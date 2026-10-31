@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "linux_triage"
-PARSER = "linux_triage/4"
+PARSER = "linux_triage/10"
 DEFAULT_FUNCTION_SECONDS = 1800
 DEFAULT_TOTAL_SECONDS = 13800
 MAX_TOTAL_SECONDS = 14100       # the most a caller may ask for (the manifest allows 14400)
@@ -73,7 +73,7 @@ GROUPS = {
                  "covers": "classic wtmp, btmp and lastlog records",
                  "does_not_cover": "wtmpdb or lastlog2 (SQLite) databases, utmp, audit login records or the journal"},
     "authentication": {"functions": ["authlog"],
-                       "covers": "auth.log or secure lines as dissect.target's authlog function parses them",
+                       "covers": "auth.log or secure lines as dissect.target's authlog function parses them; a traditional line has no year, and dissect.target (3.25) takes the year of the newest line from the file's modification time, which on a copied tree is the time of the copy, and steps back one year at each month that rises as it reads the file backwards, so a gap of a year or more is not seen",
                        "does_not_cover": "the journal, the audit log, or a log kept under another name or place"},
     "history": {"functions": ["bashhistory"],
                 "covers": "bash history files only",
@@ -88,7 +88,7 @@ GROUPS = {
             "covers": "authorized_keys, known_hosts and public keys as the functions read them",
             "does_not_cover": "sshd_config, certificates' authorities or private keys"},
     "logs": {"functions": ["journal", "syslog"],
-             "covers": "the journal and syslog as the two functions parse them",
+             "covers": "the journal and syslog as the two functions parse them; the journal carries full times, a traditional syslog line has no year and is dated as authlog's are (the file's modification time, then one year back at each rising month)",
              "does_not_cover": "the audit log, application logs, or entries the journal reader does not decode"},
     "web": {"functions": ["webserver.logs"],
             "covers": "access and error logs of the web servers dissect.target knows",
@@ -515,19 +515,73 @@ def resolve_output(out, what="output"):
         if dest == place or place not in dest.parents:
             fail("in a job %s must be a new directory under the job's output directory: give {OUT}/<name>, or work/<your agent "
                  "id>/<name>, which job_run maps there; %s is not under it" % (what, out), **{what: str(out)})
+    elif (root / "inputs").is_dir():
+        # Started in a run directory (one that holds inputs/) and outside a job, an agent writes under work/<its id>/ (work/ itself when the
+        # id is not known), as the manifest's example shows: `work/ag/../../escape` resolves to a place of the run directory that is not the
+        # agent's. The linux-target recipe starts this tool in its own output directory, which is not a run directory, with out_dir
+        # `artefacts`: there the first check (inside the working directory) is the whole rule.
+        agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "")
+        mine = root / "work" / agent if agent else root / "work"
+        if dest == mine or mine not in dest.parents:
+            fail("%s must be a new directory under %s/ (work/<your agent id>/<name>): %s resolves to %s, which is not under it"
+                 % (what, mine, out, dest), **{what: str(out)})
     return str(dest.relative_to(root))
 
 
+def run_directory():
+    """The run directory: the working directory, or the nearest directory above it that holds inputs/ (the linux-target recipe runs this
+    tool in its own output directory, which is inside the run directory, and names the image by its absolute path)."""
+    here = Path.cwd().resolve()
+    for candidate in (here, *here.parents):
+        if (candidate / "inputs").is_dir():
+            return candidate
+    return here
+
+
+def refuse_source(source):
+    """A source that is the root directory of the machine this runs on (spelled however, or a link to it), or whose real path lies outside the
+    run directory, is refused before anything is run: dissect.target would be handed the analysis machine's own file system."""
+    try:
+        real = Path(os.path.realpath(source))
+        is_root = real == Path(os.sep) or os.path.samefile(source, os.sep)
+    except (OSError, ValueError) as exc:
+        fail("source could not be examined: %s" % (getattr(exc, "strerror", None) or exc), source=source)
+    if is_root:
+        fail("refusing the root directory: it is the file system of the machine this runs on, not evidence. Pass the image or the extracted root "
+             "inside the run directory (inputs/, or store/jobs/<id>/out/...)", source=source)
+    run_dir = run_directory()
+    if real != run_dir and run_dir not in real.parents:
+        fail("source must lie inside the run directory (inputs/, or store/jobs/<id>/out/...): %s resolves outside it" % source, source=source)
+
+
+# The counting and hashing that follow a function read what it wrote, outside its own timeout. They read the clock and stop at the total
+# deadline: what they did not do is listed in not_hashed and the run is partial (a count that stopped is a lower bound, and a function
+# whose count stopped at zero is `unknown`, never `empty`).
+HASH = {"deadline": None, "skipped": []}
+
+
+def past_deadline():
+    return HASH["deadline"] is not None and time.monotonic() > HASH["deadline"]
+
+
+def skipped(path, what):
+    HASH["skipped"].append({"file": str(path), "not_done": what})
+
+
 def digest(path):
+    """The sha256 of a file, or None when the total deadline passed first (the file is then listed in not_hashed)."""
     value = hashlib.sha256()
     with path.open("rb") as fh:
         while chunk := fh.read(1024 * 1024):
+            if past_deadline():
+                skipped(path, "sha256")
+                return None
             value.update(chunk)
     return value.hexdigest()
 
 
-def count_region(path, start, end, as_json):
-    """(records, invalid lines, first invalid line numbers) of one function's bytes in its family's file."""
+def count_region(path, start, end, as_json, function=None):
+    """(records, invalid lines, first invalid line numbers, counted to the end) of one function's bytes in its family's file."""
     records = invalid = 0
     first = []
     line_no = 0
@@ -535,6 +589,9 @@ def count_region(path, start, end, as_json):
         fh.seek(start)
         remaining = end - start
         for raw in fh:
+            if (line_no & 1023) == 0 and past_deadline():
+                skipped(path, "the records of %s were counted up to byte %d of %d" % (function or "a function", end - remaining, end))
+                return records, invalid, first, False
             remaining -= len(raw)
             if raw.strip():
                 line_no += 1
@@ -550,7 +607,7 @@ def count_region(path, start, end, as_json):
                     records += 1
             if remaining <= 0:
                 break
-    return records, invalid, first
+    return records, invalid, first, True
 
 
 def scan_stderr(path, function):
@@ -636,10 +693,13 @@ def status_of(groups, kind):
     if ran == 0:
         return "failed", "no selected function ran to an exit: %d failed, %d not attempted%s" % (
             counts.get("failed", 0), counts.get("not_attempted", 0) + counts.get("pending", 0), "; the run was stopped from outside" if kind == "terminated" else "")
-    clean = kind == "finished" and all(counts.get(k, 0) == 0 for k in ("unsupported", "failed", "not_attempted", "unknown", "pending", "running"))
+    clean = (kind == "finished" and not HASH["skipped"]
+             and all(counts.get(k, 0) == 0 for k in ("unsupported", "failed", "not_attempted", "unknown", "pending", "running")))
     if clean:
         return "complete", "every one of the %d selected functions ran to exit 0 and produced records or nothing: this is not coverage of the host" % total
     parts = ["%d %s" % (counts[k], k) for k in ("unsupported", "failed", "not_attempted", "unknown", "pending", "running") if counts.get(k)]
+    if HASH["skipped"]:
+        parts.append("%d count(s) or hash(es) the total deadline left no time for (not_hashed)" % len(HASH["skipped"]))
     return "partial", "%d of %d selected functions ran%s; %s: the files and the per-function statuses say which" % (
         ran, total, "; the run was stopped from outside" if kind == "terminated" else "", ", ".join(parts) or "none left")
 
@@ -676,10 +736,16 @@ def main():
     out_arg = args.get("out_dir")
     if not isinstance(source, str) or not source or not os.path.exists(source):
         fail("source is required and must exist", source=source)
+    refuse_source(source)
     if not isinstance(out_arg, str) or not out_arg:
         fail("out_dir is required")
-    out = Path(resolve_output(out_arg, "out_dir"))
-    if out.exists():
+    try:
+        out = Path(resolve_output(out_arg, "out_dir"))
+        already = out.exists()
+    except (ValueError, UnicodeError, OSError) as exc:
+        # A NUL byte, a lone surrogate or a name over the file system's limit cannot name a place: JSON, never a traceback.
+        fail("out_dir cannot be used: %s" % type(exc).__name__, out_dir=out_arg.encode("utf-8", "backslashreplace").decode("ascii", "backslashreplace")[:300])
+    if already:
         fail("out_dir already exists; refusing to overwrite an earlier result", out_dir=str(out))
     binary = shutil.which("target-query")
     if not binary:
@@ -710,6 +776,7 @@ def main():
         fail("out_dir could not be created: %s" % (exc.strerror or exc), out_dir=str(out))
     started_at = time.time()
     deadline = time.monotonic() + total
+    HASH["deadline"] = deadline
     groups = [{"group": g, "functions": [{"name": f, "status": "pending"} for f in GROUPS[g]["functions"]],
                "covers": GROUPS[g]["covers"], "does_not_cover": GROUPS[g]["does_not_cover"], "status": "pending"} for g in selected]
 
@@ -717,7 +784,7 @@ def main():
         status, basis = status_of(groups, kind)
         return {"state": kind, "status": status, "status_basis": basis, "parser": PARSER, "source": source, "out_dir": str(out),
                 "started": started_at, "updated": time.time(), "total_timeout_seconds": total, "timeout_seconds": per_function,
-                "groups": groups, "coverage": coverage_of(groups)}
+                "groups": groups, "coverage": coverage_of(groups), "not_hashed": HASH["skipped"]}
 
     CURRENT["out"], CURRENT["state"] = out, state
     STATE["last_word"] = last_word
@@ -780,10 +847,12 @@ def main():
                         stdout.write(b"\n")
                         stdout.flush()
                 scan = scan_stderr(err_path, name)
-                records, invalid, first_bad = count_region(result_path, begin, end, not spec.get("strings"))
+                records, invalid, first_bad, counted = count_region(result_path, begin, end, not spec.get("strings"), name)
                 entry.update({"exit_code": code, "timed_out": timed_out, "seconds": round(time.monotonic() - began, 3),
                               "bytes": end - begin, "byte_offset": begin, "records": records, "invalid_lines": invalid,
                               "argv": argv[1:]})
+                if not counted:
+                    entry["records_counted_to_the_end"] = False      # the total deadline passed: `records` is a lower bound
                 if unterminated:
                     entry["last_line_unterminated"] = True
                 if timed_out:
@@ -797,14 +866,26 @@ def main():
                 else:
                     err_path.unlink()
                 entry["status"] = classify(code, timed_out, records, invalid, scan)
+                if not counted and entry["status"] in ("empty", "parsed") and records == 0:
+                    entry["status"] = "unknown"      # nothing was counted before the deadline: this says nothing about the output
                 if scan["traceback"]:
                     entry["stderr_has_a_traceback"] = True
                 write_summary(out, state("running"))
         group["status"] = group_status(group["functions"])
         if result_path.exists():
             group.update({"bytes": result_path.stat().st_size, "sha256": digest(result_path)})
-            with result_path.open("rb") as fh:
-                group["lines"] = sum(1 for _ in fh)
+            if past_deadline():
+                skipped(result_path, "the lines of the file were not counted")
+                group["lines"] = None
+            else:
+                lines_counted = 0
+                with result_path.open("rb") as fh:
+                    for lines_counted, _line in enumerate(fh, 1):
+                        if (lines_counted & 4095) == 0 and past_deadline():
+                            skipped(result_path, "the lines of the file were counted up to line %d" % lines_counted)
+                            lines_counted = None
+                            break
+                group["lines"] = lines_counted if lines_counted is not None else None
     final = state("finished")
     final["execution_complete"] = all(f.get("exit_code") == 0 and not f.get("timed_out") and f["status"] != "not_attempted"
                                       for g in groups for f in g["functions"])

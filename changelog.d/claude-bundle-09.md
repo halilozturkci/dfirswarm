@@ -1,0 +1,47 @@
+### Fixed: linux-forensics tools carry one marked text for paging, text files and the stop signal
+
+auth_log, cron_dump, journal_export, shell_history and utmp_parse had five drifting copies of the paging and text code, and auth_log had no stop handling at all. The copies now sit between `# BEGIN LINUX PARTS` and `# END LINUX PARTS` (and the stop part and the disk-image block between their own markers), and a test walks the tools and holds each text byte-equal. auth_log, cron_dump, shell_history and utmp_parse install their stop handlers on the first line after the imports, so a SIGTERM, SIGINT or SIGHUP gives one JSON last word from then on; auth_log names its kept paging files and text file like the others. A paging file that cannot be written (a full disk) is kept under its name or removed, and the error says which; a text file that cannot be flushed in the last word no longer prints an error document before it. The text file is capped (256 MiB) like the paging files (128 MiB together): past it the records are counted in `not_written` and the answer is partial.
+
+### Fixed: linux-forensics text-writing tools declare secret_output and check SECRET_OUTPUT
+
+auth_log, cron_dump, journal_export, shell_history and utmp_parse now declare `secret_output` for their text flags (`write_text` and `preview_text`; `write_commands` and `preview_commands` for shell_history), so a job that sets one is sealed as secret output without the agent saying so, and each tool refuses such a flag as JSON, before it opens or creates anything, when `SECRET_OUTPUT` is not `1`. linux_triage does not declare it.
+
+### Fixed: linux-forensics lists that grow with the evidence are capped inline and kept whole on disk
+
+auth_log listed every file it found in its answer (270 MB for 300,000 empty files) and read the clock only inside a file, so a directory of many empty files ran several times past `max_seconds` and said `complete`; shell_history listed every home's history file (46 MB for 100,000 homes). In auth_log, shell_history and cron_dump the lists that grow with the tree (files, files not reached, read errors, walk errors, links, special files, excluded directories, unmerged drop-ins, order overlaps) keep their first 200 items inline and the whole in a paging file named under `pages.<list>`; auth_log reads the clock for every file and every 256 directory entries and puts the files it did not reach in `files_not_reached`, with the answer partial. cron_dump lists `home/` and `run/user/` on the clock and looks in at most 200,000 names of each, saying so. utmp_parse echoes at most 200 of the UIDs given beyond the file, with their count. The other lists of the six tools and the recipe have fixed bounds, stated in the manifests.
+
+### Fixed: linux-forensics tools answer a hostile parameter in JSON, and auth_log's walk is on a clock
+
+linux_triage no longer ends in a traceback on an `out_dir` with a NUL byte, a lone surrogate or a name over the file system's limit; journal_export on a `unit` or `priority` with a NUL byte or a lone surrogate; cron_dump, shell_history and utmp_parse on a `contains` or `user` of a thousand nested parentheses; utmp_parse on a `start_record` no file can hold. Each is a JSON refusal. auth_log looks through a directory tree on its `max_seconds` clock, so a whole file system given as the path ends at the deadline instead of running past the manifest's timeout. The linux-target stop handler recognises a listed child by its start time alone, so a child re-parented when the wrapper ends is still signalled (the previous check, start time and parent, skipped it). cron_dump's manifest now says that environment variable names are shown as written.
+
+### Fixed: linux-forensics server-compromise names the intruder, not "the operator"
+
+Question 2 of the goal asked how "the operator" first reached the host, but in this repository the operator is the person running the case. It now asks how whoever gained access first reached the host, and a test fails on "operator" in the pack's goals and skills.
+
+### Fixed: linux-forensics linux-target re-checks a pid before its stop handler kills it
+
+The recipe's stop handler listed the wrapper's descendants, waited up to 8 seconds for the wrapper to stop, and then sent SIGKILL to every pid of that list, so a process that ended in those seconds and whose pid was reused could be killed. Each pid is now listed with its start time and parent (`/proc/<pid>/stat`, or `ps` where there is no `/proc`) and signalled only if that is still true.
+
+### Fixed: linux-forensics storage-lvm-luks names every term of a logical volume's offset
+
+The leaf said a linear volume is read at the partition's start plus the PV's data start plus "the segment's start, in sectors". `seg_start` is an offset within the volume (0 for a first segment), and LVM gives a segment's place on the PV in extents. The leaf now adds the partition start (`mmls`), `pe_start` (`pvs --units s -o+pe_start`) and the first extent times the extent size (`lvs -o+devices` or `seg_pe_ranges`; `vgs --units s -o+vg_extent_size`), in sectors, and the linux-target receipt's text agrees; a skills test holds the three terms. Checked on an LVM image with two volumes, the second beginning at extent 10: `fls` at the sum lists the second volume's root, and at the old sum lists the first's.
+
+### Fixed: linux-forensics journal_export keeps journalctl's stderr in its file and tells its own journal by machine id
+
+The answer gives the name, size and sha256 of journalctl's stderr file and no longer quotes its first lines (they can carry paths and entry text). A journal is this machine's own when the machine id in the header of its files is the one in `/etc/machine-id`, or the directory is named by it, wherever it is and however it is spelled; a path under `/var/log/journal` that carries another machine's id is no longer refused for its place. The place is used only where this machine's id cannot be read.
+
+### Fixed: linux-forensics linux_triage refuses the analysis machine's root, holds out_dir to work/<agent>/ and counts on the clock
+
+`source` is refused when it resolves to the root directory (`/`, `//`, `/..`, a link to it) or lies outside the run directory, before target-query is started. Outside a job, in a run directory, `out_dir` must resolve under `work/<agent id>/` (`work/ag/../../escape` and a link out are refused). The counting of each function's records and the hashing of the files it wrote read the clock and stop at the total deadline: what they did not do is listed in `not_hashed`, a stopped count is marked `records_counted_to_the_end: false`, and the run is partial.
+
+### Fixed: linux-forensics cron_dump bounds its answer, names cronie's extensions and withholds odd keys
+
+The entries cron_dump shows inline now stop at 1 MiB of JSON (`answer_budget`, `truncated`); the rest, and the ones shown, are whole in `pages.entries.all_results`, named with its size and sha256, and the status is unchanged (300 timers with long `OnCalendar` values made a 22.9 MB answer). The manifest and `persistence/cron-timers` say that cronie's `L`, `W`, `#` and `?` and a numeric user read as unparsed. A timer's unit key or section name that systemd does not define is withheld with its length (`key_withheld`, `section_withheld`) instead of printed cut at 128 characters, so a pasted token that stands where a key goes is not shown.
+
+### Fixed: linux-forensics records name the version of the tool that made them
+
+In all six linux tools `PARSER` (the `parser` of every record) lagged the manifest's version, so a record did not say which behaviour produced it. Each tool's `PARSER` now carries its manifest version and moves with it, and a test that walks the pack's tools holds the two equal.
+
+### Changed: linux-forensics auth_log says how weak the year of a traditional syslog line is
+
+The dating rule and the status are unchanged. Per file the answer now lists every forward step of more than 62 days between two consecutive lines in order (`forward_steps`, the first 20 inline and all of them in `pages.forward_steps`) and marks every traditional-stamp record before the last such step `year_assumed`; `year_anchor` names the line and the modification time that dated the file; `mtime_may_be_copy_time` says when that time may be the time of a copy (more than 7 days after the last dated line, one modification time shared by every file of a call, or a gzip header time that differs), with the gzip header time beside it. A new `years` argument gives a year per file and line range. The first pass keeps one byte per dated line instead of seventeen. `logs/auth-time` and `triage/system-profile` say to fix the year from a source with full dates, and linux_triage's `authentication` and `logs` families say how dissect.target 3.25 dates a traditional line.

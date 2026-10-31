@@ -296,3 +296,39 @@ test("a run that carries this pack with others is over the run's index budget, a
   const bare = await section(family, FAMILY);
   assert.ok(bare.shown_tokens > SKILL_BUDGET.run, `without the family's routers the section is ${bare.shown_tokens} tokens, over the run's ${SKILL_BUDGET.run}`);
 });
+
+test("the pack's goals and skills never call the intruder \"the operator\": in this repository the operator is the person running the case", async () => {
+  const found: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      if (e.isDirectory()) await walk(join(dir, e.name));
+      else if (e.name.endsWith(".md") && (await readFile(join(dir, e.name), "utf8")).match(/\boperators?\b/i)) found.push(join(dir, e.name).slice(PACK.length + 1));
+    }
+  };
+  await walk(join(PACK, "goals"));
+  await walk(SKILLS);
+  assert.deepEqual(found, [], "a goal or skill of the pack uses \"operator\"; name the intruder (whoever gained access) or the person running the case");
+  // The question names whoever gained access.
+  assert.match(await readFile(join(PACK, "goals", "server-compromise.md"), "utf8"), /how whoever gained access first reached this host/);
+});
+
+test("filesystem/storage-lvm-luks names every term of a logical volume's offset, in sectors, with the command that gives it, and the recipe agrees", async () => {
+  // The offset of a linear logical volume on the image is the sum of three terms. A rule over the terms, not one wording: each term with its
+  // command, the unit, and the warning that seg_start is no place on the PV (it is 0 for a first segment, so the sum is wrong for any volume
+  // that begins past extent 0 when the third term is left out).
+  const leaf = await readFile(join(SKILLS, "filesystem", "storage-lvm-luks.md"), "utf8");
+  const sentence = leaf.split("\n").find((l) => /fls -o/.test(l)) ?? "";
+  assert.ok(sentence, "the leaf says how a volume is read with fls -o");
+  assert.match(sentence, /\bmmls\b/, "the partition's start, and the command that gives it");
+  assert.match(sentence, /pvs --units s -o\+pe_start/, "the PV's data start, in sectors");
+  assert.match(sentence, /(?:lvs -o\+devices|seg_pe_ranges)/, "the segment's first extent, and where it is read");
+  assert.match(sentence, /vgs --units s -o\+vg_extent_size/, "the extent size, in sectors");
+  assert.match(sentence, /first extent[^.;]*times[^.;]*extent size|extent size[^.;]*times[^.;]*first extent/i, "the third term is a product of the two");
+  assert.match(sentence, /seg_start[^.]*(?:not a place on the PV|offset within)/i, "seg_start is named for what it is");
+  assert.match(sentence, /sectors/, "the unit");
+  assert.doesNotMatch(sentence, /plus the segment's start/, "the old wording is gone");
+  const recipe = await readFile(join(PACK, "recipes", "linux-target", "run.py"), "utf8");
+  const files = recipe.slice(recipe.indexOf("FILES_BY_PATH = ("), recipe.indexOf("def answer("));
+  assert.match(files, /partition start plus the PV's data start plus the volume's first extent times the extent size/, "the recipe's text names the same three terms");
+  assert.match(files, /storage-lvm-luks/, "and says where the commands are");
+});

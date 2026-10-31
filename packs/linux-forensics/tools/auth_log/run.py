@@ -33,15 +33,16 @@ A tool that fails loudly: a file it cannot open or read to its end is a named, p
 empty one; a line no rule places is counted, located and kept; `all_lines_parsed` is true only when every
 line matched a syslog shape and every file was read through.
 """
-import array
 import datetime
 import gzip
 import ipaddress
+import itertools
 import json
 import math
 import os
 import re
 import secrets
+import signal
 import stat
 import sys
 import tempfile
@@ -50,9 +51,107 @@ import zlib
 from pathlib import Path
 
 TOOL = "auth_log"
-PARSER = "auth_log/6"
+PARSER = "auth_log/15"
+
+
+# BEGIN LINUX STOP
+# The same text is in auth_log, cron_dump, shell_history and utmp_parse (tests/pack-linux-parts.test.ts holds the copies equal); journal_export's
+# stop is its SHARED PROCESS block. A signal ends the tool with a last word. The harness ends a tool that runs too long with SIGTERM before it
+# kills the group, and a tool that ignored it left its paging files as unfinished temporary files nobody could name. The rows written so far are
+# kept under their final names and the text file is closed, so the last word can say where they are; the answer itself was never built.
+#
+# This block comes right after TOOL and PARSER and installs the handlers as its last line, before any parts, constants or arguments exist: a
+# signal from then on gets one document (until the parts below are defined there is no page or text file to name, and the document says
+# none was kept). What is before it is the interpreter's own start-up and the imports, which no code of this file can cover.
+#
+# Two moments are not the handler's. Python can run a handler inside a buffered file's own write (its flush looks for signals between
+# writes), and there the file refuses the last word's flush: a signal that came while a row was being written left that paging file
+# unfinished and unnamed. So while a file the last word closes is being written, the handler only notes the signal, and the write
+# gives the last word once it is done. And while the answer, or an error answer, is being written, a signal is not answered: the
+# answer stands, and no second document follows it. The last word disarms the regex clock (SIGALRM) before anything else, and a file
+# that cannot be flushed inside it is named with its error and does not start an error document of its own (STATE["stopping"]). One
+# window cannot be closed from inside Python: an alarm that is already pending when a stop signal arrives runs its handler at the
+# first instruction of the last word, in the last word's frame, and the exception it raises there is taken by the tool's own
+# expression-timeout handling; the tool then ends partial within max_seconds and not at the signal.
+STATE = {"pages": [], "text": None, "writing": 0, "pending": None, "answering": False, "stopping": False}
+
+
+def _writing():
+    STATE["writing"] += 1
+
+
+def _written():
+    STATE["writing"] -= 1
+    if not STATE["writing"] and STATE["pending"] is not None:
+        signum, STATE["pending"] = STATE["pending"], None
+        _on_signal(signum, None)
+
+
+def _on_signal(signum, _frame):
+    if hasattr(signal, "setitimer"):
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0)     # the regex clock stops first: its alarm inside the last word left a paging file unnamed
+            signal.signal(signal.SIGALRM, signal.SIG_IGN)
+        except BaseException:  # noqa: BLE001
+            pass
+    if STATE["answering"]:
+        return
+    if STATE["writing"]:
+        STATE["pending"] = signum
+        return
+    STATE["answering"] = STATE["stopping"] = True       # the last word is the answer now: a second signal does not start another
+    kept, unflushed = {}, []
+    for page in STATE["pages"]:
+        try:
+            shown = page.stop_here()
+        except BaseException:  # noqa: BLE001 - a last word is best effort
+            shown = None
+        if shown:
+            kept[page.key] = shown
+        if getattr(page, "stop_error", None):
+            unflushed.append(page.key)
+    text = STATE["text"]
+    text_file = getattr(text, "shown", None) if text is not None and getattr(text, "written", 0) else None
+    if text is not None:
+        try:
+            text.close()
+        except BaseException:  # noqa: BLE001
+            pass
+    try:
+        sys.stdout.write(json.dumps({
+            "parser": PARSER, "status": "failed", "stopped_by_signal": signum,
+            "status_basis": "this tool was stopped by signal %d before it finished: no answer was built, and what it had read is not a complete result" % signum,
+            "paging_files_kept": kept, "paging_files_not_flushed": unflushed, "text_file_kept": text_file,
+            "text_file_close_error": getattr(text, "close_error", None),
+            "kept_note": "the rows each file holds were written in the order read, up to where the tool was stopped; the files are named here and nowhere else",
+        }) + "\n")
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+install_signal_handlers()
+# END LINUX STOP
 DEFAULT_LIMIT = 200
 FIRST_FAILURES = 20
+# The year of a traditional line is inferred (see the manifest). A forward step between two consecutive in-order lines of more
+# than STEP_DAYS days is reported, because the year is assumed to advance by the least the months allow across it; and the
+# modification time that anchors the year is flagged as possibly the time of a copy when it is more than COPY_DAYS after the last
+# dated line, when every file of the call shares one time to within SAME_MTIME_SECONDS, or when a gzip header time differs from it
+# by more than GZ_AGREE_SECONDS (FAT keeps two-second times).
+STEP_DAYS = 62
+STEP_INLINE = 20            # forward steps shown inline per file; the whole list is in pages.forward_steps
+COPY_DAYS = 7
+SAME_MTIME_SECONDS = 10
+GZ_AGREE_SECONDS = 2
+MAX_YEARS = 1000            # entries of the `years` argument
+YEAR_MIN, YEAR_MAX = 1970, 2200
 MAX_LINE = 64 << 10         # a physical line longer than this is located, not parsed
 DEFAULT_EXPANDED = 1 << 30  # a gzip stream is read to at most this many decompressed bytes
 DEFAULT_SECONDS = 100.0     # the manifest allows 120
@@ -64,11 +163,16 @@ MONTHS = {m: i + 1 for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
 
 
+# BEGIN LINUX PARTS
 # ---- The parts every tool of this pack that pages or keeps text copies (a tool is standalone; none imports another) ----
+# The same text is in auth_log, cron_dump, journal_export, shell_history and utmp_parse (tests/pack-linux-parts.test.ts holds the copies
+# equal). It uses STATE, _writing and _written, which are LINUX STOP's in four tools and, in journal_export, whose stop is its SHARED PROCESS
+# block, two stand-ins below the SHARED PROCESS block's STATE.
 
 
 def fail(message, **extra):
     """An error answer: JSON, exit 1, and the same `status` every answer of this pack carries."""
+    STATE["answering"] = True       # a signal from here on is not answered: this answer stands alone
     print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -169,18 +273,28 @@ def touches_withheld_text(has_filter):
     return bool(has_filter) and in_job()
 
 
+MAX_PAGING_BYTES = 128 << 20  # all the paging files of one call hold this much together; a row past it is counted and located, not written
+MAX_TEXT_BYTES = 256 << 20    # the text file of one call holds this much; a record past it is counted and located, not written
+PAGING = {"left": MAX_PAGING_BYTES}      # what the paging files of this call may still hold, in bytes, all of them together
+TEXTING = {"left": MAX_TEXT_BYTES}       # what the text file may still hold, in bytes
+
+
 # Lossless paging (the same in every library tool that pages): the page an agent reads stays small, and when
 # there are more rows the whole result is written as JSON Lines under work/<agent>/tool-output (in a job,
 # $OUT/tool-output) and named. The file name is random: it is never a digest of anything asked for. A write
-# that fails is an error answer naming the file, never a traceback and never a silent loss.
+# that fails is an error answer naming the file, never a traceback and never a silent loss: the rows written
+# before the error are kept under the file's name and the answer says so, or says the temporary was removed.
 class LosslessPage:
     def __init__(self, tool, key, limit):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError("limit must be a positive integer")
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
+        self.key = key
         self.page = []
         self.total = 0
+        self.not_written = 0        # rows after the paging cap: counted in `total`, not in the file
+        self.stop_error = None
         self._out = None
         self._tmp = None
         name = "%s-%s.jsonl" % (self.tool, secrets.token_hex(8))
@@ -193,13 +307,46 @@ class LosslessPage:
             agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
+        self._done = False
+        STATE.setdefault("pages", []).append(self)     # every page is the last word's to name, from the moment it exists
 
-    def _write(self, row):
+    def _abandon(self):
+        """A write failed (ENOSPC, EIO): what is already in the temporary is kept under the file's own name, or the temporary is removed.
+        Returns what the answer says about it."""
+        out, self._out = self._out, None
+        if out is not None:
+            try:
+                out.close()
+            except OSError:
+                pass
+        if self._tmp is None:
+            return "no paging file was left"
         try:
-            self._out.write(json.dumps(row, ensure_ascii=False, default=str))
-            self._out.write("\n")
+            os.replace(self._tmp, self.path)
+            self._done = True
+            return "the rows written before the error are in %s (the last row may be cut)" % self.path
+        except OSError:
+            pass
+        try:
+            os.unlink(self._tmp)
+            return "the temporary paging file was removed"
         except OSError as exc:
-            fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
+            return "the temporary paging file %s could not be renamed or removed (%s)" % (self._tmp, describe(exc))
+
+    def _write(self, row, kept=False):
+        data = json.dumps(row, ensure_ascii=False, default=str) + "\n"
+        size = len(data.encode("utf-8", "backslashreplace"))
+        if not kept and (self.not_written or size > PAGING["left"]):
+            self.not_written += 1       # once a row is refused no later one is written: the file stays the first rows in order
+            return
+        PAGING["left"] = max(0, PAGING["left"] - size)
+        _writing()
+        try:
+            self._out.write(data)     # one write: a stop never leaves half a row
+        except OSError as exc:
+            fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=self._abandon())
+        finally:
+            _written()
 
     def add(self, row):
         self.total += 1
@@ -209,37 +356,77 @@ class LosslessPage:
         if self._out is None:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-                self._tmp = Path(name)
+                # The name is known before the file exists, so a signal at any point after this line finds the file by it.
+                self._tmp = self.path.parent / (".%s-%s" % (self.path.name, secrets.token_hex(8)))
+                fd = os.open(str(self._tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace")
             except OSError as exc:
-                fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path))
+                state = "no paging file was left" if self._tmp is None or not os.path.lexists(self._tmp) else self._abandon()
+                fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=state)
             for kept in self.page:
-                self._write(kept)
+                self._write(kept, kept=True)
         self._write(row)
+
+    def stop_here(self):
+        """The rows written so far, kept under the final name (a signal ended the tool): the path as shown, or None where nothing was written.
+        A file that cannot be flushed is still renamed (what reached the disk is kept) and `stop_error` says it."""
+        if self._tmp is None:
+            return None
+        if self._done:
+            return self.shown           # finish() had put it under its name: it holds every row
+        out, self._out = self._out, None
+        if out is not None:
+            try:
+                out.flush()
+                os.fsync(out.fileno())
+            except OSError as exc:
+                self.stop_error = describe(exc)
+            try:
+                out.close()
+            except OSError as exc:
+                self.stop_error = self.stop_error or describe(exc)
+        if not os.path.exists(self._tmp):
+            return None
+        os.replace(self._tmp, self.path)
+        return self.shown
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
         if self._out is not None:
+            _writing()
             try:
                 self._out.flush()
                 os.fsync(self._out.fileno())
                 self._out.close()
                 os.replace(self._tmp, self.path)
+                self._done = True
             except OSError as exc:
-                fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
+                fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=self._abandon())
+            finally:
+                _written()
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
+        if self.not_written:
+            result["not_written"] = self.not_written
+            result["not_written_why"] = ("the paging files of one call hold at most %d bytes together: the first %d rows are in the file, in order; "
+                                         "the %d after them are counted in `matched` and are in the evidence at the file and line each entry names"
+                                         % (MAX_PAGING_BYTES, self.total - self.not_written, self.not_written))
         return result
 
 
 def require_job(flag):
     """What leaves a record's text is held to the secret-safe output pattern (docs/packs.md, "Secrets and
     sensitive output"): the text goes into the answer or into a file only in a job, whose output the skill
-    says to seal with secret_output: true. Outside a job the request is refused and nothing is written."""
+    says to seal with secret_output: true. Outside a job, and in a job the harness did not run as secret output (it sets
+    SECRET_OUTPUT=1 in the environment of such a job's process, from the manifest's declaration or the agent's flag), the
+    request is refused and nothing is written."""
     if not in_job():
         fail("%s is refused outside a job: a command line, a message or an environment value written or "
              "printed here would be an ordinary file or an ordinary answer, not a sealed output. Run this as "
+             "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
+    if os.environ.get("SECRET_OUTPUT") != "1":
+        fail("%s is refused: this job was not run as secret output, so what it wrote or printed would be sealed as an ordinary "
+             "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run this as "
              "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
 
 
@@ -255,11 +442,18 @@ class TextFile:
     created before anything is read (mode 0600, exclusively: a file or a link already at that name is
     refused by name) under $OUT, and the answer names it and says it may hold secrets. A byte that is not
     UTF-8 is written as a JSON escape of its lone surrogate and reads back as the byte: the file keeps the whole.
+    The file holds at most MAX_TEXT_BYTES: once a record would pass it, that record and every one after it are
+    counted in `not_written` and not written (the file stays the first records, in order), and `summary()` says so.
     """
 
     def __init__(self, name, enabled, what, flag="write_text"):
         self.enabled = enabled
         self.written = 0
+        self.not_written = 0        # records after the cap: counted, not in the file
+        self.capped = False
+        self.cut_record = False     # a record's first pieces (add_bytes_raw) were written and the cap came before its last
+        self._open_piece = False
+        self.close_error = None
         self.what = what
         self.flag = flag
         self._fh = None
@@ -272,6 +466,10 @@ class TextFile:
             raise TextRefused("%s is refused outside a job: the text of the records written here would be an "
                               "ordinary file, not a sealed output. Run this as job_run tool=%s with secret_output: "
                               "true, and ask again there. Nothing was written." % (flag, TOOL))
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise TextRefused("%s is refused: this job was not run as secret output, so the text of the records written here would be sealed "
+                              "as an ordinary output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. "
+                              "Run this as job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
         self.path = Path(out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
         try:
@@ -284,42 +482,76 @@ class TextFile:
         self._fh = os.fdopen(fd, "wb")
 
     def _put(self, data):
+        _writing()
         try:
             self._fh.write(data)
         except OSError as exc:
             fail("the text file could not be written: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
+        finally:
+            _written()
+
+    def _room(self, size):
+        """Whether `size` more bytes fit under the cap; the first that does not closes the file to every later record."""
+        if self.capped or size > TEXTING["left"]:
+            self.capped = True
+            return False
+        TEXTING["left"] -= size
+        return True
 
     def add(self, row):
         if self._fh is None:
             return
-        self._put(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n")
+        data = json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n"
+        if not self._room(len(data)):
+            self.not_written += 1
+            return
         self.written += 1
+        self._put(data)
 
     def add_bytes_raw(self, data):
         """A piece of a source's own bytes, written as it came; the record it belongs to is counted by count_record."""
-        if self._fh is not None:
+        if self._fh is None:
+            return
+        if self._room(len(data)):
+            self._open_piece = True
             self._put(data)
+        elif self._open_piece:
+            self.cut_record = True
 
     def count_record(self):
         if self._fh is not None:
-            self.written += 1
+            self._open_piece = False
+            if self.capped:
+                self.not_written += 1
+            else:
+                self.written += 1
 
     def add_bytes(self, data):
         """One record exactly as its source wrote it (a native export's line, newline included)."""
         if self._fh is None:
             return
-        self._put(data)
+        if not self._room(len(data)):
+            self.not_written += 1
+            return
         self.written += 1
+        self._put(data)
 
     def close(self):
         if self._fh is not None:
+            _writing()
             try:
                 self._fh.flush()
                 os.fsync(self._fh.fileno())
                 self._fh.close()
+                self._fh = None
             except OSError as exc:
-                fail("the text file could not be closed: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
-            self._fh = None
+                if STATE.get("stopping"):
+                    self.close_error = describe(exc)    # the last word names it: one document, not an error document and then the last word
+                    self._fh = None
+                else:
+                    fail("the text file could not be closed: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
+            finally:
+                _written()
 
     def summary(self, preview=False):
         """What the answer says about text. `preview` is true when the answer itself carries it (preview_text)."""
@@ -329,8 +561,53 @@ class TextFile:
                     "The answer's records carry their text (preview); no file of it was written, and the paging file, if there is one, holds none.")
             return {"requested": False, "written": 0, "file": None, "contains_text_that_may_hold_secrets": False, **shown,
                     "hint": hint + " %s: true, in a job run with secret_output: true, keeps the whole of each record in a private file under $OUT." % self.flag}
-        return {"requested": True, "written": self.written, "file": self.shown,
-                "contains_text_that_may_hold_secrets": self.written > 0, **shown, "format": self.what}
+        result = {"requested": True, "written": self.written, "file": self.shown,
+                  "contains_text_that_may_hold_secrets": self.written > 0, **shown, "format": self.what}
+        if self.not_written or self.capped:
+            result["not_written"] = self.not_written
+            result["not_written_why"] = ("the text file of one call holds at most %d bytes: the first %d records are in it, in order; the %d after them are "
+                                         "counted and are in the evidence at the file and line each record names%s"
+                                         % (MAX_TEXT_BYTES, self.written, self.not_written,
+                                            "; the last record in the file may be cut short" if self.cut_record else ""))
+        return result
+
+
+def capped_why(pages, text=None):
+    """The sentence for an answer that is partial because a cap was reached (the paging files' or the text file's), or None. `pages` is
+    the answer's `pages` dictionary; `text` the TextFile."""
+    cut = ["%d of %s" % (page["not_written"], name) for name, page in pages.items() if page.get("not_written")]
+    held = []
+    if cut:
+        held.append("the paging files reached their cap of %d bytes: %s row(s) are counted and are not in a paging file (see not_written in `pages`)"
+                    % (MAX_PAGING_BYTES, ", ".join(cut)))
+    if text is not None and (text.not_written or text.capped):
+        held.append("the text file reached its cap of %d bytes: %d record(s) are counted and are not in it (see not_written in `text`)"
+                    % (MAX_TEXT_BYTES, text.not_written))
+    if not held:
+        return None
+    return "; ".join(held) + "; each is in the evidence at the file and line it names"
+
+
+INLINE_LIST = 200       # items of any list that grows with the evidence (files, homes, errors, links) kept inline in the answer
+
+
+class Listed(list):
+    """A list of the answer that grows with the evidence (one item per file, home, link or error): its first INLINE_LIST items are the list, and
+    every item, those too, is kept in a paging file that the answer names under pages.<key> (`page.total` is how many there were; `settle()`
+    finishes the file and returns the page's entry for the answer's `pages`)."""
+
+    def __init__(self, key):
+        super().__init__()
+        self.page = LosslessPage(TOOL, key, INLINE_LIST)
+
+    def append(self, item):
+        self.page.add(item)
+        if len(self) < INLINE_LIST:
+            super().append(item)
+
+    def settle(self):
+        return self.page.finish()
+# END LINUX PARTS
 
 
 TRADITIONAL = re.compile(
@@ -427,7 +704,7 @@ def pam_rhost_last(rest):
 
 # Fields a line's text can never set: they are the tool's own.
 RESERVED = {"user_bytes", "user_withheld", "id", "parser", "file", "line", "byte_offset", "time", "time_raw", "time_zone", "time_utc", "year", "host",
-            "process", "pid", "kind", "reordered", "time_error", "text_bytes", "command_bytes", "raw", "line_text"}
+            "process", "pid", "kind", "reordered", "time_error", "text_bytes", "command_bytes", "raw", "line_text", "year_assumed"}
 # What is the text of a line and not a field of it: held back from the answer, kept in the text file.
 TEXT_FIELDS = ("raw", "command")
 
@@ -628,47 +905,115 @@ def circular(a, b):
     return min((a - b) % 12, (b - a) % 12)
 
 
-def classify_months(months):
-    """How each line's month relates to the lines before and after it: (a bytearray of FIRST, SAME, FORWARD, ROLLOVER or
-    REORDERED, the number of rollovers, the indexes of the first few).
+MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
-    A month that goes up is the log moving on, however long the gap (a machine that was off for eight months wrote
-    January and then September of one year). A month that goes down is a year end when it comes within six months
-    after the last one (Dec to Jan), and a step back in time otherwise. And a line that the next line contradicts is
-    out of order whichever way it points: one that is further from the last in-order month than the line after it is
-    (January, March, January: the March line is the stray; January, December, January: the December one). The last
-    line has no next line, so a downward step of more than six months is all it can show.
 
-    A line out of order does not move the place the next one is compared with. Only lines whose date and clock exist
-    are given to this."""
-    n = len(months)
-    out = bytearray(n)
-    prev, rollovers, where = None, 0, []
-    for i in range(n):
-        m = months[i]
+def packed_parts(packed):
+    """(month, day, hour, minute, second) of a date packed as ((((month * 32 + day) * 24 + h) * 60 + m) * 61 + s)."""
+    v, sec = divmod(packed, 61)
+    v, minute = divmod(v, 60)
+    v, hour = divmod(v, 24)
+    month, day = divmod(v, 32)
+    return month, day, hour, minute, sec
+
+
+def stamp_of(packed):
+    """A packed date as a traditional syslog stamp reads."""
+    month, day, hour, minute, sec = packed_parts(packed)
+    return "%s %2d %02d:%02d:%02d" % (MONTH_NAMES[month - 1], day, hour, minute, sec)
+
+
+def step_days(before, after, year_end):
+    """Whole days from one packed date to the next, as the dating rule reads the step: the same year, or the next one
+    when the step crosses a year end. Year 2000 is the leap one, so every date that exists is a date here; a 29 February
+    that falls in the following year is read as the 28th."""
+    m1, d1, h1, i1, s1 = packed_parts(before)
+    m2, d2, h2, i2, s2 = packed_parts(after)
+    start = datetime.datetime(2000, m1, d1, h1, i1, min(s1, 59))
+    try:
+        end = datetime.datetime(2001 if year_end else 2000, m2, d2, h2, i2, min(s2, 59))
+    except ValueError:
+        end = datetime.datetime(2001 if year_end else 2000, m2, 28, h2, i2, min(s2, 59))
+    return (end - start).days
+
+
+class MonthScan:
+    """Pass one: how each dated line's month relates to the lines before and after it, found as the lines go by, so that
+    a dated line costs one byte (its class). `push` takes a line's month, its packed date and its line number; `finish`
+    settles the last one. Afterwards: `classes` (a bytearray of FIRST, SAME, FORWARD, ROLLOVER or REORDERED), `rollovers`,
+    `rollover_lines` (the line numbers of the first few), `reordered`, `last_ok` (the packed date and line number of the
+    last line in order) and the forward steps longer than STEP_DAYS days: `step_count`, `steps` (the first STEP_INLINE) and
+    `last_step_line` (the line that ended the last one); each step is also given to `on_step`, which keeps the whole list.
+
+    The rule. A month that goes up is the log moving on, however long the gap (a machine that was off for eight months
+    wrote January and then September of one year): the year does not change, and a step longer than STEP_DAYS is reported
+    so that nobody takes it for a certainty. A month that goes down is a year end when it comes within six months after the
+    last one (Dec to Jan), and a step back in time otherwise. A line that the next line contradicts is out of order
+    whichever way it points: one that is further from the last in-order month than the line after it is (January, March,
+    January: the March line is the stray; January, December, January: the December one). The last line has no next line,
+    so a downward step of more than six months is all it can show. A line out of order does not move the place the next
+    one is compared with. Only lines whose date and clock exist are given to this."""
+
+    def __init__(self, on_step=None):
+        self.classes = bytearray()
+        self.rollovers = 0
+        self.rollover_lines = []
+        self.reordered = 0
+        self.last_ok = None
+        self.step_count = 0
+        self.steps = []
+        self.last_step_line = None
+        self._on_step = on_step
+        self._prev = None
+        self._held = None
+
+    def push(self, month, packed, number):
+        held, self._held = self._held, (month, packed, number)
+        if held is not None:
+            self._settle(held, month)
+
+    def finish(self):
+        if self._held is not None:
+            held, self._held = self._held, None
+            self._settle(held, None)
+
+    def _settle(self, held, nx):
+        m, packed, number = held
+        prev = self._prev
         if prev is None:
-            out[i], prev = FIRST, m
-            continue
-        if m == prev:
-            out[i] = SAME
-            continue
-        if i + 1 < n:
-            nx = months[i + 1]
-            stray = nx != m and circular(prev, nx) < circular(prev, m)
+            cls = FIRST
+        elif m == prev:
+            cls = SAME
         else:
-            stray = m < prev and (m - prev) % 12 > 6
-        if stray or (m < prev and (m - prev) % 12 > 6):
-            out[i] = REORDERED
-            continue
-        if m < prev:
-            out[i] = ROLLOVER
-            rollovers += 1
-            if len(where) < 20:
-                where.append(i)
-        else:
-            out[i] = FORWARD
-        prev = m
-    return out, rollovers, where
+            if nx is not None:
+                stray = nx != m and circular(prev, nx) < circular(prev, m)
+            else:
+                stray = m < prev and (m - prev) % 12 > 6
+            if stray or (m < prev and (m - prev) % 12 > 6):
+                cls = REORDERED
+            else:
+                cls = ROLLOVER if m < prev else FORWARD
+        self.classes.append(cls)
+        if cls == REORDERED:
+            self.reordered += 1
+            return
+        if cls == ROLLOVER:
+            self.rollovers += 1
+            if len(self.rollover_lines) < 20:
+                self.rollover_lines.append(number)
+        if cls in (FORWARD, ROLLOVER):
+            days = step_days(self.last_ok[0], packed, cls == ROLLOVER)
+            if days > STEP_DAYS:
+                step = {"line": number, "from": stamp_of(self.last_ok[0]), "to": stamp_of(packed), "days": days,
+                        "from_line": self.last_ok[1]}
+                self.step_count += 1
+                self.last_step_line = number
+                if len(self.steps) < STEP_INLINE:
+                    self.steps.append(step)
+                if self._on_step is not None:
+                    self._on_step(step)
+        self._prev = m
+        self.last_ok = (packed, number)
 
 
 def valid_clock(day_time):
@@ -766,6 +1111,7 @@ class Overtime(Exception):
     pass
 
 
+# BEGIN LINUX IMAGE
 # ---- A disk image given where this tool reads a file or an extracted root (the same in every such tool of this pack) ----
 
 # What linux_triage takes as an image: these first bytes, or one of its names with a boot sector's signature at 510.
@@ -798,6 +1144,58 @@ def refuse_disk_image(path, key):
     named = path.lower().endswith(IMAGE_SUFFIXES)
     if any(head[o:o + len(m)] == m for o, m in IMAGE_MAGIC) or (named and head[510:512] == b"\x55\xaa"):
         fail("%s is a disk image: %s" % (key, IMAGE_ROUTES), **{key: path})
+# END LINUX IMAGE
+
+
+def gzip_header_time(path):
+    """(present, epoch seconds or None) of a gzip file's header MTIME (RFC 1952: bytes 4 to 7, little-endian; 0 means the
+    compressor recorded none). (False, None) for a file that is not gzip or cannot be read."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(10)
+    except OSError:
+        return False, None
+    if len(head) < 10 or head[:2] != b"\x1f\x8b":
+        return False, None
+    value = int.from_bytes(head[4:8], "little")
+    return True, (value or None)
+
+
+def want_years(args, targets):
+    """The `years` argument as {file path: [[from_line, year, counters], ...]}, in the order given, which must be ascending
+    by line within a file. Every refusal is JSON and happens before anything is read."""
+    given = args.get("years")
+    if given is None:
+        return {}
+    if not isinstance(given, list):
+        fail("years must be a list of {file, from_line, year}")
+    if len(given) > MAX_YEARS:
+        fail("years has %d entries: at most %d are read" % (len(given), MAX_YEARS))
+    by_name = {}
+    for target in targets:
+        by_name.setdefault(os.path.normpath(target), target)
+    ranges, last_line = {}, {}
+    for index, entry in enumerate(given):
+        where = "years[%d]" % index
+        if not isinstance(entry, dict) or set(entry) != {"file", "from_line", "year"}:
+            fail("%s must be an object with exactly file, from_line and year" % where)
+        name, line, year = entry["file"], entry["from_line"], entry["year"]
+        if not isinstance(name, str) or not name:
+            fail("%s: file must be a string, one of the call's files" % where)
+        target = name if name in targets else by_name.get(os.path.normpath(name))
+        if target is None:
+            fail("%s: %s is not one of the files of this call" % (where, name if len(name) <= 200 else name[:200] + "..."),
+                 files=sorted(targets)[:50])
+        if isinstance(line, bool) or not isinstance(line, int) or not 1 <= line <= 1 << 50:
+            fail("%s: from_line must be a whole number of 1 or more" % where)
+        if isinstance(year, bool) or not isinstance(year, int) or not YEAR_MIN <= year <= YEAR_MAX:
+            fail("%s: year must be a whole year between %d and %d" % (where, YEAR_MIN, YEAR_MAX))
+        if target in last_line and line <= last_line[target]:
+            fail("%s: the ranges of %s must be ascending by from_line and may not overlap (from_line %d does not come after %d)"
+                 % (where, target, line, last_line[target]))
+        last_line[target] = line
+        ranges.setdefault(target, []).append([line, year, {"lines": 0, "first_dated": None}])
+    return ranges
 
 
 def main():
@@ -828,7 +1226,8 @@ def main():
     seconds = want_seconds(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS)
     deadline = time.monotonic() + seconds
 
-    walk_errors, skipped_symlinks, skipped_special, targets = [], [], [], []
+    walk_errors, skipped_symlinks, skipped_special = Listed("walk_errors"), Listed("skipped_symlinks"), Listed("skipped_special")
+    targets = []
 
     def regular(candidate):
         try:
@@ -851,16 +1250,26 @@ def main():
     if is_dir:
         def on_error(exc):
             walk_errors.append({"path": getattr(exc, "filename", None), "error": describe(exc)})
+        walk_stopped = False
         for root, dirs, names in os.walk(path, onerror=on_error):
-            for name in list(dirs):
-                if os.path.islink(os.path.join(root, name)):
-                    skipped_symlinks.append({"file": os.path.join(root, name), "target": os.readlink(os.path.join(root, name))})
-                    dirs.remove(name)
-            for name in names:
-                if re.match(r"^(auth\.log|secure)", name):
+            # A directory tree of millions of entries (a whole file system passed by mistake, or one directory of millions of files) is
+            # looked through on the clock: it is read every 256 entries, and at the end the answer says where the walk stopped.
+            ndirs = len(dirs)
+            for step, name in enumerate(itertools.chain(list(dirs), names)):
+                if (step & 255) == 0 and time.monotonic() > deadline:
+                    walk_stopped = True
+                    break
+                if step < ndirs:
+                    if os.path.islink(os.path.join(root, name)):
+                        skipped_symlinks.append({"file": os.path.join(root, name), "target": os.readlink(os.path.join(root, name))})
+                        dirs.remove(name)
+                elif re.match(r"^(auth\.log|secure)", name):
                     candidate = os.path.join(root, name)
                     if regular(candidate):
                         targets.append(candidate)
+            if walk_stopped:
+                walk_errors.append({"path": root, "error": "max_seconds (%s) passed while looking for log files: the walk stopped here, and the places after it were not looked in" % seconds})
+                break
     elif exists_:
         try:
             special = not stat.S_ISREG(os.lstat(path).st_mode)
@@ -873,30 +1282,84 @@ def main():
         fail("no such file or directory", path=path)
     if not targets:
         fail("no auth.log or secure file found there", path=path, skipped_symlinks=skipped_symlinks,
-             skipped_special=skipped_special, walk_errors=walk_errors)
+             skipped_special=skipped_special, walk_errors=walk_errors,
+             pages={k: v.page.finish() for k, v in (("skipped_symlinks", skipped_symlinks), ("skipped_special", skipped_special), ("walk_errors", walk_errors))})
     ranked = sorted(((rotation_basis(t), t) for t in targets), key=lambda row: (row[0][0], row[0][1], row[1]))
+    # Whether every file of the call has one modification time to within seconds (a copy made in one go): known before the files are read.
+    shared_mtime = False
+    if len(targets) > 1:
+        lowest = highest = None
+        shared_mtime = True
+        for number, candidate in enumerate(targets):
+            if (number & 1023) == 0 and time.monotonic() > deadline:
+                shared_mtime = False
+                break
+            try:
+                stamp = os.path.getmtime(candidate)
+            except (OSError, ValueError, OverflowError):
+                shared_mtime = False
+                break
+            lowest = stamp if lowest is None else min(lowest, stamp)
+            highest = stamp if highest is None else max(highest, stamp)
+        shared_mtime = shared_mtime and highest - lowest <= SAME_MTIME_SECONDS
     schemes = {basis for (rank, _k, basis), _t in ranked if rank == 1}
+    years_by_file = want_years(args, targets)
 
     try:
         text = TextFile(TEXT_NAME, write_text, "JSON Lines, mode 0600: the record's id, locator and fields as in the answer, "
                         "with `raw` (the message), `command` (a sudo command line), a typed `user` and `line_text` (the physical line)")
     except TextRefused as exc:
         fail(str(exc))
+    STATE["text"] = text
     page = LosslessPage(TOOL, "records", limit)
     unparsed_page = LosslessPage(TOOL, "unparsed", limit)
+    steps_page = LosslessPage(TOOL, "forward_steps", limit)
     preview_rows = []
 
-    files, read_errors, by_kind = [], [], {}
+    files, read_errors, by_kind = Listed("files"), Listed("read_errors"), {}
+    overlaps, not_reached = Listed("cross_file_order_overlaps"), Listed("files_not_reached")
     counts = {"physical": 0, "blank": 0, "read": 0, "unparsed": 0, "time_errors": 0, "invalid_utf8": 0}
     seq = 0
-    not_reached = []
     hit_deadline = False
+    previous = {"path": None, "last_time": None}
+    only_dead = [True]      # every file so far was partial and had no line (nothing could be read)
+
+    def settle_file(f, mtime_ts, last_line):
+        """What a file's modification time may be (a copy's), then the file joins the list; the order against the file before it is checked here."""
+        why = []
+        if last_line is not None and mtime_ts is not None:
+            after = (datetime.datetime.fromtimestamp(mtime_ts, datetime.timezone.utc).replace(tzinfo=None) - last_line).total_seconds() / 86400
+            if after > COPY_DAYS:
+                why.append("the modification time is %d days after the last dated line (more than %d)" % (after, COPY_DAYS))
+        if shared_mtime:
+            why.append("every file of this call has the same modification time, to within %d seconds" % SAME_MTIME_SECONDS)
+        if f["compression"] == "gzip":
+            present, header = gzip_header_time(f["path"])
+            f["gzip_header_time"] = None if not present or header is None else datetime.datetime.fromtimestamp(header, datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
+            f["gzip_header_time_recorded"] = bool(present and header is not None)
+            if present and header is not None and mtime_ts is not None:
+                agree = abs(mtime_ts - header) <= GZ_AGREE_SECONDS
+                f["gzip_header_agrees_with_modified"] = agree
+                if not agree:
+                    why.append("the gzip header time (%s) differs from the modification time by more than %d seconds" % (f["gzip_header_time"], GZ_AGREE_SECONDS))
+            else:
+                f["gzip_header_agrees_with_modified"] = None
+        f["mtime_may_be_copy_time"] = bool(why)
+        if why:
+            f["mtime_may_be_copy_time_why"] = why
+        if previous["last_time"] and f["first_time"] and f["first_time"] < previous["last_time"]:
+            overlaps.append({"earlier": previous["path"], "later": f["path"], "earlier_last": previous["last_time"], "later_first": f["first_time"]})
+        previous["path"], previous["last_time"] = f["path"], f["last_time"]
+        only_dead[0] = only_dead[0] and f["partial"] and f["physical_lines"] == 0
+        files.append(f)
 
     def tick(n):
         if n % 4096 == 0 and time.monotonic() > deadline:
             raise Overtime()
 
     for (rank, _key, basis), target in ranked:
+        if not hit_deadline and time.monotonic() > deadline:
+            hit_deadline = True         # the clock is read for every file: a directory of many files with no line in them ends here too
         if hit_deadline:
             not_reached.append(target)
             continue
@@ -905,15 +1368,23 @@ def main():
                 "physical_lines": 0, "unparsed_lines": 0, "records": 0, "formats": {}, "year_basis": None,
                 "first_year": None, "last_year": None, "rollovers": 0, "rollover_lines": [], "reordered_lines": 0,
                 "first_time": None, "last_time": None, "partial": False}
+        mtime_ts, anchor_when = None, None
         try:
             info["size"] = os.path.getsize(target)
-            mtime = datetime.datetime.fromtimestamp(os.path.getmtime(target), datetime.timezone.utc).replace(tzinfo=None)
+            mtime_ts = os.path.getmtime(target)
+            mtime = datetime.datetime.fromtimestamp(mtime_ts, datetime.timezone.utc).replace(tzinfo=None)
             info["modified"] = mtime.isoformat() + "Z"
         except (OSError, ValueError, OverflowError):
             mtime = None
-        # Pass one: the months of every line whose date exists, and the packed date of each, so that the year of the
-        # last in-order line can be worked back through the year ends the months show.
-        months, packed, numbers = array.array("b"), array.array("q"), array.array("q")
+            mtime_ts = None
+
+        def note_step(step, target=target):
+            steps_page.add({"file": target, **step})
+
+        # Pass one: the class of every line whose date exists (one byte each, settled as the lines go by), the year ends,
+        # the forward steps longer than STEP_DAYS, and the last line in order, so that the year of that line can be worked
+        # back through the year ends the months show.
+        scan = MonthScan(note_step)
         try:
             for n, (_n, _o, chunk, _l) in enumerate(physical_lines(target, state, expand_cap, deadline)):
                 tick(n)
@@ -931,40 +1402,47 @@ def main():
                 if not valid:
                     continue            # a date that does not exist says nothing about which way the months run
                 h, m, sec = (int(x) for x in found.group("time").split(":"))
-                months.append(month)
-                numbers.append(_n)
-                packed.append((((month * 32 + day) * 24 + h) * 60 + m) * 61 + sec)
+                scan.push(month, (((month * 32 + day) * 24 + h) * 60 + m) * 61 + sec, _n)
+            scan.finish()
         except Overtime:
             hit_deadline = True
             read_errors.append({"file": target, "error": "max_seconds (%s) passed while reading this file: it was not read further" % seconds, "line": None, "byte_offset": None})
             info["partial"] = True
-            files.append(info)
+            settle_file(info, mtime_ts, None)
             continue
-        classes, rollovers, where = classify_months(months)
-        info["rollovers"], info["rollover_lines"] = rollovers, [numbers[i] for i in where]
-        info["reordered_lines"] = sum(1 for c in classes if c == REORDERED)
-        last_valid = None
-        for i in range(len(classes) - 1, -1, -1):
-            if classes[i] != REORDERED:
-                v = packed[i]
-                v, sec = divmod(v, 61)
-                v, m = divmod(v, 60)
-                v, h = divmod(v, 24)
-                month, day = divmod(v, 32)
-                last_valid = (month, day, h, m, sec)
-                break
+        classes, rollovers = scan.classes, scan.rollovers
+        info["rollovers"], info["rollover_lines"] = rollovers, scan.rollover_lines
+        info["reordered_lines"] = scan.reordered
+        last_valid = packed_parts(scan.last_ok[0]) if scan.last_ok else None
+        anchor = anchor_year(last_valid, mtime) if mtime is not None and last_valid is not None else None
+        mtime_basis = "file mtime (UTC, with 26 hours allowed for the log's unknown zone; on a copied tree it is the time of the copy)"
         if year_arg is not None:
             first_year, info["year_basis"] = year_arg, "argument"
             info["year_argument_spans_rollover"] = rollovers > 0
         elif mtime is not None and last_valid is not None:
-            anchor = anchor_year(last_valid, mtime)
             first_year = None if anchor is None else anchor - rollovers
-            info["year_basis"] = "file mtime (UTC, with 26 hours allowed for the log's unknown zone; on a copied tree it is the time of the copy)"
+            info["year_basis"] = mtime_basis
         else:
             first_year, info["year_basis"] = None, "none: no readable modification time or no dated line"
+        ranges = years_by_file.get(target, [])
+        if ranges:
+            info["year_basis"] = ("years argument for the lines from line %s on (%d range%s); the other lines: %s"
+                                  % (ranges[0][0], len(ranges), "" if len(ranges) == 1 else "s", info["year_basis"]))
+        info["forward_steps"] = scan.steps
+        info["forward_step_count"] = scan.step_count
+        info["forward_step_days_over"] = STEP_DAYS
+        info["year_assumed_before_line"] = scan.last_step_line
+        info["year_anchor"] = None
+        if scan.last_ok:
+            info["year_anchor"] = {"line": scan.last_ok[1], "stamp": stamp_of(scan.last_ok[0]), "mtime": info["modified"],
+                                   "year": anchor, "used_for_dating": year_arg is None}
+            if anchor is not None:
+                anchor_when = datetime.datetime(anchor, *last_valid[:4], min(last_valid[4], 59))
         # Pass two: the records.
         state = FileState(target)
-        year, cursor, valid_index = first_year, None, 0
+        year, cursor, valid_index, range_at = first_year, None, 0, -1
+        last_step_line = scan.last_step_line
+        spans_rollover = False
         try:
             for number, offset, chunk, length in physical_lines(target, state, expand_cap, deadline):
                 tick(number)
@@ -1020,13 +1498,25 @@ def main():
                         cls = classes[valid_index] if valid_index < len(classes) else SAME
                         valid_index += 1
                     reordered = cls == REORDERED
-                    when, error, use = None, None, None
-                    if year_arg is not None:
+                    when, error, use, assumed = None, None, None, False
+                    if cls == ROLLOVER and year is not None and year_arg is None:
+                        year += 1       # the anchored year goes on through the year ends whichever year a range gives a line
+                    while range_at + 1 < len(ranges) and ranges[range_at + 1][0] <= number:
+                        range_at += 1
+                    if range_at >= 0:
+                        counters = ranges[range_at][2]
+                        counters["lines"] += 1
+                        if counters["first_dated"] is None:
+                            counters["first_dated"] = number
+                        elif cls == ROLLOVER:
+                            spans_rollover = True
+                        use = ranges[range_at][1]
+                        when, error = traditional_time(use, month, day, parts["time"])
+                    elif year_arg is not None:
                         use = year_arg
                         when, error = traditional_time(use, month, day, parts["time"])
                     else:
-                        if cls == ROLLOVER and year is not None:
-                            year += 1
+                        assumed = last_step_line is not None and number < last_step_line
                         if year is None:
                             error = "no year could be applied (%s)" % info["year_basis"]
                         elif not exists:
@@ -1054,6 +1544,8 @@ def main():
                     time_fields = {"time": when.isoformat() if when else None,
                                    "time_raw": line[:found.start("host")].rstrip(),
                                    "time_zone": "unknown", "time_utc": None, "year": use if when else None}
+                    if assumed and when is not None:
+                        time_fields["year_assumed"] = True
                     if error:
                         time_fields["time_error"] = error
                     if parts["time"].endswith(":60") and when is not None:
@@ -1109,35 +1601,42 @@ def main():
             read_errors.append({"file": target, "error": "max_seconds (%s) passed while reading this file: it was not read further" % seconds, "line": None, "byte_offset": None})
             info["partial"] = True
         info["compression"] = state.compression
+        if ranges:
+            info["years_applied"] = [{"from_line": r[0], "year": r[1], "dated_lines": r[2]["lines"]} for r in ranges]
+            info["years_span_rollover"] = spans_rollover
         for err in state.errors:
             read_errors.append(err)
             info["partial"] = True
-        files.append(info)
+        settle_file(info, mtime_ts, anchor_when)
     text.close()
-
-    # Do the files' own time ranges agree with the order they were read in?
-    overlaps = []
-    for earlier, later in zip(files, files[1:]):
-        if earlier["last_time"] and later["first_time"] and later["first_time"] < earlier["last_time"]:
-            overlaps.append({"earlier": earlier["path"], "later": later["path"], "earlier_last": earlier["last_time"], "later_first": later["first_time"]})
-    pages = {"records": page.finish(), "unparsed": unparsed_page.finish()}
-    all_parsed = counts["unparsed"] == 0 and not read_errors and not walk_errors and not skipped_special and not not_reached
+    pages = {"records": page.finish(), "unparsed": unparsed_page.finish(), "forward_steps": steps_page.finish()}
+    listed = {"files": files, "files_not_reached": not_reached, "cross_file_order_overlaps": overlaps, "read_errors": read_errors,
+              "walk_errors": walk_errors, "skipped_symlinks": skipped_symlinks, "skipped_special": skipped_special}
+    for key, items in listed.items():
+        settled = items.settle()
+        if settled["matched"]:
+            pages[key] = settled      # a list with nothing in it has no page to name
+    capped = capped_why(pages, text)
+    n_read_errors, n_walk_errors, n_special, n_not_reached = (listed[k].page.total for k in ("read_errors", "walk_errors", "skipped_special", "files_not_reached"))
+    all_parsed = counts["unparsed"] == 0 and not n_read_errors and not n_walk_errors and not n_special and not n_not_reached
     outcome = status_of(
-        all_parsed, not files or all(f["partial"] and f["physical_lines"] == 0 for f in files),
+        all_parsed and not capped, files.page.total == 0 or only_dead[0],
         "every line of every file matched a syslog shape and every file was read through",
-        "%d line(s) matched no syslog shape, %d read error(s), %d walk error(s), %d special file(s) not opened, %d file(s) not reached: "
-        "the answer names each" % (counts["unparsed"], len(read_errors), len(walk_errors), len(skipped_special), len(not_reached)),
+        "%d line(s) matched no syslog shape, %d read error(s), %d walk error(s), %d special file(s) not opened, %d file(s) not reached%s: "
+        "the answer names each" % (counts["unparsed"], n_read_errors, n_walk_errors, n_special, n_not_reached,
+                                   "; " + capped if capped else ""),
         "no file could be read")
+    STATE["answering"] = True       # the answer is being written: a signal from here on does not start a second document
     print(json.dumps({
         "parser": PARSER,
         **outcome,
         "path": path,
         "files": files,
-        "file_count": len(files),
+        "file_count": files.page.total,
         "files_not_reached": not_reached,
         "mixed_rotation_schemes": len(schemes) > 1,
         "cross_file_order": ("overlap" if overlaps else "not established: more than one rotation scheme" if len(schemes) > 1 else
-                             "not established: a file is ordered by its name only" if len(files) > 1 and any(r == 0 for (r, _k, _b), _t in ranked) else "consistent"),
+                             "not established: a file is ordered by its name only" if files.page.total > 1 and any(r == 0 for (r, _k, _b), _t in ranked) else "consistent"),
         "cross_file_order_overlaps": overlaps,
         "physical_lines": counts["physical"],
         "blank_lines": counts["blank"],
@@ -1160,12 +1659,16 @@ def main():
         "skipped_special": skipped_special,
         "truncated": any(p["truncated"] for p in pages.values()),
         "note": "A traditional syslog stamp carries no year and no zone: each file says the year basis applied "
-                "(its modification time, which on a copied tree is the time of the copy, or your `year`) and each "
+                "(its modification time, which on a copied tree is the time of the copy, or your `year` or `years`) and each "
                 "record keeps its stamp as written in time_raw, with `time` the clock reading as written and "
                 "`time_utc` set only where the stamp carries its zone. A month that goes up is the log moving on "
                 "however long the gap; a month that goes down is a year end only within six months after the last one, "
                 "and a line the next line contradicts is flagged reordered and placed by nearness; rollover_lines "
-                "names each year end that was read. all_lines_parsed says that every line matched a syslog shape "
+                "names each year end that was read. The year is an inference: a gap of more than %d days between two "
+                "lines is a forward step (forward_steps, whole in pages.forward_steps) across which any number of years "
+                "may have passed, every record before the last one carries year_assumed, and a file's modification "
+                "time may be the time of a copy (mtime_may_be_copy_time): fix the year from a source with full dates "
+                "and pass `year` or `years` before a conclusion rests on a date. all_lines_parsed says that every line matched a syslog shape " % STEP_DAYS +
                 "and every file was read through; it is not coverage of the host's authentication events. An "
                 "ssh_accepted line says sshd accepted an authentication: its fingerprint names a key, not a person, "
                 "and not when the key was installed. A PAM session is the named service's, not necessarily a login. A "

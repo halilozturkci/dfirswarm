@@ -37,6 +37,7 @@ running after the tool is gone. The deadline (max_seconds, at most 270 of the ma
 and SIGHUP end journalctl and what it started.
 """
 import datetime
+import hashlib
 import json
 import math
 import os
@@ -53,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "journal_export"
-PARSER = "journal_export/6"
+PARSER = "journal_export/15"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 240.0
 MAX_SECONDS = 270.0           # the most a caller may ask for (the manifest allows 300)
@@ -74,11 +75,16 @@ EPOCH = datetime.datetime(1970, 1, 1)
 BOUND = re.compile(r"^(?:@\d+(?:\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s+UTC)$")
 
 
+# BEGIN LINUX PARTS
 # ---- The parts every tool of this pack that pages or keeps text copies (a tool is standalone; none imports another) ----
+# The same text is in auth_log, cron_dump, journal_export, shell_history and utmp_parse (tests/pack-linux-parts.test.ts holds the copies
+# equal). It uses STATE, _writing and _written, which are LINUX STOP's in four tools and, in journal_export, whose stop is its SHARED PROCESS
+# block, two stand-ins below the SHARED PROCESS block's STATE.
 
 
 def fail(message, **extra):
     """An error answer: JSON, exit 1, and the same `status` every answer of this pack carries."""
+    STATE["answering"] = True       # a signal from here on is not answered: this answer stands alone
     print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -179,18 +185,28 @@ def touches_withheld_text(has_filter):
     return bool(has_filter) and in_job()
 
 
+MAX_PAGING_BYTES = 128 << 20  # all the paging files of one call hold this much together; a row past it is counted and located, not written
+MAX_TEXT_BYTES = 256 << 20    # the text file of one call holds this much; a record past it is counted and located, not written
+PAGING = {"left": MAX_PAGING_BYTES}      # what the paging files of this call may still hold, in bytes, all of them together
+TEXTING = {"left": MAX_TEXT_BYTES}       # what the text file may still hold, in bytes
+
+
 # Lossless paging (the same in every library tool that pages): the page an agent reads stays small, and when
 # there are more rows the whole result is written as JSON Lines under work/<agent>/tool-output (in a job,
 # $OUT/tool-output) and named. The file name is random: it is never a digest of anything asked for. A write
-# that fails is an error answer naming the file, never a traceback and never a silent loss.
+# that fails is an error answer naming the file, never a traceback and never a silent loss: the rows written
+# before the error are kept under the file's name and the answer says so, or says the temporary was removed.
 class LosslessPage:
     def __init__(self, tool, key, limit):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError("limit must be a positive integer")
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
+        self.key = key
         self.page = []
         self.total = 0
+        self.not_written = 0        # rows after the paging cap: counted in `total`, not in the file
+        self.stop_error = None
         self._out = None
         self._tmp = None
         name = "%s-%s.jsonl" % (self.tool, secrets.token_hex(8))
@@ -203,13 +219,46 @@ class LosslessPage:
             agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
+        self._done = False
+        STATE.setdefault("pages", []).append(self)     # every page is the last word's to name, from the moment it exists
 
-    def _write(self, row):
+    def _abandon(self):
+        """A write failed (ENOSPC, EIO): what is already in the temporary is kept under the file's own name, or the temporary is removed.
+        Returns what the answer says about it."""
+        out, self._out = self._out, None
+        if out is not None:
+            try:
+                out.close()
+            except OSError:
+                pass
+        if self._tmp is None:
+            return "no paging file was left"
         try:
-            self._out.write(json.dumps(row, ensure_ascii=False, default=str))
-            self._out.write("\n")
+            os.replace(self._tmp, self.path)
+            self._done = True
+            return "the rows written before the error are in %s (the last row may be cut)" % self.path
+        except OSError:
+            pass
+        try:
+            os.unlink(self._tmp)
+            return "the temporary paging file was removed"
         except OSError as exc:
-            fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
+            return "the temporary paging file %s could not be renamed or removed (%s)" % (self._tmp, describe(exc))
+
+    def _write(self, row, kept=False):
+        data = json.dumps(row, ensure_ascii=False, default=str) + "\n"
+        size = len(data.encode("utf-8", "backslashreplace"))
+        if not kept and (self.not_written or size > PAGING["left"]):
+            self.not_written += 1       # once a row is refused no later one is written: the file stays the first rows in order
+            return
+        PAGING["left"] = max(0, PAGING["left"] - size)
+        _writing()
+        try:
+            self._out.write(data)     # one write: a stop never leaves half a row
+        except OSError as exc:
+            fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=self._abandon())
+        finally:
+            _written()
 
     def add(self, row):
         self.total += 1
@@ -219,37 +268,77 @@ class LosslessPage:
         if self._out is None:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-                self._tmp = Path(name)
+                # The name is known before the file exists, so a signal at any point after this line finds the file by it.
+                self._tmp = self.path.parent / (".%s-%s" % (self.path.name, secrets.token_hex(8)))
+                fd = os.open(str(self._tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace")
             except OSError as exc:
-                fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path))
+                state = "no paging file was left" if self._tmp is None or not os.path.lexists(self._tmp) else self._abandon()
+                fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=state)
             for kept in self.page:
-                self._write(kept)
+                self._write(kept, kept=True)
         self._write(row)
+
+    def stop_here(self):
+        """The rows written so far, kept under the final name (a signal ended the tool): the path as shown, or None where nothing was written.
+        A file that cannot be flushed is still renamed (what reached the disk is kept) and `stop_error` says it."""
+        if self._tmp is None:
+            return None
+        if self._done:
+            return self.shown           # finish() had put it under its name: it holds every row
+        out, self._out = self._out, None
+        if out is not None:
+            try:
+                out.flush()
+                os.fsync(out.fileno())
+            except OSError as exc:
+                self.stop_error = describe(exc)
+            try:
+                out.close()
+            except OSError as exc:
+                self.stop_error = self.stop_error or describe(exc)
+        if not os.path.exists(self._tmp):
+            return None
+        os.replace(self._tmp, self.path)
+        return self.shown
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
         if self._out is not None:
+            _writing()
             try:
                 self._out.flush()
                 os.fsync(self._out.fileno())
                 self._out.close()
                 os.replace(self._tmp, self.path)
+                self._done = True
             except OSError as exc:
-                fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
+                fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=self._abandon())
+            finally:
+                _written()
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
+        if self.not_written:
+            result["not_written"] = self.not_written
+            result["not_written_why"] = ("the paging files of one call hold at most %d bytes together: the first %d rows are in the file, in order; "
+                                         "the %d after them are counted in `matched` and are in the evidence at the file and line each entry names"
+                                         % (MAX_PAGING_BYTES, self.total - self.not_written, self.not_written))
         return result
 
 
 def require_job(flag):
     """What leaves a record's text is held to the secret-safe output pattern (docs/packs.md, "Secrets and
     sensitive output"): the text goes into the answer or into a file only in a job, whose output the skill
-    says to seal with secret_output: true. Outside a job the request is refused and nothing is written."""
+    says to seal with secret_output: true. Outside a job, and in a job the harness did not run as secret output (it sets
+    SECRET_OUTPUT=1 in the environment of such a job's process, from the manifest's declaration or the agent's flag), the
+    request is refused and nothing is written."""
     if not in_job():
         fail("%s is refused outside a job: a command line, a message or an environment value written or "
              "printed here would be an ordinary file or an ordinary answer, not a sealed output. Run this as "
+             "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
+    if os.environ.get("SECRET_OUTPUT") != "1":
+        fail("%s is refused: this job was not run as secret output, so what it wrote or printed would be sealed as an ordinary "
+             "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run this as "
              "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
 
 
@@ -265,11 +354,18 @@ class TextFile:
     created before anything is read (mode 0600, exclusively: a file or a link already at that name is
     refused by name) under $OUT, and the answer names it and says it may hold secrets. A byte that is not
     UTF-8 is written as a JSON escape of its lone surrogate and reads back as the byte: the file keeps the whole.
+    The file holds at most MAX_TEXT_BYTES: once a record would pass it, that record and every one after it are
+    counted in `not_written` and not written (the file stays the first records, in order), and `summary()` says so.
     """
 
     def __init__(self, name, enabled, what, flag="write_text"):
         self.enabled = enabled
         self.written = 0
+        self.not_written = 0        # records after the cap: counted, not in the file
+        self.capped = False
+        self.cut_record = False     # a record's first pieces (add_bytes_raw) were written and the cap came before its last
+        self._open_piece = False
+        self.close_error = None
         self.what = what
         self.flag = flag
         self._fh = None
@@ -282,6 +378,10 @@ class TextFile:
             raise TextRefused("%s is refused outside a job: the text of the records written here would be an "
                               "ordinary file, not a sealed output. Run this as job_run tool=%s with secret_output: "
                               "true, and ask again there. Nothing was written." % (flag, TOOL))
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise TextRefused("%s is refused: this job was not run as secret output, so the text of the records written here would be sealed "
+                              "as an ordinary output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. "
+                              "Run this as job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
         self.path = Path(out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
         try:
@@ -294,42 +394,76 @@ class TextFile:
         self._fh = os.fdopen(fd, "wb")
 
     def _put(self, data):
+        _writing()
         try:
             self._fh.write(data)
         except OSError as exc:
             fail("the text file could not be written: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
+        finally:
+            _written()
+
+    def _room(self, size):
+        """Whether `size` more bytes fit under the cap; the first that does not closes the file to every later record."""
+        if self.capped or size > TEXTING["left"]:
+            self.capped = True
+            return False
+        TEXTING["left"] -= size
+        return True
 
     def add(self, row):
         if self._fh is None:
             return
-        self._put(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n")
+        data = json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n"
+        if not self._room(len(data)):
+            self.not_written += 1
+            return
         self.written += 1
+        self._put(data)
 
     def add_bytes_raw(self, data):
         """A piece of a source's own bytes, written as it came; the record it belongs to is counted by count_record."""
-        if self._fh is not None:
+        if self._fh is None:
+            return
+        if self._room(len(data)):
+            self._open_piece = True
             self._put(data)
+        elif self._open_piece:
+            self.cut_record = True
 
     def count_record(self):
         if self._fh is not None:
-            self.written += 1
+            self._open_piece = False
+            if self.capped:
+                self.not_written += 1
+            else:
+                self.written += 1
 
     def add_bytes(self, data):
         """One record exactly as its source wrote it (a native export's line, newline included)."""
         if self._fh is None:
             return
-        self._put(data)
+        if not self._room(len(data)):
+            self.not_written += 1
+            return
         self.written += 1
+        self._put(data)
 
     def close(self):
         if self._fh is not None:
+            _writing()
             try:
                 self._fh.flush()
                 os.fsync(self._fh.fileno())
                 self._fh.close()
+                self._fh = None
             except OSError as exc:
-                fail("the text file could not be closed: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
-            self._fh = None
+                if STATE.get("stopping"):
+                    self.close_error = describe(exc)    # the last word names it: one document, not an error document and then the last word
+                    self._fh = None
+                else:
+                    fail("the text file could not be closed: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
+            finally:
+                _written()
 
     def summary(self, preview=False):
         """What the answer says about text. `preview` is true when the answer itself carries it (preview_text)."""
@@ -339,8 +473,53 @@ class TextFile:
                     "The answer's records carry their text (preview); no file of it was written, and the paging file, if there is one, holds none.")
             return {"requested": False, "written": 0, "file": None, "contains_text_that_may_hold_secrets": False, **shown,
                     "hint": hint + " %s: true, in a job run with secret_output: true, keeps the whole of each record in a private file under $OUT." % self.flag}
-        return {"requested": True, "written": self.written, "file": self.shown,
-                "contains_text_that_may_hold_secrets": self.written > 0, **shown, "format": self.what}
+        result = {"requested": True, "written": self.written, "file": self.shown,
+                  "contains_text_that_may_hold_secrets": self.written > 0, **shown, "format": self.what}
+        if self.not_written or self.capped:
+            result["not_written"] = self.not_written
+            result["not_written_why"] = ("the text file of one call holds at most %d bytes: the first %d records are in it, in order; the %d after them are "
+                                         "counted and are in the evidence at the file and line each record names%s"
+                                         % (MAX_TEXT_BYTES, self.written, self.not_written,
+                                            "; the last record in the file may be cut short" if self.cut_record else ""))
+        return result
+
+
+def capped_why(pages, text=None):
+    """The sentence for an answer that is partial because a cap was reached (the paging files' or the text file's), or None. `pages` is
+    the answer's `pages` dictionary; `text` the TextFile."""
+    cut = ["%d of %s" % (page["not_written"], name) for name, page in pages.items() if page.get("not_written")]
+    held = []
+    if cut:
+        held.append("the paging files reached their cap of %d bytes: %s row(s) are counted and are not in a paging file (see not_written in `pages`)"
+                    % (MAX_PAGING_BYTES, ", ".join(cut)))
+    if text is not None and (text.not_written or text.capped):
+        held.append("the text file reached its cap of %d bytes: %d record(s) are counted and are not in it (see not_written in `text`)"
+                    % (MAX_TEXT_BYTES, text.not_written))
+    if not held:
+        return None
+    return "; ".join(held) + "; each is in the evidence at the file and line it names"
+
+
+INLINE_LIST = 200       # items of any list that grows with the evidence (files, homes, errors, links) kept inline in the answer
+
+
+class Listed(list):
+    """A list of the answer that grows with the evidence (one item per file, home, link or error): its first INLINE_LIST items are the list, and
+    every item, those too, is kept in a paging file that the answer names under pages.<key> (`page.total` is how many there were; `settle()`
+    finishes the file and returns the page's entry for the answer's `pages`)."""
+
+    def __init__(self, key):
+        super().__init__()
+        self.page = LosslessPage(TOOL, key, INLINE_LIST)
+
+    def append(self, item):
+        self.page.add(item)
+        if len(self) < INLINE_LIST:
+            super().append(item)
+
+    def settle(self):
+        return self.page.finish()
+# END LINUX PARTS
 
 
 # BEGIN SHARED PROCESS
@@ -716,14 +895,86 @@ def install_signal_handlers():
 # END SHARED PROCESS
 
 
-def is_own_journal(path, own_journals=None):
-    """Whether `path`, or the place it really is once every link in it is followed, is under where this machine keeps its own
-    journal (the directory itself, or either spelling of it: a link in /var may lead /var/log elsewhere). A path that is only
-    spelled differently (/var/log/../log/journal, /tmp/x -> /var/log/journal, /proc/self/root/var/log/journal) is the same place."""
-    own_journals = OWN_JOURNALS if own_journals is None else own_journals
-    spellings = {os.path.abspath(path), os.path.realpath(path)}
-    homes = set(own_journals) | {os.path.realpath(o) for o in own_journals}
-    return any(spelling == home or spelling.startswith(home.rstrip(os.sep) + os.sep) for spelling in spellings for home in homes)
+# journal_export's stop is the SHARED PROCESS block above, which has no deferral of a signal during a write; the parts below are written for
+# the stop of LINUX STOP and need these two names, which here do nothing.
+def _writing():
+    pass
+
+
+def _written():
+    pass
+
+
+MACHINE_ID_FILES = ("/etc/machine-id", "/var/lib/dbus/machine-id")
+JOURNAL_MAGIC = b"LPKSHHRH"
+JOURNAL_MACHINE_ID_AT = 40          # the machine_id field of the journal file header (systemd's journal file format: 16 bytes at offset 40)
+MAX_OWN_CHECK_FILES = 200           # how many journal files are read for their machine id
+MAX_OWN_CHECK_ENTRIES = 5000        # how many directory entries are looked at to find them (no link is followed)
+
+
+def this_machines_id():
+    """The 32 hex digits of this machine's id, or None where it cannot be read."""
+    for name in MACHINE_ID_FILES:
+        try:
+            with open(name, "rb") as fh:
+                text = fh.read(64).decode("ascii", "replace").strip().lower()
+        except OSError:
+            continue
+        if re.fullmatch(r"[0-9a-f]{32}", text):
+            return text
+    return None
+
+
+def journal_machine_ids(path):
+    """The machine ids (32 hex digits) that the journal files at `path` carry in their headers: `path` is a journal file or a directory,
+    searched below for files that begin with the journal signature, without following a link, within MAX_OWN_CHECK_FILES files and
+    MAX_OWN_CHECK_ENTRIES entries. An all-zero id is no id."""
+    found, files, entries = set(), 0, 0
+    stack = [path]
+    while stack and files < MAX_OWN_CHECK_FILES and entries < MAX_OWN_CHECK_ENTRIES:
+        here = stack.pop()
+        try:
+            if os.path.isdir(here) and not os.path.islink(here):
+                with os.scandir(here) as listing:
+                    for entry in listing:
+                        entries += 1
+                        if entries >= MAX_OWN_CHECK_ENTRIES:
+                            break
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            stack.append(entry.path)
+                continue
+            if os.path.islink(here) or not os.path.isfile(here):
+                continue
+            files += 1
+            fd = os.open(here, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+            try:
+                head = os.read(fd, JOURNAL_MACHINE_ID_AT + 16)
+            finally:
+                os.close(fd)
+        except (OSError, ValueError):
+            continue
+        if head[:8] == JOURNAL_MAGIC and len(head) >= JOURNAL_MACHINE_ID_AT + 16:
+            ident = head[JOURNAL_MACHINE_ID_AT:JOURNAL_MACHINE_ID_AT + 16]
+            if any(ident):
+                found.add(ident.hex())
+    return found
+
+
+def is_own_journal(path, own_journals=None, machine_id="this machine"):
+    """Whether the journal at `path` (a file, or a directory with journal files below it) is this machine's own: the machine id its files
+    carry in their headers is the id in this machine's /etc/machine-id, or the directory is named by that id (/var/log/journal/<id>).
+    The place is not the test: a run directory under /var/log/journal holds evidence whatever its prefix, and a copy of this machine's own
+    journal is found wherever it was put. Only where this machine's id cannot be read is the old test used, the place (`own_journals`
+    and the places the path is a link to), since nothing else can tell. `machine_id` is this machine's id for a caller that knows it."""
+    mine = this_machines_id() if machine_id == "this machine" else machine_id
+    if mine is None:
+        own_journals = OWN_JOURNALS if own_journals is None else own_journals
+        spellings = {os.path.abspath(path), os.path.realpath(path)}
+        homes = set(own_journals) | {os.path.realpath(o) for o in own_journals}
+        return any(spelling == home or spelling.startswith(home.rstrip(os.sep) + os.sep) for spelling in spellings for home in homes)
+    return os.path.basename(os.path.realpath(path)).lower() == mine or mine in journal_machine_ids(path)
 
 
 def refuse_root_directory(path):
@@ -942,14 +1193,21 @@ def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, secon
     return proc.returncode, timed_out
 
 
-def first_lines(path, count=20):
+def size_and_sha256(path):
+    """(bytes, sha256 hex) of journalctl's stderr file: the answer names the file and says how long it is and which bytes it holds, and never quotes
+    its lines (they can carry paths and the text of entries). (None, None) where the file cannot be read."""
+    digest, size = hashlib.sha256(), 0
     try:
         with open(path, "rb") as fh:
-            return [l.decode("utf-8", "replace").rstrip("\n") for _, l in zip(range(count), fh)]
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(block)
+                size += len(block)
     except OSError:
-        return []
+        return None, None
+    return size, digest.hexdigest()
 
 
+# BEGIN LINUX IMAGE
 # ---- A disk image given where this tool reads a file or an extracted root (the same in every such tool of this pack) ----
 
 # What linux_triage takes as an image: these first bytes, or one of its names with a boot sector's signature at 510.
@@ -982,6 +1240,7 @@ def refuse_disk_image(path, key):
     named = path.lower().endswith(IMAGE_SUFFIXES)
     if any(head[o:o + len(m)] == m for o, m in IMAGE_MAGIC) or (named and head[510:512] == b"\x55\xaa"):
         fail("%s is a disk image: %s" % (key, IMAGE_ROUTES), **{key: path})
+# END LINUX IMAGE
 
 
 def main():
@@ -1028,7 +1287,15 @@ def main():
         fail("grep is refused outside a job: it matches the text of the messages, which this answer withholds, so a count of what "
              "it matched would be an oracle on that text. Run this as job_run tool=journal_export with secret_output: true, and ask again there.")
     for name in ("unit", "grep", "priority", "since", "until"):
-        want_str(args, name)
+        given = want_str(args, name)
+        if given is not None:
+            # These become arguments of journalctl: a NUL byte or a lone surrogate cannot be one (it would end the call with a traceback).
+            try:
+                given.encode("utf-8")
+            except UnicodeEncodeError:
+                fail("%s holds a character that is not text (a lone surrogate): journalctl cannot be given it" % name)
+            if "\x00" in given:
+                fail("%s holds a NUL byte: journalctl cannot be given it" % name)
     bounds = {}
     for key in ("since", "until"):
         if args.get(key):
@@ -1071,7 +1338,7 @@ def main():
         print(json.dumps({
             "parser": PARSER, "mode": "verify", **outcome, "path": path, "argv": argv, "exit_code": code, "timed_out": timed_out,
             "verify": {"output_file": out_shown, "output_bytes": os.path.getsize(out_path), "stderr_file": err_shown,
-                       "stderr_bytes": os.path.getsize(err_path), "stderr_first_lines": first_lines(err_path)},
+                       "stderr_bytes": size_and_sha256(err_path)[0], "stderr_sha256": size_and_sha256(err_path)[1]},
             "claims": "journalctl --verify checks the internal, structural consistency of the journal files it was given, and, "
                       "for a sealed journal with the verification key, the seal. The exit code and the whole output are kept.",
             "does_not_show": "that no journal file or entry is missing or was removed, that the host kept a persistent journal, "
@@ -1165,14 +1432,17 @@ def main():
     text.close()
     stderr_bytes = os.path.getsize(err_path)
     if code != 0 and not timed_out and st["entries"] == 0:
-        fail("journalctl refused this journal", exit_code=code, stderr_file=err_shown, stderr_first_lines=first_lines(err_path), argv=argv)
+        stderr_size, stderr_digest = size_and_sha256(err_path)
+        fail("journalctl refused this journal", exit_code=code, stderr_file=err_shown, stderr_bytes=stderr_size, stderr_sha256=stderr_digest, argv=argv)
     pages = {"records": page.finish()}
-    complete = code == 0 and not timed_out and st["bad_count"] == 0
+    capped = capped_why(pages, text)
+    complete = code == 0 and not timed_out and st["bad_count"] == 0 and not capped
     outcome = status_of(
         complete, False,
         "journalctl exited 0 within the deadline and every line it wrote parsed; this says nothing about journal files that were not in "
         "what you collected, or entries rotated away or never written",
-        "journalctl exited %s%s and %d line(s) did not parse: what was read is kept and the files are named" % (code, " after the deadline" if timed_out else "", st["bad_count"]), "")
+        "journalctl exited %s%s and %d line(s) did not parse%s: what was read is kept and the files are named"
+        % (code, " after the deadline" if timed_out else "", st["bad_count"], "; " + capped if capped else ""), "")
     print(json.dumps({
         "parser": PARSER,
         "mode": "export",
@@ -1195,7 +1465,7 @@ def main():
         "parse_errors": {"count": st["bad_count"], "first": st["bad"], "oversized_lines": st["oversized"]},
         "entries_with_a_boot_id_that_is_not_text": st["boot_not_text"],
         "entries_with_a_boot_id_over_%d_characters" % MAX_BOOT_ID: st["boot_overlong"],
-        "stderr": {"file": err_shown, "bytes": stderr_bytes, "first_lines": first_lines(err_path)},
+        "stderr": {"file": err_shown, "bytes": stderr_bytes, "sha256": size_and_sha256(err_path)[1]},
         "records": preview_rows if preview_text else page.page,
         "record_count": pages["records"]["matched"],
         "pages": pages,

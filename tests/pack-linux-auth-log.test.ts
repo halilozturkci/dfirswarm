@@ -14,8 +14,11 @@ import { chmod, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promis
 import { join } from "node:path";
 import { test } from "node:test";
 import { gzipSync } from "node:zlib";
-import { AUTH, IS_ROOT, asJob, body, everythingBut, exists, filesUnder, lines, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { AUTH, IS_ROOT, asJob as plainJob, body, everythingBut, exists, filesUnder, lines, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+/** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
+const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
+  plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
 
 const FP_ED = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
 const FP_RSA = "SHA256:uNjrAGXtRBwLr4evnXZtCZbU6Cnt8L7tUBVdGJKEzcA";
@@ -853,5 +856,285 @@ test("auth_log reads the whole tail of a portless 'Disconnected from invalid use
     assert.equal(rows[0].user_bytes, "a x port 1 PLANTEDSTAGEVALUE 203.0.113.9".length);
     assert.deepEqual([rows[1].source, rows[1].port, rows[1].stage], ["203.0.113.9", 4000, "[preauth]"]);
     assert.deepEqual([rows[2].source, rows[2].port, rows[2].user_bytes], ["203.0.113.8", 4001, "c y port 2".length]);
+  });
+});
+
+// ---- auth_log: the year of a traditional line is an inference, and the answer says how weak ------------------------------
+
+const FAILED = (stamp: string, n: number): string => `${stamp} h sshd[${n}]: Failed password for root from 192.0.2.1 port ${n} ssh2`;
+const wholeDays = (a: Date, b: Date): number => Math.floor((b.getTime() - a.getTime()) / 86_400_000);
+
+test("auth_log flags every record before a long forward step, names the step and the line that anchored the year, and does not move a date", async () => {
+  await withCwd(async (cwd) => {
+    // Spring setup lines, then autumn lines, and a file last written in a later year: the spring lines come out in the
+    // autumn's year (the dating rule is unchanged), and the answer says that this is an assumption.
+    const path = await authDir(
+      cwd,
+      "steps",
+      {
+        "auth.log": lines(
+          FAILED("Apr 15 10:00:00", 1),
+          FAILED("Apr 16 10:00:00", 2),
+          FAILED("Oct  5 10:00:00", 3),
+          FAILED("Oct  6 10:00:00", 4),
+        ),
+      },
+      { "auth.log": new Date(Date.UTC(2031, 10, 20, 12, 0, 0)) },
+    );
+    const out = body(await tool(AUTH, cwd, { path }));
+    const [file] = out.files;
+    const rows = await rowsOf(cwd, out);
+    assert.deepEqual(rows.map((r) => String(r.time).slice(0, 10)), ["2031-04-15", "2031-04-16", "2031-10-05", "2031-10-06"], "the dating rule did not move");
+    assert.equal(out.status, "complete");
+    assert.deepEqual(rows.map((r) => r.year_assumed === true), [true, true, false, false], "every record before the last long step, and none after it");
+    assert.equal(file.forward_step_count, 1);
+    assert.equal(file.forward_steps.length, 1);
+    const expectedDays = wholeDays(new Date(Date.UTC(2000, 3, 16, 10)), new Date(Date.UTC(2000, 9, 5, 10)));
+    assert.deepEqual(
+      { line: file.forward_steps[0].line, from: file.forward_steps[0].from, to: file.forward_steps[0].to, days: file.forward_steps[0].days },
+      { line: 3, from: "Apr 16 10:00:00", to: "Oct  5 10:00:00", days: expectedDays },
+    );
+    assert.equal(file.year_assumed_before_line, 3);
+    assert.equal(out.pages.forward_steps.matched, 1);
+    assert.equal(file.year_anchor.line, 4, "the last line in order is the line whose date the modification time anchored");
+    assert.equal(file.year_anchor.stamp, "Oct  6 10:00:00");
+    assert.equal(file.year_anchor.mtime, "2031-11-20T12:00:00Z");
+    assert.equal(file.year_anchor.year, 2031);
+    assert.equal(file.year_anchor.used_for_dating, true);
+    // A step shorter than the bound is not a step, and the old fixture of a gap is unchanged: January to September is one.
+    const near = await authDir(cwd, "near", { "auth.log": lines(FAILED("Mar  1 10:00:00", 1), FAILED("Apr 15 10:00:00", 2)) }, { "auth.log": new Date(Date.UTC(2026, 3, 16)) });
+    const calm = body(await tool(AUTH, cwd, { path: near }));
+    assert.equal(calm.files[0].forward_step_count, 0);
+    assert.ok((await rowsOf(cwd, calm)).every((r) => r.year_assumed === undefined));
+  });
+});
+
+test("auth_log keeps every forward step whole in a page and a year end that is also a long step is a step", async () => {
+  await withCwd(async (cwd) => {
+    // Quarterly lines for eight years: 31 steps of 90 days or more, three of them through a year end.
+    const quarter = ["Jan  5", "Apr  5", "Jul  5", "Oct  5"];
+    const all: string[] = [];
+    for (let i = 0; i < 32; i++) all.push(FAILED(`${quarter[i % 4]} 10:00:00`, i + 1));
+    const path = await authDir(cwd, "quarters", { "auth.log": lines(...all) }, { "auth.log": new Date(Date.UTC(2030, 11, 1)) });
+    const out = body(await tool(AUTH, cwd, { path, limit: 5 }));
+    const [file] = out.files;
+    assert.equal(file.forward_step_count, 31);
+    assert.equal(file.forward_steps.length, 20, "the inline list is capped");
+    assert.equal(out.pages.forward_steps.matched, 31);
+    assert.ok(out.pages.forward_steps.all_results, "the whole list is in the tool's page");
+    const steps = await rowsOf(cwd, out, "forward_steps");
+    assert.equal(steps.length, 31);
+    assert.ok(steps.every((s) => s.days > 62 && s.file.endsWith("auth.log")));
+    assert.ok(steps.some((s) => s.from.startsWith("Oct") && s.to.startsWith("Jan")), "a step through a year end is reported");
+    const rows = await rowsOf(cwd, out);
+    assert.equal(rows.length, 32);
+    assert.equal(rows.filter((r) => r.year_assumed === true).length, 31, "every record before the last step, which ends at line 32; line 32 itself not");
+  });
+});
+
+test("auth_log says when the modification time that anchors the year may be the time of a copy", async () => {
+  await withCwd(async (cwd) => {
+    const recent = { "auth.log": lines(FAILED("Oct  5 10:00:00", 1), FAILED("Oct  6 10:00:00", 2)) };
+    // A copy made years after the log was last written.
+    const now = new Date(Date.UTC(2031, 5, 1));
+    const copied = await authDir(cwd, "copied", recent, { "auth.log": now });
+    const a = body(await tool(AUTH, cwd, { path: copied })).files[0];
+    assert.equal(a.mtime_may_be_copy_time, true);
+    assert.match(a.mtime_may_be_copy_time_why.join(" "), /days after the last dated line/);
+    // A live file: written the day of its last line.
+    const live = await authDir(cwd, "live", recent, { "auth.log": new Date(Date.UTC(2026, 9, 6, 10, 30, 0)) });
+    const b = body(await tool(AUTH, cwd, { path: live })).files[0];
+    assert.equal(b.mtime_may_be_copy_time, false);
+    assert.equal(b.mtime_may_be_copy_time_why, undefined);
+    // A tree in which every file has one time, to within seconds, and a tree in which they differ.
+    const same = new Date(Date.UTC(2026, 9, 6, 10, 30, 0));
+    const tree = await authDir(
+      cwd,
+      "tree",
+      { "auth.log": lines(FAILED("Oct  6 10:00:00", 1)), "auth.log.1": lines(FAILED("Oct  5 10:00:00", 1)), "auth.log.2": lines(FAILED("Oct  4 10:00:00", 1)) },
+      { "auth.log": same, "auth.log.1": new Date(same.getTime() + 3000), "auth.log.2": new Date(same.getTime() + 6000) },
+    );
+    const together = body(await tool(AUTH, cwd, { path: tree }));
+    assert.deepEqual(together.files.map((f: Json) => f.mtime_may_be_copy_time), [true, true, true]);
+    assert.match(together.files[0].mtime_may_be_copy_time_why.join(" "), /same modification time/);
+    const apart = await authDir(
+      cwd,
+      "apart",
+      { "auth.log": lines(FAILED("Oct  6 10:00:00", 1)), "auth.log.1": lines(FAILED("Oct  5 10:00:00", 1)) },
+      { "auth.log": new Date(Date.UTC(2026, 9, 6, 10, 30, 0)), "auth.log.1": new Date(Date.UTC(2026, 9, 5, 23, 59, 0)) },
+    );
+    assert.deepEqual(body(await tool(AUTH, cwd, { path: apart })).files.map((f: Json) => f.mtime_may_be_copy_time), [false, false]);
+  });
+});
+
+/** A gzip stream with the header time (RFC 1952: bytes 4 to 7, little-endian) set to `seconds`. */
+function gzipWithHeaderTime(text: string, seconds: number): Buffer {
+  const data = Buffer.from(gzipSync(Buffer.from(text)));
+  data.writeUInt32LE(seconds, 4);
+  return data;
+}
+
+test("auth_log reads a gzip's header time beside the file's modification time and says whether they agree", async () => {
+  await withCwd(async (cwd) => {
+    const text = lines(FAILED("Oct  5 10:00:00", 1), FAILED("Oct  6 10:00:00", 2));
+    const written = new Date(Date.UTC(2026, 9, 6, 10, 30, 0));
+    const copiedAt = new Date(Date.UTC(2026, 10, 2, 8, 0, 0));
+    const path = await authDir(
+      cwd,
+      "gz",
+      {
+        "auth.log.1.gz": gzipWithHeaderTime(text, written.getTime() / 1000),     // logrotate: the header is the log's own last write
+        "auth.log.2.gz": gzipWithHeaderTime(text, written.getTime() / 1000),     // the same, then copied: the file has the copy's time
+        "auth.log.3.gz": gzipWithHeaderTime(text, 0),                            // the compressor recorded no time
+      },
+      { "auth.log.1.gz": written, "auth.log.2.gz": copiedAt, "auth.log.3.gz": new Date(written.getTime() - 86_400_000) },
+    );
+    const out = body(await tool(AUTH, cwd, { path }));
+    const byName = Object.fromEntries(out.files.map((f: Json) => [String(f.path).split("/").pop(), f]));
+    const agree = byName["auth.log.1.gz"];
+    assert.equal(agree.gzip_header_time, "2026-10-06T10:30:00Z");
+    assert.equal(agree.modified, "2026-10-06T10:30:00Z");
+    assert.equal(agree.gzip_header_agrees_with_modified, true);
+    assert.equal(agree.mtime_may_be_copy_time, false);
+    const differ = byName["auth.log.2.gz"];
+    assert.equal(differ.gzip_header_time, "2026-10-06T10:30:00Z");
+    assert.equal(differ.modified, "2026-11-02T08:00:00Z");
+    assert.equal(differ.gzip_header_agrees_with_modified, false, "both are reported and the disagreement is said");
+    assert.equal(differ.mtime_may_be_copy_time, true);
+    assert.match(differ.mtime_may_be_copy_time_why.join(" "), /gzip header time/);
+    const none = byName["auth.log.3.gz"];
+    assert.equal(none.gzip_header_time, null);
+    assert.equal(none.gzip_header_time_recorded, false, "a header time of 0 means none");
+    assert.equal(none.gzip_header_agrees_with_modified, null);
+  });
+});
+
+test("auth_log applies a year per file and per line range, validates the list, and says where it applied", async () => {
+  await withCwd(async (cwd) => {
+    const path = await authDir(
+      cwd,
+      "ranges",
+      {
+        "auth.log": lines(
+          FAILED("Apr 15 10:00:00", 1),
+          FAILED("Apr 16 10:00:00", 2),
+          FAILED("Oct  5 10:00:00", 3),
+          FAILED("Oct  6 10:00:00", 4),
+          FAILED("Oct  7 10:00:00", 5),
+        ),
+        "auth.log.1": lines(FAILED("Sep  1 10:00:00", 1)),
+      },
+      { "auth.log": new Date(Date.UTC(2031, 10, 20)), "auth.log.1": new Date(Date.UTC(2031, 8, 2)) },
+    );
+    const file = `${path}/auth.log`;
+    const out = body(await tool(AUTH, cwd, { path, years: [{ file, from_line: 1, year: 2016 }, { file, from_line: 3, year: 2019 }] }));
+    const rows = (await rowsOf(cwd, out)).filter((r) => String(r.file).endsWith("/auth.log"));
+    assert.deepEqual(rows.map((r) => String(r.time).slice(0, 10)), ["2016-04-15", "2016-04-16", "2019-10-05", "2019-10-06", "2019-10-07"]);
+    assert.deepEqual(rows.map((r) => r.year), [2016, 2016, 2019, 2019, 2019]);
+    assert.ok(rows.every((r) => r.year_assumed === undefined), "a year the caller gave is not an assumed one");
+    const main = out.files.find((f: Json) => String(f.path).endsWith("/auth.log"));
+    assert.match(main.year_basis, /years argument/);
+    assert.deepEqual(main.years_applied, [{ from_line: 1, year: 2016, dated_lines: 2 }, { from_line: 3, year: 2019, dated_lines: 3 }]);
+    assert.equal(main.years_span_rollover, false);
+    const other = out.files.find((f: Json) => String(f.path).endsWith("/auth.log.1"));
+    assert.match(other.year_basis, /^file mtime/, "a file with no range keeps the mtime basis");
+    assert.equal(other.years_applied, undefined);
+    // A range from line 2 on leaves line 1 to the modification time; `year` keeps its meaning for the lines no range covers.
+    const partial = body(await tool(AUTH, cwd, { path, years: [{ file, from_line: 3, year: 2019 }], year: 2012 }));
+    const prows = (await rowsOf(cwd, partial)).filter((r) => String(r.file).endsWith("/auth.log"));
+    assert.deepEqual(prows.map((r) => r.year), [2012, 2012, 2019, 2019, 2019]);
+    const spans = body(await tool(AUTH, cwd, { path: await authDir(cwd, "wraps", { "auth.log": lines(FAILED("Dec 31 23:00:00", 1), FAILED("Jan  1 00:10:00", 2)) }, { "auth.log": new Date(Date.UTC(2026, 0, 2)) }), years: [{ file: "work/wraps/auth.log", from_line: 1, year: 2020 }] }));
+    assert.equal(spans.files[0].years_span_rollover, true, "a range that holds a year end applies one year to both sides, and says so");
+  });
+});
+
+test("auth_log refuses a hostile years list in JSON before it reads or writes anything", async () => {
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "hostile", { "auth.log": lines(FAILED("Apr 15 10:00:00", 1), FAILED("Oct  5 10:00:00", 2)) });
+    const file = `${path}/auth.log`;
+    const entry = (from_line: number, year: unknown = 2019, f: string = file) => ({ file: f, from_line, year });
+    const bad: Array<[string, unknown, RegExp]> = [
+      ["an unknown file", [entry(1, 2019, "work/hostile/elsewhere.log")], /not one of the files/],
+      ["overlapping ranges", [entry(2), entry(2)], /ascending|overlap/],
+      ["descending ranges", [entry(5), entry(2)], /ascending|overlap/],
+      ["a fractional year", [entry(1, 2019.5)], /year must be a whole year/],
+      ["a string year", [entry(1, "2019")], /year must be a whole year/],
+      ["a year out of range", [entry(1, 1969)], /year must be a whole year/],
+      ["a boolean year", [entry(1, true)], /year must be a whole year/],
+      ["line zero", [entry(0)], /from_line/],
+      ["a fractional line", [entry(1.5)], /from_line/],
+      ["an extra key", [{ ...entry(1), note: "x" }], /exactly file, from_line and year/],
+      ["a bare number", [3], /exactly file, from_line and year/],
+      ["not a list", { file }, /list/],
+      ["more entries than are read", Array.from({ length: 1001 }, (_, i) => entry(i + 1)), /at most 1000/],
+    ];
+    for (const [what, years, why] of bad) {
+      const answer = refused(await tool(AUTH, cwd, { path, years }));
+      assert.equal(answer.status, "failed", what);
+      assert.match(answer.error, why, what);
+    }
+    assert.deepEqual(await filesUnder(join(cwd, "work", "s1")), [], "a refusal wrote nothing");
+    // The list at its bound is read.
+    const edge = body(await tool(AUTH, cwd, { path, years: Array.from({ length: 1000 }, (_, i) => entry(i + 1)) }));
+    assert.equal(edge.status, "complete");
+  });
+});
+
+test("auth_log's first pass keeps one byte per dated line, not seventeen", () => {
+  // The pass-one state is exercised on its own: a million dated lines in, and what the process holds for them, measured.
+  const script = [
+    "import importlib.util, sys, tracemalloc",
+    `spec = importlib.util.spec_from_file_location('auth_log_run', ${JSON.stringify(AUTH)})`,
+    "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+    "N = 1_000_000",
+    "tracemalloc.start()",
+    "scan = m.MonthScan()",
+    "packed = ((((10 * 32 + 5) * 24 + 10) * 60) * 61)",
+    "for i in range(N):",
+    "    scan.push(10, packed, i + 1)",
+    "scan.finish()",
+    "current, _peak = tracemalloc.get_traced_memory()",
+    "print(current / N, len(scan.classes))",
+  ].join("\n");
+  const run = spawnSync("python3", ["-c", script], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  const [perLine, kept] = run.stdout.trim().split(" ").map(Number);
+  assert.equal(kept, 1_000_000);
+  assert.ok(perLine < 2, `pass one kept ${perLine} bytes per dated line`);
+});
+
+// ---- auth_log: the text flags are declared secret output, and refused unless SECRET_OUTPUT is 1 ----------------------------------
+
+test("auth_log declares secret_output for write_text and preview_text, and refuses each, creating nothing, unless SECRET_OUTPUT is 1", async () => {
+  const { dirname } = await import("node:path");
+  const manifest = JSON.parse(await readFile(join(dirname(AUTH), "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.secret_output, { when_args: ["write_text", "preview_text"] });
+  for (const flag of manifest.secret_output.when_args) {
+    assert.equal(manifest.params[flag].type, "boolean");
+    assert.equal(manifest.params[flag].default, undefined);
+    assert.match(manifest.params[flag].description, /SENSITIVE/);
+  }
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "declared", { "auth.log": lines("Oct  5 10:00:00 h sudo: bob : TTY=pts/0 ; PWD=/ ; USER=root ; COMMAND=/bin/echo PLANTEDVALUE") });
+    for (const flag of ["write_text", "preview_text"]) {
+      const before = await filesUnder(cwd);
+      assert.match(refused(await tool(AUTH, cwd, { path, [flag]: true })).error, /outside a job/, flag);
+      for (const value of [undefined, "0", "true", ""]) {
+        const env: Record<string, string> = value === undefined ? {} : { SECRET_OUTPUT: value };
+        const answer = refused(await plainJob(AUTH, cwd, { path, [flag]: true }, undefined, env, "out-plain"));
+        assert.match(answer.error, /SECRET_OUTPUT/, `${flag} with SECRET_OUTPUT=${value}`);
+        assert.match(answer.error, /Nothing was written/);
+        assert.doesNotMatch(JSON.stringify(answer), /PLANTEDVALUE/);
+      }
+      assert.deepEqual((await filesUnder(cwd)).filter((f) => !f.startsWith("out-plain/")), before, `${flag}: a refusal creates nothing outside the job's directory`);
+      assert.deepEqual(await filesUnder(join(cwd, "out-plain")), [], `${flag}: and nothing in the job's own`);
+    }
+    // As a secret-output job: the file is written, mode 0600; the preview carries the text.
+    const written = body(await asJob(AUTH, cwd, { path, write_text: true }, undefined, {}, "out-ok"));
+    assert.equal(written.text.written, 1);
+    assert.equal((await stat(join(cwd, "out-ok", "auth-text.jsonl"))).mode & 0o777, 0o600);
+    assert.match(await readFile(join(cwd, "out-ok", "auth-text.jsonl"), "utf8"), /PLANTEDVALUE/);
+    const preview = body(await asJob(AUTH, cwd, { path, preview_text: true }, undefined, {}, "out-pv"));
+    assert.match(JSON.stringify(preview.records), /PLANTEDVALUE/);
   });
 });
