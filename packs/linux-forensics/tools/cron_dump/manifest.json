@@ -16,11 +16,11 @@
     },
     "write_text": {
       "type": "boolean",
-      "description": "Write the raw line, the command and the environment of each cron entry, and every assignment of each timer as a row of its own (record_type assignment, with the timer's id), to $OUT/cron-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused"
+      "description": "SENSITIVE: Write the raw line, the command and the environment of each cron entry, and every assignment of each timer as a row of its own (record_type assignment, with the timer's id), to $OUT/cron-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused (declared secret_output: a job that sets write_text is run as secret output, and the tool refuses write_text when SECRET_OUTPUT is not 1)"
     },
     "preview_text": {
       "type": "boolean",
-      "description": "Put each cron entry's raw line, command and environment values in the answer (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+      "description": "SENSITIVE: Put each cron entry's raw line, command and environment values in the answer (default false). Refused unless the tool runs as a job, which must be run with secret_output: true (declared secret_output: a job that sets preview_text is run as secret output, and the tool refuses preview_text when SECRET_OUTPUT is not 1)"
     },
     "max_seconds": {
       "type": "number",
@@ -30,11 +30,17 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 60,
+  "secret_output": {
+    "when_args": [
+      "write_text",
+      "preview_text"
+    ]
+  },
   "example": "{\"root\": \"work/extracted\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 12,
-  "sha256": "33f204fa6f553a6161decf40c9328f7893179cedf71d0a1afd2fd42f98888fab",
+  "version": 13,
+  "sha256": "2e4d6d3c24575908966259612fb8691571e8ed003fd6fd23f943b3a1f594c2d3",
   "use": {
     "names": [
       "crontab",

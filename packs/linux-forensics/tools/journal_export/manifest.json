@@ -40,11 +40,11 @@
     },
     "write_text": {
       "type": "boolean",
-      "description": "Write the whole native export to $OUT/journal-native.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused; the answer never carries the text"
+      "description": "SENSITIVE: Write the whole native export to $OUT/journal-native.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused; the answer never carries the text (declared secret_output: a job that sets write_text is run as secret output, and the tool refuses write_text when SECRET_OUTPUT is not 1)"
     },
     "preview_text": {
       "type": "boolean",
-      "description": "Put message and cmdline in the projected entries of the answer (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+      "description": "SENSITIVE: Put message and cmdline in the projected entries of the answer (default false). Refused unless the tool runs as a job, which must be run with secret_output: true (declared secret_output: a job that sets preview_text is run as secret output, and the tool refuses preview_text when SECRET_OUTPUT is not 1)"
     }
   },
   "requires": [
@@ -53,11 +53,17 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 300,
+  "secret_output": {
+    "when_args": [
+      "write_text",
+      "preview_text"
+    ]
+  },
   "example": "{\"path\": \"work/extracted/var/log/journal\", \"grep\": \"sudo\", \"write_text\": true}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 11,
-  "sha256": "845d1ca3276abbfc088a427f17fc6eb524009db9a79eb35c5755bb35476ca792",
+  "version": 12,
+  "sha256": "51e34ff450d318aff858b5fd92aa42a7f1662ad24451f4782964182498e51e10",
   "use": {
     "extensions": [
       ".journal",

@@ -15,8 +15,11 @@ import { spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { IS_ROOT, SHELL, asJob, body, everythingBut, filesUnder, lines, put, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { IS_ROOT, SHELL, asJob as plainJob, body, everythingBut, filesUnder, lines, put, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+/** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
+const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
+  plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
 
 const HIST_SECRET = "HistoryPw12345";
 
@@ -287,7 +290,7 @@ test("shell_history answers with an error, not a traceback, where its output can
       await mkdir(ro, { recursive: true });
       await chmod(ro, 0o555);
       try {
-        const bad = refused(await tool(SHELL, cwd, { root: "work/ev", write_commands: true }, { JOB_ID: "j000088", OUT: ro }));
+        const bad = refused(await tool(SHELL, cwd, { root: "work/ev", write_commands: true }, { JOB_ID: "j000088", OUT: ro, SECRET_OUTPUT: "1" }));
         assert.equal(bad.status, "failed");
         assert.match(bad.error, /text file could not be created/);
         const bad2 = refused(await tool(SHELL, cwd, { root: "work/ev", limit: 1 }, { JOB_ID: "j000089", OUT: ro }).then(async (r) => (r.code === 0 ? tool(SHELL, cwd, { root: "work/ev", limit: 0 }, { JOB_ID: "j000089", OUT: ro }) : r)));
@@ -331,5 +334,37 @@ test("shell_history names owners from a passwd file the caller gives when the ro
     assert.match(bare.passwd.notes.join(" "), /root_is_file_system_root/);
     const said = body(await asJob(SHELL, cwd, { root: "work/homes", passwd: "work/other-passwd", root_is_file_system_root: true }, undefined, {}, "out-said"));
     assert.equal(said.records[0].user, "unknown", "a home directory's path /alice is not the account's /home/alice");
+  });
+});
+
+test("shell_history declares secret_output for write_commands and preview_commands, and refuses each, creating nothing, unless SECRET_OUTPUT is 1", async () => {
+  const manifest = JSON.parse(await readFile(join(SHELL, "..", "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.secret_output, { when_args: ["write_commands", "preview_commands"] });
+  for (const flag of manifest.secret_output.when_args) {
+    assert.equal(manifest.params[flag].type, "boolean");
+    assert.equal(manifest.params[flag].default, undefined);
+    assert.match(manifest.params[flag].description, /SENSITIVE/);
+  }
+  await withCwd(async (cwd) => {
+    await put(join(cwd, "work", "ev"), "home/a/.bash_history", lines("echo PLANTEDVALUE"));
+    for (const flag of ["write_commands", "preview_commands"]) {
+      const before = await filesUnder(cwd);
+      assert.match(refused(await tool(SHELL, cwd, { root: "work/ev", [flag]: true })).error, /outside a job/, flag);
+      for (const value of [undefined, "0", "true", ""]) {
+        const env = value === undefined ? {} : { SECRET_OUTPUT: value };
+        const answer = refused(await plainJob(SHELL, cwd, { root: "work/ev", [flag]: true }, undefined, env, "out-plain"));
+        assert.match(answer.error, /SECRET_OUTPUT/, `${flag} with SECRET_OUTPUT=${value}`);
+        assert.match(answer.error, /Nothing was written/);
+        assert.doesNotMatch(JSON.stringify(answer), /PLANTEDVALUE/);
+      }
+      assert.deepEqual((await filesUnder(cwd)).filter((f) => !f.startsWith("out-plain/")), before, `${flag}: a refusal creates nothing outside the job's directory`);
+      assert.deepEqual(await filesUnder(join(cwd, "out-plain")), [], `${flag}: and nothing in the job's own`);
+    }
+    const written = body(await asJob(SHELL, cwd, { root: "work/ev", write_commands: true }, undefined, {}, "out-ok"));
+    assert.ok(written.text.written >= 1);
+    assert.equal((await stat(join(cwd, "out-ok", "shell-history-commands.jsonl"))).mode & 0o777, 0o600);
+    assert.match(await readFile(join(cwd, "out-ok", "shell-history-commands.jsonl"), "utf8"), /PLANTEDVALUE/);
+    const preview = body(await asJob(SHELL, cwd, { root: "work/ev", preview_commands: true }, undefined, {}, "out-pv"));
+    assert.match(JSON.stringify(preview.records), /PLANTEDVALUE/);
   });
 });

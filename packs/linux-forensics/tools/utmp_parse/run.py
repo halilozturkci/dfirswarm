@@ -49,7 +49,7 @@ import time
 from pathlib import Path
 
 TOOL = "utmp_parse"
-PARSER = "utmp_parse/11"
+PARSER = "utmp_parse/12"
 
 
 # BEGIN LINUX STOP
@@ -408,10 +408,16 @@ class LosslessPage:
 def require_job(flag):
     """What leaves a record's text is held to the secret-safe output pattern (docs/packs.md, "Secrets and
     sensitive output"): the text goes into the answer or into a file only in a job, whose output the skill
-    says to seal with secret_output: true. Outside a job the request is refused and nothing is written."""
+    says to seal with secret_output: true. Outside a job, and in a job the harness did not run as secret output (it sets
+    SECRET_OUTPUT=1 in the environment of such a job's process, from the manifest's declaration or the agent's flag), the
+    request is refused and nothing is written."""
     if not in_job():
         fail("%s is refused outside a job: a command line, a message or an environment value written or "
              "printed here would be an ordinary file or an ordinary answer, not a sealed output. Run this as "
+             "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
+    if os.environ.get("SECRET_OUTPUT") != "1":
+        fail("%s is refused: this job was not run as secret output, so what it wrote or printed would be sealed as an ordinary "
+             "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run this as "
              "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
 
 
@@ -451,6 +457,10 @@ class TextFile:
             raise TextRefused("%s is refused outside a job: the text of the records written here would be an "
                               "ordinary file, not a sealed output. Run this as job_run tool=%s with secret_output: "
                               "true, and ask again there. Nothing was written." % (flag, TOOL))
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise TextRefused("%s is refused: this job was not run as secret output, so the text of the records written here would be sealed "
+                              "as an ordinary output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. "
+                              "Run this as job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
         self.path = Path(out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
         try:

@@ -14,8 +14,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { IS_ROOT, JOURNAL, asJob, body, everythingBut, exists, filesUnder, gone, lines, pidFile, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { IS_ROOT, JOURNAL, asJob as plainJob, body, everythingBut, exists, filesUnder, gone, lines, pidFile, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+/** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
+const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
+  plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
 
 const BOOT_A = "9d6a4f4b7a7e4b2d9b2f0a1e3f4c5d6e";
 const BOOT_B = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
@@ -471,5 +474,37 @@ test("journal_export bounds every field of a row: a byte array is named by its l
     assert.ok(out.field_census && Object.keys(out.field_census).some((k) => k.startsWith("FFFF") && k.endsWith("(100000 characters)")));
     assert.equal(out.entries_with_a_boot_id_over_128_characters, 1);
     assert.ok(rows[2].time_error.length < 300, "an unparseable time is quoted cut");
+  });
+});
+
+test("journal_export declares secret_output for write_text and preview_text, and refuses each, creating nothing, unless SECRET_OUTPUT is 1", async () => {
+  const manifest = JSON.parse(await readFile(join(JOURNAL, "..", "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.secret_output, { when_args: ["write_text", "preview_text"] });
+  for (const flag of manifest.secret_output.when_args) {
+    assert.equal(manifest.params[flag].type, "boolean");
+    assert.equal(manifest.params[flag].default, undefined);
+    assert.match(manifest.params[flag].description, /SENSITIVE/);
+  }
+  await withCwd(async (cwd, bin) => {
+    const env = await journalFixture(cwd, bin, nativeJournal());
+    for (const flag of ["write_text", "preview_text"]) {
+      const before = await filesUnder(cwd);
+      assert.match(refused(await tool(JOURNAL, cwd, { path: "work/journal", [flag]: true }, env, bin)).error, /outside a job/, flag);
+      for (const value of [undefined, "0", "true", ""]) {
+        const jobEnv = value === undefined ? env : { ...env, SECRET_OUTPUT: value };
+        const answer = refused(await plainJob(JOURNAL, cwd, { path: "work/journal", [flag]: true }, bin, jobEnv, "out-plain"));
+        assert.match(answer.error, /SECRET_OUTPUT/, `${flag} with SECRET_OUTPUT=${value}`);
+        assert.match(answer.error, /Nothing was written/);
+        assert.doesNotMatch(JSON.stringify(answer), new RegExp(JOURNAL_SECRET));
+      }
+      assert.deepEqual((await filesUnder(cwd)).filter((f) => !f.startsWith("out-plain/")), before, `${flag}: a refusal creates nothing outside the job's directory`);
+      assert.deepEqual(await filesUnder(join(cwd, "out-plain")), [], `${flag}: and nothing in the job's own`);
+    }
+    const written = body(await asJob(JOURNAL, cwd, { path: "work/journal", write_text: true }, bin, env, "out-ok"));
+    assert.equal(written.text.written, 5);
+    assert.equal((await stat(join(cwd, "out-ok", "journal-native.jsonl"))).mode & 0o777, 0o600);
+    assert.match(await readFile(join(cwd, "out-ok", "journal-native.jsonl"), "utf8"), new RegExp(JOURNAL_SECRET));
+    const preview = body(await asJob(JOURNAL, cwd, { path: "work/journal", preview_text: true }, bin, env, "out-pv"));
+    assert.match(JSON.stringify(preview.records), new RegExp(JOURNAL_SECRET));
   });
 });

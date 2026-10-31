@@ -32,11 +32,11 @@
     },
     "write_text": {
       "type": "boolean",
-      "description": "Write the text of every record (raw, a sudo command, the physical line) to $OUT/auth-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused; the answer never carries the text"
+      "description": "SENSITIVE: Write the text of every record (raw, a sudo command, the physical line) to $OUT/auth-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused; the answer never carries the text (declared secret_output: a job that sets write_text is run as secret output, and the tool refuses write_text when SECRET_OUTPUT is not 1)"
     },
     "preview_text": {
       "type": "boolean",
-      "description": "Put raw and a sudo command in the answer's records (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+      "description": "SENSITIVE: Put raw and a sudo command in the answer's records (default false). Refused unless the tool runs as a job, which must be run with secret_output: true (declared secret_output: a job that sets preview_text is run as secret output, and the tool refuses preview_text when SECRET_OUTPUT is not 1)"
     },
     "max_seconds": {
       "type": "number",
@@ -46,11 +46,17 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 120,
+  "secret_output": {
+    "when_args": [
+      "write_text",
+      "preview_text"
+    ]
+  },
   "example": "{\"path\": \"work/extracted/var/log\", \"kinds\": [\"ssh_accepted\", \"sudo\"]}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 12,
-  "sha256": "74912ef6584b39a2a7d8503f3cbf32b03102d31dcae97d3f49a4aeac23f8d26a",
+  "version": 13,
+  "sha256": "4c205aa709de471ccbcacf969e4a0a16e5c68779878e21c8003ebe68030cdc99",
   "use": {
     "names": [
       "auth.log*",

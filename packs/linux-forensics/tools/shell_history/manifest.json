@@ -28,11 +28,11 @@
     },
     "write_commands": {
       "type": "boolean",
-      "description": "Write every record's command and exact lines to $OUT/shell-history-commands.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused; the answer never carries the command"
+      "description": "SENSITIVE: Write every record's command and exact lines to $OUT/shell-history-commands.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused; the answer never carries the command (declared secret_output: a job that sets write_commands is run as secret output, and the tool refuses write_commands when SECRET_OUTPUT is not 1)"
     },
     "preview_commands": {
       "type": "boolean",
-      "description": "Put each shown record's command in the answer (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+      "description": "SENSITIVE: Put each shown record's command in the answer (default false). Refused unless the tool runs as a job, which must be run with secret_output: true (declared secret_output: a job that sets preview_commands is run as secret output, and the tool refuses preview_commands when SECRET_OUTPUT is not 1)"
     },
     "root_is_file_system_root": {
       "type": "boolean",
@@ -42,11 +42,17 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 120,
+  "secret_output": {
+    "when_args": [
+      "write_commands",
+      "preview_commands"
+    ]
+  },
   "example": "{\"root\": \"work/extracted\", \"write_commands\": true}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 11,
-  "sha256": "de53ead03fc7b0c075f640886a9ece586dc865f20d4219341ff7e0a8e5c40408",
+  "version": 12,
+  "sha256": "9615f205c80c7a176507496b050094f0f3a5597fbdb674e556584e46ae6f4085",
   "use": {
     "names": [
       ".bash_history",

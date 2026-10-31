@@ -12,8 +12,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet } from "./tool-library-harness.ts";
-import { AUTH, CRON, JOURNAL, RECIPE, SHELL, UTMP, asJob, body, filesUnder, lines, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
+import { AUTH, CRON, JOURNAL, RECIPE, SHELL, UTMP, asJob as plainJob, body, filesUnder, lines, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+/** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
+const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
+  plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
 
 /** A tool that must come back: a case whose tool is still running after `ms` is killed and fails by name (the old code ran for minutes). */
 async function bounded(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, ms = 90_000): Promise<{ out: Json; seconds: number }> {
@@ -327,7 +330,7 @@ test("the linux-target recipe does not replace the receipt of an earlier run in 
 // timeout, and no JSON came back. The clock is now read before every match, and no match is begun after the deadline.
 
 const SLOW = `${"a".repeat(18)}!`;
-const JOB_ENV = (cwd: string): Record<string, string> => ({ JOB_ID: "j1", OUT: join(cwd, "out") });
+const JOB_ENV = (cwd: string): Record<string, string> => ({ JOB_ID: "j1", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" });
 
 test("utmp_parse ends at max_seconds when every user match is slow: 4,300 records of 16 ms, max_seconds 2", async () => {
   await withCwd(async (cwd) => {
@@ -628,7 +631,7 @@ const TEXT_CAP = String.raw`
 import importlib.util, io, json, os, sys
 sys.dont_write_bytecode = True
 script, cwd = sys.argv[1:3]
-os.environ["JOB_ID"], os.environ["OUT"] = "j1", os.path.join(cwd, "out")
+os.environ["JOB_ID"], os.environ["OUT"], os.environ["SECRET_OUTPUT"] = "j1", os.path.join(cwd, "out"), "1"
 os.environ["AGENT_ID"] = "s1"
 spec = importlib.util.spec_from_file_location("tool_under_test", script)
 tool = importlib.util.module_from_spec(spec)
@@ -665,7 +668,7 @@ const CAP_END_TO_END = String.raw`
 import importlib.util, io, json, os, sys
 sys.dont_write_bytecode = True
 script, cwd, args = sys.argv[1:4]
-os.environ["JOB_ID"], os.environ["OUT"] = "j1", os.path.join(cwd, "out")
+os.environ["JOB_ID"], os.environ["OUT"], os.environ["SECRET_OUTPUT"] = "j1", os.path.join(cwd, "out"), "1"
 os.environ["AGENT_ID"] = "s1"
 spec = importlib.util.spec_from_file_location("tool_under_test", script)
 tool = importlib.util.module_from_spec(spec)

@@ -12,8 +12,11 @@ import { spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, stat, symlink, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { CRON, IS_ROOT, SHELL, asJob, body, everythingBut, filesUnder, lines, put, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { CRON, IS_ROOT, SHELL, asJob as plainJob, body, everythingBut, filesUnder, lines, put, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+/** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
+const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
+  plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
 
 const CRON_SECRET = "s3cretCronValue99";
 const SPOOL_SECRET = "abcdef123456tokenvalue";
@@ -281,7 +284,7 @@ test("cron_dump stops at max_seconds, takes no NaN for a budget, and answers wit
       await mkdir(ro, { recursive: true });
       await chmod(ro, 0o555);
       try {
-        const bad = refused(await tool(CRON, cwd, { root: "work/root", write_text: true }, { JOB_ID: "j000077", OUT: ro }));
+        const bad = refused(await tool(CRON, cwd, { root: "work/root", write_text: true }, { JOB_ID: "j000077", OUT: ro, SECRET_OUTPUT: "1" }));
         assert.equal(bad.status, "failed");
       } finally {
         await chmod(ro, 0o755);
@@ -334,5 +337,37 @@ test("cron_dump pages its census and names the run-parts files it does not enter
     assert.ok(out.pages.locations.matched > 800 && out.pages.locations.truncated);
     assert.ok(out.pages.locations.all_results);
     assert.equal(out.entries.filter((e: Json) => e.source === "run-parts").length, 1);
+  });
+});
+
+test("cron_dump declares secret_output for write_text and preview_text, and refuses each, creating nothing, unless SECRET_OUTPUT is 1", async () => {
+  const manifest = JSON.parse(await readFile(join(CRON, "..", "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.secret_output, { when_args: ["write_text", "preview_text"] });
+  for (const flag of manifest.secret_output.when_args) {
+    assert.equal(manifest.params[flag].type, "boolean");
+    assert.equal(manifest.params[flag].default, undefined);
+    assert.match(manifest.params[flag].description, /SENSITIVE/);
+  }
+  await withCwd(async (cwd) => {
+    await put(join(cwd, "work", "ev"), "etc/crontab", lines("* * * * * root /bin/echo PLANTEDVALUE"));
+    for (const flag of ["write_text", "preview_text"]) {
+      const before = await filesUnder(cwd);
+      assert.match(refused(await tool(CRON, cwd, { root: "work/ev", [flag]: true })).error, /outside a job/, flag);
+      for (const value of [undefined, "0", "true", ""]) {
+        const env = value === undefined ? {} : { SECRET_OUTPUT: value };
+        const answer = refused(await plainJob(CRON, cwd, { root: "work/ev", [flag]: true }, undefined, env, "out-plain"));
+        assert.match(answer.error, /SECRET_OUTPUT/, `${flag} with SECRET_OUTPUT=${value}`);
+        assert.match(answer.error, /Nothing was written/);
+        assert.doesNotMatch(JSON.stringify(answer), /PLANTEDVALUE/);
+      }
+      assert.deepEqual((await filesUnder(cwd)).filter((f) => !f.startsWith("out-plain/")), before, `${flag}: a refusal creates nothing outside the job's directory`);
+      assert.deepEqual(await filesUnder(join(cwd, "out-plain")), [], `${flag}: and nothing in the job's own`);
+    }
+    const written = body(await asJob(CRON, cwd, { root: "work/ev", write_text: true }, undefined, {}, "out-ok"));
+    assert.ok(written.text.written >= 1);
+    assert.equal((await stat(join(cwd, "out-ok", "cron-text.jsonl"))).mode & 0o777, 0o600);
+    assert.match(await readFile(join(cwd, "out-ok", "cron-text.jsonl"), "utf8"), /PLANTEDVALUE/);
+    const preview = body(await asJob(CRON, cwd, { root: "work/ev", preview_text: true }, undefined, {}, "out-pv"));
+    assert.match(JSON.stringify(preview.entries), /PLANTEDVALUE/);
   });
 });

@@ -60,21 +60,27 @@
     },
     "write_text": {
       "type": "boolean",
-      "description": "Write each record's user (a typed name) beside its locator to $OUT/utmp-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused"
+      "description": "SENSITIVE: Write each record's user (a typed name) beside its locator to $OUT/utmp-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused (declared secret_output: a job that sets write_text is run as secret output, and the tool refuses write_text when SECRET_OUTPUT is not 1)"
     },
     "preview_text": {
       "type": "boolean",
-      "description": "Put a typed name in the answer's records (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+      "description": "SENSITIVE: Put a typed name in the answer's records (default false). Refused unless the tool runs as a job, which must be run with secret_output: true (declared secret_output: a job that sets preview_text is run as secret output, and the tool refuses preview_text when SECRET_OUTPUT is not 1)"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 60,
+  "secret_output": {
+    "when_args": [
+      "write_text",
+      "preview_text"
+    ]
+  },
   "example": "{\"path\": \"work/extracted/var/log/wtmp\", \"types\": [\"USER_PROCESS\", \"BOOT_TIME\"]}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 11,
-  "sha256": "177b16e6d5d2673dca018017409249df9a772abd67d137c07ee53f40e3e222fd",
+  "version": 12,
+  "sha256": "38843d6bb570be43958fa8a040cb63985641b0b1ec961083ddbeb15c405ddb4d",
   "use": {
     "names": [
       "utmp",

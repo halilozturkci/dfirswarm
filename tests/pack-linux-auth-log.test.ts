@@ -14,8 +14,11 @@ import { chmod, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promis
 import { join } from "node:path";
 import { test } from "node:test";
 import { gzipSync } from "node:zlib";
-import { AUTH, IS_ROOT, asJob, body, everythingBut, exists, filesUnder, lines, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { AUTH, IS_ROOT, asJob as plainJob, body, everythingBut, exists, filesUnder, lines, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+/** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
+const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
+  plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
 
 const FP_ED = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
 const FP_RSA = "SHA256:uNjrAGXtRBwLr4evnXZtCZbU6Cnt8L7tUBVdGJKEzcA";
@@ -1098,4 +1101,40 @@ test("auth_log's first pass keeps one byte per dated line, not seventeen", () =>
   const [perLine, kept] = run.stdout.trim().split(" ").map(Number);
   assert.equal(kept, 1_000_000);
   assert.ok(perLine < 2, `pass one kept ${perLine} bytes per dated line`);
+});
+
+// ---- auth_log: the text flags are declared secret output, and refused unless SECRET_OUTPUT is 1 ----------------------------------
+
+test("auth_log declares secret_output for write_text and preview_text, and refuses each, creating nothing, unless SECRET_OUTPUT is 1", async () => {
+  const { dirname } = await import("node:path");
+  const manifest = JSON.parse(await readFile(join(dirname(AUTH), "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.secret_output, { when_args: ["write_text", "preview_text"] });
+  for (const flag of manifest.secret_output.when_args) {
+    assert.equal(manifest.params[flag].type, "boolean");
+    assert.equal(manifest.params[flag].default, undefined);
+    assert.match(manifest.params[flag].description, /SENSITIVE/);
+  }
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "declared", { "auth.log": lines("Oct  5 10:00:00 h sudo: bob : TTY=pts/0 ; PWD=/ ; USER=root ; COMMAND=/bin/echo PLANTEDVALUE") });
+    for (const flag of ["write_text", "preview_text"]) {
+      const before = await filesUnder(cwd);
+      assert.match(refused(await tool(AUTH, cwd, { path, [flag]: true })).error, /outside a job/, flag);
+      for (const value of [undefined, "0", "true", ""]) {
+        const env = value === undefined ? {} : { SECRET_OUTPUT: value };
+        const answer = refused(await plainJob(AUTH, cwd, { path, [flag]: true }, undefined, env, "out-plain"));
+        assert.match(answer.error, /SECRET_OUTPUT/, `${flag} with SECRET_OUTPUT=${value}`);
+        assert.match(answer.error, /Nothing was written/);
+        assert.doesNotMatch(JSON.stringify(answer), /PLANTEDVALUE/);
+      }
+      assert.deepEqual((await filesUnder(cwd)).filter((f) => !f.startsWith("out-plain/")), before, `${flag}: a refusal creates nothing outside the job's directory`);
+      assert.deepEqual(await filesUnder(join(cwd, "out-plain")), [], `${flag}: and nothing in the job's own`);
+    }
+    // As a secret-output job: the file is written, mode 0600; the preview carries the text.
+    const written = body(await asJob(AUTH, cwd, { path, write_text: true }, undefined, {}, "out-ok"));
+    assert.equal(written.text.written, 1);
+    assert.equal((await stat(join(cwd, "out-ok", "auth-text.jsonl"))).mode & 0o777, 0o600);
+    assert.match(await readFile(join(cwd, "out-ok", "auth-text.jsonl"), "utf8"), /PLANTEDVALUE/);
+    const preview = body(await asJob(AUTH, cwd, { path, preview_text: true }, undefined, {}, "out-pv"));
+    assert.match(JSON.stringify(preview.records), /PLANTEDVALUE/);
+  });
 });

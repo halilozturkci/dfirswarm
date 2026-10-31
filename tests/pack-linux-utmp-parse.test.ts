@@ -10,7 +10,10 @@ import { spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { IS_ROOT, UTMP, asJob, body, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { IS_ROOT, UTMP, asJob as plainJob, body, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+/** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
+const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
+  plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
 
 type Utmp = { type: number; pid?: number; line?: string; id?: string; user?: string; host?: string; session?: number; exitTermination?: number; exitStatus?: number; sec?: number; usec?: number; addr?: number[] };
 
@@ -380,7 +383,7 @@ test("utmp_parse answers in JSON where a file cannot be opened, a passwd is a pi
       await writeFile(join(cwd, "work", "bt"), utmp({ type: 6, user: "x", sec: T0 }));
       await mkdir(join(cwd, "ro"), { recursive: true });
       await chmod(join(cwd, "ro"), 0o555);
-      const run = await tool(UTMP, cwd, { path: "work/bt", write_text: true }, { JOB_ID: "j9", OUT: join(cwd, "ro", "sub") });
+      const run = await tool(UTMP, cwd, { path: "work/bt", write_text: true }, { JOB_ID: "j9", OUT: join(cwd, "ro", "sub"), SECRET_OUTPUT: "1" });
       assert.doesNotMatch(run.stderr, /Traceback/);
       assert.notEqual(run.code, 0);
       await chmod(join(cwd, "ro"), 0o755);
@@ -414,5 +417,40 @@ test("utmp_parse gives every answer a status and says on what it rests", async (
     assert.equal(tail.status, "partial");
     assert.equal(tail.all_records_read, false);
     assert.equal(refused(await tool(UTMP, cwd, { path: "work/none" })).status, "failed");
+  });
+});
+
+test("utmp_parse declares secret_output for write_text and preview_text, and refuses each, creating nothing, unless SECRET_OUTPUT is 1", async () => {
+  const manifest = JSON.parse(await readFile(join(UTMP, "..", "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.secret_output, { when_args: ["write_text", "preview_text"] });
+  for (const flag of manifest.secret_output.when_args) {
+    assert.equal(manifest.params[flag].type, "boolean");
+    assert.equal(manifest.params[flag].default, undefined);
+    assert.match(manifest.params[flag].description, /SENSITIVE/);
+  }
+  const { readdir } = await import("node:fs/promises");
+  const tree = async (dir: string): Promise<string[]> => (await readdir(dir, { recursive: true }).catch(() => [] as string[])).sort();
+  await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "work"), { recursive: true });
+    await writeFile(join(cwd, "work", "btmp"), utmp({ type: 7, pid: 7, line: "ssh:notty", user: "PLANTEDVALUE", sec: T0 }));
+    for (const flag of ["write_text", "preview_text"]) {
+      const before = (await tree(cwd)).filter((f) => f !== "out-plain");
+      assert.match(refused(await tool(UTMP, cwd, { path: "work/btmp", [flag]: true })).error, /outside a job/, flag);
+      for (const value of [undefined, "0", "true", ""]) {
+        const env = value === undefined ? {} : { SECRET_OUTPUT: value };
+        const answer = refused(await plainJob(UTMP, cwd, { path: "work/btmp", [flag]: true }, undefined, env, "out-plain"));
+        assert.match(answer.error, /SECRET_OUTPUT/, `${flag} with SECRET_OUTPUT=${value}`);
+        assert.match(answer.error, /Nothing was written/);
+        assert.doesNotMatch(JSON.stringify(answer), /PLANTEDVALUE/);
+      }
+      assert.deepEqual((await tree(cwd)).filter((f) => f !== "out-plain"), before, `${flag}: a refusal creates nothing outside the job's directory`);
+      assert.deepEqual(await tree(join(cwd, "out-plain")), [], `${flag}: and nothing in the job's own`);
+    }
+    const written = body(await asJob(UTMP, cwd, { path: "work/btmp", write_text: true }, undefined, {}, "out-ok"));
+    assert.ok(written.text.written >= 1);
+    assert.equal((await stat(join(cwd, "out-ok", "utmp-text.jsonl"))).mode & 0o777, 0o600);
+    assert.match(await readFile(join(cwd, "out-ok", "utmp-text.jsonl"), "utf8"), /PLANTEDVALUE/);
+    const preview = body(await asJob(UTMP, cwd, { path: "work/btmp", preview_text: true }, undefined, {}, "out-pv"));
+    assert.match(JSON.stringify(preview.records), /PLANTEDVALUE/);
   });
 });
