@@ -28,7 +28,7 @@
     },
     "census": {
       "type": "boolean",
-      "description": "Write a row for every file visited (default true). false keeps rows for candidates, unmeasured and unreadable files and every entry skipped, excluded or not read, and counts the files that matched nothing. The census costs up to about 0.75 KB on disk per entry (73 MB per 100,000 files, about 3.7 GB for 5 million; 0.4 to 0.5 KB with short names, growing with the length of the path); nothing bounds it but the time limit, because nothing is cut, so choose false for a large tree"
+      "description": "Write a row for every file visited (default true). false keeps rows for candidates, unmeasured and unreadable files and every entry skipped, excluded or not read, and counts the files that matched nothing. The census costs about 0.3 to 0.5 KB on disk per ordinary file, 0.6 to 0.8 KB per candidate with short paths and up to about 1.1 KB per candidate under long paths (a row grows with the path, and a candidate's row also holds its entropy windows and reasons): plan for about 1 KB per entry on a tree of candidates (about 100 MB per 100,000 files, about 5 GB for 5 million). Nothing bounds it but the time limit, because nothing is cut, so choose false for a large tree"
     },
     "max_seconds": {
       "type": "integer",
@@ -41,6 +41,6 @@
   "example": "{\"root\": \"work/extracted/Users\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 7,
+  "version": 8,
   "sha256": "e20ba42ece57848e3bd84f48127523cb5dd2602551841ff14e50e780954e24b8"
 }

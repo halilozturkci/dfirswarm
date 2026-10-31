@@ -62,7 +62,9 @@ SIGHUP) ends the tool with one JSON answer (status `failed`, `interrupted`), exi
 128 + the signal, after removing the pages it was still writing; a values file already begun
 is kept, cut back to its last whole row, and the answer says how many rows it holds. A result
 file that is already there is never replaced by another result: the new one takes the next
-free name.
+free name. The handlers are installed when the module code reaches the stop block, so a stop
+signal in the start-up window (interpreter start, compiling this file, the module code above
+that block) can end the tool with no JSON answer.
 
 What it does not locate: a long token with no label and no known shape (a 64-digit hex
 string after the word "Token") is neither located nor counted.

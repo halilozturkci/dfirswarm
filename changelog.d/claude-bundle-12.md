@@ -41,10 +41,15 @@ caller is not told more than is true:
   an occurrence, its validation, counts per kind). It also says that a path
   holding more than 64 distinct 8-character windows makes the first pass match
   its note in full, which costs more of the first pass's time.
-- `encrypted_survey` states the census's cost, up to about 0.75 KB per entry
-  (73 MB per 100,000 files), in its `census` parameter, so that a caller can
-  choose `census: false` for a large tree. `tests/pack-ransomware-census-size.test.ts`
-  pins it against trees the test builds.
+- `encrypted_survey` states the census's cost in its `census` parameter, by
+  kind of row: about 0.3 to 0.5 KB per ordinary file, 0.6 to 0.8 KB per
+  candidate with short paths, up to about 1.1 KB per candidate under long
+  paths; plan for about 1 KB per entry on a tree of candidates (about 100 MB
+  per 100,000 files), so that a caller can choose `census: false` for a large
+  tree. `tests/pack-ransomware-census-size.test.ts` pins each range against
+  trees the test builds (ordinary files, candidates, candidates under a path
+  of about 150 characters).
+- `ransom_note_scan`'s module docstring now carries the start-up caveat too.
 - Stay stated as they were, and are now held by `tests/pack-ransomware-prose.test.ts`:
   the raw tail bytes (`tail_bytes` text and the two skill lines), and the job
   residuals (SIGKILL leaves the hidden temporary files; the job's timeout is
