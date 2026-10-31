@@ -3465,3 +3465,108 @@ test("sqlite_freespace gives one figure for the time a hidden class can reveal, 
     assert.ok(perFragment > 190 && perFragment < 290, `${perFragment} bytes of paging file per fragment: the manifest says about 240`);
   });
 });
+
+// --- manifest_db: the tail under the clock, a total budget for contains, the working copy reused ---
+
+/**
+ * The real tool with a clock that moves 1 ms every time it is read, so that how far through max_seconds the row loop stops does not depend on
+ * how fast the machine is. It says on stderr how much of the clock had gone when the work after the row loop (the domain page) began.
+ * argv: tool, cwd. stdin: the arguments.
+ */
+const MANIFEST_FAKE_CLOCK = String.raw`
+import importlib.util, os, sys, time
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("md", sys.argv[1]); md = importlib.util.module_from_spec(spec); spec.loader.exec_module(md)
+class Clock:
+    def __init__(self):
+        self.now, self.first, self.tail = 1000.0, None, None
+    def monotonic(self):
+        self.now += 0.001
+        if self.first is None:
+            self.first = self.now
+        return self.now
+    def __getattr__(self, name):
+        return getattr(time, name)
+clock = Clock()
+md.time = clock
+Original = md.LosslessPage
+class Spy(Original):
+    def __init__(self, tool, key, *rest, **named):
+        if "domains" in key and clock.tail is None:
+            clock.tail = clock.now - clock.first
+        Original.__init__(self, tool, key, *rest, **named)
+md.LosslessPage = Spy
+os.chdir(sys.argv[2])
+os.environ.update(AGENT_ID="s1")
+try:
+    md.run_main(md.main)
+finally:
+    sys.stderr.write("TAIL %r\n" % (clock.tail,))
+`;
+
+test("manifest_db stops its row loop at 93 % of max_seconds, so the work after the loop runs inside the clock", async () => {
+  // The work after the loop (sorting the domains, finishing the pages) ran outside max_seconds, and only the cap of 255 seconds under a timeout of 300
+  // covered it. The clock here moves 1 ms a read; max_seconds 1 is about a thousand reads.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "tailbk", { entries: many(4000) });
+    const out = await runPySnippet(MANIFEST_FAKE_CLOCK, [MANIFEST, cwd], { path: dir, max_seconds: 1 });
+    assert.equal(out.code, 0, out.stderr);
+    const answer = JSON.parse(out.stdout) as Manifest;
+    assert.notEqual(answer.stopped_at_row, null, "the clock stopped the loop");
+    assert.ok(answer.counts.rows_read < 4000);
+    const tail = /TAIL ([0-9.]+)/.exec(out.stderr);
+    assert.ok(tail, out.stderr);
+    assert.ok(Number(tail[1]) <= 0.95, `the work after the loop began at ${tail[1]} of max_seconds`);
+    assert.ok(Number(tail[1]) > 0.5, `the loop did not run (${tail[1]})`);
+  });
+});
+
+test("manifest_db gives contains one total budget for the paths it runs out of time on, and counts the paths left", async () => {
+  // Each such path cost 2 seconds until max_seconds. With 60 of them and max_seconds 40 that was about 40 seconds and a listing that stopped
+  // partway; with a budget of 10 seconds in all the listing is read to the end and the paths after the budget are counted, not run.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "budgetbk", { entries: many(60, () => ({ path: `Library/${"a".repeat(44)}b` })) });
+    const started = Date.now();
+    const { answer } = await manifest(cwd, dir, { contains: "(a|aa)+$", max_seconds: 40 });
+    const seconds = (Date.now() - started) / 1000;
+    assert.ok(seconds < 25, `took ${seconds} s`);
+    assert.equal(answer.status, "partial");
+    assert.equal(answer.stopped_at_row, null, "the whole table was read");
+    assert.equal(answer.counts.rows_read, 60);
+    assert.ok(answer.observations.some((o) => /^contains ran past its time on 60 path\(s\)/.test(o)), answer.observations.join("\n"));
+    assert.ok(answer.observations.some((o) => /had used the 10 seconds it may spend in all .*: \d+ later path\(s\) were counted and not matched without the expression being run on them/.test(o)), answer.observations.join("\n"));
+  });
+});
+
+test("manifest_db keeps one working copy for one source, and a source that changed is another", async () => {
+  // Every call that applied a -wal copied the whole Manifest.db again under tool-output, and the copies piled up.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "copybk", { entries: [{ id: ID_A, path: "Library/in-main.db" }], wal: [{ id: ID_B, path: "Library/only-in-wal.db" }] });
+    const copies = async (): Promise<string[]> => (await readdir(join(cwd, "work", "s1", "tool-output")).catch(() => [] as string[])).filter((n) => n.startsWith("manifest_db-working-copy-"));
+    const first = (await manifest(cwd, dir)).answer;
+    const second = (await manifest(cwd, dir)).answer;
+    const third = (await manifest(cwd, dir, { contains: "wal" })).answer;
+    assert.equal((await copies()).length, 1, "three calls on the same bytes, one copy");
+    assert.equal(first.manifest_db_file.working_copy, second.manifest_db_file.working_copy);
+    assert.equal(first.manifest_db_file.working_copy, third.manifest_db_file.working_copy);
+    assert.deepEqual(second.entries.map((e) => e.relative_path).sort(), ["Library/in-main.db", "Library/only-in-wal.db"], "the reused copy lists what the first listed");
+    const at = (p: string): string => (p.startsWith("/") ? p : join(cwd, p));
+    assert.ok(await exists(join(at(first.manifest_db_file.working_copy!), "Manifest.db")), "the copy the answer names exists");
+    const other = await backup(cwd, "copybk2", { entries: [{ id: ID_A, path: "Library/in-main.db" }], wal: [{ id: ID_C, path: "Library/another-wal.db" }] });
+    const changed = (await manifest(cwd, other)).answer;
+    assert.notEqual(changed.manifest_db_file.working_copy, first.manifest_db_file.working_copy);
+    assert.equal((await copies()).length, 2);
+    // A failure or a stop removes only a copy its own call made: the one the first answer cited stays.
+    assert.ok(await exists(join(at(first.manifest_db_file.working_copy!), "Manifest.db")));
+  });
+});
+
+test("manifest_db's manifest states what it leaves as residuals: memory follows the largest cell, the scrub's cost on a long run of digits, a key that is printed", async () => {
+  const text = await readFile(join(TOOLS, "manifest_db", "manifest.json"), "utf8");
+  assert.match(text, /memory follows the largest TEXT cell once/);
+  assert.match(text, /one run of digits as long as that costs about 64 times its size in the expression/);
+  assert.match(text, /with a letter between its digits, or a separator of four or more characters between two digits, is not recognised and is printed/);
+  assert.match(text, /a name with fewer digits is printed/);
+  assert.match(text, /once it is used up, the paths that are left are counted as not matched/);
+  assert.match(text, /the row loop stops at 93 % of max_seconds/i);
+});

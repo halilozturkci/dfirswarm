@@ -1,7 +1,7 @@
 {
   "id": "mobile-forensics",
   "name": "Mobile Forensics Pack",
-  "version": "1.5.8",
+  "version": "1.5.9",
   "description": "Method and tooling for a phone: what kind of extraction you were handed and what it cannot contain, iOS backups and their manifest, Android package and user data, the app databases that carry messages and location, protobuf blobs, and what deleted means inside SQLite.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -23,8 +23,8 @@
       "README.md": "d13f23cd64730a2574a2390224682dac89403499367d923fcea642f76c27f20c",
       "tools/sqlite_freespace/manifest.json": "4b89f4100d997674945e39c64e4ca37b6ca829bb3a0dd6ba30e52bbf4da70686",
       "tools/sqlite_freespace/run.py": "7b17767d134f2900dc893cb302b7e66300cd040ad64d3e17c0b7219f061b71b7",
-      "tools/manifest_db/manifest.json": "e10fae9d499a1ffd9df0ddc95eff615955c3fc28045bfff893ebf15908d2b063",
-      "tools/manifest_db/run.py": "36221534e1e0db8e5b14b3f236cb1c29a7e44a5580ab634520128f7f679048d6",
+      "tools/manifest_db/manifest.json": "b34c70307d2838a0e7ef20f87108ef0ce979627ccabaa1bef022dd9a53647ef9",
+      "tools/manifest_db/run.py": "214a446e84577b20c0653a38f4604e88c5dc5f78b67a3cd204d4e977efe505d2",
       "tools/protobuf_peek/manifest.json": "cafb5981659c859483567550395ec29470a8f8882f3484d86706096226adb91e",
       "tools/protobuf_peek/run.py": "c7032c6df037b21b599f7092cbd866ee815ef863f761d32cdfb811bfaa7a6503",
       "goals/phone-examination.md": "fd8ad9d83c5622c98faf741d3b4a4c35c7d3140b8288b5a5840b8632f24fa6e7",
