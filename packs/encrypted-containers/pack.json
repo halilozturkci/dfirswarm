@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.6.5",
+  "version": "1.6.6",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -61,8 +61,8 @@
       "skills/volumes/bitlocker.md": "fadc5aeb13dcff3ec61a6b997db9e411a40085a6ef26cec09e88fcc8bb466553",
       "skills/volumes/filevault-apfs.md": "7604310ad397d391651aef8d010788fb29079b25aa15f0c49b5383fd467b1764",
       "skills/volumes/luks-filevault.md": "24fe2e2197fcf087d3fb225ec01713a873f6ff827411e6c6fce3b2f218bc67ae",
-      "tools/archive_probe/manifest.json": "5fbe6e61ac5eeaff88988b278e490d566137b236f38d1d5878620160a6b55a15",
-      "tools/archive_probe/run.py": "d01c236f87a67aca0026f54b9e61751c66ad1efbf5ffe8f75a187657e510338d",
+      "tools/archive_probe/manifest.json": "9fcc1f2b0ca05b44c3608ac731b485d1dc81b7362cf4078606bcce71877ed7ae",
+      "tools/archive_probe/run.py": "f08bf651b9d4ee395f19e91046ac303743790b2416a13f39ea0f0568ac6994c5",
       "tools/crypto_id/manifest.json": "0b2d7fd4f39b16b9ace93695049924901c325f10f07d4ad1bfd51f7bac7906a6",
       "tools/crypto_id/run.py": "366a68da4fc0273eb47b7ca9f6028c69a2df5cdf0705e610874597fb720a73c8",
       "tools/recovery_key_scan/manifest.json": "f3893640995eedcd2082f3e7b3e24f69b07732c33650bf9ff973639091a3b679",
