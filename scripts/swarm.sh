@@ -749,8 +749,10 @@ ensure_registry() {
     return 0
   fi
   mkdir -p "$RUNS_DIR"
+  # Made only if it is not there (noclobber), never over a registry another
+  # writer made and wrote between the test and the write.
   if [[ ! -f "$REGISTRY" ]]; then
-    printf '{"runs":[]}\n' > "$REGISTRY"
+    ( set -C; printf '{"runs":[]}\n' > "$REGISTRY" ) 2>/dev/null || true
   fi
 }
 
@@ -760,15 +762,19 @@ json_get() {
 }
 
 # The registry is written by this script and by a VM run's hub (vm-hub.ts
-# updateRegistryState): both take <registry>.lock, a directory, so neither
-# reads the file, changes it and writes back over the other's change. A lock
-# older than a minute is a writer that died holding it.
+# updateRegistryState): both take <registry>.lock, so neither reads the file,
+# changes it and writes back over the other's change. This script makes the
+# lock as a file with O_EXCL (bash's noclobber), not with mkdir: an older
+# uutils mkdir (Ubuntu 26.04's, before its fix of 2026-08-28) lets two mkdirs
+# of one name succeed at once, and both writers then went in. The hub makes it
+# as a directory with mkdir(2); each fails on the other's. A lock older than a
+# minute, file or directory, is a writer that died holding it.
 registry_lock() {
   local lock="$REGISTRY.lock" i
   for ((i = 0; i < 200; i++)); do
-    mkdir "$lock" 2>/dev/null && return 0
+    ( set -C; : > "$lock" ) 2>/dev/null && return 0
     if [[ -n "$(find "$lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]]; then
-      rmdir "$lock" 2>/dev/null || true
+      rm -f "$lock" 2>/dev/null || rmdir "$lock" 2>/dev/null || true
       continue
     fi
     sleep 0.05
@@ -776,37 +782,45 @@ registry_lock() {
   echo "BLOCKER: the run registry is locked ($lock); another kickoff or stop is writing it." >&2
   return 1
 }
-registry_unlock() { rmdir "$REGISTRY.lock" 2>/dev/null || true; }
+registry_unlock() { rm -f "$REGISTRY.lock" 2>/dev/null || true; }
+
+# The temporary file a writer rewrites the registry into: its own (mktemp; a
+# name made from $$ is the same in every subshell of one script), beside the
+# registry so the rename is atomic (a temp file under /tmp is another
+# filesystem on some hosts, and mv then copies), and with the registry's mode
+# (cp -p; mktemp makes it 0600).
+registry_tmp() {
+  local t
+  t="$(mktemp "$REGISTRY.tmp.XXXXXX")" || return 1
+  cp -p "$REGISTRY" "$t" 2>/dev/null || { rm -f "$t"; return 1; }
+  printf '%s\n' "$t"
+}
 
 registry_upsert() {
-  local rec="$1"
+  local rec="$1" tmp=""
   ensure_registry
   registry_lock || return 1
-  # Beside the registry, so the rename is atomic (a temp file under /tmp is
-  # another filesystem on some hosts, and mv then copies).
-  local tmp="$REGISTRY.tmp.$$"
-  if jq --argjson rec "$rec" '
+  if tmp="$(registry_tmp)" && jq --argjson rec "$rec" '
     .runs = ([.runs[] | select(.id != $rec.id)] + [$rec])
   ' "$REGISTRY" > "$tmp"; then
     mv "$tmp" "$REGISTRY"
   else
-    rm -f "$tmp"
+    [[ -z "$tmp" ]] || rm -f "$tmp"
   fi
   registry_unlock
 }
 
 registry_update_state() {
   local id="$1"
-  local state="$2"
+  local state="$2" tmp=""
   ensure_registry
   registry_lock || return 1
-  local tmp="$REGISTRY.tmp.$$"
-  if jq --arg id "$id" --arg state "$state" '
+  if tmp="$(registry_tmp)" && jq --arg id "$id" --arg state "$state" '
     .runs = [.runs[] | if .id == $id then .state = $state else . end]
   ' "$REGISTRY" > "$tmp"; then
     mv "$tmp" "$REGISTRY"
   else
-    rm -f "$tmp"
+    [[ -z "$tmp" ]] || rm -f "$tmp"
   fi
   registry_unlock
 }
@@ -825,14 +839,13 @@ resolve_path_nocreate() { # <path>
 
 # Merge fields into one run's record, under the registry's lock.
 registry_merge() { # <id> <json object>
-  local id="$1" patch="$2" rc=0
+  local id="$1" patch="$2" rc=0 tmp=""
   ensure_registry
   registry_lock || return 1
-  local tmp="$REGISTRY.tmp.$$"
-  if jq --arg id "$id" --argjson p "$patch" '.runs = [.runs[] | if .id == $id then . + $p else . end]' "$REGISTRY" > "$tmp"; then
+  if tmp="$(registry_tmp)" && jq --arg id "$id" --argjson p "$patch" '.runs = [.runs[] | if .id == $id then . + $p else . end]' "$REGISTRY" > "$tmp"; then
     mv "$tmp" "$REGISTRY"
   else
-    rm -f "$tmp"
+    [[ -z "$tmp" ]] || rm -f "$tmp"
     rc=1
   fi
   registry_unlock

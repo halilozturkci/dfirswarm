@@ -21,7 +21,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
 
 fn() { sed -n "/^$1() {/,/^}/p" "$ROOT/scripts/swarm.sh"; }
-for f in ensure_registry registry_lock registry_unlock registry_upsert registry_update_state detach_exec keep_host_awake stop_sandbox_daemons hub_dir_of hubs_parent hub_pid_ours; do
+for f in ensure_registry registry_lock registry_unlock registry_tmp registry_upsert registry_update_state detach_exec keep_host_awake stop_sandbox_daemons hub_dir_of hubs_parent hub_pid_ours; do
   eval "$(fn "$f")"
   type "$f" >/dev/null 2>&1 || fail "$f was not found in swarm.sh"
 done
@@ -40,16 +40,44 @@ for i in $(seq 1 12); do
 done
 wait
 [[ "$(jq '[.runs[] | select(.state == "stopped")] | length' "$REGISTRY")" == 12 ]] || fail "concurrent state changes lost one: $(jq -c '[.runs[].state]' "$REGISTRY")"
-[[ ! -d "$REGISTRY.lock" ]] || fail "the lock was left behind"
+[[ ! -e "$REGISTRY.lock" ]] || fail "the lock was left behind"
 ls "$RUNS_DIR" | grep -q 'registry.json.tmp' && fail "a temporary registry was left behind"
 pass "twelve writers at once lose nothing, and leave no lock or temporary file"
 
-# A lock a writer left when it died goes stale after a minute.
+# The lock does not rest on mkdir: Ubuntu 26.04's uutils mkdir let two mkdirs
+# of one name succeed at once, and two writers went in (CI, 2026-10-31). Here
+# mkdir lets every caller through, and twelve writers still lose nothing.
+(
+  mkdir() { command mkdir "$@" 2>/dev/null; return 0; }
+  RUNS_DIR="$TMP/runs-mkdir"
+  REGISTRY="$RUNS_DIR/registry.json"
+  ensure_registry
+  for i in $(seq 1 12); do
+    ( registry_upsert "{\"id\":\"m$i\",\"state\":\"running\"}" ) &
+  done
+  wait
+  [[ "$(jq '.runs | length' "$REGISTRY")" == 12 ]] || fail "with a mkdir that lets everyone through, concurrent upserts lost a run: $(jq -c '[.runs[].id]' "$REGISTRY")"
+) || exit 1
+pass "the registry's lock holds where mkdir lets two callers through"
+
+# The registry keeps its mode through a rewrite (the temporary file is mktemp's, 0600).
+chmod 644 "$REGISTRY"
+registry_update_state s2 stopped
+[[ "$(ls -l "$REGISTRY" | cut -c1-10)" == "-rw-r--r--" ]] || fail "a rewrite changed the registry's mode: $(ls -l "$REGISTRY" | cut -c1-10)"
+pass "a rewrite keeps the registry's mode"
+
+# A lock a writer left when it died goes stale after a minute: the hub's is a
+# directory, this script's a file.
 mkdir "$REGISTRY.lock"
 touch -t "$(date -v-5M +%Y%m%d%H%M 2>/dev/null || date -d '5 minutes ago' +%Y%m%d%H%M)" "$REGISTRY.lock"
 registry_update_state s1 done || fail "a stale lock blocked the writer"
 [[ "$(jq -r '.runs[] | select(.id == "s1") | .state' "$REGISTRY")" == done ]] || fail "the write after a stale lock did not land"
-pass "a lock left by a writer that died does not block the next"
+: > "$REGISTRY.lock"
+touch -t "$(date -v-5M +%Y%m%d%H%M 2>/dev/null || date -d '5 minutes ago' +%Y%m%d%H%M)" "$REGISTRY.lock"
+registry_update_state s1 stopped || fail "a stale lock file blocked the writer"
+[[ "$(jq -r '.runs[] | select(.id == "s1") | .state' "$REGISTRY")" == stopped ]] || fail "the write after a stale lock file did not land"
+[[ ! -e "$REGISTRY.lock" ]] || fail "the lock was left behind after a stale one"
+pass "a lock left by a writer that died, the hub's directory or this script's file, does not block the next"
 
 # --- the host kept awake, for the run and no longer -----------------------------
 if command -v caffeinate >/dev/null 2>&1 || command -v systemd-inhibit >/dev/null 2>&1; then

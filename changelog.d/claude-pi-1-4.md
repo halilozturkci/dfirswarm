@@ -50,3 +50,7 @@ The second microVM case run's agents reached files inside LVM with `fls` and `ic
 ### Fixed: RECmd is pinned to its new release (windows-forensics)
 
 Eric Zimmerman's `RECmd.zip` was replaced at the same address on 2026-10-29 by release 2026.10.3, so the pinned SHA-256 of 2026.10.2 no longer matched and the images that hold the windows pack stopped building ("RECmd: sha256 … is not the pinned …"). RECmd is now pinned to 2026.10.3 and its new SHA-256.
+
+### Fixed: two writers of the run registry at once no longer lose a run
+
+The registry's lock was a directory made with `mkdir`, and an older uutils `mkdir` (Ubuntu 26.04's, now GitHub's `ubuntu-latest`) lets two `mkdir`s of one name succeed at once: two writers went in together, and as every writer of one script named its temporary file after `$$`, one's write landed in the other's file and a run was lost (`tests/lifecycle.test.sh`, "concurrent upserts lost a run"). `swarm.sh` now makes the lock as a file with O_EXCL (bash's noclobber), which the hub's `mkdir(2)` of the same path and this one keep each other out of; each writer rewrites the registry through a temporary file of its own (`mktemp`, keeping the registry's mode); a registry that is not there yet is made without ever writing over one another writer just made; and a stale lock is cleared whether it is the hub's directory or this script's file.
