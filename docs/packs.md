@@ -902,6 +902,16 @@ Every tool a pack bundles holds to this.
    build refuses a lock whose file changed, and names the program when pip
    refuses a hash. `/etc/dfirswarm/image.json` lists what was installed from a
    lock under `locked` (a set is listed only after pip succeeded).
+   An entry can name **facts** the build records about its program:
+   `"facts": [["tshark", "--version"], ["tshark", "-G", "fields"]]`, a list of
+   argument lists whose first item is the entry's own program (the seal
+   refuses any other shape). The build runs each once, with a time limit, and
+   keeps its output as a file under `/etc/dfirswarm/facts/` (named after the
+   program and its arguments, `tshark-version.txt`), with the file's sha256
+   and its status (`recorded`, `capped` when the output was cut at the cap,
+   `failed` with why) under `facts` in `image.json`; `tools.md` names the files
+   beside the program. A failing command does not fail the build of an optional
+   program; it does for a required one.
 2. **A program a skill tells the agent to run is in the pack's `requires`, or
    in a dependency's.** A program or Python package in `requires` that no skill
    names needs either a skill that names it, or a reason in `pack.json`:

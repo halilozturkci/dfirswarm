@@ -498,6 +498,15 @@ if os.path.isfile(hj):
                     errors.append("requires/host.json: %s's not_in_image must say why" % b.get("name"))
                 elif not b.get("optional"):
                     errors.append("requires/host.json: %s is not_in_image, so it cannot be required: mark it optional" % b.get("name"))
+            # Facts the build records about the program: argument lists whose
+            # first item is the program itself (images/install.py runs them and
+            # keeps each output under /etc/dfirswarm/facts/).
+            if "facts" in b:
+                fx = b["facts"]
+                if not (isinstance(fx, list) and fx and all(isinstance(c, list) and len(c) > 1 and all(isinstance(x, str) and x for x in c) for c in fx)):
+                    errors.append("requires/host.json: %s's facts must be a list of argument lists (strings: the program, then at least one argument)" % b.get("name"))
+                elif any(c[0] != b.get("name") for c in fx):
+                    errors.append("requires/host.json: each of %s's facts must start with the program itself" % b.get("name"))
             host_names.add(b.get("name"))
     except Exception as e:
         errors.append("requires/host.json is not valid JSON: %s" % e)

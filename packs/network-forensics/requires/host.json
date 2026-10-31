@@ -35,7 +35,8 @@
         "apt": "apt-get install -y tshark"
       },
       "licence": "GPL-2.0-or-later",
-      "redistributable": false
+      "redistributable": false,
+      "facts": [["tshark", "--version"], ["tshark", "-G", "fields"]]
     },
     {
       "name": "capinfos",

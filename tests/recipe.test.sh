@@ -1073,6 +1073,40 @@ for bad in '{'"$e"', "install": {"source": {"version": "1", '"$u"'}}}' \
 done
 pass "a pinned source needs its entry, a build its program inside its prefix and pinned patches and argument lists, data its package, licence and a path inside it, a .deb the path it installs, and another system's program is never required"
 
+# --- facts: what the build records about a program -----------------------------
+# An entry's `facts` is a list of argument lists, each starting with the
+# program itself and having at least one argument after it; the seal refuses
+# any other shape, and recipe.py hands the lists to the install.
+for good in '{'"$e"', "facts": [["tool", "--version"]]}' \
+            '{'"$e"', "facts": [["tool", "--version"], ["tool", "-G", "fields"]]}'; do
+  mk_entry "$TMP/p/good-facts" "$good"
+  bash "$ROOT/scripts/pack.sh" seal "$TMP/p/good-facts" >/dev/null 2>&1 || fail "a well-formed facts entry was refused: $good"
+done
+for bad in '{'"$e"', "facts": []}' '{'"$e"', "facts": [["tool"]]}' '{'"$e"', "facts": [[]]}' \
+           '{'"$e"', "facts": [["other", "--version"]]}' '{'"$e"', "facts": ["tool --version"]}' \
+           '{'"$e"', "facts": [["tool", 3]]}' '{'"$e"', "facts": [["tool", ""]]}' '{'"$e"', "facts": "tool --version"}'; do
+  mk_entry "$TMP/p/bad-facts" "$bad"
+  bash "$ROOT/scripts/pack.sh" seal "$TMP/p/bad-facts" >/dev/null 2>&1 && fail "a facts entry of the wrong shape was sealed: $bad"
+done
+mk_entry "$TMP/p/good-facts" '{'"$e"', "facts": [["tool", "--version"], ["tool", "-G", "fields"]]}'
+python3 - "$ROOT/images" "$TMP/p" <<'EOF' || fail "recipe.py does not hand an entry's facts to the install"
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import recipe
+spec = recipe.read_pack(Path(sys.argv[2]), "good-facts")
+assert spec["binaries"][0]["facts"] == [["tool", "--version"], ["tool", "-G", "fields"]], spec["binaries"]
+EOF
+jq -e '[.binaries[] | select(.name == "tshark") | .facts] == [[["tshark", "--version"], ["tshark", "-G", "fields"]]]' \
+  <(python3 - "$ROOT/images" <<'EOF'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import recipe
+print(json.dumps(recipe.read_pack(recipe.PACKS, "network-forensics")))
+EOF
+) >/dev/null || fail "the network pack's tshark entry does not name tshark --version and tshark -G fields"
+pass "an entry's facts are argument lists that start with its program; the seal refuses any other shape, recipe.py passes them on, and tshark names its version and field list"
+
 # --- the tool library's imports are in every image ----------------------------
 # Read from each script's syntax tree, not its lines: an import inside a
 # function or a try counts, and so does one by name (importlib.import_module,

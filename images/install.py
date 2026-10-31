@@ -82,6 +82,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -100,6 +101,12 @@ SBOM = ETC / "sbom.json"
 # What an agent in a VM reads to learn what its image holds: one line a
 # program, grep-able. The run's contract names this file and no program.
 TOOLS_MD = ETC / "tools.md"
+# What the build asked a program about itself (a host.json entry's `facts`):
+# one file a command, its sha256 in image.json. The limits are a command's
+# time and the bytes of its output kept; a test sets both.
+FACTS = ETC / "facts"
+FACTS_TIMEOUT = int(os.environ.get("DFIRSWARM_FACTS_TIMEOUT", "120"))
+FACTS_MAX_BYTES = int(os.environ.get("DFIRSWARM_FACTS_MAX_BYTES", str(64 * 1024 * 1024)))
 # Where pinned downloads go, where pinned sources are unpacked, where their
 # programs are linked, and where apt's sources are; a test sets them.
 TOOLS = Path(os.environ.get("DFIRSWARM_TOOLS_DIR", "/opt/dfir/tools"))
@@ -1275,6 +1282,69 @@ def norm(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def fact_file(argv: list, taken: set) -> str:
+    """The file a fact's output is kept in: the program, then its arguments
+    without their leading dashes (`tshark-version.txt`, `tshark-G-fields.txt`)."""
+    words = [re.sub(r"[^A-Za-z0-9._-]+", "_", a.lstrip("-")) or "_" for a in argv]
+    stem = "-".join(words)[:120]
+    name, n = f"{stem}.txt", 2
+    while name in taken:
+        name, n = f"{stem}-{n}.txt", n + 1
+    taken.add(name)
+    return name
+
+
+def record_facts(spec: dict) -> dict:
+    """What an entry's `facts` ask of its program (a command each, its first
+    word the program): run with a time limit, the output kept under
+    /etc/dfirswarm/facts/ with its sha256, capped at FACTS_MAX_BYTES (said:
+    status `capped`, the kept file is the front of a longer output). A command
+    that fails, times out or has no program to run is recorded as `failed`
+    with why. The record is `{file: {program, argv, required, status, ...}}`."""
+    facts, taken, seen = {}, set(), set()
+    for b in spec.get("binaries", []):
+        for argv in b.get("facts") or []:
+            if (b["name"], tuple(argv)) in seen:
+                continue
+            seen.add((b["name"], tuple(argv)))
+            name = fact_file(argv, taken)
+            row = {"program": b["name"], "argv": list(argv), "required": bool(b.get("required"))}
+            facts[name] = row
+            exe = shutil.which(argv[0], path=IMAGE_PATH)
+            if not exe:
+                row.update(status="failed", why="the program is not on PATH")
+                continue
+            FACTS.mkdir(parents=True, exist_ok=True)
+            path = FACTS / name
+            try:
+                with open(path, "wb") as out, tempfile.TemporaryFile() as err:
+                    try:
+                        code = subprocess.run([exe, *argv[1:]], stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                              timeout=FACTS_TIMEOUT, env={**os.environ, "PATH": IMAGE_PATH, "LC_ALL": "C"}).returncode
+                        why = None if code == 0 else f"exit {code}"
+                    except subprocess.TimeoutExpired:
+                        code, why = None, f"timed out after {FACTS_TIMEOUT} s"
+                    err.seek(0)
+                    tail = err.read(400).decode("utf-8", "replace").strip()
+            except OSError as e:
+                row.update(status="failed", why=f"could not run: {e}")
+                continue
+            size = path.stat().st_size
+            if size > FACTS_MAX_BYTES:
+                with open(path, "r+b") as f:
+                    f.truncate(FACTS_MAX_BYTES)
+            kept = path.stat().st_size
+            row.update(bytes=kept, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+            if why:
+                row.update(status="failed", why=why + (f": {tail}" if tail else ""))
+            elif size > FACTS_MAX_BYTES:
+                row.update(status="capped", bytes_seen=size,
+                           why=f"the output is longer than {FACTS_MAX_BYTES} bytes; the file holds the first {kept}")
+            else:
+                row["status"] = "recorded"
+    return facts
+
+
 def tools_md(record: dict, spec: dict | None) -> str:
     """/etc/dfirswarm/tools.md: every program the image's packs put in it, what
     it is for (the pack's own words), its pack and the version installed, one
@@ -1285,6 +1355,7 @@ def tools_md(record: dict, spec: dict | None) -> str:
     pip = {norm(k): v for k, v in (record.get("pip") or {}).items()}
     apt = record.get("apt") or {}
     on_path = record.get("binaries") or {}
+    facts = record.get("facts") or {}
     packs = record.get("packs") or []
     lines = [f"# Programs in this VM ({record.get('profile', '?')} image)", "",
              f"Packs: {', '.join(packs) if packs else 'none (the base image: the shell, Python and the tool library)'}.",
@@ -1321,6 +1392,12 @@ def tools_md(record: dict, spec: dict | None) -> str:
         for b in sorted(rows, key=lambda x: x["name"].lower()):
             v = version(b)
             lines.append(f"- `{b['name']}` — {b.get('why') or 'no description'} ({', '.join(b['packs'])}{'; ' + v if v else ''})")
+            # What the build recorded about the program: a file each, the
+            # command that made it and whether it worked.
+            for fname, fact in sorted(facts.items()):
+                if fact.get("program") == b["name"]:
+                    state = fact.get("status", "?") + (f" ({fact['why']})" if fact.get("status") != "recorded" and fact.get("why") else "")
+                    lines.append(f"  - `{' '.join(fact.get('argv') or [])}`: `{FACTS / fname}`, {state}")
         lines.append("")
     libs = []
     for n in list(record.get("python_library") or []) + list((spec or {}).get("python_notes") or []):
@@ -1649,6 +1726,12 @@ def main(spec_path: str) -> int:
     shutil.rmtree(APT_LISTS, ignore_errors=True)
 
     record = profile_record(json.loads(RECORD.read_text()) if RECORD.exists() else {}, spec, downloads, failed)
+    # The facts the packs ask of their programs, kept as files. A command that
+    # fails is recorded as failed: it fails the build only for a program a pack
+    # requires, whose own version command not working is a broken program.
+    record["facts"] = record_facts(spec)
+    for fname, fact in record["facts"].items():
+        print(f"fact {fname}: {fact['status']}" + (f" ({fact['why']})" if fact.get("why") else ""))
     missing = missing_programs(spec, record)
     if missing and spec.get("allow_missing_optional"):
         record["missing_allowed"] = missing
@@ -1664,6 +1747,11 @@ def main(spec_path: str) -> int:
     lacking = sorted({b["name"] for b in spec["binaries"] if b.get("required") and not record["binaries"].get(b["name"])})
     if lacking:
         print(f"required programs missing from the image: {', '.join(lacking)}", file=sys.stderr)
+        return 1
+    broken = sorted(n for n, f in record["facts"].items()
+                    if f["status"] == "failed" and f.get("required") and record["binaries"].get(f["program"]))
+    if broken:
+        print(f"a command that records a fact about a required program failed: {', '.join(broken)}", file=sys.stderr)
         return 1
     # The program list, checked at the end: an optional program that should be
     # here and is not is a build that went wrong (apt out of disk space did

@@ -333,6 +333,11 @@ def read_pack(packs, name: str) -> dict:
                                      "licence": b.get("licence"),
                                      "redistributable": b.get("redistributable", True) is not False,
                                      "source": line, "why": b.get("why", "")})
+            # Commands whose output the build keeps as facts about the program
+            # (install.py records each under /etc/dfirswarm/facts/); the
+            # seal has checked their shape.
+            if b.get("facts"):
+                spec["binaries"][-1]["facts"] = b["facts"]
             pinned = [k for k in ("build", "source", "download") if isinstance(install.get(k), dict)]
             if pinned:
                 kind = pinned[0]
