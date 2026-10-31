@@ -51,7 +51,7 @@ import time
 from pathlib import Path
 
 TOOL = "cron_dump"
-PARSER = "cron_dump/14"
+PARSER = "cron_dump/15"
 
 
 # BEGIN LINUX STOP
@@ -1253,7 +1253,7 @@ def main():
     if want_str(args, "contains"):
         try:
             pattern = re.compile(args["contains"], re.I)
-        except re.error as exc:
+        except (re.error, RecursionError, OverflowError, ValueError) as exc:
             fail("contains is not a valid regex", reason=str(exc))
         arm_regex_clock()
     try:

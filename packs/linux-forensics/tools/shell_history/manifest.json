@@ -51,8 +51,8 @@
   "example": "{\"root\": \"work/extracted\", \"write_commands\": true}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 12,
-  "sha256": "9615f205c80c7a176507496b050094f0f3a5597fbdb674e556584e46ae6f4085",
+  "version": 13,
+  "sha256": "47a9c1e1285f55ea3c7fdec825c68660746d2262505e66bfcd4a50345bfc2681",
   "use": {
     "names": [
       ".bash_history",

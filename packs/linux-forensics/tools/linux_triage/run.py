@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "linux_triage"
-PARSER = "linux_triage/8"
+PARSER = "linux_triage/9"
 DEFAULT_FUNCTION_SECONDS = 1800
 DEFAULT_TOTAL_SECONDS = 13800
 MAX_TOTAL_SECONDS = 14100       # the most a caller may ask for (the manifest allows 14400)
@@ -739,8 +739,13 @@ def main():
     refuse_source(source)
     if not isinstance(out_arg, str) or not out_arg:
         fail("out_dir is required")
-    out = Path(resolve_output(out_arg, "out_dir"))
-    if out.exists():
+    try:
+        out = Path(resolve_output(out_arg, "out_dir"))
+        already = out.exists()
+    except (ValueError, UnicodeError, OSError) as exc:
+        # A NUL byte, a lone surrogate or a name over the file system's limit cannot name a place: JSON, never a traceback.
+        fail("out_dir cannot be used: %s" % type(exc).__name__, out_dir=out_arg.encode("utf-8", "backslashreplace").decode("ascii", "backslashreplace")[:300])
+    if already:
         fail("out_dir already exists; refusing to overwrite an earlier result", out_dir=str(out))
     binary = shutil.which("target-query")
     if not binary:

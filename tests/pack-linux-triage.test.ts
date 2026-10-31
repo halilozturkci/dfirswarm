@@ -538,6 +538,20 @@ test("linux_triage holds out_dir to work/<agent>/ outside a job: an escape throu
   });
 });
 
+test("linux_triage answers an out_dir with a NUL byte, a lone surrogate or a name over the file system's limit in JSON, not a traceback", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await triageFixture(cwd, bin, {});
+    await mkdir(join(cwd, "work", "s1"), { recursive: true });
+    for (const out_dir of ["work/s1/a\u0000b", "work/s1/a\ud800b", `work/s1/${"x".repeat(300)}`]) {
+      const run = await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir, groups: ["identity"] }, env, bin);
+      assert.doesNotMatch(run.stderr, /Traceback/, run.stderr.slice(-300));
+      const answer = refused(run);
+      assert.equal(answer.status, "failed");
+      assert.match(answer.error, /out_dir/);
+    }
+  });
+});
+
 test("linux_triage counts and hashes on the clock: past the total deadline it stops, names what it did not do in not_hashed, and says partial", async () => {
   await withCwd(async (cwd, bin) => {
     // 100 MiB of short JSON lines from one function: reading them back to count them takes longer than the 8 s the run has.

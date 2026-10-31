@@ -6,6 +6,10 @@ auth_log, cron_dump, journal_export, shell_history and utmp_parse had five drift
 
 auth_log, cron_dump, journal_export, shell_history and utmp_parse now declare `secret_output` for their text flags (`write_text` and `preview_text`; `write_commands` and `preview_commands` for shell_history), so a job that sets one is sealed as secret output without the agent saying so, and each tool refuses such a flag as JSON, before it opens or creates anything, when `SECRET_OUTPUT` is not `1`. linux_triage does not declare it.
 
+### Fixed: linux-forensics tools answer a hostile parameter in JSON, and nothing outlasts its clock
+
+linux_triage no longer ends in a traceback on an `out_dir` with a NUL byte, a lone surrogate or a name over the file system's limit; journal_export on a `unit` or `priority` with a NUL byte or a lone surrogate; cron_dump, shell_history and utmp_parse on a `contains` or `user` of a thousand nested parentheses; utmp_parse on a `start_record` no file can hold. Each is a JSON refusal. auth_log looks through a directory tree on its `max_seconds` clock, so a whole file system given as the path ends at the deadline instead of running past the manifest's timeout. The linux-target stop handler recognises a listed child by its start time alone, so a child re-parented when the wrapper ends is still signalled (the previous check, start time and parent, skipped it). cron_dump's manifest now says that environment variable names are shown as written.
+
 ### Fixed: linux-forensics server-compromise names the intruder, not "the operator"
 
 Question 2 of the goal asked how "the operator" first reached the host, but in this repository the operator is the person running the case. It now asks how whoever gained access first reached the host, and a test fails on "operator" in the pack's goals and skills.

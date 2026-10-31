@@ -63,16 +63,17 @@ FILES_BY_PATH = ("a file of this root that no function parses (a configuration, 
 
 def process_identity(pid):
     """What identifies the process that has this pid right now: its start time (field 22 of /proc/<pid>/stat, in clock ticks since boot) and
-    its parent (field 4), or, where there is no /proc, the start time and parent `ps` reports. A pid that is reused is another process with
-    another start time. None where the process is gone or cannot be read."""
+    or, where there is no /proc, the start time `ps` reports. The parent is not part of it: when the wrapper ends its children are
+    re-parented, and they are still the processes that were listed. A pid that is reused is another process with another start time.
+    None where the process is gone or cannot be read."""
     try:
         with open("/proc/%d/stat" % pid, "rb") as fh:
             data = fh.read()
         fields = data[data.rindex(b")") + 2:].split()      # the name (field 2) may hold spaces and brackets: the rest follows the last ")"
-        return ("proc", int(fields[19]), int(fields[1]))
+        return ("proc", int(fields[19]))
     except (OSError, ValueError, IndexError):
         pass
-    code, out, _err, timed_out = preflight(["ps", "-o", "lstart=,ppid=", "-p", str(pid)], 5)
+    code, out, _err, timed_out = preflight(["ps", "-o", "lstart=", "-p", str(pid)], 5)
     text = out.decode("utf-8", "replace").strip()
     return ("ps", text) if code == 0 and not timed_out and text else None
 

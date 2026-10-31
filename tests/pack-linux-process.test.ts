@@ -330,11 +330,10 @@ sleeper = subprocess.Popen(["sleep", "60"])
 try:
     listed = recipe.process_identity(sleeper.pid)
     assert listed is not None, "the identity of a running process can be read"
-    moved = (listed[0], listed[1] + 1) + tuple(listed[2:])          # the same pid with another start time: the pid was taken by another process
+    moved = (listed[0], listed[1] + 1)          # the same pid with another start time: the pid was taken by another process
     results = {
         "listed": recipe.same_process(sleeper.pid, listed),
         "start time changed": recipe.same_process(sleeper.pid, moved),
-        "parent changed": recipe.same_process(sleeper.pid, listed[:2] + (listed[2] + 1,)),
         "unreadable when listed, in our group": recipe.same_process(sleeper.pid, None),
     }
     sleeper.kill()
@@ -351,6 +350,35 @@ finally:
   assert.equal(r.status, 0, r.stderr);
   assert.equal(
     r.stdout.trim(),
-    "{'listed': True, 'start time changed': False, 'parent changed': False, 'unreadable when listed, in our group': True, 'gone': False, 'never existed': False}",
+    "{'listed': True, 'start time changed': False, 'unreadable when listed, in our group': True, 'gone': False, 'never existed': False}",
   );
+});
+
+test("the linux-target recipe's stop handler still signals a listed child whose parent has ended and left it to init", () => {
+  // The wrapper dies on SIGTERM and its children are re-parented; they are the processes that were listed and must still be signalled.
+  const program = String.raw`
+import importlib.util, os, signal, subprocess, sys, time
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("recipe_under_test", sys.argv[1])
+recipe = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(recipe)
+parent = subprocess.Popen(["sh", "-c", "sleep 60 & echo $!; exec sleep 60"], stdout=subprocess.PIPE, text=True)
+child = int(parent.stdout.readline())
+try:
+    listed = recipe.process_identity(child)
+    before = os.getppid() != 0 and open("/proc/%d/stat" % child).read().rsplit(")", 1)[1].split()[1]
+    parent.kill()
+    parent.wait()
+    time.sleep(0.3)
+    after = open("/proc/%d/stat" % child).read().rsplit(")", 1)[1].split()[1]
+    print({"reparented": before != after, "still the listed process": recipe.same_process(child, listed)})
+finally:
+    try:
+        os.kill(child, signal.SIGKILL)
+    except OSError:
+        pass
+`;
+  const r = spawnSync("python3", ["-c", program, RECIPE], { encoding: "utf8", timeout: 60_000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "{'reparented': True, 'still the listed process': True}");
 });

@@ -50,7 +50,7 @@ import zlib
 from pathlib import Path
 
 TOOL = "auth_log"
-PARSER = "auth_log/13"
+PARSER = "auth_log/14"
 
 
 # BEGIN LINUX STOP
@@ -1228,6 +1228,10 @@ def main():
         def on_error(exc):
             walk_errors.append({"path": getattr(exc, "filename", None), "error": describe(exc)})
         for root, dirs, names in os.walk(path, onerror=on_error):
+            if time.monotonic() > deadline:
+                # A directory tree of millions of entries (a whole file system passed by mistake) is looked through on the clock too.
+                walk_errors.append({"path": root, "error": "max_seconds (%s) passed while looking for log files: the walk stopped here, and the places after it were not looked in" % seconds})
+                break
             for name in list(dirs):
                 if os.path.islink(os.path.join(root, name)):
                     skipped_symlinks.append({"file": os.path.join(root, name), "target": os.readlink(os.path.join(root, name))})

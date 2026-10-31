@@ -707,6 +707,52 @@ test("auth_log, shell_history and cron_dump answer partial, and say why, when th
   });
 });
 
+// ---- a hostile parameter is a JSON refusal, never a traceback -------------------------------------------------------------
+
+test("every parameter that becomes a regex, an argument or a number answers a hostile value in JSON, with no traceback", async () => {
+  await withCwd(async (cwd, bin) => {
+    await mkdir(join(cwd, "work", "journal"), { recursive: true });
+    await writeFile(join(cwd, "work", "journal", "system.journal"), Buffer.concat([Buffer.from("LPKSHHRH"), Buffer.alloc(248)]));
+    await put(join(cwd, "work", "ev"), "etc/crontab", lines("* * * * * root /bin/true"));
+    await put(join(cwd, "work", "ev"), "home/a/.bash_history", lines("echo a"));
+    await writeFile(join(cwd, "work", "wtmp"), Buffer.alloc(384));
+    await writeFile(join(bin, "journalctl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const nested = "(".repeat(1000) + "a" + ")".repeat(1000);
+    const cases: Array<[string, string, Record<string, unknown>]> = [
+      ["journal_export", JOURNAL, { path: "work/journal", unit: "a\u0000b" }],
+      ["journal_export", JOURNAL, { path: "work/journal", unit: "\ud800" }],
+      ["journal_export", JOURNAL, { path: "work/journal", priority: "a\u0000b" }],
+      ["journal_export", JOURNAL, { path: "work/journal", priority: "\ud800" }],
+      ["cron_dump", CRON, { root: "work/ev", contains: nested }],
+      ["shell_history", SHELL, { root: "work/ev", contains: nested }],
+      ["utmp_parse", UTMP, { path: "work/wtmp", user: nested }],
+    ];
+    for (const [name, script, args] of cases) {
+      const run = await tool(script, cwd, args, {}, bin);
+      assert.doesNotMatch(run.stderr, /Traceback/, `${name} ${JSON.stringify(args).slice(0, 80)}: ${run.stderr.slice(-300)}`);
+      const answer = JSON.parse(run.stdout);
+      assert.ok(run.code === 0 || answer.status === "failed", `${name}: ${run.stdout.slice(0, 200)}`);
+    }
+    // A number no file can hold is refused as one, not met as an overflow (the integer is written out: JSON.stringify would make it a float).
+    const huge = spawnSync("python3", [UTMP], { cwd, input: '{"path": "work/wtmp", "start_record": 100000000000000000000000000000}', encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+    assert.doesNotMatch(huge.stderr, /Traceback/, huge.stderr.slice(-300));
+    assert.equal(JSON.parse(huge.stdout).status, "failed");
+    assert.match(JSON.parse(huge.stdout).error, /start_record/);
+  });
+});
+
+test("auth_log looks through a directory tree on the clock: the whole file system passed as the path ends at max_seconds, not at the harness's kill", async () => {
+  await withCwd(async (cwd) => {
+    const started = Date.now();
+    const run = await tool(AUTH, cwd, { path: "/", max_seconds: 3 });
+    const seconds = (Date.now() - started) / 1000;
+    assert.ok(seconds < 30, `took ${seconds} s for max_seconds 3`);
+    assert.doesNotMatch(run.stderr, /Traceback/);
+    const out = JSON.parse(run.stdout);
+    assert.notEqual(out.status, "complete");
+  });
+});
+
 // ---- a signal that comes while a file is being written -------------------------------------------------------------
 
 // Python can run a signal handler inside a buffered file's own flush, where the file refuses a second flush: the last word then

@@ -49,7 +49,7 @@ import time
 from pathlib import Path
 
 TOOL = "utmp_parse"
-PARSER = "utmp_parse/12"
+PARSER = "utmp_parse/13"
 
 
 # BEGIN LINUX STOP
@@ -1049,7 +1049,7 @@ def main():
     if want_str(args, "user"):
         try:
             pattern = re.compile(args["user"], re.I)
-        except re.error as exc:
+        except (re.error, RecursionError, OverflowError, ValueError) as exc:
             fail("user is not a valid regex", reason=str(exc))
         arm_regex_clock()
     want_str(args, "passwd")
@@ -1080,6 +1080,8 @@ def main():
     start_record = args.get("start_record", 0)
     if isinstance(start_record, bool) or not isinstance(start_record, int) or start_record < 0:
         fail("start_record must be a whole number")
+    if start_record > 1 << 50:
+        fail("start_record is larger than any file can hold records (at most %d)" % (1 << 50))
     typed = (typed_arg == "true") or (typed_arg == "auto" and base.startswith("btmp"))
     if pattern is not None and typed and not is_lastlog and not in_job():
         fail("user is refused outside a job on a file whose user field is typed text (btmp): the field is withheld from this answer, so "

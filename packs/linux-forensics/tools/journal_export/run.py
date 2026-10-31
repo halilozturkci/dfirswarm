@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "journal_export"
-PARSER = "journal_export/13"
+PARSER = "journal_export/14"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 240.0
 MAX_SECONDS = 270.0           # the most a caller may ask for (the manifest allows 300)
@@ -1266,7 +1266,15 @@ def main():
         fail("grep is refused outside a job: it matches the text of the messages, which this answer withholds, so a count of what "
              "it matched would be an oracle on that text. Run this as job_run tool=journal_export with secret_output: true, and ask again there.")
     for name in ("unit", "grep", "priority", "since", "until"):
-        want_str(args, name)
+        given = want_str(args, name)
+        if given is not None:
+            # These become arguments of journalctl: a NUL byte or a lone surrogate cannot be one (it would end the call with a traceback).
+            try:
+                given.encode("utf-8")
+            except UnicodeEncodeError:
+                fail("%s holds a character that is not text (a lone surrogate): journalctl cannot be given it" % name)
+            if "\x00" in given:
+                fail("%s holds a NUL byte: journalctl cannot be given it" % name)
     bounds = {}
     for key in ("since", "until"):
         if args.get(key):

@@ -49,7 +49,7 @@ import time
 from pathlib import Path
 
 TOOL = "shell_history"
-PARSER = "shell_history/12"
+PARSER = "shell_history/13"
 
 
 # BEGIN LINUX STOP
@@ -961,7 +961,7 @@ def main():
     if want_str(args, "contains"):
         try:
             pattern = re.compile(args["contains"], re.I)
-        except re.error as exc:
+        except (re.error, RecursionError, OverflowError, ValueError) as exc:
             fail("contains is not a valid regex", reason=str(exc))
     arm_regex_clock()
     only_user = want_str(args, "user")
