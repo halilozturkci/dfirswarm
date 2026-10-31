@@ -38,6 +38,19 @@ test("every manifest has a use, a version above 1, and the sha256 of its script"
   }
 });
 
+test("every network script's TOOL version equals its manifest's version, and a PARSER label names its tool", async () => {
+  for (const name of NAMES) {
+    const manifest: Json = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
+    const script = await readFile(join(TOOLS, name, "run.py"), "utf8");
+    const tool = script.match(/^TOOL = \{"name": "([a-z_]+)", "version": (\d+)\}$/m);
+    assert.ok(tool, `${name} carries TOOL = {"name": ..., "version": N}`);
+    assert.equal(tool[1], name, `${name}: TOOL names the tool`);
+    assert.equal(Number(tool[2]), manifest.version, `${name}: TOOL says version ${tool[2]}, its manifest ${manifest.version}`);
+    const parser = script.match(/^PARSER = "([a-z_]+)\/(\d+)"$/m);
+    if (parser) assert.equal(parser[1], name, `${name}: PARSER names the tool`);
+  }
+});
+
 test("the parameters a manifest names are the parameters its script reads", async () => {
   for (const name of NAMES) {
     const manifest: Json = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));

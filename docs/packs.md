@@ -867,6 +867,14 @@ Every tool a pack bundles holds to this.
    the parser, from the format's specification or a known-good sample, never
    from the parser's own output. A test that shares the parser's wrong
    assumption proves nothing.
+8. **A tool's version and its `PARSER` label move by one written rule.** The
+   tool's `version` (the manifest's, and `TOOL`'s in a script that carries one;
+   the two are always equal) moves with any change to the tool's script or
+   manifest. Its `PARSER` label (`<tool>/<n>`, in the script) moves when what a
+   record says changes: a field added, renamed, typed or read differently, or a
+   record newly kept, split or rejected, so that two answers with one label
+   were read the same way. A change only to what is withheld from printing, to
+   a bound, a clock or a message moves the version and leaves the label.
 
 ### Requires and images
 
