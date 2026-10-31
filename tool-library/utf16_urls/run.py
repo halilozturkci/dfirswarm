@@ -40,7 +40,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-PARSER = "utf16_urls/3"
+PARSER = "utf16_urls/4"
+DEADLINE_SECONDS = 54             # the manifest allows 60: the scan stops here, so that the pages are placed and the answer printed before the harness ends it
+MAX_CHUNK = 32 * 1024 * 1024      # a window of this size costs about four times its size in memory (the window, its carry, the next read, the match)
+MAX_LIMIT = 10000                 # the largest inline page; the whole result is in the file the answer names
+MAX_DISTINCT = 1_000_000          # distinct strings counted (memory); past it the groups are said to be incomplete
+MAX_CONTAINS = 1000
+PROGRESS = {"offset": 0}
 DEFAULT_CHUNK = 8 * 1024 * 1024
 CARRY = 64 * 1024
 URL_CHARS = rb"[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%\-]"
@@ -145,6 +151,149 @@ class LosslessPage:
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. The name is taken first, with an exclusive create, so a result written at the same moment cannot be replaced either.
+def same_bytes(a, b):
+    """Whether two files hold the same bytes (read in blocks, never whole)."""
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            while True:
+                x, y = fa.read(1 << 20), fb.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. The name is taken first, with an exclusive create, so a
+    result written at the same moment cannot be replaced either. Returns the path that holds it."""
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        try:
+            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
+                os.unlink(tmp)
+                return candidate
+            continue
+        os.close(fd)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+# The URL-secrets block further down is one text in three tools (a test holds the copies equal) and builds its locator page by the name LosslessPage.
+# In this tool that name is the page that never replaces a result file, so a rerun with fewer locators cannot put a smaller file over a larger one.
+LosslessPage = NoReplacePage
+
+
+# BEGIN SHARED STOP
+# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
+# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
 
 
 # ---- URL secrets: one design in browser_history, utf16_urls and esedb_query (a test holds the three copies identical)
@@ -335,9 +484,30 @@ class UrlSecrets:
 # ---- end of URL secrets
 
 
+class ClockStop(Exception):
+    """The tool's own clock ran out inside the scan."""
+
+
+def drop_pages():
+    """Remove the temporary files of the pages that were being written (the STOP block does the same on a signal)."""
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            page._tmp = None
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    drop_pages()
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error and scanned nothing it can report (see error)", **extra})
     raise SystemExit(1)
+
+
+def last_word(signum):
+    interrupted_answer(signum, offset_reached=PROGRESS["offset"])
 
 
 class Spec:
@@ -388,6 +558,8 @@ def window(spec, buf, base, eof, emit):
 
 
 def main():
+    set_deadline(DEADLINE_SECONDS)
+    install_signal_handlers(last_word)
     try:
         d = json.load(sys.stdin)
     except ValueError as exc:
@@ -400,33 +572,39 @@ def main():
     if not os.path.isfile(path):
         fail("no such file", path=path)
     contains = d.get("contains") or ""
-    if not isinstance(contains, str):
-        fail("contains must be a string")
+    if not isinstance(contains, str) or len(contains) > MAX_CONTAINS:
+        fail("contains must be a string of at most %d characters" % MAX_CONTAINS)
     contains = contains.lower()
     limit = d.get("limit", 200)
-    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
-        fail("limit must be a positive integer", limit=d.get("limit"))
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIMIT:
+        fail("limit must be a whole number from 1 to %d (the inline page; the whole result is in the file the answer names)" % MAX_LIMIT)
     chunk = d.get("chunk", DEFAULT_CHUNK)
-    if isinstance(chunk, bool) or not isinstance(chunk, int) or not 2 * CARRY <= chunk <= 256 * 1024 * 1024:
-        fail("chunk must be a whole number of bytes from %d to 268435456" % (2 * CARRY), chunk=d.get("chunk"))
+    if isinstance(chunk, bool) or not isinstance(chunk, int) or not 2 * CARRY <= chunk <= MAX_CHUNK:
+        fail("chunk must be a whole number of bytes from %d to %d" % (2 * CARRY, MAX_CHUNK))
     max_distinct = d.get("max_distinct", 100000)
-    if isinstance(max_distinct, bool) or not isinstance(max_distinct, int) or max_distinct < 1:
-        fail("max_distinct must be a positive integer", max_distinct=d.get("max_distinct"))
+    if isinstance(max_distinct, bool) or not isinstance(max_distinct, int) or not 1 <= max_distinct <= MAX_DISTINCT:
+        fail("max_distinct must be a whole number from 1 to %d" % MAX_DISTINCT)
     write_url_secrets = d.get("write_url_secrets", False)
     if not isinstance(write_url_secrets, bool):
         fail("write_url_secrets must be true or false")
+    if write_url_secrets and os.environ.get("SECRET_OUTPUT") != "1":
+        fail("write_url_secrets is refused: the whole text of the URLs whose secrets were withheld is written only in a job the harness runs as secret output "
+             "(job_run with secret_output: true, which the manifest declares for this parameter). Nothing was opened or created.")
     try:
         values = SecretValues(write_url_secrets, "utf16_urls", "write_url_secrets", "utf16_urls-url-secrets.jsonl")
     except SecretValuesRefused as exc:
         fail(str(exc))
     url_secrets = UrlSecrets(values, "utf16_urls", [path, contains], limit)
 
-    out = LosslessPage("utf16_urls", [path, contains], limit)
+    out = NoReplacePage("utf16_urls", [path, contains], limit)
     groups = {}
     totals = {"ascii": 0, "utf16le": 0, "filtered_out": 0, "pieces": 0}
     state = {"groups_complete": True}
 
     def emit(spec, offset, raw, more, is_cont):
+        PROGRESS["offset"] = offset
+        if out_of_time():
+            raise ClockStop()
         text = raw.decode("ascii", "replace") if spec.width == 1 else raw.decode("utf-16-le", "replace")
         if spec.name == "utf16le":
             present = any(a in text.lower() for a in UTF16_ANCHORS)
@@ -461,6 +639,8 @@ def main():
     ascii_spec = Spec("ascii", ASCII_START, ASCII_CONT, 1)
     utf16_spec = Spec("utf16le", UTF16_START, UTF16_CONT, 2)
     scanned = 0
+    whole_to = 0
+    stopped = None
     try:
         size = os.path.getsize(path)
         with open(path, "rb") as fh:
@@ -468,12 +648,20 @@ def main():
             base = 0
             nxt = fh.read(chunk)
             while True:
+                if out_of_time():
+                    stopped = True
+                    break
                 data, nxt = nxt, fh.read(chunk) if nxt else b""
                 eof = not nxt
                 buf = carry + data
+                try:
+                    window(ascii_spec, buf, base, eof, emit)
+                    window(utf16_spec, buf, base, eof, emit)
+                except ClockStop:
+                    stopped = True
+                    break
                 scanned += len(data)
-                window(ascii_spec, buf, base, eof, emit)
-                window(utf16_spec, buf, base, eof, emit)
+                whole_to = scanned
                 if eof:
                     break
                 keep = min(CARRY, len(buf))
@@ -485,13 +673,21 @@ def main():
              path=path, status="failed", bytes_scanned=scanned, candidates_found_before=out.total, reason=describe(exc))
 
     page = out.finish()
-    distinct = LosslessPage("utf16_urls-groups", [path, contains, "groups"], limit)
+    distinct = NoReplacePage("utf16_urls-groups", [path, contains, "groups"], limit)
     for (enc, _text), (count, first, shown_text) in sorted(groups.items(), key=lambda kv: kv[1][1]):
         distinct.add({"text": shown_text, "encoding": enc, "occurrences": count, "first_offset": first})
     group_page = distinct.finish()
+    reasons = []
+    if stopped:
+        reasons.append("the tool's own clock (%d s) ran out: the first %d of the %d bytes were scanned whole, and the scan reached about byte %d; the rest of the file was not scanned" % (
+            DEADLINE_SECONDS, whole_to, size, PROGRESS["offset"]))
+    if not state["groups_complete"]:
+        reasons.append("more than max_distinct (%d) distinct strings: the groups list is incomplete (the candidates and their count are not)" % max_distinct)
     answer = {
         "parser": PARSER,
-        "status": "complete",
+        "status": "partial" if reasons else "complete",
+        "status_basis": "; ".join(reasons) if reasons else "every byte of the %d-byte file was scanned in windows of %d bytes and every candidate is counted" % (size, chunk),
+        "stopped_by_time_limit": bool(stopped),
         "path": path,
         "file_bytes": size,
         "bytes_scanned": scanned,
@@ -514,8 +710,16 @@ def main():
                 "withheld (url_secrets_withheld).",
     }
     values.close()
-    print(json.dumps(answer, ensure_ascii=False))
+    print_answer(answer)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        drop_pages()
+        print_answer({"error": "the scan failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)

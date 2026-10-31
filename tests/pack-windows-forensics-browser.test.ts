@@ -219,11 +219,11 @@ test("browser_history withholds the secrets of a URL in every cell, and writes t
 
     // Outside a job the request is refused, and nothing is written.
     const refused = failed(await tool("browser_history", cwd, { path: "work/History", query: "chrome_url_summary", write_url_secrets: true }));
-    assert.match(refused.error, /refused outside a job/);
+    assert.match(refused.error, /write_url_secrets is refused/);
 
     // In a job the whole text goes to a file of mode 0600 under $OUT, and the answer still holds no secret.
     const env = await inJob(cwd);
-    const jobRun = await tool("browser_history", cwd, { path: "work/History", sql: "SELECT id, url FROM urls ORDER BY id", write_url_secrets: true }, env);
+    const jobRun = await tool("browser_history", cwd, { path: "work/History", sql: "SELECT id, url FROM urls ORDER BY id", write_url_secrets: true }, { ...env, SECRET_OUTPUT: "1" });
     const job = body<Answer>(jobRun);
     assert.equal(job.secret_values.written, 3);
     assert.equal(job.secret_values.contains_secret_values, true);
@@ -234,7 +234,7 @@ test("browser_history withholds the secrets of a URL in every cell, and writes t
     assert.equal(rows[0].url.includes(TOKEN), true, "the whole text is in the file");
     await assertAbsent(jobRun, join(cwd, "out"), [TOKEN, USERPW, FRAGMENT], (f) => f === file);
     // A second run in the same job does not replace it.
-    const again = failed(await tool("browser_history", cwd, { path: "work/History", query: "chrome_url_summary", write_url_secrets: true }, env));
+    const again = failed(await tool("browser_history", cwd, { path: "work/History", query: "chrome_url_summary", write_url_secrets: true }, { ...env, SECRET_OUTPUT: "1" }));
     assert.match(again.error, /already exists/);
     assert.deepEqual((await readFile(file, "utf8")).trim().split("\n").length, 3);
     // The disposable copy, which held the originals, is gone from $OUT.
@@ -270,7 +270,7 @@ test("browser_history fails as JSON, with the reason, when the evidence or the p
     await mkdir(join(cwd, "work", "s1"), { recursive: true });
     await chmod(join(cwd, "work", "s1"), 0o555);
     try {
-      const nowhere = failed(await tool("browser_history", cwd, { path: "work/History", query: "tables" }));
+      const nowhere = failed(await tool("browser_history", cwd, { path: "work/History", query: "tables" }, { TMPDIR: join(cwd, "work", "s1") }));
       assert.match(nowhere.error, /scratch directory/);
     } finally {
       await chmod(join(cwd, "work", "s1"), 0o755);
@@ -475,9 +475,9 @@ test("utf16_urls withholds the secrets of a URL in its candidates and groups, ca
     assert.equal(guess.candidate_count, 0);
     assert.equal(guess.url_secrets_withheld.count, 0, "a candidate that is filtered out is not a finding");
     const refused = failed(await tool("utf16_urls", cwd, { path: "work/mem.raw", write_url_secrets: true }));
-    assert.match(refused.error, /refused outside a job/);
+    assert.match(refused.error, /write_url_secrets is refused/);
     const env = await inJob(cwd);
-    const jobRun = await tool("utf16_urls", cwd, { path: "work/mem.raw", write_url_secrets: true }, env);
+    const jobRun = await tool("utf16_urls", cwd, { path: "work/mem.raw", write_url_secrets: true }, { ...env, SECRET_OUTPUT: "1" });
     const job = body<Answer>(jobRun);
     assert.equal(job.secret_values.written, 3);
     const file2 = join(cwd, "out", "utf16_urls-url-secrets.jsonl");

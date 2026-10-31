@@ -160,7 +160,157 @@ class LosslessPage:
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 
-PARSER = "browser_history/3"
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. The name is taken first, with an exclusive create, so a result written at the same moment cannot be replaced either.
+def same_bytes(a, b):
+    """Whether two files hold the same bytes (read in blocks, never whole)."""
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            while True:
+                x, y = fa.read(1 << 20), fb.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. The name is taken first, with an exclusive create, so a
+    result written at the same moment cannot be replaced either. Returns the path that holds it."""
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        try:
+            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
+                os.unlink(tmp)
+                return candidate
+            continue
+        os.close(fd)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+# The URL-secrets block further down is one text in three tools (a test holds the copies equal) and builds its locator page by the name LosslessPage.
+# In this tool that name is the page that never replaces a result file, so a rerun with fewer locators cannot put a smaller file over a larger one.
+LosslessPage = NoReplacePage
+
+
+# BEGIN SHARED STOP
+# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
+# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+
+PARSER = "browser_history/4"
+DEADLINE_SECONDS = 80             # the manifest allows 90: the copy, the withholding and the queries stop here, so that the pages are placed and the answer printed before the harness ends it
+MAX_LIMIT = 10000                 # the largest inline page; the whole result is in the file the answer names
+MAX_CELL_BYTES = 32 * 1024 * 1024 # SQLITE_LIMIT_LENGTH of the copy: a string or blob past this is refused by SQLite instead of built (randomblob(1e8) took 776 MB)
+INLINE_CELL = 4096                # a cell longer than this (bytes of a blob, characters of a text) is shown inline by its type and length; the whole row is in the page's file
+SCRATCH = {"dir": None}
 
 # Chromium page transition core types (page_transition_types.h) and Firefox visit types
 # (nsINavHistoryService); the raw number is always returned beside the name.
@@ -237,9 +387,39 @@ NUMERIC_METADATA = re.compile(r"(^|_)(type|date|dates|count|length|time|times|ti
 SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
+class ClockStop(Exception):
+    """The tool's own clock ran out inside the copy."""
+
+
+def drop_pages():
+    """Remove the temporary files of the pages that were being written (the STOP block does the same on a signal)."""
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            page._tmp = None
+
+
+def remove_scratch():
+    """Remove the disposable copy (the raw evidence, until the withholding has run)."""
+    if SCRATCH["dir"]:
+        shutil.rmtree(SCRATCH["dir"], ignore_errors=True)
+        SCRATCH["dir"] = None
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    remove_scratch()
+    drop_pages()
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error and returned no rows (see error)", **extra})
     raise SystemExit(1)
+
+
+def last_word(signum):
+    remove_scratch()
+    interrupted_answer(signum)
 
 
 # ---- URL secrets: one design in browser_history, utf16_urls and esedb_query (a test holds the three copies identical)
@@ -513,6 +693,16 @@ def is_card_number(value):
     return 1 if total % 10 == 0 else 0
 
 
+def withhold_rows(conn, qt, q, where):
+    """The cells that match, one at a time by rowid, each marker numbered by its row. A table without a rowid raises, and the run stops (nothing is queried)."""
+    rowids = [r for (r,) in conn.execute("SELECT rowid FROM %s WHERE %s" % (qt, where)).fetchall()]
+    for n, rowid in enumerate(rowids):
+        if not (n & 1023) and out_of_time():
+            raise ClockStop()
+        conn.execute("UPDATE %s SET %s = '[withheld: ' || length(%s) || ' characters, row ' || ? || ']' WHERE rowid = ?" % (qt, q, q), (rowid, rowid))
+    return len(rowids)
+
+
 def withhold_sensitive(conn):
     """Replace, in the disposable copy and before any query runs, every cell of a sensitive column by a
     marker that holds only its length. Returns (what was withheld, the triggers dropped). If a column
@@ -548,12 +738,16 @@ def withhold_sensitive(conn):
                 # A column declared INTEGER, REAL or NUMERIC holds no such text.
                 if re.search(r"INT|REAL|FLOA|DOUB|NUM|DEC|BOOL|DATE|TIME", declared, re.I):
                     continue
-                cursor = conn.execute(
-                    "UPDATE %s SET %s = '[withheld: ' || length(%s) || ' characters]' "
-                    "WHERE typeof(%s) = 'text' AND length(%s) BETWEEN 13 AND 23 AND is_card_number(%s)" % (qt, q, q, q, q, q))
-                if cursor.rowcount:
-                    withheld.append({"table": table, "column": name, "rule": "luhn", "cells_withheld": cursor.rowcount,
-                                     "cell_types": {"text": cursor.rowcount}, "units": "characters (text)", "total_length": None})
+                where = "typeof(%s) = 'text' AND length(%s) BETWEEN 13 AND 23 AND is_card_number(%s)" % (q, q, q)
+                try:
+                    count = conn.execute("UPDATE %s SET %s = '[withheld: ' || length(%s) || ' characters]' WHERE %s" % (qt, q, q, where)).rowcount
+                except sqlite3.IntegrityError:
+                    # Two cards of one length under one key (autofill's primary key is name and value) would be the same marker twice. Row by row,
+                    # each marker carries its row id, which is no part of the card.
+                    count = withhold_rows(conn, qt, q, where)
+                if count:
+                    withheld.append({"table": table, "column": name, "rule": "luhn", "cells_withheld": count,
+                                     "cell_types": {"text": count}, "units": "characters (text)", "total_length": None})
                 continue
             numbers = not (rule == "name" and NUMERIC_METADATA.search(name))
             types = "'text', 'blob', 'integer', 'real'" if numbers else "'text', 'blob'"
@@ -576,24 +770,73 @@ def withhold_sensitive(conn):
     return withheld, dropped
 
 
-def scratch_parent():
-    """Where the disposable copy lives: the job's $OUT, else the agent's own directory, else the system's."""
-    out, job = os.environ.get("OUT"), os.environ.get("JOB_ID")
-    if job and out:
-        base = out
-    else:
-        base = os.path.join("work", re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"))
-    try:
-        os.makedirs(base, exist_ok=True)
-        return base
-    except OSError:
-        return None
+def make_scratch():
+    """Where the disposable copy lives: a private directory (mode 0700) in the system's temporary directory, never in $OUT. The copy is the raw
+    evidence until the withholding has run, and $OUT is sealed as the job's output: a run killed with SIGKILL would leave it there. A stop signal
+    removes the copy; after SIGKILL it stays in the temporary directory (outside $OUT) until the host clears it. Python's own choice of directory is
+    not used, because it ends at the current directory when nothing else is writable."""
+    # TMPDIR, when the operator set it, is the only place tried: it is their choice, and a place that cannot be written is said, not stepped over.
+    bases = [os.environ["TMPDIR"]] if os.environ.get("TMPDIR") else ["/tmp", "/var/tmp"]
+    reason = None
+    for base in bases:
+        try:
+            return tempfile.mkdtemp(prefix=".browser-scratch-", dir=base)
+        except OSError as exc:
+            reason = exc
+    raise reason if reason is not None else OSError("no temporary directory")
 
 
 def jsonable(value):
     if isinstance(value, (bytes, bytearray)):
         return {"blob_hex": bytes(value).hex(), "length": len(value)}
     return value
+
+
+def cell_views(value):
+    """(whole, short): the cell as the page's file holds it and as the inline page shows it. A blob or a text longer than INLINE_CELL is shown inline by
+    its type and length alone."""
+    if isinstance(value, (bytes, bytearray)) and len(value) > INLINE_CELL:
+        return jsonable(value), {"type": "blob", "length": len(value), "inline_cut": True}
+    if isinstance(value, str) and len(value) > INLINE_CELL:
+        return value, {"type": "text", "length": len(value), "inline_cut": True}
+    whole = jsonable(value)
+    return whole, whole
+
+
+class RowPage(NoReplacePage):
+    """A page of rows whose cells can be large: every row goes to the file whole as it arrives (the inline page keeps only the short version of the first
+    rows, so memory does not follow the cells), and the file is kept when there are more rows than the page holds or a cell was cut."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        self.cut = 0
+
+    def add_row(self, whole, short):
+        self.total += 1
+        if self._out is None:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=f".{self.path.name}-")
+                self._tmp = Path(name)
+                self._out = os.fdopen(fd, "w", encoding="utf-8")
+            except OSError as exc:
+                self._cannot_write(exc)
+        self._write(whole)
+        if len(self.page) < self.limit:
+            self.page.append(short)
+        if short is not whole:
+            self.cut += 1
+
+    def finish(self):
+        if self._out is not None and self.total <= len(self.page) and not self.cut:
+            try:
+                self._out.close()
+                os.unlink(self._tmp)
+            except OSError:
+                pass
+            self._out = None
+            self._tmp = None
+        return super().finish()
 
 
 # ---- The sidecars, read by their formats (https://www.sqlite.org/fileformat2.html: the database header, "Write-Ahead Log",
@@ -735,16 +978,39 @@ def inspect_journal(path, db):
 
 
 def copy_private(source, destination):
-    """A copy of `source` whose mode is the owner's alone: the evidence may be read-only (0444), and the copy must be written."""
-    shutil.copyfile(source, destination)
-    os.chmod(destination, 0o600)
+    """A copy of `source` whose mode is the owner's alone from the first byte: the evidence may be read-only (0444), and the copy must be written.
+    It is read in pieces of a megabyte with the clock looked at."""
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with open(source, "rb") as src, os.fdopen(fd, "wb") as dst:
+        while True:
+            if out_of_time():
+                raise ClockStop()
+            piece = src.read(1 << 20)
+            if not piece:
+                break
+            dst.write(piece)
+
+
+def stopped_answer(path, query, values, url_secrets, where, queried=0):
+    """The clock ran out before the queries ran to their ends (or before the copy was withheld): what was read is named, and nothing unwithheld was ever queried."""
+    values.close()
+    print_answer({
+        "path": path, "parser": PARSER, "query": query, "status": "partial",
+        "status_basis": "the tool's own clock (%d s) ran out %s; %d statement(s) were answered whole before it; nothing was queried on a copy that was not yet withheld" % (DEADLINE_SECONDS, where, queried),
+        "stopped_by_time_limit": True, "url_secrets_withheld": url_secrets.summary(),
+    }, indent=2, default=str)
 
 
 def main():
+    set_deadline(DEADLINE_SECONDS)
+    install_signal_handlers(last_word)
+    os.umask(0o077)           # every file this run makes (the copy, its sidecars, SQLite's journal) is the owner's alone
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
         fail("arguments are not valid JSON", reason=str(exc))
+    if not isinstance(args, dict):
+        fail("the arguments must be a JSON object")
 
     path = args.get("path")
     if not isinstance(path, str) or not path:
@@ -753,12 +1019,17 @@ def main():
         fail("no such file", path=path)
 
     query = args.get("query", "tables")
+    if not isinstance(query, str):
+        fail("query must be a string: the name of a built-in query")
     sql = args.get("sql")
     if sql is not None and not isinstance(sql, str):
         fail("sql must be a string")
     write_url_secrets = args.get("write_url_secrets", False)
     if not isinstance(write_url_secrets, bool):
         fail("write_url_secrets must be true or false")
+    if write_url_secrets and os.environ.get("SECRET_OUTPUT") != "1":
+        fail("write_url_secrets is refused: the whole text of the URLs whose secrets were withheld is written only in a job the harness runs as secret output "
+             "(job_run with secret_output: true, which the manifest declares for this parameter). Nothing was opened or created.")
     query_note = None
     if sql is None:
         if query in OLD_NAMES:
@@ -781,9 +1052,9 @@ def main():
             fail("sql must be a SELECT, WITH or PRAGMA", statement=s)
 
     limit = args.get("limit", 200)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer", limit=args.get("limit"))
-    page_size = min(limit, 20000)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIMIT:
+        fail("limit must be a whole number from 1 to %d (the inline page; the whole result is in the file the answer names)" % MAX_LIMIT)
+    page_size = limit
 
     try:
         values = SecretValues(write_url_secrets, "browser_history", "write_url_secrets", "browser_history-url-secrets.jsonl")
@@ -791,18 +1062,23 @@ def main():
         fail(str(exc))
     url_secrets = UrlSecrets(values, "browser_history", [path, sql], page_size)
 
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # so the copy below is removed when the harness stops us
+    # The disposable copy is the raw evidence, secrets and all, until the withholding below has run. It lives in a private directory outside
+    # $OUT (mode 0700), so a run that is killed with SIGKILL leaves nothing in the job's output; a stop signal removes it (the last word).
     try:
-        scratch = tempfile.mkdtemp(prefix=".browser-scratch-", dir=scratch_parent())
+        scratch = make_scratch()
     except OSError as exc:
         values.close()
-        fail("the scratch directory for the copy could not be created: nothing was read", reason=describe(exc))
+        fail("the private scratch directory for the copy could not be made outside $OUT: nothing was read", reason=describe(exc))
+    SCRATCH["dir"] = scratch
     try:
         copy = os.path.join(scratch, os.path.basename(path))
         try:
             copy_private(path, copy)
             with open(copy, "rb") as fh:
                 head = fh.read(100)
+        except ClockStop:
+            stopped_answer(path, None if args.get("sql") else query, values, url_secrets, "while the database was copied")
+            return
         except OSError as exc:
             fail("the database could not be copied for reading: nothing was read", path=path, reason=describe(exc))
         sidecars, not_copied = [], []
@@ -846,6 +1122,9 @@ def main():
                         continue
                 copy_private(beside, copy + suffix)
                 sidecars.append(name)
+            except ClockStop:
+                stopped_answer(path, None if args.get("sql") else query, values, url_secrets, "while the sidecar %s was copied" % name)
+                return
             except OSError as exc:
                 fail("a sidecar could not be read or copied: nothing was read", file=name, reason=describe(exc))
         declares_wal = db is not None and db["write_version"] == 2 and db["read_version"] == 2
@@ -856,18 +1135,36 @@ def main():
         except sqlite3.Error as exc:
             fail("SQLite could not open the copy; nothing was queried", path=path, reason=str(exc))
         conn.text_factory = lambda b: b.decode("utf-8", errors="backslashreplace")
+        # The clock runs inside every statement, the withholding's UPDATEs and the caller's SQL alike: SQLite asks every 1,000 virtual-machine steps
+        # and a statement that has run out of time is stopped. A cell is also bounded (a randomblob of 100 MB is refused, not built).
+        conn.set_progress_handler(lambda: 1 if out_of_time() else 0, 1000)
+        try:
+            conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_CELL_BYTES)
+        except (AttributeError, sqlite3.Error):
+            pass
         results = []
+        stopped_by_clock = None
         try:
             try:
                 checkpoint = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
                 withheld, triggers_dropped = withhold_sensitive(conn)
                 conn.execute("PRAGMA query_only=ON")
+            except ClockStop:
+                stopped_answer(path, None if args.get("sql") else query, values, url_secrets, "while the sensitive columns of the copy were withheld")
+                return
             except sqlite3.DatabaseError as exc:
+                if out_of_time():
+                    stopped_answer(path, None if args.get("sql") else query, values, url_secrets, "while the sensitive columns of the copy were withheld")
+                    return
                 fail("this is not a SQLite database SQLite can read, or a sensitive column could not be withheld; nothing was queried",
                      path=path, reason=str(exc), sqlite_header=head[:16] == SQLITE_MAGIC, size=os.path.getsize(path))
             conn.set_authorizer(read_only_authorizer)
             wal = {"busy": checkpoint[0], "log_frames": checkpoint[1], "checkpointed_frames": checkpoint[2]}
             for statement_index, s in enumerate(stmts):
+                if out_of_time():
+                    stopped_by_clock = "before statement %d of %d" % (statement_index + 1, len(stmts))
+                    break
+                page = None
                 try:
                     cur = conn.execute(s)
                     columns = [d[0] for d in (cur.description or [])]
@@ -877,25 +1174,31 @@ def main():
                     for c in columns:
                         seen[c] = seen.get(c, 0) + 1
                         names.append(c if seen[c] == 1 else "%s_%d" % (c, seen[c]))
-                    page = LosslessPage(
-                        "browser_history",
-                        [path, s, statement_index],
-                        page_size,
-                    )
+                    page = RowPage("browser_history", [path, s, statement_index], page_size)
                     row_number = 0
                     for row in cur:
                         row_number += 1
-                        cells = {}
+                        if not (row_number & 255) and out_of_time():
+                            stopped_by_clock = "inside statement %d of %d, after %d rows" % (statement_index + 1, len(stmts), row_number - 1)
+                            break
+                        whole, short = {}, {}
                         for n, v in zip(names, row):
                             if isinstance(v, str):
                                 v = url_secrets.mask(v, {"statement": statement_index, "row": row_number, "column": n})
-                            cells[n] = jsonable(v)
-                        page.add(cells)
+                            whole[n], short[n] = cell_views(v)
+                        page.add_row(whole, short)
                     kept = page.finish()
                     if names != columns:
                         columns = names
                 except sqlite3.Error as exc:
-                    fail("sqlite refused the query", reason=str(exc), sql=s, done=len(results))
+                    if out_of_time():
+                        # The progress handler stopped the statement: what it had returned is kept, and the answer says so.
+                        stopped_by_clock = "inside statement %d of %d" % (statement_index + 1, len(stmts))
+                        if page is None:
+                            break
+                        kept = page.finish()
+                    else:
+                        fail("sqlite refused the query", reason=str(exc), sql=s, done=len(results))
                 results.append({
                     "sql": s,
                     "columns": columns,
@@ -903,10 +1206,23 @@ def main():
                     "row_count": kept["matched"],
                     **kept,
                 })
+                if stopped_by_clock:
+                    break
         finally:
             conn.close()
 
+        reasons = []
+        if stopped_by_clock:
+            reasons.append("the tool's own clock (%d s) ran out %s: the rows after it were not read" % (DEADLINE_SECONDS, stopped_by_clock))
+        refused = [item["file"] for item in not_copied if item.get("refused") or (item["file"].endswith("-wal") and "refused" in item)]
+        if refused:
+            reasons.append("a sidecar was not applied (%s): the database was read as acquired" % ", ".join(refused))
         out = {"path": path, "parser": PARSER, "sqlite_version": sqlite3.sqlite_version, "query": None if args.get("sql") else query}
+        out["status"] = "partial" if reasons else "complete"
+        out["status_basis"] = "; ".join(reasons) if reasons else (
+            "every statement ran to its end over the withheld copy (%d statement(s)); a cell longer than %d is shown by its type and length, with the whole row in the file the page names"
+            % (len(results), INLINE_CELL))
+        out["stopped_by_time_limit"] = bool(stopped_by_clock)
         if query_note:
             out["query_note"] = query_note
         # One statement answers as it always has; several answer each in turn.
@@ -938,11 +1254,20 @@ def main():
             "read_only": "the statement must start with SELECT, WITH or PRAGMA, and the copy is opened with an authorizer that denies anything else",
         })
         values.close()
-        print(json.dumps(out, indent=2, default=str))
+        print_answer(out, indent=2, default=str)
     finally:
         values.close()
-        shutil.rmtree(scratch, ignore_errors=True)
+        remove_scratch()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        remove_scratch()
+        drop_pages()
+        print_answer({"error": "the read failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)
