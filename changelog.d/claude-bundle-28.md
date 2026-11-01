@@ -37,3 +37,17 @@ source named. A result that fails a check is rejected with the reason and none o
 content is shown. The byte search stays a heuristic, the status stays partial, and no
 marker is not "not encrypted". doc_structure/1 does not record the file's hash, so
 the match is by size and name. `archives/protected` says so.
+
+### Added: encrypted-containers reads the protection of 7-Zip and RAR archives, and lists a ZIP, without extracting
+
+A new tool, `archive_metadata`, keeps two findings apart: whether an archive's headers
+are encrypted (the names need the password) and whether its members are. For 7-Zip it
+reads the start header (both CRCs), the next header's place against the file's size and,
+when the header is packed, the coder list for 7-Zip's AES coder; for RAR 4 and RAR 5 it
+reads every block header (the password flags, the archive encryption header, each file's
+encrypted flag and declared sizes, each CRC) to the end-of-archive block; 7z then lists
+the members with an impossible password and no prompt. A set of volumes with a missing
+next volume is named, and a member declared enormously larger than its packed size is
+counted, never unpacked. A ZIP is listed through 7z only: its structure stays
+`archive_probe`'s, so the ZIP reader is not copied. The first `limit` members are inline
+and all of them are in the file the answer names. `archives/formats` names it.

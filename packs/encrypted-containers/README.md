@@ -20,7 +20,10 @@ of its own. The thirteenth is the pack's router, `encrypted/router` (at
 most 400 tokens): it names the other twelve by the question each answers, holds no
 rule, and is the one line a run shows for the pack when its skills index is over budget.
 
-**Seven tools.**
+**Eight tools.**
+`archive_metadata` says what protects a 7-Zip or RAR archive, from the start header or the block
+headers and then through 7z: whether the headers (the names) and the members are encrypted,
+whether the set of volumes is whole; it lists a ZIP through 7z, and never extracts.
 `crypto_selftest` builds tiny synthetic LUKS, BitLocker, Core Storage, APFS, ZIP-AES
 and VHD samples, runs the installed readers and modules on them and says which pairs
 parsed, which did not and which are unavailable, with exact versions and john's helper
