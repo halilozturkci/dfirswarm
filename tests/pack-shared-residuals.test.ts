@@ -199,7 +199,7 @@ test("every copy of the comparison in the tree is the one fixed text (the macOS 
   const groups = [...seen.entries()].sort((a, b) => b[1].length - a[1].length);
   assert.equal(groups.length, 2, JSON.stringify(groups.map(([k, v]) => [k.slice(0, 10), v.length])));
   assert.equal(groups[0][0], SAME_BYTES_SHA);
-  assert.equal(groups[0][1].length, 59, "56 carriers before the three tools of ransomware-response added since (encryption_extent, recovery_validate, ransomware_scope_report)");
+  assert.equal(groups[0][1].length, 64, "56 carriers before the three tools of ransomware-response added since (encryption_extent, recovery_validate, ransomware_scope_report), and the five memory-forensics tools that carry the byte comparison (vol_readiness, mem_registry, carve_handoff, vol_views, isf_intake)");
   assert.deepEqual(groups[1][1], ["packs/macos-forensics/tools/unified_log/run.py"]);
 });
 

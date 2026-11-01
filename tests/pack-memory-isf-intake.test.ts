@@ -41,7 +41,9 @@ if a == ["--version"]:
     print("dwarf2json 0.9.0"); sys.exit(0)
 b = cfg.get("d2j", {})
 if b.get("pid"):
-    open(b["pid"], "w").write(str(os.getpid()))
+    with open(b["pid"] + ".part", "w") as f:
+        f.write(str(os.getpid()))
+    os.replace(b["pid"] + ".part", b["pid"])   # whole or absent: the test never reads half a number
 if b.get("ignore_term"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 sys.stderr.write(b.get("stderr", "")); sys.stderr.flush()
@@ -352,8 +354,12 @@ test("a vol that forks a child and ignores SIGTERM, and a converter that does: S
     await writeFile(join(bin, "vol"), `#!${PY}
 import os, signal, subprocess, sys, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
-open("${me}", "w").write(str(os.getpid()))
-k = subprocess.Popen([sys.executable, "-c", "import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); open('${kid}', 'w').write(str(os.getpid())); time.sleep(300)"])
+def put(path):
+    with open(path + ".part", "w") as f:
+        f.write(str(os.getpid()))
+    os.replace(path + ".part", path)
+put("${me}")
+k = subprocess.Popen([sys.executable, "-c", "import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); p = '${kid}'; f = open(p + '.part', 'w'); f.write(str(os.getpid())); f.close(); os.replace(p + '.part', p); time.sleep(300)"])
 time.sleep(300)
 `);
     await chmod(join(bin, "vol"), 0o755);
