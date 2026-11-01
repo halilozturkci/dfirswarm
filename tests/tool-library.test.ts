@@ -231,7 +231,8 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     const mismatch = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {});
     assert.notEqual(mismatch.code, 0);
     const bad = JSON.parse(mismatch.stdout) as { status: string; modified: string[] };
-    assert.equal(bad.status, "FAIL");
+    assert.equal(bad.status, "complete", "every file was checked: the status is about the check, ok is the verdict");
+    assert.equal((bad as { ok: boolean }).ok, false);
     assert.ok(bad.modified.includes("inputs/AF-Case2.E01"));
 
     const { createHash } = await import("node:crypto");
@@ -249,7 +250,8 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     );
     const ok = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {});
     assert.equal(ok.code, 0, ok.stderr);
-    assert.equal((JSON.parse(ok.stdout) as { status: string }).status, "OK");
+    assert.equal((JSON.parse(ok.stdout) as { status: string }).status, "complete");
+    assert.equal((JSON.parse(ok.stdout) as { ok: boolean }).ok, true);
     assert.equal((JSON.parse(ok.stdout) as { baseline: string }).baseline, "the run's inputs.json");
 
     // In a job the run's inputs.json is not in the run directory the job sees: the job service gives a copy, named by
@@ -263,7 +265,7 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     const inJob = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {}, undefined, { JOB_ID: "j000006", OUT: out, SWARM_INPUTS_MANIFEST: join(copy, "inputs.json") });
     assert.equal(inJob.code, 0, inJob.stdout + inJob.stderr);
     const inJobBody = JSON.parse(inJob.stdout) as { status: string; baseline: string };
-    assert.equal(inJobBody.status, "OK");
+    assert.equal(inJobBody.status, "complete");
     assert.match(inJobBody.baseline, /a copy of the run.s inputs.json the job service gave this job when it started/, "the answer says its baseline was the job's copy");
     const none = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {}, undefined, { JOB_ID: "j000007", OUT: out });
     assert.notEqual(none.code, 0);

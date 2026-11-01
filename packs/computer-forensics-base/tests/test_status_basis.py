@@ -5,7 +5,7 @@ import unittest
 
 from support import Case, run_tool
 
-WORDS = {"complete", "partial", "failed", "OK", "FAIL"}
+WORDS = {"complete", "partial", "failed"}
 
 
 class StatusBasis(Case):
@@ -24,7 +24,7 @@ class StatusBasis(Case):
         self.assertEqual(self.check("file_type", {"path": blob}).json["status"], "complete")
         self.assertEqual(self.check("timestamp_decode", {"value": "1700000000"}).json["status"], "complete")
         self.write("inputs.json", json.dumps({"files": []}))
-        self.assertEqual(self.check("check_inputs", {}).json["status"], "OK")
+        self.assertEqual(self.check("check_inputs", {}).json["status"], "complete")
         self.write("catalog/Disk.E01/p2048/filelist.txt", "r/r 5-128-1:\tUsers/a/file.log\n")
         self.write("catalog/Disk.E01/partitions.txt", "002:  000:000   0000002048   ...   NTFS\n")
         self.assertEqual(self.check("catalog_search", {"pattern": "file"}).json["status"], "complete")
