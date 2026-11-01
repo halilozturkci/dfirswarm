@@ -199,7 +199,7 @@ test("SAM and SECURITY: refused outside a job, in a job that is not secret outpu
     assert.equal(out.written, false);
     assert.ok(!(await argvLog(cwd)).some((c) => c.some((x) => x.includes("printkey"))), "printkey was not run");
     // write_values outside a job, and in a job that is not secret output: refused before the image is looked at (no vol call at all)
-    for (const e of [{}, { JOB_ID: "j", OUT: join(cwd, "o") }]) {
+    for (const e of [{}, { JOB_ID: "j", OUT: join(cwd, "o") }] as Array<Record<string, string>>) {
       const before = (await argvLog(cwd)).length;
       run = await runTool(REG, cwd, { ...args, write_values: true }, { ...env, ...e }, bin);
       out = parse(run);

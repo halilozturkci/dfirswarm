@@ -3,7 +3,7 @@ id: triage/address-spaces
 title: Which address space a number is in
 when: A number from memory needs a place, or a raw region is compared with a rebuilt executable.
 needs: []
-tools: [mem_profile, mem_fs]
+tools: [mem_profile, mem_fs, mem_carve]
 requires_host: [vol]
 ---
 

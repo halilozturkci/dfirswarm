@@ -4,6 +4,7 @@ title: From a signature hit to a record you can cite
 when: A carved hit must be readied for a parser, or its integrity judged.
 needs: []
 tools: [mem_carve, carve_handoff]
+mentions: [regkv, evtx_carve, mam_scan, prefetch_mam]
 requires_host: []
 ---
 

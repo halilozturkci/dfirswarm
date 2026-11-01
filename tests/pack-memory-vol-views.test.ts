@@ -224,7 +224,7 @@ test("write_values: refused outside a job and in one that is not secret output, 
     const exportsText = { "pid.4.dmp": "dump-of-system", "pid.77.dmp": `dump-with-${canary}` };
     const env = await stubVol(cwd, bin, { ...CFG, run: { stdout, exports: exportsText } });
     const args = { ...base, write_values: true };
-    for (const e of [{}, { JOB_ID: "j", OUT: join(cwd, "o") }]) {
+    for (const e of [{}, { JOB_ID: "j", OUT: join(cwd, "o") }] as Array<Record<string, string>>) {
       const before = (await calls(cwd)).length;
       const out = parse(await runTool(VIEWS, cwd, args, { ...env, ...e }, bin));
       assert.equal(out.write_values, "refused");

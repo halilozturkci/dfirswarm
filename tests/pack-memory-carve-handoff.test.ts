@@ -267,7 +267,7 @@ test("credential families: no hash and no bytes outside a secret job; write_valu
     const p = await put(cwd, "c.raw", image(1 << 20, [[0x10000, body]]));
     const args = { path: p, kind: "registry hive", signature_offset: 0x10000 };
     // refusals: nothing is opened or written (the image does not even exist for the second call)
-    for (const env of [{}, { JOB_ID: "j", OUT: join(cwd, "o") }]) {
+    for (const env of [{}, { JOB_ID: "j", OUT: join(cwd, "o") }] as Array<Record<string, string>>) {
       const out = parse(await call(cwd, { ...args, write_values: true }, env));
       assert.equal(out.status, "failed");
       assert.equal(out.write_values, "refused");

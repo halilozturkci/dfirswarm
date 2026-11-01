@@ -3,7 +3,7 @@ id: triage/coverage
 title: What a memory search covered
 when: Before writing "not in memory", or when a plugin or scan returned nothing, stopped early or gave a count.
 needs: [evidence/coverage]
-tools: [mem_carve]
+tools: [mem_carve, mem_profile]
 requires_host: [vol]
 ---
 
@@ -18,7 +18,7 @@ Memory adds two questions to the base rule: what the capture holds, and what the
 
 **Define the search before you run it.**
 - *Formats and captured ranges*: which ranges the capture holds, from validated headers and the acquisition record. `mem_profile`'s `sampled_ranges` are the bytes it sampled, and `file_pages_4k_estimate` is the file's length over 4096, not a count of captured pages.
-- *Framework initialisation*: the layer stack built, the kernel identified, the symbols matched (`triage/volatility`). A framework that did not initialise examined nothing, whatever it printed.
+- *Framework initialisation*: `vol`'s layer stack built, the kernel identified, the symbols matched (`triage/volatility`). A framework that did not initialise examined nothing, whatever it printed.
 - *Per-plugin coverage*: a list plugin walks one structure (a linked list, a table) and cannot show an object that is unlinked or freed; a scan plugin finds remnants as well. Say which one produced the empty result.
 - *Scan limits*: the start and length, the clock, the result cap, the encodings searched (UTF-8 and UTF-16LE).
 - *Unreadable mappings*: an object whose pages are not present is not readable here, which is different from absent.
