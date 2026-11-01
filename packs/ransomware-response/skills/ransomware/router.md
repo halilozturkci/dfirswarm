@@ -19,6 +19,10 @@ Encryptor
 `encryptor/destroyed-backups` recovery impairment, surviving paths
 `encryptor/backup-infrastructure` backup server, immutable store, hypervisor
 
+Platforms
+`platforms/esxi-hypervisors` hypervisor host, management plane, datastore
+`platforms/nas-storage` storage appliance, shares, replication
+
 Family and data
 `identify/family` family candidates, attribution limits
 `identify/samples-and-decryptors` sample, behaviour, public decryptors

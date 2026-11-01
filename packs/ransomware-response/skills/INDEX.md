@@ -13,6 +13,8 @@ Router: `ransomware/router`
 - `exfil/measure-and-claims` What a transfer measure means, and adversary claims: You quote a byte count, tie content to a transfer, or weigh a leak-site listing.
 - `identify/family` Identifying a ransomware family without overstating attribution: Artefacts may support a family classification or a public recovery option.
 - `identify/samples-and-decryptors` Samples, behaviour and public decryptors: A sample survives, behaviour is attributed, or public decryptors are checked.
+- `platforms/esxi-hypervisors` ESXi hosts, management plane and datastores: An ESXi host, its management server, guests or datastores were encrypted or altered.
+- `platforms/nas-storage` Network storage, shares and replication: A NAS appliance, its shares, snapshots or replication were encrypted or altered.
 - `ransomware/router` Ransomware notes by question: Pick one when none is listed, or you cannot choose.
 - `recovery/routes-and-decryptors` Partial damage, deleted originals, decryptors: Files are partly encrypted, originals may be deleted, or a decryptor is to be tested.
 - `recovery/what-is-possible` Assessing and validating recovery without destroying evidence: The organisation needs a defensible recovery position and restoration plan.

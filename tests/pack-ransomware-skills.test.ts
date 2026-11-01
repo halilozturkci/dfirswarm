@@ -63,9 +63,12 @@ const SECOND: Record<string, string> = {
   "reporting/conclusions-and-controls": "reporting/for-regulators",
 };
 
+// Leaves added after the split pass: each one is a leaf of its own, named once by the router and listed in the index.
+const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage"];
+
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, OLD_IDS.length + Object.keys(SECOND).length + 1, "the pack's leaves and its router");
+  assert.equal(skills.size, OLD_IDS.length + Object.keys(SECOND).length + ADDED.length + 1, "the pack's leaves and its router");
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= 800, `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
@@ -245,7 +248,8 @@ test("ransomware/router is the pack's only router, within 400 tokens, holds no r
   assert.deepEqual([...named].sort(), [...skills.keys()].filter((id) => id !== ROUTER).sort());
   assert.equal(BEFORE.length, 17);
   for (const id of BEFORE) assert.ok(skills.has(id), `${id} is still a skill`);
-  assert.equal(skills.size, BEFORE.length + 1, "the router is the only skill added");
+  assert.equal(skills.size, BEFORE.length + ADDED.length + 1, "the router and the leaves added since are the only skills added");
+  for (const id of ADDED) assert.ok(skills.has(id), `${id} is a skill`);
   // The generated index names it as the pack's router, which is the line the harness reads.
   assert.match(await readFile(join(SKILLS, "INDEX.md"), "utf8"), /^Router: `ransomware\/router`$/m);
 });
@@ -258,7 +262,7 @@ test("the pack index is at most 1,000 tokens counted as the harness counts it: t
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => /^- `[^`]+`/.test(l));
   const parsed = await readPackIndex(PACK);
   assert.deepEqual(parsed.entries.map((e) => e.line), lines, "the harness reads every entry line of the file, and no other");
-  assert.equal(parsed.entries.length, BEFORE.length + 1);
+  assert.equal(parsed.entries.length, BEFORE.length + ADDED.length + 1);
   assert.equal(parsed.router, ROUTER);
   assert.equal(lines.reduce((n, l) => n + estimateTokens(l), 0), parsed.tokens);
   assert.ok(parsed.tokens <= SKILL_BUDGET.pack, `the pack index is ${parsed.tokens} tokens of entries, over ${SKILL_BUDGET.pack}`);
@@ -308,21 +312,54 @@ test("a run that carries this pack with others is over the run's index budget, a
 test("the README no longer says there is no method for hypervisors or network storage, and backup-infrastructure points to the virtualization pack conditionally, by mentions only", async () => {
   const readme = flat(await readFile(join(PACK, "README.md"), "utf8"));
   assert.doesNotMatch(readme, /no examination method for hypervisors or network storage/);
-  assert.match(readme, /`encryptor\/backup-infrastructure` skill/);
-  assert.match(readme, /read by the virtualization-backup-forensics pack when it is loaded/);
-  const leaf = (await load(SKILLS)).get("encryptor/backup-infrastructure");
-  assert.ok(leaf, "the leaf exists");
-  assert.deepEqual(leaf.meta.mentions, ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"]);
-  assert.deepEqual(leaf.meta.tools, []);
-  assert.deepEqual(leaf.meta.needs, []);
-  const text = flat(leaf.body);
-  assert.match(text, /If the virtualization-backup-forensics pack is loaded \(check the run's tool inventory\)/);
-  for (const tool of ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"]) assert.ok(text.includes(`\`${tool}\``), `${tool} is named`);
-  assert.ok(TOKENS(leaf.text) <= 800, `the leaf is ${TOKENS(leaf.text).toFixed(0)} tokens`);
-  // no dependency edge: the pack depends on the base pack only, and the leaf is still method only, with its reason saying the tools are another pack's
+  assert.match(readme, /`encryptor\/backup-infrastructure`/);
+  assert.match(readme, /read by the virtualization-backup-forensics\s+pack when it is loaded/);
+  const skills = await load(SKILLS);
+  const infra = skills.get("encryptor/backup-infrastructure");
+  assert.ok(infra, "the leaf exists");
+  // backup-infrastructure points to the two platform leaves and does not repeat them: it names none of the virtualization tools.
+  const infraText = flat(infra.body);
+  assert.match(infraText, /`platforms\/esxi-hypervisors`/);
+  assert.match(infraText, /`platforms\/nas-storage`/);
+  for (const tool of ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"]) assert.ok(!infraText.includes(tool), `${tool} is not repeated in backup-infrastructure`);
+  assert.deepEqual(infra.meta.tools, []);
+  assert.deepEqual(infra.meta.needs, []);
+  assert.ok(TOKENS(infra.text) <= 800, `the leaf is ${TOKENS(infra.text).toFixed(0)} tokens`);
   const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { depends: string[]; method_only: Array<{ path: string; why: string }> };
+  // no dependency edge: the pack depends on the base pack only
   assert.deepEqual(pack.depends.map((d) => d.split(/[<>=]/)[0]), ["computer-forensics-base"]);
-  const entry = pack.method_only.find((m) => m.path === "skills/encryptor/backup-infrastructure.md");
-  assert.ok(entry, "the leaf stays method_only");
-  assert.match(entry.why, /belong to the virtualization-backup-forensics pack and are only mentioned/);
+  for (const id of ["platforms/esxi-hypervisors", "platforms/nas-storage"]) {
+    const leaf = skills.get(id);
+    assert.ok(leaf, `${id} exists`);
+    assert.deepEqual(leaf.meta.mentions, ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"], `${id} mentions the three tools`);
+    assert.deepEqual(leaf.meta.tools, [], `${id} lists no tool`);
+    assert.deepEqual(leaf.meta.needs, [], `${id} needs nothing`);
+    const text = flat(leaf.body).trim();
+    assert.match(text, /^Use when .* Not for /);
+    assert.match(text, /If the virtualization-backup-forensics pack is loaded \(check the run's tool inventory\)/, `${id} routes conditionally`);
+    assert.match(text, /Where (it|the pack) is not loaded, say that no tool read this evidence/, `${id} says what to write when the pack is absent`);
+    for (const tool of ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"]) assert.ok(text.includes(`\`${tool}\``), `${id} names ${tool}`);
+    for (const head of ["Shows.", "Does not show.", "Record:", "Sensitive output:"]) assert.ok(text.includes(head), `${id} has ${head}`);
+    assert.ok(TOKENS(leaf.text) <= 800, `${id} is ${TOKENS(leaf.text).toFixed(0)} tokens`);
+    // "Operator" is the authorised human; these leaves are about the adversary and never use the word for it.
+    assert.doesNotMatch(leaf.text, /operator/i, `${id} does not use the word operator`);
+    // a method leaf: the tools it mentions are another pack's, so it is method_only with a reason that says so
+    const entry = pack.method_only.find((m) => m.path === `skills/${id}.md`);
+    assert.ok(entry, `${id} is method_only`);
+    assert.match(entry.why, /belong to the virtualization-backup-forensics pack and are only mentioned/);
+    // the router and the index name it once
+    const router = skills.get(ROUTER)!;
+    assert.equal(router.body.split(`\`${id}\``).length - 1, 1, `the router names ${id} once`);
+    const index = await readFile(join(SKILLS, "INDEX.md"), "utf8");
+    assert.equal(index.split(`\`${id}\``).length - 1, 1, `the index names ${id} once`);
+  }
+  // the ESXi leaf keeps the layers apart and says not to consolidate before the chain metadata is preserved
+  const esxi = flat(skills.get("platforms/esxi-hypervisors")!.body);
+  assert.match(esxi, /Do not consolidate or\s+delete a snapshot/);
+  assert.match(esxi, /before the chain metadata is preserved/);
+  for (const layer of ["host", "management plane", "guest", "datastore"]) assert.ok(esxi.includes(layer), `the ESXi leaf names the ${layer}`);
+  // the NAS leaf: the three routes, and one RAID member is not a logical acquisition
+  const nas = flat(skills.get("platforms/nas-storage")!.body);
+  assert.match(nas, /One member of a RAID set, imaged alone, is not a logical acquisition/);
+  for (const route of ["client", "management plane", "replication"]) assert.ok(nas.includes(route), `the NAS leaf names ${route}`);
 });

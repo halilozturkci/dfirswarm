@@ -10,8 +10,10 @@ says "if that pack is loaded" and asks you to check the run's tool inventory.
 
 ## What it carries
 
-**Eighteen skills**: seven decision leaves, each a question of a case, ten
-second-level leaves they point to ("only if X") and the router `ransomware/router` (at most 400 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf); every leaf is at most 800 tokens.
+**Twenty skills**: seven decision leaves, each a question of a case, ten
+second-level leaves they point to ("only if X"), two platform leaves
+(`platforms/esxi-hypervisors`, `platforms/nas-storage`) that the router and the index name,
+and the router `ransomware/router` (at most 400 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf); every leaf is at most 800 tokens.
 `scope/first-hour` (`scope/triage-tools`, `scope/phase-timeline`),
 `exfil/before-encryption` (`exfil/measure-and-claims`),
 `encryptor/traces` (`encryptor/windows-evidence`, `encryptor/samples-and-notes`),
@@ -56,11 +58,12 @@ no tool of its own for hypervisor or backup records. `yara` is declared for rule
 case supplies.
 
 For hypervisors and network storage the pack carries the method, in the
-`encryptor/backup-infrastructure` skill: what to preserve, how to separate a guest's
-compromise from the host's, and why a snapshot is not an independent backup. The
-artefacts themselves (virtual-machine configuration, disk and snapshot chains, backup
-job records) are read by the virtualization-backup-forensics pack when it is loaded;
-the skill points to its tools without depending on it.
+`platforms/esxi-hypervisors` and `platforms/nas-storage` skills (and, for the backup
+server, `encryptor/backup-infrastructure`): what to preserve, how to separate a
+guest's compromise from the host's or the storage's, and why a snapshot is not an
+independent backup. The artefacts themselves (virtual-machine configuration, disk and
+snapshot chains, backup job records) are read by the virtualization-backup-forensics
+pack when it is loaded; the skills point to its tools without depending on it.
 
 ## Install and use
 
