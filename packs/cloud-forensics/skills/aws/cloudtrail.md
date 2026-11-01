@@ -13,7 +13,7 @@ Use when you hold CloudTrail files, lookup-events pages or JSON Lines and must s
 
 **Reconcile before any negative.** `status` is complete only if every record of every file was read. Read `coverage`, `file_census`, `rejected_records`, `pagination_markers` (a next page means one page of more), `digest_files` and `files_not_attempted_named`. Overlapping exports repeat events and every copy is kept: count distinct `event_id`, and cite it with the file, record and line.
 
-**Fields that carry the case:** `userIdentity` (`accessKeyId`, `sourceIdentity`, `sessionContext`), `errorCode`, `requestParameters`, `responseElements`, `additionalEventData` (console `MFAUsed`), `recipientAccountId`, `sharedEventID`. The tool keeps them; `outcome` says whether an error was recorded, not whether a change took effect.
+**Fields that carry the case:** `userIdentity` (`accessKeyId`, `sourceIdentity`, `sessionContext`), `errorCode`, `requestParameters`, `responseElements`, `additionalEventData` (console `MFAUsed`), `recipientAccountId`, `sharedEventID`. `outcome` says whether an error was recorded, not whether a change took effect.
 
 **Sessions.** An `AssumedRole` identity names a session, not a person. `session_origin` is a candidate: the successful AssumeRole-family call matching this session's access key id or ARN, with its `basis` and source event. `unresolved` lists the matches (to a cap) and picks none; `not_found`: no call fits (another key or a creationDate miss is listed, not chosen). A failed call is never a source. A chained caller has its own `session_origin`; a person needs identity-provider evidence and corroboration beyond these logs.
 
@@ -21,7 +21,7 @@ Use when you hold CloudTrail files, lookup-events pages or JSON Lines and must s
 
 **Flagged calls** (`notable`) name an API, not an effect: credential, identity, policy, ACL, snapshot-sharing and logging calls. Read the result, request and effective configuration before saying what changed. `StopLogging` suspends that trail's recording and delivery; it deletes no delivered record and stops no other trail or source: correlate trail scope, selectors, delivery, other trails and the inventory; an observed gap is not proof the call caused it.
 
-**Integrity.** The tool validates no digest file or chain, and a file hash is not that validation: unless the case supplies a validation record, say it was not performed.
+**Integrity.** The tool validates no digest file or chain; a file hash is not that validation. With no supplied record, say none was performed; only if one is wanted, `aws/cloudtrail-integrity`.
 
 **Does not show:** a person; that a call took effect; what was not logged; a complete export.
 

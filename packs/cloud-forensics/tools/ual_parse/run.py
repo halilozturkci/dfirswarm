@@ -30,8 +30,8 @@ census of every row read is separate. A filter on a record whose time could not 
 SECRET-SAFE OUTPUT (docs/packs.md, "Secrets and sensitive output"). Parameters and properties of an audit record can hold a
 secret. A field whose name says it is one, and any text shaped like one, is withheld in every channel (rows, paths, error
 messages, the files the answer names); the row says how many characters, and the original goes to
-`ual-values.jsonl` under $OUT (mode 0600, created first) only when `write_values: true` is asked, in a job, which the
-skill says to run with `secret_output: true`. A name and a shape recognise some secrets and never all.
+`ual-values.jsonl` under $OUT (mode 0600, created first) only when `write_values: true` is asked, in a job run as
+secret output (the manifest makes a job with write_values one; otherwise it is refused and nothing is written). A name and a shape recognise some secrets and never all.
 """
 # ---- BEGIN SHARED BLOCK ----------------------------------------------------------------------------------------------
 # Identical in cloudtrail_parse, signin_analyse and ual_parse. A tool is standalone, so what the three share is copied,
@@ -45,6 +45,7 @@ import codecs
 import csv
 import datetime
 import errno
+import itertools
 import json
 import os
 import re
@@ -608,8 +609,9 @@ class SecretValues:
 
     The secret-safe output pattern of recovery_key_scan (docs/packs.md, "Secrets and sensitive output"), copied
     unchanged but for the file's name and the tool named in the refusal. With `enabled` false it writes nothing and
-    `summary()` says so. Enabled, it is refused outside a job; inside one the file is created at once, before anything
-    is read (mode 0600, O_EXCL and O_NOFOLLOW: a file or a link already at that name is refused by name, a dangling link
+    `summary()` says so. Enabled, it is refused outside a job and in a job that was not run as secret output
+    (SECRET_OUTPUT is not "1"; the manifest's `secret_output` makes a job with write_values one); inside a secret job
+    the file is created at once, before anything is read (mode 0600, O_EXCL and O_NOFOLLOW: a file or a link already at that name is refused by name, a dangling link
     included), so with nothing withheld it stays an empty file and the answer says written: 0.
     """
 
@@ -628,6 +630,15 @@ class SecretValues:
                 "write_values is refused outside a job: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=%s with "
                 "secret_output: true, and ask again there. Nothing was written." % tool
+            )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise SecretValuesRefused(
+                "write_values is refused in a job that was not run as secret output: its files would "
+                "be sealed as ordinary output. The harness sets SECRET_OUTPUT=1 for a secret job's "
+                "process and it is not set here. Run this as job_run tool=%s (its manifest makes a "
+                "job with write_values secret output), or give a command job secret_output: true; "
+                "if that is refused the same way, this run's harness does not set the variable and "
+                "the values mode is not available in it. Nothing was written." % tool
             )
         self.path = Path(self.out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), name)
@@ -1386,7 +1397,9 @@ class Source:
     `cap` bytes of expansion, every byte up to a break kept (a gzip that ends early, or fails its check, gives what came before
     it and says so in `error`); an archive (ZIP, tar, bzip2, xz, 7-Zip...) is named and not read. UTF-8 is assumed, UTF-16
     where a byte order mark says so; each byte that does not decode becomes U+FFFD and is counted in `replaced`. The read
-    ends at the deadline (`timed_out`)."""
+    ends at the deadline (`timed_out`). Zero bytes after the last gzip member, to the end of the file, are padding (GNU gzip
+    ignores them): they are counted in `trailing_zero_bytes` and are not a problem. Every problem of a file is kept in
+    `problems` (the first FIRST_PROBLEMS), the rest counted, and `error` is the first."""
 
     def __init__(self, path, cap):
         self.path, self.cap = path, cap
@@ -1394,7 +1407,12 @@ class Source:
         self.eof = False
         self.bytes_read = 0
         self.compressed = False
-        self.error = None
+        self.error = None          # the first problem of the file; `problems` holds them in order, `problem_lines()` is what the answer lists
+        self.problems = []
+        self.problems_total = 0
+        self.trailing_zero_bytes = 0
+        self._zero_run = 0
+        self._member = 0
         self.archive = None
         self.capped = False
         self.timed_out = False
@@ -1417,14 +1435,29 @@ class Source:
             kind = archive_kind(head)
             if kind:
                 self.archive = kind
-                self.error = "%s: extract it first; it was not read" % kind
+                self._problem("%s: extract it first; it was not read" % kind)
                 self.eof = True
             elif head[:2] == b"\x1f\x8b":
                 self.compressed = True
             self.fh = self._raw
         except OSError as exc:
-            self.error = describe(exc)
+            self._problem(describe(exc))
             self.eof = True
+
+    def _problem(self, text):
+        """Keep a problem of this file. The first stays in `error`; the first FIRST_PROBLEMS are listed, the rest are counted."""
+        self.problems_total += 1
+        if len(self.problems) < FIRST_PROBLEMS:
+            self.problems.append(text)
+        if self.error is None:
+            self.error = text
+
+    def problem_lines(self):
+        """Every problem of the file in the order it happened (the first FIRST_PROBLEMS), and a line counting the rest."""
+        lines = list(self.problems)
+        if self.problems_total > len(self.problems):
+            lines.append("%d more problem(s) of this file were counted and are not listed" % (self.problems_total - len(self.problems)))
+        return lines
 
     def close(self):
         for h in (self.fh, self._raw):
@@ -1449,16 +1482,27 @@ class Source:
                 raw = self._raw.read(1 << 18)
                 if not raw:
                     if self._state != "header" or self._hdr:
-                        self.error = "the compressed stream ends early, after %d bytes of expansion: what came before it was read" % (self.bytes_read + got)
+                        self._problem("the compressed stream ends early, after %d bytes of expansion: what came before it was read" % (self.bytes_read + got))
+                    else:
+                        self.trailing_zero_bytes = self._zero_run         # zero padding after the last member, to the end of the file: counted, not damage
                     self._ended = True
                     break
                 self._pending = raw
             if self._state == "header":
                 buf = self._hdr + self._pending
+                if self._zero_run or buf[:1] == b"\x00":
+                    stripped = buf.lstrip(b"\x00")                 # zeros cannot begin a member; GNU gzip ignores such padding at the end of a file
+                    self._zero_run += len(buf) - len(stripped)
+                    buf = stripped
+                    if not buf:
+                        self._hdr = self._pending = b""
+                        continue
                 try:
+                    if self._zero_run:
+                        raise ValueError("zeros, then something that is not the end of the file")
                     n = gzip_header_length(buf)
                 except ValueError:
-                    self.error = "%d bytes follow the end of the compressed stream and are not another member: they were not read" % len(buf)
+                    self._problem("%d bytes follow the end of the compressed stream and are not another member: they were not read" % (self._zero_run + len(buf)))
                     self._ended = True
                     self._pending = b""
                     break
@@ -1471,7 +1515,7 @@ class Source:
                 try:
                     piece = self._d.decompress(self._pending, min(want - got, 32768))
                 except zlib.error as exc:
-                    self.error = "the compressed stream is damaged after %d bytes of expansion (%s): what came before it was read" % (self.bytes_read + got, exc)
+                    self._problem("the compressed stream is damaged after %d bytes of expansion (%s): what came before it was read" % (self.bytes_read + got, exc))
                     self._ended = True
                     self._pending = b""
                     break
@@ -1492,8 +1536,10 @@ class Source:
                 if len(self._tr) == 8:
                     crc, size = struct.unpack("<II", self._tr)
                     self._tr = b""
-                    if crc != self._crc & 0xFFFFFFFF or size != self._isize & 0xFFFFFFFF:
-                        self.error = "a member of the compressed stream fails its own check (CRC-32 or length): its bytes were read and may be wrong"
+                    self._member += 1
+                    failed = (["CRC-32"] if crc != self._crc & 0xFFFFFFFF else []) + (["length"] if size != self._isize & 0xFFFFFFFF else [])
+                    if failed:
+                        self._problem("member %d of the compressed stream fails its %s check: its bytes were read and may be wrong" % (self._member, " and ".join(failed)))
                     self._state = "header"
         return b"".join(out)
 
@@ -1511,12 +1557,12 @@ class Source:
         try:
             data = self._expand(want) if self.compressed else self.fh.read(want)
         except OSError as exc:
-            self.error = describe(exc)
+            self._problem(describe(exc))
             self.eof = True
             data = b""
         if self._first and self.compressed and data[257:262] == b"ustar":
             self.archive = "a tar archive"
-            self.error = "a tar archive (gzip-compressed): extract it first; it was not read"
+            self._problem("a tar archive (gzip-compressed): extract it first; it was not read")
             self.eof = True
             data = b""
         if self._ended:
@@ -1666,6 +1712,91 @@ def _skip_value(src, i, limit):
     return m.end() if m else None
 
 
+_STR_RUN = re.compile(r'[^"\\]*+(?:\\.[^"\\]*+)*+', re.S)  # a string's body up to its closing quote, or to a lone backslash at the buffer's end (possessive, Python 3.11 and later: the plain form keeps state for every escape)
+_RUN = re.compile(r'(?:[^"{}\[\]]++|"[^"\\]*+(?:\\.[^"\\]*+)*+")*+', re.S)   # plain text and whole strings, up to the next bracket or a string the buffer ends inside
+_BRACKET = re.compile(r'[{}\[\]]')
+_NOT_BRACKET = re.compile(r'[^{}\[\]]+')
+_DEPTH_STEP = [0] * 256
+_DEPTH_STEP[ord("{")] = _DEPTH_STEP[ord("[")] = 1
+_DEPTH_STEP[ord("}")] = _DEPTH_STEP[ord("]")] = -1
+
+
+def _skip_stream(src):
+    """Move the read position past the JSON value that starts at it, holding none of it: the scan takes what the buffer has, moves
+    the position on and reads the next chunk, so memory stays at one chunk whatever the size of the value (a record over
+    max_record_bytes is skipped this way). It steps over strings and counts brackets and looks at nothing else, so it needs no
+    valid JSON inside the value. The clock is read every 4096 steps, and `fill` reads it too. Returns "ok" (the position is after
+    the value), "bad" (what stands there is not a value) or "end" (the file, the clock or the expansion cap ended it first:
+    `src.timed_out` and `src.capped` say which)."""
+    src.ensure(1)
+    if src.pos >= len(src.buf):
+        return "end"
+    first = src.buf[src.pos]
+    depth, in_string, steps = 0, False, 0
+    if first in "{[":
+        depth = 1
+        src.advance(src.pos + 1)
+    elif first == '"':
+        in_string = True
+        src.advance(src.pos + 1)
+    else:
+        m = _BARE.match(src.buf, src.pos)
+        if not m:
+            return "bad"
+        while True:
+            src.advance(m.end())
+            if src.pos < len(src.buf) or not src.fill():
+                return "ok"
+            m = _BARE.match(src.buf, src.pos)
+            if not m:
+                return "ok"
+    while True:
+        buf, j, n = src.buf, src.pos, len(src.buf)
+        while j < n:
+            steps += 1
+            if not steps & 4095 and out_of_time():
+                src.advance(j)
+                src.timed_out = True
+                src.eof = True
+                return "end"
+            if in_string:
+                e = _STR_RUN.match(buf, j).end()
+                if e < n and buf[e] == '"':
+                    j = e + 1
+                    in_string = False
+                    if depth == 0:
+                        src.advance(j)
+                        return "ok"
+                    continue
+                j = e                       # the buffer ends inside the string, or on a backslash whose next character is still to come
+                break
+            j = _RUN.match(buf, j).end()    # plain text and whole strings, at C speed, up to a bracket
+            if j >= n:
+                break
+            if buf[j] == '"':               # a string the buffer ends inside
+                in_string = True
+                j += 1
+                continue
+            q = buf.find('"', j)            # a bracket: the stretch up to the next string
+            end = q if q >= 0 else n
+            closers = buf.count("}", j, end) + buf.count("]", j, end)
+            if closers and depth - closers <= 0:
+                # The value may end in this stretch. The lowest depth it reaches is found at C speed (the brackets alone, summed as they come);
+                # only a stretch that does reach zero is walked bracket by bracket, to find where.
+                lowest = min(itertools.accumulate(map(_DEPTH_STEP.__getitem__, _NOT_BRACKET.sub("", buf[j:end]).encode())))
+                if depth + lowest <= 0:
+                    for m in _BRACKET.finditer(buf, j, end):
+                        depth += 1 if m.group() in "{[" else -1
+                        if depth <= 0:
+                            src.advance(m.end())
+                            return "ok"
+            depth += buf.count("{", j, end) + buf.count("[", j, end) - closers
+            j = end
+        src.advance(j)
+        if not src.fill():
+            return "end"
+
+
 def envelope_scan(src, envelope_keys, limit):
     """For an object that starts at the read position: ("envelope", key, index after its `[`, names of the members before it)
     if a member named in `envelope_keys` holds an array, with the members in front of it skipped whatever they hold;
@@ -1719,6 +1850,22 @@ def read_units(src, envelope_keys, record_cap=MAX_RECORD_BYTES, document_cap=MAX
     def info(line, offset, chars, envelope):
         count[0] += 1
         return {"record": count[0], "line": line, "offset": offset, "chars": chars, "envelope": envelope}
+
+    def skip_oversize(start_line, start_off, key):
+        """A record over the cap, which the read position stands at: scan to its end without holding it (clocked, one chunk of
+        memory). Returns the reject to yield, and whether the read must stop. A skipped record is rejected with where it was
+        and how long; the records after it are read."""
+        outcome = _skip_stream(src)
+        if outcome == "ok":
+            return ("reject", info(start_line, start_off, src.offset() - start_off, key),
+                    "a record larger than max_record_bytes (%d): skipped, and the records after it are read" % record_cap), False
+        if outcome == "bad":
+            src.stopped = "what stands at line %d, where a record larger than max_record_bytes should be, is not a JSON value: the rest of the array was not read" % start_line
+            return ("reject", info(start_line, start_off, None, key), "a record larger than max_record_bytes (%d), and not a JSON value" % record_cap), True
+        src.stopped = ("the time limit ended the read" if src.timed_out else
+                       "the expansion reached max_expanded_bytes inside a record larger than max_record_bytes at line %d" % start_line if src.capped else
+                       "the array was not closed: the file ends inside a record larger than max_record_bytes at line %d" % start_line)
+        return ("reject", info(start_line, start_off, None, key), "a record larger than max_record_bytes (%d), and the read ended inside it" % record_cap), True
 
     def finish():
         src.extra_keys = sorted(extra)
@@ -1782,9 +1929,15 @@ def read_units(src, envelope_keys, record_cap=MAX_RECORD_BYTES, document_cap=MAX
                     try:
                         value, end = _decode_at(src, record_cap)
                     except TooLong:
-                        src.stopped = "a record larger than max_record_bytes at line %d: the rest of the array was not read" % start_line
-                        yield "reject", info(start_line, start_off, None, key), "a record larger than max_record_bytes (%d)" % record_cap
-                        return
+                        reject, stop = skip_oversize(start_line, start_off, key)
+                        yield reject
+                        if stop:
+                            return
+                        expecting_item = False
+                        src.skip_ws()
+                        if src.timed_out:
+                            return
+                        continue
                     except json.JSONDecodeError as exc:
                         if src.timed_out:       # the deadline cut the record, the JSON is not damaged
                             src.stopped = "the time limit ended the read"
@@ -1793,7 +1946,18 @@ def read_units(src, envelope_keys, record_cap=MAX_RECORD_BYTES, document_cap=MAX
                         if exc.msg == "nested too deeply":
                             # a record the decoder cannot hold is valid JSON as far as can be told: it is skipped without parsing it (by counting
                             # its brackets), rejected, and the records after it are read
-                            skip_end = _skip_value(src, start_pos, record_cap)
+                            try:
+                                skip_end = _skip_value(src, start_pos, record_cap)
+                            except TooLong:             # over the cap as well: the scan that holds nothing skips it
+                                reject, stop = skip_oversize(start_line, start_off, key)
+                                yield reject
+                                if stop:
+                                    return
+                                expecting_item = False
+                                src.skip_ws()
+                                if src.timed_out:
+                                    return
+                                continue
                             if skip_end is not None:
                                 src.advance(skip_end)
                                 yield "reject", info(start_line, start_off, skip_end - start_pos, key), "a record nested too deeply to be read (deeper than the JSON decoder holds)"
@@ -1997,7 +2161,10 @@ def first_of(item, keys, *names):
 # ---- END SHARED BLOCK -------------------------------------------------------------------------------------------
 
 TOOL = "ual_parse"
-PARSER = "ual_parse/4"
+# The label moves when what a record says changes (docs/packs.md, 'A tool's version and its PARSER label'). 4: until the
+# foreign-record, long-integer and per-record-isolation changes; 5: those; 6: a record over max_record_bytes is skipped and the
+# records after it are read (they were never read before).
+PARSER = "ual_parse/6"
 VALUES_NAME = "ual-values.jsonl"
 ENVELOPE_KEYS = ("value", "Records", "items")
 AUDIT_KEYS = ("AuditData", "auditData")
@@ -2143,6 +2310,101 @@ def choose_time(cands, order, assume_utc):
             if st["status"] == wanted:
                 return raw, source, st
     return parsed[0] if parsed else (None, None, parse_stamp(None))
+
+
+_NOT_FULL_BYTE = re.compile(rb"[^\xff]")
+
+
+class ResultIndexes:
+    """The ResultIndex values of one file, held against the ResultCount beside them. The rows of one search carry the same count and
+    the indices 1 to that count, each once, in any order; rows with another count belong to another search, so each count is its own
+    group. A group is a bitmap of one bit per index (a count of 5,000,000 is 625 KB), so a repeat is found when it is read and a gap
+    when the file ends, whatever the order. Memory is bounded: all bitmaps together hold at most TRACK_BITS bits and there are at most
+    MAX_COUNTS groups; rows of a count beyond that are counted, not checked, and the answer says so (a read is never whole on what it did
+    not check). The first FIRST_PROBLEMS repeated, missing and out-of-range indices of a group are named, the rest counted."""
+    TRACK_BITS = 1 << 28
+    MAX_COUNTS = 64
+
+    def __init__(self):
+        self.groups = {}
+        self.used = 0
+        self.with_index = self.without_index = self.no_count = self.not_checked = 0
+        self.not_checked_counts = set()
+
+    def add(self, count, index):
+        if index is None:
+            self.without_index += 1
+            return
+        self.with_index += 1
+        if count is None:
+            self.no_count += 1
+            return
+        g = self.groups.get(count)
+        if g is None:
+            if count < 1 or len(self.groups) >= self.MAX_COUNTS or self.used + count > self.TRACK_BITS:
+                self.not_checked += 1
+                if len(self.not_checked_counts) < FIRST_PROBLEMS:
+                    self.not_checked_counts.add(count)
+                return
+            self.used += count
+            g = self.groups[count] = {"bits": bytearray((count + 7) >> 3), "rows": 0, "repeated": 0, "first_repeated": [], "out_of_range": 0, "first_out": []}
+        g["rows"] += 1
+        if 1 <= index <= count:
+            at, mask = (index - 1) >> 3, 1 << ((index - 1) & 7)
+            if g["bits"][at] & mask:
+                g["repeated"] += 1
+                if len(g["first_repeated"]) < FIRST_PROBLEMS:
+                    g["first_repeated"].append(index)
+            else:
+                g["bits"][at] |= mask
+        else:
+            g["out_of_range"] += 1
+            if len(g["first_out"]) < FIRST_PROBLEMS:
+                g["first_out"].append(index)
+
+    @staticmethod
+    def first_missing(bits, count, n):
+        out = []
+        for m in _NOT_FULL_BYTE.finditer(bits):
+            for bit in range(8):
+                index = m.start() * 8 + bit + 1
+                if index <= count and not bits[m.start()] >> bit & 1:
+                    out.append(index)
+                    if len(out) >= n:
+                        return out
+        return out
+
+    def findings(self, shown, said_for=None):
+        """(entry for the answer's pagination_markers, sentence for the file's problems) for each thing wrong with the indices. `said_for` is
+        the count whose missing indices the ResultCount sentence of the file already says (rows fewer than the count): not said twice."""
+        found = []
+        if self.with_index and self.without_index:
+            found.append(({"file": shown, "keys": ["ResultIndex"], "rows_with_result_index": self.with_index, "rows_without_result_index": self.without_index},
+                          "%d row(s) carry a ResultIndex and %d carry none or one that is not a number: the indices cannot show the search was exported whole" % (self.with_index, self.without_index)))
+        if self.not_checked:
+            found.append(({"file": shown, "keys": ["ResultIndex"], "rows_not_checked": self.not_checked, "counts_not_checked": sorted(self.not_checked_counts)},
+                          "%d row(s) carry a ResultCount this tool does not check the indices of (more than %d distinct counts, or more indices than it holds): their ResultIndex values were not checked" % (
+                              self.not_checked, self.MAX_COUNTS)))
+        named = 0
+        for count in sorted(self.groups):
+            g = self.groups[count]
+            distinct = int.from_bytes(g["bits"], "little").bit_count()
+            missing = count - distinct
+            if not (g["repeated"] or g["out_of_range"] or (missing and count != said_for)):
+                continue
+            named += 1
+            if named > FIRST_PROBLEMS:
+                continue
+            first_missing = self.first_missing(g["bits"], count, FIRST_PROBLEMS) if missing else []
+            found.append(({"file": shown, "keys": ["ResultIndex"], "result_count": count, "rows": g["rows"], "distinct_indices": distinct,
+                           "repeated_indices": g["repeated"], "first_repeated": g["first_repeated"], "missing_indices": missing, "first_missing": first_missing,
+                           "out_of_range_indices": g["out_of_range"], "first_out_of_range": g["first_out"]},
+                          "the %d row(s) of ResultCount %d hold %d distinct ResultIndex value(s) of the %d expected: %d repeated (first: %s), %d missing (first: %s), %d outside 1 to %d (first: %s)" % (
+                              g["rows"], count, distinct, count, g["repeated"], g["first_repeated"][:5], missing, first_missing[:5], g["out_of_range"], count, g["first_out"][:5])))
+        if named > FIRST_PROBLEMS:
+            found.append(({"file": shown, "keys": ["ResultIndex"], "more_counts_with_problems": named - FIRST_PROBLEMS},
+                          "%d more ResultCount group(s) have repeated, missing or out-of-range indices and are counted, not listed" % (named - FIRST_PROBLEMS)))
+        return found
 
 
 class Census:
@@ -2293,6 +2555,7 @@ def main():
             census.rejected.start_file()
             order = {"value": date_order, "basis": "declared" if date_order else None, "tried": False, "seen": None, "contradicted": 0}
             result_count = max_index = None
+            indexes = ResultIndexes()
             records = rejected = payload_bad = size_rejects = 0
             first_reject = None
             stopped_all_rejected = False
@@ -2334,11 +2597,20 @@ def main():
                             payload_flagged = True
                             census.rejected.note({"file": shown, "record": info["record"], "line": info["line"], "reason": detail, "kind": "payload"})
                         rc, ri = first_of(outer, o_keys, "ResultCount"), first_of(outer, o_keys, "ResultIndex")
+                        count_now = index_now = None
                         try:
-                            result_count = max(result_count or 0, int(rc)) if rc is not None else result_count
-                            max_index = max(max_index or 0, int(ri)) if ri is not None else max_index
+                            count_now = int(rc) if rc is not None else None
                         except (TypeError, ValueError, OverflowError):
                             pass
+                        try:
+                            index_now = int(ri) if ri is not None else None
+                        except (TypeError, ValueError, OverflowError):
+                            pass
+                        if count_now is not None:
+                            result_count = max(result_count or 0, count_now)
+                        if index_now is not None:
+                            max_index = max(max_index or 0, index_now)
+                        indexes.add(count_now, index_now)
                         cands = time_candidates(audit, outer, o_keys)
                         raw, source, st = choose_time(cands, order["value"], assume_utc)
                         if st["status"] == "ambiguous_date_order" and not order["tried"]:
@@ -2438,8 +2710,12 @@ def main():
                 census.pagination.append({"file": shown, "keys": ["ResultCount"], "result_count": result_count, "rows": records, "highest_result_index": max_index})
                 problems.append("the export's own ResultCount says %d records matched the search; this file holds %d (the highest ResultIndex is %s): the search was not exported whole" % (
                     result_count, records, max_index))
+            count_says = result_count is not None and (records < result_count or (max_index is not None and max_index < result_count))
+            for entry, sentence in indexes.findings(shown, result_count if count_says else None):
+                census.pagination.append(entry)
+                problems.append(sentence)
             if src.error:
-                problems.append(src.error)
+                problems.extend(src.problem_lines())
             if src.capped:
                 problems.append("the expansion reached max_expanded_bytes (%d): the rest of the file was not read" % max_expanded)
             if getattr(src, "stopped", None):
@@ -2490,6 +2766,8 @@ def main():
                 row["problems"] = [scrub(p) for p in problems]
             if src.replaced:
                 row["replacement_characters"] = src.replaced
+            if src.trailing_zero_bytes:
+                row["trailing_zero_bytes"] = src.trailing_zero_bytes
             if order["value"] or order["tried"]:
                 row["date_order"] = order["value"]
                 row["date_order_basis"] = order["basis"]

@@ -1,7 +1,7 @@
 {
   "id": "cloud-forensics",
   "name": "Cloud and SaaS Forensics Pack",
-  "version": "1.4.5",
+  "version": "1.5.3",
   "description": "Method and tooling for logs that belong to somebody else's computer, examined as supplied exports: what a cloud or SaaS export covers and what its silence can show, the Microsoft 365 unified audit log, Entra sign-ins, AWS CloudTrail, Google Workspace, and the tokens, grants and mailbox rules behind a cloud account.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,10 +18,6 @@
     {
       "name": "pwsh",
       "why": "an operator's acquisition runtime for Microsoft 365 collection; no skill or tool of this pack runs it, and the agent examines supplied exports offline and never connects to a tenant"
-    },
-    {
-      "name": "aws",
-      "why": "an operator's acquisition capability for CloudTrail, Config and GuardDuty records; no skill or tool of this pack runs it (`aws/cloudtrail` only reads supplied exports, and its id spells the program), and an agent never connects to an account with it"
     }
   ],
   "method_only": [
@@ -42,14 +38,15 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "1343dfb9780cff60a5c664b17af8796d7d65b16d446dec0b8c715d51fa5798f1",
+      "README.md": "bc552c841e140ae206c0769f44154daecd702f12e43cde6ccd561bacaac8ea53",
       "goals/tenant-compromise.md": "52bb72bead930eaf3e4a0f01f76162aaf30feae7ca44a5a7aa7307f2ee9dc0d8",
       "requires/host.json": "67f5c2ace76741baaa57edafda54a79edf0305a0645de2493f3c6c6e5b11ab2b",
       "requires/python.txt": "eb9148a62031d80af4795335b759dbe15552ed2df3b5b97648fbcda6b32b64de",
-      "skills/INDEX.md": "dc5c072ff20da259b4b316a3a6e96ea5a87cf52040ece8099efd635a00f0f89a",
-      "skills/aws/cloudtrail.md": "fd40e09cdff829feed25a5a53e6b45c7ff783baf1bb91719f1ce1583bf6e4988",
-      "skills/cloud/router.md": "a802777a992013d5fa60162c78d788f9283b9c08e4e7e6795a3ff5c2a53d6371",
-      "skills/entra/signins.md": "068452016ed964aa2a61fb0634b92f71845bb0364b386b6b8d5a88d813ecb2f5",
+      "skills/INDEX.md": "ec2b0768c10a7ae50d835b9c8ef99e8af9ebfdab6fc010b6c999a07337506cee",
+      "skills/aws/cloudtrail-integrity.md": "7c0f0fb6540ddbbcfbb32cc020cdb9d8ba1711c61e88ac98739260ae76e761fc",
+      "skills/aws/cloudtrail.md": "de2becc72fec819d92b4db3f5ce3fbb6f9bc31bb8008a7daae8acbb95d25f9c5",
+      "skills/cloud/router.md": "5d3290dc0ee03b4c58dbbaa6c28110ec067b795cace5750ca0a647e7a5ac50ff",
+      "skills/entra/signins.md": "a17151f9d315bb2d34816da067a0991baa4d8a1356061347b333b70d13aba8dc",
       "skills/google/workspace-access.md": "af272db6d3ff4edee0831de2920c81050dc3623ace590dd3a70dbe861eaf9a08",
       "skills/google/workspace.md": "a8e5c5dc0150a693bf0bf54a410dcd1a7b9bf01461afd32e12c36c708f2a566a",
       "skills/identity/grants.md": "971e2b10faf46f0da0b6a493f6b715b100ce6effa68eb6838988c9ea022f14dc",
@@ -57,12 +54,12 @@
       "skills/logs/sources.md": "1ff58fa6b521168b1a1d439cfd2275cb636ce2dc2593f7861eb93829d02c92ff",
       "skills/logs/what-exists.md": "8b29caefc5a4930d4af9b52706d79ae93c87c30ec6d9b62efeb4157108922dc5",
       "skills/m365/unified-audit-log.md": "04ba5c0035ac630d1274dc377ae9f8b93ac56845ba01713737353ec618bafe53",
-      "tools/cloudtrail_parse/manifest.json": "94b961a7be11f84c4c4538e96fab0cbceb633a84586ed6c229bdeb08dfa81fa2",
-      "tools/cloudtrail_parse/run.py": "218f0f61f5a738c7f492325d4a4c9db1f15cf5230c71df030b9494c8564b5096",
-      "tools/signin_analyse/manifest.json": "3dcb4dbd71554fd5aea74d41257ef40fdf55792932b3e4918c74595f10109c22",
-      "tools/signin_analyse/run.py": "e3438531bfa81f997882d7be0c5a21cb3f90576ded0d163461370dc4033902af",
-      "tools/ual_parse/manifest.json": "fd803d553c6326fdba08b3a2bad9ae665b6d30cac79a1de03098f6afa1a419c3",
-      "tools/ual_parse/run.py": "97e3764035f9d9f607e7210e8e98bd1fa31d7476d77158ad18d861bb0a72e192"
+      "tools/cloudtrail_parse/manifest.json": "039bb924a2ad288c2d27e32cc02f840e9239a0f61e3403771c06ad9c6cd16432",
+      "tools/cloudtrail_parse/run.py": "bcd579ca3f5fa3d9c7836458ebcf67d5e1fb2821a0272ec8deaffb3b5ccdcaa3",
+      "tools/signin_analyse/manifest.json": "2624de1fc68a37cc603cb33ab56f75b84943febde3f4525c39f2a005c1e7984e",
+      "tools/signin_analyse/run.py": "929245504c3dc34ebc0dd91fc62a5d72cf40fcd9f9c509c737bf67a818325b8c",
+      "tools/ual_parse/manifest.json": "6f44f3787b9fc4f1cd8e2f9583a4fe93bf323f150ae2b954d2ee889bdbf80f37",
+      "tools/ual_parse/run.py": "18e3a1d5a5eb24914adea9a893504fa8556d1cb464c364dff898352b23edd412"
     }
   },
   "tools": [
@@ -70,5 +67,5 @@
     "signin_analyse",
     "ual_parse"
   ],
-  "skills": 10
+  "skills": 11
 }

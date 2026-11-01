@@ -20,6 +20,7 @@ Microsoft
 
 Other providers
 `aws/cloudtrail` principal, action, origin
+`aws/cloudtrail-integrity` operator's digest check, cited
 `google/workspace` Workspace audit exports
 `google/workspace-access` delegation, sharing, forwarding
 

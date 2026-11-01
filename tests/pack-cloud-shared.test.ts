@@ -6,12 +6,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmod, readFile, readdir, stat, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ALICE, SIGNIN, TOOLS, TRAIL, UAL, asJob, body, ct, everythingBut, exists, filesUnder, put, refused, rowsOf, spawnTool, tool, trail, withDir } from "./cloud-pack-harness.ts";
-import type { Json } from "./cloud-pack-harness.ts";
+import type { Json, Run } from "./cloud-pack-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 import { CONTROLS, JWT, NAMED_CASES, TEXT_CASES, leaked } from "./cloud-pack-secrets.ts";
 
 const NAMES = ["cloudtrail_parse", "signin_analyse", "ual_parse"] as const;
@@ -562,7 +563,7 @@ test("SIGTERM flushes the values file: what the run withheld before the signal i
     await withDir(async (cwd) => {
       await put(cwd, "work/ev/big.json", make(300_000));
       await asJob(script, cwd, { path: "work/ev/missing" });
-      const { child, done } = spawnTool(script, cwd, { path: "work/ev/big.json", write_values: true, time_limit_seconds: 300, ...(name === "cloudtrail_parse" ? { link_sessions: false } : {}) }, { JOB_ID: "jflush", OUT: join(cwd, "out") });
+      const { child, done } = spawnTool(script, cwd, { path: "work/ev/big.json", write_values: true, time_limit_seconds: 300, ...(name === "cloudtrail_parse" ? { link_sessions: false } : {}) }, { JOB_ID: "jflush", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" });
       // The paged result is opened at the 501st row, so once a file is there the first record, which holds the secret, was withheld.
       let started = false;
       for (let i = 0; i < 1200 && !started; i++) {
@@ -578,5 +579,251 @@ test("SIGTERM flushes the values file: what the run withheld before the signal i
       assert.ok(file, `${name}: the values file is kept`);
       assert.ok((await readFile(join(cwd, "out", file!), "utf8")).includes(secret), `${name}: the withheld original reached the file before the process ended`);
     });
+  }
+});
+
+test("write_values is refused as JSON, before anything is created, in a job whose SECRET_OUTPUT is not 1: nothing is written under $OUT", async () => {
+  const secret = "Hunter2-correct-horse-9";
+  const cases: Array<[string, string, string, Record<string, unknown>]> = [
+    ["cloudtrail_parse", TRAIL, trail(ct({ eventID: "g-0", eventSource: "s3.amazonaws.com", eventName: "GetObject", userIdentity: ALICE, requestParameters: { password: secret } })), { link_sessions: false }],
+    ["signin_analyse", SIGNIN, JSON.stringify({ value: [{ id: "g-0", createdDateTime: "2026-02-14T09:00:00Z", userPrincipalName: "a@example.org", userId: "id-0", status: { errorCode: 0 }, password: secret }] }), {}],
+    ["ual_parse", UAL, JSON.stringify([{ Id: "u-0", Operation: "Send", UserId: "a@b.c", CreationTime: "2026-02-14T09:00:00Z", Password: secret }]), {}],
+  ];
+  const saved = process.env.SECRET_OUTPUT;
+  delete process.env.SECRET_OUTPUT;
+  try {
+    for (const [name, script, evidence, extra] of cases) {
+      await withDir(async (cwd) => {
+        await put(cwd, "work/ev/e.json", evidence);
+        // Unset, empty, and anything but the exact "1" (the harness sets "1" and nothing else).
+        const settings: Array<Record<string, string>> = [{}, { SECRET_OUTPUT: "" }, { SECRET_OUTPUT: "0" }, { SECRET_OUTPUT: "true" }, { SECRET_OUTPUT: "01" }, { SECRET_OUTPUT: " 1" }];
+        for (const env of settings) {
+          const out = refused(await asJob(script, cwd, { path: "work/ev/e.json", write_values: true, ...extra }, env));
+          const label = `${name} with ${JSON.stringify(env)}`;
+          assert.equal(out.status, "failed", label);
+          assert.equal(out.write_values, "refused", label);
+          assert.equal(out.written, false, label);
+          assert.match(out.error, /not run as secret output/, label);
+          assert.match(out.error, /Nothing was written/, label);
+          assert.ok(!JSON.stringify(out).includes(secret), label);
+          assert.deepEqual(await filesUnder(join(cwd, "out")), [], `${label}: nothing under $OUT`);
+        }
+        // With the variable the harness sets, the same call writes the file.
+        const ok = body(await asJob(script, cwd, { path: "work/ev/e.json", write_values: true, ...extra }, { SECRET_OUTPUT: "1" }));
+        assert.equal(ok.secret_values.requested, true, name);
+        assert.ok(ok.secret_values.written >= 1, name);
+      });
+    }
+  } finally {
+    if (saved === undefined) delete process.env.SECRET_OUTPUT;
+    else process.env.SECRET_OUTPUT = saved;
+  }
+});
+
+// ---- the shared reader: a record over max_record_bytes, gzip padding and damage, the parser labels -----------------------------
+
+type Shape = { name: string; script: string; ok: (i: number) => string; wrap: (parts: string[]) => string; read: string; rejected: string };
+const SHAPES: Shape[] = [
+  { name: "cloudtrail_parse", script: TRAIL, ok: (i) => JSON.stringify(ct({ eventID: `e-${i}`, userIdentity: ALICE })), wrap: (p) => `{"Records":[${p.join(",")}]}`, read: "records_read", rejected: "records_rejected" },
+  { name: "signin_analyse", script: SIGNIN, ok: (i) => JSON.stringify({ id: `g-${i}`, createdDateTime: "2026-02-14T09:00:00Z", userPrincipalName: "a@example.org", userId: "id-1", status: { errorCode: 0 } }), wrap: (p) => `{"value":[${p.join(",")}]}`, read: "records_read", rejected: "records_rejected" },
+  { name: "ual_parse", script: UAL, ok: (i) => JSON.stringify({ Id: `u-${i}`, Operation: "Send", UserId: "a@b.c", CreationTime: "2026-02-14T09:00:00Z" }), wrap: (p) => `[${p.join(",")}]`, read: "rows_read", rejected: "rows_rejected" },
+];
+/** A record that is never read as one, whatever it holds: `blob` is JSON text. */
+const huge = (blob: string): string => `{"id":"big","pad":${blob}}`;
+
+test("a record over max_record_bytes in an array or an envelope is skipped, counted and located, and the records after it are read: 2 records and 1 rejected, partial, in all three tools (a 17 MiB record, the default cap)", async () => {
+  for (const s of SHAPES) {
+    await withDir(async (cwd) => {
+      await put(cwd, "work/ev/a.json", s.wrap([s.ok(1), huge(JSON.stringify("a".repeat(17 << 20))), s.ok(3)]));
+      const out = body(await tool(s.script, cwd, { path: "work/ev/a.json" }));
+      assert.equal(out.coverage[s.read], 2, `${s.name}: the records on both sides are read`);
+      assert.equal(out.coverage[s.rejected], 1, s.name);
+      assert.equal(out.status, "partial", s.name);
+      const rows = await rowsOf(cwd, out, "rejected_records");
+      assert.equal(rows.length, 1, s.name);
+      assert.match(rows[0].reason, /larger than max_record_bytes \(16777216\): skipped/, s.name);
+      assert.equal(rows[0].record, 2, s.name);
+      assert.equal(rows[0].line, 1, s.name);
+      assert.ok(rows[0].chars === undefined || rows[0].chars >= 17 << 20, `${s.name}: the skipped length is recorded`);
+      assert.doesNotMatch(JSON.stringify(out), /the rest of the array was not read/, s.name);
+    });
+  }
+});
+
+test("a record over a small max_record_bytes is skipped whatever it holds: brackets, quotes and escapes inside strings, a million nested levels, a bare string; first, last, twice in a row", async () => {
+  const tricky = JSON.stringify('}]}{[" \\ \\" ]]]}}}'.repeat(200_000));        // brackets and quotes inside a string, escaped as JSON escapes them
+  const escapes = JSON.stringify("\n\\\"".repeat(1_000_000));
+  const deep = "[".repeat(1_500_000) + "]".repeat(1_500_000);
+  const plain = JSON.stringify("x".repeat(3 << 20));
+  for (const s of SHAPES) {
+    const cases: Array<[string, string[], number, number]> = [
+      ["brackets inside a string", [s.ok(1), huge(tricky), s.ok(3)], 2, 1],
+      ["escapes", [s.ok(1), huge(escapes), s.ok(3)], 2, 1],
+      ["nested a million levels", [s.ok(1), huge(deep), s.ok(3)], 2, 1],
+      ["a bare string element", [s.ok(1), plain, s.ok(3)], 2, 1],
+      ["first", [huge(plain), s.ok(2), s.ok(3)], 2, 1],
+      ["last", [s.ok(1), s.ok(2), huge(plain)], 2, 1],
+      ["twice in a row", [s.ok(1), huge(plain), huge(deep), s.ok(4)], 2, 2],
+    ];
+    for (const [what, parts, read, rejected] of cases) {
+      await withDir(async (cwd) => {
+        await put(cwd, "work/ev/a.json", s.wrap(parts));
+        const out = body(await tool(s.script, cwd, { path: "work/ev/a.json", max_record_bytes: 1024 }));
+        assert.equal(out.coverage[s.read], read, `${s.name}, ${what}: records read`);
+        assert.equal(out.coverage[s.rejected], rejected, `${s.name}, ${what}: records rejected`);
+        assert.equal(out.status, "partial", `${s.name}, ${what}`);
+      });
+    }
+  }
+});
+
+test("a file that ends inside a record over max_record_bytes is partial and names it; a time limit during the skip ends the read inside the clock", async () => {
+  for (const s of SHAPES) {
+    await withDir(async (cwd) => {
+      await put(cwd, "work/ev/a.json", s.wrap([s.ok(1), `{"id":"big","pad":"${"a".repeat(3 << 20)}`]).replace(/\]\}?$/, ""));
+      const out = body(await tool(s.script, cwd, { path: "work/ev/a.json", max_record_bytes: 1024 }));
+      assert.equal(out.coverage[s.read], 1, s.name);
+      assert.equal(out.status, "partial", s.name);
+      assert.match(JSON.stringify(out), /the file ends inside a record larger than max_record_bytes/, s.name);
+    });
+    await withDir(async (cwd) => {
+      // 60 MiB of one-character strings: far more than a one second limit can scan.
+      await put(cwd, "work/ev/a.json", s.wrap([s.ok(1), huge("[" + '"a",'.repeat(15_000_000) + '"a"]'), s.ok(3)]));
+      const started = Date.now();
+      const out = body(await tool(s.script, cwd, { path: "work/ev/a.json", max_record_bytes: 1024, time_limit_seconds: 1 }));
+      assert.ok(Date.now() - started < 30_000, `${s.name}: ${Date.now() - started} ms`);
+      assert.equal(out.status, "partial", s.name);
+      assert.equal(out.coverage.stopped_by_time_limit, true, s.name);
+    });
+  }
+});
+
+test("SIGTERM during the skip of a huge record ends the tool with exit 143 and no traceback", async (t) => {
+  await withDir(async (cwd) => {
+    await put(cwd, "work/ev/a.json", SHAPES[0].wrap([SHAPES[0].ok(1), huge("[" + '"a",'.repeat(30_000_000) + '"a"]'), SHAPES[0].ok(3)]));
+    const { child, done } = spawnTool(TRAIL, cwd, { path: "work/ev/a.json", max_record_bytes: 1024, time_limit_seconds: 300 });
+    await new Promise((r) => setTimeout(r, 1500));
+    child.kill("SIGTERM");
+    const run = await done;
+    if (run.code === 0) {
+      t.diagnostic("the read finished before the signal");
+      return;
+    }
+    assert.equal(run.code, 143, run.stderr);
+    assert.doesNotMatch(run.stderr, /Traceback/);
+  });
+});
+
+test("a record far over max_record_bytes is skipped without being held: a 160 MiB record keeps the peak resident size under 120 MiB", async () => {
+  const wrapper = peakRssPrelude() + String.raw`
+import runpy
+sys.argv = [sys.argv[1]]
+try:
+    runpy.run_path(sys.argv[0], run_name="__main__")
+except SystemExit:
+    pass
+sys.stderr.write("MAXRSS %d\n" % self_peak_bytes())
+`;
+  await withDir(async (cwd) => {
+    const record = Buffer.concat([Buffer.from('{"id":"big","pad":"'), Buffer.alloc(160 << 20, "a"), Buffer.from('"}')]);
+    await put(cwd, "work/ev/a.json", Buffer.concat([Buffer.from('{"Records":['), Buffer.from(SHAPES[0].ok(1) + ","), record, Buffer.from("," + SHAPES[0].ok(3) + "]}")]));
+    const run: Run = await new Promise((resolve, reject) => {
+      const child = spawn("python3", ["-c", wrapper, TRAIL], { cwd, env: { ...process.env, AGENT_ID: "s1" } });
+      const out: Buffer[] = [];
+      const err: Buffer[] = [];
+      child.stdout.on("data", (c: Buffer) => out.push(c));
+      child.stderr.on("data", (c: Buffer) => err.push(c));
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") }));
+      child.stdin.end(JSON.stringify({ path: "work/ev/a.json", max_record_bytes: 1024 }));
+    });
+    const peak = /MAXRSS (\d+)/.exec(run.stderr);
+    assert.ok(peak, run.stderr);
+    const answer = JSON.parse(run.stdout);
+    assert.equal(answer.coverage.records_read, 2);
+    assert.equal(answer.coverage.records_rejected, 1);
+    assert.ok(Number(peak[1]) < 120 << 20, `peak resident size ${Number(peak[1]) >> 20} MiB`);
+  });
+});
+
+/** JSON Lines in gzip members, the lines of one shape. */
+const members = (s: Shape, n: number): Buffer[] => Array.from({ length: n }, (_, i) => gzipSync(Buffer.from(s.ok(i + 1) + "\n")));
+/** Flip a byte of a member's trailer: 0..3 its CRC-32, 4..7 its length. */
+const damaged = (member: Buffer, at: number): Buffer => {
+  const copy = Buffer.from(member);
+  copy[copy.length - 8 + at] ^= 0xff;
+  return copy;
+};
+const census = async (cwd: string, out: Json): Promise<Json> => (await rowsOf(cwd, out, "file_census"))[0];
+
+test("zero bytes after the last gzip member are padding: counted apart from damage, and the read stays complete (GNU gzip ignores them); zeros before anything else, or before another member, are not padding", async () => {
+  for (const s of SHAPES) {
+    for (const zeros of [1, 512, (1 << 20) + 3]) {
+      await withDir(async (cwd) => {
+        await put(cwd, "work/ev/a.jsonl.gz", Buffer.concat([...members(s, 2), Buffer.alloc(zeros)]));
+        const out = body(await tool(s.script, cwd, { path: "work/ev/a.jsonl.gz" }));
+        const row = await census(cwd, out);
+        assert.equal(out.coverage[s.read], 2, `${s.name}, ${zeros} zero bytes`);
+        assert.equal(out.status, "complete", `${s.name}, ${zeros} zero bytes: ${out.status_basis}`);
+        assert.equal(row.trailing_zero_bytes, zeros, s.name);
+        assert.equal(row.problems, undefined, `${s.name}: padding is not a problem`);
+      });
+    }
+    await withDir(async (cwd) => {
+      await put(cwd, "work/ev/a.jsonl.gz", Buffer.concat([...members(s, 1), Buffer.alloc(100), Buffer.from("garbage")]));
+      const out = body(await tool(s.script, cwd, { path: "work/ev/a.jsonl.gz" }));
+      const row = await census(cwd, out);
+      assert.equal(out.status, "partial", `${s.name}: zeros, then garbage`);
+      assert.equal(row.trailing_zero_bytes, undefined, s.name);
+      assert.match(row.problems.join(" "), /107 bytes follow the end of the compressed stream/, s.name);
+    });
+    await withDir(async (cwd) => {
+      const [a, b] = members(s, 2);
+      await put(cwd, "work/ev/a.jsonl.gz", Buffer.concat([a, Buffer.alloc(16), b]));
+      const out = body(await tool(s.script, cwd, { path: "work/ev/a.jsonl.gz" }));
+      assert.equal(out.status, "partial", `${s.name}: a member after zeros is the data GNU gzip would drop`);
+      assert.equal(out.coverage[s.read], 1, s.name);
+    });
+    await withDir(async (cwd) => {
+      const [a] = members(s, 1);
+      await put(cwd, "work/ev/a.jsonl.gz", Buffer.concat([a.subarray(0, a.length - 6), Buffer.alloc(64)]));
+      const out = body(await tool(s.script, cwd, { path: "work/ev/a.jsonl.gz" }));
+      assert.equal(out.status, "partial", `${s.name}: a member cut short is not padding`);
+    });
+  }
+});
+
+test("every problem of a gzip file is kept, in order: a CRC failure and then a length failure are both listed; past 25 the rest are counted", async () => {
+  for (const s of SHAPES) {
+    await withDir(async (cwd) => {
+      const [a, b, c] = members(s, 3);
+      await put(cwd, "work/ev/a.jsonl.gz", Buffer.concat([damaged(a, 0), damaged(b, 5), c]));
+      const out = body(await tool(s.script, cwd, { path: "work/ev/a.jsonl.gz" }));
+      const row = await census(cwd, out);
+      assert.equal(out.status, "partial", s.name);
+      assert.equal(out.coverage[s.read], 3, `${s.name}: the bytes of a damaged member are read`);
+      const joined: string[] = row.problems;
+      const crc = joined.findIndex((p) => /member 1 of the compressed stream fails its CRC-32 check/.test(p));
+      const length = joined.findIndex((p) => /member 2 of the compressed stream fails its length check/.test(p));
+      assert.ok(crc >= 0 && length > crc, `${s.name}: both problems are listed, in order: ${JSON.stringify(joined)}`);
+    });
+    await withDir(async (cwd) => {
+      const bad = members(s, 30).map((m) => damaged(m, 1));
+      await put(cwd, "work/ev/a.jsonl.gz", Buffer.concat(bad));
+      const out = body(await tool(s.script, cwd, { path: "work/ev/a.jsonl.gz" }));
+      const listed: string[] = (await census(cwd, out)).problems.filter((p: string) => /fails its CRC-32 check/.test(p));
+      assert.equal(listed.length, 25, s.name);
+      assert.match((await census(cwd, out)).problems.join(" "), /5 more problem\(s\) of this file were counted and are not listed/, s.name);
+      assert.equal(out.coverage[s.read], 30, s.name);
+    });
+  }
+});
+
+test("the PARSER labels move with what a record says: cloudtrail_parse, signin_analyse and ual_parse are at 6 (5 for the foreign-record, long-integer and isolation changes; 6 for the records after a record over max_record_bytes, which are read now)", async () => {
+  for (const s of SHAPES) {
+    const text = await readFile(s.script, "utf8");
+    const m = /^PARSER = "([a-z_]+)\/(\d+)"$/m.exec(text);
+    assert.ok(m, `${s.name} has a PARSER label`);
+    assert.deepEqual([m[1], Number(m[2])], [s.name, 6], `${s.name}: change the label, and this pin, in the commit that changes what a record says`);
   }
 });

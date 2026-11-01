@@ -14,6 +14,7 @@ import { ROOT } from "./tool-library-harness.ts";
 const SKILLS = join(ROOT, "packs", "cloud-forensics", "skills");
 const IDS = [
   "aws/cloudtrail",
+  "aws/cloudtrail-integrity",
   "entra/signins",
   "google/workspace",
   "google/workspace-access",
@@ -25,7 +26,7 @@ const IDS = [
 ];
 
 // The pack's one router: shown alone when a run's index is over budget, and names every other skill once (routerChecks below).
-// IDS holds the nine leaves; the router reads no artefact, so the per-leaf checks of this file do not apply to it.
+// IDS holds the ten leaves; the router reads no artefact, so the per-leaf checks of this file do not apply to it.
 const ROUTER = "cloud/router";
 
 const read = (id: string): { front: Record<string, string>; text: string; body: string } => {
@@ -42,7 +43,7 @@ const read = (id: string): { front: Record<string, string>; text: string; body: 
 
 const list = (v: string): string[] => v.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean);
 
-test("the pack carries these nine skills and its router, and no others", () => {
+test("the pack carries these ten skills and its router, and no others", () => {
   const found: string[] = [];
   const walk = (dir: string, prefix: string): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -214,7 +215,33 @@ test("pwsh and aws are said to be an operator's acquisition tools, in requires a
   }
   const pack = JSON.parse(readFileSync(join(ROOT, "packs", "cloud-forensics", "pack.json"), "utf8"));
   assert.ok(pack.unreferenced_ok.some((e: { name: string; why: string }) => e.name === "pwsh" && /never connects to a tenant/.test(e.why)));
-  assert.equal(pack.skills, 10);
+  assert.equal(pack.skills, 11);
+});
+
+test("aws/cloudtrail-integrity routes the CloudTrail integrity check to the operator: the command and its options are named and cited with a date, the result vocabulary is fixed, a signature-less export and a file hash are not validation, and nothing tells the agent to run the program", () => {
+  const leaf = read("aws/cloudtrail-integrity");
+  assert.deepEqual(list(leaf.front.tools ?? "[]"), [], "no tool of the pack validates");
+  assert.equal(leaf.front.requires_host, "[]", "no host program is required: the agent never runs it");
+  assert.deepEqual(list(leaf.front.mentions ?? "[]"), ["aws"], "the program is named as the operator's, in mentions");
+  const b = leaf.body;
+  assert.match(b, /`aws cloudtrail validate-logs`/);
+  for (const opt of ["--trail-arn", "--start-time", "--end-time", "--s3-bucket", "--s3-prefix", "--account-id", "--verbose"]) assert.ok(b.includes(`\`${opt}\``), `${opt} is named`);
+  assert.match(b, /read 20\d\d-\d\d-\d\d, docs\.aws\.amazon\.com\/cli\/latest\/reference\/cloudtrail\/validate-logs\.html/, "the source is dated and cited");
+  assert.match(b, /UNVERIFIED/, "what the cited page does not document is marked");
+  assert.match(b, /`verified`, `failed` or `unavailable`/, "the result vocabulary");
+  assert.match(b, /per digest file and per log file/i);
+  assert.match(b, /gaps in the chain/);
+  assert.match(b, /lost the S3 object metadata \(the digest signature\) cannot show that validation/);
+  assert.match(b, /a file hash[^.]*is not that validation/i);
+  assert.match(b, /Offline: no tool of this pack validates/);
+  assert.match(b, /you never run one or authenticate to an account/);
+  assert.doesNotMatch(b, /\b(run|execute|use|invoke)\b[^.]{0,20}`aws /i, "no instruction to run the program");
+  // The CloudTrail leaf opens it only if, and the router names it.
+  assert.match(read("aws/cloudtrail").body, /only if one is wanted, `aws\/cloudtrail-integrity`/);
+  assert.match(readFileSync(join(SKILLS, "cloud", "router.md"), "utf8"), /`aws\/cloudtrail-integrity` /);
+  // aws is still an operator's program that is not in the image.
+  const host = JSON.parse(readFileSync(join(ROOT, "packs", "cloud-forensics", "requires", "host.json"), "utf8"));
+  assert.ok(host.binaries.find((x: { name: string }) => x.name === "aws").not_in_image);
 });
 
 test("the split pass: the pack's needs chains stay within the 1,900-token budget without the base pack, and every index entry is within 40 tokens", () => {

@@ -265,7 +265,7 @@ test("every field a lead depends on is kept: ids, correlation id, authentication
     assert.deepEqual([e.token_issuer_type, e.unique_token_identifier], ["AzureAD", "abcDEF123_uniq"]);
     assert.equal(e.device_detail.operatingSystem, "Windows 11");
     assert.equal(e.raw_record.id, "signin-1");
-    assert.deepEqual([e.record, e.line, e.event_index ?? null, e.parser], [1, 1, null, "signin_analyse/4"]);
+    assert.deepEqual([e.record, e.line, e.event_index ?? null, e.parser], [1, 1, null, "signin_analyse/6"]);
     assert.equal(e.source_file.endsWith("s.json"), true);
     assert.equal(out.single_factor_successes.length, 1);
     assert.equal(out.single_factor_successes[0].event_id, "signin-1");
@@ -331,13 +331,13 @@ test("a credential-shaped value in a record is withheld from every row, the raw 
 
     const outside = refused(await tool(SIGNIN, cwd, { path: `work/ev/${JWT}.json`, write_values: true }));
     assert.match(outside.error, /write_values is refused outside a job/);
-    const sealed = body(await asJob(SIGNIN, cwd, { path: `work/ev/${JWT}.json`, write_values: true }, {}, "out", "jsealed"));
+    const sealed = body(await asJob(SIGNIN, cwd, { path: `work/ev/${JWT}.json`, write_values: true }, { SECRET_OUTPUT: "1" }, "out", "jsealed"));
     const file = join(cwd, "out", "signin-values.jsonl");
     assert.equal((await stat(file)).mode & 0o777, 0o600);
     const values = await readFile(file, "utf8");
     assert.ok(values.includes(PASSWORD) && values.includes(JWT));
     assert.ok(sealed.secret_values.written >= 3);
-    const second = refused(await asJob(SIGNIN, cwd, { path: `work/ev/${JWT}.json`, write_values: true }, {}, "out", "jsealed"));
+    const second = refused(await asJob(SIGNIN, cwd, { path: `work/ev/${JWT}.json`, write_values: true }, { SECRET_OUTPUT: "1" }, "out", "jsealed"));
     assert.match(second.error, /the values file already exists/);
     assert.equal(await readFile(file, "utf8"), values);
   });
@@ -539,6 +539,92 @@ test("two successes at one recorded second in two far places are listed with no 
     assert.match(t.why, /same recorded second/);
     const apart = await run(cwd, "a.json", graph(signIn(1, "2026-02-14T09:00:00Z", 0, geo(41.0, 29.0)), signIn(2, "2026-02-14T09:00:01Z", 0, { ...geo(52.5, 13.4), ipAddress: "192.0.2.9" })));
     assert.ok(apart.impossible_travel[0].implied_speed_kmh > 900);
+  });
+});
+
+// ---- the analysis after the read has a clock of its own ----------------------------------------------------------------------
+
+/** Forty accounts, each with a burst of three failures and a success, so that every account that is analysed leaves one lead. */
+const accounts = (n: number): string => graph(...Array.from({ length: n }, (_, a) => {
+  const user = { userPrincipalName: `user${String(a).padStart(2, "0")}@example.org`, userId: `guid-${String(a).padStart(2, "0")}` };
+  return [50126, 50126, 50126, 0].map((code, k) => signIn(a * 10 + k, `2026-02-14T09:0${k}:00Z`, code, user));
+}).flat());
+
+test("when the analysis clock is out, the accounts not analysed are counted and named, the leads of the others are kept, and the answer is partial, never complete", async () => {
+  await withDir(async (cwd) => {
+    await put(cwd, "work/ev/a.json", accounts(40));
+    const whole = body(await tool(SIGNIN, cwd, { path: "work/ev/a.json" }));
+    assert.equal(whole.status, "complete");
+    assert.equal(whole.failure_bursts_before_success.length, 40);
+    assert.equal(whole.coverage.analysis_stopped_by_time_limit, false);
+    assert.equal(whole.coverage.users_not_analysed_by_clock, 0);
+
+    // The clock runs out after two accounts have had their turn.
+    const some = body(await tool(CLOCK, cwd, { path: "work/ev/a.json" }, { INJECT_TOOL: SIGNIN, INJECT_ANALYSIS: "after:2" }));
+    assert.equal(some.status, "partial");
+    assert.match(some.status_basis, /^the analysis of the events ended at its own time limit \(540 s after the call began\), after the read: 38 account\(s\) were not analysed/);
+    assert.equal(some.coverage.analysis_stopped_by_time_limit, true);
+    assert.equal(some.coverage.users_analysed, 2);
+    assert.equal(some.coverage.users_not_analysed_by_clock, 38);
+    assert.equal(some.coverage.users_not_analysed_by_clock_named.length, 25, "the first FIRST_PROBLEMS are named");
+    assert.deepEqual(some.coverage.users_not_analysed_by_clock_named.slice(0, 2), ["user02@example.org", "user03@example.org"], "in the order the accounts are analysed in");
+    assert.equal(some.failure_bursts_before_success.length, 2, "the leads of the accounts that were analysed are kept");
+    assert.equal(some.coverage.records_read, 160, "the read itself was whole");
+
+    // The clock is out when the analysis starts: no account is analysed, every one is named as not analysed.
+    const none = body(await tool(CLOCK, cwd, { path: "work/ev/a.json" }, { INJECT_TOOL: SIGNIN, INJECT_ANALYSIS: "expired" }));
+    assert.equal(none.status, "partial");
+    assert.equal(none.coverage.users_analysed, 0);
+    assert.equal(none.coverage.users_not_analysed_by_clock, 40);
+    assert.deepEqual(none.failure_bursts_before_success, []);
+    assert.match(none.status_basis, /40 account\(s\) were not analysed/);
+  });
+});
+
+// ---- interrupt codes: what the tool does with the codes outside its list of prompts -------------------------------------------
+
+for (const code of [50072, 50097, 50199]) {
+  test(`error code ${code} is not on the tool's list of prompts: it counts as a failure and feeds a burst, and the manifest and the skill say so`, async () => {
+    await withDir(async (cwd) => {
+      const out = await run(cwd, "c.json", graph(signIn(1, "2026-02-14T09:00:00Z", code), signIn(2, "2026-02-14T09:00:01Z", code), signIn(3, "2026-02-14T09:00:02Z", code), signIn(4, "2026-02-14T09:00:03Z", 0)));
+      assert.deepEqual(out.events.map((e: Json) => e.success), [false, false, false, true]);
+      assert.deepEqual([out.failures, out.interrupts], [3, 0]);
+      assert.equal(out.events[0].outcome_class, undefined, "not an interrupt");
+      assert.equal(out.failure_bursts_before_success.length, 1);
+      assert.deepEqual(out.failure_bursts_before_success[0].failure_result_codes, { [code]: 3 });
+    });
+    const manifest = JSON.parse(await readFile(join(import.meta.dirname, "..", "packs", "cloud-forensics", "tools", "signin_analyse", "manifest.json"), "utf8"));
+    assert.match(manifest.description, new RegExp(`50072, 50097 and 50199[^.]*counted as a failure`), "the manifest names the codes");
+    const skill = await readFile(join(import.meta.dirname, "..", "packs", "cloud-forensics", "skills", "entra", "signins.md"), "utf8");
+    assert.match(skill, /50072, 50097 and 50199/, "the skill names the codes");
+  });
+}
+
+test("a code that is neither a number nor a success or failure word (the text unverifiable, say) is no failure: success null, counted as an unknown outcome", async () => {
+  await withDir(async (cwd) => {
+    const out = await run(cwd, "u.json", graph(signIn(1, "2026-02-14T09:00:00Z", null, { status: { errorCode: "unverifiable", failureReason: null, additionalDetails: null } }), signIn(2, "2026-02-14T09:00:01Z", 0)));
+    assert.deepEqual(out.events.map((e: Json) => e.success), [null, true]);
+    assert.deepEqual([out.failures, out.unknown_outcome], [0, 1]);
+  });
+});
+
+// ---- a file that proves both date orders -----------------------------------------------------------------------------------------
+
+test("a file that proves both date orders is refused saying so, with the counts and the argument that settles it; a file that proves none says that instead", async () => {
+  await withDir(async (cwd) => {
+    const dmy = portalRow(1, "25/01/2026 09:00:00", "Success", "0");      // 25 cannot be a month: day/month/year
+    const mdy = portalRow(2, "01/25/2026 09:00:00", "Success", "0");      // 25 cannot be a month: month/day/year
+    const unclear = portalRow(3, "03/04/2026 09:00:00", "Success", "0");  // either
+    await put(cwd, "work/ev/both.csv", portalCsv(dmy, mdy, unclear));
+    const both = refused(await tool(SIGNIN, cwd, { path: "work/ev/both.csv" }));
+    assert.match(both.error, /the file proves both orders: 1 row\(s\) can only be day\/month\/year and 1 only month\/day\/year/);
+    assert.doesNotMatch(both.error, /no unambiguous string in the file proves the order/);
+    assert.match(both.error, /Say which with date_order: dmy or mdy/);
+    assert.deepEqual([both.rows_only_day_month, both.rows_only_month_day, both.ambiguous_records], [1, 1, 1]);
+    await put(cwd, "work/ev/none.csv", portalCsv(unclear));
+    const none = refused(await tool(SIGNIN, cwd, { path: "work/ev/none.csv" }));
+    assert.match(none.error, /no unambiguous string in the file proves the order/);
+    assert.equal(none.rows_only_day_month, undefined);
   });
 });
 

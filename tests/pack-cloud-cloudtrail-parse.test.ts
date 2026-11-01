@@ -219,7 +219,7 @@ test("a Records file read as a stream gives every record its file, record number
     assert.deepEqual(out.records.map((r: Json) => [r.event_id, r.record, r.line]), [["s-1", 1, 3], ["s-2", 2, 4], ["s-3", 3, 5]]);
     assert.equal(out.records[2].time, "2026-02-14T09:00:00.1234567Z");
     assert.equal(out.records[2].time_utc, "2026-02-14T09:00:00.1234567Z", "the fractions are kept");
-    assert.equal(out.records[0].parser, "cloudtrail_parse/4");
+    assert.equal(out.records[0].parser, "cloudtrail_parse/6");
     assert.equal(out.first_event, "2026-02-14T09:00:00.1234567Z");
     assert.equal(out.last_event, "2026-02-14T09:00:02Z");
   });
@@ -335,7 +335,7 @@ test("write_values puts the originals in a mode 0600 file under $OUT, only in a 
     assert.equal(outside.written, false);
     assert.deepEqual(await filesUnder(join(cwd, "work", "ev")).then((f) => f.filter((n) => !n.endsWith(".json"))), []);
 
-    const first = body(await asJob(TRAIL, cwd, { path: "work/ev", write_values: true }, {}, "out", "jsame"));
+    const first = body(await asJob(TRAIL, cwd, { path: "work/ev", write_values: true }, { SECRET_OUTPUT: "1" }, "out", "jsame"));
     assert.equal(first.secret_values.requested, true);
     assert.ok(first.secret_values.written >= 5);
     assert.equal(first.secret_values.contains_secret_values, true);
@@ -348,7 +348,7 @@ test("write_values puts the originals in a mode 0600 file under $OUT, only in a 
     const rest = await everythingBut(cwd, JSON.stringify(first), ["out/cloudtrail-values.jsonl"]);
     for (const needle of NEEDLES) assert.ok(!rest.includes(needle), `the job's other files hold ${needle.slice(0, 10)}...`);
 
-    const second = refused(await asJob(TRAIL, cwd, { path: "work/ev", write_values: true }, {}, "out", "jsame"));
+    const second = refused(await asJob(TRAIL, cwd, { path: "work/ev", write_values: true }, { SECRET_OUTPUT: "1" }, "out", "jsame"));
     assert.match(second.error, /the values file already exists/);
     assert.equal(await readFile(file, "utf8"), values, "the earlier file is untouched");
   });
@@ -357,7 +357,7 @@ test("write_values puts the originals in a mode 0600 file under $OUT, only in a 
 test("with nothing withheld the values file stays an empty mode 0600 file and the answer says written: 0", async () => {
   await withDir(async (cwd) => {
     await put(cwd, "work/ev/plain.json", trail(ct({ eventID: "p-1", userIdentity: ALICE, requestParameters: { roleArn: ROLE, roleSessionName: "s" } })));
-    const out = body(await asJob(TRAIL, cwd, { path: "work/ev", write_values: true }));
+    const out = body(await asJob(TRAIL, cwd, { path: "work/ev", write_values: true }, { SECRET_OUTPUT: "1" }));
     assert.equal(out.secret_values.written, 0);
     assert.equal(out.secret_values.contains_secret_values, false);
     const file = join(cwd, "out", "cloudtrail-values.jsonl");
@@ -519,13 +519,13 @@ test("a link left where the values file would go is refused by name, and nothing
     await mkdir(join(cwd, "out"), { recursive: true });
     await put(cwd, "elsewhere.txt", "untouched");
     await symlink(join(cwd, "elsewhere.txt"), join(cwd, "out", "cloudtrail-values.jsonl"));
-    const out = refused(await asJob(TRAIL, cwd, { path: "work/ev", write_values: true }));
+    const out = refused(await asJob(TRAIL, cwd, { path: "work/ev", write_values: true }, { SECRET_OUTPUT: "1" }));
     assert.match(out.error, /the values file already exists/);
     assert.equal(await readFile(join(cwd, "elsewhere.txt"), "utf8"), "untouched");
     // a link that points nowhere is refused the same way (O_EXCL does not follow it)
     await rm(join(cwd, "out", "cloudtrail-values.jsonl"));
     await symlink(join(cwd, "nowhere"), join(cwd, "out", "cloudtrail-values.jsonl"));
-    const dangling = refused(await asJob(TRAIL, cwd, { path: "work/ev", write_values: true }));
+    const dangling = refused(await asJob(TRAIL, cwd, { path: "work/ev", write_values: true }, { SECRET_OUTPUT: "1" }));
     assert.match(dangling.error, /the values file already exists/);
     assert.equal(await exists(join(cwd, "nowhere")), false);
   });

@@ -40,7 +40,8 @@ An empty list excludes nothing: the export may be a slice of the account's activ
 
 SECRET-SAFE OUTPUT (docs/packs.md, "Secrets and sensitive output"). A field whose name says it is a secret, and any text
 shaped like one, is withheld in every channel; the original goes to `signin-values.jsonl` under $OUT (mode 0600, created
-first) only when `write_values: true` is asked, in a job, which the skill says to run with `secret_output: true`. Names,
+first) only when `write_values: true` is asked, in a job run as secret output (the manifest makes a job with write_values one; otherwise it is refused and nothing
+is written). Names,
 addresses, locations and device identifiers are personal data, not secrets: they are in the answer; the case's own rules
 say where such output may go.
 """
@@ -56,6 +57,7 @@ import codecs
 import csv
 import datetime
 import errno
+import itertools
 import json
 import os
 import re
@@ -619,8 +621,9 @@ class SecretValues:
 
     The secret-safe output pattern of recovery_key_scan (docs/packs.md, "Secrets and sensitive output"), copied
     unchanged but for the file's name and the tool named in the refusal. With `enabled` false it writes nothing and
-    `summary()` says so. Enabled, it is refused outside a job; inside one the file is created at once, before anything
-    is read (mode 0600, O_EXCL and O_NOFOLLOW: a file or a link already at that name is refused by name, a dangling link
+    `summary()` says so. Enabled, it is refused outside a job and in a job that was not run as secret output
+    (SECRET_OUTPUT is not "1"; the manifest's `secret_output` makes a job with write_values one); inside a secret job
+    the file is created at once, before anything is read (mode 0600, O_EXCL and O_NOFOLLOW: a file or a link already at that name is refused by name, a dangling link
     included), so with nothing withheld it stays an empty file and the answer says written: 0.
     """
 
@@ -639,6 +642,15 @@ class SecretValues:
                 "write_values is refused outside a job: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=%s with "
                 "secret_output: true, and ask again there. Nothing was written." % tool
+            )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise SecretValuesRefused(
+                "write_values is refused in a job that was not run as secret output: its files would "
+                "be sealed as ordinary output. The harness sets SECRET_OUTPUT=1 for a secret job's "
+                "process and it is not set here. Run this as job_run tool=%s (its manifest makes a "
+                "job with write_values secret output), or give a command job secret_output: true; "
+                "if that is refused the same way, this run's harness does not set the variable and "
+                "the values mode is not available in it. Nothing was written." % tool
             )
         self.path = Path(self.out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), name)
@@ -1397,7 +1409,9 @@ class Source:
     `cap` bytes of expansion, every byte up to a break kept (a gzip that ends early, or fails its check, gives what came before
     it and says so in `error`); an archive (ZIP, tar, bzip2, xz, 7-Zip...) is named and not read. UTF-8 is assumed, UTF-16
     where a byte order mark says so; each byte that does not decode becomes U+FFFD and is counted in `replaced`. The read
-    ends at the deadline (`timed_out`)."""
+    ends at the deadline (`timed_out`). Zero bytes after the last gzip member, to the end of the file, are padding (GNU gzip
+    ignores them): they are counted in `trailing_zero_bytes` and are not a problem. Every problem of a file is kept in
+    `problems` (the first FIRST_PROBLEMS), the rest counted, and `error` is the first."""
 
     def __init__(self, path, cap):
         self.path, self.cap = path, cap
@@ -1405,7 +1419,12 @@ class Source:
         self.eof = False
         self.bytes_read = 0
         self.compressed = False
-        self.error = None
+        self.error = None          # the first problem of the file; `problems` holds them in order, `problem_lines()` is what the answer lists
+        self.problems = []
+        self.problems_total = 0
+        self.trailing_zero_bytes = 0
+        self._zero_run = 0
+        self._member = 0
         self.archive = None
         self.capped = False
         self.timed_out = False
@@ -1428,14 +1447,29 @@ class Source:
             kind = archive_kind(head)
             if kind:
                 self.archive = kind
-                self.error = "%s: extract it first; it was not read" % kind
+                self._problem("%s: extract it first; it was not read" % kind)
                 self.eof = True
             elif head[:2] == b"\x1f\x8b":
                 self.compressed = True
             self.fh = self._raw
         except OSError as exc:
-            self.error = describe(exc)
+            self._problem(describe(exc))
             self.eof = True
+
+    def _problem(self, text):
+        """Keep a problem of this file. The first stays in `error`; the first FIRST_PROBLEMS are listed, the rest are counted."""
+        self.problems_total += 1
+        if len(self.problems) < FIRST_PROBLEMS:
+            self.problems.append(text)
+        if self.error is None:
+            self.error = text
+
+    def problem_lines(self):
+        """Every problem of the file in the order it happened (the first FIRST_PROBLEMS), and a line counting the rest."""
+        lines = list(self.problems)
+        if self.problems_total > len(self.problems):
+            lines.append("%d more problem(s) of this file were counted and are not listed" % (self.problems_total - len(self.problems)))
+        return lines
 
     def close(self):
         for h in (self.fh, self._raw):
@@ -1460,16 +1494,27 @@ class Source:
                 raw = self._raw.read(1 << 18)
                 if not raw:
                     if self._state != "header" or self._hdr:
-                        self.error = "the compressed stream ends early, after %d bytes of expansion: what came before it was read" % (self.bytes_read + got)
+                        self._problem("the compressed stream ends early, after %d bytes of expansion: what came before it was read" % (self.bytes_read + got))
+                    else:
+                        self.trailing_zero_bytes = self._zero_run         # zero padding after the last member, to the end of the file: counted, not damage
                     self._ended = True
                     break
                 self._pending = raw
             if self._state == "header":
                 buf = self._hdr + self._pending
+                if self._zero_run or buf[:1] == b"\x00":
+                    stripped = buf.lstrip(b"\x00")                 # zeros cannot begin a member; GNU gzip ignores such padding at the end of a file
+                    self._zero_run += len(buf) - len(stripped)
+                    buf = stripped
+                    if not buf:
+                        self._hdr = self._pending = b""
+                        continue
                 try:
+                    if self._zero_run:
+                        raise ValueError("zeros, then something that is not the end of the file")
                     n = gzip_header_length(buf)
                 except ValueError:
-                    self.error = "%d bytes follow the end of the compressed stream and are not another member: they were not read" % len(buf)
+                    self._problem("%d bytes follow the end of the compressed stream and are not another member: they were not read" % (self._zero_run + len(buf)))
                     self._ended = True
                     self._pending = b""
                     break
@@ -1482,7 +1527,7 @@ class Source:
                 try:
                     piece = self._d.decompress(self._pending, min(want - got, 32768))
                 except zlib.error as exc:
-                    self.error = "the compressed stream is damaged after %d bytes of expansion (%s): what came before it was read" % (self.bytes_read + got, exc)
+                    self._problem("the compressed stream is damaged after %d bytes of expansion (%s): what came before it was read" % (self.bytes_read + got, exc))
                     self._ended = True
                     self._pending = b""
                     break
@@ -1503,8 +1548,10 @@ class Source:
                 if len(self._tr) == 8:
                     crc, size = struct.unpack("<II", self._tr)
                     self._tr = b""
-                    if crc != self._crc & 0xFFFFFFFF or size != self._isize & 0xFFFFFFFF:
-                        self.error = "a member of the compressed stream fails its own check (CRC-32 or length): its bytes were read and may be wrong"
+                    self._member += 1
+                    failed = (["CRC-32"] if crc != self._crc & 0xFFFFFFFF else []) + (["length"] if size != self._isize & 0xFFFFFFFF else [])
+                    if failed:
+                        self._problem("member %d of the compressed stream fails its %s check: its bytes were read and may be wrong" % (self._member, " and ".join(failed)))
                     self._state = "header"
         return b"".join(out)
 
@@ -1522,12 +1569,12 @@ class Source:
         try:
             data = self._expand(want) if self.compressed else self.fh.read(want)
         except OSError as exc:
-            self.error = describe(exc)
+            self._problem(describe(exc))
             self.eof = True
             data = b""
         if self._first and self.compressed and data[257:262] == b"ustar":
             self.archive = "a tar archive"
-            self.error = "a tar archive (gzip-compressed): extract it first; it was not read"
+            self._problem("a tar archive (gzip-compressed): extract it first; it was not read")
             self.eof = True
             data = b""
         if self._ended:
@@ -1677,6 +1724,91 @@ def _skip_value(src, i, limit):
     return m.end() if m else None
 
 
+_STR_RUN = re.compile(r'[^"\\]*+(?:\\.[^"\\]*+)*+', re.S)  # a string's body up to its closing quote, or to a lone backslash at the buffer's end (possessive, Python 3.11 and later: the plain form keeps state for every escape)
+_RUN = re.compile(r'(?:[^"{}\[\]]++|"[^"\\]*+(?:\\.[^"\\]*+)*+")*+', re.S)   # plain text and whole strings, up to the next bracket or a string the buffer ends inside
+_BRACKET = re.compile(r'[{}\[\]]')
+_NOT_BRACKET = re.compile(r'[^{}\[\]]+')
+_DEPTH_STEP = [0] * 256
+_DEPTH_STEP[ord("{")] = _DEPTH_STEP[ord("[")] = 1
+_DEPTH_STEP[ord("}")] = _DEPTH_STEP[ord("]")] = -1
+
+
+def _skip_stream(src):
+    """Move the read position past the JSON value that starts at it, holding none of it: the scan takes what the buffer has, moves
+    the position on and reads the next chunk, so memory stays at one chunk whatever the size of the value (a record over
+    max_record_bytes is skipped this way). It steps over strings and counts brackets and looks at nothing else, so it needs no
+    valid JSON inside the value. The clock is read every 4096 steps, and `fill` reads it too. Returns "ok" (the position is after
+    the value), "bad" (what stands there is not a value) or "end" (the file, the clock or the expansion cap ended it first:
+    `src.timed_out` and `src.capped` say which)."""
+    src.ensure(1)
+    if src.pos >= len(src.buf):
+        return "end"
+    first = src.buf[src.pos]
+    depth, in_string, steps = 0, False, 0
+    if first in "{[":
+        depth = 1
+        src.advance(src.pos + 1)
+    elif first == '"':
+        in_string = True
+        src.advance(src.pos + 1)
+    else:
+        m = _BARE.match(src.buf, src.pos)
+        if not m:
+            return "bad"
+        while True:
+            src.advance(m.end())
+            if src.pos < len(src.buf) or not src.fill():
+                return "ok"
+            m = _BARE.match(src.buf, src.pos)
+            if not m:
+                return "ok"
+    while True:
+        buf, j, n = src.buf, src.pos, len(src.buf)
+        while j < n:
+            steps += 1
+            if not steps & 4095 and out_of_time():
+                src.advance(j)
+                src.timed_out = True
+                src.eof = True
+                return "end"
+            if in_string:
+                e = _STR_RUN.match(buf, j).end()
+                if e < n and buf[e] == '"':
+                    j = e + 1
+                    in_string = False
+                    if depth == 0:
+                        src.advance(j)
+                        return "ok"
+                    continue
+                j = e                       # the buffer ends inside the string, or on a backslash whose next character is still to come
+                break
+            j = _RUN.match(buf, j).end()    # plain text and whole strings, at C speed, up to a bracket
+            if j >= n:
+                break
+            if buf[j] == '"':               # a string the buffer ends inside
+                in_string = True
+                j += 1
+                continue
+            q = buf.find('"', j)            # a bracket: the stretch up to the next string
+            end = q if q >= 0 else n
+            closers = buf.count("}", j, end) + buf.count("]", j, end)
+            if closers and depth - closers <= 0:
+                # The value may end in this stretch. The lowest depth it reaches is found at C speed (the brackets alone, summed as they come);
+                # only a stretch that does reach zero is walked bracket by bracket, to find where.
+                lowest = min(itertools.accumulate(map(_DEPTH_STEP.__getitem__, _NOT_BRACKET.sub("", buf[j:end]).encode())))
+                if depth + lowest <= 0:
+                    for m in _BRACKET.finditer(buf, j, end):
+                        depth += 1 if m.group() in "{[" else -1
+                        if depth <= 0:
+                            src.advance(m.end())
+                            return "ok"
+            depth += buf.count("{", j, end) + buf.count("[", j, end) - closers
+            j = end
+        src.advance(j)
+        if not src.fill():
+            return "end"
+
+
 def envelope_scan(src, envelope_keys, limit):
     """For an object that starts at the read position: ("envelope", key, index after its `[`, names of the members before it)
     if a member named in `envelope_keys` holds an array, with the members in front of it skipped whatever they hold;
@@ -1730,6 +1862,22 @@ def read_units(src, envelope_keys, record_cap=MAX_RECORD_BYTES, document_cap=MAX
     def info(line, offset, chars, envelope):
         count[0] += 1
         return {"record": count[0], "line": line, "offset": offset, "chars": chars, "envelope": envelope}
+
+    def skip_oversize(start_line, start_off, key):
+        """A record over the cap, which the read position stands at: scan to its end without holding it (clocked, one chunk of
+        memory). Returns the reject to yield, and whether the read must stop. A skipped record is rejected with where it was
+        and how long; the records after it are read."""
+        outcome = _skip_stream(src)
+        if outcome == "ok":
+            return ("reject", info(start_line, start_off, src.offset() - start_off, key),
+                    "a record larger than max_record_bytes (%d): skipped, and the records after it are read" % record_cap), False
+        if outcome == "bad":
+            src.stopped = "what stands at line %d, where a record larger than max_record_bytes should be, is not a JSON value: the rest of the array was not read" % start_line
+            return ("reject", info(start_line, start_off, None, key), "a record larger than max_record_bytes (%d), and not a JSON value" % record_cap), True
+        src.stopped = ("the time limit ended the read" if src.timed_out else
+                       "the expansion reached max_expanded_bytes inside a record larger than max_record_bytes at line %d" % start_line if src.capped else
+                       "the array was not closed: the file ends inside a record larger than max_record_bytes at line %d" % start_line)
+        return ("reject", info(start_line, start_off, None, key), "a record larger than max_record_bytes (%d), and the read ended inside it" % record_cap), True
 
     def finish():
         src.extra_keys = sorted(extra)
@@ -1793,9 +1941,15 @@ def read_units(src, envelope_keys, record_cap=MAX_RECORD_BYTES, document_cap=MAX
                     try:
                         value, end = _decode_at(src, record_cap)
                     except TooLong:
-                        src.stopped = "a record larger than max_record_bytes at line %d: the rest of the array was not read" % start_line
-                        yield "reject", info(start_line, start_off, None, key), "a record larger than max_record_bytes (%d)" % record_cap
-                        return
+                        reject, stop = skip_oversize(start_line, start_off, key)
+                        yield reject
+                        if stop:
+                            return
+                        expecting_item = False
+                        src.skip_ws()
+                        if src.timed_out:
+                            return
+                        continue
                     except json.JSONDecodeError as exc:
                         if src.timed_out:       # the deadline cut the record, the JSON is not damaged
                             src.stopped = "the time limit ended the read"
@@ -1804,7 +1958,18 @@ def read_units(src, envelope_keys, record_cap=MAX_RECORD_BYTES, document_cap=MAX
                         if exc.msg == "nested too deeply":
                             # a record the decoder cannot hold is valid JSON as far as can be told: it is skipped without parsing it (by counting
                             # its brackets), rejected, and the records after it are read
-                            skip_end = _skip_value(src, start_pos, record_cap)
+                            try:
+                                skip_end = _skip_value(src, start_pos, record_cap)
+                            except TooLong:             # over the cap as well: the scan that holds nothing skips it
+                                reject, stop = skip_oversize(start_line, start_off, key)
+                                yield reject
+                                if stop:
+                                    return
+                                expecting_item = False
+                                src.skip_ws()
+                                if src.timed_out:
+                                    return
+                                continue
                             if skip_end is not None:
                                 src.advance(skip_end)
                                 yield "reject", info(start_line, start_off, skip_end - start_pos, key), "a record nested too deeply to be read (deeper than the JSON decoder holds)"
@@ -2009,7 +2174,10 @@ def first_of(item, keys, *names):
 
 
 TOOL = "signin_analyse"
-PARSER = "signin_analyse/4"
+# The label moves when what a record says changes (docs/packs.md, 'A tool's version and its PARSER label'). 4: until the
+# foreign-record, long-integer and per-record-isolation changes; 5: those; 6: a record over max_record_bytes is skipped and the
+# records after it are read (they were never read before).
+PARSER = "signin_analyse/6"
 VALUES_NAME = "signin-values.jsonl"
 ENVELOPE_KEYS = ("value", "items", "Records")
 SINGLE = "singlefactorauthentication"
@@ -2040,6 +2208,21 @@ ARGS = frozenset(("path", "user", "max_speed_kmh", "burst_window_seconds", "burs
 # Codes the tool lists as a prompt inside a sign-in flow (a multi-factor challenge, a registration, a keep-me-signed-in
 # question): the flow goes on in a later event of its own. A heuristic list; failure_reason is the provider's own word.
 INTERRUPT_CODES = frozenset(("50074", "50076", "50079", "50125", "50140", "50158"))
+# Any other code is not a prompt here: a non-zero number is a failure when no Status word decides, and so feeds a burst. That includes codes
+# the provider documents as steps of a flow (50072, 50097 and 50199 among them: their meanings were not checked against Microsoft's
+# current reference for this tool, so they are counted as failures and the manifest and the skill say so). A value that is neither a
+# number nor a success or failure word (for example the text "unverifiable") is neither: success null, counted in unknown_outcome.
+
+# The analysis after the read has a clock of its own. The read stops at time_limit_seconds (at most 480); the analysis stops at
+# ANALYSIS_ENDS_SECONDS after the call began, whatever the read used, which leaves the 600-second timeout a margin of 60 seconds for the
+# account in flight, the pages and the answer. It is checked before each account and inside the database's sort, and an account whose
+# turn did not come is counted and named (the first FIRST_PROBLEMS), never left out silently.
+ANALYSIS_ENDS_SECONDS = 540
+ANALYSIS_DEADLINE = [None]
+
+
+def analysis_out_of_time():
+    return ANALYSIS_DEADLINE[0] is not None and time.monotonic() > ANALYSIS_DEADLINE[0]
 
 
 class Fields(dict):
@@ -2309,6 +2492,7 @@ def main():
     field_limit = record_cap          # a CSV field may be as large as the record the call allows
     write_values = want_bool(args, "write_values")
     seconds = start_clock(args)
+    ANALYSIS_DEADLINE[0] = DEADLINE[0] - seconds + ANALYSIS_ENDS_SECONDS
     if out_file is not None:
         out_file = resolve_output(out_file, "out_file")
     try:
@@ -2329,9 +2513,14 @@ def main():
                  state.statuses["no_zone"], r[0], r[1], r[2]), record=r[0], line=r[1], records_without_a_zone=state.statuses["no_zone"])
     if state.statuses.get("ambiguous_date_order") and not order:
         r = state.first_bad["ambiguous_date_order"]
-        fail("%d record(s) carry a day/month/year time whose two leading fields are both 12 or less, and no unambiguous string in the file proves the order "
-             "(the first is record %d at line %s: %s). Say which with date_order: dmy or mdy." % (state.statuses["ambiguous_date_order"], r[0], r[1], r[2]),
-             record=r[0], line=r[1], ambiguous_records=state.statuses["ambiguous_date_order"])
+        both = state.order["dmy"] and state.order["mdy"]
+        fail("%d record(s) carry a day/month/year time whose two leading fields are both 12 or less, and %s "
+             "(the first is record %d at line %s: %s). Say which with date_order: dmy or mdy." % (
+                 state.statuses["ambiguous_date_order"],
+                 ("the file proves both orders: %d row(s) can only be day/month/year and %d only month/day/year, so one order cannot be taken from it" % (state.order["dmy"], state.order["mdy"]))
+                 if both else "no unambiguous string in the file proves the order", r[0], r[1], r[2]),
+             record=r[0], line=r[1], ambiguous_records=state.statuses["ambiguous_date_order"],
+             **({"rows_only_day_month": state.order["dmy"], "rows_only_month_day": state.order["mdy"]} if both else {}))
 
     census_files = LosslessPage("file_census", limit)
     rejected = RejectLog(LosslessPage("rejected_records", limit))
@@ -2510,7 +2699,7 @@ def main():
         if envelope_markers:
             pagination.append({"file": row["file"], "keys": envelope_markers})
         if src.error:
-            problems.append(src.error)
+            problems.extend(src.problem_lines())
         if src.capped:
             problems.append("the expansion reached max_expanded_bytes (%d): the rest of the file was not read" % max_expanded)
         if getattr(src, "stopped", None):
@@ -2537,6 +2726,8 @@ def main():
                     "rejected": counts["records_rejected"], "bytes_read": src.bytes_read, "shape": getattr(src, "mode", None)})
         if src.replaced:
             row["replacement_characters"] = src.replaced
+        if src.trailing_zero_bytes:
+            row["trailing_zero_bytes"] = src.trailing_zero_bytes
         if stopped_early:
             row["status"] = "partial"
         elif src.archive:
@@ -2567,6 +2758,10 @@ def main():
     withheld_summary = withheld.summary()
     replaced = row.get("replacement_characters", 0)
     complete = (row["status"] == "read" and not pagination and replaced == 0)
+    read_whole = complete
+    complete = complete and not analysis["cut"]
+    analysis_basis = ("the analysis of the events ended at its own time limit (%d s after the call began), after the read: %d account(s) were not analysed (their leads are absent, not empty; "
+                      "see coverage.users_not_analysed_by_clock and users_not_analysed_by_clock_named)" % (ANALYSIS_ENDS_SECONDS, analysis["not_analysed"])) if analysis["cut"] else None
     limit_basis = None
     if limit_stop and not stopped_early:
         limit_basis = ("a limit of this tool's own stopped the read before any event: %s; raise it (max_expanded_bytes, max_record_bytes) and run again; "
@@ -2577,15 +2772,18 @@ def main():
                         "also, if any, part of the file that was not read as sign-in records, a next page that was not supplied, or events with a time that could not be decoded "
                         "(see coverage, file_problems, rejected_records and pagination_markers)" % (seconds, counts["events"])) if stopped_early else
                        limit_basis or
-                       "part of the file was not read as sign-in records, or the export names a next page that was not supplied, or events have a time that could not be decoded "
-                       "(see coverage, file_problems, rejected_records and pagination_markers)",
+                       (analysis_basis if read_whole else
+                        "part of the file was not read as sign-in records, or the export names a next page that was not supplied, or events have a time that could not be decoded "
+                        "(see coverage, file_problems, rejected_records and pagination_markers)" + ("; also, " + analysis_basis if analysis_basis else "")),
                        "no sign-in record could be read from the file (see file_problems)")
     answer = {
         "parser": PARSER, **status, "path": shown_path(path),
         "coverage": {**counts, "files_found": 1, "time_limit_seconds": seconds, "stopped_by_time_limit": stopped_early, "max_expanded_bytes": max_expanded, "max_record_bytes": record_cap, "limit_stop": limit_stop,
                      "time_statuses": time_statuses, "bytes_read": row["bytes_read"], "replacement_characters": replaced,
                      "analysis_kept_in": db_where, "users_analysed": analysis["users"], "users_not_analysed_over_cap": analysis["over_cap"],
-                     "users_not_analysed_named": analysis["over_named"], "rejected_records_not_listed": rejected.total_unlisted},
+                     "users_not_analysed_named": analysis["over_named"], "analysis_stopped_by_time_limit": analysis["cut"],
+                     "analysis_ends_seconds_after_the_call_began": ANALYSIS_ENDS_SECONDS, "users_not_analysed_by_clock": analysis["not_analysed"],
+                     "users_not_analysed_by_clock_named": analysis["not_analysed_named"], "rejected_records_not_listed": rejected.total_unlisted},
         "assumptions": [a for a in (
             ("times with no zone were read as UTC because assume_utc was set: %d event(s)" % assumed["assume_utc_applied_to"]) if assumed["assume_utc_applied_to"] else None,
             ("times in a column named Date (UTC) were read as UTC on the column's own say-so: %d event(s)" % assumed["column_named_utc"]) if assumed["column_named_utc"] else None,
@@ -2638,105 +2836,126 @@ def analyse(db, limit, ceiling, window, min_failures, min_prompts):
     users = over_cap = burst_no = 0
     over_named = []
     window_ns = int(window * 1000000000)
+    cut, done_through = False, None          # done_through: the last account key whose turn is over (analysed, or over the series cap)
+    db.set_progress_handler(lambda: 1 if ANALYSIS_DEADLINE[0] is not None and time.monotonic() > ANALYSIS_DEADLINE[0] else 0, 200000)
 
     def ref(r):
         return {k: v for k, v in (("event_id", r[16]), ("correlation_id", r[17]), ("record", r[18]), ("line", r[19]), ("event_index", r[20]), ("time", r[4])) if v is not None}
 
-    for ukey, group in itertools.groupby(cur, key=lambda r: r[0]):
-        series = list(itertools.islice(group, SERIES_CAP + 1))
-        users += 1
-        user = series[0][1]
-        if len(series) > SERIES_CAP:
-            over_cap += 1
-            if len(over_named) < FIRST_PROBLEMS:
-                over_named.append(user)
-            for _ in group:
-                pass
-            continue
-        # single factor
-        for r in series:
-            if r[5] == 1 and str(r[12] or "").replace(" ", "").lower() == SINGLE:
-                single.add({"user": user, "application": r[2], "address": r[6], "client": r[11], "authentication": r[12], "conditional_access": r[13],
-                            "time": r[4], **ref(r)})
-        # bursts and prompts: per account and application, within the window before a success
-        runs, ints = {}, {}
-        for r in series:
-            if r[3] is None:
+    try:
+        for ukey, group in itertools.groupby(cur, key=lambda r: r[0]):
+            if analysis_out_of_time():
+                cut = True
+                break
+            series = list(itertools.islice(group, SERIES_CAP + 1))
+            users += 1
+            user = series[0][1]
+            if len(series) > SERIES_CAP:
+                over_cap += 1
+                if len(over_named) < FIRST_PROBLEMS:
+                    over_named.append(user)
+                for _ in group:
+                    pass
+                done_through = ukey
                 continue
-            if r[5] == 0:
-                runs.setdefault(r[2], []).append(r)
-            elif r[21] == "interrupt":
-                ints.setdefault(r[2], []).append(r)
-            elif r[5] == 1:
-                fails = [f for f in runs.get(r[2], []) if r[3] - f[3] <= window_ns]
-                if len(fails) >= min_failures:
-                    codes, addrs = {}, {}
-                    for f in fails:
-                        codes[f[14]] = codes.get(f[14], 0) + 1
-                        addrs[f[6]] = addrs.get(f[6], 0) + 1
-                    burst_no += 1
-                    for f in fails:
-                        members.add({"burst": burst_no, "role": "failure", **ref(f)})
-                    members.add({"burst": burst_no, "role": "success", **ref(r)})
-                    bursts.add({"burst": burst_no, "user": user, "application": r[2], "failures_before": len(fails), "first_failure_at": fails[0][4],
-                                "last_failure_at": fails[-1][4], "succeeded_at": r[4], "success_address": r[6], "success_result": r[15],
-                                "failure_addresses": addrs, "success_address_among_failure_addresses": r[6] in addrs, "failure_result_codes": codes,
-                                "window_seconds": window, "success": ref(r), "failure_events": [ref(f) for f in fails[:10]], "failure_events_total": len(fails),
-                                "failure_events_listed_in": "pages.burst_members (burst %d)" % burst_no if len(fails) > 10 else "all listed here"})
-                waiting = [p for p in ints.get(r[2], []) if r[3] - p[3] <= window_ns]
-                if len(waiting) >= min_prompts:
-                    codes, addrs = {}, {}
-                    for p in waiting:
-                        codes[p[14]] = codes.get(p[14], 0) + 1
-                        addrs[p[6]] = addrs.get(p[6], 0) + 1
-                    prompts.add({"user": user, "application": r[2], "prompts_before": len(waiting), "first_prompt_at": waiting[0][4], "succeeded_at": r[4],
-                                 "prompt_codes": codes, "prompt_addresses": addrs, "success_address": r[6], "window_seconds": window,
-                                 "why": "interrupted sign-ins are the prompts of a normal multi-factor flow; this many in a row before a success is a lead (many prompts, "
-                                        "then an acceptance, is what the multi-factor-fatigue hypothesis looks like), not a conclusion", "success": ref(r)})
-                runs[r[2]] = []
-                ints[r[2]] = []
-            else:
-                runs[r[2]] = []
-                ints[r[2]] = []
-        # addresses seen once among this account's events in this export
-        seen = {}
-        for r in series:
-            if r[6]:
-                seen[r[6]] = seen.get(r[6], 0) + 1
-        for r in series:
-            if r[5] == 1 and r[6] and seen.get(r[6]) == 1 and len(seen) > 2:
-                seen_once.add({"user": user, "time": r[4], "address": r[6], "country": r[7], "client": r[11], "distinct_addresses_for_account": len(seen),
-                               "why": "this address occurs once among this account's events in this export; the export may not hold the account's earlier history",
-                               **ref(r)})
-        # travel: adjacent successes (equal times included: two places at one second)
-        previous = None
-        for r in series:
-            if r[5] != 1 or r[3] is None:
-                continue
-            if previous is not None:
-                seconds = (r[3] - previous[3]) / 1e9
-                if 0 <= seconds < 86400:
-                    pair = None
-                    if None not in (previous[9], previous[10], r[9], r[10]):
-                        km = distance((previous[9], previous[10]), (r[9], r[10]))
-                        if seconds == 0:
-                            if km > 100:
-                                pair = {"kilometres": round(km, 1), "implied_speed_kmh": None, "coarse": False, "basis": "coordinates, the same second",
-                                        "why": "two successes at the same recorded second %.0f km apart: no speed can be computed" % km}
-                        else:
-                            speed = km / (seconds / 3600)
-                            if speed > ceiling and km > 100:
-                                pair = {"kilometres": round(km, 1), "implied_speed_kmh": round(speed, 1), "coarse": False, "basis": "coordinates"}
-                    elif previous[7] and r[7] and str(previous[7]).lower() != str(r[7]).lower() and seconds < 3600:
-                        pair = {"coarse": True, "basis": "country change only", "why": "the export carries a country but no coordinates"}
-                    if pair:
-                        travel.add({"user": user, "from": {"time": previous[4], "address": previous[6], "country": previous[7], "city": previous[8], **ref(previous)},
-                                    "to": {"time": r[4], "address": r[6], "country": r[7], "city": r[8], **ref(r)}, "seconds_apart": round(seconds, 1), **pair})
-            previous = r
+            # single factor
+            for r in series:
+                if r[5] == 1 and str(r[12] or "").replace(" ", "").lower() == SINGLE:
+                    single.add({"user": user, "application": r[2], "address": r[6], "client": r[11], "authentication": r[12], "conditional_access": r[13],
+                                "time": r[4], **ref(r)})
+            # bursts and prompts: per account and application, within the window before a success
+            runs, ints = {}, {}
+            for r in series:
+                if r[3] is None:
+                    continue
+                if r[5] == 0:
+                    runs.setdefault(r[2], []).append(r)
+                elif r[21] == "interrupt":
+                    ints.setdefault(r[2], []).append(r)
+                elif r[5] == 1:
+                    fails = [f for f in runs.get(r[2], []) if r[3] - f[3] <= window_ns]
+                    if len(fails) >= min_failures:
+                        codes, addrs = {}, {}
+                        for f in fails:
+                            codes[f[14]] = codes.get(f[14], 0) + 1
+                            addrs[f[6]] = addrs.get(f[6], 0) + 1
+                        burst_no += 1
+                        for f in fails:
+                            members.add({"burst": burst_no, "role": "failure", **ref(f)})
+                        members.add({"burst": burst_no, "role": "success", **ref(r)})
+                        bursts.add({"burst": burst_no, "user": user, "application": r[2], "failures_before": len(fails), "first_failure_at": fails[0][4],
+                                    "last_failure_at": fails[-1][4], "succeeded_at": r[4], "success_address": r[6], "success_result": r[15],
+                                    "failure_addresses": addrs, "success_address_among_failure_addresses": r[6] in addrs, "failure_result_codes": codes,
+                                    "window_seconds": window, "success": ref(r), "failure_events": [ref(f) for f in fails[:10]], "failure_events_total": len(fails),
+                                    "failure_events_listed_in": "pages.burst_members (burst %d)" % burst_no if len(fails) > 10 else "all listed here"})
+                    waiting = [p for p in ints.get(r[2], []) if r[3] - p[3] <= window_ns]
+                    if len(waiting) >= min_prompts:
+                        codes, addrs = {}, {}
+                        for p in waiting:
+                            codes[p[14]] = codes.get(p[14], 0) + 1
+                            addrs[p[6]] = addrs.get(p[6], 0) + 1
+                        prompts.add({"user": user, "application": r[2], "prompts_before": len(waiting), "first_prompt_at": waiting[0][4], "succeeded_at": r[4],
+                                     "prompt_codes": codes, "prompt_addresses": addrs, "success_address": r[6], "window_seconds": window,
+                                     "why": "interrupted sign-ins are the prompts of a normal multi-factor flow; this many in a row before a success is a lead (many prompts, "
+                                            "then an acceptance, is what the multi-factor-fatigue hypothesis looks like), not a conclusion", "success": ref(r)})
+                    runs[r[2]] = []
+                    ints[r[2]] = []
+                else:
+                    runs[r[2]] = []
+                    ints[r[2]] = []
+            # addresses seen once among this account's events in this export
+            seen = {}
+            for r in series:
+                if r[6]:
+                    seen[r[6]] = seen.get(r[6], 0) + 1
+            for r in series:
+                if r[5] == 1 and r[6] and seen.get(r[6]) == 1 and len(seen) > 2:
+                    seen_once.add({"user": user, "time": r[4], "address": r[6], "country": r[7], "client": r[11], "distinct_addresses_for_account": len(seen),
+                                   "why": "this address occurs once among this account's events in this export; the export may not hold the account's earlier history",
+                                   **ref(r)})
+            # travel: adjacent successes (equal times included: two places at one second)
+            previous = None
+            for r in series:
+                if r[5] != 1 or r[3] is None:
+                    continue
+                if previous is not None:
+                    seconds = (r[3] - previous[3]) / 1e9
+                    if 0 <= seconds < 86400:
+                        pair = None
+                        if None not in (previous[9], previous[10], r[9], r[10]):
+                            km = distance((previous[9], previous[10]), (r[9], r[10]))
+                            if seconds == 0:
+                                if km > 100:
+                                    pair = {"kilometres": round(km, 1), "implied_speed_kmh": None, "coarse": False, "basis": "coordinates, the same second",
+                                            "why": "two successes at the same recorded second %.0f km apart: no speed can be computed" % km}
+                            else:
+                                speed = km / (seconds / 3600)
+                                if speed > ceiling and km > 100:
+                                    pair = {"kilometres": round(km, 1), "implied_speed_kmh": round(speed, 1), "coarse": False, "basis": "coordinates"}
+                        elif previous[7] and r[7] and str(previous[7]).lower() != str(r[7]).lower() and seconds < 3600:
+                            pair = {"coarse": True, "basis": "country change only", "why": "the export carries a country but no coordinates"}
+                        if pair:
+                            travel.add({"user": user, "from": {"time": previous[4], "address": previous[6], "country": previous[7], "city": previous[8], **ref(previous)},
+                                        "to": {"time": r[4], "address": r[6], "country": r[7], "city": r[8], **ref(r)}, "seconds_apart": round(seconds, 1), **pair})
+                previous = r
+            done_through = ukey
+    except sqlite3.OperationalError as exc:                 # the progress handler stopped the database's sort or a fetch: the account being read was not analysed
+        if not (analysis_out_of_time() or "interrupted" in str(exc)):
+            raise
+        cut = True
+    finally:
+        db.set_progress_handler(None, 0)
+    not_analysed, not_named = 0, []
+    if cut:
+        after = "AND ukey > ?" if done_through is not None else ""
+        bind = (done_through,) if done_through is not None else ()
+        not_analysed = db.execute("SELECT COUNT(*) FROM (SELECT 1 FROM ev WHERE ukey IS NOT NULL %s GROUP BY ukey)" % after, bind).fetchone()[0]
+        not_named = [r[0] for r in db.execute("SELECT ushown FROM ev WHERE ukey IS NOT NULL %s GROUP BY ukey ORDER BY ukey LIMIT %d" % (after, FIRST_PROBLEMS), bind)]
     pages = {"single_factor_successes": single.finish(), "failure_bursts_before_success": bursts.finish(), "burst_members": members.finish(),
              "prompts_before_success": prompts.finish(), "addresses_seen_once": seen_once.finish(), "impossible_travel": travel.finish()}
     return {"pages": pages, "users": users, "over_cap": over_cap, "over_named": over_named, "single_factor": single.page, "bursts": bursts.page,
-            "members": members.page, "prompts": prompts.page, "seen_once": seen_once.page, "travel": travel.page}
+            "members": members.page, "prompts": prompts.page, "seen_once": seen_once.page, "travel": travel.page,
+            "cut": cut, "not_analysed": not_analysed, "not_analysed_named": not_named}
 
 
 if __name__ == "__main__":
