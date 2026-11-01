@@ -13,6 +13,7 @@ import { FS, MEM, PROFILE } from "./memory-f1-support.ts";
 const VOL = join(MEM, "vol_readiness", "run.py");
 const REG = join(MEM, "mem_registry", "run.py");
 const HAND = join(MEM, "carve_handoff", "run.py");
+const VIEWS = join(MEM, "vol_views", "run.py");
 
 test("rk_live_, pk_live_ and whsec_ keys are withheld in a name, a path and an engine line, whole and in 12-character pieces", () => {
   const code = [
@@ -32,7 +33,7 @@ test("rk_live_, pk_live_ and whsec_ keys are withheld in a name, a path and an e
     "                if key in shown or any(key[i:i + 12] in shown for i in range(len(key) - 11)): leaked += 1",
     "print(planted, leaked)",
   ].join("\n");
-  for (const tool of [FS, PROFILE, VOL, REG, HAND]) {
+  for (const tool of [FS, PROFILE, VOL, REG, HAND, VIEWS]) {
     const out = spawnSync("python3", ["-c", code, tool], { encoding: "utf8", timeout: 120_000 });
     assert.equal(out.status, 0, out.stderr);
     assert.equal(out.stdout.trim(), "3600 0", tool);

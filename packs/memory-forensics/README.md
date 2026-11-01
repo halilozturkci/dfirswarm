@@ -23,7 +23,7 @@ Depends on the Computer Forensics Base Pack.
 | Pattern matching | `patterns/yara` |
 | Acquisition | `acquire/images` (`acquire/avml-and-preserve`) |
 
-**Six tools.** `mem_profile` says what a memory file's header shows before
+**Seven tools.** `mem_profile` says what a memory file's header shows before
 anything is run against it (a crash dump's physical-memory runs with their file
 offsets, checked for order, overlap and payload; a LiME file's ranges; an ELF core's
 byte order) and answers "unrecognised" for anything else, because a flat capture and
@@ -49,12 +49,14 @@ exercised here. On a host or image without `/dev/fuse` or a `fusermount3`/`fuser
 
 `carve_handoff` takes one hit of `mem_carve` (`kind`, `signature_offset`) and readies it for the parser that reads it, without parsing: the structure's start (a plain Prefetch record four bytes before `SCCA`, only when those bytes are a known version), the cut by `mem_carve`'s own rule, the header checks and, for a registry hive (base-block checksum, sequence numbers, chain of bins) and an event log file or chunk (chunks, header checksum), whether the pages stay adjacent in the image. It hashes the slice only for a family that cannot be a credential store (a hive, a SQLite database and a property list never are hashed) and writes slice bytes only with `write_values` in a job run as secret output. It names the windows-forensics tools that read the family (`regkv`, `evtx_carve`, `mam_scan`, `prefetch_mam`) and calls none of them, so it depends on that pack not at all.
 
+`vol_views` puts one named question to the installed Volatility on an image, offline, and keeps the engine's whole answer: `question` names a plugin as the installed `vol` lists it (a name it does not list is refused, and none is guessed), `readiness` is the `ready` answer of `vol_readiness` for that image, and the output comes back with its scope and a status. Every line is split at its tabs and each cell judged by the same rules as the other tools, paged with the whole judged output in a file whose size and sha256 are given; the raw output and the files a plugin's own dump option exports are kept only with `write_values` in a job run as secret output, with their digests in a `manifest.jsonl` beside them and never in the answer. A Linux or macOS question stays blocked until `vol_readiness` finds a table for it. Run against a stand-in `vol` in this review, like the other two Volatility tools.
+
 **Sensitive output.** Memory holds whatever the machine held. `mem_fs` writes file
 content only when it runs as a job, only on `write_values: true`, and only under
 `$OUT/mem_fs`; its answer carries the locator of each file, never its content or a
 digest of it (`recovery_key_scan` of the encrypted-containers pack is the reference
-implementation of that pattern). `mem_fs`, `mem_carve`, `mem_registry` and `carve_handoff` declare `secret_output`
-for `write_values`, so the harness seals the job as sensitive, and all four check
+implementation of that pattern). `mem_fs`, `mem_carve`, `mem_registry`, `carve_handoff` and `vol_views` declare `secret_output`
+for `write_values`, so the harness seals the job as sensitive, and all five check
 `SECRET_OUTPUT=1` and refuse as JSON otherwise. `mem_carve` cuts slices out of an image
 (credential hives included, deliberately: a cracking tool downstream stays available)
 only with `write_values: true`, into a directory with mode 0700 (at most 1,000 slices a call; the slices count toward `max_results_bytes`, and the clock is looked at before each). What the tools print

@@ -108,7 +108,7 @@ const call = (cwd: string, args: Record<string, unknown>, env: Record<string, st
   runTool(HAND, cwd, args, env, undefined, signal, after);
 
 async function secretJob(cwd: string, n = 1): Promise<{ env: Record<string, string>; out: string }> {
-  const out = join(cwd, "job-out");
+  const out = join(cwd, `job-out-${n}`);
   await mkdir(out, { recursive: true });
   return { env: { JOB_ID: `job${n}`, OUT: out, SECRET_OUTPUT: "1" }, out };
 }

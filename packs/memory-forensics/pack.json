@@ -1,7 +1,7 @@
 {
   "id": "memory-forensics",
   "name": "Memory Forensics Pack",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "Method and tooling for a memory image: what the container is before anything else, what can be read with no framework at all, processes and injection, network state, credential material, and the discipline that keeps a string in memory from becoming a claim about behaviour.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -28,7 +28,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "511217f182ce176c5759d7eb4e3a4b0de27ff3f2ba410cb76707aae7ac44ca08",
+      "README.md": "a3803beddd9b3c10ee6b2ce4a7b0bc9f8f4d02a050f6fd354c339067ea18d6c0",
       "goals/memory-triage.md": "16661eee801bceda2ea7010e733ce1ad677f1e38489834ddb1be782d95b0b985",
       "requires/host.json": "0acbd4125515941f933809791a302f536589d85d3dc8d1730bf414585a5ae44f",
       "requires/python.txt": "805da5f067cc98775d074649955d9cca3e18379ef9284f73d162d6aae998f0f6",
@@ -57,7 +57,7 @@
       "skills/triage/volatility-catalogue.md": "dbbe0140769636f8f39dd2497dca58e369e62222089206dc10c5f9d3fe310c75",
       "skills/triage/volatility-plugins.md": "f31917912ac5446ff7ef5f0a3e4f28b896e63d710710e70dfc75ec6d7c478227",
       "skills/triage/volatility-symbols.md": "09d32c3953d3f1a890313b14703ef90551e4e5b3e2ef8bc27bb87906c7a18d91",
-      "skills/triage/volatility.md": "60354478825f341dfb74ba7f8c69fa684d757228175888aaaa9da5ba5ec687a4",
+      "skills/triage/volatility.md": "c5fa0cceacfa987a3971c6190664c5720577d4d0aca21ceae5cf9551ee1b2ef8",
       "skills/triage/what-you-have.md": "9c694ae5c0c695fc243b486390fdd95a728ccef2fd2c01f4dd772a1b8e012355",
       "tools/carve_handoff/manifest.json": "ea812e4755a4bdc5c549442bcddb0ea06277e414e258cee68a2d030264d0401d",
       "tools/carve_handoff/run.py": "0d8beab7e3da46df0c2979ab06d43fde5b293ac7d12a4700936a22ad29180eaf",
@@ -70,7 +70,9 @@
       "tools/mem_registry/manifest.json": "0cabfa0c5e6ec95b9c30c8b715f26034f8d6582b16a486a69f791ca39886cf68",
       "tools/mem_registry/run.py": "38404d095285f03022d0915707fbc4987710c6734084c3133aa1ec5b8197536d",
       "tools/vol_readiness/manifest.json": "10c01ab600143cb801ef892324474e65f4020b8069eb86cb2a6f9737ef673411",
-      "tools/vol_readiness/run.py": "9cfcad8252d767ec26977ee83bb0a7dce692d6554c5c9864228fa3545956cee0"
+      "tools/vol_readiness/run.py": "9cfcad8252d767ec26977ee83bb0a7dce692d6554c5c9864228fa3545956cee0",
+      "tools/vol_views/manifest.json": "18db2969d300ecb4f907a2cca5f1f2ccb0f8a1839f62bd675f1d57f4efa45503",
+      "tools/vol_views/run.py": "782eb241fdb99dbfe05286a6d684b5c3e7bd1bb092ac60ee4de03e697f378334"
     }
   },
   "tools": [
@@ -79,7 +81,8 @@
     "mem_fs",
     "mem_profile",
     "mem_registry",
-    "vol_readiness"
+    "vol_readiness",
+    "vol_views"
   ],
   "skills": 25,
   "method_only": [

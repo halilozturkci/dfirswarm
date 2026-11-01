@@ -3,7 +3,7 @@ id: triage/volatility
 title: Volatility, offline, with the right symbols
 when: Selecting Volatility plugins, or diagnosing an unsatisfied symbol or translation requirement.
 needs: []
-tools: [mem_profile, vol_readiness]
+tools: [mem_profile, vol_readiness, vol_views]
 requires_host: [vol]
 ---
 
@@ -16,7 +16,7 @@ the container and the captured ranges are what you think they are.
 
     vol --offline -vv -f IMAGE windows.info
 
-`vol_readiness` asks first, offline and without a plugin result: whether `vol` is there, which plugins it lists, whether the image's kernel has a table (`ready`, `blocked` or `unknown`), whether a YARA binding imports and whether FUSE is usable.
+`vol_readiness` asks first, offline and without a plugin result: whether `vol` is there, which plugins it lists, whether the image's kernel has a table (`ready`, `blocked` or `unknown`), whether a YARA binding imports and whether FUSE is usable. `vol_views` then runs one plugin the installed `vol` lists, offline, on that `ready` answer, and keeps its whole output (the raw output only in a job run with `secret_output: true`).
 
 A plugin that writes files takes `-o "$OUT"`. Record the `Volatility 3 Framework`
 version line, the plugin, the image hash and the symbol identity: the kernel is
