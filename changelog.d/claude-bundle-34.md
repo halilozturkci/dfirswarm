@@ -74,3 +74,17 @@ a profile file), and a verdict of exactly one of `matches_known_original`, `stru
 `inconclusive`. `recovery/routes-and-decryptors` names it and is no longer `method_only`. Measured: a 64 MiB file whose
 512-byte granules alternate between zeros and random bytes (65,536 ranges) took 1.4 s at 25 MB resident and wrote
 6,609,067 bytes of profile; a random 256 MiB file took 0.6 s.
+
+### Added: ransomware-response has a fifth tool, `ransomware_scope_report`
+
+It takes sealed outputs by reference (censuses of `encrypted_survey`, the profiles of `encryption_extent` and
+`recovery_validate`, timelines of host, time and kind events, a recipe's `coverage.json`), each versioned by the
+`parser` of its receipt (another version is refused by name), and reports per host the scope with denominators,
+the bytes inspected against the bytes in the census, candidate against validated findings and the coverage
+statements, and for all hosts a machine-readable coverage statement. A host with no census is `unknown`; a host
+with two censuses is a `conflict` and is not added to the totals; no figure is extrapolated and no estate-wide
+percentage is stated. Aggregation streams into a SQLite index under the output directory (sums only, no row of
+an input) in bounded memory; the answer is paged and the whole is in files. Measured: a census of 10,000,000
+rows (261 bytes each) was read in 76 s at 24 MB resident; a deep-tier suite asserts the bound.
+`scope/phase-timeline` and `reporting/conclusions-and-controls` name it and are no longer `method_only`. The
+carrier tests list the new tool, and `tests/node-tests.deep` lists its deep suite.

@@ -103,6 +103,7 @@ test("SIGINT and SIGHUP in that gap end each lineage the same way", async () => 
     join(ROOT, "packs", "ransomware-response", "tools", "ransom_note_scan", "run.py"),
     join(ROOT, "packs", "ransomware-response", "tools", "encryption_extent", "run.py"),
     join(ROOT, "packs", "ransomware-response", "tools", "recovery_validate", "run.py"),
+    join(ROOT, "packs", "ransomware-response", "tools", "ransomware_scope_report", "run.py"),
     join(ROOT, "packs", "macos-forensics", "tools", "plist_read", "run.py"),
     join(ROOT, "packs", "encrypted-containers", "tools", "crypto_id", "run.py"),
   ]) {

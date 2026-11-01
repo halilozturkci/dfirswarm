@@ -3,7 +3,7 @@ id: reporting/conclusions-and-controls
 title: Conclusions by phase, and control findings
 when: Writing conclusions by phase, a negative exfiltration finding or insurance findings.
 needs: []
-tools: []
+tools: [ransomware_scope_report]
 requires_host: []
 ---
 
@@ -18,6 +18,10 @@ references, the method and scope, what was observed and what inferred, the
 confidence and its reason, the contrary evidence, the limitations and what would
 change the answer. Use the outcomes the evidence supports: established, partial,
 bounded negative, not determinable.
+
+For the scope behind a conclusion across hosts, `ransomware_scope_report` counts what
+the sealed outputs say, per host and with denominators. A host with no census is
+unknown, and it states no estate-wide percentage: do not write one from it.
 
 A negative exfiltration finding names the sources, systems, interval, coverage
 gaps and the detection opportunity: whether the suspected transfer would have

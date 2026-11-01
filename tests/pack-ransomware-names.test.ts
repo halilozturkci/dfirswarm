@@ -219,6 +219,7 @@ const PACKS = join(ROOT, "packs");
 
 const EXTENT = join(PACKS, "ransomware-response", "tools", "encryption_extent", "run.py");
 const VALIDATE = join(PACKS, "ransomware-response", "tools", "recovery_validate", "run.py");
+const REPORT = join(PACKS, "ransomware-response", "tools", "ransomware_scope_report", "run.py");
 
 test("the three tools carry the same name block, and the network pack's withholding block and the windows pack's place, page and stop blocks as shipped there", async () => {
   assert.equal(await block(SURVEY, "NAMES"), await block(NOTES, "NAMES"));
@@ -227,9 +228,11 @@ test("the three tools carry the same name block, and the network pack's withhold
   assert.equal(await block(EXTENT, "BACKSTOP"), await block(NOTES, "BACKSTOP"));
   assert.equal(await block(VALIDATE, "NAMES"), await block(NOTES, "NAMES"));
   assert.equal(await block(VALIDATE, "BACKSTOP"), await block(NOTES, "BACKSTOP"));
+  assert.equal(await block(REPORT, "NAMES"), await block(NOTES, "NAMES"));
+  assert.equal(await block(REPORT, "BACKSTOP"), await block(NOTES, "BACKSTOP"));
   const network = await block(join(PACKS, "network-forensics", "tools", "pcap_extract", "run.py"), "WITHHOLDING");
   const regkv = join(PACKS, "windows-forensics", "tools", "regkv", "run.py");
-  for (const path of [SURVEY, NOTES, EXTENT, VALIDATE]) {
+  for (const path of [SURVEY, NOTES, EXTENT, VALIDATE, REPORT]) {
     assert.equal(await block(path, "WITHHOLDING"), network, `${path}: withholding`);
     for (const name of ["PLACE", "PAGE", "STOP"]) assert.equal(await block(path, name), await block(regkv, name), `${path}: ${name}`);
     const text = await readFile(path, "utf8");

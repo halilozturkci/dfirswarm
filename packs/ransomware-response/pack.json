@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -56,10 +56,6 @@
       "why": "a method leaf about the minimum preservation before a rebuild, repair, decryption or reconnection and about acceptance; it works from the ledger and names no tool or program"
     },
     {
-      "path": "skills/reporting/conclusions-and-controls.md",
-      "why": "a reporting method leaf for conclusions and control findings; it works from the ledger and names no tool or program"
-    },
-    {
       "path": "skills/reporting/for-regulators.md",
       "why": "a notification and reporting method leaf for legal, regulatory and insurance review; it works from the ledger and names no tool or program"
     },
@@ -72,10 +68,6 @@
       "why": "a method leaf about what the survey's and the scan's name withholding hides; it names no tool or program"
     },
     {
-      "path": "skills/scope/phase-timeline.md",
-      "why": "a method leaf about keeping a phase timeline; it names no tool or program"
-    },
-    {
       "path": "skills/ransomware/router.md",
       "why": "the pack's router: it names the other notes by the question each answers and holds no rule, tool or program of its own"
     }
@@ -84,7 +76,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "a4e71f4dd3064838a9a1afd7ff4fa9d232b32c6f1d38a297c24b530063974ace",
+      "README.md": "236f44825e0fce87e13e2db6d49b9c01556fc0b19cc5fd057029162400678d5c",
       "goals/ransomware-case.md": "bb889a729a06a1633e49284a99cf333aab899c57cbe5f0d8748e43ec02b78d62",
       "requires/host.json": "e9738f0296f8c734625a6a03a3d771737bd62a83432aae3bb7c0b0f82e10374c",
       "requires/python.txt": "5a396319de276d1ea51953493ef8e4f2dd0d7cb87c67aac6fbd0e63c096d63b6",
@@ -105,11 +97,11 @@
       "skills/recovery/preserve-and-restore.md": "8aeb94f76d1abd9828d1d16210ce401e8faf26387f1affa505b7230f62c5077b",
       "skills/recovery/routes-and-decryptors.md": "3405ad7b9e4357b17c55dc04d0791473869490875f45e37df05063bf081b86d1",
       "skills/recovery/what-is-possible.md": "b7481ded7186f0948f32a870ede9364f500b410735615ca7f2e3905f53d6a017",
-      "skills/reporting/conclusions-and-controls.md": "de39b2b61cf7bd58bde677335eab9878e1eeeda486e27b797762a593574feb24",
+      "skills/reporting/conclusions-and-controls.md": "68a4989d2a8ec7605cab51d0b7107613aa5b5abf9753cfb5f9660be0d79d09b7",
       "skills/reporting/for-regulators.md": "695c9b585403e0551fcb9d857d2e150682f249d50e2ef9c9720b87dbf718cae7",
       "skills/reporting/notification-register.md": "011b542d268f7c8b5c91ba59bf9675b033c57354f9146bf5509700ea697987a4",
       "skills/scope/first-hour.md": "cec879bfca6d5dbd754bcf314f247a0ae679259e4fe77a3d6659eca9b788d686",
-      "skills/scope/phase-timeline.md": "fadd923ba83a6b5ca7f9aecbe967094bddc74c6afcde2d572e79fbc59e7bf5a8",
+      "skills/scope/phase-timeline.md": "c076da1b61c8657850b8dfe356a87cf3eeba2a2e68c6fd0572d4d971d16623dd",
       "skills/scope/triage-tools-names.md": "184d73620b040296206fccb56827cb13e3fa834bc035e6f0b91b8a49a2f0299a",
       "skills/scope/triage-tools.md": "2d8ca3366f1b39ea7ff0bde4984076550edf302336794a5d554a0d66a386a148",
       "tools/encrypted_survey/manifest.json": "917db356a29abdf6d3ed44e9b94f3d771f31f12f577b0a65c1160ece3251260e",
@@ -118,6 +110,8 @@
       "tools/encryption_extent/run.py": "ce4df7314c65609cc83318e29ab46436c16a64281addf18e664c535c916a7df6",
       "tools/ransom_note_scan/manifest.json": "aa7527fa4dc2cb318b7af83b1725103351b588354009b977c49c4f11bd1fd0d7",
       "tools/ransom_note_scan/run.py": "ddc71992fbc131529e14000207feb73545d66d78080ffdfcb00cb89aba0d2507",
+      "tools/ransomware_scope_report/manifest.json": "99edd332160dfcd521da07d64d08a2dbd7d151862dc76ca36e163eece561710a",
+      "tools/ransomware_scope_report/run.py": "9ae93ccddb26d80b8a28601a60b732af21845b3d096fdb901f402df5e5a05c76",
       "tools/recovery_validate/manifest.json": "92647b94eb18adb5815f075c3f0b17a78cf3430f2687fcc872da0c4ec9683e69",
       "tools/recovery_validate/run.py": "859035119eee6825ae46438e94be059421b2b2f31f5767240bf93293124a6e15"
     }
@@ -126,6 +120,7 @@
     "encrypted_survey",
     "encryption_extent",
     "ransom_note_scan",
+    "ransomware_scope_report",
     "recovery_validate"
   ],
   "skills": 23

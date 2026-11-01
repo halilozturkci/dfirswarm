@@ -1,0 +1,1708 @@
+#!/usr/bin/env python3
+"""Put the sealed outputs of an examination side by side, and say what they cover and what they do not.
+
+The tool takes outputs by reference (paths to files that other tools wrote; it imports nothing from them and runs none):
+per-host censuses of encrypted_survey, the profiles of encryption_extent and recovery_validate, timelines (JSON Lines events with
+host, time and kind) and a collection recipe's coverage.json. Each producer's output is versioned by the `parser` of its
+receipt line; a version this tool does not read is refused by name.
+
+It reports, per host and for the hosts together:
+
+  * the host and share scope with its DENOMINATORS: the files and bytes in each host's census, by status;
+  * the files and bytes assessed (inspected by encryption_extent) against the ones that were not;
+  * candidate findings (the census's candidates, the extent's high-entropy runs) against validated ones (recovery_validate's
+    verdicts), kept apart;
+  * a machine-readable coverage statement.
+
+A host that has no census is `unknown`: nothing is extrapolated to it from another host, and no estate-wide percentage is stated.
+A host with more than one census is `conflict` and its numbers are not added to the totals. Aggregation streams into a
+disk-backed SQLite index under the output directory (no row of an input is held in memory), and the answer is paged with the
+whole in files that are named.
+"""
+import builtins
+import collections
+import datetime
+import errno
+import functools
+import hashlib
+import json
+import math
+import os
+import re
+import sqlite3
+import stat
+import sys
+import tempfile
+import unicodedata
+from pathlib import Path
+
+PARSER = "ransomware_scope_report/1"
+WORK = "report"
+TOOL = "ransomware_scope_report"
+ACCEPTED = {"censuses": ("encrypted_survey/3",), "extents": ("encryption_extent/1",), "recovery_checks": ("recovery_validate/1",)}
+KINDS = ("censuses", "extents", "recovery_checks", "timelines", "coverage")
+DEFAULT_SECONDS, MAX_SECONDS = 780, 840    # the manifest allows 900
+MAX_INPUTS = 100000
+MAX_HOSTS = 100000
+MAX_LINE = 1 << 20
+MAX_KIND = 100
+FLUSH_KEYS = 20000           # aggregated keys held in memory before they are written to the index
+DEFAULT_LIMIT = 200
+VERDICTS = ("matches_known_original", "structurally_valid", "unrecovered", "inconclusive")
+CENSUS_STATUSES = ("candidate", "noncandidate", "unmeasured", "read_failed")
+TIME = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$")
+
+# The pattern ransom_note_scan uses to take a file for a note by its name, so that the tools agree on which names are note names.
+NAME_HINTS = re.compile(
+    r"(readme|read_me|decrypt|restore|recover|unlock|how[\W_]*to|ransom|help[\W_]*|"
+    r"your[\W_]*files|instruction|_note|!!!)", re.I)
+
+# Lossless paging (the same in every library tool that pages): the page an
+# agent reads stays small, and when there are more rows the whole result is
+# written as JSON Lines under work/<agent>/tool-output and named.
+import hashlib
+
+# The rows a table shows inline are cut by size as well as by count: the answer is judged, serialised and read back within the run's
+# clock, and a `limit` of 1,000,000 over rows of a few hundred bytes would take longer than max_seconds (and leave the answer without
+# its keys). The cut is lossless: every row is in the paging file, named by all_results. The same text is in encrypted_survey, and a test
+# holds the two classes equal; the model is snapshot_chain_check's LosslessPage.
+INLINE_BYTES = 1 << 19
+
+
+class LosslessPage:
+    def __init__(self, tool: str, key: object, limit: int):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+        self.limit = limit
+        self.page: list[object] = []
+        self.page_bytes = 0
+        self.total = 0
+        self._out = None
+        self._tmp: Path | None = None
+        digest = hashlib.sha256(
+            json.dumps(key, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        name = f"{self.tool}-{digest}.jsonl"
+        job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+        if job and out:
+            # In a job only $OUT is written, and it is sealed as the job's
+            # output: the whole result is cited from there.
+            self.path = Path(out) / "tool-output" / name
+            self.shown = "store/jobs/%s/out/tool-output/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
+        else:
+            agent = re.sub(
+                r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
+            )
+            self.path = Path("work") / agent / "tool-output" / name
+            self.shown = str(self.path)
+
+    def _cannot_write(self, exc: BaseException) -> None:
+        """The whole result cannot be kept: say so as JSON and stop, never a traceback."""
+        import sys as _sys
+        _sys.stdout.write(json.dumps({
+            "error": "the whole result (%d rows so far) cannot be written to %s: %s. Outside a job the place is your own "
+                     "work/<your id>/ directory; in a job it is $OUT." % (self.total, self.shown, describe(exc)),
+            "status": "failed",
+            "status_basis": "the tool stopped with an error (see error); the whole result could not be kept, so there is no answer",
+        }) + "\n")
+        _sys.exit(1)
+
+    def _write(self, row: object) -> None:
+        assert self._out is not None
+        # ASCII only: U+2028, U+0085, a bidi override and a lone surrogate (a file name that is not UTF-8) are escaped, lose nothing, and a
+        # line of the file is always a row.
+        text = json.dumps(row, ensure_ascii=True, default=str)
+        try:
+            self._out.write(text)
+            self._out.write("\n")
+        except OSError as exc:
+            self._cannot_write(exc)
+
+    def add(self, row: object, evidence: str | None = None) -> object:
+        """Keep a row: read back by the backstop first (`evidence` is the name of a file printed as it is on purpose), then paged. Returns
+        the row as kept."""
+        row = seal_row(row, evidence)
+        self.total += 1
+        if len(self.page) < self.limit and self.page_bytes < INLINE_BYTES:
+            self.page.append(row)
+            self.page_bytes += len(repr(row))
+            return row
+        if self._out is None:
+            # A stop must not come between the temporary file and its registration (self._tmp): the stop handler removes only the
+            # registered files. The three stop signals are held for these steps and delivered right after; where the call is missing it is a no-op.
+            hold = getattr(signal, "pthread_sigmask", None)
+            was = hold(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hold else None
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(
+                    dir=self.path.parent, prefix=f".{self.path.name}-"
+                )
+                self._tmp = Path(name)
+                self._out = os.fdopen(fd, "w", encoding="utf-8")
+            except OSError as exc:
+                self._cannot_write(exc)
+            finally:
+                if hold:
+                    hold(signal.SIG_SETMASK, was)
+            for kept in self.page:
+                self._write(kept)
+        self._write(row)
+        return row
+
+    def finish(self) -> dict:
+        result = {
+            "matched": self.total,
+            "returned": len(self.page),
+            "truncated": self.total > len(self.page),
+        }
+        if self.total > len(self.page) and len(self.page) < self.limit:
+            result["inline_cut_by_size"] = (
+                "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
+            )
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                os.replace(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+
+
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. A result written at the same moment cannot be replaced either: taking a name fails when it is there.
+# Only regular files are ever compared: both names are opened with O_NONBLOCK and O_NOFOLLOW and looked at with fstat before a byte is
+# read, so a FIFO, a device, a directory or a link at a name (the caller's own results_to, say) is another result's and cannot hold the
+# tool. The comparing of one call has PLACE_COMPARE_SECONDS in all; past it an earlier result is taken as different and this one takes
+# the next free name (nothing is replaced, but an identical rerun may then be named anew).
+# The name is taken with a hard link of the finished file, so it never holds an empty file, whatever stops the tool and when (SIGKILL
+# included). Where the file system refuses the link, the name is taken with an exclusive create and the file is moved over it: a stop
+# that unwinds (an exception) takes the empty name back while it is still the empty file this call made; a stop that ends the process
+# without unwinding (SIGKILL, the handlers of the STOP block) between the create and the move leaves the empty name, and the next run takes -2.
+PLACE_COMPARE_SECONDS = 5   # all the comparing one call to place_without_replacing does; past it an earlier result is taken as different
+
+
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
+    try:
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
+            return False
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
+    except OSError:
+        return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
+
+
+def _take_name(tmp, candidate):
+    """Give the finished `tmp` the name `candidate` if it is free, and say whether it now has it (False: the name is taken, by a file, a
+    link, a FIFO or a directory). The name is taken with a hard link, so it never holds an empty file; where the file system refuses the
+    link it is taken with an exclusive create and the file is moved over it, and a stop that unwinds in between takes the empty name back."""
+    try:
+        os.link(tmp, candidate)
+    except FileExistsError:
+        return False
+    except OSError:
+        pass                                   # no hard links here: the older way, below
+    else:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass                               # the hidden name stays beside the placed file; the stop path of the page removes it
+        return True
+    fd = made = None
+    try:
+        fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        made = os.fstat(fd)
+        closing, fd = fd, None
+        os.close(closing)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return True
+    except FileExistsError:
+        return False
+    except BaseException:
+        try:
+            if made is None and fd is not None:
+                made = os.fstat(fd)
+        except OSError:
+            pass
+        try:
+            if fd is not None:
+                os.close(fd)
+        except OSError:
+            pass
+        try:
+            now = os.lstat(candidate)
+            if made is not None and (now.st_mode & 0o170000) == 0o100000 and now.st_size == 0 and (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino):
+                os.unlink(candidate)           # the empty name this call took is not left behind
+        except OSError:
+            pass
+        raise
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. A name that is taken (by a file, a link, a FIFO or a directory) is
+    left as it is: a regular file of the same bytes is named again, any other result takes the next free <stem>-<n><suffix>. Returns the
+    path that holds it. The comparing with earlier results has PLACE_COMPARE_SECONDS in all: past it an earlier result is taken as
+    different and this one takes the next free name."""
+    deadline = time.monotonic() + PLACE_COMPARE_SECONDS
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        if _take_name(tmp, candidate):
+            return candidate
+        if not os.path.islink(candidate) and same_bytes(tmp, candidate, deadline):
+            os.unlink(tmp)
+            return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+def finish_page(page) -> dict:
+    """page.finish(), with the size cut named: NoReplacePage (the shared block above) replaces LosslessPage.finish, so the cut that
+    LosslessPage makes by INLINE_BYTES is said here, outside the block, for every table. The same text is in ransom_note_scan."""
+    result = page.finish()
+    if page.total > len(page.page) and len(page.page) < page.limit:
+        result["inline_cut_by_size"] = (
+            "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
+        )
+    return result
+
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+# BEGIN SHARED WITHHOLDING
+# The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
+# reverse-engineering packs), so that they withhold the same strings; the tests that hold the copies equal are
+# tests/pack-network-withholding.test.ts, tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts and
+# tests/pack-re-process.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a
+# path component, a URL, a message that quotes either.
+COUNTS = {"names": 0, "urls": 0, "text": 0}
+# A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
+# `/` joins pieces of a base64 token and is handled apart, below.
+_RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
+_SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
+_HEX = re.compile(r"[0-9a-fA-F]{32,}")
+# The prefixed secrets that one expression finds. A JWT is not among them: `eyJ` + 8 name characters + `.` + 8 + `.` + the rest, tried at
+# every `eyJ`, runs to the end of the run of name characters and fails again at each next `eyJ` of a text made of them, which costs the
+# square of the length. `_prefixed_spans` reads a JWT in one pass instead, and puts it in order with these.
+_PREFIX_RULES = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+                           r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
+                           r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+_JWT_RUN = re.compile(r"[A-Za-z0-9_-]+")
+# User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
+_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
+
+
+def _withheld(what, length, kind):
+    COUNTS[kind] = COUNTS.get(kind, 0) + 1
+    return ("<%s withheld %d characters>" % (what, length)) if what else ("<withheld %d characters>" % length)
+
+
+def _token_run(run):
+    """Is this run of name characters shaped like a token, and not like words, dates or versions?"""
+    if _HEX.search(run):
+        return True
+    chunks = [(m.group()[0].isdigit(), m.start(), m.end()) for m in re.finditer(r"[A-Za-z]+|[0-9]+", run)]
+    # digits packed between letters ("a9b2c7"), which words, dates and versions do not do
+    packed = 0
+    for i, (is_digit, start, end) in enumerate(chunks):
+        if not is_digit or end - start > 3:
+            continue
+        before = i > 0 and not chunks[i - 1][0] and chunks[i - 1][2] == start
+        after = i + 1 < len(chunks) and not chunks[i + 1][0] and chunks[i + 1][1] == end
+        packed += 1 if before or after else 0
+    if packed >= 3:
+        return True
+    letters = [c for c in run if c.isalpha()]
+    case_flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
+    if len(letters) >= 20 and case_flips >= max(8, 0.4 * len(letters)):
+        return True
+    if run.endswith("==") and len(run) >= 16:
+        return True
+    if run.endswith("=") and len(run) >= 24:
+        return True
+    return len(run) >= 40 and run.isalnum() and any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+
+
+def _randomish(piece):
+    """A piece of a path that is not a plain word: digits among letters, or capitals inside a word."""
+    if len(piece) < 4 or "." in piece or re.fullmatch(r"[A-Z][a-z]+", piece):
+        return False
+    letters = [c for c in piece if c.isalpha()]
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
+
+
+_SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
+# A text longer than this is withheld whole, by its length, and not examined: no name, path or URL is tens of thousands of characters
+# long, and the answer says how long the text was. Every rule below reads a text of this length in well under a second whatever its
+# characters are, so that no call of `scrub` or `token_spans` can run for long on a text a file chose; the limit is the backstop for
+# a shape of text that no rule was tried on, and the rules themselves are linear.
+TEXT_LIMIT = 65536
+
+
+def _prefixed_spans(text, tail=None):
+    """The spans of the prefixed secrets in the text (a vendor prefix, a JWT, `Basic`/`Bearer` and its value), left to right and apart,
+    as one expression holding all of them would find them (the first match at each offset, the next search where the last ended), in
+    time linear in the text. With `tail`, an expression matched where each span ends, the span takes what it matches.
+
+    A JWT is read from the runs of name characters (`[A-Za-z0-9_-]+`), cut once: its head is the first `eyJ` of a run that is followed
+    by 8 or more characters of that run, and it ends where the third part of the JWT does; every later `eyJ` of the run reads the same
+    rest, so the first one is the one that matches and a run that does not hold a JWT is not read again for each `eyJ` in it."""
+    from bisect import bisect_right
+    size = len(text)
+    starts, ends, rest = [], [], {}
+    if "eyJ" in text:
+        for m in _JWT_RUN.finditer(text):
+            starts.append(m.start())
+            ends.append(m.end())
+
+    def jwt_end(r):      # where a JWT whose head is in run r ends, or -1: `.`, a run of 8 or more, `.`, then the rest of the next run
+        if r not in rest:
+            end, last = -1, ends[r] + 1
+            if (last < size and text[last - 1] == "." and r + 1 < len(starts) and starts[r + 1] == last
+                    and ends[r + 1] - last >= 8 and ends[r + 1] < size and text[ends[r + 1]] == "."):
+                end = ends[r + 1] + 1
+                if r + 2 < len(starts) and starts[r + 2] == end:
+                    end = ends[r + 2]
+            rest[r] = end
+        return rest[r]
+
+    def next_jwt(at):    # (start, end) of the first JWT that starts at or after `at`, or None
+        while True:
+            p = text.find("eyJ", at)
+            if p < 0:
+                return None
+            r = bisect_right(starts, p) - 1
+            if p + 11 <= ends[r] and jwt_end(r) >= 0:
+                return p, jwt_end(r)
+            at = ends[r]  # no `eyJ` further in this run can be a head either
+
+    spans, at = [], 0
+    other = _PREFIX_RULES.search(text)
+    jwt = next_jwt(0) if starts else None
+    while other is not None or jwt is not None:
+        if other is not None and other.start() < at:      # it began inside the span just taken: look again from its end
+            other = _PREFIX_RULES.search(text, at)
+        elif jwt is not None and jwt[0] < at:
+            jwt = next_jwt(at)
+        else:
+            start, end = other.span() if jwt is None or (other is not None and other.start() < jwt[0]) else jwt
+            if tail is not None:
+                end = tail.match(text, end).end()
+            spans.append((start, end))
+            at = end
+    return spans
+
+
+def _grow_spans(text, spans):
+    """Each flagged span takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+
+    One pass cuts the text into pieces (runs of name characters) and keeps where each starts and ends. A span then walks
+    that array by index; a piece is judged once, and a walk that reaches a piece an earlier walk has settled stops there, so
+    the work is linear in the text and no range is sliced or searched again. (Looking back with a search over everything
+    before a piece costs the cube of the length for a name of many `/`-joined pieces.)"""
+    from bisect import bisect_left
+    starts, ends = [], []
+    for m in _SPAN_PIECE.finditer(text):
+        starts.append(m.start())
+        ends.append(m.end())
+    count, size = len(starts), len(text)
+    judged_left, judged_right, settled_left, settled_right = {}, {}, {}, {}
+
+    def padded(k):       # where piece k ends with the up to two `=` of padding after it
+        e = ends[k]
+        if e < size and text[e] == "=":
+            e += 2 if e + 1 < size and text[e + 1] == "=" else 1
+        return e
+
+    def left_ok(j):
+        if j not in judged_left:
+            judged_left[j] = _randomish(text[starts[j]:ends[j]])
+        return judged_left[j]
+
+    def right_ok(k):
+        if k not in judged_right:
+            judged_right[k] = _randomish(text[starts[k]:padded(k)])
+        return judged_right[k]
+
+    def before(at):      # the piece that growing left from offset `at` takes, or -1. `$` also ends a match before a final line break.
+        if at < 2 or text[at - 1] != "/":
+            return -1
+        for stop in ((at - 1, at - 2) if text[at - 2] == "\n" else (at - 1,)):
+            j = bisect_left(ends, stop)
+            if j < count and ends[j] == stop:
+                return j if left_ok(j) else -1
+        return -1
+
+    def after(k):        # the piece that growing right from the end of piece k takes, or -1
+        e = padded(k)
+        if k + 1 >= count or e >= size - 1 or text[e] != "/" or starts[k + 1] != e + 1:
+            return -1
+        return k + 1 if right_ok(k + 1) else -1
+
+    def settle(i, step, memo):
+        trail = []
+        while i not in memo:
+            trail.append(i)
+            j = step(i)
+            if j < 0:
+                memo[i] = i
+                break
+            i = j
+        final = memo[i]
+        for t in trail:
+            memo[t] = final
+        return final
+
+    grown = []
+    for start, end in spans:
+        j = before(start)
+        if j >= 0:
+            start = starts[settle(j, lambda i: before(starts[i]), settled_left)]
+        if end < size - 1 and text[end] == "/":
+            k = bisect_left(starts, end + 1)
+            if k < count and starts[k] == end + 1 and right_ok(k):
+                end = padded(settle(k, after, settled_right))
+        grown.append((start, end))
+    return grown
+
+
+def token_spans(text):
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text))]
+    spans = _prefixed_spans(text)
+    for m in _RUN.finditer(text):
+        if _token_run(m.group()):
+            spans.append(m.span())
+    # A base64 token holds `/`: pieces too short to be one alone (an AWS-style secret has two) are caught as a whole.
+    for m in _SLASHED.finditer(text):
+        run = m.group()
+        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
+            spans.append(m.span())
+    grown = _grow_spans(text, spans) if spans else []
+    grown.sort()
+    merged = []
+    for start, end in grown:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def token_shaped(text):
+    return bool(token_spans(text))
+
+
+def scrub(text, kind="text"):
+    """The text with every token-shaped run and every user-info withheld."""
+    if len(text) > TEXT_LIMIT:
+        return _withheld("over-long text", len(text), kind)
+    text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    out, last = [], 0
+    for start, end in token_spans(text):
+        out.append(text[last:start])
+        out.append(_withheld("token-shaped text", end - start, kind))
+        last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
+def redact_url(url):
+    """A URL or request target without its user-info, its token-shaped path text, its query values or its fragment."""
+    rest, fragment = (url.split("#", 1) + [None])[:2]
+    rest, query = (rest.split("?", 1) + [None])[:2]
+    scheme = authority = ""
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/]*)(.*)$", rest, re.S)
+    if m:
+        scheme, authority, rest = m.group(1), m.group(2), m.group(3)
+        if "@" in authority:
+            userinfo, authority = authority.rsplit("@", 1)
+            authority = _withheld("userinfo", len(userinfo), "urls") + "@" + authority
+    out = scheme + authority + scrub(rest, "urls")
+    if query is not None:
+        pairs = []
+        for pair in query.split("&"):
+            name, eq, value = pair.partition("=")
+            pairs.append(scrub(name, "urls") + (eq + _withheld("", len(value), "urls") if eq else ""))
+        out += "?" + "&".join(pairs)
+    if fragment is not None:
+        out += "#" + _withheld("", len(fragment), "urls")
+    return out
+
+
+def cell(value):
+    """Text for one tab-separated cell or one printed path: no tab or line break, and a byte that was not UTF-8
+    (a lone surrogate) written as \\xNN, so that no writer raises on it."""
+    text = value if isinstance(value, str) else str(value)
+    out = []
+    for ch in text:
+        o = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\n":
+            out.append("\\n")
+        elif 0xDC80 <= o <= 0xDCFF:
+            out.append("\\x%02x" % (o - 0xDC00))
+        elif 0xD800 <= o <= 0xDFFF:
+            out.append("\\u%04x" % o)
+        elif o < 0x20 or o == 0x7F:
+            out.append("\\x%02x" % o)
+        else:
+            out.append(ch)
+    return "".join(out)
+# END SHARED WITHHOLDING
+
+
+# BEGIN SHARED NAMES
+# The same text is in encrypted_survey and ransom_note_scan, so that the two tools judge a name alike (a ransomware-response test holds
+# the copies equal). A path is printed only through shown(): every component is judged, and no directory above a file is exempt.
+# Everything derived from a name that is withheld (an extension, a stem, a length, the place of the name among its siblings) is withheld
+# with it: a name that is withheld is replaced by one constant marker, and the order of a listing never follows the text that was withheld.
+WITHHELD = "<identifier-shaped name withheld>"
+WITHHELD_PATHS = [0]              # printed paths that had a component withheld (one per call of shown)
+_IDRUN = re.compile(r"[A-Za-z0-9]{8,}")
+_WORDY = re.compile(r"[A-Z]?[a-z]+(?:[A-Z][a-z]+)*|[A-Z]+")
+_PAIR_SEPARATORS = re.compile(r"[^0-9A-Za-z]")
+_DIGIT_GROUPS = re.compile(r"(?<![0-9])[0-9]{3,}(?:[ ,][0-9]{3,})+(?![0-9])")
+HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+SINGLE_CASE_RUN = 16              # a run of letters of one case is a word below this many letters, a random run from here on
+HEX_PAIRS = 8                     # this many pairs of hex digits joined by one separator are a byte string
+# Directory names every Windows, Linux and ESXi host has, whose letters and digits would otherwise be taken for an identifier, and the names
+# of the exceptions Python raises (the tools print the type of an error: IsADirectoryError reads as letters that are not words). A component
+# is printed as it is when it is one of these, whole and in any case.
+WELL_KNOWN = frozenset((
+    "system32", "syswow64", "inetcache", "inetcookies", "inethistory", "msocache", "psreadline", "framework", "framework64",
+    "sqlserver", "gpucache", "dawnwebgpucache", "dawngraphitecache", "grshadercache", "indexeddb", "overlay2", "datastore1")
+) | frozenset(name.lower() for name, value in vars(builtins).items() if isinstance(value, type) and issubclass(value, BaseException))
+
+
+# The characters whose NFKC form holds a slash (a full-width solidus, the "a/c", "a/s", "c/o" and "c/u" signs) each read as one backslash, a
+# separator that is not a slash: a path is split at the real slashes only, and a folded one would cut a run of pairs into pieces of one.
+_SLASH_LIKE = dict.fromkeys((0x2100, 0x2101, 0x2105, 0x2106, 0xFF0F), "\\")
+# Characters that show nothing and are not format characters: a combining grapheme joiner, variation selectors, Mongolian free variation
+# selectors, hangul and khmer fillers, a braille blank, tag and musical controls, the other default-ignorable code points.
+_INVISIBLE = re.compile("[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3164"
+                        "\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
+
+
+def _unseen(ch):
+    """Whether a non-ASCII character shows nothing of its own: a format character, a combining mark, a default-ignorable code point."""
+    return unicodedata.category(ch) in ("Cf", "Mn", "Mc", "Me") or _INVISIBLE.match(ch) is not None
+
+
+def fold(name):
+    """The name as the rule reads it: NFKC (a full-width letter or digit is the ASCII one; a full-width solidus is a separator, not a
+    slash), every decimal digit of any script as its ASCII digit, and nothing that shows nothing: no format character, no combining mark
+    (taken off the letter it sits on before the two are composed), no default-ignorable code point (a zero-width space, a variation
+    selector, a filler cannot split a token)."""
+    if name.isascii():
+        return name
+    out = []
+    for ch in unicodedata.normalize("NFKC", "".join(c for c in name.translate(_SLASH_LIKE) if c.isascii() or not _unseen(c))):
+        if ord(ch) < 128:
+            out.append(ch)
+        elif unicodedata.category(ch) == "Nd":
+            out.append(str(unicodedata.decimal(ch)))
+        elif not _unseen(ch):
+            out.append(ch)
+    return "".join(out)
+
+
+def _hex_pairs(text):
+    """Whether HEX_PAIRS or more pairs of hex digits follow each other, one separator between two. A separator is any character that is not
+    an ASCII letter or a digit (the pairs of `id[aa-bb-...-hh]`, `key=aa:bb:...` and `(aa.bb...)` are found: a neighbour of the run that is
+    not a letter or a digit does not hide a pair at its end), and only a letter or a digit glued to a pair makes it no pair. A run does not
+    cross a slash: a path is read one component at a time (a full-width solidus is not a slash: fold turns it into a separator)."""
+    for part in text.split("/"):
+        run = 0
+        for piece in _PAIR_SEPARATORS.split(part):
+            if len(piece) == 2 and piece[0] in HEX_DIGITS and piece[1] in HEX_DIGITS:
+                run += 1
+                if run >= HEX_PAIRS:
+                    return True
+            else:
+                run = 0
+    return False
+
+
+def _digit_groups(text):
+    """Whether groups of three or more digits, joined by a space or a comma, hold ten or more digits together."""
+    return any(sum(c.isdigit() for c in m.group(0)) >= 10 for m in _DIGIT_GROUPS.finditer(text))
+
+
+def shaped(name):
+    """Whether a name holds a token shaped like an identifier. The name is folded first (fold). A token is a run of 8 or more ASCII
+    letters and digits. It is identifier-shaped when it holds both letters and digits, or is 10 or more digits, or is letters only and is
+    not one word, one capitalised word, several capitalised words or all capitals, or is 16 or more letters of one case. So are 8 or more
+    pairs of hex digits joined by one separator (any character that is not a letter, a digit or a slash: a colon, a dash, a dot, an underscore,
+    a space, a bracket, an equals sign; a letter or a digit glued to a pair at an end of the run makes that pair no pair), and groups of
+    digits joined by a space or a comma that hold 10 digits or more. The rule is a shape: a longer or different separator, a different
+    grouping and other scripts are not covered (see the manifests)."""
+    text = fold(name)
+    for m in _IDRUN.finditer(text):
+        token = m.group(0)
+        if token.isdigit():
+            if len(token) >= 10:
+                return True
+        elif any(c.isdigit() for c in token):
+            return True
+        elif not _WORDY.fullmatch(token):
+            return True
+        elif len(token) >= SINGLE_CASE_RUN and (token.islower() or token.isupper()):
+            return True
+    return len(text) >= 23 and _hex_pairs(text) or len(text) >= 11 and _digit_groups(text)
+
+
+@functools.lru_cache(maxsize=65536)
+def _judge(part):
+    """What to print in place of one path component, or None to print it as it is. A component that is judged is withheld whole, by
+    one marker that says nothing of its length or its shape."""
+    if part.lower() in WELL_KNOWN:
+        return None
+    if shaped(part):
+        return WITHHELD
+    return WITHHELD if scrub(part, "names") != part else None
+
+
+def shown(path, values=(), keep_last=False, count=True):
+    """A path as it may be printed: every component that could carry an identifier is withheld.
+
+    A component is withheld when it holds a token shaped like an identifier (shaped), when the shared withholding rules above find a
+    token, a key or user-info in it, or when it contains a value the note held (case-insensitive, 8 characters or more). The same rule
+    applies to every path a tool prints, so a name is never hidden on one line and printed on the next; a harmless name can be withheld
+    with it, and the directory can be listed. keep_last leaves the final component as it is (a name that is itself the evidence).
+    """
+    if not isinstance(path, str):
+        return path
+    parts = path.split("/")
+    last = len(parts) - 1
+    lows = [v.lower() for v in values if len(v) >= 8]
+    changed = False
+    for i, part in enumerate(parts):
+        if not part or (keep_last and i == last):
+            continue
+        replaced = _judge(part)
+        if replaced is None and lows:
+            low = part.lower()
+            if any(v in low for v in lows):
+                replaced = WITHHELD
+        if replaced is not None:
+            parts[i] = replaced
+            changed = True
+    if changed and count:
+        WITHHELD_PATHS[0] += 1
+    return "/".join(parts)
+
+
+_ORDER_SALT = os.urandom(16)
+
+
+def print_order(entries, judged, hidden=None):
+    """The directory entries in the order an answer prints them: by the text printed for each (the marker for a name that is judged
+    and withheld, the name itself otherwise; `judged(entry)` says whether the answer prints the entry's name through the judge;
+    `hidden(entry)`, when given, says that a name the first rule lets through is withheld all the same, because the note beneath it holds
+    its value: it sorts as the marker does), and the entries that print alike in an order drawn afresh every run (a keyed hash of the whole
+    path, the directory above included, under a salt of this run: the same name in two directories has two unrelated ranks). The rank of a
+    withheld name among its siblings, the order a directory lists them in and the inode never show in what an answer lists, in the
+    order of its rows, in the numbers it hands out or in which entries a limit keeps."""
+    texts = []
+    for entry in entries:
+        name = entry.name
+        try:
+            if hidden is not None and hidden(entry):
+                texts.append(WITHHELD)
+            else:
+                texts.append((_judge(name) or name) if judged(entry) else name)
+        except OSError:
+            texts.append(_judge(name) or name)
+    order = sorted(range(len(entries)), key=texts.__getitem__)
+    out, i = [], 0
+    while i < len(order):
+        j = i + 1
+        while j < len(order) and texts[order[j]] == texts[order[i]]:
+            j += 1
+        group = order[i:j]
+        if len(group) > 1:
+            group.sort(key=lambda n: (hashlib.blake2b(entries[n].path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest(), n))
+        out.extend(group)
+        i = j
+    return [entries[n] for n in out]
+# END SHARED NAMES
+
+
+# BEGIN SHARED BACKSTOP
+# The same text is in encrypted_survey and ransom_note_scan (a ransomware-response test holds the copies equal). Every row a page or the census
+# keeps and the answer itself pass through here on their way out, whatever the code that made them did: a second check, written apart from
+# shown() (it reads a string whole, not component by component, and calls neither the judge, scrub nor any call site's decision), that
+# replaces a string holding an identifier-shaped text by a marker, counts it, and makes a complete answer partial. The one exception is on
+# purpose: the name of a file that is not named like a note is evidence and is printed as it is (the caller says so with `evidence`, and the
+# check refuses that claim for a name that is note-named). Content that is hex by nature (a digest, a tail) is passed by its key.
+BOUNDARY = {"replaced": 0, "by": {}, "where": [], "not_listed": 0}
+OWN_NAMES = set()                 # the names of the files this run wrote (their digest is the name of the root and of the table)
+FREE_KEYS = frozenset(("sha256", "tail_hex", "suffix_hex"))
+PROSE_KEYS = frozenset(("reason", "status_basis", "partial_reasons"))    # the tool's own sentences: "(4294967296 bytes)" there is a size, not a name
+SERIAL_KEYS = frozenset(("note_id", "finding_id", "first_note_id", "duplicate_of"))      # a sequence number this tool counted: N000001, F1000000
+_SERIAL = re.compile(r"[NF][0-9]{6,12}")
+MAX_REPLACED_LISTED = 20
+MAX_JUDGED = 1 << 16
+_SUSPECT = re.compile(r"[A-Za-z0-9]{8}|(?:[0-9A-Fa-f]{2}[^0-9A-Za-z/]){4}|[0-9]{3}[ ,][0-9]{3}")
+_ALNUM_RUN = re.compile(r"[A-Za-z0-9]+")
+_PAIRS = re.compile(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{2}(?:[^0-9A-Za-z/][0-9A-Fa-f]{2}){7}(?![0-9A-Za-z])")
+_GROUPS = re.compile(r"(?<![0-9])[0-9]{3,}(?:[ ,][0-9]{3,})+(?![0-9])")
+
+
+class Sealed(dict):
+    """A row that has been through the backstop: it is not read again (its evidence name would not pass without the claim made for it)."""
+
+
+_FOLDS_TO_SLASH = dict.fromkeys((0x2100, 0x2101, 0x2105, 0x2106, 0xFF0F), "\\")      # NFKC turns these into a slash: not a path separator here
+_UNSEEN = re.compile("[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3164"
+                     "\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
+
+
+def _read_as(text):
+    """The string as the check reads it: NFKC (a full-width solidus is a separator, not a slash), decimal digits of any script as ASCII
+    digits, nothing that shows nothing (no format character, no combining mark, no default-ignorable code point; a mark is taken off the
+    character it sits on before the two are composed into one)."""
+    if text.isascii():
+        return text
+    seen = lambda ch: unicodedata.category(ch) in ("Cf", "Mn", "Mc", "Me") or _UNSEEN.match(ch) is not None     # noqa: E731
+    kept = []
+    for ch in unicodedata.normalize("NFKC", "".join(c for c in text.translate(_FOLDS_TO_SLASH) if c.isascii() or not seen(c))):
+        if ch.isascii():
+            kept.append(ch)
+        elif unicodedata.category(ch) == "Nd":
+            kept.append(str(unicodedata.decimal(ch)))
+        elif not seen(ch):
+            kept.append(ch)
+    return "".join(kept)
+
+
+@functools.lru_cache(maxsize=65536)
+def _why(text, prose=False):
+    """The reason a string may not be printed (a fixed sentence, never a part of the string), or None. `prose` is a sentence of the tool's
+    own (a reason, a status basis): a number of 10 or more digits followed by " bytes" is a size there and is not read as a name."""
+    flat = _read_as(text)
+    for found in _ALNUM_RUN.finditer(flat):
+        run = found.group()
+        size = len(run)
+        if size < 8 or run.lower() in WELL_KNOWN:
+            continue
+        digits = sum(1 for c in run if c.isdigit())
+        if digits == size:
+            if size >= 10 and not (prose and flat.startswith(" bytes", found.end())):
+                return "a long run of digits"
+        elif digits:
+            return "letters and digits in one run"
+        elif run.isupper() or run.islower():
+            if size >= 16:
+                return "a long run of letters of one case"
+        elif any(c.isupper() and not (i + 1 < size and run[i + 1].islower()) for i, c in enumerate(run)):
+            return "letters that do not read as words"
+    if _PAIRS.search(flat):
+        return "pairs of hex digits"
+    for m in _GROUPS.finditer(flat):
+        if sum(c.isdigit() for c in m.group(0)) >= 10:
+            return "groups of digits"
+    return None
+
+
+_CLEAN = set()                    # short strings already found clean (keys, repeated words): not read again
+
+
+def _refuse(text, evidence, prose=False):
+    """Why this string may not be printed, or None. `prose` is set for the tool's own sentences (see _why)."""
+    size = len(text)
+    if size < 8 or text in _CLEAN or text in OWN_NAMES:
+        return None
+    if size > MAX_JUDGED:
+        return "a string too long to check"
+    if evidence and not NAME_HINTS.search(evidence):
+        if text.lower() in evidence.lower():              # the name itself, or a piece of it (its extension)
+            return None
+        if text.endswith("/" + evidence):                 # a path whose last component is the evidence
+            text = text[:-len(evidence) - 1]
+            size = len(text)
+            if size < 8:
+                return None
+    why = None if text.isascii() and not _SUSPECT.search(text) else _why(text, prose)
+    if why is None and not prose and size <= 64 and len(_CLEAN) < 20000:
+        _CLEAN.add(text)
+    return why
+
+
+def _place(where):
+    """The place of a string as text: the keys that are plain words and the indexes above it, never a key that came from a name (a key is a
+    word only when it is also one to the second check: a key of letters and digits is not printed, whatever it looks like)."""
+    parts = []
+    while where is not None:
+        where, label = where
+        word = not isinstance(label, int) and re.fullmatch(r"[a-z][a-z_0-9]{0,40}", str(label)) and _why(str(label)) is None
+        parts.append(label if isinstance(label, int) or word else "*")
+    return "/" + "/".join(str(p) for p in reversed(parts))
+
+
+def _replaced(why, where):
+    BOUNDARY["replaced"] += 1
+    BOUNDARY["by"][why] = BOUNDARY["by"].get(why, 0) + 1
+    if len(BOUNDARY["where"]) < MAX_REPLACED_LISTED:
+        BOUNDARY["where"].append({"at": _place(where), "check": why})
+    else:
+        BOUNDARY["not_listed"] += 1
+    return "<withheld at the output: %s>" % why
+
+
+def _read_back(value, where, key, evidence):
+    """`value` with every string checked; the same object when nothing was replaced."""
+    if isinstance(value, Sealed):
+        return value
+    if isinstance(value, str):
+        if len(value) < 8 or key in FREE_KEYS or (key in SERIAL_KEYS and _SERIAL.fullmatch(value)):
+            return value
+        why = _refuse(value, evidence, key in PROSE_KEYS)
+        return _replaced(why, where) if why else value
+    if isinstance(value, dict):
+        pairs, changed = [], False
+        for k, v in value.items():
+            nk = _read_back(k, (where, "(key)"), None, None) if isinstance(k, str) and len(k) >= 8 else k
+            if isinstance(v, (str, dict, list, tuple)):
+                nv = _read_back(v, (where, k if nk is k else "(key)"), k if isinstance(k, str) else None, evidence)
+            else:
+                nv = v
+            changed = changed or nk is not k or nv is not v
+            pairs.append((nk, nv))
+        if not changed:
+            return value
+        out = {}
+        for nk, nv in pairs:
+            while nk in out:
+                nk = "%s #" % nk
+            out[nk] = nv
+        return out
+    if isinstance(value, (list, tuple)):
+        items = [_read_back(v, (where, i), key, evidence) for i, v in enumerate(value)]
+        return value if all(a is b for a, b in zip(items, value)) else items
+    return value
+
+
+def seal_row(row, evidence=None):
+    """A row on its way to a page or the census: every string read back. `evidence` is the name of the file the row is about when it is
+    printed as it is on purpose (a file that is not named like a note)."""
+    if isinstance(row, Sealed):
+        return row
+    out = _read_back(row, None, None, evidence)
+    return Sealed(out) if isinstance(out, dict) else out
+
+
+def release(doc):
+    """The answer: every string that was not read back already is read back now. A complete answer that had a string replaced is partial."""
+    out = _read_back(doc, None, None, None)
+    if BOUNDARY["replaced"] and isinstance(out, dict):
+        note = {"strings_replaced_at_the_output": BOUNDARY["replaced"], "by_check": dict(BOUNDARY["by"]), "replaced_at": list(BOUNDARY["where"]),
+                "replaced_not_listed": BOUNDARY["not_listed"],
+                "note": "every string of this answer and of the files it names was read back by a second check, written apart from the rule "
+                        "that withholds names; a string it found identifier-shaped is replaced by a marker and its place is in replaced_at"}
+        merged = {}
+        for k, v in out.items():
+            merged[k] = v
+            if k == "status_basis":
+                merged["boundary"] = note
+        merged.setdefault("boundary", note)
+        if merged.get("status") == "complete":
+            merged["status"] = "partial"
+            if "complete" in merged:
+                merged["complete"] = "partial"
+            merged["status_basis"] = "%s; %d strings held an identifier-shaped text that the first rule missed and were replaced at the output (see boundary)" % (
+                merged.get("status_basis") or "every entry was visited", BOUNDARY["replaced"])
+        out = merged
+    return out
+# END SHARED BACKSTOP
+
+
+def output_place(tool, key):
+    """Where a whole result is written and how the answer names it: (real path, path as cited)."""
+    digest = hashlib.sha256(json.dumps(key, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+    name = f"{tool}-{digest}.jsonl"
+    job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+    if job and out:
+        # In a job only $OUT is written, and it is sealed as the job's output.
+        return Path(out) / "tool-output" / name, "store/jobs/%s/out/tool-output/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
+    agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
+    path = Path("work") / agent / "tool-output" / name
+    return path, str(path)
+
+
+class Profile:
+    """One JSON line per record (the tool says which), then a receipt; written whole or not at all.
+
+    The file is made under a temporary name and placed when the receipt is written, so an interrupted run leaves no file with
+    the profile's name: a profile that exists ends in its receipt. It is placed without replacing a profile already there (a
+    rerun with other limits writes a different profile, and the earlier one, which may be the larger, stays); the answer names
+    the file that holds this one. The name is made from the parameters, never from a name of any file.
+    """
+
+    def __init__(self, key):
+        self.path, self.shown = output_place(TOOL + "-profile", key)
+        self.rows = 0
+        # A stop must not come between the temporary file and its registration in PAGES, which is how the stop handler finds it. The three
+        # stop signals are held for these steps and delivered right after; where the call is missing it is a no-op.
+        hold = getattr(signal, "pthread_sigmask", None)
+        was = hold(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hold else None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=f".{self.path.name}-")
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            PAGES.append(self)
+        finally:
+            if hold:
+                hold(signal.SIG_SETMASK, was)
+
+    def add(self, row, evidence=None):
+        row = seal_row(row, evidence)
+        self._out.write(json.dumps(row, ensure_ascii=True, default=str))
+        self._out.write("\n")
+        self.rows += 1
+        return row
+
+    def finish(self, receipt):
+        receipt = release({"record": "receipt", "rows": self.rows, **receipt})
+        self._out.write(json.dumps(receipt, ensure_ascii=True, default=str))
+        self._out.write("\n")
+        self._out.flush()
+        os.fsync(self._out.fileno())
+        self._out.close()
+        placed = place_without_replacing(self._tmp, self.path)
+        self._tmp = None
+        self.path = placed
+        self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+
+
+class NoProfile:
+    """Stands in for the profile when no file can be made for it: the windows are measured and counted, none is kept."""
+
+    shown = None
+
+    def __init__(self):
+        self.rows = 0
+
+    def add(self, row, evidence=None):
+        self.rows += 1
+        return row
+
+    def finish(self, receipt):
+        pass
+
+
+def fail(message, **extra):
+    print_answer(release({"error": message, "status": "failed",
+                          "status_basis": "the tool stopped with an error (see error); it produced no %s" % WORK, **extra}))
+    raise SystemExit(1)
+
+
+def describe(exc):
+    """An error without the path it names: type, errno name and the system's own words (never the text of an exception that has none:
+    it can name the place of the output)."""
+    code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
+    words = getattr(exc, "strerror", None) or ("no free name for a result file" if str(exc).startswith("no free name") else "no system message")
+    return "%s%s: %s" % (type(exc).__name__, " " + code if code else "", words)
+
+
+def where_it_failed(exc):
+    """The line of this tool an unexpected exception was raised on: enough to find it, and no text of the exception (which can name a path)."""
+    tb = exc.__traceback__
+    line = None
+    while tb is not None:
+        if tb.tb_frame.f_code.co_filename == __file__:
+            line = tb.tb_lineno
+        tb = tb.tb_next
+    return "line %s of the tool" % line if line else "an unknown line"
+
+
+PROGRESS = {}
+
+
+def last_word(signum):
+    """What the tool says when a stop signal ends it: one JSON answer, never a clean-looking partial one."""
+    print(json.dumps({"error": "stopped by signal %d before the %s was complete" % (signum, WORK), "status": "failed",
+                      "status_basis": "the tool was stopped by signal %d; the profile and the tables it was still writing were removed, "
+                                      "so nothing it had read is an answer" % signum,
+                      "interrupted": True, "signal": signum, "coverage_so_far": PROGRESS.get("coverage")}), flush=True)
+
+
+def drop_temporary_files():
+    """Remove the files a page or the profile was still writing (a failure, not a stop signal, ended the tool)."""
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def pread_full(fd, length, offset):
+    chunks, got = [], 0
+    while got < length:
+        data = os.pread(fd, length - got, offset + got)
+        if not data:
+            break
+        chunks.append(data)
+        got += len(data)
+    return b"".join(chunks)
+
+
+def evidence_of(name):
+    """The name of a file when it is printed as it is on purpose (a file that is not named like a note), else None."""
+    return None if NAME_HINTS.search(name) else name
+
+
+def display(path):
+    """The path as it may be printed. Every directory above the file is judged by shown(); the file's own name is withheld when it
+    is named like a note and holds an identifier-shaped token, and is otherwise printed as it is: a file that is not named like a
+    note is an encrypted file or an ordinary one, and its name is evidence."""
+    return shown(path, keep_last=not NAME_HINTS.search(os.path.basename(path)))
+
+
+def kind_of(mode):
+    for test, text in ((stat.S_ISFIFO, "a named pipe"), (stat.S_ISSOCK, "a socket"), (stat.S_ISBLK, "a block device"),
+                       (stat.S_ISCHR, "a character device"), (stat.S_ISDIR, "a directory")):
+        if test(mode):
+            return text
+    return "a special file"
+
+
+def open_regular(path):
+    """A descriptor for a regular file, opened without following a link and without blocking (a named pipe opens at once and is
+    refused by its fstat); its fstat comes with it."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(errno.EINVAL, "not a regular file (%s)" % kind_of(st.st_mode))
+    except OSError:
+        os.close(fd)
+        raise
+    return fd, st
+
+
+def why_not_opened(exc):
+    """(reason code, description) for a file that could not be opened: no text of the exception, which can name a path."""
+    if isinstance(exc, ValueError):
+        return "path_invalid", "ValueError: the path cannot be used as a file name (a NUL byte or a character the system cannot encode)"
+    if getattr(exc, "errno", None) == errno.ELOOP:
+        return "link_not_followed", describe(exc)
+    if getattr(exc, "errno", None) == errno.EINVAL and "not a regular file" in str(getattr(exc, "strerror", "")):
+        return "not_a_regular_file", describe(exc)
+    return "read_failed", describe(exc)
+
+
+class Budget:
+    def __init__(self, total):
+        self.total = total
+        self.read = 0
+
+    def allows(self, n):
+        return self.read + n <= self.total
+
+    def spend(self, n):
+        self.read += n
+
+
+
+class HostEntry:
+    def __init__(self, name):
+        self.name = name
+        self.path = name
+
+
+def judged_host(entry):
+    return True
+
+
+class Index:
+    """The SQLite index of the aggregates, made under a temporary name that a stop removes, and placed without replacing an earlier index when
+    the report is complete. It holds sums and bounds per host and key, never a row of an input."""
+
+    def __init__(self, key):
+        self.path, self.shown = output_place(TOOL + "-index", key)
+        self.path, self.shown = self.path.with_suffix(".sqlite"), self.shown[: -len(".jsonl")] + ".sqlite"
+        hold = getattr(signal, "pthread_sigmask", None)
+        was = hold(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hold else None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=f".{self.path.name}-")
+            os.close(fd)
+            self._tmp = Path(name)
+            PAGES.append(self)
+        finally:
+            if hold:
+                hold(signal.SIG_SETMASK, was)
+        self.db = sqlite3.connect(str(self._tmp), isolation_level=None)
+        self.db.execute("PRAGMA journal_mode=OFF")
+        self.db.execute("PRAGMA synchronous=OFF")
+        self.db.executescript(
+            "CREATE TABLE agg(kind TEXT, host INTEGER, input INTEGER, key TEXT, a INTEGER, b INTEGER, c INTEGER, d INTEGER, first TEXT, last TEXT,"
+            " PRIMARY KEY(kind, host, input, key)) WITHOUT ROWID;"
+            "CREATE TABLE inputs(kind TEXT, host INTEGER, input INTEGER, parser TEXT, receipt TEXT, receipt_status TEXT, rows INTEGER, skipped INTEGER,"
+            " PRIMARY KEY(kind, host, input)) WITHOUT ROWID;"
+            "CREATE TABLE coverage(host INTEGER, input INTEGER, status TEXT, status_basis TEXT, PRIMARY KEY(host, input)) WITHOUT ROWID;"
+            "CREATE TABLE host_rank(host INTEGER PRIMARY KEY, rank INTEGER);")
+
+    def flush(self, buffer):
+        if not buffer:
+            return
+        self.db.execute("BEGIN")
+        self.db.executemany(
+            "INSERT INTO agg(kind, host, input, key, a, b, c, d, first, last) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(kind, host, input, key) DO UPDATE SET "
+            "a=a+excluded.a, b=b+excluded.b, c=c+excluded.c, d=d+excluded.d, "
+            "first=CASE WHEN excluded.first IS NULL THEN first WHEN first IS NULL OR excluded.first < first THEN excluded.first ELSE first END, "
+            "last=CASE WHEN excluded.last IS NULL THEN last WHEN last IS NULL OR excluded.last > last THEN excluded.last ELSE last END",
+            [(k[0], k[1], k[2], k[3], v[0], v[1], v[2], v[3], v[4], v[5]) for k, v in buffer.items()])
+        self.db.execute("COMMIT")
+        buffer.clear()
+
+    def finish(self):
+        self.db.close()
+        placed = place_without_replacing(self._tmp, self.path)
+        self._tmp = None
+        self.path = placed
+        self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+
+
+def read_receipt(fd, size, accepted, facts):
+    """The receipt (the last line) of a census or a profile: its `parser` must be one this tool reads; no receipt is a partial input."""
+    tail = pread_full(fd, min(size, MAX_LINE), max(0, size - MAX_LINE)).rstrip(b"\n")
+    pieces = tail.rsplit(b"\n", 1)
+    last = pieces[-1] if (size <= MAX_LINE or len(pieces) == 2) else b""
+    receipt = None
+    try:
+        doc = json.loads(last) if last else None
+        receipt = doc if isinstance(doc, dict) and doc.get("record") == "receipt" else None
+    except (ValueError, RecursionError):
+        receipt = None
+    if receipt is None:
+        facts["receipt"] = "missing"
+        return
+    parser = receipt.get("parser")
+    facts["receipt"] = "present"
+    facts["parser"] = parser[:80] if isinstance(parser, str) else None
+    if parser not in accepted:
+        fail("an input was written by a parser this tool does not read: %r (it reads %s); an unknown version is refused, not guessed at"
+             % (parser[:80] if isinstance(parser, str) else parser, ", ".join(accepted)))
+    st = receipt.get("status")
+    facts["receipt_status"] = st if isinstance(st, str) and len(st) <= 20 else None
+
+
+def host_id(ctx, name):
+    hosts = ctx["hosts"]
+    found = hosts.get(name)
+    if found is None:
+        if len(hosts) >= MAX_HOSTS:
+            fail("more than %d hosts: split the report" % MAX_HOSTS)
+        found = len(hosts) + 1
+        hosts[name] = found
+    return found
+
+
+def normal_time(value):
+    if not isinstance(value, str):
+        return None
+    m = TIME.match(value)
+    if not m:
+        return None
+    return m.group(1) + "." + ((m.group(2) or "") + "000000")[:6] + "Z"
+
+
+def stream_rows(path, kind, host, input_no, ctx):
+    """Stream one input into the aggregates; returns its facts. A stop at the clock is recorded, not raised."""
+    index, buffer = ctx["index"], ctx["buffer"]
+    facts = {"rows": 0, "skipped": 0, "receipt": None, "parser": None, "receipt_status": None, "stopped_by_clock": False}
+    fd, st = open_regular(path)
+    try:
+        if kind in ACCEPTED:
+            read_receipt(fd, st.st_size, ACCEPTED[kind], facts)
+        loads = json.loads
+        with os.fdopen(os.dup(fd), "rb") as handle:
+            readline = handle.readline
+            while True:
+                if out_of_time():
+                    facts["stopped_by_clock"] = True
+                    break
+                line = readline(MAX_LINE + 1)
+                if not line:
+                    break
+                facts["rows"] += 1
+                if len(line) > MAX_LINE:
+                    facts["skipped"] += 1
+                    while line and not line.endswith(b"\n"):
+                        line = readline(MAX_LINE + 1)
+                    continue
+                try:
+                    row = loads(line)
+                except (ValueError, RecursionError):
+                    facts["skipped"] += 1
+                    continue
+                if not isinstance(row, dict):
+                    facts["skipped"] += 1
+                    continue
+                rec = row.get("record")
+                if kind == "timelines":
+                    h, t, k = row.get("host", host), normal_time(row.get("time")), row.get("kind")
+                    if not isinstance(h, str) or not h or t is None or not isinstance(k, str) or not k or len(k) > MAX_KIND:
+                        facts["skipped"] += 1
+                        continue
+                    key = ("timeline", host_id(ctx, h), 0, k)
+                    cur = buffer.get(key)
+                    if cur is None:
+                        buffer[key] = [1, 0, 0, 0, t, t]
+                    else:
+                        cur[0] += 1
+                        if t < cur[4]:
+                            cur[4] = t
+                        if t > cur[5]:
+                            cur[5] = t
+                elif rec != "file":
+                    continue
+                else:
+                    size = row.get("bytes")
+                    size = size if isinstance(size, int) and not isinstance(size, bool) and 0 <= size < (1 << 62) else 0
+                    if kind == "censuses":
+                        status = row.get("status")
+                        if status not in CENSUS_STATUSES:
+                            facts["skipped"] += 1
+                            continue
+                        key = ("census", host, input_no, status)
+                        add = (1, size, 0, 0)
+                    elif kind == "extents":
+                        status = row.get("status")
+                        status = status if status in ("inspected", "partial", "not_inspected") else "unknown_status"
+                        done = row.get("bytes_inspected")
+                        runs = row.get("high_entropy_runs")
+                        key = ("extent", host, input_no, status)
+                        add = (1, size, done if isinstance(done, int) and not isinstance(done, bool) and 0 <= done < (1 << 62) else 0,
+                               runs if isinstance(runs, int) and not isinstance(runs, bool) and 0 <= runs < (1 << 40) else 0)
+                    else:
+                        verdict = row.get("verdict")
+                        verdict = verdict if verdict in VERDICTS else "unknown_verdict"
+                        key = ("recovery", host, input_no, verdict)
+                        add = (1, size, 0, 0)
+                    cur = buffer.get(key)
+                    if cur is None:
+                        buffer[key] = [add[0], add[1], add[2], add[3], None, None]
+                    else:
+                        cur[0] += add[0]
+                        cur[1] += add[1]
+                        cur[2] += add[2]
+                        cur[3] += add[3]
+                if len(buffer) >= FLUSH_KEYS:
+                    index.flush(buffer)
+    finally:
+        os.close(fd)
+    index.flush(buffer)
+    return facts
+
+
+def read_coverage(path):
+    fd, st = open_regular(path)
+    try:
+        data = pread_full(fd, min(st.st_size, MAX_LINE) + 1, 0)
+    finally:
+        os.close(fd)
+    if len(data) > MAX_LINE:
+        return None, None
+    try:
+        doc = json.loads(data)
+    except (ValueError, RecursionError):
+        return None, None
+    if not isinstance(doc, dict):
+        return None, None
+    status, basis = doc.get("status"), doc.get("status_basis")
+    return (status if isinstance(status, str) and len(status) <= 20 else None), (basis[:500] if isinstance(basis, str) else None)
+
+
+KNOWN_PARAMS = set(KINDS) | {"expected_hosts", "limit", "max_seconds"}
+
+
+def int_param(args, key, default, low, high=None, why=""):
+    value = args.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        fail("%s must be an integer" % key)
+    if value < low:
+        fail("%s must be at least %d" % (key, low))
+    if high is not None and value > high:
+        fail("%s must be at most %d%s" % (key, high, why))
+    return value
+
+
+def read_specs(args, kind):
+    value = args.get(kind)
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > MAX_INPUTS:
+        fail("%s must be a list of at most %d {host, file} objects" % (kind, MAX_INPUTS))
+    out = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) - {"host", "file"}:
+            fail("each entry of %s is an object with the keys host and file" % kind)
+        path, host = item.get("file"), item.get("host")
+        if not isinstance(path, str) or not path:
+            fail("each entry of %s needs a file (a path)" % kind)
+        if host is not None and (not isinstance(host, str) or not host or len(host) > 255):
+            fail("host is a non-empty string of at most 255 characters")
+        if host is None and kind != "timelines":
+            fail("each entry of %s needs a host" % kind)
+        out.append((host, path))
+    return out
+
+
+def main():
+    install_signal_handlers(last_word)
+    try:
+        args = json.load(sys.stdin)
+    except (ValueError, RecursionError):
+        fail("arguments are not valid JSON")
+    if not isinstance(args, dict):
+        fail("arguments must be a JSON object")
+    limit = int_param(args, "limit", DEFAULT_LIMIT, 1, 1000000000)
+    max_seconds = int_param(args, "max_seconds", DEFAULT_SECONDS, 1, MAX_SECONDS, " (the tool's own clock; the manifest's timeout is 900)")
+    specs = {kind: read_specs(args, kind) for kind in KINDS}
+    expected = args.get("expected_hosts", [])
+    if not isinstance(expected, list) or len(expected) > MAX_INPUTS or not all(isinstance(h, str) and h and len(h) <= 255 for h in expected):
+        fail("expected_hosts is a list of host names")
+    if not any(specs.values()):
+        fail("name what to report on: censuses, extents, recovery_checks, timelines or coverage, each a list of {host, file}")
+    unknown = sorted(k for k in args if k not in KNOWN_PARAMS)
+    set_deadline(max_seconds)
+
+    try:
+        index = Index(["index"])
+    except (OSError, sqlite3.Error) as exc:
+        fail("the index file could not be created (%s)" % (describe(exc) if isinstance(exc, OSError) else type(exc).__name__))
+    ctx = {"hosts": {}, "index": index, "buffer": {}}
+    for name in expected:
+        host_id(ctx, name)
+    declared = collections.defaultdict(lambda: collections.Counter())
+    problems = collections.Counter()
+    notes = []
+    stopped = {}
+    input_no = 0
+    for kind in KINDS:
+        for host, path in specs[kind]:
+            if out_of_time():
+                stopped["inputs_not_read"] = stopped.get("inputs_not_read", 0) + 1
+                continue
+            input_no += 1
+            hid = host_id(ctx, host) if host is not None else 0
+            try:
+                if kind == "coverage":
+                    status, basis = read_coverage(path)
+                    index.db.execute("INSERT OR REPLACE INTO coverage VALUES(?,?,?,?)", (hid, input_no, status, basis))
+                    if status is None:
+                        problems["coverage_unreadable"] += 1
+                    declared[hid]["coverage"] += 1
+                    continue
+                facts = stream_rows(path, kind, hid, input_no, ctx)
+            except (OSError, ValueError) as exc:
+                code, text = why_not_opened(exc)
+                problems["input_not_read:" + code] += 1
+                index.db.execute("INSERT OR REPLACE INTO inputs VALUES(?,?,?,?,?,?,?,?)", (kind, hid, input_no, None, "not_read", None, 0, 0))
+                declared[hid][kind] += 0
+                continue
+            declared[hid][kind] += 1
+            index.db.execute("INSERT OR REPLACE INTO inputs VALUES(?,?,?,?,?,?,?,?)",
+                             (kind, hid, input_no, facts["parser"], facts["receipt"], facts["receipt_status"], facts["rows"], facts["skipped"]))
+            if facts["skipped"]:
+                problems["rows_skipped"] += facts["skipped"]
+            if facts["receipt"] == "missing":
+                problems["no_receipt:" + kind] += 1
+            elif facts["receipt_status"] not in (None, "complete"):
+                problems["receipt_not_complete:" + kind] += 1
+            if facts["stopped_by_clock"]:
+                stopped["input_cut_by_clock"] = stopped.get("input_cut_by_clock", 0) + 1
+
+    # the hosts in the order an answer prints them: by the text printed for each, the withheld ones in an order drawn afresh every run
+    entries = print_order([HostEntry(n) for n in ctx["hosts"]], judged_host)
+    rank = {}
+    index.db.execute("BEGIN")
+    for r, e in enumerate(entries):
+        rank[e.name] = r
+        index.db.execute("INSERT INTO host_rank VALUES(?,?)", (ctx["hosts"][e.name], r))
+    index.db.execute("COMMIT")
+    names_by_id = {v: k for k, v in ctx["hosts"].items()}
+
+    hosts_page = NoReplacePage(TOOL, ["hosts"], limit)
+    timeline_page = NoReplacePage(TOOL, ["timeline"], limit)
+    total = {"hosts": 0, "hosts_with_census": 0, "hosts_unknown": 0, "hosts_conflict": 0, "hosts_census_partial": 0, "census_files": 0, "census_bytes": 0,
+             "candidate_files": 0, "candidate_bytes": 0, "extent_bytes_inspected": 0, "recovery_files_checked": 0}
+    db = index.db
+    for e in entries:
+        hid = ctx["hosts"][e.name]
+        total["hosts"] += 1
+        row = {"host_id": "H%d" % hid, "host": shown(e.name, count=False)}
+        cand_files = None
+        inputs = {k: db.execute("SELECT input, parser, receipt, receipt_status, rows, skipped FROM inputs WHERE kind=? AND host=? ORDER BY input", (k, hid)).fetchall()
+                  for k in ("censuses", "extents", "recovery_checks")}
+        n_census = len(inputs["censuses"])
+        if n_census == 0:
+            row["scope"] = "unknown"
+            row["scope_basis"] = "this host has no census: nothing is said about its files, and nothing is extrapolated to it from another host"
+            total["hosts_unknown"] += 1
+        else:
+            by_input = {}
+            for (inp, status, files, size) in db.execute("SELECT input, key, a, b FROM agg WHERE kind='census' AND host=? ORDER BY input, key", (hid,)):
+                by_input.setdefault(inp, {})[status] = {"files": files, "bytes": size}
+            censuses = []
+            for (inp, parser, receipt, rstatus, rows, skipped) in inputs["censuses"]:
+                st = by_input.get(inp, {})
+                censuses.append({"parser": parser, "receipt": receipt, "receipt_status": rstatus, "rows": rows, "rows_skipped": skipped,
+                                 "files": sum(v["files"] for v in st.values()), "bytes": sum(v["bytes"] for v in st.values()), "by_status": st})
+            row["censuses"] = censuses
+            if n_census > 1:
+                row["scope"] = "conflict"
+                row["scope_basis"] = "%d censuses were given for this host: they are shown apart and none is added to the totals" % n_census
+                total["hosts_conflict"] += 1
+            else:
+                c = censuses[0]
+                complete = c["receipt"] == "present" and c["receipt_status"] == "complete" and not c["rows_skipped"]
+                row["scope"] = "complete" if complete else "partial"
+                row["scope_basis"] = ("the census ends in a receipt that says complete" if complete else
+                                      "the census has no receipt, its receipt does not say complete, or rows of it were skipped: it is itself partial")
+                total["hosts_with_census"] += 1
+                if not complete:
+                    total["hosts_census_partial"] += 1
+                total["census_files"] += c["files"]
+                total["census_bytes"] += c["bytes"]
+                cand = c["by_status"].get("candidate", {"files": 0, "bytes": 0})
+                cand_files = cand["files"]
+                total["candidate_files"] += cand["files"]
+                total["candidate_bytes"] += cand["bytes"]
+                row["denominators"] = {"files": c["files"], "bytes": c["bytes"],
+                                       "candidate_file_fraction": round(cand["files"] / c["files"], 4) if c["files"] else None,
+                                       "fraction_basis": "this host's candidate files over the files in this host's census; not extrapolated to any other host"}
+        ext = db.execute("SELECT key, SUM(a), SUM(b), SUM(c), SUM(d) FROM agg WHERE kind='extent' AND host=? GROUP BY key ORDER BY key", (hid,)).fetchall()
+        if ext:
+            files = sum(x[1] for x in ext)
+            named = sum(x[2] for x in ext)
+            inspected = sum(x[3] for x in ext)
+            total["extent_bytes_inspected"] += inspected
+            row["encryption_extent"] = {"inputs": len(inputs["extents"]), "files": files, "bytes_named": named, "bytes_inspected": inspected,
+                                        "bytes_not_inspected": max(named - inspected, 0), "high_entropy_runs": sum(x[4] for x in ext),
+                                        "by_status": {x[0]: {"files": x[1], "bytes": x[2], "bytes_inspected": x[3]} for x in ext},
+                                        "basis": "candidate observations: high entropy is not a finding of encryption, and bytes not inspected say nothing"}
+            if row["scope"] in ("complete", "partial"):
+                cen_bytes = row["denominators"]["bytes"]
+                row["assessed_against_unassessed"] = {"census_bytes": cen_bytes, "assessed_bytes": inspected, "unassessed_bytes": max(cen_bytes - inspected, 0),
+                                                      "assessed_exceeds_census": inspected > cen_bytes,
+                                                      "basis": "bytes inspected by encryption_extent against the bytes in the census; the two sets of files may differ, and a host with a census is the only one with a denominator"}
+        rec = db.execute("SELECT key, SUM(a), SUM(b) FROM agg WHERE kind='recovery' AND host=? GROUP BY key ORDER BY key", (hid,)).fetchall()
+        if rec:
+            total["recovery_files_checked"] += sum(x[1] for x in rec)
+            row["recovery_checks"] = {"inputs": len(inputs["recovery_checks"]), "by_verdict": {x[0]: {"files": x[1], "bytes": x[2]} for x in rec},
+                                      "validated_files": sum(x[1] for x in rec if x[0] == "matches_known_original"),
+                                      "basis": "validated means the recovered file matched a known original; a structurally valid file is a candidate, not a validated one"}
+        row["candidate_against_validated"] = {"candidate_files": cand_files, "validated_files": row.get("recovery_checks", {}).get("validated_files", 0),
+                                              "basis": "candidates are the census's candidate files; validated files are the ones recovery_validate matched to a known original"}
+        tl = db.execute("SELECT COUNT(*), SUM(a), MIN(first), MAX(last) FROM agg WHERE kind='timeline' AND host=?", (hid,)).fetchone()
+        if tl and tl[0]:
+            row["timeline"] = {"kinds": tl[0], "events": tl[1], "first": tl[2], "last": tl[3],
+                               "basis": "the earliest and latest event given, in UTC; the start and end of the incident are not these"}
+        cov = db.execute("SELECT status, status_basis FROM coverage WHERE host=? ORDER BY input", (hid,)).fetchall()
+        if cov:
+            row["collection_coverage"] = [{"status": s, "status_basis": b} for s, b in cov]
+        hosts_page.add(row, None)
+        for (kind, events, first, last) in db.execute("SELECT key, a, first, last FROM agg WHERE kind='timeline' AND host=? ORDER BY key", (hid,)):
+            timeline_page.add({"host_id": "H%d" % hid, "host": shown(e.name, count=False), "kind": kind, "events": events, "first": first, "last": last}, None)
+
+    pages = {"hosts": finish_page(hosts_page), "timeline": finish_page(timeline_page)}
+    OWN_NAMES.update(p["all_results"] for p in pages.values() if p.get("all_results"))
+    reasons = []
+    if total["hosts_unknown"]:
+        reasons.append("%d hosts have no census and are unknown" % total["hosts_unknown"])
+    if total["hosts_conflict"]:
+        reasons.append("%d hosts have more than one census and are not added to the totals" % total["hosts_conflict"])
+    if total["hosts_census_partial"]:
+        reasons.append("%d censuses are themselves partial (no receipt, a receipt that does not say complete, or skipped rows)" % total["hosts_census_partial"])
+    for code, n in sorted(problems.items()):
+        reasons.append("%s: %d" % (code, n))
+    if stopped.get("inputs_not_read"):
+        reasons.append("the time limit (max_seconds %d) was reached: %d inputs were not read" % (max_seconds, stopped["inputs_not_read"]))
+    if stopped.get("input_cut_by_clock"):
+        reasons.append("the time limit (max_seconds %d) was reached while %d inputs were being read: the rows after the last one read are not counted" % (max_seconds, stopped["input_cut_by_clock"]))
+    if not total["hosts"]:
+        reasons.append("no host was found in the inputs")
+    if BOUNDARY["replaced"]:
+        reasons.append("%d strings held an identifier-shaped text that the first rule missed and were replaced at the output (see boundary)" % BOUNDARY["replaced"])
+    complete = "partial" if reasons else "complete"
+    basis = "; ".join(reasons) if reasons else "every input was read to its end, every host has exactly one census that ends in a receipt that says complete, and the time limit was not reached"
+    statement = {"scope": "the hosts named in the inputs and in expected_hosts; nothing outside them", **total, "hosts_with_complete_census": total["hosts_with_census"] - total["hosts_census_partial"],
+                 "extrapolated": False, "estate_wide_percentage": None,
+                 "estate_wide_percentage_note": "no estate-wide percentage is stated: a host with no census is unknown, and no host stands for another",
+                 "inputs": {k: len(v) for k, v in specs.items()}}
+    index.finish()
+    if index.shown:
+        OWN_NAMES.add(index.shown)
+    answer = release({
+        "parser": PARSER,
+        "complete": complete,
+        "status": complete,
+        "status_basis": basis,
+        "partial_reasons": reasons,
+        "report": "Scope with denominators, assessed against unassessed, candidate against validated, and a coverage statement, from the outputs the "
+                  "caller named. It counts what those outputs say; it measures nothing itself, extrapolates nothing, and states no estate-wide "
+                  "percentage. A host with no census is unknown.",
+        "coverage_statement": statement,
+        "time_limit": {"max_seconds": max_seconds, "reached": bool(stopped), **stopped},
+        "hosts": hosts_page.page,
+        "timeline": timeline_page.page,
+        "index": {"file": index.shown, "scope": "SQLite: the aggregates per host and key (agg), the inputs and their receipts, the coverage statements and the printing order of the hosts; no row of an input"},
+        "pages": pages,
+        "truncated": any(p["truncated"] for p in pages.values()),
+        "paths_withheld": WITHHELD_PATHS[0],
+        **({"unrecognised_parameters": unknown} if unknown else {}),
+    })
+    print_answer(answer, indent=2)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except SystemExit as exc:
+        if exc.code not in (0, None):
+            drop_temporary_files()
+        raise
+    except Exception as exc:  # never an empty or clean answer for a failure
+        drop_temporary_files()
+        detail = describe(exc) if isinstance(exc, OSError) else "%s at %s" % (type(exc).__name__, where_it_failed(exc))
+        fail("unexpected failure: %s" % detail)
