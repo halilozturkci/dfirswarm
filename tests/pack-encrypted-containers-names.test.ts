@@ -15,6 +15,7 @@ const AP = join(TOOLS, "archive_probe", "run.py");
 const CID = join(TOOLS, "crypto_id", "run.py");
 const PR = join(TOOLS, "password_recover", "run.py");
 const TC = join(TOOLS, "tcrypt_header", "run.py");
+const SS = join(TOOLS, "crypto_selftest", "run.py");
 const CM = join(TOOLS, "crypto_metadata", "run.py");
 const NETWORK = join(ROOT, "packs", "network-forensics", "tools", "pcap_summary", "run.py");
 const WINDOWS = join(ROOT, "packs", "windows-forensics", "tools", "regkv", "run.py");
@@ -37,7 +38,7 @@ test("the tools carry the same blocks, byte for byte", async () => {
     assert.ok(copies[0].length > 1000);
   }
   for (const name of ["PLACE", "PAGE"]) {
-    const copies = await Promise.all([RKS, AP, CM].map((p) => block(p, name)));
+    const copies = await Promise.all([RKS, AP, CM, SS].map((p) => block(p, name)));
     for (const other of copies.slice(1)) assert.equal(other, copies[0], `${name} differs`);
   }
   // The blocks that are another pack's are the other pack's text: the network withholding block, the network process block (the
@@ -46,13 +47,14 @@ test("the tools carry the same blocks, byte for byte", async () => {
   assert.equal(await block(AP, "PROCESS"), await block(join(ROOT, "packs", "network-forensics", "tools", "pcap_extract", "run.py"), "PROCESS"));
   assert.equal(await block(PR, "PROCESS"), await block(AP, "PROCESS"));
   assert.equal(await block(TC, "PROCESS"), await block(AP, "PROCESS"));
+  assert.equal(await block(SS, "PROCESS"), await block(AP, "PROCESS"));
   assert.equal(await block(CM, "PROCESS"), await block(AP, "PROCESS"));
   assert.equal(await block(RKS, "PLACE"), await block(WINDOWS, "PLACE"));
   assert.equal(await block(RKS, "PAGE"), await block(WINDOWS, "PAGE"));
 });
 
 test("no tool starts a program in a session of its own", async () => {
-  for (const path of [RKS, AP, CID, PR, TC, CM]) {
+  for (const path of [RKS, AP, CID, PR, TC, CM, SS]) {
     const text = await readFile(path, "utf8");
     assert.doesNotMatch(text.replace(/^\s*#.*$/gm, "").replace(/"""[\s\S]*?"""/g, ""), /start_new_session|setsid|process_group/, path);
   }
@@ -265,7 +267,7 @@ print(json.dumps(rows))
 `;
 
 test("names: no regular expression of the blocks takes more than a second on 4,096 or 32,768 adversarial characters", async () => {
-  for (const path of [RKS, AP, CID, PR, TC]) {
+  for (const path of [RKS, AP, CID, PR, TC, SS]) {
     const run = await runPySnippet(HUNT, [path], null);
     assert.equal(run.code, 0, run.stderr);
     for (const [n, worst] of JSON.parse(run.stdout) as Array<[number, number]>) assert.ok(worst < 1, `${n} characters took ${worst} s in ${path}`);

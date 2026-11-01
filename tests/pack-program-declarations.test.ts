@@ -84,6 +84,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "encrypted-containers/tools/archive_probe": w("strings"),
   "encrypted-containers/tools/crypto_id": w("strings"),
   "encrypted-containers/tools/crypto_metadata": w("strings"),
+  "encrypted-containers/tools/crypto_selftest": w("strings"),
   "encrypted-containers/tools/password_recover": w("7z", "strings"),
   "encrypted-containers/tools/recovery_key_scan": w("strings"),
   "encrypted-containers/tools/tcrypt_header": w("strings"),

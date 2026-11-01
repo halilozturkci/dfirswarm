@@ -14,3 +14,14 @@ list; a reader that fails, times out, prints what the tool cannot read or disagr
 with the header answers `partial`. `volumes/luks-filevault`, `volumes/filevault-apfs`
 and `volumes/bitlocker` name it. What the installed Core Storage and APFS readers
 print is not established here, so only their counts and encryption lines are shown.
+
+### Added: encrypted-containers proves its readers on synthetic samples
+
+A new tool, `crypto_selftest`, builds the smallest LUKS1, LUKS2, BitLocker-metadata,
+Core Storage, APFS, ZIP-with-AES and VHD samples from the formats' descriptions,
+runs `cryptsetup`, `bdeinfo`, `fvdeinfo`, `fsapfsinfo` and `7z` on them and says per
+pair whether the reader parsed the sample, did not, is unavailable or timed out.
+It also imports `pybde`, `pyvhdi`, `pyluksde`, `pytsk3`, `dfvfs` and `pyAesCrypt` in
+a child interpreter with a version and an open test, and lists the `*2john` helpers
+on PATH by name. A verdict is about the sample only, never about a real volume. A
+rerun in the same job replaces no sample. `identify/by-format` names it.

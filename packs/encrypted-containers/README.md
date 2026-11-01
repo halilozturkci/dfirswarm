@@ -20,7 +20,11 @@ of its own. The thirteenth is the pack's router, `encrypted/router` (at
 most 400 tokens): it names the other twelve by the question each answers, holds no
 rule, and is the one line a run shows for the pack when its skills index is over budget.
 
-**Six tools.**
+**Seven tools.**
+`crypto_selftest` builds tiny synthetic LUKS, BitLocker, Core Storage, APFS, ZIP-AES
+and VHD samples, runs the installed readers and modules on them and says which pairs
+parsed, which did not and which are unavailable, with exact versions and john's helper
+inventory: the receipt an image's acceptance step reads.
 `crypto_metadata` takes a volume image and a byte offset and runs the reader for the
 scheme the signature shows (`cryptsetup luksDump`, `bdeinfo`, `fvdeinfo`,
 `fsapfsinfo`): the key slots, segments, digests and tokens of LUKS, the key

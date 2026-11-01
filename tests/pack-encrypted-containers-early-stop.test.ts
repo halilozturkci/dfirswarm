@@ -24,7 +24,7 @@ import { test } from "node:test";
 import { ROOT } from "./tool-library-harness.ts";
 
 const ENC = join(ROOT, "packs", "encrypted-containers", "tools");
-const TOOLS = ["archive_probe", "crypto_id", "recovery_key_scan", "password_recover", "tcrypt_header", "crypto_metadata"];
+const TOOLS = ["archive_probe", "crypto_id", "recovery_key_scan", "password_recover", "tcrypt_header", "crypto_metadata", "crypto_selftest"];
 
 function blockStart(text: string, name: string): number {
   const i = text.indexOf(`# BEGIN SHARED ${name}`);
