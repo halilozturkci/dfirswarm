@@ -37,7 +37,7 @@
   "example": "{\"path\": \"work/extracted/winevt\", \"min_level\": \"high\", \"out_dir\": \"work/<your id>/hunt\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 11,
+  "version": 10,
   "sha256": "5ee6efa5469b07d9276ba39c1cd7cc78adedd3c0182bb941e3a320bd6172f1b5",
   "use": {
     "extensions": [
@@ -50,6 +50,6 @@
       }
     ]
   },
-  "requires": ["hayabusa","zircolite"],
+  "requires": [],
   "secret_output": "required"
 }

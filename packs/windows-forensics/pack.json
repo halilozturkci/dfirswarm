@@ -138,7 +138,7 @@
       "tools/regkv/run.py": "e264911cb7a2a4356f28b7416d8e006ffa6e4fa55f39b98f984c7433a00d060c",
       "tools/shellbags/manifest.json": "ab1046b3979ff276354208ae26a25ff07a7ff588f56998d3f3aabad2861a7e7a",
       "tools/shellbags/run.py": "13637832f8e24905022b319192c3d9bb008959fe84844d204e1a338accaa7bf7",
-      "tools/sigma_hunt/manifest.json": "7c243874e70ba722cda370916ec7d14e5f4fd66b20ffbd4ce870d11e33c6d48a",
+      "tools/sigma_hunt/manifest.json": "e52d9e11bc8b46463cad72983a4c66eed850d7fc1f41ffca28a8c34efdf81cb8",
       "tools/sigma_hunt/run.py": "5ee6efa5469b07d9276ba39c1cd7cc78adedd3c0182bb941e3a320bd6172f1b5",
       "tools/usn_journal/manifest.json": "d661bac8996f25d7c02228ca2ae32aee97567ceee143d93d685470c972e45f03",
       "tools/usn_journal/run.py": "985f4269f91fb25f8133ca3f50a9e97eb655174eca838a40fdb11dfa6a396fc5",

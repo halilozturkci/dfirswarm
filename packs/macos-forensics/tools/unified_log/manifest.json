@@ -49,9 +49,11 @@
   "example": "{\"path\": \"work/extracted/system_logs.logarchive\", \"predicate\": \"process == \\\"sudo\\\"\", \"out_dir\": \"work/<your id>/ulog\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
-  "version": 8,
+  "version": 7,
   "sha256": "d2ca743b1cc0a7c1013cbf03e119b79eaffda0d19637664d924380bad8cc7420",
-  "requires": ["unifiedlog_iterator","log"],
+  "requires": [
+    "unifiedlog_iterator"
+  ],
   "use": {
     "extensions": [
       ".tracev3",

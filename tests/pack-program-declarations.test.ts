@@ -87,7 +87,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "linux-forensics/tools/linux_triage": w("strings"),
   "macos-forensics/tools/fsevents_parse": w("strings"),
   "macos-forensics/tools/knowledgec_query": w("log", "strings"),
-  "macos-forensics/tools/unified_log": w("strings"),
+  "macos-forensics/tools/unified_log": { ...w("strings"), log: "the macOS system log command, looked for with which() only when sys.platform is darwin and for the live store; it is not in any image, and the reader this tool needs is unifiedlog_iterator (its requires)" },
   "mobile-forensics/recipes/android-aleapp": w("log"),
   "mobile-forensics/recipes/ios-ileapp": w("log"),
   "ransomware-response/tools/encrypted_survey": w("7z", "log"),
@@ -107,6 +107,8 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "windows-forensics/tools/lnk_parse": w("pwsh", "strings"),
   "windows-forensics/tools/regkv": w("strings"),
   "windows-forensics/tools/registry_recover": w("log"),
+  "virtualization-backup-forensics/tools/snapshot_chain_check": { "qemu-img": "run only when it is installed, to read a disk format header; the pack pins that the tool declares no requires (tests/pack-virtualization-shared.test.ts), as nothing in it needs the program to answer" },
+  "windows-forensics/tools/sigma_hunt": { hayabusa: "one of two engines, either of which is enough (the description says so, and tests/pack-windows-forensics.test.ts pins that it declares neither: declaring both would claim both are needed)", zircolite: "one of two engines, either of which is enough (see hayabusa)" },
   "windows-forensics/tools/shellbags": w("strings"),
   "windows-forensics/tools/yara_scan": w("strings"),
 };
