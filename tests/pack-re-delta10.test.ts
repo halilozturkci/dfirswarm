@@ -13,12 +13,12 @@ import { spawnSync } from "node:child_process";
 import { readFile, readdir, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_PROBE, DOC_STRUCTURE, FUZZY, PE_DIRECTORIES, PE_INFO, RE, body, buildElf, buildPe, buildZip, put, refused, rels, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { DOC_PROBE, DOC_STRUCTURE, ELF_DIRECTORIES, FUZZY, PE_DIRECTORIES, PE_INFO, RE, body, buildElf, buildPe, buildZip, put, refused, rels, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json, ZipEntry } from "./pack-re-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
 
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
-const RE_COPIES = [DOC_PROBE, DOC_STRUCTURE, PE_DIRECTORIES, PE_INFO, CAPA_FLOSS];
+const RE_COPIES = [DOC_PROBE, DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, PE_INFO, CAPA_FLOSS];
 
 const ALNUM = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 /** A fixed-seed generator (mulberry32): the same draws on every run. */

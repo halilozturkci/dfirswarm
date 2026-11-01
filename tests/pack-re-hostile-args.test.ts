@@ -12,7 +12,7 @@ import { test } from "node:test";
 import { RE, TOOLS, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 
-const TOOL_NAMES = ["doc_probe", "doc_structure", "entropy_map", "fuzzy_hash", "go_buildinfo", "marshal_inspect", "pe_directories", "pe_info"];
+const TOOL_NAMES = ["doc_probe", "doc_structure", "entropy_map", "fuzzy_hash", "go_buildinfo", "marshal_inspect", "pe_directories", "elf_directories", "pe_info", "unpack_safe"];
 const RECIPES = ["static-binary", "capa-floss"];
 const HOSTILE = ["[".repeat(100_000), "{" + '"path":['.repeat(50_000), "[]", "1", "null", '"abc"', "true"];
 

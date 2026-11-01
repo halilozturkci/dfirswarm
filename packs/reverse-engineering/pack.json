@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.9.8",
+  "version": "1.10.1",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -22,20 +22,55 @@
     {
       "name": "make",
       "why": "declared for building a tool distributed as source from a tree the operator or a pack supplied; no skill names it, and nothing from the evidence is ever built or run"
+    },
+    {
+      "name": "analyzeHeadless",
+      "why": "Ghidra's headless analyzer, declared ahead of the skill that will describe the headless route as a method; no skill names it yet, and nothing from the evidence is ever installed into it as an extension or script"
+    },
+    {
+      "name": "java",
+      "why": "the JDK Ghidra's headless analyzer runs on; a runtime, never called by a skill on its own"
+    },
+    {
+      "name": "diec",
+      "why": "Detect It Easy's console program, declared ahead of the skill that will name it; no skill walks through it yet"
+    },
+    {
+      "name": "dotnet",
+      "why": "the .NET runtime a .NET decompiler runs on, declared ahead of that decompiler's own entry; a runtime, never called by a skill on its own"
+    },
+    {
+      "name": "qpdf",
+      "why": "declared for the second reading of a PDF that a later change to doc_structure will add; no skill names it yet"
+    },
+    {
+      "name": "osslsigncode",
+      "why": "declared for the Authenticode verification tool a later change adds; no skill names it yet"
+    },
+    {
+      "name": "lief",
+      "why": "a Python library for PE, ELF and Mach-O structure, declared ahead of the skill that will name it; no tool of this pack imports it yet"
+    },
+    {
+      "name": "msoffcrypto-tool",
+      "why": "a Python library for protected Office files, declared ahead of the second reading doc_structure will gain; no tool of this pack imports it yet"
     }
   ],
   "secrets": [],
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "0a7a2a0b3f83fbe56728e36b0ed50bcab84a25d2949fac38405c7836775ae912",
+      "README.md": "1da40e10a11181f559855b174beeb3bbf311185e787aa9e89fde459fa96b48bc",
       "goals/sample-triage.md": "0f6798ec18204b277c9430d5a74359cf7c5142131ccfc5071293b3dd1bd0ad12",
       "recipes/capa-floss/recipe.json": "fc5f8d643e9716b0fb9382b77c743bd268876f6b2be5638c05e765c52b0d3beb",
       "recipes/capa-floss/run.py": "55c39e2becc923250deafbb2d3606622e574a318aaa53a0730d4110a803284fe",
       "recipes/static-binary/recipe.json": "97412d41c8e82df6075805027141c351ae2a26621ec4924f2aa6238a4e39d566",
       "recipes/static-binary/run.py": "b4b7788e1d8b1a8e4bf59938de21f18d61211148c6a84b56c53b31a0e19572b9",
-      "requires/host.json": "35d6940ebf96fe7342b6be31f503561267f756ec91203661c0940860b0dd0171",
-      "requires/python.txt": "f0f18bd3e9e860703a9a7599d84f281b999764d16f1619aeef6b89a670c5566b",
+      "requires/host.json": "e438c1f441995fb30448e0c8b09b454fc402842a0496536a27e1a3e8be58000e",
+      "requires/locks/floss.txt": "83949fd4edbc82abdb527a7957d401e4a18f40a4c70f6bec104e4edbf4808d0d",
+      "requires/locks/olevba.txt": "0fa1a024d9ce875c81addf1f3fc6f6e0ec794fc08fba4744c0f1d791f2758faa",
+      "requires/python.lock": "78ca0b72b924a3678f631bf0fe6bdda0608b6ff995a3893eafdf995e880c03a4",
+      "requires/python.txt": "c8831228d4b61be16e43d0ef686b9952a4084d217b6024fa4449169904559f25",
       "skills/INDEX.md": "d9a2e3dab5cdcf8516f4db5c3a7fef49fac651a8d4daa0072b332d0e898a22c4",
       "skills/capabilities/mapping.md": "b568574dffe48e3acd7e284c0d921e01f20e1f81ee53e907538ccff005e271a7",
       "skills/code/static-inspection.md": "3cb55eec74e8c06c4e69f919de64c1f92e3f40e66f183df4cf4c1840e43a492a",
@@ -43,10 +78,10 @@
       "skills/documents/macros.md": "551bbf0b227aca359e5d8289086ea1d38086f72384b96f5d61f27466d386fac4",
       "skills/documents/pdf-rtf.md": "cf066d8dec45114cb112588cbcd4307576220f720dc7f5aa4877997d622e3a75",
       "skills/elf/packing-and-identity.md": "a4cfdebf3efb071edca2da1560ff2e7b015ed89d366777645b995aeb2336176a",
-      "skills/elf/structure.md": "913d82302d83dc52d253971d7436811be92be563b1d47bb164abef96eda4f7aa",
+      "skills/elf/structure.md": "f3ca612cd9eb9a722aef9660198b11a6cb86d1dc085ef41d4e4c6da80b13f5de",
       "skills/macho/structure.md": "58fdbd9009abac5db96e488db9ace1ebd935084b38f96c29634cd3b4c6fa9b26",
       "skills/managed/clr.md": "8bf03cdc3eb78cd5a4813cd39a32df65b722a95a9ed330479cf29920b595140e",
-      "skills/packing/static-recovery.md": "b253d8af43bcb8a23c1460561aa2c9948ce42e0587b75bf1e058fbda2136db6b",
+      "skills/packing/static-recovery.md": "d0bcfcf7c6b3ba1d8076907a9fd94931022cfa41823c99e4be569e98eef345a5",
       "skills/pe/signature-and-resources.md": "b07ac934578b5b471917189812d9a651a7c52f5107826af100cbbd2326d68781",
       "skills/pe/structure.md": "555340ce97d7f18ddf8de1eeeb1b1ce345c2498f4ff219004812cc98f8eafb0a",
       "skills/reverse-engineering/router.md": "733871064383e7b724fe7f0d79962b909d260a0e4729e8bcdd354e564f3513ac",
@@ -62,6 +97,8 @@
       "tools/doc_probe/run.py": "36de5747661471a899d9188a229129620e7ada6dd258f5ae5006d8f0bfe8f67a",
       "tools/doc_structure/manifest.json": "927433c4c8d48cfba46c235ca44d1cc2218226e4f884dec740b1ec98ac8bb8af",
       "tools/doc_structure/run.py": "58c5254d5065c7714ca0cb7c3982b3ebca77549a531e13b76f648efc3134d62b",
+      "tools/elf_directories/manifest.json": "c8db119ae261910e31e4dd472d9763683b447c9c824a2ab880edb932f49d64fd",
+      "tools/elf_directories/run.py": "22f3802fb5720d2b6595a5e1fe381817430cc3cd825b8f20078c80bff5945703",
       "tools/entropy_map/manifest.json": "d515dee2c1de13b44a8160e62585b15358274b9c9507222cc0859be25c3d3695",
       "tools/entropy_map/run.py": "ae3a8e8e3ba3e2759a90d52cd4f42ebe670b43424122fa35e727c7867ceec439",
       "tools/fuzzy_hash/manifest.json": "52c29a84a07010361a66679808e015c89d482befe3d3ff30909671de8e5a5fb4",
@@ -73,18 +110,22 @@
       "tools/pe_directories/manifest.json": "9a82db7cdc03f7817d26291f706b333ab7794dd69fd5fcb7e19946f0e3d4bcda",
       "tools/pe_directories/run.py": "1ccf8962ba0409c19380435b9bfd509645b37147552b14c7b011deeaeac08ac9",
       "tools/pe_info/manifest.json": "772d626b65f084da0f03c5cc73494be8183d944ec26f3e5a26305a482d366e46",
-      "tools/pe_info/run.py": "7c86009c5fa4cec5974c66fb36fa1fd6a982bb7756875fd352486c8b83901915"
+      "tools/pe_info/run.py": "7c86009c5fa4cec5974c66fb36fa1fd6a982bb7756875fd352486c8b83901915",
+      "tools/unpack_safe/manifest.json": "9c68735d82e3a4d524fcf596523dcad234f1391ef26b995516f3277598ba86d3",
+      "tools/unpack_safe/run.py": "95485521a617fb4ae2317ac12bdc3f298848682cf4b9109deeff5e7edcfb9553"
     }
   },
   "tools": [
     "doc_probe",
     "doc_structure",
+    "elf_directories",
     "entropy_map",
     "fuzzy_hash",
     "go_buildinfo",
     "marshal_inspect",
     "pe_directories",
-    "pe_info"
+    "pe_info",
+    "unpack_safe"
   ],
   "recipes": [
     "reverse-engineering/capa-floss",

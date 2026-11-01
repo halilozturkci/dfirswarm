@@ -315,3 +315,11 @@ test("scripts/test-select.ts asks for the Python 3.11 job for a pack, the tool l
   }
   assert.equal(select([], layout).py311, false, "nothing changed");
 });
+
+test("the re-real-programs job reports and does not gate: continue-on-error is on the job, it runs only when the Python 3.11 job does, on Python 3.11, and CI green still needs it", () => {
+  const job = jobText("re-real-programs");
+  assert.match(job, /^ {4}continue-on-error: true$/m, "the job itself, not one step, does not fail the run");
+  assert.match(job, /^ {4}if: needs\.select\.outputs\.py311 == 'true'$/m);
+  assert.match(job, /actions\/setup-python@[0-9a-f]{40} # v[\d.]+\n {8}with:\n {10}python-version: "3\.11"/, "the FLOSS lock is resolved for 3.11");
+  assert.match(jobText("green"), /^ {4}needs: \[[^\]\n]*\bre-real-programs\b[^\]\n]*\]$/m);
+});

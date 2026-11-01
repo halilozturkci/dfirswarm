@@ -17,13 +17,13 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_STRUCTURE, PE_DIRECTORIES, RE, body, buildZip, filesUnder, put, tool, withCwd } from "./pack-re-harness.ts";
+import { DOC_STRUCTURE, ELF_DIRECTORIES, PE_DIRECTORIES, RE, body, buildElf, buildZip, filesUnder, put, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 import { buildPdf, buildPeDirs } from "./pack-re-doc-fixtures.ts";
 import { SHAPES, canaries, needles, prng } from "./pack-re-canary-shapes.ts";
 
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
-const COPIES = [DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS];
+const COPIES = [DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, CAPA_FLOSS];
 const GO_BUILDINFO = join(RE, "tools", "go_buildinfo", "run.py");
 /** The copies whose sanitiser (shown_path) and backstop (final_check) the cases below test: go_buildinfo too, which has no tables of the document tools. */
 const SANITISER = [...COPIES, GO_BUILDINFO];
@@ -149,6 +149,7 @@ for (const [label, script, name, make] of [
   ["doc_structure (a ZIP package)", DOC_STRUCTURE, "p.docx", () => buildZip([{ name: "[Content_Types].xml", data: Buffer.from("<Types/>") }, { name: "word/document.xml", data: Buffer.from("<a/>") }, { name: "word/b.xml", data: Buffer.from("<a/>") }])],
   ["doc_structure (a PDF)", DOC_STRUCTURE, "p.pdf", () => buildPdf([{ num: 1, body: "<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /URI /URI (http://h.example/) >> >>" }, { num: 2, body: "<< /Type /Pages /Kids [] /Count 0 >>" }], "/Root 1 0 R").file],
   ["pe_directories", PE_DIRECTORIES, "p.dll", () => buildPeDirs({ exports: { imageName: "a.dll", functions: [{ name: "f" }, { name: "g" }] } }).file],
+  ["elf_directories", ELF_DIRECTORIES, "e.so", () => buildElf({ cls: 64, needed: ["liba.so", "libb.so"], soname: "libe.so" })],
 ] as const) {
   test(`the backstop holds with the sanitiser removed: ${label}, unsanitised strings injected into the answer and every table row`, async () => {
     await withCwd(async (cwd) => {
@@ -184,7 +185,7 @@ test("a number of 32 digits or more (a /Count, a /Prev) is given by its size; a 
     assert.equal(a.withheld_by_final_check, undefined);
     assert.match(JSON.stringify(a), /<a number of 107 bits, withheld>/);
   });
-  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES]) {
+  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES]) {
     const r = py(path, "print(json.dumps([m.shown_answer(10 ** 31), m.shown_answer(10 ** 31 - 1), m.shown_answer(-(10 ** 40)), m.shown_answer(True)]))");
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout.trim(), `["<a number of 103 bits, withheld>", ${"9".repeat(31)}, "<a number of 133 bits, withheld>", true]`);
@@ -204,7 +205,7 @@ test("a key out of the file spelled like a marker the tool writes keeps its '<' 
     assert.ok(keys.includes("\\x3ctoken-shaped text withheld 20 characters> #2"), JSON.stringify(keys));
     assert.equal(keys.filter((k) => k.startsWith("<token-shaped text withheld 20 characters>")).length, 2);
   });
-  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES]) {
+  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES]) {
     const code = [
       "class C: key = 'k'",
       "spill = m.Spill(C(), 2)",
