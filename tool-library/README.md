@@ -141,7 +141,7 @@ or `tools/`.
 | `grep_filelist` | python3 | `s864a08` | 4 | Search the catalog filelist for a pattern (case-insensitive). Returns the first 100 matching lines as a JSON … |
 | `guest_syslog` | python3 | `s5d1001` | 1 | Extract unique syslog-like lines from a binary (Kali/rsyslog) matching a month-day prefix; drop kernel lines. |
 | `hdfs_node_icat` | python3 | `s9a5f03` | 2 | Extract an inode from a cluster node's image with icat and hash what it wrote. node picks one of the HDFS cas… |
-| `icat_extract` | python3 | `s864a08` | 9 | Extract one Sleuth Kit address (an inode, or inode-type-id for an NTFS stream such as 168-128-4) from a disk … |
+| `icat_extract` | python3 | `s864a08` | 10 | Extract one Sleuth Kit address (an inode, or inode-type-id for an NTFS stream such as 168-128-4) from a disk … |
 | `icat_root` | python3 | `s9d8306` | 5 | Extract an inode from an EXT4 volume with icat. The Webserver case's image and its 503808-sector offset are t… |
 | `ioc_scan` | python3 | `s183900` | 7 | Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its sta… |
 | `ledger_timeline` | python3 | `se5fdcd` | 3 | Write a run's dated ledger entries as one timeline in time order (Markdown table, CSV or JSON Lines). Leaves … |

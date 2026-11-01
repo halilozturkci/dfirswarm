@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.11.15",
+  "version": "1.11.16",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -71,7 +71,7 @@
       "tests/test_feature_scan.py": "bc8354f308a0c990d4011a8abb14345c2fde4dbdefe44585446ffb5c0d2a8ded",
       "tests/test_file_carver.py": "9e154ffa6495f14c318b1bfd6fe43cf6812a00c913d9cb454571c79ddb3b8fb0",
       "tests/test_file_type.py": "9fbeb3e2db8d81d7b7e2ae4e5cb7f58d227a0606f0429765b2f78a4ce1272dc0",
-      "tests/test_icat_extract.py": "00aacc6b5715bebd808e268c1d32e100f20b73d5404554a7a82a40eb076cf716",
+      "tests/test_icat_extract.py": "58b7385f836255b6684f4ba80b4d5ffdbac024b83fb0188aec18d47953fa9127",
       "tests/test_image_layout.py": "4a31d9a0f4d1f6b972fa565ac42acc59addc46f722eea529ee6cab67a8ec35f8",
       "tests/test_ioc_scan.py": "bc1c0808d4af23ad16eea57601d15055789582ba93bc616015207cfb51626d0e",
       "tests/test_manifests.py": "3d1b4dbdacdc8a11553320ca621c6f9b859570f03f2292f49a368c326a04a50f",
@@ -98,8 +98,8 @@
       "tools/file_carver/run.py": "be88d7d9898293603c2fa5031a0e5c14f6a007c3d8dbde13097b3910fc4c18d5",
       "tools/file_type/manifest.json": "b901eaabfd3f3c86339df902e243082bcfb72a6aa0fe1f6b4685239d55f7b1a7",
       "tools/file_type/run.py": "1a6179c96350f66fabe1ec24fb38a36c8c27551f5d14b18f92dd0dacf69ba55e",
-      "tools/icat_extract/manifest.json": "a331cc0e0d1a5936b8c6a051f0dfe59c896e88e9e6f3e55093563e43a2eb5066",
-      "tools/icat_extract/run.py": "c16a13833ae742f3dd504bab21396238a099be070b81bfcb7e636f99d9033b9f",
+      "tools/icat_extract/manifest.json": "4ab9aa5fa7c58ef61acb9c1e6527a76d6cb7132dc13d6136e691971de0037b08",
+      "tools/icat_extract/run.py": "ac42691517ac0041c887dbb6514a12c9201cc5affd4a8a8e0b5475b3318960a5",
       "tools/image_layout/manifest.json": "9063cc4a1f855b0499a707caeb354a83184d38e86b7a9f68e09b4fde1ed406fe",
       "tools/image_layout/run.py": "b9bc7cff784e5b6040ca5f127a77431949afb8d25272d45df8bf307ce8081568",
       "tools/ioc_scan/manifest.json": "6334554b494cbe7341003f61a115e27de580fb1a21169cdc7df217f71693ff3b",

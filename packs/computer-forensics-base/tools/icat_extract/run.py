@@ -20,7 +20,8 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "icat_extract", "version": 9}
+TOOL = {"name": "icat_extract", "version": 10}
+OFFSET_MAX = 1 << 40              # sectors: an explicit offset above this is not a volume offset (512 TiB at 512 bytes a sector)
 BLOCK = 1 << 20
 MAX_BYTES_DEFAULT = 32 * 1024 ** 3
 MAX_BYTES_CEILING = 1024 ** 4
@@ -28,6 +29,8 @@ MAX_SECONDS_DEFAULT = 1500
 MAX_SECONDS_CEILING = 1700        # inside the manifest's own 1800-second limit: a longer budget would be killed, not reported
 SECTOR_MAX = 65536
 INODE = re.compile(r"^\d+(-\d+(-\d+)?)?$")
+RESOLVE_SECONDS = 60               # the search for the image under inputs/ (when image= is not given)
+CANDIDATES_MAX = 200               # and the images it keeps before it asks the caller to say which
 
 def _catalogue_slug(path):
     """The directory name the kickoff's catalogue gives an input: its path under
@@ -59,20 +62,40 @@ def _resolve_image(explicit=None):
     baking one in. One candidate is used; several mean the caller must say which.
     An image is known by its extension or, lacking one (a raw `dd` of a web
     server named after the host), by the catalogue: the kickoff writes
-    catalog/<input>/partitions.txt for every input it read as a disk."""
-    import glob, os
+    catalog/<input>/partitions.txt for every input it read as a disk.
+    The search is on a clock (RESOLVE_SECONDS, read for every entry) and keeps at most CANDIDATES_MAX names:
+    a tree it cannot finish, or one with more images than that, is said, and the caller passes image=."""
+    import glob, os, time
     if explicit:
         return explicit
+    deadline = time.monotonic() + RESOLVE_SECONDS
     cands = []
     for ext in ("*.E01", "*.e01", "*.raw", "*.dd", "*.001", "*.img", "*.vhd", "*.vhdx"):
         cands += glob.glob(os.path.join("inputs", ext))
-    seen = set()
     for root_dir in _inputs_roots():
-        for base, _dirs, files in os.walk(root_dir, followlinks=False):
-            for f in files:
-                p = os.path.join(base, f)
-                if os.path.isfile(os.path.join("catalog", _catalogue_slug(p), "partitions.txt")):
-                    cands.append(p)
+        stack = [root_dir]
+        while stack:
+            here = stack.pop()
+            try:
+                scan = os.scandir(here)
+            except OSError:
+                continue
+            with scan:
+                for entry in scan:
+                    if time.monotonic() > deadline:
+                        raise SystemExit(json.dumps({"ok": False, "error": "looking for the image under inputs/ used its %d seconds before it was done; pass image=" % RESOLVE_SECONDS}))
+                    try:
+                        is_dir = entry.is_dir()
+                        if is_dir and entry.is_symlink():
+                            continue                         # a directory link is a name and not a place to walk
+                    except OSError:
+                        continue
+                    if is_dir:
+                        stack.append(entry.path)
+                    elif os.path.isfile(os.path.join("catalog", _catalogue_slug(entry.path), "partitions.txt")):
+                        cands.append(entry.path)
+                        if len(set(cands)) > CANDIDATES_MAX:
+                            raise SystemExit(json.dumps({"ok": False, "error": "more than %d images under inputs/; pass image=" % CANDIDATES_MAX}))
     cands = sorted(set(cands))
     if len(cands) == 1:
         return cands[0]
@@ -152,9 +175,41 @@ def _catalogued(image, offset, inode):
     return out
 
 
+FAILED_BASIS = "the tool stopped with an error and extracted nothing (see error)"
+
+
 def fail(msg, **extra):
-    print(json.dumps({"error": msg, **extra}))
+    print(json.dumps({"error": msg, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS, **extra}))
     sys.exit(1)
+
+
+def last_word(kind, value, _tb):
+    """An error nobody expected is an answer too: its class only, since its message can quote a name from the evidence."""
+    print(json.dumps({"error": "internal error: %s" % kind.__name__, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS}))
+    sys.stdout.flush()
+    os._exit(1)
+
+
+sys.excepthook = last_word
+
+
+def on_stdout(resolve, *given):
+    """The image and offset resolvers end with SystemExit(<JSON text>), which Python prints on stderr: the answer belongs on stdout."""
+    try:
+        return resolve(*given)
+    except SystemExit as exc:
+        if isinstance(exc.code, str):
+            try:
+                said = json.loads(exc.code)
+            except ValueError:
+                said = {"error": exc.code}
+            if isinstance(said, dict):
+                said.setdefault("tool", TOOL)
+                said.setdefault("status", "failed")
+                said.setdefault("status_basis", FAILED_BASIS)
+            print(json.dumps(said))
+            sys.exit(1)
+        raise
 
 
 def resolve_output(out):
@@ -185,15 +240,29 @@ def resolve_output(out):
 
 try:
     d = json.load(sys.stdin)
-except ValueError as exc:
-    fail("arguments are not valid JSON", reason=str(exc))
+except (ValueError, RecursionError) as exc:
+    fail("arguments are not valid JSON", reason=str(exc)[:200])
 if not isinstance(d, dict):
     fail("arguments are a JSON object")
 inode = d.get("inode")
 output = d.get("output")
-image = _resolve_image(d.get("image"))
 if inode is None or not isinstance(output, str) or not output:
     fail("need inode and output")
+for _name, _value in (("output", output), ("image", d.get("image")), ("inode", inode)):
+    if _name == "image" and _value is not None and not isinstance(_value, str):
+        fail("image is a path")
+    if isinstance(_value, str):
+        if "\0" in _value:
+            fail("%s holds a NUL character" % _name)
+        try:
+            _value.encode("utf-8")
+        except UnicodeEncodeError:
+            fail("%s is not text that can be written as UTF-8 (it holds a lone surrogate)" % _name)
+# An explicit offset is a volume offset in sectors: a whole number, not a bool, not negative, and within what icat takes (OFFSET_MAX).
+given_offset = d.get("offset")
+if given_offset is not None and (isinstance(given_offset, bool) or not isinstance(given_offset, int) or not 0 <= given_offset <= OFFSET_MAX):
+    fail("offset is a volume offset in sectors: a whole number from 0 to %d" % OFFSET_MAX, given=type(given_offset).__name__ + " " + str(given_offset)[:40])
+image = on_stdout(_resolve_image, d.get("image"))
 if isinstance(inode, bool) or not (isinstance(inode, int) and inode >= 0 or isinstance(inode, str) and INODE.match(inode)):
     fail("inode is a Sleuth Kit address: a number, or number-type-id for an NTFS stream (168-128-4)", inode=inode)
 # 084284 is address 84284: icat would read a leading zero as octal. The address is held as its numbers.
@@ -211,7 +280,7 @@ if not isinstance(max_seconds, int) or isinstance(max_seconds, bool) or not 1 <=
 dest = resolve_output(output)
 if not os.path.isfile(image):
     fail(f"image not found: {image}")
-offset = _resolve_offset(image, d.get("offset"))
+offset = on_stdout(_resolve_offset, image, given_offset)
 # A directory's inode gives icat its index, not a file: an agent extracted
 # Edge's History directory (d/d 84284) as "EdgeHistory.db", 272 bytes of
 # $INDEX_ROOT, and read "file is not a database" from it. Said here when the
@@ -243,7 +312,7 @@ while err_fd is None:
     k += 1
     err_path = dest.with_name(dest.name + ".icat.stderr" + ("" if k == 1 else ".%d" % k))
     try:
-        err_fd = os.open(str(err_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        err_fd = os.open(str(err_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     except FileExistsError:
         continue
     except OSError as exc:
@@ -253,7 +322,7 @@ size = 0
 status, why = "complete", None
 started = time.monotonic()
 try:
-    out_fd = os.open(str(part), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    out_fd = os.open(str(part), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
 except OSError as exc:
     os.close(err_fd)
     os.unlink(err_path)
