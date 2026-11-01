@@ -1,0 +1,54 @@
+{
+  "name": "recovery_validate",
+  "description": "Check a recovery output that was produced separately, against the original ciphertext and against the decryptor's provenance, and say what the evidence supports. It never runs a decryptor and never runs, imports or unpacks anything from the evidence: it reads the files it is given. The decryptor's provenance (`provenance`: name, version, publisher, source, obtained, verified, exit_code, notes) is recorded as the caller gave it, marked as not verified, and not used for any verdict: an exit code of 0 is never a reason to say that a file was recovered. For each recovered file (`items`: a path, or {recovered, ciphertext, known_sha256, format}; or every file of a tree `recovered_root`, paired by relative path with `ciphertext_root`) it reports: its size and sha256 (evidence, not a secret; the hash of a file whose name looks like a credential file or whose first bytes are a private-key header is not printed, `sha256_withheld` says so); the check of its format, chosen by the caller's `format`, else the first extension of the name that names a supported format, else the magic of the first bytes (zip and the office and archive formats built on it, pdf, png, jpeg, sqlite, text): the ZIP central directory is read and walked entry by entry against the end record, with the sizes it declares added up and the file never unpacked (`unpacked` is false; `possible_zip_bomb` is a claim of the directory, not a measurement; a directory of more than 64 MiB, or of more than 200000 entries, is not walked: the check fails with a `directory_error` that names the bound); the PDF header, end marker and the startxref target; the PNG chunk headers up to IEND; the JPEG markers up to the scan; the SQLite header and page size and, unless `check_sqlite` is false, an integrity check run read-only and immutable on a COPY of the file made under the output directory (at most 256 MiB, removed when the check ends or a stop signal comes), never on the input; the decodability of text (UTF-8, or UTF-16 with a byte-order mark) over the whole file; a comparison with the known original when its sha256 is given for the item or listed in `known_originals` (a file in sha256sum format, matched by file name, at most 200000 names); the unrecovered ranges: whole granules of `granule` bytes (default 4096) of the recovered file that are still equal to the ciphertext at the same offset or are all zero, merged into ranges (the first 16 in a file's row, every one in the profile file; a run shorter than a granule is not listed); and a verdict. The verdict is one of exactly four words: `matches_known_original` (the sha256 equals the known original's), `structurally_valid` (the structure of the format is intact; this says nothing about the content being the original), `unrecovered` (the file is empty, or every granule equals the ciphertext or is all zero) and `inconclusive` (anything else: a file that was not read in full or could not be opened, ranges that are still unrecovered, a known original that differs, a structure check that failed or does not apply); `verdict_basis` gives the reason in words, and no other verdict word is printed (the source holds the set and replaces anything else by `inconclusive`). The tool never says `recovered`. `status` (also `complete`) is `complete` only when at least one file was named, every one was opened and read in full, no structure check was cut short and no limit was reached; otherwise it is `partial` with `status_basis` and `partial_reasons` (a verdict of `inconclusive` is a result, not a missing one). An explicit list holds at most 20000 files; a tree is walked with the clock checked at every entry, nothing is followed, at most 1,000,000 entries are visited and the walk stops there and says so. Every path is printed through the rule encrypted_survey uses (its manifest states the shape of an identifier and the rates at which it misses and withholds; the code is the same text, held equal by tests): a directory component with an identifier-shaped token, and the name of a file named like a note, is withheld; the name of any other file is printed as it is, because it is the evidence; `paths_withheld` counts the withheld paths. A second check reads every string of the answer and of the files it names on the way out and replaces one still identifier-shaped, making a complete answer partial. The profile (`recovery_validate-profile-<digest>.jsonl`, the digest of the parameters, never of a name) holds one JSON line per unrecovered range and per file, then a receipt; it is written under a temporary name and placed when complete, and a profile or page file already there is never replaced, even by a rerun with other limits: the new one takes the next free name (`-2`, `-3`) and the answer names it. Tables longer than `limit` are written whole as JSON Lines and named in pages; the rows shown inline also stop at about 512 KiB. Memory does not grow with the size of a file or the number of ranges: a 64 MiB file whose granules of 512 bytes alternate between zeros and random bytes (65,536 ranges, the most ranges a file of that size can make) was checked in 1.4 s at 25 MB resident and wrote 6,609,067 bytes of profile (about 100 bytes per range); a random 256 MiB file read in 0.6 s at 24 MB resident; the profile grows with the number of ranges, at most one per two granules, and only the clock and read_budget_bytes bound it. The tool's own clock `max_seconds` (default 780, at most 840, below the manifest's 900) is checked before every chunk of 1 MiB, every tree entry and every list line; the job's own timeout_seconds is not passed to the tool. `read_budget_bytes` (default 8589934592) counts every byte read, the ciphertext and the copy of a SQLite file included; when it is spent the rest of a file is unread and the answer is partial. It reads only regular files, opens them without following a link and without blocking (a named pipe is refused by its fstat, never read) and writes only under the output directory. A stop signal (SIGTERM, SIGINT, SIGHUP) ends it with one JSON answer (status failed, interrupted, exit code 128 + the signal) after removing the profile, the pages and the SQLite copy it was writing. The handlers are installed when the tool's module code has run as far as its stop block: the start of the interpreter and the compiling of the file come first, and a stop signal in that window can end the tool with no JSON answer at all. SIGKILL cannot be caught: a tool killed that way leaves the hidden temporary files of the profile, the pages and a SQLite copy in tool-output, and, in a window of microseconds, an empty file at a result name; delete them.",
+  "params": {
+    "items": {
+      "type": "array",
+      "description": "The recovered files to check, at most 20000: a path, or an object {recovered, ciphertext, known_sha256, format}. `ciphertext` is the original encrypted file (compared granule by granule at the same offsets); `known_sha256` is the sha256 of the known original; `format` is one of pdf, zip, png, jpeg, sqlite, text and says which structure to check"
+    },
+    "recovered_root": {
+      "type": "string",
+      "description": "A directory of recovery output: every regular file under it is checked, in print order, following no link. With `ciphertext_root`, the ciphertext of a file is the file at the same relative path under that root"
+    },
+    "ciphertext_root": {
+      "type": "string",
+      "description": "The directory of the original ciphertext, paired with recovered_root by relative path (a file without a counterpart is checked without a ciphertext)"
+    },
+    "known_originals": {
+      "type": "string",
+      "description": "The path of a list of known originals in sha256sum format (`<64 hex digits>  <file name>`), matched by the recovered file's name; at most 200000 names"
+    },
+    "provenance": {
+      "type": "object",
+      "description": "The decryptor as the caller knows it: name, version, publisher, source, obtained (true or false), verified (true or false), exit_code, notes. Recorded as given, not verified, and not used for any verdict"
+    },
+    "granule": {
+      "type": "integer",
+      "description": "Bytes per granule for the unrecovered ranges, 512 to 1048576 (default 4096). A run of equal or zero bytes shorter than a granule is not listed"
+    },
+    "check_sqlite": {
+      "type": "boolean",
+      "description": "Run the read-only integrity check on a copy of a SQLite file (default true); false checks the header and page size only"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows shown inline in the items table (default 200); every row is counted, and a table with more is written whole as JSON Lines and named in pages.items.all_results. The rows shown inline also stop at about 512 KiB whatever limit says"
+    },
+    "read_budget_bytes": {
+      "type": "integer",
+      "description": "The most this run reads in all (default 8589934592, at least 4096). When it is spent the rest of a file is unread and the answer is partial"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out no further chunk is read, what was checked is written, and the answer is partial"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 900,
+  "example": "{\"items\": [{\"recovered\": \"work/recovered/report.docx\", \"ciphertext\": \"work/extracted/report.docx.locked\"}], \"provenance\": {\"name\": \"a public decryptor\", \"version\": \"1.0\", \"obtained\": true, \"verified\": true}}",
+  "by": "maintainer",
+  "at": "2026-11-01T12:00:00.000Z",
+  "version": 1,
+  "sha256": "859035119eee6825ae46438e94be059421b2b2f31f5767240bf93293124a6e15"
+}

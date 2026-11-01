@@ -44,6 +44,8 @@ import unicodedata
 from pathlib import Path
 
 PARSER = "encryption_extent/1"
+WORK = "measurement"
+TOOL = "encryption_extent"
 ACCEPTED_CENSUS_PARSERS = ("encrypted_survey/3",)
 CENSUS_STATUSES = ("candidate", "noncandidate", "unmeasured", "read_failed")
 DEFAULT_WINDOW, MIN_WINDOW, MAX_WINDOW = 4096, 64, 67108864
@@ -1081,7 +1083,7 @@ def output_place(tool, key):
 
 
 class Profile:
-    """One JSON line per window, run, uninspected range and file, then a receipt; written whole or not at all.
+    """One JSON line per record (the tool says which), then a receipt; written whole or not at all.
 
     The file is made under a temporary name and placed when the receipt is written, so an interrupted run leaves no file with
     the profile's name: a profile that exists ends in its receipt. It is placed without replacing a profile already there (a
@@ -1090,7 +1092,7 @@ class Profile:
     """
 
     def __init__(self, key):
-        self.path, self.shown = output_place("encryption_extent-profile", key)
+        self.path, self.shown = output_place(TOOL + "-profile", key)
         self.rows = 0
         # A stop must not come between the temporary file and its registration in PAGES, which is how the stop handler finds it. The three
         # stop signals are held for these steps and delivered right after; where the call is missing it is a no-op.
@@ -1144,7 +1146,7 @@ class NoProfile:
 
 def fail(message, **extra):
     print_answer(release({"error": message, "status": "failed",
-                          "status_basis": "the tool stopped with an error (see error); it produced no measurement", **extra}))
+                          "status_basis": "the tool stopped with an error (see error); it produced no %s" % WORK, **extra}))
     raise SystemExit(1)
 
 
@@ -1172,7 +1174,7 @@ PROGRESS = {}
 
 def last_word(signum):
     """What the tool says when a stop signal ends it: one JSON answer, never a clean-looking partial one."""
-    print(json.dumps({"error": "stopped by signal %d before the measurement was complete" % signum, "status": "failed",
+    print(json.dumps({"error": "stopped by signal %d before the %s was complete" % (signum, WORK), "status": "failed",
                       "status_basis": "the tool was stopped by signal %d; the profile and the tables it was still writing were removed, "
                                       "so nothing it had read is an answer" % signum,
                       "interrupted": True, "signal": signum, "coverage_so_far": PROGRESS.get("coverage")}), flush=True)
@@ -1187,6 +1189,19 @@ def drop_temporary_files():
                 os.unlink(tmp)
             except OSError:
                 pass
+
+
+COST = {"per_byte": 6e-8}     # seconds per byte read and measured: the floor is about 1.7 times what 64 MiB took when measured; the slowest window seen so far raises it
+
+
+def time_left():
+    return float("inf") if STOP["deadline"] is None else STOP["deadline"] - time.monotonic()
+
+
+def too_late(length):
+    """True when a window of `length` bytes would not be read and measured before the tool's own clock runs out: it is not started, so that
+    the clock is honoured to within a window's cost of the largest window that was already measured, and not by the 2 s a 64 MiB window takes."""
+    return out_of_time() or time_left() < length * COST["per_byte"]
 
 
 def entropy_exact(block):
@@ -1427,10 +1442,10 @@ def layout_findings(fd, size, rules, threshold, budget):
     """Each rule of a supplied layout against the bytes it names: the observed entropy and whether it matches what the rule expects."""
     found = []
     for i, rule in enumerate(rules):
-        if out_of_time():
+        length = rule["length"]
+        if too_late(length):
             found.append({"rule": i, "result": "not_read", "reason": "time_limit"})
             continue
-        length = rule["length"]
         start = rule["offset"] if rule["from"] == "start" else size - rule["offset"] - length
         if start < 0 or start + length > size:
             found.append({"rule": i, "result": "outside_file", "start": max(start, 0), "length": length})
@@ -1498,12 +1513,13 @@ def inspect_file(ctx, file_id, shown_path, path, given_format, counterpart, auth
         windows, contiguous = plan_windows(size, ctx["window"], ctx["policy"], ctx["samples"])
         pending_short = False
         for off, length in windows:
-            if out_of_time():
+            if too_late(length * (2 if cfd is not None else 1)):
                 reason = "time_limit"
                 break
             if not ctx["budget"].allows(length * (2 if cfd is not None else 1)):
                 reason = "read_budget_spent"
                 break
+            began = time.monotonic()
             try:
                 block = pread_full(fd, length, off)
             except OSError as exc:
@@ -1514,6 +1530,8 @@ def inspect_file(ctx, file_id, shown_path, path, given_format, counterpart, auth
                 reason = "file_shorter_than_when_opened"
                 break
             e = entropy_exact(block)
+            if len(block) >= 1 << 20:
+                COST["per_byte"] = max(COST["per_byte"], (time.monotonic() - began) / len(block))
             high = e >= ctx["threshold"]
             spans.add(off, len(block))
             n_windows += 1

@@ -60,3 +60,17 @@ now says when to use `encrypted_survey` (which files look encrypted, and their t
 `encryption_extent` (where in a file windows read high, and the ranges left unread), and that neither one
 alone shows that a file was encrypted. Measured: `scope/triage-tools` 800 to 713 tokens, the new leaf 375;
 the router 381 of 400, the index 848 of 1,000.
+
+### Added: ransomware-response has a fourth tool, `recovery_validate`
+
+It checks a recovery output that was produced separately against the original ciphertext and the decryptor's
+provenance, which it records as given and does not use. It never runs a decryptor or anything from the
+evidence and never unpacks an archive. Per file it reports the size and sha256 (not printed for a file that looks
+like a credential file), the structure of its format (the ZIP central directory walked against the end record,
+the PDF startxref target, the PNG and JPEG markers, the SQLite header and a read-only integrity check on a copy
+under the output directory, the decodability of text), a comparison with a known original (a hash per file or a
+sha256sum list), the unrecovered ranges (whole granules still equal to the ciphertext or all zero, every one in
+a profile file), and a verdict of exactly one of `matches_known_original`, `structurally_valid`, `unrecovered`,
+`inconclusive`. `recovery/routes-and-decryptors` names it and is no longer `method_only`. Measured: a 64 MiB file whose
+512-byte granules alternate between zeros and random bytes (65,536 ranges) took 1.4 s at 25 MB resident and wrote
+6,609,067 bytes of profile; a random 256 MiB file took 0.6 s.

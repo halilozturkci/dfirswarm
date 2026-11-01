@@ -1,6 +1,6 @@
 # Ransomware Response Pack
 
-Evidence-led ransomware examination. Its three tools return candidates and measurements; what a
+Evidence-led ransomware examination. Its four tools return candidates and measurements; what a
 candidate shows has to be validated before anyone acts on it.
 
 Depends on the Computer Forensics Base Pack. It does not repeat the intrusion
@@ -23,7 +23,12 @@ and the router `ransomware/router` (at most 400 tokens; the prompt shows this on
 `reporting/for-regulators` (`reporting/notification-register`,
 `reporting/conclusions-and-controls`).
 
-**Three tools.** `encryption_extent` measures where, in named files or in the candidates
+**Four tools.** `recovery_validate` checks a recovery output that was produced
+separately, against the original ciphertext and the decryptor's recorded provenance:
+the structure of each file's format, a comparison with known originals, the
+unrecovered ranges, and a verdict of one of four words (`matches_known_original`,
+`structurally_valid`, `unrecovered`, `inconclusive`). It never runs a decryptor or
+anything from the evidence, and an exit code is not evidence. `encryption_extent` measures where, in named files or in the candidates
 of an `encrypted_survey` census given by reference, windows of bytes read as high
 entropy, under a policy the caller declares (`sampling` or `full`). It names the bytes it did
 not inspect, checks the head and the end of a file against its format, compares with a

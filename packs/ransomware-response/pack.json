@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -56,10 +56,6 @@
       "why": "a method leaf about the minimum preservation before a rebuild, repair, decryption or reconnection and about acceptance; it works from the ledger and names no tool or program"
     },
     {
-      "path": "skills/recovery/routes-and-decryptors.md",
-      "why": "a method leaf about partial damage, deleted originals and a decryptor test; the only tool it names, `file_carver`, belongs to the base pack"
-    },
-    {
       "path": "skills/reporting/conclusions-and-controls.md",
       "why": "a reporting method leaf for conclusions and control findings; it works from the ledger and names no tool or program"
     },
@@ -88,7 +84,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "70ecf237a340be6aa641e21f23202f71324f27941165b65d9d9899c82a9cc104",
+      "README.md": "a4e71f4dd3064838a9a1afd7ff4fa9d232b32c6f1d38a297c24b530063974ace",
       "goals/ransomware-case.md": "bb889a729a06a1633e49284a99cf333aab899c57cbe5f0d8748e43ec02b78d62",
       "requires/host.json": "e9738f0296f8c734625a6a03a3d771737bd62a83432aae3bb7c0b0f82e10374c",
       "requires/python.txt": "5a396319de276d1ea51953493ef8e4f2dd0d7cb87c67aac6fbd0e63c096d63b6",
@@ -107,7 +103,7 @@
       "skills/platforms/nas-storage.md": "48229ad42fa98748cc1ca13dadde9d9927852b659aa739ba45417df37a909a85",
       "skills/ransomware/router.md": "21984240f2fcdb6a4dfbc43da6a60cadcc76441f422629ae6813146d09c453de",
       "skills/recovery/preserve-and-restore.md": "8aeb94f76d1abd9828d1d16210ce401e8faf26387f1affa505b7230f62c5077b",
-      "skills/recovery/routes-and-decryptors.md": "bc09eadad49ad7930a4aa99a21c1603f7987dfa570d9c9d19dd7472bfc21bbb2",
+      "skills/recovery/routes-and-decryptors.md": "3405ad7b9e4357b17c55dc04d0791473869490875f45e37df05063bf081b86d1",
       "skills/recovery/what-is-possible.md": "b7481ded7186f0948f32a870ede9364f500b410735615ca7f2e3905f53d6a017",
       "skills/reporting/conclusions-and-controls.md": "de39b2b61cf7bd58bde677335eab9878e1eeeda486e27b797762a593574feb24",
       "skills/reporting/for-regulators.md": "695c9b585403e0551fcb9d857d2e150682f249d50e2ef9c9720b87dbf718cae7",
@@ -118,16 +114,19 @@
       "skills/scope/triage-tools.md": "2d8ca3366f1b39ea7ff0bde4984076550edf302336794a5d554a0d66a386a148",
       "tools/encrypted_survey/manifest.json": "917db356a29abdf6d3ed44e9b94f3d771f31f12f577b0a65c1160ece3251260e",
       "tools/encrypted_survey/run.py": "68db06040a957cbe96c1f74cb1fee0f8976198f4a46532570436347504caf51f",
-      "tools/encryption_extent/manifest.json": "eee55894bf42da092a7a2ba9799ae0f85f9138d24c7c817390df2cfadb52050a",
-      "tools/encryption_extent/run.py": "e79d34c7561afb2b6e0581a34350b2059085f94b8288c2ae3bfae46753545fb4",
+      "tools/encryption_extent/manifest.json": "7dbf66238747b11e636d4524211c3c58139e4bf357cc3eb6fbc90dee0f5f8242",
+      "tools/encryption_extent/run.py": "ce4df7314c65609cc83318e29ab46436c16a64281addf18e664c535c916a7df6",
       "tools/ransom_note_scan/manifest.json": "aa7527fa4dc2cb318b7af83b1725103351b588354009b977c49c4f11bd1fd0d7",
-      "tools/ransom_note_scan/run.py": "ddc71992fbc131529e14000207feb73545d66d78080ffdfcb00cb89aba0d2507"
+      "tools/ransom_note_scan/run.py": "ddc71992fbc131529e14000207feb73545d66d78080ffdfcb00cb89aba0d2507",
+      "tools/recovery_validate/manifest.json": "92647b94eb18adb5815f075c3f0b17a78cf3430f2687fcc872da0c4ec9683e69",
+      "tools/recovery_validate/run.py": "859035119eee6825ae46438e94be059421b2b2f31f5767240bf93293124a6e15"
     }
   },
   "tools": [
     "encrypted_survey",
     "encryption_extent",
-    "ransom_note_scan"
+    "ransom_note_scan",
+    "recovery_validate"
   ],
   "skills": 23
 }
