@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { AUDIT, CANARY, asJob, body, everythingBut, filesUnder, json, put, refused, rowsOf, tool, withCwd } from "./pack-virtualization-harness.ts";
 import type { Json } from "./pack-virtualization-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const hex = (n: number, width = 8): string => n.toString(16).toUpperCase().padStart(width, "0");
 
@@ -464,7 +465,7 @@ test("a declared XML record is bounded in bytes: one record of many large childr
   await withCwd(async (cwd) => {
     const big = "x".repeat(1 << 20);
     await put(cwd, "inputs/big.xml", `<A><R when="2024-01-05T02:00:00Z"><Op>a</Op></R><R when="2024-01-05T03:00:00Z">${`<T>${big}</T>`.repeat(60)}<Op>b</Op></R><R when="2024-01-05T04:00:00Z"><Op>c</Op></R></A>`);
-    const wrapper = "import os,sys,resource\npid=os.fork()\nif pid==0:\n os.execvp('python3',['python3',sys.argv[1]])\n_,st,ru=os.wait4(pid,0)\nsys.stderr.write('RSS %d\\n' % ru.ru_maxrss)\nsys.exit(os.waitstatus_to_exitcode(st))\n";
+    const wrapper = peakRssPrelude() + "p, peak = run_peak(['python3', sys.argv[1]])\nsys.stderr.write('RSS %d\\n' % peak)\nsys.exit(p.returncode)\n";
     const run = await new Promise<{ stdout: string; stderr: string }>((resolve) => {
       const child = spawn("python3", ["-c", wrapper, AUDIT], { cwd, env: { ...process.env, AGENT_ID: "s1" } });
       const o: Buffer[] = [], e: Buffer[] = [];
@@ -480,7 +481,7 @@ test("a declared XML record is bounded in bytes: one record of many large childr
     assert.equal(out.problem_lines[0].record, 2);
     assert.equal(out.status, "partial");
     const raw = Number(/RSS (\d+)/.exec(run.stderr)?.[1] ?? 0);
-    const mb = process.platform === "darwin" ? raw / (1 << 20) : raw / 1024;
+    const mb = raw / (1 << 20);
     assert.ok(mb < 160, `resident size ${mb.toFixed(0)} MB`);
   });
 });

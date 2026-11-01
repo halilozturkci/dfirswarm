@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ownPathsToOut } from "../extensions/protocol.ts";
 import { withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 import { AGENT, WIN, body, everyFileUnder, exists, failed, stub, stubModule, tool, type Run } from "./windows-pack-harness.ts";
 
 const root = process.getuid?.() === 0;
@@ -55,12 +56,10 @@ async function limited(script: string, cwd: string, args: unknown, env: Record<s
 
 /** The peak resident size of a run, in MiB, and its answer: python3 runs the tool as a child and reports the child's high-water mark. */
 async function measured(script: string, cwd: string, args: unknown, env: Record<string, string> = {}): Promise<{ run: Run; peakMiB: number }> {
-  const wrapper = `
-import json, os, resource, subprocess, sys
-p = subprocess.run(["python3", sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True)
-peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-scale = 1 if sys.platform == "darwin" else 1024
-sys.stdout.write(json.dumps({"code": p.returncode, "stdout": p.stdout.decode("utf8", "replace"), "stderr": p.stderr.decode("utf8", "replace"), "peak": peak * scale}))
+  const wrapper = peakRssPrelude() + `
+import json, os, subprocess
+p, peak = run_peak(["python3", sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True)
+sys.stdout.write(json.dumps({"code": p.returncode, "stdout": p.stdout.decode("utf8", "replace"), "stderr": p.stderr.decode("utf8", "replace"), "peak": peak}))
 `;
   return new Promise((resolve, reject) => {
     const child = spawn("python3", ["-c", wrapper, script], { cwd, env: { ...process.env, ...AGENT, ...env } });

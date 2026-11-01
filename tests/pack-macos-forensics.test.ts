@@ -30,6 +30,7 @@ import { gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const MAC = join(ROOT, "packs", "macos-forensics", "tools");
 const PLIST = join(MAC, "plist_read", "run.py");
@@ -998,14 +999,13 @@ c.commit()
 
 /** Peak resident memory of a tool run in a process of its own, in MB (Linux reports KB, macOS bytes). */
 async function peakRssMb(script: string, cwd: string, args: unknown): Promise<{ mb: number; stdout: string; code: number | null }> {
-  const code = `
-import resource, runpy, sys
+  const code = peakRssPrelude() + `
+import runpy
 sys.argv = [sys.argv[1]]
 try:
     runpy.run_path(sys.argv[0], run_name="__main__")
 finally:
-    r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    sys.stderr.write("RSS_MB=%f\\n" % ((r / 1e6) if sys.platform == "darwin" else (r / 1e3)))
+    sys.stderr.write("RSS_MB=%f\\n" % (self_peak_bytes() / 1e6))
 `;
   const out = await new Promise<Run>((resolve, reject) => {
     const child = spawn("python3", ["-c", code, script], { cwd, env: { ...process.env, ...AGENT } });

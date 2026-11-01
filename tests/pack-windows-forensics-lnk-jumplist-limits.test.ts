@@ -18,6 +18,7 @@ import { readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 import { WIN, body, pythonCanImport, tool } from "./windows-pack-harness.ts";
 import { FILETIME_A, cfb, destList, lnk } from "./windows-t1-fixtures.ts";
 
@@ -37,13 +38,12 @@ const containerOf = async (cwd: string, out: Answer): Promise<Row> => (await row
 
 /** Run the tool and say how much memory it peaked at: a wrapper that starts it and reads the peak resident size of its child (bytes on macOS, KiB elsewhere). */
 function measured(cwd: string, args: unknown): { answer: Answer; rssMb: number; seconds: number; cpu: number } {
-  const code = [
-    "import json, os, resource, subprocess, sys, time",
+  const code = peakRssPrelude() + [
+    "import json, os, resource, subprocess, time",
     "t = time.time()",
-    "p = subprocess.run([sys.executable, sys.argv[1]], input=sys.argv[2], capture_output=True, text=True, env={**os.environ, 'AGENT_ID': 's1'})",
-    "ru = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss",
+    "p, peak = run_peak([sys.executable, sys.argv[1]], input=sys.argv[2], capture_output=True, text=True, env={**os.environ, 'AGENT_ID': 's1'})",
     "cpu = resource.getrusage(resource.RUSAGE_CHILDREN).ru_utime + resource.getrusage(resource.RUSAGE_CHILDREN).ru_stime",
-    "print(json.dumps({'out': p.stdout, 'err': p.stderr[-300:], 'mb': ru / (1 << 20) if sys.platform == 'darwin' else ru / 1024, 'sec': time.time() - t, 'cpu': cpu}))",
+    "print(json.dumps({'out': p.stdout, 'err': p.stderr[-300:], 'mb': peak / (1 << 20), 'sec': time.time() - t, 'cpu': cpu}))",
   ].join("\n");
   const r = spawnSync("python3", ["-c", code, join(WIN, "lnk_jumplist", "run.py"), JSON.stringify(args)], { cwd, encoding: "utf8", maxBuffer: 1 << 28 });
   assert.equal(r.status, 0, r.stderr);

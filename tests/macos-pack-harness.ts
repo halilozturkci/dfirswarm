@@ -9,6 +9,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { ROOT, runPy, runPySnippet } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 export const MAC = join(ROOT, "packs", "macos-forensics", "tools");
 export const PLIST = join(MAC, "plist_read", "run.py");
@@ -256,12 +257,12 @@ export async function runAndSignal(script: string, cwd: string, args: unknown, s
 
 /** CPU seconds (user + system) of the tool, and its peak resident memory, read from the child's rusage. */
 export async function measured(script: string, cwd: string, args: unknown, env: Record<string, string> = {}): Promise<{ cpu: number; mb: number; wall: number; stdout: string; code: number | null; stderr: string }> {
-  const code = `
-import json, os, resource, subprocess, sys, time
+  const code = peakRssPrelude() + `
+import json, os, resource, subprocess, time
 begun = time.monotonic()
-p = subprocess.run([sys.executable, sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True)
+p, peak = run_peak([sys.executable, sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True)
 r = resource.getrusage(resource.RUSAGE_CHILDREN)
-rss = r.ru_maxrss / 1e6 if sys.platform == "darwin" else r.ru_maxrss / 1e3
+rss = peak / 1e6
 sys.stdout.buffer.write(p.stdout)
 sys.stderr.write("MEASURED=%f,%f,%f,%d\\n" % (r.ru_utime + r.ru_stime, rss, time.monotonic() - begun, p.returncode))
 sys.stderr.buffer.write(p.stderr)

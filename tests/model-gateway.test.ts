@@ -105,7 +105,7 @@ async function fakeProvider(): Promise<{ server: Server; port: number; seen: See
 
 type Rig = { root: string; up: Awaited<ReturnType<typeof fakeProvider>>; config: GatewayConfig; gateway: ModelGateway; port: number };
 
-async function rig(options: { limits?: GatewayConfig["limits"]; budget?: Record<string, unknown> } = {}): Promise<Rig> {
+async function rig(options: { limits?: GatewayConfig["limits"]; budget?: Record<string, unknown>; now?: () => number } = {}): Promise<Rig> {
   const root = await mkdtemp(join(tmpdir(), "model-gateway-"));
   mkdirSync(join(root, "traces"), { recursive: true });
   mkdirSync(join(root, "done", "agents"), { recursive: true });
@@ -133,7 +133,7 @@ async function rig(options: { limits?: GatewayConfig["limits"]; budget?: Record<
     ...(options.limits ? { limits: options.limits } : {}),
   };
   const keys = new Map([["openai", OPENAI_KEY], ["resp", OPENAI_KEY], ["anthropic", ANTHROPIC_KEY]]);
-  const gateway = new ModelGateway(config, keys, { quiet: true });
+  const gateway = new ModelGateway(config, keys, { quiet: true, ...(options.now ? { now: options.now } : {}) });
   const port = await gateway.listen(0);
   return { root, up, config, gateway, port };
 }
@@ -314,11 +314,26 @@ test("a seat past a cap may still call for the harness's grace, to post its find
 
 test("refusals are logged a few a minute per seat and reason, and counted past that", async () => {
   process.env.GW_TEST_OPENAI_KEY = OPENAI_KEY;
-  const r = await rig({ limits: { refusal_log_per_minute: 2 } });
+  // The refusal log reads its minute from an injected clock, so the count
+  // does not depend on where the host's wall clock stands in its minute.
+  let clock = Date.parse("2026-09-24T12:00:10Z");
+  const r = await rig({ limits: { refusal_log_per_minute: 2 }, now: () => clock });
   cleanups.push(() => close(r));
-  for (let i = 0; i < 6; i++) await call(r, `/p/openai/${upHost(r)}/v1/chat/completions`, { model: "gpt-test" }, { authorization: "Bearer nope" });
+  const knock = () => call(r, `/p/openai/${upHost(r)}/v1/chat/completions`, { model: "gpt-test" }, { authorization: "Bearer nope" });
+  for (let i = 0; i < 6; i++) await knock();
   const lines = logLines(r).filter((l) => l.refused === "bad_token");
   assert.equal(lines.length, 2, "a knocking loop does not grow the log");
+  // The minute turns in the middle of a loop: the first minute's count is
+  // written when it turns, and the new minute starts its own two lines.
+  clock = Date.parse("2026-09-24T12:00:59Z");
+  await knock();
+  clock = Date.parse("2026-09-24T12:01:00Z");
+  for (let i = 0; i < 3; i++) await knock();
+  const after = logLines(r).filter((l) => l.refused === "bad_token");
+  assert.equal(after.length, 5, "two in the first minute, one summary, two in the next");
+  assert.equal(after.filter((l) => typeof l.suppressed === "number").length, 1);
+  assert.equal(after.find((l) => typeof l.suppressed === "number")!.suppressed, 5, "six calls and one more in the first minute, two written: five counted");
+  assert.equal(after.at(-1)!.at, "2026-09-24T12:01:00.000Z", "the line is stamped by the injected clock");
 });
 
 test("an upstream error reaches the guest as the provider sent it, and a body or a rate over the limit is refused", async () => {

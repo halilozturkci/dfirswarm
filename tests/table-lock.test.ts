@@ -312,12 +312,60 @@ test("a holder's heartbeat stops once its lock has been taken over", async () =>
         const until = Date.now() + 2_000;
         while (!existsSync(join(lockDir, "beat")) && Date.now() < until) await sleep(20);
         assert.ok(existsSync(join(lockDir, "beat")), "the holder never refreshed its lock");
-        // Broken while we stalled, and taken by someone else.
-        await rm(lockDir, { recursive: true, force: true });
+        // Broken while we stalled, and taken by someone else. A tick of the
+        // heartbeat can be between its read of the owner and its write when
+        // this happens (it read our token, and writes `beat` into whatever
+        // directory is there by then): that one write can land in the middle of
+        // the removal (ENOTEMPTY, which the retry covers) or after the swap.
+        // What must not happen is a second one, so each round clears the file
+        // and waits for six ticks; a heartbeat that keeps going puts it back
+        // every round, one that has stopped leaves it absent after at most the
+        // one round that met the stray write.
+        await rm(lockDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
         await mkdir(lockDir);
         await writeFile(join(lockDir, "owner"), "someone-else", "utf8");
-        await sleep(300);
-        assert.equal(existsSync(join(lockDir, "beat")), false, "kept refreshing a lock that is someone else's");
+        const beat = join(lockDir, "beat");
+        let rounds = 0;
+        do {
+          await rm(beat, { force: true });
+          await sleep(300);
+          rounds += 1;
+        } while (existsSync(beat) && rounds < 4);
+        assert.equal(existsSync(beat), false, "kept refreshing a lock that is someone else's");
+      }),
+    );
+  } finally {
+    Object.assign(tableLockTiming, saved);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a heartbeat tick that was in flight when the lock was taken over leaves one stray file, not a heartbeat that goes on", async () => {
+  // The tick that read our token just before the take-over writes `beat` after
+  // it. The test plays that tick by hand, at the one moment it can happen, so
+  // the outcome does not depend on the host's timing: the stray file is
+  // tolerated once, and a second one (the heartbeat still running) is not.
+  const { root, lockDir } = await sandbox();
+  const saved = { ...tableLockTiming };
+  try {
+    tableLockTiming.heartbeatMs = 50;
+    await warningsDuring(() =>
+      withTableLock(root, async () => {
+        const until = Date.now() + 2_000;
+        while (!existsSync(join(lockDir, "beat")) && Date.now() < until) await sleep(20);
+        await rm(lockDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
+        await mkdir(lockDir);
+        await writeFile(join(lockDir, "owner"), "someone-else", "utf8");
+        const beat = join(lockDir, "beat");
+        await writeFile(beat, "stray", "utf8");
+        let rounds = 0;
+        do {
+          await rm(beat, { force: true });
+          await sleep(300);
+          rounds += 1;
+        } while (existsSync(beat) && rounds < 4);
+        assert.equal(existsSync(beat), false, "the heartbeat went on after the stray write");
+        assert.ok(rounds <= 2, `${rounds} rounds to settle`);
       }),
     );
   } finally {

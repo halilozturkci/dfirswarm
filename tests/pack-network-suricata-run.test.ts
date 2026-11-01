@@ -442,7 +442,8 @@ test("a stop signal prints partial JSON with the stage and the files on disk, an
       const dir = await stage(cwd, bin, { sleep: true, eve: ALERT(1) + "\n" });
       const { path, rules } = await inputs(cwd);
       const run = startDetached(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
-      for (let i = 0; i < 100 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
+      // A state, waited for as long as a loaded runner needs (the signal is meant to land after the stand-in has started its program).
+      await untilExists(join(dir, "started"));
       run.signal(sig);
       assert.equal(await run.closed, code, sig);
       const last = JSON.parse(run.stdout());
@@ -451,11 +452,19 @@ test("a stop signal prints partial JSON with the stage and the files on disk, an
       assert.equal(last.stage, "running Suricata");
       assert.ok(last.files_on_disk.includes("suricata.yaml"));
       const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
-      await new Promise((r) => setTimeout(r, 300));
-      assert.throws(() => process.kill(pid, 0), /ESRCH/);
+      assert.equal(await gone(pid), true, `${sig}: what Suricata started is gone`);
     });
   }
 });
+
+/** Waits for a file the stand-in writes once it is in the state a test needs; fails by name after a minute rather than going on without it. */
+async function untilExists(path: string, ms = 60_000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!(await exists(path))) {
+    if (Date.now() > until) assert.fail(`${path} was not written within ${ms} ms`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
 
 test("a bad home_net entry is named by its position and length, never echoed", async () => {
   await withCwd(async (cwd, bin) => {

@@ -22,6 +22,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 import { KAPE_COPY_HEADER, TOOLS, TRIAGE, body, filesUnder, kapeCopyRow, put, tableRows, tool, uac3, withCwd } from "./pack-triage-harness.ts";
 import type { Json } from "./pack-triage-harness.ts";
 
@@ -47,13 +48,12 @@ const cov = async (cwd: string, out: string): Promise<Json> => JSON.parse(await 
 const jsonl = async (path: string): Promise<Json[]> => (await readFile(path, "utf8")).trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
 
 /** Run the recipe on a file and say how much memory the process held at most (the recipe is the only child). */
-const RSS = `
-import json, resource, subprocess, sys
+const RSS = peakRssPrelude() + `
+import json, subprocess
 recipe, verb, target, out = sys.argv[1:5]
 args = [sys.executable, recipe, verb, "--target", target] + (["--out", out] if verb == "run" else [])
-p = subprocess.run(args, capture_output=True, text=True)
-peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-print(json.dumps({"code": p.returncode, "peak_mb": peak / (1 << 20 if sys.platform == "darwin" else 1 << 10), "stdout": p.stdout[:400]}))
+p, peak = run_peak(args, capture_output=True, text=True)
+print(json.dumps({"code": p.returncode, "peak_mb": peak / (1 << 20), "stdout": p.stdout[:400]}))
 `;
 async function measured(verb: string, path: string, cwd: string, out = "o", env: Record<string, string> = {}): Promise<{ code: number; peak_mb: number; stdout: string }> {
   return new Promise((resolve, reject) => {

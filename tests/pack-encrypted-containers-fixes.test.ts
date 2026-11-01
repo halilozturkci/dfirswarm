@@ -9,6 +9,7 @@ import { chmod, mkdir, readFile, readdir, stat, symlink, writeFile } from "node:
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const ENC = join(ROOT, "packs", "encrypted-containers", "tools");
 const SCAN = join(ENC, "recovery_key_scan", "run.py");
@@ -194,11 +195,9 @@ test("archive_probe follows a Zip64 locator whatever the End record says, and re
   });
 });
 
-const MEMORY_DRIVER = String.raw`
-import json, resource, subprocess, sys
-p = subprocess.run(["python3", sys.argv[1]], input=json.dumps({"path": sys.argv[2]}).encode(), capture_output=True, cwd=sys.argv[3], env={**__import__("os").environ, "AGENT_ID": "s1"})
-rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-rss = rss if sys.platform == "darwin" else rss * 1024
+const MEMORY_DRIVER = peakRssPrelude() + String.raw`
+import json, subprocess
+p, rss = run_peak(["python3", sys.argv[1]], input=json.dumps({"path": sys.argv[2]}).encode(), capture_output=True, cwd=sys.argv[3], env={**__import__("os").environ, "AGENT_ID": "s1"})
 out = json.loads(p.stdout)
 print(json.dumps({"code": p.returncode, "rss_mib": rss / 2**20, "listing": out.get("listing"), "count": out.get("entry_count")}))
 `;

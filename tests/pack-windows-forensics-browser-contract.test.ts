@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { WIN, py } from "./windows-pack-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 import {
   assertJsonAnswer, assertStopped, fuzzTool, manifestOf, rerunSmaller, runTool, startTool, stopAt, typeConfused, withDeadline, type Moment, type StopSignal,
 } from "./windows-tool-contract.ts";
@@ -267,15 +268,14 @@ test("browser_history: a cell over the inline bound is shown by its type and len
 });
 
 function runMeasured(script: string, cwd: string, args: unknown, env: Record<string, string> = {}): { code: number | null; stdout: string; stderr: string; peakMiB: number } {
-  const wrapper = [
-    "import json, resource, subprocess, sys",
-    "p = subprocess.run(['python3', sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True)",
-    "peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss",
+  const wrapper = peakRssPrelude() + [
+    "import json, subprocess",
+    "p, peak = run_peak(['python3', sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True)",
     "sys.stdout.write(json.dumps({'code': p.returncode, 'stdout': p.stdout.decode('utf8', 'replace'), 'stderr': p.stderr.decode('utf8', 'replace'), 'peak': peak}))",
   ].join("\n");
   const ran = spawnSync("python3", ["-c", wrapper, script], { cwd, input: JSON.stringify(args), encoding: "utf8", timeout: 60_000, maxBuffer: 1 << 28, env: { ...process.env, AGENT_ID: "s1", ...env } });
   const r = JSON.parse(ran.stdout) as { code: number; stdout: string; stderr: string; peak: number };
-  return { code: r.code, stdout: r.stdout, stderr: r.stderr, peakMiB: r.peak / 1024 };
+  return { code: r.code, stdout: r.stdout, stderr: r.stderr, peakMiB: r.peak / (1024 * 1024) };
 }
 
 test("browser_history: a query that would build a 100 MB cell is refused inside bounded memory", async () => {

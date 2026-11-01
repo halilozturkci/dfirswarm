@@ -369,8 +369,13 @@ try:
     before = os.getppid() != 0 and open("/proc/%d/stat" % child).read().rsplit(")", 1)[1].split()[1]
     parent.kill()
     parent.wait()
-    time.sleep(0.3)
-    after = open("/proc/%d/stat" % child).read().rsplit(")", 1)[1].split()[1]
+    # The child is re-parented when its parent ends; wait for that state (up to 20 s on a loaded host) rather than for a fixed time.
+    until = time.monotonic() + 20
+    while True:
+        after = open("/proc/%d/stat" % child).read().rsplit(")", 1)[1].split()[1]
+        if after != before or time.monotonic() > until:
+            break
+        time.sleep(0.02)
     print({"reparented": before != after, "still the listed process": recipe.same_process(child, listed)})
 finally:
     try:
