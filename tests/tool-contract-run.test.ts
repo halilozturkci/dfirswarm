@@ -99,7 +99,7 @@ async function inEmptyDir<T>(fn: (cwd: string) => Promise<T>): Promise<T> {
 }
 
 /** The first required parameter that names a path, else the first parameter that does (a name read from the manifest, not a list of tools). */
-const PATHISH = /^(path|image|source|db_path|db|hive|file|dir|directory|input|archive|pcap|log|logfile|evidence)$/;
+const PATHISH = /^(path|root|image|source|db_path|db|hive|file|dir|directory|input|archive|pcap|log|logfile|evidence)$/;
 export function pathParam(manifest: Manifest): string | null {
   const params = Object.entries(manifest.params ?? {}).filter(([, p]) => p?.type === "string");
   return (params.find(([k, p]) => p.required && PATHISH.test(k)) ?? params.find(([k]) => PATHISH.test(k)))?.[0] ?? null;

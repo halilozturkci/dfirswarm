@@ -8,13 +8,7 @@
   "status_pair": [
     { "tool": "computer-forensics-base/catalog_search", "item": "BASE-02", "why": "answers no JSON on stdout" },
     { "tool": "computer-forensics-base/check_inputs", "item": "BASE-05", "why": "status is FAIL, not complete, partial or failed" },
-    { "tool": "computer-forensics-base/sqlite_query", "item": "BASE-02", "why": "a refusal answers without status" },
-    { "tool": "triage-collection/collection_coverage", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" },
-    { "tool": "triage-collection/collection_id", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" },
-    { "tool": "triage-collection/collection_index", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" },
-    { "tool": "triage-collection/collection_manifest_parse", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" },
-    { "tool": "triage-collection/collection_manifest_verify", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" },
-    { "tool": "triage-collection/collection_path_map", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" }
+    { "tool": "computer-forensics-base/sqlite_query", "item": "BASE-02", "why": "a refusal answers without status" }
   ],
   "non_utf8_name": []
 }
