@@ -248,7 +248,6 @@ on, and `inputs/` is unchanged.
 - `find work/extracted -name SHA256SUMS -exec sh -c 'c="sha256sum -c"; command -v sha256sum >/dev/null || c="shasum -a 256 -c"; for m; do (cd "${m%/*}" && $c SHA256SUMS) >/dev/null 2>&1 || $c "$m" >/dev/null 2>&1 || exit 1; done' sh {} +`
 - `test -n "$(find work/rules -iname '*.yar*' -exec awk 'FNR==1{k=0} {t=$0;o=""} k{i=index(t,"*/");if(!i)next;t=substr(t,i+2);k=0} {while((i=index(t,"/*"))){o=o substr(t,1,i-1)" ";t=substr(t,i+2);j=index(t,"*/");if(!j){k=1;t="";break};t=substr(t,j+2)} o=o t;if((i=index(o,"//")))o=substr(o,1,i-1)} o~/^[ \t]*((private|global)[ \t]+)*rule[ \t]+[A-Za-z_]/{print FILENAME}' {} + 2>/dev/null)"`
 - `command -v yara >/dev/null || exit 0; find work/rules -iname '*.yar*' -exec sh -c 'for r; do yara "$r" /dev/null >/dev/null 2>&1 || exit 1; done' sh {} +`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 14`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,8,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies

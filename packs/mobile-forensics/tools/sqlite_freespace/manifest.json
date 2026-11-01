@@ -34,8 +34,8 @@
   "example": "{\"db\": \"work/extracted/sms.db\", \"limit\": 50}",
   "by": "maintainer",
   "at": "2026-09-22T20:00:00.000Z",
-  "version": 4,
-  "sha256": "7b17767d134f2900dc893cb302b7e66300cd040ad64d3e17c0b7219f061b71b7",
+  "version": 5,
+  "sha256": "5928f7933ea705a61261eb8ce6c9f07d7a18c1b9cde742a347752c11a37a277c",
   "use": {
     "magic": [
       {

@@ -160,6 +160,16 @@ def list_recipes(packs):
     return rows
 
 
+def detect_why(rc, why):
+    """What the census says of a recipe whose detect step exited `rc` (the contract in docs/packs.md): 1 does not apply (the recipe's own why), 2
+    could not tell (not a failure of the step, and not "does not apply"), any other code is a failed detect step."""
+    if rc == 2:
+        return "its detect step could not tell (exit 2)%s" % (": " + why if why else "")
+    if rc != 1:
+        return "its detect step failed (exit %d)%s" % (rc, ": " + why if why else "")
+    return why
+
+
 def recipe_argv(r, verb, target, extra):
     runtime = "python3" if r["runtime"] == "python3" else "bash"
     return [runtime, os.path.join(r["dir"], r["entry"]), verb, "--target", json.dumps(target)] + extra
@@ -308,8 +318,7 @@ class Catalog:
                 applied.append(r)
                 rmdir_quiet(probe)
             else:
-                if rc != 1:
-                    why = "its detect step failed (exit %d)%s" % (rc, ": " + why if why else "")
+                why = detect_why(rc, why)
                 if "is not in this image" in why:
                     self.notes.append("%s — no catalogue of %s by %s" % (why, rel, r["id"]))
                 line = "%s: %s" % (r["id"], why or "does not apply")

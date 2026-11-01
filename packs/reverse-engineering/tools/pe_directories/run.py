@@ -41,7 +41,7 @@ import xml.parsers.expat
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "pe_directories", "version": 3}
+TOOL = {"name": "pe_directories", "version": 4}
 PARSER = "pe_directories/1"
 NOTE = ("Static structure only. A directory shows what the file declares to its loader and tools, not what the code does: an export, a delay-load "
         "import, a TLS callback or a resource is a declaration, and a strong-name flag or a PDB path is a claim. Read `status`, `problems` and `coverage` "
@@ -1245,9 +1245,9 @@ class SecretValues:
         self.shown = None
         if not enabled:
             return
-        if not (self.job and self.out):
+        if not (self.job and self.out and os.environ.get("SECRET_OUTPUT") == "1"):
             raise SecretValuesRefused(
-                "write_values is refused outside a job: a value written here would be an ordinary "
+                "write_values is refused outside a job run as secret output: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=pe_directories with "
                 "secret_output: true, and ask again there. Nothing was written."
             )

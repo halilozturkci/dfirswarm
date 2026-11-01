@@ -27,6 +27,7 @@
       "description": "The tool's own time limit in seconds (default 420, 1 to 540; the manifest's timeout is 600). At it, or on a stop signal, the attempt is cut and the answer is partial; whatever john had tried stays in the sealed pot file"
     }
   },
+  "requires": ["john"],
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 600,
@@ -34,7 +35,7 @@
   "example": "{\"source\": \"work/extracted/secret.zip\", \"format\": \"zip\", \"candidates\": \"work/candidates.txt\"}",
   "by": "maintainer",
   "at": "2026-10-31T12:00:00.000Z",
-  "version": 5,
+  "version": 6,
   "sha256": "f11139fdb36b3612a51e01deec89d235332a9e3c7e47a007e8a7aa0e0b7e30b5",
   "use": {
     "extensions": []

@@ -36,7 +36,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "file_type", "version": 5}
+TOOL = {"name": "file_type", "version": 6}
 BUDGET_SECONDS = 100          # under the manifest's 120
 LIBMAGIC_TIMEOUT = 10
 ERRORS_SHOWN = 50
@@ -127,7 +127,7 @@ TEXTY = bytes(range(0x20, 0x7f)) + b"\r\n\t\f\b"
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra}))
     raise SystemExit(1)
 
 

@@ -1158,7 +1158,7 @@ export type StoreCheck = {
   /** Each revision's MANIFEST.json and its index files, and each generation.json, held to the journal's lines. */
   catalogue: { revisions_verified: number; revisions_mismatched: string[]; generations_verified: number; generations_mismatched: string[] };
   /** The derived catalogue, from its journal lines: objects offered and skipped, answered, catalogued, left unanswered, and each limit it met. */
-  derived: { offered: number; skipped: number; detected: number; applied: number; catalogued: number; partial: number; unanswered: number; deferred: number; bounded: string[] };
+  derived: { offered: number; skipped: number; detected: number; applied: number; undetermined: number; catalogued: number; partial: number; unanswered: number; deferred: number; bounded: string[] };
 };
 
 /** Every regular file under a directory, links and specials left out. */
@@ -1206,16 +1206,17 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
     notes: count("note"),
     degraded: count("jobs_degraded"),
     catalogue: { revisions_verified: 0, revisions_mismatched: [], generations_verified: 0, generations_mismatched: [] },
-    derived: { offered: 0, skipped: 0, detected: 0, applied: 0, catalogued: 0, partial: 0, unanswered: count("detect_unanswered"), deferred: count("derived_deferred"), bounded: [] },
+    derived: { offered: 0, skipped: 0, detected: 0, applied: 0, undetermined: 0, catalogued: 0, partial: 0, unanswered: count("detect_unanswered"), deferred: count("derived_deferred"), bounded: [] },
   };
   for (const l of checked.lines) {
     if (l.type === "derived_offered") {
       out.derived.offered += ((l.offered as unknown[]) ?? []).length;
       out.derived.skipped += ((l.skipped as unknown[]) ?? []).length;
     } else if (l.type === "detect_answered") {
-      const rows = (l.rows as Array<{ applies?: boolean }>) ?? [];
+      const rows = (l.rows as Array<{ applies?: boolean | "unknown" }>) ?? [];
       out.derived.detected += rows.length;
-      out.derived.applied += rows.filter((r) => r.applies).length;
+      out.derived.applied += rows.filter((r) => r.applies === true).length;
+      out.derived.undetermined += rows.filter((r) => r.applies === "unknown").length;
     } else if (l.type === "generation_committed" && l.trigger === "derived") {
       if (l.status === "complete") out.derived.catalogued += 1;
       else out.derived.partial += 1;

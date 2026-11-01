@@ -1,4 +1,19 @@
 {
   "about": "Deliberate differences between a tool-library tool and its twin under packs/*/tools. Empty: every twin is byte-equal. An entry is {tool, file, why, library_sha256, pack_sha256}; the digests are those of the two files as they differ today, so a changed side fails the entry until it is re-read, and an entry whose files are equal again fails as stale. The list only shrinks (tests/tool-library-twins.test.ts).",
-  "entries": []
+  "entries": [
+    {
+      "tool": "marshal_inspect",
+      "file": "provenance-marshal_constants.json",
+      "why": "the library copy was saved from a run and keeps the provenance record of its constants table; a pack ships no provenance file",
+      "library_sha256": "3efe280a82f24f628a06f5bb17def3d397987d1fcd717050d245a6049ffb83b1",
+      "pack_sha256": "absent"
+    },
+    {
+      "tool": "marshal_inspect",
+      "file": "provenance.json",
+      "why": "the library copy was saved from a run and keeps that run's provenance record; a pack ships no provenance file",
+      "library_sha256": "678e372391581a960dec8bb10ae2c23d1ab526f657116e976864e1da02970f01",
+      "pack_sha256": "absent"
+    }
+  ]
 }

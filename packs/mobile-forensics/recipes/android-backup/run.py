@@ -594,12 +594,38 @@ def member_type(member):
     return "other"
 
 
+def _open_regular(path):
+    """The target opened for reading without waiting for it (an open of a FIFO named here would block until a writer came): the type is read from the
+    descriptor, and anything but a regular file is refused as an OSError, which detect reads as "cannot tell"."""
+    import errno
+    import stat
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _is_regular(path):
+    import stat
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except (OSError, ValueError):
+        return False
+
+
 def detect(path):
     try:
-        with open(path, "rb") as handle:
+        with _open_regular(path) as handle:
             details = header(handle)
         return True, "Android backup header version %d, encryption %s" % (details["version"], details["encryption"])
-    except (OSError, UnicodeError, ValueError) as exc:
+    except OSError as exc:
+        return "unknown", "the file could not be read, so it cannot be told whether it is an Android backup: %s" % exc
+    except (UnicodeError, ValueError) as exc:
         return False, str(exc)
 
 
@@ -752,7 +778,7 @@ def main():
     if args.command == "detect":
         applies, why = detect(path)
         print(json.dumps({"applies": applies, "why": why}))
-        return 0 if applies else 1
+        return 2 if applies == "unknown" else 0 if applies else 1
     if not args.out:
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "run was given no output directory, so nothing was run", "error": "run needs --out DIR"}))
         return 2
@@ -760,7 +786,7 @@ def main():
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "an argument was refused, so nothing was run", "error": "--max-decompressed-bytes must be positive"}))
         return 2
     applies, why = detect(path)
-    if not applies:
+    if applies is not True:
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not one this recipe reads, so nothing was run", "why": why}))
         return 2
     try:

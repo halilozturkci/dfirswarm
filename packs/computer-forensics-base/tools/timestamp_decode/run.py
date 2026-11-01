@@ -36,7 +36,7 @@ import json
 import re
 import sys
 
-TOOL = {"name": "timestamp_decode", "version": 3}
+TOOL = {"name": "timestamp_decode", "version": 4}
 
 UTC = datetime.timezone.utc
 CTX = decimal.Context(prec=120, traps=[decimal.InvalidOperation, decimal.Overflow, decimal.DivisionByZero])
@@ -58,7 +58,7 @@ SHOWN_DIGITS = 9
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra}))
     raise SystemExit(1)
 
 

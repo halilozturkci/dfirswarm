@@ -140,6 +140,6 @@ test("an argument error is still a JSON refusal and a file that is no ZIP is sti
   await withCwd(async (cwd) => {
     await put(cwd, "work/plain.txt", "just text");
     const out = refused(await tool(DOC_STRUCTURE, cwd, { path: "work/plain.txt" }));
-    assert.equal(out.status, "unsupported");
+    assert.equal(out.status, "failed");
   });
 });

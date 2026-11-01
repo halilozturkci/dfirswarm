@@ -1,6 +1,6 @@
 {
   "id": "disk-volumes",
-  "version": "1.1.0",
+  "version": "1.1.3",
   "description": "A disk image's partition table and, for every filesystem on it, the filesystem header, a body file, a path list with inodes and a MAC timeline (The Sleuth Kit). A logical volume image with no partition table is read from sector 0.",
   "object": "disk image",
   "order": 10,
@@ -111,5 +111,5 @@
   ],
   "purpose": "inventory",
   "covers": "Allocated and deleted entries The Sleuth Kit lists for NTFS, FAT, exFAT, ext, HFS+ and APFS partitions. It reads no file contents, carves nothing, and does not open encrypted volumes (BitLocker, LUKS, FileVault) or volume shadow copies.",
-  "sha256": "270b4e669d36b318155bbbb2a42c1134f3dfdc45409d01040da1ae0f373cd28f"
+  "sha256": "74d16bd3264b7dde8598799b4fe0a6a7d2599263a67d7936c94ec442f84548d4"
 }

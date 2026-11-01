@@ -70,7 +70,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 5}
+TOOL = {"name": "archive_extract", "version": 6}
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
 MAX_TOTAL_DEFAULT = 8 * 1024 ** 3
@@ -1037,7 +1037,7 @@ def say(obj, code=0):
 
 
 def fail(message, **extra):
-    say({"ok": False, "error": scrub(message), "tool": TOOL, **extra}, 1)
+    say({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % scrub(message), "error": scrub(message), "tool": TOOL, **extra}, 1)
 
 
 def whole(args, key, default, low, high):

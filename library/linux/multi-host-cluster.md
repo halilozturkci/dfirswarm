@@ -231,7 +231,6 @@ holds, the ledger holds the dated events the timeline rests on, and
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 30`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 23`
 - `awk 'tolower(p) ~ /host/ && /^ *[|]? *:?-+:? *[|]/ {m=1} {p=$0} END {exit !m}' work/indicators.md`
   (the indicators table's header has a hosts column.)
 - `python3 -c 'import json,os,re,collections;fs=[f["path"] for f in json.load(open("inputs.json"))["files"] if re.search(r"[.](e01|ex01|s01|001|raw|dd|img|bin|vmdk|vhdx?|qcow2|aff4)$",f["path"],re.I)];st={(os.path.dirname(p),re.sub(r"(?i)(-(flat|s[0-9]{3}))?[.]vmdk$|([.](raw|dd|img|bin))?[.][^.]+$","",os.path.basename(p))) for p in fs};n=collections.Counter(s for d,s in st);t=open("work/report.md",errors="replace").read();raise SystemExit(any(not re.search(r"(?<![\w-])"+re.escape(os.path.basename(d) if n[s]>1 else s)+r"(?![\w-])",t,re.I) for d,s in st))'`

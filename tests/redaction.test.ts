@@ -15,7 +15,7 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { disputeEntry, initSandbox, recordEntry, readLedger } from "../extensions/protocol.ts";
@@ -175,4 +175,64 @@ test("the scan after redaction finds what word replacement cannot: UTF-16 text, 
   dirs.push(clean);
   await writeFile(join(clean, "a.txt"), "nothing sensitive\n");
   assert.deepEqual(leakScan(clean, sensitiveTokens(await readLedger(root, { raw: true }))).hits, []);
+});
+
+test("a file a recipe's coverage marks secret_bearing is withheld whole in a redacted package, its digest kept in the sidecar; an unmarked sibling stays; a count under the same key is no mark", async () => {
+  const { root, pkg } = await run();
+  const out = join(pkg, "store", "jobs", "j000002", "out");
+  await mkdir(join(out, "sub"), { recursive: true });
+  const rows = "1\t10.0.0.5\t/login?user=mira&token=Zq7kP2mR9xWd\n";
+  await writeFile(join(out, "http.tsv"), rows);
+  await writeFile(join(out, "dns.tsv"), "1\texample.org\n");
+  await writeFile(join(out, "sub", "tls.tsv"), "1\tsubject\n");
+  await writeFile(join(out, "outside.txt"), "not named by the mark\n");
+  // the mark, by its shape: a name beside the JSON and a reason; an escaping name, an absolute one and a non-string reason are no marks
+  await writeFile(join(out, "coverage.json"), JSON.stringify({ recipe: "any-recipe", secret_bearing: { "http.tsv": "URL query values", "sub/tls.tsv": "subject names", "../../../ledger.jsonl": "x", "/etc/hostname": "x", "dns.tsv": 3 } }));
+  // an answer field that counts, under the same key, marks nothing
+  await mkdir(join(pkg, "store", "jobs", "j000003", "out"), { recursive: true });
+  await writeFile(join(pkg, "store", "jobs", "j000003", "out", "answer.json"), JSON.stringify({ secret_bearing: { passwords: 2, tokens: 1 } }));
+  await writeFile(join(pkg, "store", "jobs", "j000003", "out", "passwords"), "kept\n");
+  const r = await redactPackage(root, pkg, { leaks: "list" });
+  assert.match(await readFile(join(out, "http.tsv"), "utf8"), /^\[withheld: sensitive content \(marked secret_bearing by store\/jobs\/j000002\/out\/coverage\.json: URL query values\); matched hidden-[0-9a-f]{24}\./);
+  assert.match(await readFile(join(out, "sub", "tls.tsv"), "utf8"), /^\[withheld: sensitive content \(marked secret_bearing by [^)]*subject names\)/);
+  assert.equal(await readFile(join(out, "dns.tsv"), "utf8"), "1\texample.org\n", "a sibling the mark gives a number for is not withheld");
+  assert.equal(await readFile(join(out, "outside.txt"), "utf8"), "not named by the mark\n", "an unmarked sibling stays");
+  assert.equal(await readFile(join(pkg, "store", "jobs", "j000003", "out", "passwords"), "utf8"), "kept\n", "a count under secret_bearing is an answer field, not a mark");
+  assert.ok(r.withheld.some((w) => w.path.endsWith("http.tsv") && /secret_bearing/.test(w.why) && /^hidden-[0-9a-f]{24}$/.test(w.sha256_of_original) && w.bytes === rows.length));
+  const rec = JSON.parse(await readFile(join(pkg, "REDACTIONS.json"), "utf8")) as { changes: Array<{ path: string; before_sha256: string }> };
+  assert.equal(rec.changes.find((c) => c.path === "store/jobs/j000002/out/http.tsv")?.before_sha256, sha(rows), "the record keeps the sha256 of the withheld file");
+  assert.doesNotMatch(JSON.stringify(rec), /Zq7kP2mR9xWd/, "and never its text");
+  const side = JSON.parse(await readFile(join(pkg, "..", `${pkg.slice(pkg.lastIndexOf("/") + 1)}.private.json`), "utf8")) as { map: Record<string, { sha256?: string; path?: string }> };
+  assert.ok(Object.values(side.map).some((m) => m.sha256 === sha(rows) && m.path === "store/jobs/j000002/out/http.tsv"), "the sidecar keeps the digest and the path of the withheld file");
+});
+
+test("a secret_bearing mark that cannot be honoured whole fails closed: a mark file over 8 MiB, 10,001 marks, an upper-case .JSON receipt, a mark that names a link", async () => {
+  const { root, pkg } = await run();
+  const at = (n: string) => join(pkg, "store", "jobs", n, "out");
+  for (const n of ["j000010", "j000011", "j000012", "j000013"]) await mkdir(at(n), { recursive: true });
+  // 1. a receipt of 9 MiB that carries a mark: it is not parsed, and what stands beside it is withheld
+  await writeFile(join(at("j000010"), "coverage.json"), JSON.stringify({ secret_bearing: { "http.tsv": "URL query values" }, filler: "x".repeat(9 * 1024 * 1024) }));
+  await writeFile(join(at("j000010"), "http.tsv"), "big\tsecret rows\n");
+  await writeFile(join(at("j000010"), "dns.tsv"), "big\tother rows\n");
+  // 2. 10,001 marks, the marked file the last
+  const marks: Record<string, string> = {};
+  for (let i = 0; i < 10_000; i++) marks[`pad${i}.tsv`] = "pad";
+  marks["last.tsv"] = "the 10,001st";
+  await writeFile(join(at("j000011"), "coverage.json"), JSON.stringify({ secret_bearing: marks }));
+  await writeFile(join(at("j000011"), "last.tsv"), "last\tsecret rows\n");
+  // 3. a receipt named in upper case
+  await writeFile(join(at("j000012"), "COVERAGE.JSON"), JSON.stringify({ secret_bearing: { "upper.tsv": "names" } }));
+  await writeFile(join(at("j000012"), "upper.tsv"), "upper\tsecret rows\n");
+  // 4. a mark that names a link
+  await writeFile(join(at("j000013"), "coverage.json"), JSON.stringify({ secret_bearing: { "linked.tsv": "names" } }));
+  await writeFile(join(at("j000013"), "real.tsv"), "real\tsecret rows\n");
+  await symlink("real.tsv", join(at("j000013"), "linked.tsv"));
+  const r = await redactPackage(root, pkg, { leaks: "list" });
+  const placeholder = /^\[withheld: sensitive content \(/;
+  assert.match(await readFile(join(at("j000010"), "http.tsv"), "utf8"), placeholder, "beside a mark file too big to parse");
+  assert.match(await readFile(join(at("j000010"), "dns.tsv"), "utf8"), /beside store\/jobs\/j000010\/out\/coverage\.json, a secret_bearing mark that was not honoured whole \(larger than 8388608 bytes\)/);
+  assert.match(await readFile(join(at("j000011"), "last.tsv"), "utf8"), /marked secret_bearing by store\/jobs\/j000011\/out\/coverage\.json: the 10,001st/, "the last of 10,001 marks is honoured");
+  assert.match(await readFile(join(at("j000012"), "upper.tsv"), "utf8"), /marked secret_bearing by store\/jobs\/j000012\/out\/COVERAGE\.JSON/);
+  assert.match(await readFile(join(at("j000013"), "real.tsv"), "utf8"), /which is not a regular file/, "beside a mark that names a link");
+  assert.ok(r.withheld.length >= 6);
 });

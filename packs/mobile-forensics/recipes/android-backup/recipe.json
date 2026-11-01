@@ -1,6 +1,6 @@
 {
   "id": "android-backup",
-  "version": "1.1.1",
+  "version": "1.1.3",
   "description": "Read an Android adb-backup (.ab) header and, when it is not encrypted and its version is one this recipe reads (1 to 5), inventory every member of its embedded tar without extracting it. Decompression is bounded by an output budget, the end of the zlib stream is verified and bytes after it are counted, the tar is followed header by header beside the tar library (its two end-of-archive blocks must come, a zero block between members is read past and said, data after them is said, and the members the library lists must be the headers counted), and a run never writes over an earlier run's output.",
   "object": "Android adb backup",
   "order": 36,
@@ -31,5 +31,5 @@
   ],
   "purpose": "inventory",
   "covers": "The adb-backup header (version, compression, encryption scheme; the key-derivation values of an encrypted one are not printed) and every member name, type, size and tar timestamp when encryption is none and the version is supported. It extracts nothing, does not bypass app backup exclusions, and cannot list an encrypted payload: no password is read or accepted. A payload that expands past its decompression budget, a stream cut off before its end marker or damaged, bytes after the end of the stream (a second stream, padding), a tar that ends without its end-of-archive blocks or after one zero block, a zero block with a header after it (read past, and said), data after the end blocks (not read, and said), a wiped long-name or pax data block, a listing that passes its own time limit (--max-seconds, default 1500 s; a coverage.json that says partial is written before it starts),  a tar header the library refuses (its offset is said, and the listing stops there), an extended header too large to read, a version outside 1 to 5 and an unknown scheme are each said (status partial, with the reason); a payload of two zero blocks and no member is a valid empty archive (complete), and what was listed before is kept.",
-  "sha256": "792cd55b52e9146ad491ad51eba05685f9df70563ec51a6d17b8e3dc84300cac"
+  "sha256": "647b27c8c66061c767dd5289e4eeb0a11b48da7d95b6b0a47a8a24148d1620db"
 }

@@ -33,9 +33,33 @@ def target_of(value):
     return paths[0]
 
 
+def _open_regular(path):
+    """The target opened for reading without waiting for it (an open of a FIFO named here would block until a writer came): the type is read from the
+    descriptor, and anything but a regular file is refused as an OSError, which detect reads as "cannot tell"."""
+    import errno
+    import stat
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _is_regular(path):
+    import stat
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except (OSError, ValueError):
+        return False
+
+
 def detect(path):
     try:
-        with open(path, "rb") as handle:
+        with _open_regular(path) as handle:
             if handle.read(len(MAGIC)) != MAGIC:
                 return False, "no Android backup signature"
             version = handle.readline(4096)
@@ -43,7 +67,7 @@ def detect(path):
                 return False, "Android backup header has no numeric version"
         return True, "an Android adb backup (version %s)" % version[:-1].decode("ascii")
     except OSError as exc:
-        return False, str(exc)
+        return "unknown", "the file could not be read, so it cannot be told whether it is an Android backup: %s" % exc
 
 
 def main():
@@ -61,7 +85,7 @@ def main():
     if args.command == "detect":
         applies, why = detect(path)
         print(json.dumps({"applies": applies, "why": why}))
-        return 0 if applies else 1
+        return 2 if applies == "unknown" else 0 if applies else 1
     if args.out:
         os.makedirs(args.out, exist_ok=True)
         with open(os.path.join(args.out, "coverage.json"), "w", encoding="utf-8") as handle:

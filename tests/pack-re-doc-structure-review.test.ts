@@ -613,7 +613,7 @@ test("an unsupported file's head_hex is its first four bytes only", async () => 
     await put(cwd, "work/t.bin", GHP);
     const r = await tool(DOC_STRUCTURE, cwd, { path: "work/t.bin" });
     const a = JSON.parse(r.stdout);
-    assert.equal(a.status, "unsupported");
+    assert.equal(a.status, "failed");
     assert.equal(a.head_hex, Buffer.from(GHP.slice(0, 4)).toString("hex"));
   });
 });
