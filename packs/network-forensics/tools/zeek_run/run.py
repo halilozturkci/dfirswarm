@@ -20,6 +20,10 @@ What is written, and what is recorded about it:
     are read too. A record that does not fit its header (a wrong column count, a value that is not its declared
     type, a line that is not a JSON object, a log with no header) is counted with its line number and byte offset,
     its raw line is kept in malformed-<log>.jsonl, and ok is false: it is never dropped.
+  * A log's name is the engine's, not the capture's: it comes from Zeek's scripts and from the policies this tool loads. A name shaped like a token or
+    carrying user-info (only a hostile policy makes one) is shown as withheld-NNNNNN everywhere the answer names a log (the keys of `logs`, `file`,
+    malformed-<log>.jsonl, the lists of logs), the log is renamed to that on disk, and the real name is kept in zeek-log-names.jsonl in out_dir (mode 0600,
+    named in the answer as log_names_file), written at the moment of the rename. Every other name is printed as Zeek wrote it.
   * Requested logs Zeek did not write (logs_requested_not_written) are kept apart from logs it wrote with no
     records (logs_empty). reporter.log, weird.log and capture_loss.log are summarised every time, whatever `logs`
     asks for: they are where an engine says it did not understand the input or lost packets.
@@ -46,7 +50,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "zeek_run", "version": 8}
+TOOL = {"name": "zeek_run", "version": 9}
 PARSER = "zeek_run/5"
 
 
@@ -395,6 +399,46 @@ def describe(exc):
 
 def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
+
+
+class LogNames:
+    """The names the engine gave its logs, as the answer shows them: a stem shaped like a token (or carrying user-info) is shown as withheld-NNNNNN, the log is
+    renamed to it on disk (it stays whole in out_dir under that name), and the real stem is written to zeek-log-names.jsonl in out_dir, mode 0600,
+    flushed at the moment of the rename. Names that are not withheld are printed as they are."""
+
+    NAME = "zeek-log-names.jsonl"
+
+    def __init__(self, out_dir):
+        self.out_dir, self.path, self.fh, self.count = out_dir, None, None, 0
+
+    def shown(self, files):
+        """The .log file names in `files`, with any withheld one renamed; the names as the answer shows them, sorted."""
+        out = []
+        for name in sorted(files):
+            stem = name[:-4]
+            if not (token_shaped(stem) or scrub(stem) != stem):
+                out.append(name)
+                continue
+            while True:
+                self.count += 1
+                kept = "withheld-%06d.log" % self.count
+                if not os.path.lexists(os.path.join(self.out_dir, kept)):
+                    break
+            if self.fh is None:
+                self.path = os.path.join(self.out_dir, self.NAME)
+                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                self.fh = os.fdopen(fd, "w", encoding="utf-8")
+            self.fh.write(json.dumps({"finding_id": "G%06d" % self.count, "log": kept[:-4], "real_log": stem}) + "\n")
+            self.fh.flush()
+            os.fsync(self.fh.fileno())
+            os.rename(os.path.join(self.out_dir, name), os.path.join(self.out_dir, kept))
+            out.append(kept)
+        return sorted(out)
+
+    def close(self):
+        if self.fh is not None:
+            self.fh.close()
+            self.fh = None
 
 
 def fail(message, **extra):
@@ -1220,6 +1264,7 @@ def main():
             fail("out_dir already holds files; stale Zeek logs would contaminate the result", out_dir=out_dir)
     except OSError as exc:
         fail("out_dir cannot be listed (%s)" % describe(exc), out_dir=out_dir)
+    log_names = LogNames(out_dir)
     limit = args.get("limit", 200)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
@@ -1286,11 +1331,17 @@ def main():
     except OSError as exc:
         fail("zeek could not be run (%s)" % describe(exc), command=argv)
     if timed_out:
-        partial = sorted(n[:-4] for n in os.listdir(out_dir) if n.endswith(".log"))
+        try:
+            partial = [n[:-4] for n in log_names.shown([n for n in os.listdir(out_dir) if n.endswith(".log")])]
+        except OSError:
+            partial = []
         fail("zeek did not finish in time and was killed with everything it had started", after_seconds=timeout, command=argv,
              partial_output=out_dir, logs_written_so_far=partial, stdout=stdout_path, stderr=stderr_path)
 
-    written = sorted(n for n in os.listdir(out_dir) if n.endswith(".log"))
+    try:
+        written = log_names.shown([n for n in os.listdir(out_dir) if n.endswith(".log")])
+    except OSError as exc:
+        fail("the names of the logs could not be set aside (%s)" % describe(exc), out_dir=out_dir)
     if not written:
         fail("zeek wrote no logs", exit_code=code, command=argv, stdout=stdout_path, stderr=stderr_path)
     for name in os.listdir(out_dir):
@@ -1420,6 +1471,8 @@ def main():
                             "and by exit_code, not assumed")},
         "exit_code": code,
         "logs_written": [n[:-4] for n in written],
+        "log_names_withheld": log_names.count,
+        "log_names_file": log_names.path,
         "logs_requested_not_written": not_written,
         "logs_empty": empty,
         "reading_cut_by_its_clock": bool(logs_cut or logs_not_read),
@@ -1457,6 +1510,7 @@ def main():
                  "none. Zeek's own stdout and stderr are kept beside the logs; reporter, weird and capture_loss are summarised under "
                  "engine_diagnostics."),
     }
+    log_names.close()
     answer_out(json.dumps(answer, indent=2))
     return 0
 

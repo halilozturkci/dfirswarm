@@ -12,7 +12,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -660,5 +660,53 @@ test("a stop signal that arrives while the answer is being written adds no secon
     const answer = JSON.parse(run.stdout);
     assert.equal(answer.tool.name, "zeek_run");
     assert.equal(answer.interrupted_by_signal, undefined, "one document: the answer, not a last word after it");
+  });
+});
+
+test("a log whose name is shaped like a token is shown as withheld-NNNNNN everywhere, renamed on disk, and its real name is in a 0600 index; an ordinary name is printed as Zeek wrote it", async () => {
+  await withCwd(async (cwd, bin) => {
+    // a stand-in engine that plays a hostile policy: it names logs after random token shapes (random on every run)
+    const rng = createRng(Number(randomBytes(4).readUInt32LE(0)));
+    const stems = [planted(rng, "ghp"), planted(rng, "akia"), planted(rng, "jwt").replaceAll(".", "_")];
+    const bad = [...CONN_ROW.slice(0, 5)]; // a row that does not fit its header: kept raw in a malformed file named after the log
+    await stage(cwd, bin, {
+      "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
+      "my-custom.log": tsvLog("my-custom", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
+      [`${stems[0]}.log`]: tsvLog("x", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
+      [`${stems[1]}.log`]: tsvLog("x", CONN_FIELDS, CONN_TYPES, [CONN_ROW, bad]),
+      [`${stems[2]}.log`]: tsvLog("x", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
+    });
+    const run = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
+    const out = body(run);
+    for (const stem of stems) assert.ok(!run.stdout.includes(stem), "a token-shaped log name is printed in the answer");
+    assert.deepEqual(Object.keys(out.logs).sort(), ["conn", "my-custom", "withheld-000001", "withheld-000002", "withheld-000003"], "the keys of logs");
+    assert.deepEqual(out.logs_written, ["conn", "my-custom", "withheld-000001", "withheld-000002", "withheld-000003"]);
+    assert.equal(out.log_names_withheld, 3);
+    for (const key of ["withheld-000001", "withheld-000002", "withheld-000003"]) {
+      assert.equal(out.logs[key].file, join(out.out_dir, `${key}.log`), "file names the renamed log");
+      assert.ok(await exists(join(cwd, out.logs[key].file)), "the log is whole in out_dir under the shown name");
+    }
+    assert.equal(out.logs["my-custom"].file, join(out.out_dir, "my-custom.log"), "an ordinary name is as Zeek wrote it");
+    // the malformed record's file and its name in the answer
+    assert.equal(out.malformed_records, 1);
+    const [malformedKey] = Object.keys(out.malformed_files);
+    assert.match(malformedKey, /^withheld-00000\d$/);
+    assert.equal(out.malformed_files[malformedKey], `malformed-${malformedKey}.jsonl`);
+    assert.equal(out.malformed[0].log, malformedKey);
+    // nothing on disk is named after the token either, except through the index
+    const names = await filesUnder(join(cwd, "work/z"));
+    for (const stem of stems) assert.ok(!names.some((n) => n.includes(stem)), `a file is named after ${stem.slice(0, 4)}...`);
+    // the index: mode 0600, the real names, named in the answer
+    assert.equal(out.log_names_file, join(out.out_dir, "zeek-log-names.jsonl"));
+    assert.equal((await stat(join(cwd, out.log_names_file))).mode & 0o777, 0o600);
+    const index = (await readFile(join(cwd, out.log_names_file), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.deepEqual(index.map((r: Json) => r.real_log).sort(), [...stems].sort());
+    assert.deepEqual(index.map((r: Json) => r.log).sort(), ["withheld-000001", "withheld-000002", "withheld-000003"]);
+    // a run with only ordinary names makes no index
+    await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) });
+    const plain = body(await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/plain" }, env(cwd), bin));
+    assert.equal(plain.log_names_withheld, 0);
+    assert.equal(plain.log_names_file, null);
+    assert.ok(!(await exists(join(cwd, "work/plain/zeek-log-names.jsonl"))));
   });
 });
