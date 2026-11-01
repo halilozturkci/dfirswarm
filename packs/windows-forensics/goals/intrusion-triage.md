@@ -12,9 +12,9 @@ you quote one.
 
 1. The system profile: build, install date, computer name, the timezone you
    converted every timestamp from, and the accounts on the machine.
-2. Initial access: how the operator first reached this machine, with the
+2. Initial access: how the intruder first reached this machine, with the
    artefact that shows it and the time in UTC.
-3. Execution: every program the operator ran that is not part of Windows, each
+3. Execution: every program the intruder ran that is not part of Windows, each
    with at least two independent artefacts agreeing, and a hash where one
    survives.
 4. Persistence: how anything arranged to run again, or the evidence that

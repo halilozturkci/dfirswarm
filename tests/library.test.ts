@@ -241,7 +241,7 @@ test("every entry that ships keeps the library's contract", async () => {
     if (checks.length < 6) bad(id, `${checks.length} checks; the standard set alone is seven`);
     if (countChecks(body) !== checks.length) bad(id, "the console would count the checks differently from this test");
     const text = checks.join("\n");
-    for (const must of ["test -f work/report.md", "test -f work/timeline.md", "ledger/entries.jsonl", `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections`, `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`]) {
+    for (const must of ["test -f work/report.md", "test -f work/timeline.md", `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections`, `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`]) {
       if (!text.includes(must)) bad(id, `standard check missing: ${must}`);
     }
     // The answers check names every question the goal numbers, and the summary and the narrative;
@@ -254,17 +254,15 @@ test("every entry that ships keeps the library's contract", async () => {
     if (answersCheck.includes("--report")) bad(id, "the answers check reads the report; it reads the ledger's answers");
     if (/find +inputs\b/.test(text) && !/find -[HL] inputs/.test(text)) bad(id, "a check walks inputs/ with a bare find");
 
-    // The timeline counts dated rows, with no header arithmetic, and the
-    // ledger it is built from holds at least three quarters of them.
+    // The timeline counts dated rows, with no header arithmetic. No check
+    // counts ledger events against a number (the pack goals dropped that too).
+    if (/"kind":"event"|kind\\?":\\?"event/.test(text)) bad(id, "a check counts event entries in the ledger against a minimum");
     const rows = /at least (\d+) dated rows \(the ISO 8601 UTC time in the first column, after any `#` index\)/.exec(dod);
     if (!rows) bad(id, "the definition of done does not fix the timeline's dated rows and their time column");
     else {
       const x = Number(rows[1]);
       const dated = `test "$(grep -cE '^\\| *([0-9]+ *\\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge ${x}`;
       if (!text.includes(dated)) bad(id, `the timeline check does not count ${x} dated rows`);
-      const ledger = /grep -c '"kind":"event"' ledger\/entries\.jsonl\)" -ge (\d+)/.exec(text);
-      const floor = /ledger holds the dated events the narrative/.test(dod) ? 1 : Math.ceil(0.75 * x);
-      if (!ledger || Number(ledger[1]) < floor) bad(id, `the ledger event floor is below ${floor} for ${x} timeline rows`);
     }
     if (/grep -c '\^\| ' work\/timeline\.md/.test(text)) bad(id, "counts every table line in work/timeline.md, not dated rows");
     if (/head -\d+ work\/timeline\.md/.test(text)) bad(id, "looks for the timeline's header in the file's first lines, not its header row");
@@ -415,4 +413,9 @@ test("the worker prompt, the library and the three CTF goals carry lead-first co
       assert.ok(body.includes(must), `${goal} does not say: ${must}`);
     }
   }
+});
+
+test("library/README.md standard checks do not count ledger events against a minimum either", async () => {
+  const readme = await readFile(join(libraryDir(REPO), "README.md"), "utf8");
+  assert.doesNotMatch(readme, /"kind":"event"' ledger\/entries\.jsonl\)" -ge/, "the standard checks still count events");
 });

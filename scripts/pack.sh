@@ -237,6 +237,11 @@ if os.path.isdir(rdir):
         mg = rm.get("magic")
         if "magic" in rm and (not isinstance(mg, list) or not all(isinstance(x, dict) and isinstance(x.get("offset"), int) and 0 <= x.get("offset") <= 1048576 and isinstance(x.get("hex"), str) and re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,64}", x.get("hex")) for x in mg)):
             errors.append("recipes/%s: magic is a list of {offset, hex}: bytes (1 to 64, as hex) at an offset within the first MiB that a derived file must hold to be offered" % name)
+        for key in ("requires", "requires_optional"):
+            if key in rm and (not isinstance(rm.get(key), list) or not all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", x) for x in rm.get(key))):
+                errors.append("recipes/%s: %s is a list of program names (the programs the recipe %s)" % (name, key, "cannot run without" if key == "requires" else "uses when they are there"))
+        if set(rm.get("requires") or []) & set(rm.get("requires_optional") or []) if isinstance(rm.get("requires"), list) and isinstance(rm.get("requires_optional"), list) else False:
+            errors.append("recipes/%s: a program is required or optional, not both" % name)
         if "secret_output" in rm:
             errors.append("recipes/%s/recipe.json: secret_output is a tool manifest's key (job kind tool); a recipe job cannot honour it" % name)
         if "order" in rm and not isinstance(rm.get("order"), int):

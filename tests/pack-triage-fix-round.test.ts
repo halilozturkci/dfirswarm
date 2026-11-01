@@ -52,7 +52,7 @@ test("a FIFO as the target of the recipe ends in JSON, in time, for detect and f
     assert.equal(detect.killed, false, "detect hangs on a FIFO");
     assert.equal(detect.code, 2);
     const answer = JSON.parse(detect.stdout);
-    assert.equal(answer.applies, false);
+    assert.equal(answer.applies, "unknown");
     assert.match(answer.why, /not a regular file/);
     const result = await run("python3", [RECIPE, "run", "--target", target(fifo), "--out", "out"], cwd, 20000);
     assert.equal(result.killed, false, "run hangs on a FIFO");
@@ -67,7 +67,7 @@ test("a FIFO as the target of the recipe ends in JSON, in time, for detect and f
     for (const name of ["link.zip", "linkf"]) {
       const r = await run("python3", [RECIPE, "detect", "--target", target(join(cwd, name))], cwd, 20000);
       assert.equal(r.killed, false, name);
-      assert.equal(JSON.parse(r.stdout).applies, false, name);
+      assert.equal(JSON.parse(r.stdout).applies, "unknown", name);
     }
   });
 });

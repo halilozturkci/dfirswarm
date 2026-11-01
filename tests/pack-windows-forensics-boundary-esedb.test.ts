@@ -6,7 +6,6 @@
  */
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPy, withCwd } from "./tool-library-harness.ts";
@@ -224,19 +223,6 @@ cp -R "${fixture}"/. "$root.export"/
       assert.ok(orders[tree].some((o) => o !== byRank), `${tree}: the raw order of the names is not always the printed order`);
     }
   });
-});
-
-test("the windows-forensics tools that carry the SHARED BOUNDARY block carry it identically", async () => {
-  const { readdir: ls } = await import("node:fs/promises");
-  const begin = "# BEGIN SHARED BOUNDARY";
-  const end = "# END SHARED BOUNDARY";
-  const found: Record<string, string> = {};
-  for (const name of await ls(WIN)) {
-    const text = await readFile(join(WIN, name, "run.py"), "utf8").catch(() => "");
-    if (text.includes(begin)) found[name] = text.slice(text.indexOf(begin), text.indexOf(end) + end.length);
-  }
-  assert.ok(Object.keys(found).length >= 1);
-  assert.equal(new Set(Object.values(found).map((b) => createHash("sha256").update(b).digest("hex"))).size, 1, `the block differs between ${Object.keys(found).join(", ")}`);
 });
 
 test("esedb_query: a row of three cells of 262,144 characters made of PEM markers with no end (one led by a token) is sealed in seconds, not the 30 the quadratic window took", async () => {

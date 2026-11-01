@@ -49,8 +49,8 @@
   "example": "{\"path\": \"work/extracted/.fseventsd\", \"flags\": [\"Removed\"], \"out_file\": \"work/<your id>/fsevents.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
-  "version": 6,
-  "sha256": "af0cccdf15c493607918ea5830374a5783ca8b2d263279f1df93b5e2b7ae3591",
+  "version": 7,
+  "sha256": "740f945e570d93d3173b4cb4b7c686d8c486e2e84a13c1c29feb7cddd13bf5e4",
   "use": {
     "magic": [
       {

@@ -1516,19 +1516,21 @@ def container_kind(path):
 def detect(path):
     """(applies, why, kind): kind is iLEAPP's input type, tar or zip."""
     if not os.path.isfile(path):
-        return False, "not a readable file", None
+        return "unknown", "not a readable file, so it cannot be told what it holds", None
     try:
         kind = container_kind(path)
     except OSError as exc:
-        return False, "not a readable file: %s" % (exc.strerror or exc), None
+        return "unknown", "not a readable file, so it cannot be told what it holds: %s" % (exc.strerror or exc), None
     if kind == "zip":
         try:
             with zipfile.ZipFile(path) as archive:
                 for name in archive.namelist():
                     if ios_name(name):
                         return True, "zip members have an iOS full file-system root", "zip"
-        except (zipfile.BadZipFile, OSError) as exc:
+        except zipfile.BadZipFile as exc:
             return False, "not a readable zip: %s" % exc, None
+        except OSError as exc:
+            return "unknown", "the zip could not be read, so it cannot be told what it holds: %s" % exc, None
         return False, "zip has no iOS full file-system marker", None
     try:
         with TarList(path) as listing:
@@ -1537,8 +1539,10 @@ def detect(path):
                     return True, "tar members have an iOS full file-system root", "tar"
                 listing.archive.members = []
             if listing.watch.violation is not None:
-                return False, "tar has no iOS full file-system marker before a header the scan does not read (an extended header of %d bytes at offset %d)" % (listing.watch.violation, listing.watch.violation_at), None
-    except (tarfile.TarError, OSError, EOFError) as exc:
+                return "unknown", "tar has no iOS full file-system marker before a header the scan does not read (an extended header of %d bytes at offset %d)" % (listing.watch.violation, listing.watch.violation_at), None
+    except OSError as exc:
+        return "unknown", "the file could not be read, so it cannot be told what it holds: %s" % exc, None
+    except (tarfile.TarError, EOFError) as exc:
         return False, "not a readable tar or zip: %s" % exc, None
     return False, "tar has no iOS full file-system marker", None
 
@@ -1769,11 +1773,11 @@ def main():
     applies, why, kind = detect(path)
     if args.command == "detect":
         print(json.dumps({"applies": applies, "why": why}))
-        return 0 if applies else 1
+        return 2 if applies == "unknown" else 0 if applies else 1
     if not args.out:
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "run was given no output directory, so nothing was run", "error": "run needs --out DIR"}))
         return 2
-    if not applies:
+    if applies is not True:
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not one this recipe reads, so nothing was run", "why": why}))
         return 2
     rc = run(path, kind, args.out, args.max_seconds)

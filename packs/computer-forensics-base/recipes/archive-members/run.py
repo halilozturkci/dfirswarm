@@ -183,14 +183,38 @@ def reads_as_tar(path):
         return False
 
 
+def _open_regular(path):
+    """The target opened for reading without waiting for it (an open of a FIFO named here would block until a writer came): the type is read from the
+    descriptor, and anything but a regular file is refused as an OSError, which detect reads as "cannot tell"."""
+    import errno
+    import stat
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _is_regular(path):
+    import stat
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except (OSError, ValueError):
+        return False
+
+
 def detect(path):
     """(format, why) or (None, why). A tar header that reads at offset 0 decides before a zip end record found near the end does:
     the end record of a zip that is a member of a tar sits inside the tar. archive_extract orders the formats the same way."""
     try:
-        with open(path, "rb") as fh:
+        with _open_regular(path) as fh:
             head = fh.read(512)
     except OSError as e:
-        return None, "unreadable: %s" % (e.strerror or e)
+        return "unknown", "unreadable, so it cannot be told whether it is an archive: %s" % (e.strerror or e)
     if head.startswith(SEVEN_Z_MAGIC):
         return "7z", "7z signature"
     if head.startswith((b"PK\x03\x04", b"PK\x05\x06")):
@@ -789,7 +813,7 @@ def run(path, out_dir):
     cov = {"recipe": "archive-members", "target": path, "format": fmt, "members": 0,
            "covered": "the archive's list of members", "not_covered": "member contents; archives inside the archive",
            "limits_hit": [], "errors": []}
-    if fmt is None:
+    if fmt is None or fmt == "unknown":
         cov.update(status="unsupported", why=why, status_basis="no tar, zip or 7z structure was found in the file: " + why)
         json.dump(cov, open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
         print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
@@ -846,10 +870,16 @@ def main(argv):
     _t, path = target_of(args["--target"])
     if argv[1] == "detect":
         fmt, why = detect(path)
+        if fmt == "unknown":
+            print(json.dumps({"applies": "unknown", "format": None, "why": why}))
+            return 2
         print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
         return 0 if fmt else 1
     if "--out" not in args:
         print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
+        return 2
+    if not _is_regular(path):
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not a regular file, so nothing was run", "error": "not a regular file"}))
         return 2
     return run(path, args["--out"])
 

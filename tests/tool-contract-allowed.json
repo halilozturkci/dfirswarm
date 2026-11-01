@@ -1,0 +1,15 @@
+{
+  "secret_output": [
+    { "tool": "virtualization-backup-forensics/backup_audit_normalise", "item": "VIRT-09", "why": "write_text writes the text of the evidence and is declared by no secret_output" },
+    { "tool": "virtualization-backup-forensics/snapshot_chain_check", "item": "VIRT-09", "why": "write_text writes the text of the evidence and is declared by no secret_output" },
+    { "tool": "virtualization-backup-forensics/virtualization_inventory", "item": "VIRT-09", "why": "write_text writes the text of the evidence and is declared by no secret_output" },
+    { "tool": "reverse-engineering/elf_directories", "item": "PKG-XP-10", "why": "write_values is declared by no secret_output; a tool added after PKG-XP-10, of the same kind as pe_directories" }
+  ],
+  "version_label": [],
+  "status_pair": [
+    { "tool": "computer-forensics-base/catalog_search", "item": "BASE-02", "why": "answers no JSON on stdout" },
+    { "tool": "computer-forensics-base/check_inputs", "item": "BASE-05", "why": "status is FAIL, not complete, partial or failed" },
+    { "tool": "computer-forensics-base/sqlite_query", "item": "BASE-02", "why": "a refusal answers without status" }
+  ],
+  "non_utf8_name": []
+}

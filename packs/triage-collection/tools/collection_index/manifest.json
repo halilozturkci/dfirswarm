@@ -41,8 +41,8 @@
   "example": "{\"root\": \"inputs/collection\", \"contains\": \"NTUSER\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 7,
-  "sha256": "fbdb1ec296427f51f6ca37686ceb16741c7ece95377fe1026ae586aa2286c306",
+  "version": 8,
+  "sha256": "437bb3f68124e9f498347cedc0ba5ce9beb4a258d991ee43385cfc075fccb287",
   "use": {
     "names": [
       "*_CopyLog.csv"

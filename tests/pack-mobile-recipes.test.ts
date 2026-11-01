@@ -463,8 +463,9 @@ ${[LOG.header(2), LOG.found(1, 2, "Messages", "messages", 2), `echo "OSError: [E
         const tar = join(cwd, "work", `long-${compress}.tar`);
         await build(TARX, tar, JSON.stringify({ compress, long_header_first: 200 * 1024 * 1024, members: [{ name: marker, size: 16 }] }));
         const { result, maxrss } = await measuredRecipe(recipeName, ["detect", "--target", target(tar)], cwd);
-        const answer = JSON.parse(result.stdout) as { applies: boolean; why: string };
-        assert.equal(answer.applies, false, answer.why);
+        const answer = JSON.parse(result.stdout) as { applies: boolean | string; why: string };
+        assert.equal(answer.applies, "unknown", answer.why);
+        assert.equal(result.code, 2, "a scan that stopped at a bound could not tell: exit 2");
         assert.match(answer.why, /before a header the scan does not read \(an extended header of 209715200 bytes at offset 0\)/);
         assert.ok(maxrss < 100 * 1024 * 1024, `${compress}: ${maxrss} bytes resident`);
       }

@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "icat_extract", "version": 9}
+TOOL = {"name": "icat_extract", "version": 11}
 BLOCK = 1 << 20
 MAX_BYTES_DEFAULT = 32 * 1024 ** 3
 MAX_BYTES_CEILING = 1024 ** 4
@@ -153,8 +153,25 @@ def _catalogued(image, offset, inode):
 
 
 def fail(msg, **extra):
-    print(json.dumps({"error": msg, **extra}))
+    print(json.dumps({"error": msg, "status": "failed", "status_basis": "the tool stopped with an error: %s" % msg, "tool": TOOL, **extra}))
     sys.exit(1)
+
+
+def on_stdout(resolve, *given):
+    """The image and offset resolvers end with SystemExit(<JSON text>), which Python prints on stderr: the answer belongs on stdout, with the status pair."""
+    try:
+        return resolve(*given)
+    except SystemExit as exc:
+        if isinstance(exc.code, str):
+            try:
+                doc = json.loads(exc.code)
+            except ValueError:
+                doc = {"ok": False, "error": exc.code}
+            if isinstance(doc, dict):
+                doc = {"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % doc.get("error"), "tool": TOOL, **doc}
+            print(json.dumps(doc))
+            sys.exit(1)
+        raise
 
 
 def resolve_output(out):
@@ -191,7 +208,9 @@ if not isinstance(d, dict):
     fail("arguments are a JSON object")
 inode = d.get("inode")
 output = d.get("output")
-image = _resolve_image(d.get("image"))
+if d.get("image") is not None and (not isinstance(d.get("image"), str) or "\0" in d.get("image")):
+    fail("image is a string without a NUL byte")
+image = on_stdout(_resolve_image, d.get("image"))
 if inode is None or not isinstance(output, str) or not output:
     fail("need inode and output")
 if isinstance(inode, bool) or not (isinstance(inode, int) and inode >= 0 or isinstance(inode, str) and INODE.match(inode)):
@@ -211,7 +230,7 @@ if not isinstance(max_seconds, int) or isinstance(max_seconds, bool) or not 1 <=
 dest = resolve_output(output)
 if not os.path.isfile(image):
     fail(f"image not found: {image}")
-offset = _resolve_offset(image, d.get("offset"))
+offset = on_stdout(_resolve_offset, image, d.get("offset"))
 # A directory's inode gives icat its index, not a file: an agent extracted
 # Edge's History directory (d/d 84284) as "EdgeHistory.db", 272 bytes of
 # $INDEX_ROOT, and read "file is not a database" from it. Said here when the

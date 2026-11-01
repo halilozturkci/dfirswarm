@@ -577,10 +577,34 @@ def stamp(raw):
     return "%s-%s-%sT%s:%s:%s%s" % tuple(g)
 
 
+def _open_regular(path):
+    """The target opened for reading without waiting for it (an open of a FIFO named here would block until a writer came): the type is read from the
+    descriptor, and anything but a regular file is refused as an OSError, which detect reads as "cannot tell"."""
+    import errno
+    import stat
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _is_regular(path):
+    import stat
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except (OSError, ValueError):
+        return False
+
+
 def detect(path):
     """(format, why) or (None, why), from the headers alone."""
     try:
-        with open(path, "rb") as fh:
+        with _open_regular(path) as fh:
             head = fh.read(0x30)
             seg = ad1_segment_header(head)
             if seg["index"] != 1:
@@ -588,7 +612,7 @@ def detect(path):
             fh.seek(seg["header"])
             logical = fh.read(20)
     except OSError as e:
-        return None, "unreadable: %s" % (e.strerror or e)
+        return "unknown", "unreadable, so it cannot be told whether it is an AD1 image: %s" % (e.strerror or e)
     except AD1Error as e:
         return None, str(e)
     if not logical.startswith(AD1_LOGICAL_MAGIC):
@@ -829,10 +853,16 @@ def main(argv):
     target, paths = target_of(args["--target"])
     if argv[1] == "detect":
         fmt, why = detect(paths[0])
+        if fmt == "unknown":
+            print(json.dumps({"applies": "unknown", "format": None, "why": why}))
+            return 2
         print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
         return 0 if fmt else 1
     if "--out" not in args:
         print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
+        return 2
+    if not _is_regular(paths[0]):
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not a regular file, so nothing was run", "error": "not a regular file"}))
         return 2
     return run(target, paths, args["--out"])
 

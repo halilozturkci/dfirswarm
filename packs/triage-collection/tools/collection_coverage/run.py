@@ -68,7 +68,7 @@ def describe(exc):
 
 def fail(message, **extra):
     """An error answer: JSON, exit 1, never a traceback. A name in it that is shaped like a credential is withheld."""
-    write_answer({"error": scrub(str(message)), "status": "failed", **extra})
+    write_answer({"error": scrub(str(message)), "status": "failed", "status_basis": "the tool stopped with an error: %s" % scrub(str(message)), **extra})
     raise SystemExit(1)
 
 
@@ -86,7 +86,7 @@ def scrub_all(value):
 def _stopped_by_signal(signum, frame):
     """A kill leaves no half-written file (atexit runs on SystemExit) and no empty answer."""
     print(json.dumps({"error": "the tool was stopped by signal %d before it finished; nothing it was writing was published" % signum,
-                      "status": "failed"}))
+                      "status": "failed", "status_basis": "stopped by signal %d before the answer was complete" % signum}))
     raise SystemExit(128 + signum)
 
 

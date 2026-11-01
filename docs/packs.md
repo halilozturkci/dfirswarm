@@ -799,6 +799,35 @@ import each other), and holds to this:
   is a `UnicodeDecodeError`): the answer says the row and what the error's code
   decides (the time budget, the authorizer, a value over the length limit),
   never the message or the class, and no decision reads the message.
+- *What the shape rule misses is printed, and a `secret_output` job is where such a file is used.* A tool
+  that withholds by the shape of a string (a name that is not plain, a token prefix, user-info, a long
+  random-looking run) withholds what has the shape. A secret of another shape (a plain password, a
+  pronounceable passphrase, a UUID-shaped key, a short value in a name) is printed in the answer: the
+  rule is a floor for what a post quotes, not a classifier
+  ([ADR 0018](adr/0018-sensitive-outputs-are-used-by-agents-and-every-access-is-recorded.md)). The tool's
+  manifest and skill say so for its own rule, with the rates measured on random plants. The place to
+  use a file that holds what the rule misses is a `secret_output` job's sealed output: an agent reads
+  it there, and each read is recorded.
+- *A recipe's detect step has three answers.* `entry detect --target …` prints a JSON line with a `why`, and its exit code
+  is the answer: **0** the recipe applies, **1** it does not, **2** it cannot tell (the line also says
+  `applies: "unknown"`: the target could not be read, a program it needs is not in the image, a walk ended at its
+  limit); any other code is a failed detect. The census (`catalog/coverage.tsv`, `catalog/plan.json`) records exit 2 as
+  "its detect step could not tell", never as "does not apply" and never as a failure of the step, and the job
+  service's `detect_answered` rows carry `applies: true | false | "unknown"`; only `true` starts a recipe. A detect that can
+  tell neither way must exit 2, not 1: a 1 is a claim that the object is not for this recipe. A call the recipe did not understand (a usage error) is not an answer
+  about the object: where a recipe prints JSON for it, it says `applies: "unknown"`; an argument parser's own usage message on stderr with exit 2 cannot be told
+  from "cannot tell" by the census, which records the exit code.
+- *A recipe marks a file it wrote `secret_bearing`, and a redacted package withholds it.* A recipe cannot declare
+  `secret_output` (the seal refuses the key in `recipe.json`), so its coverage or receipt says which of its output
+  files hold what the evidence holds: a JSON file with a `secret_bearing` object, `{ "<file>": "<why>" }`, the name a
+  plain relative path beside that JSON file and the reason a string (network-capture writes it). `package --redact`
+  reads the mark by its shape, never by the name of a recipe or a tool, and withholds each file it names whole, its
+  digest and path kept in the private sidecar and never in the package, as it does for a sensitive job's output. A
+  `secret_bearing` that is not a map of names to reasons is an answer field and marks nothing: plist_read's
+  `secret_bearing` (counts of what it withheld) and doc_structure's `secret_bearing_attributes` are of that kind. A mark the redaction cannot honour whole fails closed: a file that carries
+  the word and is over 8 MiB or is not JSON that parses, and a mark that names a link or anything but a regular file,
+  make it withhold every file of that directory and below, and the record says why. A receipt is found by `.json` in any
+  case, and every mark in it is read.
 - *The manifest declares it, and the harness enforces it.* The description
   says SENSITIVE and names the flag, and the manifest carries the key the job
   service reads, `"secret_output"`: `"required"` (every job of the tool) or
@@ -889,6 +918,14 @@ Every tool a pack bundles holds to this.
    a bound, a clock or a message moves the version and leaves the label.
 
 ### Requires and images
+
+A tool or a recipe says which programs it runs. A tool's `manifest.json` names them in `requires`; a recipe's `recipe.json`
+names those it cannot run without in `requires` and those it uses when they are there in `requires_optional` (a program
+is one or the other; the seal checks the shape of both keys). The program must be one a pack's `requires/host.json`
+lists. `tests/pack-program-declarations.test.ts` reads every tool's and recipe's source, and fails on a program it names
+as a call (a quoted argv item or `which()` argument; a command at the start of a line or after a pipe) that the unit does
+not declare; a name that is only a word in the source (a file type, a dictionary key, a collector's name) is
+allow-listed in that test with its reason.
 
 1. **Every dependency is pinned.** A pip requirement with `==`; a host binary
    with its version; a download with its sha256. The licence label is read from

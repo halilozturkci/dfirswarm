@@ -22,8 +22,8 @@
   "example": "{\"hive\": \"work/extracted/Amcache.hve\", \"limit\": 200}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 9,
-  "sha256": "84328a843ffb0044dc8eab829817a007f1e87bb591f00a7307971014ce1e174a",
+  "version": 10,
+  "sha256": "e88c7e10811d7aad5b204f4cff6389b9240da0327c810826f387261340e484b6",
   "use": {
     "names": [
       "Amcache.hve"

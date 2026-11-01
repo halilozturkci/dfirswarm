@@ -6,12 +6,12 @@
  * a stream cut, a count missing), and a pack PR that edits its tool without the copy leaves exactly
  * that. The packs own the tools: the library holds copies, byte for byte.
  *
- * One test holds all of them. Every twin must have the same `run.*` files and `manifest.json`,
- * byte for byte, unless tests/tool-library-twins-allowed.json declares the difference: the tool, the
+ * One test holds all of them. Every twin must have the same files (every file of the two directories, at any depth: run.*, manifest.json and any
+ * helper or data file), byte for byte, and no file on one side only, unless tests/tool-library-twins-allowed.json declares the difference: the tool, the
  * file, why it is deliberate, and the two digests of the difference as it is today. The digests are
  * the check that the difference is still the declared one: a changed side fails the entry until
  * someone re-reads it, and an entry whose files are equal again is stale and fails too. The list
- * only shrinks; its ceiling below is the number of entries it holds today (none), so adding one
+ * only shrinks; its ceiling below is the number of entries it holds today (two), so adding one
  * means editing this file as well, in plain view of the review.
  *
  * The library README's row for every twin names the manifest's runtime and version.
@@ -25,7 +25,7 @@ import { test } from "node:test";
 import { LIB, ROOT } from "./tool-library-harness.ts";
 
 const ALLOWED = join(ROOT, "tests", "tool-library-twins-allowed.json");
-const ALLOWED_CEILING = 0;
+const ALLOWED_CEILING = 2; // the two provenance records marshal_inspect's library copy keeps and its pack does not
 const TWINS_FLOOR = 21; // the twins today; a tool leaving the library or a pack is a deliberate edit of this number
 
 type Allowed = { tool: string; file: string; why: string; library_sha256: string; pack_sha256: string };
@@ -50,9 +50,21 @@ async function findTwins(libRoot: string, packsRoot: string): Promise<Twin[]> {
   return twins;
 }
 
-/** The files a run executes or reads as the tool: run.* and manifest.json. */
+/**
+ * Every file of a twin directory, at any depth, as a path relative to it: a helper or a data file next to run.py is part of the tool, so a file that is
+ * on one side only is a drift too. Compiled caches (`__pycache__`) are not files of the tool.
+ */
 async function comparedFiles(dir: string): Promise<string[]> {
-  return (await readdir(dir)).filter((f) => f === "manifest.json" || /^run\./.test(f)).sort();
+  const out: string[] = [];
+  const walk = async (d: string, prefix: string): Promise<void> => {
+    for (const e of await readdir(d, { withFileTypes: true })) {
+      if (e.name === "__pycache__" || e.name.endsWith(".pyc")) continue;
+      if (e.isDirectory()) await walk(join(d, e.name), `${prefix}${e.name}/`);
+      else out.push(`${prefix}${e.name}`);
+    }
+  };
+  await walk(dir, "");
+  return out.sort();
 }
 
 /** What is wrong with the twins under these roots, as sentences; empty when they are as declared. */
@@ -155,11 +167,18 @@ test("the comparison finds a drifted twin, a missing file and a stray run.sh, ho
     await put(join(packs, "p", "tools"), "extra", same);
     await put(lib, "nomanifest", { "run.py": "x\n" });
     await put(join(packs, "p", "tools"), "nomanifest", { "run.py": "x\n" });
+    await put(lib, "helper", same);
+    await put(join(packs, "p", "tools"), "helper", { ...same, "table.py": "T = 1\n" }); // a helper on the pack's side only, not named run.* or manifest.json
+    await put(lib, "bytecode", same);
+    await put(join(packs, "p", "tools"), "bytecode", same);
+    await mkdir(join(lib, "bytecode", "__pycache__"), { recursive: true });
+    await writeFile(join(lib, "bytecode", "__pycache__", "run.cpython-312.pyc"), "x"); // a compiled cache is no file of the tool
 
     const sorted = async (allowed: Allowed[]) => (await twinProblems(lib, packs, allowed)).sort();
     assert.deepEqual(await sorted([]), [
       "drift (packs/p): run.py has drifted from the pack's: copy the pack's file into tool-library/drift/",
       "extra (packs/p): run.sh is in the library and not in the pack",
+      "helper (packs/p): table.py is in the pack and not in the library",
       "nomanifest (packs/p): no manifest.json on either side",
     ]);
 
@@ -170,7 +189,7 @@ test("the comparison finds a drifted twin, a missing file and a stray run.sh, ho
       library_sha256: sha256(Buffer.from("print(2)\n")),
       pack_sha256: sha256(Buffer.from("print(1)\n")),
     };
-    const rest = (await sorted([declared])).filter((p) => !p.startsWith("extra") && !p.startsWith("nomanifest"));
+    const rest = (await sorted([declared])).filter((p) => !p.startsWith("extra") && !p.startsWith("nomanifest") && !p.startsWith("helper"));
     assert.deepEqual(rest, [], "a declared difference with both digests as declared passes");
 
     const changed = { ...declared, pack_sha256: sha256(Buffer.from("print(3)\n")) };

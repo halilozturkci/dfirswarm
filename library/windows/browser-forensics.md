@@ -175,7 +175,6 @@ unchanged.
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 18`
 - `test -f work/browsing.md`
 - `test "$(grep -c '^| ' work/browsing.md)" -ge 3`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 14`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies

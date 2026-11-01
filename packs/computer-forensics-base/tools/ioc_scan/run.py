@@ -33,7 +33,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-TOOL = {"name": "ioc_scan", "version": 8}
+TOOL = {"name": "ioc_scan", "version": 10}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -369,7 +369,7 @@ class Locators:
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra}))
     sys.exit(1)
 
 
@@ -409,6 +409,8 @@ def main():
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
     path = args.get("path") or "inputs/[UNALLOCATED]"
+    if not isinstance(path, str) or "\0" in path:
+        fail("path is a string without a NUL byte: a file or a directory to scan")
     needles = args.get("needles")  # a list of strings, or a pipe-separated string
     if isinstance(needles, str):
         needles = [n for n in needles.split("|") if n]

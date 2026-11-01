@@ -77,7 +77,7 @@ test("every tool that carries the shared withholding block carries the same text
     const block = await withholdingBlock(path);
     if (block !== null) carriers.push({ path, block });
   }
-  assert.ok(carriers.length >= 17, `${carriers.length} tools carry the block`);
+  assert.ok(carriers.length > 0, `${carriers.length} tools carry the block`); // how many carry it is held by tests/shared-blocks-census.test.ts (tests/shared-blocks.json)
   for (const c of carriers) assert.equal(c.block, carriers[0]!.block, `${c.path} carries the same block as ${carriers[0]!.path}`);
   const code = [
     "import json, re, sys, time",
