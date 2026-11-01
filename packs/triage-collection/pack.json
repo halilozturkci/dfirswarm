@@ -1,7 +1,7 @@
 {
   "id": "triage-collection",
   "name": "Triage and Collection Pack",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "description": "What to do when the evidence is a collector's output rather than an image: surveying what was delivered and which collectors left records, reading those records without turning them into findings, keeping the source, delivered and analysis paths apart, saying what the delivery can and cannot establish, requesting more evidence through the operator, and handing files to the platform packs.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,10 +18,10 @@
   "checksums": {
     "sha256": {
       "LICENCE": "c271b022edf4f543b6fc7c4e6fc0b138c57648f0dffe25a4e34c7e9f1c178d8a",
-      "README.md": "84deceeb2b4dd5bc83b52749dee818c3b2448b8337949af969e7422df824a7f2",
+      "README.md": "3f5985ad204385174f6c72c03c4c8d7b8caeb5d04d847962593324df72bf3f1b",
       "goals/collection-intake.md": "ed89303440885a201a191d42de56977b609170e07f15c0268114bb68511651c2",
-      "recipes/collection-intake/recipe.json": "14c40e6bc27973964b86db48b2fb1ec17ca8bdfaff2ba6bab707c93d058bbc1e",
-      "recipes/collection-intake/run.py": "e8a509aa64d3812da1e0ba82ca516b0e8c44c92df312482c2bacb5a028565dc6",
+      "recipes/collection-intake/recipe.json": "c7dd83b7bbabfbb138eb06405a79dfbe61ab9fa98a258886b57f3fafdb3aa8b4",
+      "recipes/collection-intake/run.py": "88fab7cb7a7936f9659a28d71b37a58e108c8033a2bf3d910c50c1adb6d28cd3",
       "requires/host.json": "ac64fed9b7f55c84cfd47753314c6f14f26d5538f9e482e6fc520173e42aeffa",
       "requires/python.txt": "4f753bdd539922ce6d87e00b3c099f7c18af8cf5d04139588668f957d7d3eddd",
       "skills/INDEX.md": "3ac62b06c23cfe9cc450c25e388df629bd1f493b6d00888f4ae0d467b219ddd0",
@@ -45,18 +45,18 @@
       "skills/verify/raw-and-derived.md": "b9018d3a208c3500fd2ab5029f7eb2decfbdb4cc392d1e6cae65d5ff3ca7f1fd",
       "skills/verify/target-outcomes.md": "420b464d85ca59e391bd3dfb36b5ef5161917a0055b27cae8c349ebbe98eb185",
       "skills/verify/time-layers.md": "1c5ae12396541f66581eb5ede022671d3bfd076ff004dc57b84de0e51a5f72eb",
-      "tools/collection_coverage/manifest.json": "722661e7c8d83015f86724dc143c317ae6f47126caf4ce1f3d313cc53d2a731c",
-      "tools/collection_coverage/run.py": "1bf3db333bb6f6605e72f99fe50f7c02f7b53a87364b07933944c1cc0389f1e7",
+      "tools/collection_coverage/manifest.json": "9f5c2879e1c7022c0a5249cb5d4b78ceded46e0f922e3e3dac1a8a38c53f95fd",
+      "tools/collection_coverage/run.py": "5dd5498f2a5e873f8e2cbf2b957086a5d8f6a5c1bdd9dcc81593dea56a799a5b",
       "tools/collection_id/manifest.json": "c61cf91d9acc8ac57fc1c15e4d98e86df97965818a50f2ddb83c40e771107a6f",
       "tools/collection_id/run.py": "e6830369111506eda2a2d34a3e13f5dd1190a61ac0300c0cd11bd3534fb19cbe",
       "tools/collection_index/manifest.json": "901668cefdcbb3fa186a26bcb0fbcd72a5254aa74bbcd358fd45f8e3d546d22d",
       "tools/collection_index/run.py": "56816728ef6d6474460c7ce3af4f0153df5fcb3986d621932a469c76e27aeef3",
-      "tools/collection_manifest_parse/manifest.json": "b870f80af5350f1e13e2d29581581498a0f68611558366a6aae352c7ec5a3473",
-      "tools/collection_manifest_parse/run.py": "8c89e068f6b0ff462bad265b165483c4ca6e070ff4ba7ad2b1562f24777f305b",
-      "tools/collection_manifest_verify/manifest.json": "c65f980273a98156a6ea9895ff843b75a57676174837028092c785ed86ad137a",
-      "tools/collection_manifest_verify/run.py": "c1f1c8aa185f4657c6d73673057a797e192704bbda892576ea894d6f0c9df820",
-      "tools/collection_path_map/manifest.json": "43815c6aad8548b983b68adca88646e254031964996762c581dfe2f167599c47",
-      "tools/collection_path_map/run.py": "7a7dd8819c3908bf2a2cb0a0a531c0c051713d5f3bc10fc097d3eb18f942aa3f"
+      "tools/collection_manifest_parse/manifest.json": "aab89533bc710a01df4713602c1703c8132e3437500886860ecb9d845458eb14",
+      "tools/collection_manifest_parse/run.py": "fcd8c015544ca701aba9f39a595a130ac81f57a8feeda0780e62eefc8c2d51d8",
+      "tools/collection_manifest_verify/manifest.json": "4152046def567d45ae1e415084dc9de8a8a03fb5fa172b9bb40fc64fc256124e",
+      "tools/collection_manifest_verify/run.py": "2cf7bd81cbffc5f9de3e432f0bdae4d97e95425132ba76561ab7829da7ae5787",
+      "tools/collection_path_map/manifest.json": "27f99c4edd697925090bba7712a25a59a9b57f5015cb257301471583b441ffeb",
+      "tools/collection_path_map/run.py": "bdd7c92e268229042ff496114328d6634a7de0a81d9bd78d4681a3897cb94101"
     }
   },
   "tools": [

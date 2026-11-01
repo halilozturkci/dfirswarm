@@ -1504,8 +1504,34 @@ def over_memory():
     except (ImportError, OSError):
         return None
     if peak * 10 > ceiling * 6:
-        return "the memory bound (%d MB held of the %d MB this process may hold)" % (peak >> 20, ceiling >> 20)
+        return "the memory bound (%s held of the %s this process may hold)" % (size_text(peak), size_text(ceiling))
     return None
+
+
+def size_text(n):
+    """A byte count in the largest unit that does not make it 0 (a tiny override is not '0 MB')."""
+    if n >= 1 << 20:
+        return "%d MB" % (n >> 20)
+    if n >= 1 << 10:
+        return "%d KB" % (n >> 10)
+    return "%d bytes" % n
+
+
+CLOCK_EVERY = 256                  # a loop over the census asks the clock and the memory bound this many entries apart
+
+
+def census_clock(census, position, what):
+    """True when the time limit or the memory bound says a loop over the census must end here (asked every CLOCK_EVERY entries): the census is then
+    marked stopped and not complete, so that the answer is partial and no record is called missing."""
+    if position % CLOCK_EVERY:
+        return False
+    reason = "the time limit" if out_of_time() else over_memory()
+    if not reason:
+        return False
+    if census.stopped is None:
+        census.stopped = {"reason": "%s ended %s" % (reason, what), "directories_not_listed": 0}
+    census.complete = False
+    return True
 
 
 def fold_name(text):
@@ -1753,7 +1779,9 @@ def discover(census):
     never read. Sorted by the name's bytes, so a run reads the same records in the same order every time."""
     found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "velo_encrypted": {}, "inside_collected": []}
     payloads = {}
-    for rel, size, kind in sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0])):
+    for position, (rel, size, kind) in enumerate(sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0]))):
+        if census_clock(census, position, "the search for the collectors' records"):
+            break
         name = name_of(rel)
         low = name.lower()
         directory = parent_of(rel)
@@ -1795,7 +1823,9 @@ def discover(census):
     if payloads:
         # an encrypted Velociraptor collection is an outer container of data.zip and, when the collector was given metadata, metadata.json: the
         # directory that holds those and nothing else (a file or a link beside them makes it an ordinary directory with a file named data.zip)
-        for rel, size, kind in census.entries():
+        for position, (rel, size, kind) in enumerate(census.entries()):
+            if census_clock(census, position, "the search for encrypted collections"):
+                break
             entry = payloads.get(parent_of(rel))
             if entry is None:
                 continue
@@ -3068,7 +3098,9 @@ def main():
     whole = {}                                # per-file record -> whether its rows were read whole: a file is called unexpected only against rows that were
     for _directory, log, inner in scopes:
         whole[log] = any(s["log"] == log and (s.get("sources", {}).get("uploads.json", s)["status"] == "parsed" if inner else s["status"] == "parsed") for s in sources)
-    for rel, size, kind in sorted(census.entries(), key=lambda e: os.fsencode(e[0])):
+    for position, (rel, size, kind) in enumerate(sorted(census.entries(), key=lambda e: os.fsencode(e[0]))):
+        if census_clock(census, position, "the search for delivered files no record names"):
+            break
         if rel in record_files:
             continue
         for directory, log, inner in scopes:

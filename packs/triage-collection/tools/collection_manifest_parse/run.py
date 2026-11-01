@@ -1502,8 +1502,34 @@ def over_memory():
     except (ImportError, OSError):
         return None
     if peak * 10 > ceiling * 6:
-        return "the memory bound (%d MB held of the %d MB this process may hold)" % (peak >> 20, ceiling >> 20)
+        return "the memory bound (%s held of the %s this process may hold)" % (size_text(peak), size_text(ceiling))
     return None
+
+
+def size_text(n):
+    """A byte count in the largest unit that does not make it 0 (a tiny override is not '0 MB')."""
+    if n >= 1 << 20:
+        return "%d MB" % (n >> 20)
+    if n >= 1 << 10:
+        return "%d KB" % (n >> 10)
+    return "%d bytes" % n
+
+
+CLOCK_EVERY = 256                  # a loop over the census asks the clock and the memory bound this many entries apart
+
+
+def census_clock(census, position, what):
+    """True when the time limit or the memory bound says a loop over the census must end here (asked every CLOCK_EVERY entries): the census is then
+    marked stopped and not complete, so that the answer is partial and no record is called missing."""
+    if position % CLOCK_EVERY:
+        return False
+    reason = "the time limit" if out_of_time() else over_memory()
+    if not reason:
+        return False
+    if census.stopped is None:
+        census.stopped = {"reason": "%s ended %s" % (reason, what), "directories_not_listed": 0}
+    census.complete = False
+    return True
 
 
 def fold_name(text):
@@ -1751,7 +1777,9 @@ def discover(census):
     never read. Sorted by the name's bytes, so a run reads the same records in the same order every time."""
     found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "velo_encrypted": {}, "inside_collected": []}
     payloads = {}
-    for rel, size, kind in sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0])):
+    for position, (rel, size, kind) in enumerate(sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0]))):
+        if census_clock(census, position, "the search for the collectors' records"):
+            break
         name = name_of(rel)
         low = name.lower()
         directory = parent_of(rel)
@@ -1793,7 +1821,9 @@ def discover(census):
     if payloads:
         # an encrypted Velociraptor collection is an outer container of data.zip and, when the collector was given metadata, metadata.json: the
         # directory that holds those and nothing else (a file or a link beside them makes it an ordinary directory with a file named data.zip)
-        for rel, size, kind in census.entries():
+        for position, (rel, size, kind) in enumerate(census.entries()):
+            if census_clock(census, position, "the search for encrypted collections"):
+                break
             entry = payloads.get(parent_of(rel))
             if entry is None:
                 continue
@@ -2948,7 +2978,8 @@ def main():
     runs = {}
     for s in sources:
         runs.setdefault((s["collector"], s["run"], s.get("directory", ".")), []).append(s)
-    run_rows, all_known = [], bool(runs)
+    runs_table = Table(TOOL + "-runs", limit)
+    total_failures, all_known = 0, bool(runs)
     for (collector, run, directory), group in runs.items():
         failure_sources = [s for s in group if s["kind"] in FAILURE_SOURCES]
         why = []
@@ -2961,7 +2992,8 @@ def main():
             why.append("%d archive(s) at the top of the delivery were not opened" % top_archives)
         known = not why
         all_known = all_known and known
-        run_rows.append({"collector": collector, "run": run, "directory": directory, "collector_version": "unknown",
+        total_failures += sink.failures[(collector, run)]
+        runs_table.add({"collector": collector, "run": run, "directory": directory, "collector_version": "unknown",
                          "version_basis": "no record this tool reads states it",
                          "sources": [s["log"] for s in group],
                          "failures_recorded": {"count": sink.failures[(collector, run)] if known else None,
@@ -2971,7 +3003,7 @@ def main():
                                                          "not determined (%s). This is not zero failures" % "; ".join(why[:6])),
                                                "seen": sink.failures[(collector, run)]}})
     unsupported = [{"collector": "CyLR", "adapter": ADAPTERS["cylr"]["schema"], "supported": False}] if (wanted is None or "CyLR" in wanted) else []
-    tables = {"records": records.finish(), "problems": problems.finish()}
+    tables = {"records": records.finish(), "problems": problems.finish(), "runs": runs_table.finish()}
     values = VALUES[0]
     sources_table = Table(TOOL + "-sources", limit)
     for s in sources:
@@ -2989,7 +3021,6 @@ def main():
     status = "complete" if not problem_lines else "partial"
     basis = ("every directory was listed and every recognised record was read whole" if status == "complete" else
              "; ".join(problem_lines[:10]) + ("; and %d more (see sources)" % (len(problem_lines) - 10) if len(problem_lines) > 10 else ""))
-    total_failures = sum(r["failures_recorded"]["seen"] for r in run_rows)
     out = {
         "tool": TOOL, "parser": PARSER, "root": shown(root, "root"), "status": status, "status_basis": basis,
         "ignored_parameters": ignored_parameters(args, KNOWN_PARAMETERS),
@@ -3000,7 +3031,7 @@ def main():
                    "errors": census.errors_total, "first_errors": [{k: shown(v, "census error") if k == "path" else v for k, v in e.items()} for e in census.errors],
                    "stopped": census.stopped, "capped": census.capped, "complete": census.complete},
         "collectors_recognised": sorted({s["collector"] for s in sources}),
-        "runs": run_rows,
+        "runs": runs_table.page,
         "failures_recorded": {"count": total_failures if all_known else None, "seen": total_failures,
                               "basis": ("every run's failure-source records were read whole" if all_known else
                                         "not determined for every run (see runs[].failures_recorded.basis); this is not zero failures; `seen` is how many were read all the same")},

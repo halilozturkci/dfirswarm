@@ -1501,8 +1501,34 @@ def over_memory():
     except (ImportError, OSError):
         return None
     if peak * 10 > ceiling * 6:
-        return "the memory bound (%d MB held of the %d MB this process may hold)" % (peak >> 20, ceiling >> 20)
+        return "the memory bound (%s held of the %s this process may hold)" % (size_text(peak), size_text(ceiling))
     return None
+
+
+def size_text(n):
+    """A byte count in the largest unit that does not make it 0 (a tiny override is not '0 MB')."""
+    if n >= 1 << 20:
+        return "%d MB" % (n >> 20)
+    if n >= 1 << 10:
+        return "%d KB" % (n >> 10)
+    return "%d bytes" % n
+
+
+CLOCK_EVERY = 256                  # a loop over the census asks the clock and the memory bound this many entries apart
+
+
+def census_clock(census, position, what):
+    """True when the time limit or the memory bound says a loop over the census must end here (asked every CLOCK_EVERY entries): the census is then
+    marked stopped and not complete, so that the answer is partial and no record is called missing."""
+    if position % CLOCK_EVERY:
+        return False
+    reason = "the time limit" if out_of_time() else over_memory()
+    if not reason:
+        return False
+    if census.stopped is None:
+        census.stopped = {"reason": "%s ended %s" % (reason, what), "directories_not_listed": 0}
+    census.complete = False
+    return True
 
 
 def fold_name(text):
@@ -1750,7 +1776,9 @@ def discover(census):
     never read. Sorted by the name's bytes, so a run reads the same records in the same order every time."""
     found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "velo_encrypted": {}, "inside_collected": []}
     payloads = {}
-    for rel, size, kind in sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0])):
+    for position, (rel, size, kind) in enumerate(sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0]))):
+        if census_clock(census, position, "the search for the collectors' records"):
+            break
         name = name_of(rel)
         low = name.lower()
         directory = parent_of(rel)
@@ -1792,7 +1820,9 @@ def discover(census):
     if payloads:
         # an encrypted Velociraptor collection is an outer container of data.zip and, when the collector was given metadata, metadata.json: the
         # directory that holds those and nothing else (a file or a link beside them makes it an ordinary directory with a file named data.zip)
-        for rel, size, kind in census.entries():
+        for position, (rel, size, kind) in enumerate(census.entries()):
+            if census_clock(census, position, "the search for encrypted collections"):
+                break
             entry = payloads.get(parent_of(rel))
             if entry is None:
                 continue
@@ -3046,19 +3076,25 @@ def main():
         mappings.add(row)
 
     collision_counts = collections.Counter()
-    for rel, entries in sink.named_by.items():
+    for position, (rel, entries) in enumerate(sink.named_by.items()):
+        if census_clock(census, position, "the check for collisions"):
+            break
         keys = {source_key(e["source_path_claim"]) for e in entries if e["source_path_claim"]}
         if len(keys) > 1:
             collision_counts["delivered_file_named_with_different_source_paths"] += 1
             collisions.add({"collision": "delivered_file_named_with_different_source_paths", "delivered": rel,
                             "source_paths": sorted({e["source_path_claim"] for e in entries if e["source_path_claim"]})[:FIRST_PROBLEMS]})
-    for key, rels in sorted(sink.sources_of.items()):
+    for position, (key, rels) in enumerate(sorted(sink.sources_of.items())):
+        if census_clock(census, position, "the check for collisions"):
+            break
         if len(rels) > 1:
             collision_counts["source_path_delivered_more_than_once"] += 1
             collisions.add({"collision": "source_path_delivered_more_than_once", "source_path_case_folded": key, "delivered": sorted(rels, key=os.fsencode)[:FIRST_PROBLEMS],
                             "count": len(rels),
                             "note": "two runs of a collector, two copies of a file or a case-variant: the records say which, the paths alone do not"})
-    for group in census.by_key.values():
+    for position, group in enumerate(census.by_key.values()):
+        if census_clock(census, position, "the check for names that differ only by case"):
+            break
         names = sorted({g[0] for g in group})
         if len(names) > 1:
             collision_counts["delivered_names_differing_only_by_case"] += 1
