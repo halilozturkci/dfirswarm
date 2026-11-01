@@ -23,7 +23,7 @@ Depends on the Computer Forensics Base Pack.
 | Pattern matching | `patterns/yara` |
 | Acquisition | `acquire/images` (`acquire/avml-and-preserve`) |
 
-**Five tools.** `mem_profile` says what a memory file's header shows before
+**Six tools.** `mem_profile` says what a memory file's header shows before
 anything is run against it (a crash dump's physical-memory runs with their file
 offsets, checked for order, overlap and payload; a LiME file's ranges; an ELF core's
 byte order) and answers "unrecognised" for anything else, because a flat capture and
@@ -47,12 +47,14 @@ exercised here. On a host or image without `/dev/fuse` or a `fusermount3`/`fuser
 
 `mem_registry` is opt-in: it lists the registry hives of a Windows image and reads one key of one hive (`windows.registry.hivelist` and `windows.registry.printkey`, the names taken from what the installed `vol` lists), offline, with the hive offset, the plugin and the Volatility version on every record and a coverage of hives found against hives read (partial when pages were missing). The SAM and SECURITY hives, and keys under SAM, SECURITY, `PolicySecrets` and `SAMDomains`, are refused unless `write_values` is set in a job run as secret output; the value of a credential-named key or value is withheld whole (by name, not by content) and written, unjudged, to a 0600 file under `$OUT/mem_registry` only then. Like `vol_readiness`, it was run against a stand-in `vol` in this review, with hand-written fixtures of the documented columns, not against the real Volatility.
 
+`carve_handoff` takes one hit of `mem_carve` (`kind`, `signature_offset`) and readies it for the parser that reads it, without parsing: the structure's start (a plain Prefetch record four bytes before `SCCA`, only when those bytes are a known version), the cut by `mem_carve`'s own rule, the header checks and, for a registry hive (base-block checksum, sequence numbers, chain of bins) and an event log file or chunk (chunks, header checksum), whether the pages stay adjacent in the image. It hashes the slice only for a family that cannot be a credential store (a hive, a SQLite database and a property list never are hashed) and writes slice bytes only with `write_values` in a job run as secret output. It names the windows-forensics tools that read the family (`regkv`, `evtx_carve`, `mam_scan`, `prefetch_mam`) and calls none of them, so it depends on that pack not at all.
+
 **Sensitive output.** Memory holds whatever the machine held. `mem_fs` writes file
 content only when it runs as a job, only on `write_values: true`, and only under
 `$OUT/mem_fs`; its answer carries the locator of each file, never its content or a
 digest of it (`recovery_key_scan` of the encrypted-containers pack is the reference
-implementation of that pattern). `mem_fs`, `mem_carve` and `mem_registry` declare `secret_output`
-for `write_values`, so the harness seals the job as sensitive, and all three check
+implementation of that pattern). `mem_fs`, `mem_carve`, `mem_registry` and `carve_handoff` declare `secret_output`
+for `write_values`, so the harness seals the job as sensitive, and all four check
 `SECRET_OUTPUT=1` and refuse as JSON otherwise. `mem_carve` cuts slices out of an image
 (credential hives included, deliberately: a cracking tool downstream stays available)
 only with `write_values: true`, into a directory with mode 0700 (at most 1,000 slices a call; the slices count toward `max_results_bytes`, and the clock is looked at before each). What the tools print
