@@ -49,6 +49,7 @@ jobs:
     outputs:
       all: ${{ steps.s.outputs.all }}
       vm: ${{ steps.s.outputs.vm }}
+      py311: ${{ steps.s.outputs.py311 }}
       node: ${{ steps.s.outputs.node }}
       shell: ${{ steps.s.outputs.shell }}
     steps:
@@ -72,7 +73,7 @@ jobs:
           if [ "$EVENT" = push ] && [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then narrow_push=true; fi
           if { [ "$EVENT" != pull_request ] && [ "$narrow_push" != true ]; } || [ "$FULL_LABEL" = true ]; then
             why="$([ "$FULL_LABEL" = true ] && echo "the full-ci label" || echo "a $EVENT run")"
-            { echo "all=true"; echo "vm=true"; echo "node="; echo "shell="; } >> "$GITHUB_OUTPUT"
+            { echo "all=true"; echo "vm=true"; echo "py311=true"; echo "node="; echo "shell="; } >> "$GITHUB_OUTPUT"
             echo "**Everything** ($why)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -80,11 +81,13 @@ jobs:
           q() { node -e "const s = require(process.argv[1]); process.stdout.write(String($1))" "$RUNNER_TEMP/select.json"; }
           all="$(q 's.all')"
           vm="$(q "s.all || s.changed.some((p) => /^packs\/[^/]+\/requires\//.test(p))")"
-          { echo "all=$all"; echo "vm=$vm"
+          py311="$(q 's.py311')"
+          { echo "all=$all"; echo "vm=$vm"; echo "py311=$py311"
             echo "node<<SELECT_EOF"; q 's.node.join("\n")'; echo; echo "SELECT_EOF"
             echo "shell<<SELECT_EOF"; q 's.shell.join("\n")'; echo; echo "SELECT_EOF"; } >> "$GITHUB_OUTPUT"
           { echo "**$( [ "$all" = true ] && echo Everything || echo "$(q 's.node.length') node suites, $(q 's.shell.length') shell suites")** for $(q 's.changed.length') changed file(s); microVM job: $vm."
             echo; q 's.reasons.map((r) => "- " + r).join("\n")'; echo; } >> "$GITHUB_STEP_SUMMARY"
+          echo "Python 3.11 job: $py311." >> "$GITHUB_STEP_SUMMARY"
 
   test:
     name: linux · ${{ matrix.part }}
@@ -328,6 +331,64 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  python-311:
+    # The pack tools run in the VM images on Debian 12's Python 3.11
+    # (images/base.Dockerfile: node:24-bookworm-slim, Debian's python3). The
+    # Linux jobs above run Ubuntu 24.04's 3.12, the macOS jobs 3.14, and the
+    # microVM job only the VM suites, so nothing else here meets the images'
+    # interpreter. This job runs the suites that start a pack tool
+    # (tests/pack-*.test.ts) inside that image, pinned to the digest the
+    # Dockerfile pins (tests/ci-shards.test.ts compares the two), with python3
+    # installed from the images' own apt snapshot (images/debian-snapshot), and
+    # fails when the interpreter is not 3.11. The select job runs it for
+    # everything (the nightly run, a run by hand, the full-ci label) and for a
+    # change to a pack, the tool library, an image file or a pack-tool suite
+    # (scripts/test-select.ts, py311). The suites run as the image's own
+    # unprivileged user, as the other Linux jobs' do: a suite that checks a
+    # refusal by file permissions proves nothing as root. The job adds runner
+    # time to every pull request that changes a pack.
+    name: pack tools · Python 3.11 (the images') · ${{ matrix.part }}
+    needs: select
+    if: needs.select.outputs.py311 == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ["1/2", "2/2"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Debian's python3, from the images' apt snapshot
+        run: |
+          set -eu
+          d="$(tr -d '[:space:]' < images/debian-snapshot)"
+          printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s/\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s/\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' "$d" "$d" > /etc/apt/sources.list.d/debian.sources
+          printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99snapshot
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends ca-certificates git python3 python3-venv python3-pip jq sqlite3 file xxd socat procps binutils bsdextrautils less unzip p7zip-full xz-utils bzip2 zstd curl libimage-exiftool-perl ripgrep
+          python3 -c 'import sys; print(sys.version); assert sys.version_info[:2] == (3, 11), "the images run Python 3.11"'
+          # The suites run as the image's own user, in a copy of the checkout it owns.
+          chown -R node:node "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+      - name: npm ci
+        run: su node -s /bin/bash -c 'npm ci'
+      - name: The pack-tool suites this run needs
+        env:
+          ALL: ${{ needs.select.outputs.all }}
+          NODE_LIST: ${{ needs.select.outputs.node }}
+        run: |
+          set -eu
+          if [ "$ALL" = true ]; then
+            su node -s /bin/bash -c 'node --experimental-strip-types --no-warnings scripts/test-node.ts --list'
+          else
+            printf '%s\n' "$NODE_LIST"
+          fi | { grep -E '^tests/pack-[^/]+\.test\.ts$' || true; } > "$RUNNER_TEMP/pack.list"
+          echo "$(wc -l < "$RUNNER_TEMP/pack.list") pack-tool suite(s) on Python $(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')" | tee -a "$GITHUB_STEP_SUMMARY"
+          chown node:node "$RUNNER_TEMP/pack.list"
+      - name: Pack-tool suites ${{ matrix.part }}
+        run: su node -s /bin/bash -c 'node --experimental-strip-types --no-warnings scripts/test-node.ts --test-shard=${{ matrix.part }} --files-from="$RUNNER_TEMP/pack.list"'
+
   replay-impact:
     # A pull request's impact line (scripts/replay-impact.ts): every contract
     # fixture replayed under the pull request's base and under its head, each
@@ -470,8 +531,9 @@ jobs:
           cache: npm
       # The Python the suites run, named rather than taken from the host: the
       # hosted runner's python3 is 3.14, a Mac's own may be the 3.9 of the
-      # command line tools. The Linux jobs run Ubuntu 24.04's 3.12, so the two
-      # supported ends are both tested. On the owner's Mac it is Homebrew's
+      # command line tools. The Linux jobs run Ubuntu 24.04's 3.12 and the
+      # python-311 job the images' 3.11 (Debian 12), so the supported ends are
+      # all tested. On the owner's Mac it is Homebrew's
       # python@3.14 (scripts/macos-runner-setup.sh requires it): setup-python
       # installs a macOS Python with sudo, which the job user does not have.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -638,7 +700,7 @@ jobs:
     #   - a part that has not started after the grace period, or was skipped,
     #     does not block, and a notice names it.
     # The timeout covers the grace period plus the longest part (90 minutes).
-    needs: [select, test, node-floor, node-24, replay-impact, pack-versions, guards-without-namespaces, microvm]
+    needs: [select, test, node-floor, node-24, python-311, replay-impact, pack-versions, guards-without-namespaces, microvm]
     runs-on: ubuntu-24.04
     timeout-minutes: 115
     permissions:

@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { deepSuites, nodeSuites } from "../scripts/test-node.ts";
+import { repoLayout, select } from "../scripts/test-select.ts";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const WORKFLOW = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
@@ -125,8 +126,12 @@ const SHELL_TAIL = String.raw` \$\{\{ needs\.select\.outputs\.all != 'true' && f
 test("a suite list narrows a run only through the select job, and never on a run it marks as everything", () => {
   const narrowing = [...WORKFLOW.matchAll(/--files-from|--within|--tier=/g)].length;
   const guarded = [...WORKFLOW.matchAll(/needs\.select\.outputs\.all != 'true' && format\('--(?:files-from|within)=\{0\}\/(?:node|shell)\.list', runner\.temp\)/g)].length;
+  // The Python 3.11 job builds its own list (the pack-tool suites among the select job's, or all of them) in a step that reads the
+  // select job's outputs; the next test holds that step to it.
+  const packList = [...WORKFLOW.matchAll(/--files-from="\$RUNNER_TEMP\/pack\.list"/g)].length;
   assert.ok(narrowing > 0, "no job reads the select job's lists");
-  assert.equal(narrowing, guarded, "a --files-from, --within or --tier in ci.yml that is not the select job's guarded list");
+  assert.equal(narrowing, guarded + packList, "a --files-from, --within or --tier in ci.yml that is not the select job's guarded list");
+  assert.equal(packList, 1, "the Python 3.11 job's one list");
   const select = WORKFLOW.match(/^ {2}select:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n)/m)?.[1] ?? "";
   assert.match(select, /if \{ \[ "\$EVENT" != pull_request \] && \[ "\$narrow_push" != true \]; \} \|\| \[ "\$FULL_LABEL" = true \]; then[\s\S]*?echo "all=true"/, "a run that is neither a pull request nor a push with a range (the nightly run, a run by hand), and a pull request labelled full-ci, must run everything");
   assert.match(select, /narrow_push=false\n\s+if \[ "\$EVENT" = push \] && \[ -n "\$BASE" \] && git cat-file -e "\$BASE\^\{commit\}" 2>\/dev\/null; then narrow_push=true; fi/, "only a push whose before is a commit here may run narrow");
@@ -234,4 +239,67 @@ test("the CI green job, the check main requires, needs every other job but macos
   assert.match(green, /scripts\/ci-green\.ts[\s\S]*--needs-env NEEDS[\s\S]*--jobs-from-gh/,"it decides through scripts/ci-green.ts: the needed jobs pass on success or skipped only (tests/ci-green.test.ts), and the macOS parts are read from this run attempt's jobs");
   assert.match(green, /^ {6}actions: read$/m, "it reads the run's jobs");
   assert.doesNotMatch(green, /^ {4}needs:.*\bmacos\b/m, "it does not need the macOS job");
+});
+
+// --- the Python 3.11 job: the pack tools on the images' interpreter -----------------------------------------------------------------
+
+/** The text of one job of ci.yml, up to the next job. */
+function jobText(name: string): string {
+  const m = WORKFLOW.match(new RegExp(String.raw`^ {2}${name}:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))`, "m"));
+  assert.ok(m, `ci.yml has no \`${name}:\` job`);
+  return m[1];
+}
+
+const BASE_DOCKERFILE = readFileSync(join(ROOT, "images/base.Dockerfile"), "utf8");
+
+test("a job runs the pack-tool suites on the images' Python 3.11, in the images' own base image, from the images' apt snapshot", () => {
+  const job = jobText("python-311");
+  // The image is the one the base Dockerfile ends in, by the same digest: a digest moved there (scripts/apt-snapshot-bump.sh --digests) and not here fails this.
+  const from = [...BASE_DOCKERFILE.matchAll(/^FROM (node:24-bookworm-slim@sha256:[0-9a-f]{64})$/gm)].map((m) => m[1]);
+  assert.equal(from.length, 1, "images/base.Dockerfile has one node:24-bookworm-slim stage, pinned by digest");
+  assert.match(job, new RegExp(String.raw`^ {4}container:\n {6}image: ${from[0].replace(/[.:@]/g, "\$&")}$`, "m"), "the job's container is the base image's node stage, by its digest");
+  assert.match(job, /^ {4}runs-on: ubuntu-24\.04$/m);
+  // python3 comes from the images' own apt sources (the snapshot date in images/debian-snapshot, the sources text of the Dockerfile) and is checked to be 3.11.
+  assert.match(job, /d="\$\(tr -d '\[:space:\]' < images\/debian-snapshot\)"/, "the snapshot date is read from images/debian-snapshot");
+  const sources = BASE_DOCKERFILE.match(/printf ('Types: deb\\nURIs: http:\/\/snapshot\.debian\.org[^']*') "\$d" "\$d" > \/etc\/apt\/sources\.list\.d\/debian\.sources/)?.[1];
+  assert.ok(sources, "the Dockerfile writes the snapshot sources");
+  assert.ok(job.includes(`printf ${sources} "$d" "$d" > /etc/apt/sources.list.d/debian.sources`), "the job writes the same apt sources as the base image");
+  assert.match(job, /apt-get install -y -q --no-install-recommends [^\n]*\bpython3\b/, "python3 is Debian's");
+  assert.match(job, /assert sys\.version_info\[:2\] == \(3, 11\)/, "the job fails when the interpreter is not 3.11");
+  // The suites: the pack-tool ones, by scripts/test-node.ts, in shards 1..N of one N, as an unprivileged user.
+  const parts = [...job.matchAll(/^\s+part: \[([^\]]*)\]$/gm)][0]?.[1];
+  assert.ok(parts, "no part: [..] matrix");
+  const shards = parts.split(",").map((s) => s.trim().replace(/^"|"$/g, "").split("/").map(Number));
+  const n = shards[0][1];
+  assert.ok(shards.every(([, m]) => m === n), "the parts name different shard counts");
+  assert.deepEqual(shards.map(([i]) => i).sort(), Array.from({ length: n }, (_, k) => k + 1), "the parts must be shards 1..N, each once");
+  assert.match(job, /scripts\/test-node\.ts --test-shard=\$\{\{ matrix\.part \}\} --files-from="\$RUNNER_TEMP\/pack\.list"/, "each part runs its own shard of the pack list through scripts/test-node.ts");
+  assert.match(job, /su node -s \/bin\/bash -c 'node --experimental-strip-types/, "the suites run as the image's unprivileged user");
+  // The list is the pack-tool suites among the select job's (a narrow run), or all of them: nothing else narrows it.
+  assert.match(job, /ALL: \$\{\{ needs\.select\.outputs\.all \}\}\n\s+NODE_LIST: \$\{\{ needs\.select\.outputs\.node \}\}/, "the list is built from the select job's outputs");
+  assert.match(job, /if \[ "\$ALL" = true \]; then\n\s+su node -s \/bin\/bash -c 'node --experimental-strip-types --no-warnings scripts\/test-node\.ts --list'\n\s+else\n\s+printf '%s\\n' "\$NODE_LIST"\n\s+fi \| \{ grep -E '\^tests\/pack-\[\^\/\]\+\\.test\\.ts\$' \|\| true; \} > "\$RUNNER_TEMP\/pack\.list"/, "everything: every suite npm test runs, then only the tests/pack-*.test.ts ones; narrow: those among the select job's");
+});
+
+test("the select job decides the Python 3.11 job, and the green check needs it", () => {
+  const select = jobText("select");
+  assert.match(select, /py311: \$\{\{ steps\.s\.outputs\.py311 \}\}/, "select exports py311");
+  assert.match(select, /\{ echo "all=true"; echo "vm=true"; echo "py311=true"; echo "node="; echo "shell="; \} >> "\$GITHUB_OUTPUT"/, "a run that runs everything runs the job (the nightly run, a run by hand, the full-ci label)");
+  assert.match(select, /py311="\$\(q 's\.py311'\)"/, "a narrow run asks scripts/test-select.ts");
+  assert.match(jobText("python-311"), /^ {4}needs: select\n {4}if: needs\.select\.outputs\.py311 == 'true'$/m, "the job runs when select says so");
+  assert.match(jobText("green"), /^ {4}needs: \[[^\]\n]*\bpython-311\b[^\]\n]*\]$/m, "CI green needs the job");
+});
+
+test("scripts/test-select.ts asks for the Python 3.11 job for a pack, the tool library, an image file or a pack-tool suite, and for everything it does not narrow", () => {
+  const layout = repoLayout();
+  const packTool = layout.nodeRun.find((s) => /^tests\/pack-[^/]+\.test\.ts$/.test(s)) as string;
+  assert.ok(packTool, "there are pack-tool suites");
+  const yes = ["packs/cloud-forensics/tools/cloudtrail_parse/run.py", "packs/triage-collection/README.md", "tool-library/x/run.py", "images/base.Dockerfile", packTool, "scripts/vm.ts", ".github/workflows/ci.yml", "package.json"];
+  for (const f of yes) assert.equal(select([f], layout).py311, true, `${f} needs the Python 3.11 job`);
+  const no = ["docs/architecture.md", "changelog.d/x.md", "tests/ci-shards.test.ts", "tests/changelog.test.ts"];
+  for (const f of no) {
+    const s = select([f], layout);
+    assert.equal(s.all, false, f);
+    assert.equal(s.py311, false, `${f} does not need the Python 3.11 job (${s.reasons.join("; ")})`);
+  }
+  assert.equal(select([], layout).py311, false, "nothing changed");
 });

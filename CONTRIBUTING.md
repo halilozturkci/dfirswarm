@@ -63,6 +63,12 @@ block, and a notice names it. It is the check `main` requires, so a pull
 request with auto-merge on merges by itself once it is green (`images.yml` and
 `image-boot.yml` are not part of it). The Linux jobs run on `ubuntu-24.04`, not
 `ubuntu-latest`, until a deliberate move.
+The pack tools are tested on three Pythons: 3.12 (the Linux jobs, Ubuntu 24.04),
+3.14 (the macOS jobs) and 3.11, the interpreter of the VM images (Debian 12),
+by the `python-311` job, which runs the `tests/pack-*.test.ts` suites inside the
+images' own `node:24-bookworm-slim` with Debian's `python3`; it runs for a
+change to a pack, the tool library, an image file or such a suite, and in every
+nightly run. Other Pythons are not tested here.
 The `spikes/` directory is neither typechecked (`tsconfig.json` covers
 `extensions/`, `scripts/` and `tests/`) nor re-run: its scripts record
 measurements made once, and they can go stale. The host suites run on
