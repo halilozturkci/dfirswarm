@@ -1,7 +1,7 @@
 {
   "id": "mobile-forensics",
   "name": "Mobile Forensics Pack",
-  "version": "1.5.13",
+  "version": "1.5.14",
   "description": "Method and tooling for a phone: what kind of extraction you were handed and what it cannot contain, iOS backups and their manifest, Android package and user data, the app databases that carry messages and location, protobuf blobs, and what deleted means inside SQLite.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -48,12 +48,12 @@
       "skills/mobile/router.md": "9dcd7e7b3f162b98529fd6e78260f69cb9992fb17948afebfb435f2a5bb8a06c",
       "tests/cases.json": "073cde529d3deab7c45c6f60310ae362765ba36e127aadd5980a977d5bd0c038",
       "tests/pack.test.sh": "3f253d7348f592a100e39a5aae0e05069f6c8b6b5854296e8b4cc33652f74ab6",
-      "tools/manifest_db/manifest.json": "b34c70307d2838a0e7ef20f87108ef0ce979627ccabaa1bef022dd9a53647ef9",
-      "tools/manifest_db/run.py": "214a446e84577b20c0653a38f4604e88c5dc5f78b67a3cd204d4e977efe505d2",
-      "tools/protobuf_peek/manifest.json": "cafb5981659c859483567550395ec29470a8f8882f3484d86706096226adb91e",
-      "tools/protobuf_peek/run.py": "c7032c6df037b21b599f7092cbd866ee815ef863f761d32cdfb811bfaa7a6503",
-      "tools/sqlite_freespace/manifest.json": "4b89f4100d997674945e39c64e4ca37b6ca829bb3a0dd6ba30e52bbf4da70686",
-      "tools/sqlite_freespace/run.py": "7b17767d134f2900dc893cb302b7e66300cd040ad64d3e17c0b7219f061b71b7"
+      "tools/manifest_db/manifest.json": "1bf12345cbf0c489971e4fbe2865ecbc488f63245793b44b80ae5d543e3edb9a",
+      "tools/manifest_db/run.py": "12086c730cc0f6462c40379d67a0850d155479a8993f758ed504e6c331e6e413",
+      "tools/protobuf_peek/manifest.json": "fa084c3f16068ea356d5722f5e7adb9dd8c4e431fc8638bdc6bd5cddbf89b3e4",
+      "tools/protobuf_peek/run.py": "d91c06ff627916842bea64b2295161e71ea39e9cfe463bc9985f79bdb4c557a8",
+      "tools/sqlite_freespace/manifest.json": "6fe244a4c2c94fe8e2450beae450471f01bcd626d157ccbda3e0d5d6e830c5bf",
+      "tools/sqlite_freespace/run.py": "5928f7933ea705a61261eb8ce6c9f07d7a18c1b9cde742a347752c11a37a277c"
     }
   },
   "tools": [

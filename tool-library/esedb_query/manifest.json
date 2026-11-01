@@ -35,7 +35,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 14,
-  "sha256": "fcb70a8c46918bd161853a752557f5bf4e3b6de7f6ea3b6952768a3caa0750dc",
+  "sha256": "ce95888b11852cb149e14fb26dbc6f782320fa9a4b0ed934bf339d9ffe50e8a3",
   "use": {
     "extensions": [
       ".edb"
