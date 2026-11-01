@@ -3,7 +3,7 @@ id: encryptor/backup-infrastructure
 title: Backup servers, immutable storage and hypervisors
 when: A backup server, immutable store, hypervisor or recovery setting was affected.
 needs: []
-tools: []
+tools: [backup_destruction_correlate]
 requires_host: []
 ---
 
@@ -24,7 +24,9 @@ keys and the whole backup chain are still available.
 **Hypervisors and network storage.** For a hypervisor read `platforms/esxi-hypervisors`;
 for network storage read `platforms/nas-storage`. They hold what to preserve, how
 to separate a guest's compromise from the host's or the storage's, and which tools
-of the virtualization pack read the evidence, if it is loaded.
+of the virtualization pack read the evidence, if it is loaded. Their answers (the audit,
+the chain check) go by reference to `backup_destruction_correlate`, which keeps what a
+job reported apart from a chain that is missing its base.
 
 **Boot recovery and stopped services.** Record changes to the recovery
 configuration (the boot manager's recovery and boot-status settings, the recovery
