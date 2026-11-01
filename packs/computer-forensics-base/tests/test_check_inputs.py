@@ -38,6 +38,25 @@ class CheckInputs(Case):
         for key in ("modified", "missing", "added"):
             self.assertEqual(r.json[key], [])
 
+    def test_a_directory_that_cannot_be_listed_is_unreadable_and_has_a_row_in_the_receipts(self):
+        if os.geteuid() == 0:
+            self.skipTest("root lists any directory")
+        a = b"alpha"
+        self.write("inputs/a.bin", a)
+        self.write("inputs/locked/x.bin", b"x")
+        self.manifest([{"path": "inputs/a.bin", "bytes": 5, "sha256": sha(a)}])
+        os.chmod(self.path("inputs/locked"), 0)
+        try:
+            r = self.check()
+        finally:
+            os.chmod(self.path("inputs/locked"), 0o700)
+        self.assertEqual([u["path"] for u in r.json["unreadable"]], ["inputs/locked"])
+        rows = [json.loads(x) for x in self.read(r.json["receipts_file"]).splitlines()]
+        locked = [x for x in rows if x["path"] == "inputs/locked"]
+        self.assertEqual(len(locked), 1, rows)
+        self.assertTrue(locked[0]["result"].startswith("unreadable: "), locked)
+        self.assertEqual(r.json["status"], "partial")
+
     def test_a_missing_digest_is_a_failure_not_a_size_check(self):
         self.write("inputs/a.bin", b"alpha")
         self.manifest([{"path": "inputs/a.bin", "bytes": 5}])

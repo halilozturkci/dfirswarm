@@ -4,7 +4,7 @@
   "params": {
     "max_seconds": {
       "type": "integer",
-      "description": "Time budget in seconds for the whole check (default 1500, at most 1700, inside the tool's own 1800 second limit). Hashing stops a fifth of it earlier (at most 60 seconds), so the walk over inputs/ for added files has time; files and directories not reached are reported as not_checked, the status is partial and the run fails"
+      "description": "Time budget in seconds for reading the manifest and hashing (default 1500, at most 1700). Hashing runs to max_seconds; the walk over inputs/ for added files then gets a fifth of it more (at least 1 and at most 60 seconds), so the whole run takes at most max_seconds plus that, inside the tool's own 1800 second limit; files and directories not reached are reported as not_checked, the status is partial and the run fails"
     }
   },
   "runtime": "python3",
@@ -12,6 +12,6 @@
   "timeout_seconds": 1800,
   "by": "sfcc304",
   "at": "2026-09-18T15:41:47.088Z",
-  "version": 9,
-  "sha256": "27bcf3560a13608554689afef5d4318bf33f7fed7b31eeeddeed0fe3c06ff276"
+  "version": 10,
+  "sha256": "e46dcacebdfeef72c99a8ebaf8ad5d359bb73e0fda011e0c9b3130f10873b245"
 }

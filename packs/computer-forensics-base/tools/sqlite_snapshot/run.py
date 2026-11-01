@@ -113,7 +113,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "sqlite_snapshot", "version": 4}
+TOOL = {"name": "sqlite_snapshot", "version": 5}
 CHUNK = 1 << 20
 MAX_BYTES_DEFAULT = 8 * 1024 ** 3
 MAX_BYTES_CEILING = 1024 ** 4
@@ -470,6 +470,19 @@ def entropy(page):
     return -sum(c / len(page) * math.log2(c / len(page)) for c in counts.values())
 
 
+def open_regular(path):
+    """open(path, "rb") for a path that was just checked as a regular file: opened without waiting (O_NONBLOCK) and looked at with fstat on the
+    descriptor, so a FIFO or a device put in its place after the check is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
 def private_open(path, mode="wb"):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     return os.fdopen(fd, mode)
@@ -512,7 +525,7 @@ def read_wal(path, db_page_size, deadline):
     if size < 32:
         info.update(state="shorter than its 32-byte header", valid_header=False, frames_in_file=0, frames_valid=0, frames_committed=0, frames_uncommitted_valid=0)
         return info
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         head = fh.read(32)
         magic, version, page, seq, salt1, salt2, ck1, ck2 = struct.unpack(">IIIIIIII", head)
         info.update(magic="%08x" % magic, format_version=version, page_size=page, checkpoint_sequence=seq, salt1="%08x" % salt1, salt2="%08x" % salt2)
@@ -577,7 +590,7 @@ def read_wal(path, db_page_size, deadline):
 
 
 def journal_state(path):
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         head = fh.read(28)
     if head[:8] == JOURNAL_MAGIC:
         return "header present: a rollback journal that was not rolled back (a write was interrupted)"
@@ -592,7 +605,7 @@ def copy_hashing(src, dst_path, deadline, limit_left):
     """Copy src to a new file at dst_path (exclusive, 0600), streamed through sha256. Returns (bytes, sha256)."""
     h = hashlib.sha256()
     n = 0
-    with open(src, "rb") as fi, private_open(dst_path) as fo:
+    with open_regular(src) as fi, private_open(dst_path) as fo:
         while True:
             if time.monotonic() > deadline:
                 raise TimeoutError("the time budget ended the copy after %d bytes" % n)
@@ -653,7 +666,7 @@ def main():
     real = os.path.realpath(db)
     try:
         size = os.path.getsize(real)
-        with open(real, "rb") as fh:
+        with open_regular(real) as fh:
             first = fh.read(4096)
     except OSError as exc:
         fail("the database cannot be read: %s" % describe(exc), db_path=scrub(db))

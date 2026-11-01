@@ -102,7 +102,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "ioc_scan", "version": 11}
+TOOL = {"name": "ioc_scan", "version": 12}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -384,14 +384,34 @@ class Locators:
         except OSError as exc:
             self.error = "the whole result could not be kept (%s: %s)" % (self.path.parent, exc.strerror or exc)
 
+    def _give_up(self, exc):
+        """The file of every locator cannot be written (a full disk, a file-size limit): it is closed and removed, the counts and the page stay
+        whole, and the answer says so (all_results_error)."""
+        self.error = "the whole result could not be kept (%s: %s)" % (self.path.parent, getattr(exc, "strerror", None) or exc.__class__.__name__)
+        try:
+            if self.fh:
+                self.fh.close()
+        except OSError:
+            pass
+        try:
+            if self.tmp is not None:
+                os.unlink(self.tmp)
+        except OSError:
+            pass
+        self.fh = self.tmp = None
+
     def add(self, row, show):
         self.total += 1
         if self.fh:
             line = json.dumps(row, ensure_ascii=True) + "\n"
             if self.stopped_at is None and self.written < ROW_CAP and self.bytes + len(line) <= LOCATORS_BYTES_MAX:
-                self.fh.write(line)
-                self.written += 1
-                self.bytes += len(line)
+                try:
+                    self.fh.write(line)
+                except OSError as exc:
+                    self._give_up(exc)
+                else:
+                    self.written += 1
+                    self.bytes += len(line)
             elif self.stopped_at is None:
                 self.stopped_at = row["offset"]       # from the first row that did not fit on, none is written: the file is a prefix
         if show and len(self.page) < self.limit:
@@ -418,6 +438,17 @@ class Locators:
 
     def finish(self):
         info = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        try:
+            self._store(info)
+        except OSError as exc:              # the last bytes or the publishing failed: the file is dropped, the page and counts stay whole
+            self._give_up(exc)
+            for k in [k for k in info if k.startswith("all_results") or k == "earlier_answers"]:
+                del info[k]
+        if self.error:
+            info["all_results_error"] = self.error
+        return info
+
+    def _store(self, info):
         if self.fh:
             self.fh.flush()
             os.fsync(self.fh.fileno())
@@ -437,9 +468,6 @@ class Locators:
                                                 "the counts and the inline page are of the whole scan. To list the rest, scan again from start=all_results_stopped_at_offset")
             else:
                 os.unlink(self.tmp)
-        if self.error:
-            info["all_results_error"] = self.error
-        return info
 
 
 def fail(message, **extra):
@@ -478,7 +506,7 @@ def main():
     started = time.monotonic()
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
@@ -673,6 +701,9 @@ def main():
         result["stopped"] = stopped or stopped_short
     if stopped:
         result["next_start"] = next_start
+    if locators.error and result["truncated"]:
+        result["status"] = "partial"
+        result["status_basis"] += "; the file that should hold every locator could not be written (all_results_error), so the occurrences past the page are counted, not listed"
     if secret.stopped_at is not None:
         result["status"] = "partial"
         result["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"

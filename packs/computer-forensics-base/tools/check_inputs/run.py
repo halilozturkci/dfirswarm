@@ -13,8 +13,9 @@ file as it is checked, so a long hash leaves a record even if the run is cut sho
 The answer lists at most LISTED paths of each kind (with the count of all of them); the receipts
 file holds a row for every one, the files added under inputs/ and the manifest's malformed and
 duplicate entries included. The walk over inputs/ for added files reads the clock for every entry
-and, when its time runs out (the budget is for the manifest and the hashing; the walk has a fifth
-of it more, at most 60 seconds), says where it stopped as a `not_checked` entry.
+and, when its time runs out (the budget is for the manifest and the hashing, which run to max_seconds; the walk then has
+a fifth of it more, at least 1 and at most 60 seconds, so the whole run can take max_seconds plus that), says where it
+stopped as a `not_checked` entry.
 
 `status` is complete when every file was checked and the walk finished, whatever they showed;
 partial when a file is `not_checked`, `unreadable`, `malformed` or `digest_missing` (not
@@ -106,7 +107,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "check_inputs", "version": 9}
+TOOL = {"name": "check_inputs", "version": 10}
 MANIFEST = "inputs.json"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SPECIALS = {"fifo": stat.S_ISFIFO, "socket": stat.S_ISSOCK, "char": stat.S_ISCHR, "block": stat.S_ISBLK}
@@ -405,6 +406,13 @@ walk_entries = 0
 walk_stopped = None
 
 
+def unlisted(path, exc):
+    """A directory under inputs/ that could not be listed: named in `unreadable` and given a row in the receipts, like a file that cannot be read."""
+    why = "a directory under inputs/ could not be listed: %s" % (exc.strerror or exc)
+    unreadable.append({"path": path, "why": why})
+    receipts.add({"path": path, "kind": "directory", "result": "unreadable: %s" % why})
+
+
 def walk_for_added(walked, under, top, held):
     """The names under `walked` that the manifest does not list, one directory at a time and the clock read for every entry.
     A directory link is a name of its own, not a place to walk into. Returns where the clock stopped it, or None."""
@@ -416,7 +424,7 @@ def walk_for_added(walked, under, top, held):
         try:
             scan = os.scandir(root)
         except OSError as exc:
-            unreadable.append({"path": under if where == "." else under + where, "why": "a directory under inputs/ could not be listed: %s" % (exc.strerror or exc)})
+            unlisted(under if where == "." else under + where, exc)
             continue
         with scan:
             while True:
@@ -425,7 +433,7 @@ def walk_for_added(walked, under, top, held):
                 except StopIteration:
                     break
                 except OSError as exc:
-                    unreadable.append({"path": under if where == "." else under + where, "why": "a directory under inputs/ could not be listed: %s" % (exc.strerror or exc)})
+                    unlisted(under if where == "." else under + where, exc)
                     break
                 walk_entries += 1
                 if time.monotonic() > deadline:

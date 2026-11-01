@@ -88,7 +88,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 RUN = {"proc": None, "size": 0}      # the icat running and the bytes written, for a stop
 
-TOOL = {"name": "icat_extract", "version": 12}
+TOOL = {"name": "icat_extract", "version": 13}
 OFFSET_MAX = 1 << 40              # sectors: an explicit offset above this is not a volume offset (512 TiB at 512 bytes a sector)
 BLOCK = 1 << 20
 MAX_BYTES_DEFAULT = 32 * 1024 ** 3
@@ -289,7 +289,10 @@ def resolve_output(out):
     modified.
     """
     root = Path.cwd().resolve()
-    dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    try:
+        dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:     # a symlink loop, a name too long, a lone surrogate
+        fail("output cannot be resolved: %s" % (exc.__class__.__name__ if not getattr(exc, "strerror", None) else exc.strerror), output=str(out))
     if dest != root and root not in dest.parents:
         fail("output must stay inside the run directory", output=str(out))
     inputs = root / "inputs"
@@ -408,8 +411,16 @@ def _stopped(signum):
 
 install_signal_handlers(_stopped)
 with os.fdopen(out_fd, "wb") as out, os.fdopen(err_fd, "wb") as errf:
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
-    RUN["proc"] = proc
+    # A stop that arrives between the child's start and its being recorded would leave icat running: the stop signals are held back for
+    # these two statements and delivered right after, when the handler can end the child by its pid. (A stop before this point finds no
+    # child: it answers, and the empty .partial and .icat.stderr files that were made new are named in the answer.)
+    _stops = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
+    signal.pthread_sigmask(signal.SIG_BLOCK, _stops)
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
+        RUN["proc"] = proc
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, _stops)
     pipe = proc.stdout.fileno()
     try:
         while True:

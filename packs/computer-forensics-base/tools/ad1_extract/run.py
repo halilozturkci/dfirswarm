@@ -904,11 +904,15 @@ def main():
 
     writing = [None]                      # the file being written, so that a stop can keep it under a name that says it is not whole
 
+    held_gaps = [None]                    # the gaps file, so that a stop closes it with every row it was given (gaps.jsonl is whole lines up to the stop)
+
     def _stopped(signum):
         try:
             man.flush()
         except (OSError, ValueError):
             pass
+        if held_gaps[0] is not None:
+            held_gaps[0].close()
         kept = None
         if writing[0] is not None and os.path.lexists(writing[0]):
             k, kept = 0, str(writing[0]) + ".partial"
@@ -1066,6 +1070,7 @@ def main():
         # Read to its end under the call's clock; the gaps with non-zero bytes, or not read to their end, are all in ad1_extract.gaps.jsonl
         # (at most GAPS_FILE_MAX of them), the first AD1_GAPS_LISTED in the answer.
         gaps = GapFile(str(out / GAPS))
+        held_gaps[0] = gaps
         try:
             unaccounted = ad1_unaccounted(img, deadline, gaps.add)
         finally:

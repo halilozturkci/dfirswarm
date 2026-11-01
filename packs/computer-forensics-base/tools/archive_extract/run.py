@@ -70,7 +70,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 7}
+TOOL = {"name": "archive_extract", "version": 8}
 STARTED = time.monotonic()               # the run's clock starts with the tool: the archive hash and the 7z banner are on it too
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
@@ -2731,6 +2731,12 @@ def main():
         eng.status = "interrupted"
         eng.write_receipt()
         eng.finish_files()
+        # one document on stdout: a stop is not a status (the statuses are complete, partial and failed), it is partial with interrupted true
+        print(json.dumps({"ok": False, "tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "out_dir": scrub(str(dest)),
+                          "members_seen": eng.rows, "next_index": eng.next_index, "receipt": eng.receipt_path.name if not eng.receipt_error else None,
+                          "receipt_error": eng.receipt_error,
+                          "status_basis": "the tool was stopped by signal %d: the members already written are on disk (an unfinished one is a .partial file), "
+                                          "members_file lists them, and next_index is where a run with from_index and resume true goes on" % signum}), flush=True)
     STATE["last_word"] = last_word
 
     dec = None

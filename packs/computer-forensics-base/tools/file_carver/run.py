@@ -119,7 +119,7 @@ class _Held:
 HELD = _Held()             # the hidden file of the carved copy being written
 PAGES.append(HELD)
 
-TOOL = {"name": "file_carver", "version": 5}
+TOOL = {"name": "file_carver", "version": 6}
 CHUNK = 1 << 20
 DEFAULT_MAX = 100_000_000
 PDF_EOF_LIMIT = 1000
@@ -183,11 +183,24 @@ MAGICS = {
 }
 
 
+def open_regular(path):
+    """open(path, "rb") for a path that was just checked as a regular file: opened without waiting (O_NONBLOCK) and looked at with fstat on the
+    descriptor, so a FIFO or a device put in its place after the check is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
 class Src:
     """The source file, read at absolute offsets, a block at a time."""
 
     def __init__(self, path):
-        self.fh = open(path, "rb")
+        self.fh = open_regular(path)
         self.size = os.fstat(self.fh.fileno()).st_size
         self.origin = 0                # where the candidate starts, for the distance a refusal names
         self.reached = 0               # the furthest byte any read has reached

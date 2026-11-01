@@ -107,6 +107,8 @@ CHILD = {"proc": None}     # the program being run, ended by its pid on a stop
 
 def run_child(argv, timeout, **kwargs):
     """subprocess.run with its output captured, with the child recorded so that a stop can end it by its pid."""
+    if argv and isinstance(argv[-1], str) and os.path.lexists(argv[-1]):
+        open_regular(argv[-1]).close()         # the image was checked a moment ago: a FIFO or device put in its place is refused, not handed to mmls or fsstat
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
     CHILD["proc"] = proc
     try:
@@ -137,7 +139,7 @@ class _Held:
 HELD = _Held()             # the hidden file of the program output being kept
 PAGES.append(HELD)
 
-TOOL = {"name": "image_layout", "version": 6}
+TOOL = {"name": "image_layout", "version": 7}
 CHILD_TIMEOUT = 120
 TOTAL_BUDGET = 270          # seconds, under the manifest's 300
 SECTOR_MAX = 65536
@@ -179,12 +181,25 @@ def run(argv, deadline):
             "stdout": p.stdout.decode("utf-8", "replace"), "stderr": p.stderr.decode("utf-8", "replace").strip()}
 
 
+def open_regular(path):
+    """open(path, "rb") for a path that was just checked as a regular file: opened without waiting (O_NONBLOCK) and looked at with fstat on the
+    descriptor, so a FIFO or a device put in its place after the check is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
 def container_of(path):
     """Name the container from its first bytes (and, for a fixed VHD, its last
     512), not from its extension. (name, basis): the basis says how sure that is."""
     try:
         size = os.path.getsize(path)
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             head = fh.read(512)
             tail = b""
             if size >= 512:

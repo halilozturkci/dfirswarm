@@ -88,7 +88,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "sig_carve", "version": 9}
+TOOL = {"name": "sig_carve", "version": 10}
 WINDOW = 8 * 1024 * 1024
 BUDGET_SECONDS = 100              # inside the manifest's 120: past it the scan stops, says so, and names where to continue
 CONTEXT_MAX = 4096
@@ -369,6 +369,19 @@ SIGS = {
 }
 
 
+def open_regular(path):
+    """open(path, "rb") for a path that was just checked as a regular file: opened without waiting (O_NONBLOCK) and looked at with fstat on the
+    descriptor, so a FIFO or a device put in its place after the check is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
 def _same_bytes(a, b, deadline=None):
     """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
     (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
@@ -477,7 +490,7 @@ def main():
                                           "run again with start=%d to go on" % (signum, scanned)}), flush=True)
     install_signal_handlers(_stopped)
     try:
-        fh = open(path, "rb")
+        fh = open_regular(path)
     except OSError as exc:
         fail("the file cannot be opened: %s" % (exc.strerror or exc), path=path)
     with fh:

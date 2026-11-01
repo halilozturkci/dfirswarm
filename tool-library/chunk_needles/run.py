@@ -90,7 +90,7 @@ PAGES = []                 # objects with a hidden temporary file (_tmp) that a 
 CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
 PROGRESS = {"scanned": 0}
 
-TOOL = {"name": "chunk_needles", "version": 14}
+TOOL = {"name": "chunk_needles", "version": 15}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -293,6 +293,7 @@ def _resolve_catalog(explicit=None):
     raise SystemExit('{"ok": false, "error": "several catalogues; pass catalog=", "candidates": %s}' % json.dumps(subs))
 
 import errno
+import select
 import hashlib
 import tempfile
 from pathlib import Path
@@ -738,6 +739,32 @@ def _stopped(signum):
 install_signal_handlers(_stopped)
 
 
+def open_regular(path):
+    """open(path, "rb") for a path that was just checked as a regular file: opened without waiting (O_NONBLOCK) and looked at with fstat on the
+    descriptor, so a FIFO or a device put in its place after the check is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
+def read_some(pipe, chunk, deadline):
+    """Up to `chunk` bytes from icat's pipe, waiting on the clock: b"" at the end of the stream, None when the clock ran out first. A blocking
+    read would wait for an icat that stalls (a damaged image, a hung disk) for as long as it likes."""
+    fd = pipe.fileno()
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        ready, _, _ = select.select([fd], [], [], min(left, 1.0))
+        if ready:
+            return os.read(fd, chunk)
+
+
 def scan_fh(fh, source, total=None):
     counts = {n: {"ascii": 0, "utf16le": 0} for n in need_list}
     key = [source["label"], source.get("image"), source.get("volume_offset_sectors"), source.get("inode"), source.get("sector_size"), context]
@@ -779,9 +806,13 @@ def scan_fh(fh, source, total=None):
             if cut[0] is None and taken[0] % CLOCK_EVERY == 0 and time.monotonic() > deadline:
                 cut[0] = at
         return True
+    piped = source["kind"] == "icat"
     try:
         while stopped is None:
-            data = fh.read(chunk)
+            data = read_some(fh, chunk, deadline) if piped else fh.read(chunk)
+            if data is None:                    # icat said nothing until the clock ran out: what it had given is scanned, the rest is the next scan's
+                stopped = scanner.done
+                break
             if not data:
                 break
             for off in range(0, len(data), FEED):
@@ -813,7 +844,7 @@ if path:
     source = {"kind": "file", "path": path, "bytes": os.path.getsize(path)}
     source["label"] = path
     try:
-        with open(path, "rb") as f:
+        with open_regular(path) as f:
             hits, scanned, stopped = scan_fh(f, source, source["bytes"])
     except OSError as exc:
         fail("cannot read %s: %s" % (path, exc.strerror or exc))

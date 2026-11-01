@@ -119,7 +119,7 @@ class _Held:
 HELD = _Held()             # the hidden file of the carved copy being written
 PAGES.append(HELD)
 
-TOOL = {"name": "file_carver", "version": 5}
+TOOL = {"name": "file_carver", "version": 6}
 CHUNK = 1 << 20
 DEFAULT_MAX = 100_000_000
 PDF_EOF_LIMIT = 1000
@@ -153,7 +153,10 @@ def resolve_output(out):
     if not isinstance(out, str) or not out or "\x00" in out:
         fail("output is a path under the run directory")
     root = Path.cwd().resolve()
-    dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    try:
+        dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:     # a symlink loop, a name too long, a lone surrogate
+        fail("output cannot be resolved: %s" % (exc.__class__.__name__ if not getattr(exc, "strerror", None) else exc.strerror), output=str(out))
     if dest == root or root not in dest.parents:
         fail("output must stay inside the run directory, not be the run directory itself", output=str(out))
     inputs = root / "inputs"
@@ -180,11 +183,24 @@ MAGICS = {
 }
 
 
+def open_regular(path):
+    """open(path, "rb") for a path that was just checked as a regular file: opened without waiting (O_NONBLOCK) and looked at with fstat on the
+    descriptor, so a FIFO or a device put in its place after the check is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
 class Src:
     """The source file, read at absolute offsets, a block at a time."""
 
     def __init__(self, path):
-        self.fh = open(path, "rb")
+        self.fh = open_regular(path)
         self.size = os.fstat(self.fh.fileno()).st_size
         self.origin = 0                # where the candidate starts, for the distance a refusal names
         self.reached = 0               # the furthest byte any read has reached
@@ -666,7 +682,7 @@ def carve(path, offset, sig_type, max_size, dest=None):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
@@ -695,7 +711,7 @@ def main():
     except Refuse as exc:
         fail(str(exc), **{"sig_type": sig_type, **exc.extra})
     except OSError as exc:
-        fail("the source could not be read: %s" % (exc.strerror or exc), path=path)
+        fail("the source could not be read or the output could not be written: %s" % (exc.strerror or exc), path=path)
     except (struct.error, ValueError, OverflowError) as exc:
         fail("a header of this signature is malformed: %s" % exc, sig_type=sig_type, offset=offset)
     if dest is not None:
