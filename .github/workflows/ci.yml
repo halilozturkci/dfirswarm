@@ -411,13 +411,18 @@ jobs:
     # stand-ins the other suites use. The programs are installed from the pins
     # in the pack's requires/ (the download's sha256 is checked before anything
     # is unpacked; FLOSS installs from its hash lock with --require-hashes), so
-    # this job tests the versions the images carry. It REPORTS: the test step
-    # has continue-on-error, so a failing case shows as a warning on the run and
-    # in the job's log, and does not fail CI green. Whether it should gate is
-    # the owner's call; to make it gate, drop continue-on-error from that step.
-    # amd64 only (the runner's architecture).
+    # this job tests the versions the images carry (Python 3.11, the one the
+    # FLOSS lock is resolved for). It REPORTS: continue-on-error is on the JOB,
+    # so a failure of any step (the install of a program, a hash that does not
+    # match, a case) shows as a warning and does not fail CI green. Whether it
+    # should gate is the owner's call; to make it gate, drop continue-on-error
+    # from the job. It runs when the select job says the Python 3.11 job is
+    # needed (a pack, the tool library, an image file or a pack-tool suite
+    # changed, and every nightly run). amd64 only (the runner's architecture).
     name: reverse-engineering · real programs (reports, does not gate)
     needs: select
+    if: needs.select.outputs.py311 == 'true'
+    continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -427,6 +432,9 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
       - run: npm ci
       - name: Install the programs the pack pins
         run: |
