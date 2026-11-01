@@ -2208,6 +2208,21 @@ ARGS = frozenset(("path", "user", "max_speed_kmh", "burst_window_seconds", "burs
 # Codes the tool lists as a prompt inside a sign-in flow (a multi-factor challenge, a registration, a keep-me-signed-in
 # question): the flow goes on in a later event of its own. A heuristic list; failure_reason is the provider's own word.
 INTERRUPT_CODES = frozenset(("50074", "50076", "50079", "50125", "50140", "50158"))
+# Any other code is not a prompt here: a non-zero number is a failure when no Status word decides, and so feeds a burst. That includes codes
+# the provider documents as steps of a flow (50072, 50097 and 50199 among them: their meanings were not checked against Microsoft's
+# current reference for this tool, so they are counted as failures and the manifest and the skill say so). A value that is neither a
+# number nor a success or failure word (for example the text "unverifiable") is neither: success null, counted in unknown_outcome.
+
+# The analysis after the read has a clock of its own. The read stops at time_limit_seconds (at most 480); the analysis stops at
+# ANALYSIS_ENDS_SECONDS after the call began, whatever the read used, which leaves the 600-second timeout a margin of 60 seconds for the
+# account in flight, the pages and the answer. It is checked before each account and inside the database's sort, and an account whose
+# turn did not come is counted and named (the first FIRST_PROBLEMS), never left out silently.
+ANALYSIS_ENDS_SECONDS = 540
+ANALYSIS_DEADLINE = [None]
+
+
+def analysis_out_of_time():
+    return ANALYSIS_DEADLINE[0] is not None and time.monotonic() > ANALYSIS_DEADLINE[0]
 
 
 class Fields(dict):
@@ -2477,6 +2492,7 @@ def main():
     field_limit = record_cap          # a CSV field may be as large as the record the call allows
     write_values = want_bool(args, "write_values")
     seconds = start_clock(args)
+    ANALYSIS_DEADLINE[0] = DEADLINE[0] - seconds + ANALYSIS_ENDS_SECONDS
     if out_file is not None:
         out_file = resolve_output(out_file, "out_file")
     try:
@@ -2497,9 +2513,14 @@ def main():
                  state.statuses["no_zone"], r[0], r[1], r[2]), record=r[0], line=r[1], records_without_a_zone=state.statuses["no_zone"])
     if state.statuses.get("ambiguous_date_order") and not order:
         r = state.first_bad["ambiguous_date_order"]
-        fail("%d record(s) carry a day/month/year time whose two leading fields are both 12 or less, and no unambiguous string in the file proves the order "
-             "(the first is record %d at line %s: %s). Say which with date_order: dmy or mdy." % (state.statuses["ambiguous_date_order"], r[0], r[1], r[2]),
-             record=r[0], line=r[1], ambiguous_records=state.statuses["ambiguous_date_order"])
+        both = state.order["dmy"] and state.order["mdy"]
+        fail("%d record(s) carry a day/month/year time whose two leading fields are both 12 or less, and %s "
+             "(the first is record %d at line %s: %s). Say which with date_order: dmy or mdy." % (
+                 state.statuses["ambiguous_date_order"],
+                 ("the file proves both orders: %d row(s) can only be day/month/year and %d only month/day/year, so one order cannot be taken from it" % (state.order["dmy"], state.order["mdy"]))
+                 if both else "no unambiguous string in the file proves the order", r[0], r[1], r[2]),
+             record=r[0], line=r[1], ambiguous_records=state.statuses["ambiguous_date_order"],
+             **({"rows_only_day_month": state.order["dmy"], "rows_only_month_day": state.order["mdy"]} if both else {}))
 
     census_files = LosslessPage("file_census", limit)
     rejected = RejectLog(LosslessPage("rejected_records", limit))
@@ -2737,6 +2758,10 @@ def main():
     withheld_summary = withheld.summary()
     replaced = row.get("replacement_characters", 0)
     complete = (row["status"] == "read" and not pagination and replaced == 0)
+    read_whole = complete
+    complete = complete and not analysis["cut"]
+    analysis_basis = ("the analysis of the events ended at its own time limit (%d s after the call began), after the read: %d account(s) were not analysed (their leads are absent, not empty; "
+                      "see coverage.users_not_analysed_by_clock and users_not_analysed_by_clock_named)" % (ANALYSIS_ENDS_SECONDS, analysis["not_analysed"])) if analysis["cut"] else None
     limit_basis = None
     if limit_stop and not stopped_early:
         limit_basis = ("a limit of this tool's own stopped the read before any event: %s; raise it (max_expanded_bytes, max_record_bytes) and run again; "
@@ -2747,15 +2772,18 @@ def main():
                         "also, if any, part of the file that was not read as sign-in records, a next page that was not supplied, or events with a time that could not be decoded "
                         "(see coverage, file_problems, rejected_records and pagination_markers)" % (seconds, counts["events"])) if stopped_early else
                        limit_basis or
-                       "part of the file was not read as sign-in records, or the export names a next page that was not supplied, or events have a time that could not be decoded "
-                       "(see coverage, file_problems, rejected_records and pagination_markers)",
+                       (analysis_basis if read_whole else
+                        "part of the file was not read as sign-in records, or the export names a next page that was not supplied, or events have a time that could not be decoded "
+                        "(see coverage, file_problems, rejected_records and pagination_markers)" + ("; also, " + analysis_basis if analysis_basis else "")),
                        "no sign-in record could be read from the file (see file_problems)")
     answer = {
         "parser": PARSER, **status, "path": shown_path(path),
         "coverage": {**counts, "files_found": 1, "time_limit_seconds": seconds, "stopped_by_time_limit": stopped_early, "max_expanded_bytes": max_expanded, "max_record_bytes": record_cap, "limit_stop": limit_stop,
                      "time_statuses": time_statuses, "bytes_read": row["bytes_read"], "replacement_characters": replaced,
                      "analysis_kept_in": db_where, "users_analysed": analysis["users"], "users_not_analysed_over_cap": analysis["over_cap"],
-                     "users_not_analysed_named": analysis["over_named"], "rejected_records_not_listed": rejected.total_unlisted},
+                     "users_not_analysed_named": analysis["over_named"], "analysis_stopped_by_time_limit": analysis["cut"],
+                     "analysis_ends_seconds_after_the_call_began": ANALYSIS_ENDS_SECONDS, "users_not_analysed_by_clock": analysis["not_analysed"],
+                     "users_not_analysed_by_clock_named": analysis["not_analysed_named"], "rejected_records_not_listed": rejected.total_unlisted},
         "assumptions": [a for a in (
             ("times with no zone were read as UTC because assume_utc was set: %d event(s)" % assumed["assume_utc_applied_to"]) if assumed["assume_utc_applied_to"] else None,
             ("times in a column named Date (UTC) were read as UTC on the column's own say-so: %d event(s)" % assumed["column_named_utc"]) if assumed["column_named_utc"] else None,
@@ -2808,105 +2836,126 @@ def analyse(db, limit, ceiling, window, min_failures, min_prompts):
     users = over_cap = burst_no = 0
     over_named = []
     window_ns = int(window * 1000000000)
+    cut, done_through = False, None          # done_through: the last account key whose turn is over (analysed, or over the series cap)
+    db.set_progress_handler(lambda: 1 if ANALYSIS_DEADLINE[0] is not None and time.monotonic() > ANALYSIS_DEADLINE[0] else 0, 200000)
 
     def ref(r):
         return {k: v for k, v in (("event_id", r[16]), ("correlation_id", r[17]), ("record", r[18]), ("line", r[19]), ("event_index", r[20]), ("time", r[4])) if v is not None}
 
-    for ukey, group in itertools.groupby(cur, key=lambda r: r[0]):
-        series = list(itertools.islice(group, SERIES_CAP + 1))
-        users += 1
-        user = series[0][1]
-        if len(series) > SERIES_CAP:
-            over_cap += 1
-            if len(over_named) < FIRST_PROBLEMS:
-                over_named.append(user)
-            for _ in group:
-                pass
-            continue
-        # single factor
-        for r in series:
-            if r[5] == 1 and str(r[12] or "").replace(" ", "").lower() == SINGLE:
-                single.add({"user": user, "application": r[2], "address": r[6], "client": r[11], "authentication": r[12], "conditional_access": r[13],
-                            "time": r[4], **ref(r)})
-        # bursts and prompts: per account and application, within the window before a success
-        runs, ints = {}, {}
-        for r in series:
-            if r[3] is None:
+    try:
+        for ukey, group in itertools.groupby(cur, key=lambda r: r[0]):
+            if analysis_out_of_time():
+                cut = True
+                break
+            series = list(itertools.islice(group, SERIES_CAP + 1))
+            users += 1
+            user = series[0][1]
+            if len(series) > SERIES_CAP:
+                over_cap += 1
+                if len(over_named) < FIRST_PROBLEMS:
+                    over_named.append(user)
+                for _ in group:
+                    pass
+                done_through = ukey
                 continue
-            if r[5] == 0:
-                runs.setdefault(r[2], []).append(r)
-            elif r[21] == "interrupt":
-                ints.setdefault(r[2], []).append(r)
-            elif r[5] == 1:
-                fails = [f for f in runs.get(r[2], []) if r[3] - f[3] <= window_ns]
-                if len(fails) >= min_failures:
-                    codes, addrs = {}, {}
-                    for f in fails:
-                        codes[f[14]] = codes.get(f[14], 0) + 1
-                        addrs[f[6]] = addrs.get(f[6], 0) + 1
-                    burst_no += 1
-                    for f in fails:
-                        members.add({"burst": burst_no, "role": "failure", **ref(f)})
-                    members.add({"burst": burst_no, "role": "success", **ref(r)})
-                    bursts.add({"burst": burst_no, "user": user, "application": r[2], "failures_before": len(fails), "first_failure_at": fails[0][4],
-                                "last_failure_at": fails[-1][4], "succeeded_at": r[4], "success_address": r[6], "success_result": r[15],
-                                "failure_addresses": addrs, "success_address_among_failure_addresses": r[6] in addrs, "failure_result_codes": codes,
-                                "window_seconds": window, "success": ref(r), "failure_events": [ref(f) for f in fails[:10]], "failure_events_total": len(fails),
-                                "failure_events_listed_in": "pages.burst_members (burst %d)" % burst_no if len(fails) > 10 else "all listed here"})
-                waiting = [p for p in ints.get(r[2], []) if r[3] - p[3] <= window_ns]
-                if len(waiting) >= min_prompts:
-                    codes, addrs = {}, {}
-                    for p in waiting:
-                        codes[p[14]] = codes.get(p[14], 0) + 1
-                        addrs[p[6]] = addrs.get(p[6], 0) + 1
-                    prompts.add({"user": user, "application": r[2], "prompts_before": len(waiting), "first_prompt_at": waiting[0][4], "succeeded_at": r[4],
-                                 "prompt_codes": codes, "prompt_addresses": addrs, "success_address": r[6], "window_seconds": window,
-                                 "why": "interrupted sign-ins are the prompts of a normal multi-factor flow; this many in a row before a success is a lead (many prompts, "
-                                        "then an acceptance, is what the multi-factor-fatigue hypothesis looks like), not a conclusion", "success": ref(r)})
-                runs[r[2]] = []
-                ints[r[2]] = []
-            else:
-                runs[r[2]] = []
-                ints[r[2]] = []
-        # addresses seen once among this account's events in this export
-        seen = {}
-        for r in series:
-            if r[6]:
-                seen[r[6]] = seen.get(r[6], 0) + 1
-        for r in series:
-            if r[5] == 1 and r[6] and seen.get(r[6]) == 1 and len(seen) > 2:
-                seen_once.add({"user": user, "time": r[4], "address": r[6], "country": r[7], "client": r[11], "distinct_addresses_for_account": len(seen),
-                               "why": "this address occurs once among this account's events in this export; the export may not hold the account's earlier history",
-                               **ref(r)})
-        # travel: adjacent successes (equal times included: two places at one second)
-        previous = None
-        for r in series:
-            if r[5] != 1 or r[3] is None:
-                continue
-            if previous is not None:
-                seconds = (r[3] - previous[3]) / 1e9
-                if 0 <= seconds < 86400:
-                    pair = None
-                    if None not in (previous[9], previous[10], r[9], r[10]):
-                        km = distance((previous[9], previous[10]), (r[9], r[10]))
-                        if seconds == 0:
-                            if km > 100:
-                                pair = {"kilometres": round(km, 1), "implied_speed_kmh": None, "coarse": False, "basis": "coordinates, the same second",
-                                        "why": "two successes at the same recorded second %.0f km apart: no speed can be computed" % km}
-                        else:
-                            speed = km / (seconds / 3600)
-                            if speed > ceiling and km > 100:
-                                pair = {"kilometres": round(km, 1), "implied_speed_kmh": round(speed, 1), "coarse": False, "basis": "coordinates"}
-                    elif previous[7] and r[7] and str(previous[7]).lower() != str(r[7]).lower() and seconds < 3600:
-                        pair = {"coarse": True, "basis": "country change only", "why": "the export carries a country but no coordinates"}
-                    if pair:
-                        travel.add({"user": user, "from": {"time": previous[4], "address": previous[6], "country": previous[7], "city": previous[8], **ref(previous)},
-                                    "to": {"time": r[4], "address": r[6], "country": r[7], "city": r[8], **ref(r)}, "seconds_apart": round(seconds, 1), **pair})
-            previous = r
+            # single factor
+            for r in series:
+                if r[5] == 1 and str(r[12] or "").replace(" ", "").lower() == SINGLE:
+                    single.add({"user": user, "application": r[2], "address": r[6], "client": r[11], "authentication": r[12], "conditional_access": r[13],
+                                "time": r[4], **ref(r)})
+            # bursts and prompts: per account and application, within the window before a success
+            runs, ints = {}, {}
+            for r in series:
+                if r[3] is None:
+                    continue
+                if r[5] == 0:
+                    runs.setdefault(r[2], []).append(r)
+                elif r[21] == "interrupt":
+                    ints.setdefault(r[2], []).append(r)
+                elif r[5] == 1:
+                    fails = [f for f in runs.get(r[2], []) if r[3] - f[3] <= window_ns]
+                    if len(fails) >= min_failures:
+                        codes, addrs = {}, {}
+                        for f in fails:
+                            codes[f[14]] = codes.get(f[14], 0) + 1
+                            addrs[f[6]] = addrs.get(f[6], 0) + 1
+                        burst_no += 1
+                        for f in fails:
+                            members.add({"burst": burst_no, "role": "failure", **ref(f)})
+                        members.add({"burst": burst_no, "role": "success", **ref(r)})
+                        bursts.add({"burst": burst_no, "user": user, "application": r[2], "failures_before": len(fails), "first_failure_at": fails[0][4],
+                                    "last_failure_at": fails[-1][4], "succeeded_at": r[4], "success_address": r[6], "success_result": r[15],
+                                    "failure_addresses": addrs, "success_address_among_failure_addresses": r[6] in addrs, "failure_result_codes": codes,
+                                    "window_seconds": window, "success": ref(r), "failure_events": [ref(f) for f in fails[:10]], "failure_events_total": len(fails),
+                                    "failure_events_listed_in": "pages.burst_members (burst %d)" % burst_no if len(fails) > 10 else "all listed here"})
+                    waiting = [p for p in ints.get(r[2], []) if r[3] - p[3] <= window_ns]
+                    if len(waiting) >= min_prompts:
+                        codes, addrs = {}, {}
+                        for p in waiting:
+                            codes[p[14]] = codes.get(p[14], 0) + 1
+                            addrs[p[6]] = addrs.get(p[6], 0) + 1
+                        prompts.add({"user": user, "application": r[2], "prompts_before": len(waiting), "first_prompt_at": waiting[0][4], "succeeded_at": r[4],
+                                     "prompt_codes": codes, "prompt_addresses": addrs, "success_address": r[6], "window_seconds": window,
+                                     "why": "interrupted sign-ins are the prompts of a normal multi-factor flow; this many in a row before a success is a lead (many prompts, "
+                                            "then an acceptance, is what the multi-factor-fatigue hypothesis looks like), not a conclusion", "success": ref(r)})
+                    runs[r[2]] = []
+                    ints[r[2]] = []
+                else:
+                    runs[r[2]] = []
+                    ints[r[2]] = []
+            # addresses seen once among this account's events in this export
+            seen = {}
+            for r in series:
+                if r[6]:
+                    seen[r[6]] = seen.get(r[6], 0) + 1
+            for r in series:
+                if r[5] == 1 and r[6] and seen.get(r[6]) == 1 and len(seen) > 2:
+                    seen_once.add({"user": user, "time": r[4], "address": r[6], "country": r[7], "client": r[11], "distinct_addresses_for_account": len(seen),
+                                   "why": "this address occurs once among this account's events in this export; the export may not hold the account's earlier history",
+                                   **ref(r)})
+            # travel: adjacent successes (equal times included: two places at one second)
+            previous = None
+            for r in series:
+                if r[5] != 1 or r[3] is None:
+                    continue
+                if previous is not None:
+                    seconds = (r[3] - previous[3]) / 1e9
+                    if 0 <= seconds < 86400:
+                        pair = None
+                        if None not in (previous[9], previous[10], r[9], r[10]):
+                            km = distance((previous[9], previous[10]), (r[9], r[10]))
+                            if seconds == 0:
+                                if km > 100:
+                                    pair = {"kilometres": round(km, 1), "implied_speed_kmh": None, "coarse": False, "basis": "coordinates, the same second",
+                                            "why": "two successes at the same recorded second %.0f km apart: no speed can be computed" % km}
+                            else:
+                                speed = km / (seconds / 3600)
+                                if speed > ceiling and km > 100:
+                                    pair = {"kilometres": round(km, 1), "implied_speed_kmh": round(speed, 1), "coarse": False, "basis": "coordinates"}
+                        elif previous[7] and r[7] and str(previous[7]).lower() != str(r[7]).lower() and seconds < 3600:
+                            pair = {"coarse": True, "basis": "country change only", "why": "the export carries a country but no coordinates"}
+                        if pair:
+                            travel.add({"user": user, "from": {"time": previous[4], "address": previous[6], "country": previous[7], "city": previous[8], **ref(previous)},
+                                        "to": {"time": r[4], "address": r[6], "country": r[7], "city": r[8], **ref(r)}, "seconds_apart": round(seconds, 1), **pair})
+                previous = r
+            done_through = ukey
+    except sqlite3.OperationalError as exc:                 # the progress handler stopped the database's sort or a fetch: the account being read was not analysed
+        if not (analysis_out_of_time() or "interrupted" in str(exc)):
+            raise
+        cut = True
+    finally:
+        db.set_progress_handler(None, 0)
+    not_analysed, not_named = 0, []
+    if cut:
+        after = "AND ukey > ?" if done_through is not None else ""
+        bind = (done_through,) if done_through is not None else ()
+        not_analysed = db.execute("SELECT COUNT(*) FROM (SELECT 1 FROM ev WHERE ukey IS NOT NULL %s GROUP BY ukey)" % after, bind).fetchone()[0]
+        not_named = [r[0] for r in db.execute("SELECT ushown FROM ev WHERE ukey IS NOT NULL %s GROUP BY ukey ORDER BY ukey LIMIT %d" % (after, FIRST_PROBLEMS), bind)]
     pages = {"single_factor_successes": single.finish(), "failure_bursts_before_success": bursts.finish(), "burst_members": members.finish(),
              "prompts_before_success": prompts.finish(), "addresses_seen_once": seen_once.finish(), "impossible_travel": travel.finish()}
     return {"pages": pages, "users": users, "over_cap": over_cap, "over_named": over_named, "single_factor": single.page, "bursts": bursts.page,
-            "members": members.page, "prompts": prompts.page, "seen_once": seen_once.page, "travel": travel.page}
+            "members": members.page, "prompts": prompts.page, "seen_once": seen_once.page, "travel": travel.page,
+            "cut": cut, "not_analysed": not_analysed, "not_analysed_named": not_named}
 
 
 if __name__ == "__main__":
