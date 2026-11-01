@@ -808,6 +808,13 @@ import each other), and holds to this:
   manifest and skill say so for its own rule, with the rates measured on random plants. The place to
   use a file that holds what the rule misses is a `secret_output` job's sealed output: an agent reads
   it there, and each read is recorded.
+- *A recipe's detect step has three answers.* `entry detect --target …` prints a JSON line with a `why`, and its exit code
+  is the answer: **0** the recipe applies, **1** it does not, **2** it cannot tell (the line also says
+  `applies: "unknown"`: the target could not be read, a program it needs is not in the image, a walk ended at its
+  limit); any other code is a failed detect. The census (`catalog/coverage.tsv`, `catalog/plan.json`) records exit 2 as
+  "its detect step could not tell", never as "does not apply" and never as a failure of the step, and the job
+  service's `detect_answered` rows carry `applies: true | false | "unknown"`; only `true` starts a recipe. A detect that can
+  tell neither way must exit 2, not 1: a 1 is a claim that the object is not for this recipe.
 - *A recipe marks a file it wrote `secret_bearing`, and a redacted package withholds it.* A recipe cannot declare
   `secret_output` (the seal refuses the key in `recipe.json`), so its coverage or receipt says which of its output
   files hold what the evidence holds: a JSON file with a `secret_bearing` object, `{ "<file>": "<why>" }`, the name a
@@ -906,6 +913,14 @@ Every tool a pack bundles holds to this.
    a bound, a clock or a message moves the version and leaves the label.
 
 ### Requires and images
+
+A tool or a recipe says which programs it runs. A tool's `manifest.json` names them in `requires`; a recipe's `recipe.json`
+names those it cannot run without in `requires` and those it uses when they are there in `requires_optional` (a program
+is one or the other; the seal checks the shape of both keys). The program must be one a pack's `requires/host.json`
+lists. `tests/pack-program-declarations.test.ts` reads every tool's and recipe's source, and fails on a program it names
+as a call (a quoted argv item or `which()` argument; a command at the start of a line or after a pipe) that the unit does
+not declare; a name that is only a word in the source (a file type, a dictionary key, a collector's name) is
+allow-listed in that test with its reason.
 
 1. **Every dependency is pinned.** A pip requirement with `==`; a host binary
    with its version; a download with its sha256. The licence label is read from

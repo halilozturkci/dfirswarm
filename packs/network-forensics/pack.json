@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.6.16",
+  "version": "1.6.17",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. No flow-record reader (NetFlow, IPFIX) is bundled.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -20,8 +20,8 @@
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "4160187b9bbe9ad499f796b7e3d9326ab965f0f4e08094f1da340949e7bce313",
       "goals/what-left-the-network.md": "8e6dd6ae10d2bd8380b567e8bffb3bc644ac90602eed83edbd3773fd8ebdc811",
-      "recipes/network-capture/recipe.json": "81b8f10d3fd8912ad0b66e380a633be3ac2b6a65665f02b292ebeab508460d44",
-      "recipes/network-capture/run.py": "594bff150453c060b9458ad8c82d514de6d7d2fb5b13b0e345c66da94f48fded",
+      "recipes/network-capture/recipe.json": "ae2493109dc8684fb70bf8d13b9752e9c53a56aa17e521187150970f7843453d",
+      "recipes/network-capture/run.py": "fdc67a78af18315b8155e5a79067782e3d09e960b06340ca61e568454c32dfbb",
       "requires/host.json": "0157c345706a969bf277202f7a9bfc3399a28c2878c8502e1dbe789981670365",
       "requires/python.txt": "d5768d4bec0bea8ec8e736e2710a757309af18fa3f862dae2db201e154d45a4a",
       "skills/INDEX.md": "8589b8b32eacbbc5a7836a99ed2824e2743fc519eed7c748ad9bbda7574e96a5",

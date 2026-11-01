@@ -61,7 +61,7 @@
       "tools/knowledgec_query/run.py": "b79631360cc15612b102864138d58cabba91c328485fc1c38d97cf96d91b9223",
       "tools/plist_read/manifest.json": "de1a5a780a0f5e2a0880852c33cf2ced62f497c4f10e8b991366bf05e5b83e55",
       "tools/plist_read/run.py": "f4fd31a83e7f05839045908ad82fb1a57334cc6c02d41c9a30ed4df5dfa58d4c",
-      "tools/unified_log/manifest.json": "27383a02e2fa474f4323726f1d3d54bc9145d88cbb9be04a743842534b007519",
+      "tools/unified_log/manifest.json": "a449b80c08abfcfd7b033bf52f4b35681af74766658051de1d50cb246f0d5339",
       "tools/unified_log/run.py": "d2ca743b1cc0a7c1013cbf03e119b79eaffda0d19637664d924380bad8cc7420"
     }
   },

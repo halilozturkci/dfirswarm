@@ -29,6 +29,7 @@
   ],
   "runtime": "python3",
   "entry": "run.py",
+  "requires_optional": ["target-query"],
   "auto": [],
   "limits": {
     "seconds": 3600

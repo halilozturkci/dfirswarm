@@ -51,13 +51,14 @@
       "description": "The most images qemu-img is run on (default 50)"
     }
   },
+  "requires": ["qemu-img"],
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 60,
   "example": "{\"root\": \"work/extracted/vm\"}",
   "by": "maintainer",
   "at": "2026-10-15T09:00:00.000Z",
-  "version": 4,
+  "version": 5,
   "use": {
     "extensions": [
       ".vmdk",
