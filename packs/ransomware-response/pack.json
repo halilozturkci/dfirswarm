@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -40,12 +40,20 @@
       "why": "a method leaf about what a transfer measure means and about an adversary's claims; the reader it points to (`esedb_query` of windows-forensics) belongs to another pack and is only mentioned"
     },
     {
+      "path": "skills/intrusion/entry-and-spread.md",
+      "why": "a method leaf about reconstructing entry, persistence and spread; it names no tool of this pack, and the readers it mentions (`evtx_query`, `auth_log`, `cloudtrail_parse`, `network_log_summary`) belong to other packs and are only mentioned"
+    },
+    {
       "path": "skills/platforms/esxi-hypervisors.md",
       "why": "a method leaf about the host, the management plane, the guest and the datastore of an ESXi environment; the three tools it mentions (`virtualization_inventory`, `snapshot_chain_check`, `backup_audit_normalise`) belong to the virtualization-backup-forensics pack and are only mentioned, if that pack is loaded"
     },
     {
       "path": "skills/platforms/nas-storage.md",
       "why": "a method leaf about network storage appliances and their shares, snapshots and replication; the three tools it mentions belong to the virtualization-backup-forensics pack and are only mentioned, if that pack is loaded"
+    },
+    {
+      "path": "skills/recovery/preserve-and-restore.md",
+      "why": "a method leaf about the minimum preservation before a rebuild, repair, decryption or reconnection and about acceptance; it works from the ledger and names no tool or program"
     },
     {
       "path": "skills/recovery/routes-and-decryptors.md",
@@ -76,11 +84,11 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "b78b15e4bb335f64032f21a6724ff8600c656cbe47c9bc7f429e38c2909d3644",
+      "README.md": "5b9875ef4dbfc70eb3a87132ae3599b92724280a20805840fc6801150a678be1",
       "goals/ransomware-case.md": "bb889a729a06a1633e49284a99cf333aab899c57cbe5f0d8748e43ec02b78d62",
       "requires/host.json": "e9738f0296f8c734625a6a03a3d771737bd62a83432aae3bb7c0b0f82e10374c",
       "requires/python.txt": "5a396319de276d1ea51953493ef8e4f2dd0d7cb87c67aac6fbd0e63c096d63b6",
-      "skills/INDEX.md": "27d9db3788d10a73d89d2c0999472dcf38bc371eb2983efce799c1243b546978",
+      "skills/INDEX.md": "479d691e97147328da799c4c7bae2435bf48fc2fcc88858c66a4d5452d08c95e",
       "skills/encryptor/backup-infrastructure.md": "cb9ba78fa9715708f68debf372c524be259c8acb05c849f75252f617edd15531",
       "skills/encryptor/destroyed-backups.md": "25145bd5dcb74d38767b35275f8f7c6d7ccc945d4c84ee077ee79602b7de857d",
       "skills/encryptor/samples-and-notes.md": "c474223e2b99b52de74fa9f91c89342c6422a8e439c01ed7c0ec719b22554c3c",
@@ -90,9 +98,11 @@
       "skills/exfil/measure-and-claims.md": "7c8bf8ed8f82fa0b64f5c450045abcb0ba614c1ed620a706a5040c9a5e238118",
       "skills/identify/family.md": "39eb3c5c83497b2f380738eb870441e26dc58348ab80695eac1eaa0ea2a05812",
       "skills/identify/samples-and-decryptors.md": "08b0cbdbf1c422972c71963854ecc6b619dee888a2f09af4987804539179727e",
+      "skills/intrusion/entry-and-spread.md": "137e49cb9f8a015f051fc78ab82016c8dee266118b2d4ee12de65b0d1aa42d91",
       "skills/platforms/esxi-hypervisors.md": "7983e2ab5293ead6191ab6457539c7363fa6f0380580e1d3ddd29bf6138864ad",
       "skills/platforms/nas-storage.md": "48229ad42fa98748cc1ca13dadde9d9927852b659aa739ba45417df37a909a85",
-      "skills/ransomware/router.md": "8a95d2b0d9f12658dcc724a2e00973a5e962cc55ff45e65a39a1a5fa1f3c5ebd",
+      "skills/ransomware/router.md": "91f7ead0c3b01b1a061121a8b3057b34cbfd1fcf5ff2c2dd221c1ecbec68a990",
+      "skills/recovery/preserve-and-restore.md": "8aeb94f76d1abd9828d1d16210ce401e8faf26387f1affa505b7230f62c5077b",
       "skills/recovery/routes-and-decryptors.md": "bc09eadad49ad7930a4aa99a21c1603f7987dfa570d9c9d19dd7472bfc21bbb2",
       "skills/recovery/what-is-possible.md": "69e54614d766ad3a4a6d1c77e58b334f443b5bd2e30214569351dc4c7a2f96ef",
       "skills/reporting/conclusions-and-controls.md": "de39b2b61cf7bd58bde677335eab9878e1eeeda486e27b797762a593574feb24",
@@ -111,5 +121,5 @@
     "encrypted_survey",
     "ransom_note_scan"
   ],
-  "skills": 20
+  "skills": 22
 }

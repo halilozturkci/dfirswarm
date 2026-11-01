@@ -64,7 +64,7 @@ const SECOND: Record<string, string> = {
 };
 
 // Leaves added after the split pass: each one is a leaf of its own, named once by the router and listed in the index.
-const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage"];
+const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage", "intrusion/entry-and-spread", "recovery/preserve-and-restore"];
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
@@ -362,4 +362,43 @@ test("the README no longer says there is no method for hypervisors or network st
   const nas = flat(skills.get("platforms/nas-storage")!.body);
   assert.match(nas, /One member of a RAID set, imaged alone, is not a logical acquisition/);
   for (const route of ["client", "management plane", "replication"]) assert.ok(nas.includes(route), `the NAS leaf names ${route}`);
+});
+
+test("the two method leaves for entry and for preservation are named once, conditional about other packs' tools, and repeat no sentence of the leaves they sit beside", async () => {
+  const skills = await load(SKILLS);
+  const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { depends: string[]; method_only: Array<{ path: string; why: string }> };
+  const router = skills.get(ROUTER)!;
+  const index = await readFile(join(SKILLS, "INDEX.md"), "utf8");
+  const sentences = (s: string): string[] =>
+    norm(s.replace(/^---[\s\S]*?---/, "").replace(/\*\*[^*]+\*\*/g, " ")).split(/(?<=[.:;])\s+/).map((x) => x.trim()).filter((x) => x.split(" ").length >= 5);
+  const neighbours = ["scope/phase-timeline", "scope/first-hour", "recovery/what-is-possible"].flatMap((id) => sentences(skills.get(id)!.text));
+  for (const id of ["intrusion/entry-and-spread", "recovery/preserve-and-restore"]) {
+    const leaf = skills.get(id);
+    assert.ok(leaf, `${id} exists`);
+    assert.equal(router.body.split(`\`${id}\``).length - 1, 1, `the router names ${id} once`);
+    assert.equal(index.split(`\`${id}\``).length - 1, 1, `the index names ${id} once`);
+    assert.ok(TOKENS(leaf.text) <= 800, `${id} is ${TOKENS(leaf.text).toFixed(0)} tokens`);
+    const text = flat(leaf.body).trim();
+    assert.match(text, /^Use when .* Not for /);
+    for (const head of ["Shows.", "Does not show.", "Record:", "Sensitive output:"]) assert.ok(text.includes(head), `${id} has ${head}`);
+    assert.doesNotMatch(leaf.text, /operator/i, `${id} does not use the word operator`);
+    assert.deepEqual(leaf.meta.needs, []);
+    assert.ok(pack.method_only.find((m) => m.path === `skills/${id}.md`), `${id} is method_only`);
+    const mine = sentences(leaf.text);
+    assert.ok(mine.length >= 10, "the leaf has sentences to compare");
+    for (const sentence of mine) assert.ok(!neighbours.includes(sentence), `${id} repeats a sentence of a neighbouring leaf: ${sentence}`);
+  }
+  // entry-and-spread: the other packs' readers are named only conditionally, by mentions and by the rule "check the run's tool inventory"
+  const entry = skills.get("intrusion/entry-and-spread")!;
+  assert.deepEqual(entry.meta.mentions, ["evtx_query", "auth_log", "cloudtrail_parse", "network_log_summary"]);
+  assert.deepEqual(entry.meta.tools, []);
+  const e = flat(entry.body);
+  assert.match(e, /If the windows-forensics, linux-forensics, cloud-forensics or network-forensics pack is loaded \(check the run's tool inventory\)/);
+  assert.match(e, /No exploit is reproduced/);
+  for (const part of ["graph", "initial access", "persistence", "deployment", "window", "alternatives"]) assert.ok(e.toLowerCase().includes(part), `entry-and-spread covers ${part}`);
+  for (const family of ["VPN", "identity", "mail", "endpoint-detection", "remote-management", "cloud audit"]) assert.ok(e.includes(family), `entry-and-spread correlates ${family}`);
+  // preserve-and-restore: the minimum package, the emergency exceptions and what each loses, isolation, identity, clean build, acceptance
+  const p = flat(skills.get("recovery/preserve-and-restore")!.body);
+  for (const part of ["minimum package", "Emergency exceptions", "evidence the exception loses", "in isolation", "Identity before reconnection", "Clean-build decisions", "Acceptance"]) assert.ok(p.includes(part), `preserve-and-restore covers ${part}`);
+  assert.deepEqual(pack.depends.map((d) => d.split(/[<>=]/)[0]), ["computer-forensics-base"]);
 });
