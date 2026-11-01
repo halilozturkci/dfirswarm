@@ -35,22 +35,46 @@ anything is read) writes the unparsed lines' text and each redacted target's ori
 $OUT/network-log-values.jsonl and nowhere else; a second run in the same job is refused by name. The directory is
 private (mode 0700, files 0600): run the tool as a job with secret_output: true.
 """
+import json
+import os
+import signal
+import sys
+
+TOOL = {"name": "network_log_summary", "version": 10}
+PARSER = "network_log_summary/5"
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
+import stat
 import collections
 import datetime
 import errno
 import gzip
 import ipaddress
-import json
-import os
 import re
-import signal
-import sys
 import time
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "network_log_summary", "version": 6}
-PARSER = "network_log_summary/5"
 COLUMNS = ["line", "byte_offset", "byte_length", "format", "parse_status", "timestamp_raw", "timestamp_utc", "timezone_source",
            "src", "dst", "src_port", "dst_port", "protocol", "method", "target", "referer", "status", "bytes", "action", "user",
            "user_agent", "elapsed_ms", "hierarchy", "mime", "in_if", "out_if", "nat_src", "nat_dst", "tcp_flags", "unparsed_tail", "decoding"]
@@ -370,11 +394,35 @@ def describe(exc):
     return scrub("%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc)))
 
 
+def holds_files(directory):
+    """Whether `directory` holds anything: one entry is looked at, never the whole listing (a caller's directory can hold millions of names)."""
+    with os.scandir(directory) as entries:
+        return next(entries, None) is not None
+
+
+def open_regular(path, follow=True):
+    """A file opened for reading that is never waited on: the open does not block (a name that became a pipe since it was checked would otherwise wait
+    for a writer), the type is read from the descriptor, and anything but a regular file is refused. follow=False also refuses a symbolic link (for a
+    name the capture or the engine produced). The file object it returns reads in the ordinary, blocking way."""
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
 
 
 def fail(message, **extra):
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})     # one document: a stop that arrives while this is written waits, and the tool leaves with it
     print(json.dumps({"error": scrub(message), "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -449,12 +497,19 @@ class SecretValues:
         # after the read. With nothing withheld it stays an empty file, mode 0600, and the answer says written: 0.
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            before = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hasattr(signal, "pthread_sigmask") else None
+            try:
+                # made and registered with the stop signals held: a stop between the two would leave an empty values file that nothing removes
+                fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                self._fh = os.fdopen(fd, "w", encoding="utf-8")
+                STAGE["values"] = self
+            finally:
+                if before is not None:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, before)
         except FileExistsError:
             raise SecretValuesRefused("the values file already exists", self.path)
         except OSError as exc:
             raise SecretValuesRefused("the values file could not be created (%s)" % describe(exc), self.path)
-        self._fh = os.fdopen(fd, "w", encoding="utf-8")
 
     def add(self, finding_id, locator, value):
         if not self.enabled or self._fh is None:
@@ -724,6 +779,9 @@ def _stop(signum, _frame):
     raise Stopped(signum)
 
 
+STAGE = {"now": "checking its arguments", "values": None}   # what a stop that ends the run outside the read loop says it was doing
+
+
 class ClockedFile:
     """The file under a gzip stream, read through the tool's clock. Python's gzip reader walks the members of a stream inside one
     read: a stream of a few hundred thousand empty members returns nothing for seconds, and the tool's line loop never gets
@@ -745,11 +803,15 @@ class Source:
     """The log as a stream of bytes: plain, or gzip with a cap on what it may expand to."""
 
     def __init__(self, path, cap, deadline):
-        with open(path, "rb") as fh:
-            magic = fh.read(2)
+        self.raw = open_regular(path)
+        try:
+            magic = self.raw.read(2)
+            self.raw.seek(0)
+        except BaseException:
+            self.raw.close()
+            raise
         self.gzip = magic == b"\x1f\x8b"
         self.cap = cap
-        self.raw = open(path, "rb")
         self.fh = gzip.GzipFile(fileobj=ClockedFile(self.raw, deadline), mode="rb") if self.gzip else self.raw
         self.read_total = 0
 
@@ -775,6 +837,8 @@ def optional_int(args, key, default, minimum):
 
 
 def main():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _stop)     # first, before the arguments are read and before anything is opened; the read loop below answers a stop of its own
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -788,7 +852,7 @@ def main():
         fail("out_dir is required: an empty directory under work/ (in a job, under $OUT)")
     out_dir = resolve_output(out_dir, "out_dir")
     try:
-        if os.path.exists(out_dir) and os.listdir(out_dir):
+        if os.path.exists(out_dir) and holds_files(out_dir):
             fail("out_dir already holds files", out_dir=out_dir)
     except OSError as exc:
         fail("out_dir cannot be listed (%s)" % describe(exc), out_dir=out_dir)
@@ -817,11 +881,13 @@ def main():
         elif os.path.lexists(os.path.join(os.environ["OUT"], SecretValues.NAME)):
             fail("the values file already exists", write_values="refused", written=False, values_file=os.path.join(os.environ["OUT"], SecretValues.NAME))
 
+    STAGE["now"] = "opening its outputs"
     os.umask(0o077)
     try:
         values = SecretValues(write_values)
     except SecretValuesRefused as exc:
         fail(str(exc), write_values="refused", written=False, values_file=exc.path)
+    STAGE["values"] = values
     try:
         os.makedirs(out_dir, mode=0o700, exist_ok=True)
         os.chmod(out_dir, 0o700)
@@ -846,8 +912,7 @@ def main():
         with open(normal_path, "x", encoding="utf-8", newline="\n") as normal, open(bad_path, "x", encoding="utf-8", newline="\n") as bad:
             normal.write("\t".join(COLUMNS) + "\n")
             bad.write("\t".join(UNPARSED_COLUMNS) + "\n")
-            for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-                signal.signal(signum, _stop)
+            STAGE["now"] = "reading the log"
             try:
                 while True:
                     raw = source.readline(max_line + 1)
@@ -1030,5 +1095,16 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except SystemExit:
         raise
+    except Stopped as stop:
+        # a stop outside the read loop (the arguments, the opening of the outputs): the loop answers its own, with the tables it wrote
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(signum, signal.SIG_IGN)
+        if STAGE["values"] is not None:
+            STAGE["values"].discard()
+        print(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False,
+                          "status_basis": "the tool was stopped by signal %d while it was %s; no line of the log had been normalised%s" %
+                                          (stop.signum, STAGE["now"], ", and the output directory may hold the empty tables it had begun to write" if STAGE["values"] is not None else ""),
+                          "interrupted_by_signal": stop.signum, "stage": STAGE["now"]}), flush=True)
+        os._exit(128 + stop.signum)
     except BaseException as exc:  # noqa: BLE001 - never a traceback, never a clean answer for a failure
         fail("unexpected failure: %s" % describe(exc))

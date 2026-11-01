@@ -40,9 +40,17 @@ secret that does not look like a token is not recognised; a hash, GUID or UUID
 is withheld too and recoverable in a job): run them as jobs with
 `secret_output: true`. Every answer of the six carries `status` (`complete`,
 `partial` or `failed`) and `status_basis`, exit 0 means the engine ran, and
-SIGTERM, SIGINT and SIGHUP end a tool with partial JSON. No flow
-export (NetFlow, IPFIX) is read by anything here: `skills/capture/what-you-have.md` says
-how to identify the producer and what its byte counters mean, and that is all.
+SIGTERM, SIGINT and SIGHUP end a tool with partial JSON, from the first lines of
+its script on (the six tools and the recipe install a minimal handler before
+their other imports, which answers "stopped before any work" and exits 128 plus
+the signal). The one window left is the interpreter's own start and its compile
+of the script, before the script's first line has run: a stop there gives no
+answer. Measured on 2026-11-01 (SIGTERM at a random offset of 0-250 ms after the
+start, 80 runs of each script, one CPU, no network), 6 to 19 of 80 runs gave no
+JSON, all but one of them within 55 ms of the start, on a quiet host; a busy host sees more (misses up to about 80 ms were seen). No flow
+export (NetFlow, IPFIX) is read by anything here: `skills/capture/what-you-have.md`
+says to identify the producer, the sampling and what its byte counters mean
+first, and that no flow reader is bundled; it gives no method for reading one.
 
 **One catalogue recipe.** `network-capture` detects pcap and pcapng by magic,
 then writes capture metadata and complete listings of the selected fields of

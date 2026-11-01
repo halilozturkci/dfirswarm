@@ -36,11 +36,35 @@ If the list of fields cannot be read, the fields are asked for unchecked and the
 """
 import json
 import os
+import signal
+import sys
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"recipe": "network-capture", "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
+import errno
+import stat
 import shutil
 import select
-import signal
 import subprocess
-import sys
 import time
 
 MAGICS = {b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4", b"\x4d\x3c\xb2\xa1",
@@ -72,7 +96,11 @@ NEEDS_ONE_OF = {"http2.tsv": ["http2.streamid", "http2.type"], "quic.tsv": ["qui
 
 
 def target_of(arg):
-    text = open(arg, encoding="utf-8").read() if os.path.isfile(arg) else arg
+    if os.path.isfile(arg):
+        with open_regular(arg) as fh:
+            text = fh.read().decode("utf-8")
+    else:
+        text = arg
     target = json.loads(text)
     paths = target.get("paths") if isinstance(target, dict) else None
     if not isinstance(paths, list) or not paths or not isinstance(paths[0], str):
@@ -82,7 +110,7 @@ def target_of(arg):
 
 def detect(path):
     try:
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             magic = fh.read(4)
     except OSError as exc:
         return False, "unreadable: %s" % (exc.strerror or exc)
@@ -541,6 +569,22 @@ def describe(exc):
     return "%s: %s" % (type(exc).__name__, getattr(exc, "strerror", None) or exc)
 
 
+def open_regular(path, follow=True):
+    """A file opened for reading that is never waited on: the open does not block (a name that became a pipe since it was checked would otherwise wait
+    for a writer), the type is read from the descriptor, and anything but a regular file is refused. follow=False also refuses a symbolic link (for a
+    name the capture or the engine produced). The file object it returns reads in the ordinary, blocking way."""
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def first_line(argv, seconds=30):
     """The first line a program prints, and why it could not be had; (line or None, reason or None)."""
     code, out, err, timed_out = preflight(argv, seconds)
@@ -603,7 +647,21 @@ def field_names(tshark, wanted, seconds):
     return found, None
 
 
+PROGRESS = {"stage": "checking its arguments"}
+
+
+def early_word(signum):
+    """What a recipe stopped before its receipt's last word exists says on stdout: partial, the stage it was in, and that no listing had been started.
+    The last word that writes the receipt takes over once the receipt is ready."""
+    print(json.dumps({"ok": False, "status": "partial",
+                      "status_basis": "the recipe was stopped by signal %d while it was %s; no program had been started and no listing written%s" %
+                                      (signum, PROGRESS["stage"], ", and the output directory may hold the receipt it had begun to write" if PROGRESS["stage"] != "checking its arguments" else ""),
+                      "interrupted_by_signal": signum, "stage": PROGRESS["stage"]}), flush=True)
+
+
 def main():
+    STATE["last_word"] = early_word
+    install_signal_handlers()
     if len(sys.argv) < 4 or sys.argv[2] != "--target":
         print(json.dumps({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR"}))
         return 2
@@ -621,6 +679,7 @@ def main():
         print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
         return 2
     out_dir = sys.argv[sys.argv.index("--out") + 1]
+    PROGRESS["stage"] = "preparing the output directory"
     os.umask(0o077)       # the directory 0700, every file 0600, tshark's and capinfos's own output too
     try:
         os.makedirs(out_dir, mode=0o700, exist_ok=True)
@@ -669,7 +728,6 @@ def main():
         print(json.dumps({"ok": False, "status": "partial", "status_basis": data["status_basis"], "interrupted_by_signal": signum}), flush=True)
 
     STATE["last_word"] = last_word
-    install_signal_handlers()
     for tool_name, binary in (("tshark", tshark), ("capinfos", capinfos)):
         line, why_not = first_line([binary, "--version"], min(30, max(1, deadline - time.monotonic())))
         data["tools"][tool_name] = {"path": binary, "version": line, **({"version_error": why_not} if why_not else {})}

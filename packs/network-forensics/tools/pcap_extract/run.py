@@ -53,21 +53,46 @@ can their names and the request URIs. The tool follows the secret-safe output pa
   * Nothing is placed on a command line but the capture's path, the output place and the caller's own display
     filter.
 """
+import json
+import os
+import signal
+import sys
+
+TOOL = {"name": "pcap_extract", "version": 9}
+PARSER = "pcap_extract/5"
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
 import array
 import binascii
 import datetime
 import errno
 import hashlib
 import ipaddress
-import json
-import os
 import re
 import select
 import shutil
-import signal
 import stat
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -76,8 +101,6 @@ try:
 except ImportError:  # pragma: no cover
     ctypes = None
 
-TOOL = {"name": "pcap_extract", "version": 6}
-PARSER = "pcap_extract/5"
 DEFAULT_PROTOCOLS = ["http", "ftp-data", "smb", "smb2", "tftp", "imf"]
 DEFAULT_DEADLINE = 3000
 MAX_DEADLINE = 3300           # the manifest's outer limit is 3600: the tool stops its own passes first, so nothing is left running
@@ -397,11 +420,36 @@ def describe(exc):
     return scrub("%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc)))
 
 
+def holds_files(directory):
+    """Whether `directory` holds anything: one entry is looked at, never the whole listing (a caller's directory can hold millions of names)."""
+    with os.scandir(directory) as entries:
+        return next(entries, None) is not None
+
+
+def open_regular(path, follow=True):
+    """A file opened for reading that is never waited on: the open does not block (a name that became a pipe since it was checked would otherwise wait
+    for a writer), the type is read from the descriptor, and anything but a regular file is refused. follow=False also refuses a symbolic link (for a
+    name the capture or the engine produced). The file object it returns reads in the ordinary, blocking way."""
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
 
 
 def fail(message, **extra):
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})     # one document: a stop that arrives while this is written waits, and the tool leaves with it
+    STATE["last_word"] = None
     print(json.dumps({"error": scrub(message), "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -1120,8 +1168,7 @@ def shown_url(url):
 
 def file_digest(path):
     h = hashlib.sha256()
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(fd, "rb") as fh:
+    with open_regular(path, follow=False) as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -1657,7 +1704,7 @@ def decryption_secrets(path, seconds=20.0):
     deadline = time.monotonic() + seconds
     count = blocks = 0
     try:
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             head = fh.read(12)
             if len(head) < 12 or head[:4] != b"\x0a\x0d\x0d\x0a":
                 return 0, "not a pcapng file: it holds no Decryption Secrets Block"
@@ -1730,7 +1777,7 @@ def main():
     out_dir = resolve_output(out_dir, "out_dir")
     PROGRESS["out_dir"] = out_dir
     try:
-        if os.path.exists(out_dir) and os.listdir(out_dir):
+        if os.path.exists(out_dir) and holds_files(out_dir):
             fail("out_dir already holds files", out_dir=out_dir)
     except OSError as exc:
         fail("out_dir cannot be listed (%s)" % describe(exc), out_dir=out_dir)

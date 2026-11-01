@@ -41,22 +41,47 @@ SENSITIVE OUTPUT. EVE can carry URLs, host names, SNI, DNS names, file names and
 private (mode 0700, every file 0600, including what Suricata writes) and the answer says to run the tool as a job
 with secret_output: true. Inline alerts carry addresses, ports and the rule's signature only.
 """
+import json
+import os
+import signal
+import sys
+
+TOOL = {"name": "suricata_run", "version": 10}
+PARSER = "suricata_run/5"
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
+import stat
 import collections
+import contextlib
 import errno
 import hashlib
 import ipaddress
-import json
-import os
 import re
 import shutil
-import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "suricata_run", "version": 7}
-PARSER = "suricata_run/5"
 TEST_SECONDS = 120
 MAX_TIMEOUT = 1000            # the manifest's limit is 1200: --build-info (30 s) and the configuration test (120 s) come first
 MANIFEST_SECONDS = 1200       # the manifest's limit: the tool's own clock for reading eve.json ends READ_MARGIN seconds before it, counted from the start
@@ -365,11 +390,36 @@ def describe(exc):
     return scrub("%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc)))
 
 
+def holds_files(directory):
+    """Whether `directory` holds anything: one entry is looked at, never the whole listing (a caller's directory can hold millions of names)."""
+    with os.scandir(directory) as entries:
+        return next(entries, None) is not None
+
+
+def open_regular(path, follow=True):
+    """A file opened for reading that is never waited on: the open does not block (a name that became a pipe since it was checked would otherwise wait
+    for a writer), the type is read from the descriptor, and anything but a regular file is refused. follow=False also refuses a symbolic link (for a
+    name the capture or the engine produced). The file object it returns reads in the ordinary, blocking way."""
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
 
 
 def fail(message, **extra):
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})     # one document: a stop that arrives while this is written waits, and the tool leaves with it
+    STATE["last_word"] = None
     print(json.dumps({"error": scrub(message), "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -836,23 +886,35 @@ def shown_time(value):
 
 
 PROGRESS = {"stage": "arguments", "out_dir": None}
+STOP_LISTED = 200       # names the answer to a stop lists
+STOP_COUNTED = 100_000  # entries it counts before it says "more than"
 
 
 def last_word(signum):
     """What a stopped run says on stdout: partial, which stage it was in, and what is on disk."""
     out_dir = PROGRESS.get("out_dir")
+    files, total = [], 0
     try:
-        files = sorted(os.listdir(out_dir)) if out_dir else []
+        with os.scandir(out_dir) if out_dir else contextlib.nullcontext([]) as entries:
+            for entry in entries:
+                total += 1
+                if len(files) < STOP_LISTED:
+                    files.append(entry.name)
+                elif total > STOP_COUNTED:
+                    break
     except OSError:
-        files = []
+        pass
+    files.sort()
     print(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False,
                       "status_basis": "the tool was stopped by signal %d while it was %s; the engine, if it was running, was killed with what it had started, and eve.json is only as far as it got" % (signum, PROGRESS["stage"]),
-                      "interrupted_by_signal": signum, "stage": PROGRESS["stage"], "out_dir": out_dir, "files_on_disk": files}), flush=True)
+                      "interrupted_by_signal": signum, "stage": PROGRESS["stage"], "out_dir": out_dir, "files_on_disk": files,
+                      "files_on_disk_total": total if total <= STOP_COUNTED else None,
+                      "files_on_disk_note": "the first %d names are listed (the directory holds more than %d when the total is null); the whole directory is on disk" % (STOP_LISTED, STOP_COUNTED) if total > STOP_LISTED else None}), flush=True)
 
 
 def file_sha256(path):
     h = hashlib.sha256()
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -863,7 +925,7 @@ def rule_load_counts(*paths):
     found = None
     for path in paths:
         try:
-            with open(path, "rb") as fh:
+            with open_regular(path, follow=False) as fh:
                 for raw in fh:
                     m = LOADED.search(raw.decode("utf-8", "replace"))
                     if m:
@@ -969,7 +1031,7 @@ def main():
     out_dir = resolve_output(out_dir, "out_dir")
     PROGRESS["out_dir"] = out_dir
     try:
-        if os.path.exists(out_dir) and os.listdir(out_dir):
+        if os.path.exists(out_dir) and holds_files(out_dir):
             fail("out_dir already holds files", out_dir=out_dir)
     except OSError as exc:
         fail("out_dir cannot be listed (%s)" % describe(exc), out_dir=out_dir)
@@ -1042,7 +1104,7 @@ def main():
             fail("the configuration could not be written (%s)" % describe(exc), out_dir=out_dir)
     try:
         config_sha, rules_sha = file_sha256(config_path), file_sha256(rules)
-        with open(rules, "rb") as fh:
+        with open_regular(rules) as fh:
             rule_lines = sum(1 for raw in fh if raw.strip() and not raw.lstrip().startswith(b"#"))
         rules_bytes = os.path.getsize(rules)
     except OSError as exc:
@@ -1097,7 +1159,11 @@ def main():
     other_with_fingerprint = 0
     signature_overflow = 0
     lines = 0
-    with open(eve, "rb") as fh:
+    try:
+        eve_fh = open_regular(eve, follow=False)
+    except OSError as exc:
+        fail("eve.json is not a regular file that can be read (%s)" % describe(exc), exit_code=code, stdout=stdout_path, stderr=stderr_path, out_dir=out_dir)
+    with eve_fh as fh:
         while True:
             raw = fh.readline(MAX_LINE + 1)
             if not raw:

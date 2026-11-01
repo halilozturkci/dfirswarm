@@ -176,6 +176,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createRng, planted } from "./pack-network-canaries.ts";
 import type { Json } from "./pack-network-harness.ts";
 import { startDetached } from "./pack-network-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 test("an integer too large for a float is a number that is not epoch seconds: counted out_of_range, never an unexpected failure", async () => {
   await withCwd(async (cwd) => {
@@ -435,5 +436,85 @@ test("a tool-output that is a symbolic link is refused before anything is read (
     const err = refused(await tool(BEACON, cwd, { timestamps: Array.from({ length: 50 }, (_, i) => 1_700_000_000 + 60 * i) }));
     assert.match(err.error, /tool-output is a symbolic link/);
     assert.deepEqual(await readdir(join(cwd, "elsewhere")), [], "nothing was written where the link points");
+  });
+});
+
+test("a 32 MiB inline list of 0.5, is refused before it is parsed: the peak resident size stays far under the 428 MB the parse used to take", { timeout: 120_000 }, async (t) => {
+  if (process.platform !== "linux") return t.skip("the child's own peak is read from /proc/<pid>/status (VmHWM): not measured off Linux");
+  await withCwd(async (cwd) => {
+    const limit = 32 * 1024 * 1024;
+    const head = '{"timestamps":[', tail = "0.5]}";
+    const input = head + "0.5,".repeat(Math.floor((limit - head.length - tail.length) / 4)) + tail;
+    assert.ok(input.length <= limit && input.length > limit - 8, `the arguments are ${input.length} bytes: just under 32 MiB`);
+    // VmHWM of the tool's own image (tests/peak-rss.ts): ru_maxrss would count the parent that held the 32 MiB text
+    const wrapper = peakRssPrelude() + `import json, os
+p, peak = run_peak(["python3", sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True, cwd=sys.argv[2], env={**os.environ, "AGENT_ID": "s1"})
+sys.stdout.write(json.dumps({"code": p.returncode, "out": p.stdout.decode(), "err": p.stderr.decode(), "peak_mb": peak // (1024 * 1024)}))
+`;
+    const run = spawnSync("python3", ["-c", wrapper, BEACON, cwd], { input, encoding: "utf8", maxBuffer: 1 << 26, timeout: 100_000 });
+    const result = JSON.parse(run.stdout);
+    t.diagnostic(`peak resident ${result.peak_mb} MB for ${input.length} bytes of arguments`);
+    assert.doesNotMatch(result.err, /Traceback/);
+    assert.equal(result.code, 1);
+    const answer = JSON.parse(result.out);
+    assert.equal(answer.status, "failed");
+    assert.match(answer.error, /8388\d+ commas, more than a series of at most 500000 events passed inline can: give the series as timestamps_file/);
+    assert.ok(result.peak_mb < 120, `peak resident ${result.peak_mb} MB: the list was parsed whole (428 MB before the count)`);
+  });
+});
+
+/** The tool with its standard input left open and nothing written to it (a writer that never closes the pipe). */
+function holdStdin(cwd: string, env: Record<string, string> = {}): { child: ReturnType<typeof spawn>; closed: Promise<{ code: number | null; stdout: string; stderr: string; ms: number }> } {
+  const child = spawn("python3", [BEACON], { cwd, env: { ...process.env, AGENT_ID: "s1", ...env }, stdio: ["pipe", "pipe", "pipe"] });
+  const out: Buffer[] = [], err: Buffer[] = [];
+  child.stdout?.on("data", (c: Buffer) => out.push(c));
+  child.stderr?.on("data", (c: Buffer) => err.push(c));
+  const began = Date.now();
+  const closed = new Promise<{ code: number | null; stdout: string; stderr: string; ms: number }>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), ms: Date.now() - began }));
+  });
+  return { child, closed };
+}
+
+test("standard input that is never closed ends the call as JSON at the tool's own clock, and a stop signal ends the wait at once", { timeout: 60_000 }, async () => {
+  await withCwd(async (cwd) => {
+    // the clock: ARGUMENT_READ_SECONDS is 45; the variable shortens it for this test
+    const waiting = holdStdin(cwd, { BEACON_SCORE_ARGUMENT_SECONDS: "1.5" });
+    const ended = await waiting.closed;
+    assert.doesNotMatch(ended.stderr, /Traceback/);
+    assert.equal(ended.code, 1);
+    const answer = JSON.parse(ended.stdout);
+    assert.equal(answer.status, "failed");
+    assert.match(answer.error, /did not arrive within 1\.5 seconds: standard input was not closed by the writer/);
+    assert.ok(ended.ms < 15_000, `ended after ${ended.ms} ms`);
+    // a signal during the wait
+    const held = holdStdin(cwd);
+    await new Promise((r) => setTimeout(r, 1500));
+    held.child.kill("SIGTERM");
+    const stopped = await held.closed;
+    assert.doesNotMatch(stopped.stderr, /Traceback/);
+    assert.equal(stopped.code, 143);
+    const word = JSON.parse(stopped.stdout);
+    assert.equal(word.status, "partial");
+    assert.equal(word.interrupted_by_signal, 15);
+    assert.ok(stopped.ms < 15_000, `ended after ${stopped.ms} ms`);
+  });
+});
+
+test("a name that is a pipe when the file is opened is refused, not waited on: the open does not block and the type is checked on the descriptor", { timeout: 60_000 }, async (t) => {
+  if (process.platform === "win32") return t.skip("no named pipes");
+  await withCwd(async (cwd) => {
+    const code = `import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("beacon", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+fifo = os.path.join(sys.argv[2], "series"); os.mkfifo(fifo)
+try:
+    list(m.values_of(fifo, None, {"long_lines": 0}, None)); print("read")
+except OSError as exc:
+    print("refused", exc.errno)
+`;
+    const run = spawnSync("python3", ["-c", code, BEACON, cwd], { encoding: "utf8", timeout: 15_000 });
+    assert.equal(run.error, undefined, "the open of a pipe with no writer blocked");
+    assert.equal(run.stdout.trim(), "refused 22");
   });
 });
