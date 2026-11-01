@@ -365,7 +365,7 @@ VALUES = [None]    # the values file of this call, once it exists: an answer tha
 
 
 # BEGIN SHARED ONE WAY OUT
-# The same text is in doc_structure, elf_directories and the capa-floss recipe (tests/pack-re-process.test.ts holds the copies equal).
+# The same text is in doc_structure, pe_directories and the capa-floss recipe (tests/pack-re-process.test.ts holds the copies equal).
 # Two steps stand between a string out of a file and any byte the tool writes. shown_path is the sanitiser: it withholds every shape
 # below, by shape only: what is printed is what no rule here recognises, and a secret of another shape (a plain password, a token
 # family the rules do not name, a token split across two fields) is printed. It reads the WHOLE text for what only the whole shows (a

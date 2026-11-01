@@ -118,7 +118,7 @@ sleep 60`);
   {
     name: "elf_directories", script: ELF_DIRECTORIES, marker: MODULE_LEVEL,
     work: async (cwd) => {
-      await put(cwd, "inputs/syms.so", buildElf({ cls: 64, needed: Array.from({ length: 4000 }, (_, i) => `lib${i}Name${i * 7}.so`) }));
+      await put(cwd, "inputs/syms.so", buildElf({ cls: 64, needed: Array.from({ length: 150_000 }, (_, i) => `lib${i}Name${i * 7}.so`) }));
       return { argv: [], stdin: JSON.stringify({ path: "inputs/syms.so" }) };
     },
   },
