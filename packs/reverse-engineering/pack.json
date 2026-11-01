@@ -119,7 +119,8 @@
     "go_buildinfo",
     "marshal_inspect",
     "pe_directories",
-    "pe_info"
+    "pe_info",
+    "unpack_safe"
   ],
   "recipes": [
     "reverse-engineering/capa-floss",

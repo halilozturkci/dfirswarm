@@ -1,0 +1,47 @@
+{
+  "name": "unpack_safe",
+  "description": "Unpack a UPX-packed executable into a derivative file, with `upx -t` first and `upx -d` second, and record exactly what was done: the SHA-256 of the sample and of the derivative, `upx --version` as printed, each step's argv and exit code, and the log that holds UPX's own words (nothing from the sample is printed inline). UPX only: a file UPX does not recognise is refused as `unsupported`, by name of another packer when its marker is in the first MiB (a hint, not a finding). The derivative is written into a directory of its own under the tool-output directory (in a job, under $OUT), never over the original, then linked under its final name without replacing any file, with no execute bit; the sample is read through a descriptor opened without following a link (a symbolic link, a pipe or a device is refused) and must be unchanged when UPX is done. The output budget (`max_output_bytes`, default 256 MiB, UPX can expand about 1000:1) is checked against the size UPX lists before anything is written, and the growing file is watched while UPX writes it: a file past the budget ends UPX, is removed, and the answer is `partial` with `limits_hit`. A call that spends `max_seconds` is `partial` and the half-written file is removed; a corrupted file, a failing UPX or an empty output is `failed` with no derivative. `complete` means upx -t accepted the file, upx -d exited 0 and the derivative is a regular, non-empty file within the budget; it does not mean the sample is safe, that nothing else is packed inside it, or that the derivative runs. A decompressed file is the sample's own content: read it as you read the sample. Requires upx. A stop signal (SIGTERM, SIGINT or SIGHUP) ends upx and what it started and answers with one JSON document (status `failed`, `interrupted` true), exit 128 plus the signal, from the moment the module has run as far as its handlers; a second signal does nothing while the first is answered, and the unfinished derivative is removed.",
+  "use": {
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "4d5a"
+      },
+      {
+        "offset": 0,
+        "hex": "7f454c46"
+      }
+    ],
+    "extensions": [
+      ".exe",
+      ".dll",
+      ".sys",
+      ".scr",
+      ".so"
+    ]
+  },
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The packed sample (a regular file of at most 1 GiB; read, never changed)"
+    },
+    "max_output_bytes": {
+      "type": "integer",
+      "description": "Output budget for the derivative, from 1048576 to 1073741824 (default 268435456)"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "Time for the whole call, from 5 to 150 (default 120); a step not reached or not finished by then is `not_attempted` or ended and the answer is `partial`"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "requires": [
+    "upx"
+  ],
+  "timeout_seconds": 180,
+  "example": "{\"path\": \"work/extracted/sample.exe\", \"max_output_bytes\": 268435456}",
+  "by": "maintainer",
+  "at": "2026-11-01T12:00:00.000Z",
+  "version": 1
+}
