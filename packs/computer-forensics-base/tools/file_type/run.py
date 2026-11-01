@@ -456,22 +456,45 @@ class Results:
     def _tmp(self):
         return self.tmp
 
+    def _give_up(self, exc):
+        """The whole-result file cannot be written (a full disk, a file-size limit): it is closed and removed, the page and the counts stay
+        whole, and the answer says so (all_results_error)."""
+        self.error = "the whole result could not be kept (%s: %s)" % (self.path.parent, getattr(exc, "strerror", None) or exc.__class__.__name__)
+        try:
+            if self.fh:
+                self.fh.close()
+        except OSError:
+            pass
+        try:
+            if self.tmp:
+                os.unlink(self.tmp)
+        except OSError:
+            pass
+        self.fh = self.tmp = None
+
     def add(self, entry):
         if self.fh:
-            self.fh.write(json.dumps(entry) + "\n")          # ASCII escapes: a name that is not UTF-8 is written, never lost
+            try:
+                self.fh.write(json.dumps(entry) + "\n")          # ASCII escapes: a name that is not UTF-8 is written, never lost
+            except OSError as exc:
+                self._give_up(exc)
 
     def finish(self, keep):
         """Publish the file when the inline page is not the whole result; drop it when it is."""
         if not self.fh:
             return None
-        self.fh.flush()
-        os.fsync(self.fh.fileno())
-        self.fh.close()
-        if keep:
-            self.path, self.shown = publish(self.tmp, self.path, self.shown)
-            self.tmp = None
-            return self.shown
-        os.unlink(self.tmp)
+        try:
+            self.fh.flush()
+            os.fsync(self.fh.fileno())
+            self.fh.close()
+            if keep:
+                self.path, self.shown = publish(self.tmp, self.path, self.shown)
+                self.tmp = None
+                return self.shown
+            os.unlink(self.tmp)
+        except OSError as exc:
+            self._give_up(exc)
+            return None
         return None
 
 
@@ -557,8 +580,9 @@ def main():
         inline_total += 1
         if len(page) < limit:
             page.append(entry)
-    whole = results.finish(keep=inline_total > len(page) or (mismatch_only and counts["discovered"] > inline_total) or counts["errors"] > ERRORS_SHOWN
-                           or counts["not_attempted"] > ERRORS_SHOWN)
+    needed = (inline_total > len(page) or (mismatch_only and counts["discovered"] > inline_total) or counts["errors"] > ERRORS_SHOWN
+              or counts["not_attempted"] > ERRORS_SHOWN)
+    whole = results.finish(keep=needed)
     why_not_complete = []
     if stopped:
         why_not_complete.append(stopped)
@@ -599,6 +623,11 @@ def main():
         out["all_results_format"] = "JSON Lines, one complete entry per file looked at, whatever limit and mismatch_only show"
     if results.error:
         out["all_results_error"] = results.error
+        if needed:                                   # the page is not the whole result and the file that holds the rest is missing
+            out["complete"] = False
+            out["status"] = "partial"
+            out["status_basis"] = ("%s; %s" % (out["status_basis"], "the file that should hold every result could not be written (all_results_error)")
+                                   if why_not_complete else "the page and the counts are right, but the file that should hold every result could not be written (all_results_error)")
     if stopped:
         out["stopped"] = stopped
     if why_not_complete:

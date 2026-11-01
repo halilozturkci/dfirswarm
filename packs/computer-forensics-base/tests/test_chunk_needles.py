@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+import time
 import unittest
 
 from support import Case, manifest, run_tool, stand_in
@@ -270,6 +271,25 @@ class ChunkNeedles(Case):
         self.assertEqual(r.json["status"], "partial")
         self.assertIn("extract the inode (icat_extract)", r.json["stopped"])
         self.assertGreater(r.json["next_start"], 0)
+
+    def test_an_icat_that_says_nothing_is_not_waited_for_past_the_clock(self):
+        d = self.path("bin")
+        os.makedirs(d)
+        pid_file = self.path("icat.pid")
+        stand_in(d, "icat", 'echo $$ > "%s"\nprintf "aaneedle"\nhead -c 300000 /dev/zero\nexec sleep 60\n' % pid_file)
+        self.write("inputs/disk.E01", b"x")
+        started = time.monotonic()
+        r = run_tool("chunk_needles", {"needles": "needle", "inode": 12, "image": "inputs/disk.E01", "offset": 0, "max_seconds": 2}, self.dir, [d], timeout=40)
+        took = time.monotonic() - started
+        try:
+            self.assertLess(took, 20, "the tool waited for an icat that said nothing: %r %r" % (r.stdout[:200], r.stderr[-200:]))
+            self.assertEqual((r.code, r.json["status"]), (0, "partial"), r.stdout[:300])
+            self.assertEqual(r.json["hits"]["needle"]["ascii"], 1)
+        finally:
+            try:
+                os.kill(int(self.read(pid_file)), 9)       # the stand-in's own pid, recorded by itself, and no other
+            except (OSError, ValueError):
+                pass
 
     def test_values_are_refused_in_a_job_that_was_not_run_as_secret_output(self):
         env, out = self.job_env(secret=False)

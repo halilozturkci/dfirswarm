@@ -698,7 +698,7 @@ def main():
     except Refuse as exc:
         fail(str(exc), **{"sig_type": sig_type, **exc.extra})
     except OSError as exc:
-        fail("the source could not be read: %s" % (exc.strerror or exc), path=path)
+        fail("the source could not be read or the output could not be written: %s" % (exc.strerror or exc), path=path)
     except (struct.error, ValueError, OverflowError) as exc:
         fail("a header of this signature is malformed: %s" % exc, sig_type=sig_type, offset=offset)
     if dest is not None:

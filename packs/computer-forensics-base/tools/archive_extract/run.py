@@ -1607,10 +1607,17 @@ def private_file(path, mode="w"):
 def write_json_atomic(path, obj):
     tmp = "%s.tmp.%d" % (path, os.getpid())
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, indent=2, ensure_ascii=True)
-        fh.write("\n")
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(obj, fh, indent=2, ensure_ascii=True)
+            fh.write("\n")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)           # a full disk or a file-size limit: the half-written file is not left beside the receipt
+        except OSError:
+            pass
+        raise
 
 
 # ---- the engine -------------------------------------------------------------------------------------------------------
@@ -1647,13 +1654,20 @@ class Engine:
         self.notes = []
         self.extra = {}
         self.status = "running"          # running | interrupted | failed while the run is not over; None once it is
+        self.receipt_error = None        # why receipt.json could not be written, when it could not
 
     # -- bookkeeping --
     def count(self, status):
         self.counts[status] = self.counts.get(status, 0) + 1
 
     def write_receipt(self):
-        write_json_atomic(str(self.receipt_path), self.receipt())
+        """Write receipt.json; a disk that refuses is said in the answer (receipt_error) and makes it partial, never a crash with no JSON."""
+        try:
+            write_json_atomic(str(self.receipt_path), self.receipt())
+            return True
+        except OSError as exc:
+            self.receipt_error = describe(exc)
+            return False
 
     def receipt(self):
         bad = {k: v for k, v in self.counts.items() if k not in ("extracted", "directory", "not_created")}
@@ -2781,6 +2795,11 @@ def main():
     eng.status = None
     eng.write_receipt()
     receipt = eng.receipt()
+    if eng.receipt_error:
+        receipt["status"] = "failed" if receipt["status"] == "failed" else "partial"
+        receipt["status_basis"] = ("the extraction ran, but %s could not be written (%s): the members already written are on disk, and the answer "
+                                   "is the only record of the run" % (eng.receipt_path.name, eng.receipt_error))
+        receipt["receipt_error"] = eng.receipt_error
     out = {"ok": True, **receipt, "members": eng.page,
            "members_returned": len(eng.page), "members_truncated": eng.rows > len(eng.page),
            "note": ("the inline members are a page; members_file has every member" if eng.rows > len(eng.page) else None)}

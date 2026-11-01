@@ -127,6 +127,13 @@ def _answer(result, code=0):
 
 def _unexpected(kind, value, _tb):
     """An exception nobody expected is an answer too: the class only, never a message, which could quote the evidence."""
+    for page in list(globals().get("PAGES", ())):          # the hidden file of the match list is not left behind
+        held = getattr(page, "_tmp", None)
+        if held is not None:
+            try:
+                os.unlink(held)
+            except OSError:
+                pass
     budget_class = globals().get("_Budget")
     if budget_class is not None and issubclass(kind, budget_class):
         sys.stdout.write(json.dumps({"ok": False, "error": "the time budget ran out before the search began", "status": "partial",
@@ -460,6 +467,23 @@ def _stopped(signum):
                       "status_basis": "the tool was stopped by signal %d during the search: the matches counted so far are a lower bound, and the file of every match was not kept" % signum}), flush=True)
 
 
+def _drop_matches(err):
+    """The file of every match cannot be written (a full disk, a file-size limit): it is closed, removed, and the answer says so."""
+    global all_out, keep_error
+    keep_error = "%s: %s" % (keep_dir, getattr(err, "strerror", None) or err.__class__.__name__)
+    if all_out is not None:
+        try:
+            all_out.close()
+        except OSError:
+            pass
+    all_out = None
+    HELD._tmp = None
+    try:
+        os.unlink(tmp)
+    except (OSError, TypeError):
+        pass
+
+
 install_signal_handlers(_stopped)
 try:
     os.makedirs(keep_dir, exist_ok=True)
@@ -493,7 +517,10 @@ try:
                 total += 1
                 text = line
                 if all_out:
-                    all_out.write("%d\t%s\n" % (i, text))
+                    try:
+                        all_out.write("%d\t%s\n" % (i, text))
+                    except (OSError, ValueError) as e:      # ENOSPC, EFBIG: the page is still right, the whole set is not kept
+                        _drop_matches(e)
                 if total > offset and len(hits) < limit:
                     hits.append({"n": i, "line": text})
 except _Budget:
@@ -513,12 +540,17 @@ if INDEX_PROBLEMS.get(revision):
 more = offset + len(hits) < total
 result["next_offset"] = offset + len(hits) if more else None
 if all_out:
-    all_out.close()
+    try:
+        all_out.close()                      # the last buffered bytes are written here, and can fail like any other
+    except OSError as e:
+        _drop_matches(e)
+if all_out:
     if more or offset or stopped_at is not None:
         # Nothing already at the name is replaced: an earlier answer to this search, complete, stays when this one was cut short.
         keep_stem, keep_ext = os.path.splitext(keep)
         shown_stem, _ = os.path.splitext(shown)
         k = 1
+        published = True
         while True:
             suffix = "" if k == 1 else ".%d" % k
             held = keep_stem + suffix + keep_ext
@@ -537,15 +569,22 @@ if all_out:
                         break
                     k += 1
                     continue
-                os.rename(tmp, held)
+                try:
+                    os.rename(tmp, held)
+                except OSError as e:
+                    _drop_matches(e)
+                    published = False
             else:
                 os.unlink(tmp)
             break
-        result["all_matches"] = shown_stem + suffix + keep_ext
-        result["earlier_answers"] = earlier_answers(held)
-        result["all_matches_format"] = "one match per line: the line number in the catalogue file, a tab, the line"
+        if published:
+            result["all_matches"] = shown_stem + suffix + keep_ext
+            result["earlier_answers"] = earlier_answers(held)
+            result["all_matches_format"] = "one match per line: the line number in the catalogue file, a tab, the line"
+        else:
+            result["all_matches_error"] = "the whole match set could not be written (%s); page through it with offset=" % keep_error
     else:
         os.unlink(tmp)
-elif more or offset:
+elif more or offset or stopped_at is not None:
     result["all_matches_error"] = "the whole match set could not be written (%s); page through it with offset=" % keep_error
 _answer(result)

@@ -934,17 +934,25 @@ def summarise(output, sample, out_dir, stop_at, invalid_path):
                     entry["message_length"] = len(msg)
                     entry["message_note"] = "a preview: the whole line is line %d of the output file" % number
                 head.append(entry)
+    invalid_error = None
     if bad:
-        with open(invalid_path, "x", encoding="utf-8") as fh:
-            fh.write("line\tbyte_offset\tbytes\treason\tfirst 200 bytes (the whole line stays in the output file)\n")
-            for n, off, size, why, snippet in bad:
-                fh.write("%d\t%d\t%d\t%s\t%s\n" % (n, off, size, why.replace("\t", " ").replace("\n", " "),
-                                                   snippet.decode("utf-8", "replace").replace("\t", " ").replace("\n", " ")))
+        try:
+            with open(invalid_path, "x", encoding="utf-8") as fh:
+                fh.write("line\tbyte_offset\tbytes\treason\tfirst 200 bytes (the whole line stays in the output file)\n")
+                for n, off, size, why, snippet in bad:
+                    fh.write("%d\t%d\t%d\t%s\t%s\n" % (n, off, size, why.replace("\t", " ").replace("\n", " "),
+                                                       snippet.decode("utf-8", "replace").replace("\t", " ").replace("\n", " ")))
+        except OSError as exc:                  # a full disk or a file-size limit: the counts stay whole, the half listing is removed
+            invalid_error = getattr(exc, "strerror", None) or exc.__class__.__name__
+            try:
+                os.unlink(invalid_path)
+            except OSError:
+                pass
     return {"events": events, "invalid_lines": invalid, "oversized_lines": oversized, "events_without_a_time": untimed,
             "first_event": readable(earliest[1]) if earliest else None, "last_event": readable(latest[1]) if latest else None,
             "parsers_seen": parsers_seen, "head": head,
-            "invalid_lines_file": invalid_path if bad else None,
-            "invalid_lines_listed": len(bad), "invalid_lines_listing_complete": len(bad) == invalid,
+            "invalid_lines_file": invalid_path if bad and not invalid_error else None, "invalid_lines_file_error": invalid_error,
+            "invalid_lines_listed": len(bad) if not invalid_error else 0, "invalid_lines_listing_complete": len(bad) == invalid and not invalid_error,
             "stopped_at_line": stopped_at_line}
 
 
@@ -1131,6 +1139,8 @@ def main():
             result["events"] = summary["events"]
             result["invalid_lines"] = summary["invalid_lines"]
             result["oversized_lines"] = summary["oversized_lines"]
+            if summary["invalid_lines_file_error"]:
+                result["problems"].append("the file listing the invalid lines could not be written (%s): the count is whole, the listing is not" % summary["invalid_lines_file_error"])
             if summary["invalid_lines_file"]:
                 result["invalid_lines_file"] = summary["invalid_lines_file"]
                 result["invalid_lines_listing_complete"] = summary["invalid_lines_listing_complete"]

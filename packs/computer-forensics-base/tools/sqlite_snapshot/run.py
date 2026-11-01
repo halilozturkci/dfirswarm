@@ -478,10 +478,17 @@ def private_open(path, mode="wb"):
 def write_json_atomic(path, obj):
     tmp = "%s.tmp.%d" % (path, os.getpid())
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, indent=2, ensure_ascii=True)
-        fh.write("\n")
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(obj, fh, indent=2, ensure_ascii=True)
+            fh.write("\n")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)           # a full disk or a file-size limit: the half-written file is not left beside the receipt
+        except OSError:
+            pass
+        raise
 
 
 # ---- the WAL, read from the copy -----------------------------------------------------------------------------------------
@@ -730,8 +737,16 @@ def main():
     }
     receipt_path = str(dest / "snapshot.json")
 
+    receipt_trouble = []
+
     def write_receipt():
-        write_json_atomic(receipt_path, receipt)
+        """snapshot.json; a disk that refuses is said in the answer (receipt_error), not a crash with no JSON."""
+        try:
+            write_json_atomic(receipt_path, receipt)
+            return True
+        except OSError as exc:
+            receipt_trouble[:] = [describe(exc)]
+            return False
 
     def last_word(signum):
         """The receipt says it was stopped (a stop is not a status: partial, with interrupted true), the copy under way is named as a .partial
@@ -910,8 +925,14 @@ def main():
     receipt["status_basis"] = ("every file of the set was copied and hashed, and the WAL was read and applied in the copy" if receipt["status"] == "complete" else
                                "a file of the set was not copied whole, or the WAL or journal could not be read or applied (see problems)")
     receipt["seconds"] = round(time.monotonic() - started, 2)
-    write_receipt()
-    say(dict(receipt), 0)
+    written = write_receipt()
+    answer = dict(receipt)
+    if not written:
+        answer["status"] = "partial"
+        answer["receipt_error"] = receipt_trouble[0]
+        answer["status_basis"] = ("the copy was made, but snapshot.json could not be written (%s): the files under original/ and applied/ are on disk, "
+                                  "and this answer is the only record of them" % receipt_trouble[0])
+    say(answer, 0)
 
 
 if __name__ == "__main__":

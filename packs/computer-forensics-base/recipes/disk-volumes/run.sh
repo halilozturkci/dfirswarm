@@ -32,6 +32,8 @@
 set -uo pipefail
 
 have() { command -v "$1" >/dev/null 2>&1; }
+TMPF=""        # a temporary file outside the output directory (mktemp), removed when a stop ends the script
+final() { trap '' TERM INT HUP; }     # the answer is about to be written: a stop signal from here on changes nothing, or it would add a second document
 
 target_field() { # target_field <json or file> <paths0|name>
   python3 - "$1" "$2" <<'PY'
@@ -97,7 +99,7 @@ PY
 
 STEP_TIMEOUT="${RECIPE_STEP_SECONDS:-900}"
 PROBE_TIMEOUT="${RECIPE_PROBE_SECONDS:-120}"
-[[ "$STEP_TIMEOUT" =~ ^[0-9]+$ && "$PROBE_TIMEOUT" =~ ^[0-9]+$ ]] || { echo '{"ok": false, "error": "RECIPE_STEP_SECONDS and RECIPE_PROBE_SECONDS are whole numbers"}'; exit 2; }
+[[ "$STEP_TIMEOUT" =~ ^[0-9]+$ && "$PROBE_TIMEOUT" =~ ^[0-9]+$ ]] || { final; echo '{"ok": false, "error": "RECIPE_STEP_SECONDS and RECIPE_PROBE_SECONDS are whole numbers"}'; exit 2; }
 # The recipe's own clock: recipe.json's limits.seconds (a test holds the two equal), less a margin of a twentieth, at most a minute, for
 # the index and the coverage. SECONDS is the shell's own count of seconds since it began.
 TOTAL_SECONDS="${RECIPE_SECONDS:-14400}"
@@ -160,6 +162,8 @@ on_signal() { # on_signal <name> <number>
     if alive "$p"; then kill -KILL "$p" 2>/dev/null; fi
     wait "$p" 2>/dev/null
   done
+  if [[ -n "$TMPF" ]]; then rm -f "$TMPF" "$TMPF.stderr"; fi         # the probe's temporary file, if one was being written
+  if [[ -n "${out:-}" ]]; then rm -f "$out/.fsstat.tmp"; fi          # the hidden file the file-system probe was writing
   if [[ "$cmd" == run && -n "$out" && -d "$out" ]]; then
     stopped_by="SIG$name"
     notes+=("stopped by SIG$name: the step that was running was ended and the steps after it were not run")
@@ -215,11 +219,11 @@ fsstat_boxed() { boxed fsstat "$@"; }
 # reads_a_file_system <start> <img>: does fsstat read one there (a time-boxed call, its words kept only to look for the answer).
 reads_a_file_system() {
   local f rc=0
-  f="$(mktemp)"
+  f="$(mktemp)"; TMPF="$f"
   boxed fsstat -o "$1" "$2" > "$f" 2>/dev/null || rc=$?
-  if (( rc == 125 )); then rm -f "$f"; return 2; fi        # not started: it is not known whether a file system is there
+  if (( rc == 125 )); then rm -f "$f"; TMPF=""; return 2; fi        # not started: it is not known whether a file system is there
   grep -q '^File System Type:' "$f" 2>/dev/null && rc=0 || rc=1
-  rm -f "$f"
+  rm -f "$f"; TMPF=""
   return "$rc"
 }
 
@@ -279,10 +283,10 @@ volume() { # volume <img> <shown name> <start> <description>
 # probe_fs <fsstat arguments>: does fsstat read a file system there, as a detect-time call (no pipe: a pipeline is a foreground wait).
 probe_fs() {
   local f rc=1
-  f="$(mktemp)"
+  f="$(mktemp)"; TMPF="$f"
   probe fsstat "$@" > "$f" 2>/dev/null || true
   grep -q '^File System Type:' "$f" 2>/dev/null && rc=0
-  rm -f "$f"
+  rm -f "$f"; TMPF=""
   return "$rc"
 }
 
@@ -320,21 +324,21 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "{\"ok\": false, \"error\": \"$1 needs a value\"}"; exit 2; }
       case "$1" in --target) target="$2" ;; --out) out="$2" ;; --probe-out) probe_out="$2" ;; esac
       shift 2 ;;
-    *) echo '{"ok": false, "error": "unknown argument"}'; exit 2 ;;
+    *) final; echo '{"ok": false, "error": "unknown argument"}'; exit 2 ;;
   esac
 done
-[[ -n "$target" ]] || { echo '{"ok": false, "error": "--target is required"}'; exit 2; }
+[[ -n "$target" ]] || { final; echo '{"ok": false, "error": "--target is required"}'; exit 2; }
 img="$(target_field "$target" paths0)"
 shown="$(target_field "$target" name)"
-[[ -n "$img" && -f "$img" ]] || { echo '{"applies": "unknown", "why": "the target is not a regular file, so it cannot be told what it is", "ok": false, "error": "the target is not a readable file"}'; exit 2; }
+[[ -n "$img" && -f "$img" ]] || { final; echo '{"applies": "unknown", "why": "the target is not a regular file, so it cannot be told what it is", "ok": false, "error": "the target is not a readable file"}'; exit 2; }
 
 case "$cmd" in
   detect)
     if have mmls && probe mmls "$img" >/dev/null 2>&1; then
-      echo '{"applies": true, "why": "a partition table (mmls)"}'; exit 0
+      final; echo '{"applies": true, "why": "a partition table (mmls)"}'; exit 0
     fi
     if have fsstat && probe_fs "$img"; then
-      echo '{"applies": true, "why": "a filesystem at sector 0 (fsstat)"}'; exit 0
+      final; echo '{"applies": true, "why": "a filesystem at sector 0 (fsstat)"}'; exit 0
     fi
     # A volume carved or copied out of a disk can keep the disk's offset
     # with no table before it (Ali Hadi #10's recovered Kali prefix: ext4
@@ -345,12 +349,12 @@ case "$cmd" in
       fi
     done
     if ! have mmls && ! have fsstat; then
-      echo '{"applies": "unknown", "why": "mmls and fsstat are not in this image"}'; exit 2
+      final; echo '{"applies": "unknown", "why": "mmls and fsstat are not in this image"}'; exit 2
     fi
-    echo '{"applies": false, "why": "no partition table and no filesystem at sector 0, 63 or 2048"}'; exit 1
+    final; echo '{"applies": false, "why": "no partition table and no filesystem at sector 0, 63 or 2048"}'; exit 1
     ;;
   run)
-    [[ -n "$out" ]] || { echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
+    [[ -n "$out" ]] || { final; echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
     mkdir -p "$out"
     : > "$out/index.tsv"
     volumes=0
@@ -458,12 +462,12 @@ case "$cmd" in
           if [[ ${#unstarted[@]} -gt 0 ]]; then
             notes+=("no partition table was read and no file system was found, but the recipe's time limit left no time for every step (limits_hit names them): the image is not shown to have none")
             coverage partial "nothing was read before the recipe's time limit"
-            echo '{"ok": false, "status": "partial"}'
+            final; echo '{"ok": false, "status": "partial"}'
             exit 2
           fi
           notes+=("no partition table (mmls), and no filesystem at sector 0, 63 or 2048 (fsstat)")
           coverage unsupported "nothing"
-          echo '{"ok": false, "status": "unsupported"}'
+          final; echo '{"ok": false, "status": "unsupported"}'
           exit 2
         fi
       fi
@@ -473,10 +477,10 @@ case "$cmd" in
       rel="${f#"$out/"}"
       index_row "$rel" "what the step writing ${rel%.stderr} said on stderr"
     done < <(find "$out" -type f -name '*.stderr' | sort)
-    python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"], "volumes": int(sys.argv[2]), "candidate_volumes": int(sys.argv[3])}))' "$out/coverage.json" "$volumes" "$candidate_volumes"
+    final; python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"], "volumes": int(sys.argv[2]), "candidate_volumes": int(sys.argv[3])}))' "$out/coverage.json" "$volumes" "$candidate_volumes"
     ;;
   *)
-    echo '{"applies": "unknown", "why": "a usage error, so nothing was asked", "ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'
+    final; echo '{"applies": "unknown", "why": "a usage error, so nothing was asked", "ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'
     exit 2
     ;;
 esac

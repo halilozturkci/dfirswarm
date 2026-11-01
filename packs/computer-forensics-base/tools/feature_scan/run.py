@@ -734,6 +734,7 @@ class SecretValues:
         self.enabled = enabled
         self.written = 0
         self._fh = None
+        self.write_error = None          # why the values file stopped growing (a full disk, a file-size limit)
         self.job = os.environ.get("JOB_ID") or ""
         self.out = os.environ.get("OUT") or ""
         self.path = None
@@ -769,17 +770,23 @@ class SecretValues:
         self._fh = os.fdopen(fd, "w", encoding="utf-8")
 
     def add(self, finding_id: str, locator: dict, value: str) -> None:
-        if not self.enabled:
+        if not self.enabled or self.write_error is not None:
             return
-        self._fh.write(json.dumps({"finding_id": finding_id, **locator, "value": value}, ensure_ascii=True))   # a path with bytes that are not UTF-8 is an escape, not an encoding error
-        self._fh.write("\n")
+        try:
+            self._fh.write(json.dumps({"finding_id": finding_id, **locator, "value": value}, ensure_ascii=True) + "\n")   # a path with bytes that are not UTF-8 is an escape, not an encoding error
+        except OSError as exc:
+            self.write_error = getattr(exc, "strerror", None) or exc.__class__.__name__      # the file is a prefix: what it holds is whole lines up to here
+            return
         self.written += 1
 
     def close(self) -> None:
         if self._fh is not None:
-            self._fh.flush()
-            os.fsync(self._fh.fileno())
-            self._fh.close()
+            try:
+                self._fh.flush()
+                os.fsync(self._fh.fileno())
+                self._fh.close()
+            except OSError as exc:
+                self.write_error = self.write_error or getattr(exc, "strerror", None) or exc.__class__.__name__
             self._fh = None
 
     def summary(self) -> dict:
@@ -788,6 +795,7 @@ class SecretValues:
             "written": self.written,
             "values_file": self.shown if self.enabled else None,
             "contains_secret_values": self.written > 0,
+            "write_error": self.write_error,
             "format": "JSON Lines, mode 0600: finding_id, feature_file, count (occurrences), value (a feature value as bulk_extractor wrote it)" if self.enabled else None,
         }
 
@@ -1204,7 +1212,7 @@ def main():
     feature_total = len(features)
     del features[FEATURES_SHOWN:]
     exit_ok = code == 0 and not timed_out
-    status = "complete" if exit_ok and not not_counted else ("partial" if n_written or exit_ok else "failed")
+    status = "complete" if exit_ok and not not_counted and secret.write_error is None else ("partial" if n_written or exit_ok else "failed")
     result = {
         "tool": TOOL,
         "path": path,

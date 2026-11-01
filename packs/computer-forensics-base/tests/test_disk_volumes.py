@@ -287,6 +287,32 @@ class DiskVolumesStopAndClock(Case):
                 self.assertTrue(self.gone(pid), "the step (pid %d) was left running" % pid)
                 os.unlink(pidfile)
 
+    def test_a_stop_leaves_no_hidden_probe_file_in_out_or_a_temporary_file_in_tmp(self):
+        import signal
+        d = self.path("bin")
+        os.makedirs(d, exist_ok=True)
+        pidfile = self.path("step.pid")
+        stand_in(d, "mmls", "exit 1\n")                              # no partition table: the file-system probe writes out/.fsstat.tmp
+        stand_in(d, "fsstat", 'echo $$ > "%s"\nexec sleep 60\n' % pidfile)
+        self.write("disk.img", b"\0" * 65536)
+        tmp = self.path("tmpdir")
+        os.makedirs(tmp)
+        for where in ("no table", "table"):
+            if where == "table":
+                self.write("mmls.txt", self.CLEAN)
+                stand_in(d, "mmls", 'cat "%s"\n' % self.path("mmls.txt"))
+            out = self.path("out-" + where.replace(" ", "-"))
+            if os.path.exists(pidfile):
+                os.unlink(pidfile)
+            proc = self.start(d, out, env={"TMPDIR": tmp})
+            pid = self.wait_for(pidfile)
+            proc.send_signal(signal.SIGTERM)
+            stdout, stderr = proc.communicate(timeout=30)
+            self.assertEqual(proc.returncode, 128 + signal.SIGTERM, (where, stdout, stderr))
+            self.assertTrue(self.gone(pid), "the step (pid %d) was left running" % pid)
+            self.assertEqual([n for n in os.listdir(out) if n.startswith(".")], [], where)
+            self.assertEqual(os.listdir(tmp), [], "%s: a temporary file was left in TMPDIR" % where)
+
     def test_a_second_signal_while_the_first_is_answered_changes_nothing(self):
         import signal
         bin_dir, pidfile = self.blocking_stubs("fsstat")

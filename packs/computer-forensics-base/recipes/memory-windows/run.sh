@@ -31,6 +31,8 @@
 set -uo pipefail
 
 have() { command -v "$1" >/dev/null 2>&1; }
+TMPF=""        # a temporary file outside the output directory (mktemp), removed when a stop ends the script
+final() { trap '' TERM INT HUP; }     # the answer is about to be written: a stop signal from here on changes nothing, or it would add a second document
 
 target_field() {
   python3 - "$1" "$2" <<'PY'
@@ -71,7 +73,7 @@ looks_like_memory() {
 
 STEP_TIMEOUT="${RECIPE_STEP_SECONDS:-900}"
 PROBE_TIMEOUT="${RECIPE_PROBE_SECONDS:-30}"
-[[ "$STEP_TIMEOUT" =~ ^[0-9]+$ && "$PROBE_TIMEOUT" =~ ^[0-9]+$ ]] || { echo '{"ok": false, "error": "RECIPE_STEP_SECONDS and RECIPE_PROBE_SECONDS are whole numbers"}'; exit 2; }
+[[ "$STEP_TIMEOUT" =~ ^[0-9]+$ && "$PROBE_TIMEOUT" =~ ^[0-9]+$ ]] || { final; echo '{"ok": false, "error": "RECIPE_STEP_SECONDS and RECIPE_PROBE_SECONDS are whole numbers"}'; exit 2; }
 out=""
 cmd=""
 notes=()
@@ -110,6 +112,8 @@ on_signal() { # on_signal <name> <number>
     if alive "$p"; then kill -KILL "$p" 2>/dev/null; fi
     wait "$p" 2>/dev/null
   done
+  if [[ -n "$TMPF" ]]; then rm -f "$TMPF" "$TMPF.stderr"; fi         # the probe's temporary file, if one was being written
+  if [[ -n "${out:-}" ]]; then rm -f "$out/.fsstat.tmp"; fi          # the hidden file the file-system probe was writing
   if [[ "$cmd" == run && -n "$out" && -d "$out" ]]; then
     stopped_by="SIG$name"
     notes+=("stopped by SIG$name: the step that was running was ended and the steps after it were not run")
@@ -241,26 +245,26 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "{\"ok\": false, \"error\": \"$1 needs a value\"}"; exit 2; }
       case "$1" in --target) target="$2" ;; --out) out="$2" ;; --probe-out) probe_out="$2" ;; esac
       shift 2 ;;
-    *) echo '{"ok": false, "error": "unknown argument"}'; exit 2 ;;
+    *) final; echo '{"ok": false, "error": "unknown argument"}'; exit 2 ;;
   esac
 done
-[[ -n "$target" ]] || { echo '{"ok": false, "error": "--target is required"}'; exit 2; }
+[[ -n "$target" ]] || { final; echo '{"ok": false, "error": "--target is required"}'; exit 2; }
 img="$(target_field "$target" paths0)"
 shown="$(target_field "$target" name)"
-[[ -n "$img" && -f "$img" ]] || { echo '{"applies": "unknown", "why": "the target is not a regular file, so it cannot be told what it is", "ok": false, "error": "the target is not a readable file"}'; exit 2; }
+[[ -n "$img" && -f "$img" ]] || { final; echo '{"applies": "unknown", "why": "the target is not a regular file, so it cannot be told what it is", "ok": false, "error": "the target is not a readable file"}'; exit 2; }
 
 case "$cmd" in
   detect)
-    looks_like_memory "$img" || { echo '{"applies": false, "why": "not memory by its name or file(1)"}'; exit 1; }
-    have vol || { echo '{"applies": "unknown", "why": "looks like memory, but vol is not in this image"}'; exit 2; }
+    looks_like_memory "$img" || { final; echo '{"applies": false, "why": "not memory by its name or file(1)"}'; exit 1; }
+    have vol || { final; echo '{"applies": "unknown", "why": "looks like memory, but vol is not in this image"}'; exit 2; }
     # What vol says about a file it does not recognise is kept, when the
     # caller gives a place for it (--probe-out), not thrown away.
-    if [[ -n "$probe_out" ]]; then mkdir -p "$probe_out"; probe="$probe_out/windows.info.txt"; else probe="$(mktemp)"; fi
+    if [[ -n "$probe_out" ]]; then mkdir -p "$probe_out"; probe="$probe_out/windows.info.txt"; else probe="$(mktemp)"; TMPF="$probe"; fi
     rc=0
     bg "$PROBE_TIMEOUT" vol --offline -vv -q -f "$img" windows.info > "$probe" 2> "$probe.stderr" || rc=$?
     [[ -s "$probe.stderr" ]] || rm -f "$probe.stderr"
     if [[ "$rc" -eq 0 ]] && grep -qi "NTBuildLab\|Kernel Base\|SystemTime" "$probe"; then
-      rm -f "$probe" "$probe.stderr"; echo '{"applies": true, "why": "Volatility windows.info names a Windows image"}'; exit 0
+      rm -f "$probe" "$probe.stderr"; final; echo '{"applies": true, "why": "Volatility windows.info names a Windows image"}'; exit 0
     fi
     # Volatility can identify and stack a Windows layer before discovering
     # that the exact offline symbol table is absent. That is applicable-but-
@@ -269,7 +273,7 @@ case "$cmd" in
        grep -qs '/download/symbols/.*\.pdb/' "$probe.stderr"; then
       miss="$(kernel_missing "$probe" "$probe.stderr" "$shown")"
       [[ -n "$probe_out" ]] || rm -f "$probe" "$probe.stderr"
-      python3 -c 'import json, sys; print(json.dumps({"applies": True, "why": "Volatility recognized Windows memory, but the matching offline symbol table is absent; run will fail until the image supplies it", "missing": json.loads(sys.argv[1])}))' "$miss"
+      final; python3 -c 'import json, sys; print(json.dumps({"applies": True, "why": "Volatility recognized Windows memory, but the matching offline symbol table is absent; run will fail until the image supplies it", "missing": json.loads(sys.argv[1])}))' "$miss"
       exit 0
     fi
     if [[ "$rc" -eq 142 ]]; then
@@ -278,15 +282,15 @@ case "$cmd" in
       miss="$(kernel_missing "$probe" "$probe.stderr" "$shown" "$PROBE_TIMEOUT")"
       [[ -s "$probe" ]] || rm -f "$probe"
       [[ -n "$probe_out" ]] || rm -f "$probe" "$probe.stderr"
-      python3 -c 'import json, sys; print(json.dumps({"applies": "unknown", "why": "offered to Volatility as memory; windows.info did not answer within %ss" % sys.argv[2], "missing": json.loads(sys.argv[1])}))' "$miss" "$PROBE_TIMEOUT"
+      final; python3 -c 'import json, sys; print(json.dumps({"applies": "unknown", "why": "offered to Volatility as memory; windows.info did not answer within %ss" % sys.argv[2], "missing": json.loads(sys.argv[1])}))' "$miss" "$PROBE_TIMEOUT"
       exit 2
     fi
     [[ -s "$probe" ]] || rm -f "$probe"
     [[ -n "$probe_out" ]] || rm -f "$probe" "$probe.stderr"
-    echo '{"applies": false, "why": "offered to Volatility as memory; windows.info named no Windows memory image"}'; exit 1
+    final; echo '{"applies": false, "why": "offered to Volatility as memory; windows.info named no Windows memory image"}'; exit 1
     ;;
   run)
-    [[ -n "$out" ]] || { echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
+    [[ -n "$out" ]] || { final; echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
     mkdir -p "$out"; : > "$out/index.tsv"; : > "$out/steps.jsonl"
     # Said before the first step, so a run stopped anywhere leaves a coverage
     # file that says it did not finish.
@@ -307,13 +311,13 @@ case "$cmd" in
         missing_json="$(kernel_missing "$out/windows.info.txt" "$out/windows.info.txt.stderr" "$shown")"
         notes+=("vol --offline windows.info on $shown: no symbol table for this kernel in the image; it was not fetched, and the plugins that need it were not run")
         coverage partial "windows.info was attempted offline; no symbol table for this kernel in the image, so no Windows plugin was run"
-        python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"], "missing": c["missing"]}))' "$out/coverage.json"
+        final; python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"], "missing": c["missing"]}))' "$out/coverage.json"
         exit 0
       fi
       if [[ "$r" == ok ]]; then why="ran but named no Windows image"; else why="$r"; fi
       notes+=("vol windows.info on $shown: $why")
       coverage failed "nothing"
-      echo '{"ok": false, "status": "failed"}'
+      final; echo '{"ok": false, "status": "failed"}'
       exit 2
     fi
     finished=0
@@ -329,7 +333,7 @@ case "$cmd" in
       rel="${f#"$out/"}"; [[ "$rel" == windows.info.txt.stderr ]] || index_row "$rel" "what the step writing ${rel%.stderr} said on stderr"
     done < <(find "$out" -type f -name '*.stderr' | sort)
     if [[ ${#notes[@]} -gt 0 ]]; then coverage partial "windows.info and the plugins that finished; symbols $symbols"; else coverage complete "windows.info and eleven plugins; symbols $symbols"; fi
-    python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"]}))' "$out/coverage.json"
+    final; python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"]}))' "$out/coverage.json"
     ;;
-  *) echo '{"applies": "unknown", "why": "a usage error, so nothing was asked", "ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'; exit 2 ;;
+  *) final; echo '{"applies": "unknown", "why": "a usage error, so nothing was asked", "ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'; exit 2 ;;
 esac

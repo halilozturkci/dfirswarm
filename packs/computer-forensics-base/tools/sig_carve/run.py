@@ -556,10 +556,13 @@ def main():
         scan["stopped"] = stopped
     if read_error:
         scan["read_error"] = read_error
+    unwritten = [n for n, e in results.items() if "all_results_error" in e]      # hits past the page that no file holds
     print_answer({
         "tool": TOOL,
-        "status": "complete" if complete else "partial" if not read_error else "failed",
-        "status_basis": ("the whole requested range was read and every header in it is reported" if complete else
+        "status": "complete" if complete and not unwritten else "partial" if not read_error else "failed",
+        "status_basis": ("the whole requested range was read and every header in it is reported" if complete and not unwritten else
+                         "the whole range was read and the counts and pages are right, but the file that should hold every hit could not be written for %s "
+                         "(all_results_error): the hits past the page are counted, not listed" % ", ".join(unwritten) if complete else
                          "the scan stopped at its clock (scanned.stopped says where to go on)" if not read_error else
                          "the file could not be read all the way (scanned.read_error)"),
         "source": {"path": path, "bytes": size, "address_space": "the bytes of this file as given; a container (E01, VMDK) is not decoded"},
