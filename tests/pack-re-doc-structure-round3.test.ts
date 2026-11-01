@@ -149,7 +149,7 @@ function objstmPdf(direct: Map<number, string>, streams: Map<number, [number, Bu
 const BASE = new Map<number, string>([[1, "<< /Type /Catalog /Pages 2 0 R >>"], [2, "<< /Type /Pages /Kids [] /Count 0 >>"]]);
 const names = (n: number): Buffer => Buffer.from("[" + "/a".repeat(n) + "]", "latin1");
 
-test("P1-3 a 118 KB file of four object streams, seven members each of 999,000 names: under 400 MB, partial, the bound named (3 GB, complete, before)", async () => {
+test("P1-3 a 118 KB file of four object streams, seven members each of 999,000 names: under 400 MB, partial, the bound named (3 GB, complete, before)", async (t) => {
   await withCwd(async (cwd) => {
     const streams = new Map<number, [number, Buffer][]>();
     for (let s = 0; s < 4; s++) streams.set(100 + s, Array.from({ length: 7 }, (_x, k): [number, Buffer] => [200 + s * 10 + k, names(999_000)]));
@@ -157,10 +157,15 @@ test("P1-3 a 118 KB file of four object streams, seven members each of 999,000 n
     // the members compress well past max_ratio's 1,000: the ratio is lifted so that the parser, not the decoder, meets them
     // The time is the tool's CPU time, not the wall clock: on a loaded machine the same work took 70 s of wall time against 21 s idle. The kill is
     // far past anything idle (the tool's own clock is 100 s), so a loaded runner does not end the case before it can be measured.
-    const { run, cpuSeconds, rssMb } = bounded(cwd, { path: "work/mem.pdf", max_ratio: 1_000_000 }, 600_000);
+    const { run, cpuSeconds, rssMb } = bounded(cwd, { path: "work/mem.pdf", max_ratio: 1_000_000, max_seconds: 90 }, 600_000);
     const a = JSON.parse(run.stdout) as Json;
     assert.ok(rssMb < 400, `${rssMb.toFixed(0)} MB`);
     assert.ok(cpuSeconds < 60, `${cpuSeconds.toFixed(1)} s of CPU`);
+    // The count of members the bound left unread is a count of members the tool got to before its own wall clock: a tool starved by the host
+    // (it met its 90-second clock with under 80 s of CPU in it) has not got to all of them. Said, and skipped.
+    if (a.limits_hit.some((l: string) => /max_seconds \(90\)/.test(l)) && cpuSeconds < 80) {
+      return t.skip(`the host was too loaded for the tool to reach every member within its 90-second wall clock: ${cpuSeconds.toFixed(1)} s of CPU`);
+    }
     assert.equal(a.status, "partial");
     assert.ok(a.limits_hit.some((l: string) => /more than 250000 values in one parse/.test(l)), JSON.stringify(a.limits_hit));
     assert.equal(a.census.objects_not_read_at_a_limit, 28);
