@@ -230,9 +230,9 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     );
     const mismatch = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {});
     assert.notEqual(mismatch.code, 0);
-    const bad = JSON.parse(mismatch.stdout) as { status: string; modified: string[] };
+    const bad = JSON.parse(mismatch.stdout) as { status: string; ok: boolean; modified: string[] };
     assert.equal(bad.status, "complete", "every file was checked: the status is about the check, ok is the verdict");
-    assert.equal((bad as { ok: boolean }).ok, false);
+    assert.equal(bad.ok, false);
     assert.ok(bad.modified.includes("inputs/AF-Case2.E01"));
 
     const { createHash } = await import("node:crypto");
