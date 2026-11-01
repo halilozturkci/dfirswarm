@@ -36,6 +36,7 @@ import { mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, childGone, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const PACK = process.env.MOBILE_PACK ?? join(ROOT, "packs", "mobile-forensics");
 const TOOLS = join(PACK, "tools");
@@ -87,12 +88,12 @@ async function build(code: string, ...args: string[]): Promise<void> {
 
 /**
  * The tool run under a wrapper that reports, after the answer on stderr, the process's peak resident memory (bytes) and the peak
- * of what Python allocated (tracemalloc). The resident peak depends on the machine: a runner's interpreter, its allocator and, on
- * Linux, a peak a child can inherit from a large parent are in it, so a test compares it with a run of the same wrapper on a tiny
+ * of what Python allocated (tracemalloc). The resident peak is read as VmHWM of the process's own image (tests/peak-rss.ts), so
+ * a peak inherited from the parent is not in it. It still depends on the machine: a runner's interpreter and its allocator are in it, so a test compares it with a run of the same wrapper on a tiny
  * input (`baseline()`). The Python allocation peak does not depend on any of that: it is what the tool's own buffers need.
  */
-const MEASURE = String.raw`
-import resource, runpy, sys, tracemalloc
+const MEASURE = peakRssPrelude() + String.raw`
+import runpy, tracemalloc
 tracemalloc.start()
 sys.argv = [sys.argv[1]]
 try:
@@ -100,8 +101,7 @@ try:
 except SystemExit:
     pass
 traced = tracemalloc.get_traced_memory()[1]
-usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-sys.stderr.write("MAXRSS %d\nTRACED %d\n" % (usage if sys.platform == "darwin" else usage * 1024, traced))
+sys.stderr.write("MAXRSS %d\nTRACED %d\n" % (self_peak_bytes(), traced))
 `;
 
 type Measured = { run: Run; maxrss: number; traced: number };
@@ -3354,37 +3354,40 @@ test("a stop signal at the end of the shared block, before main() installs the h
 
 test("the three tools deliver a whole answer to a reader that takes it steadily but slowly for longer than the stall clock", async () => {
   // The clock was set once per os.write call, and one call on a blocking pipe returns only when all of it has gone in: a reader that took the
-  // data steadily for longer than WRITE_STALL_SECONDS ended the tool with exit 141 and a cut answer. The clock here is 1 second; the reader
-  // takes 64 KiB every 150 ms, so the answer (about 1.4 MB) takes about 3 seconds and no single wait comes near the clock.
+  // data steadily for longer than WRITE_STALL_SECONDS ended the tool with exit 141 and a cut answer. The clock here is 4 seconds; the reader
+  // takes one chunk (64 KiB on Linux) every 250 ms, so the answer (about 2.9 MB) takes about 11 seconds and no single wait of the reader's comes
+  // near the clock unless the host starves the test process for seconds (at 1 second a loaded host did: the tool ended with 141).
   await withCwd(async (cwd) => {
     const code = String.raw`
 import importlib.util, sys
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("t", sys.argv[1]); t = importlib.util.module_from_spec(spec); spec.loader.exec_module(t)
-t.WRITE_STALL_SECONDS = 1
+t.WRITE_STALL_SECONDS = 4
 def main():
-    t.send({"rows": ["row %d" % i for i in range(120000)], "tail": "the end"})
+    t.send({"rows": ["row %d" % i for i in range(240000)], "tail": "the end"})
 t.run_main(main)
 `;
     for (const script of [FREESPACE, MANIFEST, PROTOBUF]) {
-      const r = await new Promise<{ code: number | null; stdout: string; stderr: string; seconds: number }>((resolve, reject) => {
+      const r = await new Promise<{ code: number | null; stdout: string; stderr: string; paused: number }>((resolve, reject) => {
         const child = spawn("python3", ["-c", code, script], { cwd, env: { ...process.env, ...AGENT } });
         const out: Buffer[] = [], err: Buffer[] = [];
-        const began = Date.now();
+        let paused = 0; // seconds the reader held the pipe shut, by construction: a timer never fires early, so the run took at least this long
         const guard = setTimeout(() => child.kill("SIGKILL"), 60000);
         child.stdout.on("data", (c: Buffer) => {
           out.push(c);
           child.stdout.pause();
-          setTimeout(() => child.stdout.resume(), 150);
+          paused += 0.25;
+          setTimeout(() => child.stdout.resume(), 250);
         });
         child.stderr.on("data", (c: Buffer) => err.push(c));
         child.on("error", reject);
-        child.on("close", (code2) => { clearTimeout(guard); resolve({ code: code2, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), seconds: (Date.now() - began) / 1000 }); });
+        child.on("close", (code2) => { clearTimeout(guard); resolve({ code: code2, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), paused }); });
       });
-      assert.ok(r.seconds > 1.5, `${script}: the reader was not slow enough to prove anything (${r.seconds} s)`);
+      // What is proved is a reader slower than the stall clock, so the proof is counted from the pauses it took (the host's pace and the pipe's chunking do not enter it).
+      assert.ok(r.paused > 4.5, `${script}: the reader was not slow enough to prove anything (it paused ${r.paused.toFixed(2)} s in all)`);
       assert.equal(r.code, 0, `${script}: ${r.stderr}`);
       const parsed = JSON.parse(r.stdout) as { rows: string[]; tail: string };
-      assert.equal(parsed.rows.length, 120000, script);
+      assert.equal(parsed.rows.length, 240000, script);
       assert.equal(parsed.tail, "the end");
     }
   });
