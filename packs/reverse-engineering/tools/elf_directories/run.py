@@ -1277,6 +1277,8 @@ class Names:
     def __init__(self, values):
         self.values = values
         self.count = 0
+        self.written = 0
+        self.capped = False
         self._fh = None
         self.shown = None
         self.error = None
@@ -1289,10 +1291,15 @@ class Names:
             self.dir = Path("work") / agent / "tool-output"
             self.prefix = str(self.dir) + "/"
 
+    MAX_BYTES = 64 << 20            # the file of withheld names stops growing here; the file read is the source of the rest
+
     def add(self, real, shown, kind="part_name"):
         self.count += 1
         finding_id = "N%06d" % self.count
         self.values.add(finding_id, {"kind": kind}, real)
+        if self.written >= self.MAX_BYTES:
+            self.capped = True
+            return finding_id
         if self._fh is None and self.error is None:
             try:
                 refused = own_dir(self.dir)
@@ -1312,7 +1319,9 @@ class Names:
             except OSError as exc:
                 self.error = "the file could not be created in %s (%s)" % (self.dir, describe(exc))
         if self._fh is not None:
-            self._fh.write(json.dumps({"finding_id": finding_id, "kind": kind, "name": real, "shown": shown}) + "\n")
+            line = json.dumps({"finding_id": finding_id, "kind": kind, "name": real, "shown": shown}) + "\n"
+            self.written += len(line)
+            self._fh.write(line)
             self._fh.flush()
         return finding_id
 
@@ -1632,6 +1641,8 @@ def parse_headers(img, ctx):
             if min(phnum, fit) > MAX_PHDRS:
                 ctx.limit_hit("the program header table declares %d entries: the first %d are read" % (phnum, MAX_PHDRS))
             for i in range(min(phnum, fit, MAX_PHDRS)):
+                if i % 1024 == 0 and ctx.expired("the program headers"):
+                    break
                 at = phoff + i * phentsize
                 if elf.wide:
                     p_type, p_flags, off, vaddr, paddr, filesz, memsz, align = elf.u("IIQQQQQQ", at)
@@ -1655,6 +1666,8 @@ def parse_headers(img, ctx):
             if min(shnum, fit) > MAX_SHDRS:
                 ctx.limit_hit("the section header table declares %d entries: the first %d are read" % (shnum, MAX_SHDRS))
             for i in range(min(shnum, fit, MAX_SHDRS)):
+                if i % 1024 == 0 and ctx.expired("the section headers"):
+                    break
                 row = read_shdr(elf, shoff + i * shentsize)
                 row["index"] = i
                 elf.shdrs.append(row)
@@ -1814,33 +1827,50 @@ def read_dynamic(img, elf, ctx, out):
     return {"tags": tags, "str_base": str_base, "str_end": str_end}
 
 
-def gnu_hash_symbols(img, elf, start, avail):
-    """The symbol count a DT_GNU_HASH table implies (the highest chain index reached + 1), or None."""
+CHUNK_WORDS = 65536                # words of a hash table read between two looks at the clock
+
+
+def gnu_hash_symbols(img, elf, ctx, start, avail):
+    """(count, floor) for a DT_GNU_HASH table: the symbol count it implies (the highest chain index reached + 1) or None when it implies none,
+    and the table's own lower bound (symoffset: the symbols before it are not hashed). A table in which no bucket holds a symbol implies no
+    count: symoffset is only a lower bound there (every unhashed symbol, an import for one, is below it), so it is never returned as a count.
+    The bucket scan and the chain walk look at the clock every CHUNK_WORDS words."""
     if avail < 16:
-        return None
+        return None, 0
     nbuckets, symoffset, bloom_size, _shift = elf.u("IIII", start)
     wordsize = 8 if elf.wide else 4
     buckets_at = start + 16 + bloom_size * wordsize
     chain_at = buckets_at + nbuckets * 4
     if buckets_at + nbuckets * 4 > start + avail or nbuckets > (1 << 24):
-        return None
+        return None, symoffset
     top = 0
-    for b in range(nbuckets):
-        (v,) = elf.u("I", buckets_at + b * 4)
-        top = max(top, v)
+    done = 0
+    while done < nbuckets:
+        if ctx.expired("the DT_GNU_HASH buckets"):
+            return None, symoffset
+        n = min(CHUNK_WORDS, nbuckets - done)
+        raw = bytes(img.mm[buckets_at + done * 4:buckets_at + (done + n) * 4])
+        if len(raw) < n * 4:
+            return None, symoffset
+        top = max(top, max(v for (v,) in struct.iter_unpack(elf.end + "I", raw)))
+        done += n
     if top < symoffset:
-        return symoffset
+        return None, symoffset
     i = top
+    walked = 0
     while True:
+        if walked % CHUNK_WORDS == 0 and ctx.expired("the DT_GNU_HASH chain"):
+            return None, symoffset
         at = chain_at + (i - symoffset) * 4
         if at + 4 > start + avail or at + 4 > img.size:
-            return None
+            return None, symoffset
         (c,) = elf.u("I", at)
         if c & 1:
-            return i + 1
+            return i + 1, symoffset
         i += 1
+        walked += 1
         if i - symoffset > MAX_SYMBOLS:
-            return None
+            return None, symoffset
 
 
 def read_symbols(img, elf, ctx, out, dyn):
@@ -1852,7 +1882,7 @@ def read_symbols(img, elf, ctx, out, dyn):
         if mapped is None:
             ctx.problem("DT_SYMTAB (address 0x%x) is not mapped by any PT_LOAD segment that holds file bytes: .dynsym is not read through the dynamic array" % addr)
         else:
-            count, how = None, None
+            count, how, floor = None, None, 0
             ent = dyn["tags"].get(11)
             if ent is not None and ent != symsz:
                 ctx.problem("DT_SYMENT is %d, not %d: .dynsym is not read" % (ent, symsz))
@@ -1866,15 +1896,21 @@ def read_symbols(img, elf, ctx, out, dyn):
                     h = elf.to_offset(dyn["tags"][0x6ffffef5])
                     if h is not None:
                         try:
-                            count = gnu_hash_symbols(img, elf, h[0], h[1] - h[0])
+                            count, floor = gnu_hash_symbols(img, elf, ctx, h[0], h[1] - h[0])
                         except Short:
                             count = None
-                        how = "DT_GNU_HASH"
-                if count is None:
-                    for s in elf.shdrs:
-                        if s["type"] == SHT_DYNSYM and s["addr"] == addr:
-                            count, how = s["size"] // symsz, "the .dynsym section header"
-                            break
+                        if count is not None:
+                            how = "DT_GNU_HASH"
+                sec = next((x for x in elf.shdrs if x["type"] == SHT_DYNSYM and (x["addr"] == addr or x["offset"] == mapped[0])), None)
+                sec_count = sec["size"] // symsz if sec is not None else None
+                if count is None and sec_count is not None:
+                    count, how = sec_count, "the .dynsym section header"
+                elif count is not None and sec_count is not None and sec_count != count:
+                    ctx.problem(".dynsym: %s gives %d symbols and the section header gives %d: the loader's count (%d) is listed" % (how, count, sec_count, count))
+                if count is None and floor and not ctx.expired("the symbol count"):
+                    count, how = floor, "DT_GNU_HASH lower bound"
+                    ctx.problem(".dynsym: DT_GNU_HASH has no symbol in any bucket and there is no section header or DT_HASH to count them: the table holds at least %d symbols "
+                                "(the ones before symoffset are not hashed); only that many are listed" % floor)
                 if count is None:
                     ctx.problem(".dynsym: the symbol count could not be found (no DT_HASH, no usable DT_GNU_HASH and no matching section header): it is not listed")
                 else:
@@ -1904,7 +1940,7 @@ def read_symbols(img, elf, ctx, out, dyn):
         listed = bad_name = 0
         by_bind = {}
         for i in range(n):
-            if i % 256 == 0 and ctx.expired("the " + name + " table"):
+            if i % 16 == 0 and ctx.expired("the " + name + " table"):
                 break
             at = start + i * symsz
             if elf.wide:
@@ -2229,6 +2265,8 @@ def main():
         tables[name]["rows"] = page.page
         if page.not_written:
             ctx.problem("the whole %s table could not be written to a file: %s" % (name, page.not_written))
+    if ctx.names.capped:
+        ctx.limit_hit("the file of withheld names reached %d MiB and stopped growing: %d names were withheld in all; the later ones are not kept there (the file that was read is the source)" % (Names.MAX_BYTES >> 20, ctx.names.count))
     if ctx.names.error:
         ctx.problem("the real names behind the withheld ones could not be kept: %s" % ctx.names.error)
     truncated = any(p["truncated"] for p in tables.values())

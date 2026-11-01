@@ -4,7 +4,7 @@
 for an ELF file: every program header (and the interpreter, executable-stack and RELRO facts), every entry
 of the dynamic array found through `PT_DYNAMIC` (so a file with stripped or damaged section headers reads
 the same), with NEEDED, SONAME, RPATH and RUNPATH strings and FLAGS, FLAGS_1, BIND_NOW, SYMBOLIC and TEXTREL
-decoded, `.dynsym` (its length from DT_HASH, DT_GNU_HASH or the section header) and `.symtab`, and the notes
+decoded, `.dynsym` (its length from DT_HASH, from DT_GNU_HASH when the table implies one, or from the section header; a DT_GNU_HASH table with no symbol in any bucket gives only a lower bound, which is never taken as a count) and `.symtab`, and the notes
 with the GNU build ID and ABI tag. ELF32 and ELF64 in both byte orders. A table that runs past the end of
 the file, a dynamic array without a terminator and a note that runs past its segment are problems, never an
 empty list. The first `limit` rows of each table are in the answer and the whole table is in a file. Strings

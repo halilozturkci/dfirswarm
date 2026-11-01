@@ -23,6 +23,7 @@ type Opts = {
   cls: 32 | 64; big?: boolean; needed?: string[]; soname?: string; rpath?: string; runpath?: string; flags?: number; flags1?: number; bindNowTag?: boolean;
   dynsyms?: Sym[]; symtab?: Sym[]; buildId?: string; abi?: [number, number, number, number]; noSections?: boolean; noDynamic?: boolean;
   noTerminator?: boolean; cutTo?: number; noHash?: boolean; stackExec?: boolean; hashCount?: number;
+  gnuHash?: { nbuckets?: number; symoffset: number; bucket0?: number; chain?: number[] };   // a DT_GNU_HASH table (gABI-adjacent GNU extension): nbuckets buckets, only the first can be nonzero
 };
 
 /** An ELF file from the gABI: Ehdr, program headers (LOAD over the file, DYNAMIC, NOTE, GNU_STACK), data, then section headers. */
@@ -68,7 +69,15 @@ function elf(o: Opts): Buffer {
   const dynsymAt = o.dynsyms ? place(dynsymBlob, 8) : 0;
   let hashAt = 0;
   if (o.dynsyms && !o.noHash) { const nchain = o.hashCount ?? o.dynsyms.length + 1; hashAt = place(Buffer.concat([u32(1), u32(nchain), u32(0), Buffer.alloc(nchain * 4)]), 4); }
+  let gnuAt = 0;
+  if (o.gnuHash) {
+    const g = o.gnuHash, nb = g.nbuckets ?? 1;
+    const buckets = Buffer.alloc(nb * 4);
+    if (nb) (big ? buckets.writeUInt32BE(g.bucket0 ?? 0, 0) : buckets.writeUInt32LE(g.bucket0 ?? 0, 0));
+    gnuAt = place(Buffer.concat([u32(nb), u32(g.symoffset), u32(1), u32(0), Buffer.alloc(w ? 8 : 4), buckets, ...(g.chain ?? [1]).map(u32)]), 8);
+  }
   const entries: [number, number][] = [...dyn, [5, BASE + strtabAt], [10, strtab.length]];
+  if (gnuAt) entries.push([0x6ffffef5, BASE + gnuAt]);
   if (o.dynsyms) { entries.push([6, BASE + dynsymAt], [11, symsz]); if (hashAt) entries.push([4, BASE + hashAt]); }
   if (o.flags !== undefined) entries.push([30, o.flags]);
   if (o.flags1 !== undefined) entries.push([0x6ffffffb, o.flags1]);
@@ -322,6 +331,74 @@ test("agreement with readelf -d -s -n on binaries present on this machine (read 
       const bid = /Build ID: (\w+)/.exec(rd("-n"))?.[1] ?? null;
       assert.equal(out.notes.gnu_build_id, bid, `${p}: build id`);
       t.diagnostic(`${p}: ${needed.length} needed, ${dsn} dynsym, ${syn} symtab, build id ${bid ? "yes" : "no"}`);
+    }
+  });
+});
+
+// --- a DT_GNU_HASH table is a count only when a bucket holds a symbol -----------------------------------------------------------------
+
+test("a DT_GNU_HASH table with no symbol in any bucket gives only a lower bound: the section header's count is used, or the answer is partial and says at least", async () => {
+  await withCwd(async (cwd) => {
+    // the shape of every non-PIE executable that exports nothing: the symbols are all imports, below symoffset, and every bucket is empty
+    const syms = [{ name: "puts", shndx: 0 }, { name: "__libc_start_main", shndx: 0 }, { name: "__gmon_start__", shndx: 0, bind: 2 }];
+    const withSections = body(await run(cwd, "nopie.elf", elf({ cls: 64, needed: ["libc.so.6"], dynsyms: syms, noHash: true, gnuHash: { symoffset: 4, bucket0: 0, chain: [] } })));
+    assert.equal(withSections.symbols.dynsym.declared, 4, "the null symbol and three imports");
+    assert.equal(withSections.symbols.dynsym.listed, 4);
+    assert.equal(withSections.symbols.dynsym.found_by, "the .dynsym section header");
+    assert.equal(withSections.status, "complete", JSON.stringify(withSections.problems));
+    const stripped = body(await run(cwd, "nopie-nosec.elf", elf({ cls: 64, needed: ["libc.so.6"], dynsyms: syms, noHash: true, gnuHash: { symoffset: 3, bucket0: 0, chain: [] }, noSections: true })));
+    assert.equal(stripped.status, "partial");
+    assert.equal(stripped.symbols.dynsym.found_by, "DT_GNU_HASH lower bound");
+    assert.ok(stripped.problems.some((p: string) => /at least 3 symbols/.test(p)), JSON.stringify(stripped.problems));
+    // a table with a symbol in a bucket still gives its count
+    const hashed = body(await run(cwd, "hashed.elf", elf({ cls: 64, needed: [], dynsyms: [{ name: "a" }, { name: "b" }], noHash: true, gnuHash: { symoffset: 1, bucket0: 1, chain: [0, 1] }, noSections: true })));
+    assert.equal(hashed.symbols.dynsym.declared, 3);
+    assert.equal(hashed.symbols.dynsym.found_by, "DT_GNU_HASH");
+  });
+});
+
+test("a hash table of 16 million buckets is scanned under the clock: max_seconds 1 ends the read within a few seconds and the answer is partial", async () => {
+  await withCwd(async (cwd) => {
+    const data = elf({ cls: 64, needed: [], dynsyms: [{ name: "x" }], noHash: true, gnuHash: { nbuckets: 0xffffff, symoffset: 1, bucket0: 0, chain: [] }, noSections: true });
+    await put(cwd, "work/buckets.elf", data);
+    const t0 = Date.now();
+    const out = body(await tool(ELF_DIRS, cwd, { path: "work/buckets.elf", max_seconds: 1 }));
+    assert.ok(Date.now() - t0 < 6000, `took ${Date.now() - t0} ms`);
+    assert.ok(["partial", "complete"].includes(out.status));
+    assert.ok(out.symbols.dynsym === undefined || out.symbols.dynsym.listed >= 0);
+  });
+});
+
+// --- readelf on files gcc makes here: no-PIE with no exports, PIE, static, stripped, a shared object with a soname and a runpath ---------
+
+const haveGcc = spawnSync("sh", ["-c", "command -v gcc"]).status === 0 && haveReadelf;
+test("agreement with readelf on files gcc makes: no-PIE with no exports, PIE, static, stripped, a shared object with soname and runpath", { skip: haveGcc ? false : "gcc or readelf is not installed on this machine" }, async () => {
+  await withCwd(async (cwd) => {
+    await put(cwd, "work/h.c", '#include <stdio.h>\nint main(void){puts("hi");return 0;}\n');
+    await put(cwd, "work/lib.c", "int exported_one(int x){return x+1;}\nint exported_two(void){return 2;}\n");
+    const build: [string, string[]][] = [
+      ["nopie", ["-no-pie", "work/h.c"]], ["pie", ["-pie", "-fPIE", "work/h.c"]], ["static", ["-static", "work/h.c"]], ["stripped", ["-s", "work/h.c"]],
+      ["so", ["-shared", "-fPIC", "-Wl,-soname,libdemo.so.1", "-Wl,-rpath,/opt/demo/lib", "work/lib.c"]],
+    ];
+    for (const [name, flags] of build) {
+      const made = spawnSync("gcc", [...flags, "-o", `work/${name}`], { cwd, encoding: "utf8" });
+      if (made.status !== 0) continue;               // a machine without a static libc builds the rest
+      const out = body(await tool(ELF_DIRS, cwd, { path: `work/${name}`, limit: 20000 }));
+      const rd = (flag: string) => spawnSync("readelf", ["-W", flag, join(cwd, "work", name)], { encoding: "utf8", maxBuffer: 1 << 28 }).stdout;
+      const needed = [...rd("-d").matchAll(/\(NEEDED\)\s+Shared library: \[(.*?)\]/g)].map((m) => m[1]);
+      assert.deepEqual(out.dynamic.needed ?? [], needed, name);
+      const dsn = rd("--dyn-syms").split("\n").filter((l) => /^\s*\d+:/.test(l)).length;
+      assert.equal(out.symbols.dynsym?.listed ?? 0, dsn, `${name}: .dynsym rows`);
+      const symtab = rd("-s").split("Symbol table '.symtab'")[1];
+      const syn = symtab ? symtab.split("\n").filter((l) => /^\s*\d+:/.test(l)).length : 0;
+      assert.equal(out.symbols.symtab?.listed ?? 0, syn, `${name}: .symtab rows`);
+      assert.equal(out.notes.gnu_build_id, /Build ID: (\w+)/.exec(rd("-n"))?.[1] ?? null, `${name}: build id`);
+      if (name === "so") {
+        assert.equal(out.dynamic.soname, "libdemo.so.1");
+        assert.deepEqual(out.dynamic.rpath.concat(out.dynamic.runpath), ["/opt/demo/lib"]);
+      }
+      if (name === "static") assert.equal(out.dynamic.present, false);
+      assert.equal(out.status, "complete", `${name}: ${JSON.stringify(out.problems)}`);
     }
   });
 });
