@@ -30,8 +30,9 @@ structures that other parsers read (a hive, an event log chunk, a Prefetch recor
 says for each where the signature is, where the structure starts and what its header
 supports, and cuts a fixed-size slice for the parser: a survey, not a recovery.
 `mem_fs` starts MemProcFS for one call, lists a directory of its file tree or copies
-chosen files byte for byte into the job's output, and stops it; the mount is gone
-when it returns.
+chosen files byte for byte into the job's output, and stops it; the mount is released
+when it returns, unless the clean-up failed (an engine that cannot be ended, an unmount helper
+that does not answer): the answer then names a `cleanup` problem and the mount may remain.
 Whether MemProcFS contacts a symbol server is governed by the job's network policy; the tool
 passes it no flag about that, and the pinned binary's behaviour was not verified in this review.
 

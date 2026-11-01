@@ -45,8 +45,20 @@ every 4,096th hit otherwise, and inside the search of a window. Every call makes
 the first window is always searched whole and the first hit always reported, so a call
 that is given so little time that it cannot finish even that runs past `max_seconds` by
 that one window of work and still moves `resume_start` forward; a resume loop ends. An explicit hit list (`results_to`) is flushed to disk
-every 256 MiB inside that loop, so the flush at the end of a sweep has at most that much left to do; the temporary list the tool keeps when
-no `results_to` is given is flushed once, at the end, and the time that takes at the 16 GiB `max_results_bytes` cap was not measured.
+every 256 MiB inside that loop, so the flush at the end of a sweep has at most that much left to do (plus the hits of one look at the clock,
+4,096 hits): no periodic flush is started once the clock has run out, and the longest one measured, of 256 MiB, took 0.27 s. The temporary
+list the tool keeps when no `results_to` is given is flushed once, at the end.
+
+MEASURED (2026-11-01, ext4 on a 1 TB virtual disk under WSL2, 19 GB of memory, Python 3.12; hit lists of 247 bytes a hit, the densest kind of
+hit there is). The sweep wrote 40,000 hits a second (10 MB/s of hit list), so inside its 780 s the hit list reaches about 7.7 GiB on that
+machine and the 16 GiB `max_results_bytes` cap only on one more than twice as fast; the end of the sweep was measured at the cap itself, with the
+real paging code fed 16 GiB (17,179,821,812 bytes, 69,554,126 hits): without `results_to`, the final flush, fsync and closing took 4.1 s (the
+fsync 1.1 s) and placing a new name is a rename; a rerun that finds an earlier list of the same size under the same name compares the two byte
+for byte before it names the earlier one again, and with both read from the disk (not from the page cache) that took 47.5 s, and the whole
+end of that rerun 51.7 s. The end of a sweep has 120 s (the 900 s of the manifest less the 780 s of the clock): 116 s and 68 s of margin on that
+disk. The compare reads 32 GiB, so it needs a disk that sustains about 300 MB/s of reads (it did 720 MB/s); on a slower one lower
+`max_results_bytes`. The figure is for one earlier list: each further list of the same size under the next names (-2, -3) that agrees up to
+a late byte is compared in turn and adds as much. End to end, a 2 GiB cap was reached in 216 s and again in 223 s over the equal-size list.
 
 STOPS. A signal (SIGTERM, SIGINT, SIGHUP) ends the tool with one JSON answer (status "interrupted", exit 128 plus the signal) that names the
 hits kept so far under a visible name ending in .partial, never a hidden temporary one, and resume_start. Once the sweep has ended, the hit list is
@@ -435,6 +447,8 @@ def interrupted_answer(signum, **extra):
 
 
 def fail(message, **extra):
+    for page in list(PAGES):    # a page that was being written is dropped with its hidden temporary file, whatever ended the call
+        page.abort()
     emit(json.dumps({"error": message, "status": "failed",
                      "status_basis": "the call was refused or ended before an answer; nothing in this document is a finding",
                      **extra}))
@@ -928,9 +942,11 @@ def main():
                         STATE["hits_so_far"] = hit_count
                     finally:
                         GUARD["depth"] -= 1
-                    if results and unsynced >= SYNC_EVERY:
+                    if results and unsynced >= SYNC_EVERY and time.monotonic() < deadline:
                         # Outside the hold and inside the clock's loop: what the end of the sweep would have flushed in one piece (up to the
-                        # 16 GiB cap) is flushed as it is written, and the clock sees the time it takes.
+                        # 16 GiB cap) is flushed as it is written, and the clock sees the time it takes. Once the clock has run out no
+                        # periodic fsync is started (the loop is about to stop at its next look at the clock, at most CHECK_EVERY hits on); what
+                        # is unsynced then is flushed by the final fsync, which has its own margin outside the clock.
                         results.flush()
                         os.fsync(results.fileno())
                         unsynced = 0

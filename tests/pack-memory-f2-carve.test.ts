@@ -5,6 +5,7 @@
  * at the head of the first fix round. The clock and the file size are faked by a sitecustomize on PYTHONPATH (tests/memory-f1-support.ts).
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -137,4 +138,64 @@ test("an early end of file counts what was read as swept, and reports a signatur
     assert.equal(out.bytes_swept, 102400, "swept what was read, not the length the file was measured at");
     assert.deepEqual(out.hits.map((h) => h.signature_offset), [1000, 102396]);
   });
+});
+
+// The tool is loaded as a module (nothing runs until run_guarded), SYNC_EVERY is made small, and os.fsync is replaced by one that records
+// when it was called and, the first time, takes longer than the whole clock: the periodic fsync of an explicit hit list, which sits inside
+// the clocked loop, is then started after the deadline unless the loop stops starting them.
+const FSYNC_PROBE = `
+import importlib.util, json, os, sys, time
+spec = importlib.util.spec_from_file_location("carve", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+m.SYNC_EVERY = 2048
+calls, real, t0 = [], os.fsync, time.monotonic()
+def slow(fd):
+    calls.append(time.monotonic() - t0)
+    if len(calls) == 1:
+        time.sleep(1.5)
+    real(fd)
+os.fsync = slow
+try:
+    m.run_guarded()
+finally:
+    sys.stderr.write(json.dumps(calls))
+`;
+
+test("with results_to, a periodic fsync is not started once the clock has run out (the final one is)", async () => {
+  await withCwd(async (cwd) => {
+    // 3,000 hits in one window (fewer than the 4,096 between two looks at the clock), so only the periodic fsyncs can be late
+    const blob = Buffer.alloc(3000 * 16 + 4096);
+    for (let i = 0; i < 3000; i++) blob.write("%PDF-", i * 16, "latin1");
+    await writeFile(join(cwd, "work", "dense.raw"), blob);
+    const run = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+      const child = spawn("python3", ["-c", FSYNC_PROBE, CARVE], { cwd, env: { ...process.env, AGENT_ID: "s1" }, stdio: ["pipe", "pipe", "pipe"] });
+      const out: Buffer[] = [], err: Buffer[] = [];
+      child.stdout.on("data", (c: Buffer) => out.push(c));
+      child.stderr.on("data", (c: Buffer) => err.push(c));
+      child.stdin.end(JSON.stringify({ path: "work/dense.raw", kinds: ["PDF"], limit: 1, max_seconds: 1, results_to: "work/s1/hits.jsonl" }));
+      const hard = setTimeout(() => child.kill("SIGKILL"), 60_000);
+      child.on("close", (code) => { clearTimeout(hard); resolve({ code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") }); });
+    });
+    const out = JSON.parse(run.stdout) as Carve;
+    assert.equal(out.hit_count, 3000, run.stdout);
+    const calls = JSON.parse(run.stderr.trim().split("\n").pop() as string) as number[];
+    assert.ok(calls.length >= 2, `the probe saw ${calls.length} fsync calls`);
+    assert.ok(calls[0] < 1, "the first periodic fsync should start before the 1 s clock");
+    const late = calls.slice(0, -1).filter((t) => t > 1.1);      // all but the last call, which is the final fsync at the end of the sweep
+    assert.equal(late.length, 0, `${late.length} periodic fsync(s) were started after the deadline`);
+  });
+});
+
+test("the manifest and the docstring give the measured end of the spill path at the 16 GiB cap, and the cap they measured is the one in the code", async () => {
+  const dir = join(CARVE, "..");
+  const manifest = JSON.parse(await readFile(join(dir, "manifest.json"), "utf8")) as { description: string; timeout_seconds: number };
+  const code = (await readFile(CARVE, "utf8")).replace(/\s+/g, " ");
+  assert.doesNotMatch(manifest.description, /was not measured/);
+  assert.doesNotMatch(code, /was not measured/);
+  assert.match(manifest.description, /fed 16 GiB took 4\.1 s .{0,120}51\.7 s/);
+  assert.match(code, /took 4\.1 s .{0,400}51\.7 s/);
+  assert.match(code, /MAX_RESULT_BYTES_DEFAULT, MAX_RESULT_BYTES_CAP, MAX_RESULT_BYTES_FLOOR = 1 << 30, 16 << 30, 1 << 20/, "the cap that was measured (16 GiB) changed");
+  // the figures leave room: 780 s of clock + the measured end of a rerun (51.7 s) is inside the manifest's timeout
+  assert.ok(780 + 52 <= manifest.timeout_seconds);
 });

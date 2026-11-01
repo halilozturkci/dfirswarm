@@ -45,9 +45,32 @@ bytes of its stream (a thread always reads the pipe, so a verbose engine neither
 pipe nor fills the disk); the answer counts what was read after that and discarded.
 
 The tool stops by itself: timeout_seconds is at most 480, so the end of the call (the
-engine's stop, its unmount, the last file) stays inside the manifest's 600. A signal
+engine's stop, its unmount, the last file) stays inside the manifest's 600. Those steps have their own bounded waits: terminate 20 s,
+kill 20 s, the checks of whether the mount is still there 3 s in all (and 2 s to end a check that did not answer), two unmount calls
+12 s each (and 2 s each to end a helper that did not finish), two drains 5 s each and the worker 5 s, which is 88 s before the
+reads of the process table. Where /proc is read, each read of it stops at 2 s (the table is read three times in the clean-up and the
+search for the pipe holders walks /proc once more: 8 s) and the holders of the engine's pipes are given 2 s after SIGTERM and 2 s after
+SIGKILL: the bound is 100 s. Where it is not, process_table() runs ps (10 s at most, and 2 s to end it) twice in the clean-up: the
+bound is 112 s. A check at the deadline that has to be ended adds 2 s before the clean-up: 480 + 2 + 112 = 594 is inside the 600.
+
+What the engine daemonised before the listing of its descendants, or forked after it, is not in that listing. On Linux it is found by
+what it holds: the pipes this tool made for the engine are named in /proc/<pid>/fd as pipe:[inode], and a process that holds one got it
+from the engine. Each holder is ended (SIGTERM, then SIGKILL) and named in the answer (clean_up.pipe_holders); the kill set is never
+wider than the holders: not this tool, not pid 1, not an ancestor of this tool, and a process only if its start time and its pipe are
+checked again just before the signal, through a pidfd where the kernel has one. A process that closed its copies of the pipes is not
+found, and off Linux, or where /proc cannot be read, nothing is searched: what the engine daemonised may outlive the call.
+
+No stat of the mount is made by this process, because a FUSE server that does not answer holds every stat of its mount for as long as
+it lives: the readiness check at startup and the checks of the clean-up are made by a short child (python -P -c, in this tool's process
+group) that is killed at its time limit. At startup the limit is the call's deadline, and a check that does not answer ends the call as
+"not ready"; in the clean-up the mount is named as still there and not answering. A request that the FUSE server has read cannot be
+interrupted, not even by SIGKILL, so a check stuck on it ends only with the server: a child or an unmount helper that is still not
+reaped REAP_WAIT seconds after its kill is named in the answer with its pid and left (a check that has ended by the time the engine is
+stopped is not named): no wait in the clean-up is without a limit.
+
+A signal
 (SIGTERM, SIGINT, SIGHUP) ends it with one JSON answer (status interrupted, exit 128 plus
-the signal), after the engine is stopped and the mount released; the rows already kept in the results file are named (partial_results). A
+the signal), after the engine is stopped and the mount released (or, when the clean-up did not finish, with cleanup_problems saying so); the rows already kept in the results file are named (partial_results). A
 signal that arrives while that file is placed or the answer written is held until the answer is out. The process leaves without the
 interpreter's shutdown (os._exit after the flush), which would put the default action of every signal back first. What no script can answer
 is a stop that arrives before the interpreter has run this file's first lines, tens of milliseconds at the start of a process (longer on a
@@ -90,7 +113,7 @@ from pathlib import Path  # noqa: E402
 CHUNK = 1 << 20
 DEFAULT_TIMEOUT = 300
 MIN_TIMEOUT = 2
-MAX_TIMEOUT = 480          # 480 s + the engine's stop and unmount (at most 95 s) stays inside the manifest's 600
+MAX_TIMEOUT = 480          # 480 s + 2 s + the engine's stop and unmount (at most 100 s with /proc, 112 s with ps) stays inside the manifest's 600
 DEFAULT_MAX_BYTES = 4 << 30
 MAX_PATHS = 1000
 PAGE = 200
@@ -926,9 +949,11 @@ def fail(message, **extra):
 
 
 def interrupted_answer(signum, **extra):
+    released = ("the engine was stopped and the mount released" if not extra.get("cleanup_problems")
+                else "the clean-up did not finish (cleanup_problems), so the mount may remain")
     emit({"error": "stopped by signal %d before the call was complete" % signum, "status": "interrupted",
-          "status_basis": "the tool was stopped by signal %d; the engine was stopped and the mount released, and what an export had written "
-                          "before that is kept and named" % signum, "signal": signum, "parser": PARSER, **extra})
+          "status_basis": "the tool was stopped by signal %d; %s, and what an export had written "
+                          "before that is kept and named" % (signum, released), "signal": signum, "parser": PARSER, **extra})
 
 
 class SecretValuesRefused(Exception):
@@ -1222,23 +1247,39 @@ def _pdeathsig():
         pass
 
 
+PROC_SCAN = 2          # seconds one read of /proc may take (the process table, the search for the holders of the engine's pipes)
+SCAN = {"incomplete": False}    # a read of /proc that stopped at PROC_SCAN: the clean-up says so
+
+
 def process_table():
-    """{pid: (parent pid, start)} for every process, from /proc where there is one, else from ps (given 10 seconds); {} when neither
-    answers. `start` is when the process started (the kernel's clock ticks since boot, or the time ps prints): a pid whose start has
-    changed is another process."""
+    """{pid: (parent pid, start)} for every process, from /proc where there is one (read for PROC_SCAN seconds at most, the clock looked
+    at for every entry; a read that did not finish sets SCAN["incomplete"]), else from ps (given 10 seconds, and 2 more to be reaped after
+    its kill); {} when neither answers. `start` is when the process started (the kernel's clock ticks since boot, or the time ps prints):
+    a pid whose start has changed is another process."""
     table = {}
     try:
         if os.path.isdir("/proc/self"):
-            for entry in os.listdir("/proc"):
-                if entry.isdigit():
-                    try:
-                        with open("/proc/%s/stat" % entry, "rb") as fh:
-                            fields = fh.read().rsplit(b")", 1)[1].split()
-                        table[int(entry)] = (int(fields[1]), int(fields[19]))   # fields 4 and 22 of stat: ppid, starttime
-                    except (OSError, IndexError, ValueError):
-                        continue
+            stop = time.monotonic() + PROC_SCAN
+            with os.scandir("/proc") as entries:
+                for entry in entries:
+                    if time.monotonic() >= stop:
+                        SCAN["incomplete"] = True
+                        break
+                    if entry.name.isdigit():
+                        try:
+                            with open("/proc/%s/stat" % entry.name, "rb") as fh:
+                                fields = fh.read().rsplit(b")", 1)[1].split()
+                            table[int(entry.name)] = (int(fields[1]), int(fields[19]))   # fields 4 and 22 of stat: ppid, starttime
+                        except (OSError, IndexError, ValueError):
+                            continue
         else:
-            listing = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,lstart="], capture_output=True, text=True, timeout=10).stdout
+            child = subprocess.Popen(["ps", "-A", "-o", "pid=,ppid=,lstart="], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, text=True)
+            try:
+                listing = child.communicate(timeout=10)[0]
+            except subprocess.TimeoutExpired:
+                end_child(child, "ps")      # subprocess.run would wait for it without a limit after its kill
+                return {}
             for line in listing.splitlines():
                 parts = line.split(None, 2)
                 if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
@@ -1282,15 +1323,240 @@ def end_what_the_engine_left(listed):
             pass
 
 
-def is_mounted(mount):
-    """Whether the path is a mount point, a dead one included: os.path.ismount says no for a FUSE mount whose engine has died (ENOTCONN)."""
+# What the engine started and daemonised before the listing, or forked between the listing and its end, is not in the listing. On Linux
+# it is found by what it holds: the pipes this tool made for the engine (its stdout and stderr) are named in /proc/<pid>/fd as
+# pipe:[inode], and a process that holds one of them got it from the engine. The kill set is never wider than that: not this tool, not
+# pid 1, not an ancestor of this tool, and only a process whose start time and pipe are checked again, through a pidfd where there is
+# one, just before the signal.
+HOLDER_TERM = 2        # seconds the holders are given after SIGTERM
+HOLDER_KILL = 2        # seconds they are given after SIGKILL
+MAX_HOLDERS = 64       # holders ended in one call; a search that finds more is incomplete and says so
+MAX_REPORTED = 50      # holders named in the answer
+
+
+def pipe_inodes(*streams):
+    """The inode numbers of the pipes this tool made for the engine ({} where there is no /proc to look them up in)."""
+    if not os.path.isdir("/proc/self/fd"):
+        return set()
+    found = set()
+    for stream in streams:
+        try:
+            found.add(os.fstat(stream.fileno()).st_ino)
+        except (OSError, ValueError):
+            pass
+    return found
+
+
+def start_of(pid):
+    """The start time of a process (field 22 of /proc/<pid>/stat), or None when there is no such process."""
     try:
-        if os.path.ismount(mount):
-            return True
-        os.lstat(mount)
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            return int(fh.read().rsplit(b")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def alive_as(pid, start):
+    """Whether `pid` is still the process that started at `start` and is not dead (a zombie is not: it holds no descriptor)."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            fields = fh.read().rsplit(b")", 1)[1].split()
+        return int(fields[19]) == start and fields[0] not in (b"Z", b"X")
+    except (OSError, IndexError, ValueError):
         return False
-    except OSError as exc:
-        return exc.errno == errno.ENOTCONN
+
+
+def holds_pipe(pid, wanted, stop=None):
+    """Whether process `pid` holds one of the pipes in `wanted` ({'pipe:[inode]', ...}); None when its descriptors cannot be read, or
+    the clock `stop` ran out before they were all looked at."""
+    try:
+        with os.scandir("/proc/%d/fd" % pid) as entries:
+            for entry in entries:
+                if stop is not None and time.monotonic() >= stop:
+                    return None
+                try:
+                    if os.readlink(entry.path) in wanted:
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return False
+
+
+def find_pipe_holders(inodes):
+    """({pid: start} of the processes, other than this tool, pid 1 and the tool's ancestors, that hold one of the pipes; whether the search
+    was complete). The search stops at PROC_SCAN seconds and at MAX_HOLDERS holders."""
+    wanted = {"pipe:[%d]" % inode for inode in inodes}
+    table = process_table()
+    skip, pid = {1, os.getpid()}, os.getppid()
+    while pid and pid not in skip and pid in table:     # the ancestors of this tool
+        skip.add(pid)
+        pid = table[pid][0]
+    skip.add(pid)
+    found, complete = {}, not SCAN["incomplete"]
+    stop = time.monotonic() + PROC_SCAN
+    try:
+        with os.scandir("/proc") as entries:
+            for entry in entries:
+                if time.monotonic() >= stop:
+                    complete = False
+                    break
+                if not entry.name.isdigit() or int(entry.name) in skip:
+                    continue
+                pid = int(entry.name)
+                held = holds_pipe(pid, wanted, stop)
+                if held is None and time.monotonic() >= stop:
+                    complete = False
+                    break
+                if held:
+                    start = start_of(pid)
+                    if start is not None:
+                        if len(found) >= MAX_HOLDERS:
+                            complete = False
+                            break
+                        found[pid] = start
+    except OSError:
+        complete = False
+    return found, complete
+
+
+def signal_holder(pid, start, wanted, signum):
+    """Signal `pid` only if it is still the process that was found: the same start time and still holding one of the pipes. Where the
+    kernel has pidfds the descriptor is opened first and the checks are made after it, so that the signal goes to the process that was
+    checked even if its number is reused a moment later. True when a signal was sent."""
+    fd = None
+    try:
+        try:
+            fd = os.pidfd_open(pid)
+        except AttributeError:
+            fd = None
+        except OSError as exc:
+            if exc.errno != errno.ENOSYS and exc.errno != errno.EPERM:
+                return False                # ESRCH: gone
+        if start_of(pid) != start or holds_pipe(pid, wanted) is not True:
+            return False
+        send = getattr(signal, "pidfd_send_signal", None)
+        if fd is not None and send is not None:
+            send(fd, signum)
+        else:
+            os.kill(pid, signum)
+        return True
+    except OSError:
+        return False
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def end_pipe_holders(inodes):
+    """End the processes that still hold the engine's pipes once the engine and what was listed below it are gone: SIGTERM, HOLDER_TERM
+    seconds, SIGKILL, HOLDER_KILL seconds, each checked again just before the signal. Returns the clean-up record: {'found': n,
+    'ended': [{'pid', 'how'}], 'left': [pids], 'search_complete': bool}, or None where there is no /proc to look in."""
+    if not inodes:
+        return None
+    found, complete = find_pipe_holders(inodes)
+    wanted = {"pipe:[%d]" % inode for inode in inodes}
+    how = {}
+
+    def alive(pid):         # the process that was found, not yet dead (a zombie holds nothing)
+        return alive_as(pid, found[pid])
+
+    for signum, wait, word in ((signal.SIGTERM, HOLDER_TERM, "terminated"), (signal.SIGKILL, HOLDER_KILL, "killed")):
+        sent = [pid for pid, start in found.items() if alive(pid) and signal_holder(pid, start, wanted, signum)]
+        for pid in sent:
+            how[pid] = word
+        until = time.monotonic() + wait
+        while time.monotonic() < until and any(alive(pid) for pid in sent):
+            time.sleep(0.05)
+        if not any(alive(pid) for pid in found):
+            break
+    ended = [{"pid": pid, "how": how[pid]} for pid in found if pid in how and not alive(pid)]
+    left = [pid for pid in found if alive(pid)]
+    return {"found": len(found), "ended": ended[:MAX_REPORTED], "left": left[:MAX_REPORTED], "search_complete": complete,
+            **({"more": len(ended) + len(left) - MAX_REPORTED} if len(ended) + len(left) > MAX_REPORTED else {})}
+
+
+# A stat of a FUSE mount whose server does not answer blocks for as long as the server lives (and, once a signal has interrupted it, can
+# be ended by SIGKILL only), so no call on the mount is made by this process: it is made by a short child with a time limit.
+CHECK_WAIT = 3         # seconds, in all, that the clean-up gives to asking whether the mount is still there
+UNMOUNT_WAIT = 12      # one call of the unmount helper
+REAP_WAIT = 2          # after a child (a mount check, the unmount helper) was killed; a child still not reaped then is named and left
+LEFT = []              # children that were not reaped REAP_WAIT seconds after their kill: (what, Popen); looked at again once the engine is stopped
+CHECK_CODE = (
+    "import errno, os, sys\n"
+    "mount, marker = sys.argv[1], sys.argv[2]\n"
+    "try:\n"
+    "    mounted = os.path.ismount(mount)\n"
+    "    if not mounted:\n"
+    "        os.lstat(mount)\n"
+    "except OSError as exc:\n"
+    "    mounted = exc.errno == errno.ENOTCONN\n"      # os.path.ismount says no for a FUSE mount whose engine has died (ENOTCONN)
+    "if not mounted:\n"
+    "    sys.exit(12)\n"
+    "sys.exit(10 if not marker or os.path.isdir(marker) else 11)\n"
+)
+
+
+def end_child(child, what):
+    """Kill a child of this tool and wait for it for REAP_WAIT seconds at most (never without a limit: a process in uninterruptible
+    sleep is not reaped by its kill). A child that is still not reaped is recorded in LEFT, named in the answer, and left."""
+    try:
+        child.kill()
+    except OSError:
+        pass
+    try:
+        child.wait(timeout=REAP_WAIT)
+    except subprocess.TimeoutExpired:
+        LEFT.append((what, child))
+    except OSError:
+        pass
+
+
+def check_mount(mount, wait, marker=None):
+    """Ask, from a child that is ended at the time limit, whether `mount` is a mount point (a dead one included) and, when a marker is
+    given, whether the marker is a directory in it. 'ready' (a mount point, the marker there), 'mounted' (a mount point, no marker), 'free'
+    (not a mount point), 'silent' (no answer in `wait` seconds: the child was killed) or 'unknown' (the child could not be run or gave
+    no verdict). The child stays in this tool's process group and ends with the call."""
+    argv = [sys.executable or "python3", "-P", "-c", CHECK_CODE, str(mount), str(marker) if marker else ""]
+    try:
+        child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, ValueError):
+        return "unknown"
+    try:
+        try:
+            code = child.wait(timeout=max(0.05, wait))
+        except subprocess.TimeoutExpired:
+            return "silent"
+        return {10: "ready", 11: "mounted", 12: "free"}.get(code, "unknown")
+    finally:
+        if child.poll() is None:
+            end_child(child, "mount check")
+
+
+def run_unmount_helper(argv):
+    """Run the unmount helper for UNMOUNT_WAIT seconds at most; then kill it and wait REAP_WAIT more. None when it finished, else
+    what happened, in words."""
+    try:
+        helper = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return "the unmount helper could not be run"
+    ended = False
+    try:
+        try:
+            helper.wait(timeout=UNMOUNT_WAIT)
+            return None
+        except subprocess.TimeoutExpired:
+            pass
+        ended = True
+        message = "the unmount helper did not finish within %ds" % UNMOUNT_WAIT
+        end_child(helper, "unmount helper")
+        if helper.poll() is None:
+            message += " and could not be ended (pid %d, left running)" % helper.pid
+        return message
+    finally:
+        if not ended and helper.poll() is None:
+            end_child(helper, "unmount helper")
 
 
 def main():
@@ -1312,7 +1578,7 @@ def main():
     mount = writable_mount(mount_arg)
     timeout = args.get("timeout_seconds", DEFAULT_TIMEOUT)
     if not isinstance(timeout, int) or isinstance(timeout, bool) or not MIN_TIMEOUT <= timeout <= MAX_TIMEOUT:
-        fail("timeout_seconds must be an integer from %d to %d: the engine's stop and unmount after it need up to 95 s, "
+        fail("timeout_seconds must be an integer from %d to %d: the engine's stop and unmount after it need up to 114 s, "
              "and the tool's own limit is 600" % (MIN_TIMEOUT, MAX_TIMEOUT))
     mode = args.get("mode", "list")
     if mode not in ("list", "text", "export"):
@@ -1408,6 +1674,9 @@ def main():
     drains = [LogDrain(proc.stdout, stdout_file), LogDrain(proc.stderr, stderr_file)]
     state = {"phase": "startup", "abandon": False}
     problem = None  # (phase, message)
+    cleanup_notes = []  # every trouble of the clean-up, also when an earlier problem is the one the answer names
+    clean_up_record = {}  # what the clean-up did beyond the engine's own end (the processes that held the engine's pipes), in every answer
+    pipes = pipe_inodes(proc.stdout, proc.stderr)   # the pipes this tool made for the engine, by inode (empty without /proc)
     result = {}
     timings = {}
     interrupted = None
@@ -1661,7 +1930,14 @@ def main():
     try:
         # --- startup: until the mount appears ---
         while True:
-            if is_mounted(mount) and ready_marker.is_dir():
+            # The stat of the mount and of <mount>/sys is made by a child that is ended at the deadline: a FUSE server that does not
+            # answer must not hold this process past the one deadline.
+            seen = check_mount(mount, max(0.2, deadline - time.monotonic()), ready_marker)
+            if seen == "ready":
+                break
+            if seen == "silent":
+                problem = ("startup", "not ready: the mount did not answer a check within the %ds deadline (the FUSE server of the engine is not "
+                                      "answering)" % timeout)
                 break
             if proc.poll() is not None:
                 problem = ("startup", "memprocfs exited before the mount appeared (exit status %s)" % proc.returncode)
@@ -1697,8 +1973,26 @@ def main():
             # problem of the cleanup, and the steps after it still run.
             def cleanup_problem(message):
                 nonlocal problem
+                cleanup_notes.append(message)
                 if not problem:
                     problem = ("cleanup", message)
+
+            # Whether the mount is still there, asked of a child (CHECK_WAIT seconds in all for every ask of the clean-up). A mount that
+            # does not answer is counted as still there, and is not asked about again.
+            check_left = [float(CHECK_WAIT)]
+            silent = []
+
+            def still_mounted():
+                if silent:
+                    return True
+                asked = time.monotonic()
+                seen = check_mount(mount, check_left[0])
+                check_left[0] -= time.monotonic() - asked
+                if seen == "silent":
+                    silent.append(True)
+                    cleanup_problem("the mount is still there and does not answer (a check of it did not return in the %ds the clean-up "
+                                    "gives to checks)" % CHECK_WAIT)
+                return seen != "free"
 
             try:
                 table = process_table()
@@ -1719,20 +2013,36 @@ def main():
                     cleanup_problem("memprocfs did not end within %ds of being killed" % CLEANUP_WAIT)
             # What the engine started and left (it holds the engine's pipes for as long as it lives) is ended with it.
             end_what_the_engine_left(listed)
-            if is_mounted(mount):
+            # What it daemonised before that listing, or forked after it, is found by the pipes it still holds (Linux).
+            try:
+                holders = end_pipe_holders(pipes)
+            except Exception:  # noqa: BLE001 - best effort; a search that failed is said so, not hidden
+                holders = {"found": 0, "ended": [], "left": [], "search_complete": False}
+            if holders is not None:
+                clean_up_record["pipe_holders"] = holders
+                if holders["left"]:
+                    cleanup_problem("%d process(es) that hold the engine's pipes could not be ended (pid %s)"
+                                    % (len(holders["left"]), ", ".join(str(p) for p in holders["left"])))
+                if not holders["search_complete"]:
+                    cleanup_problem("the search for the processes that hold the engine's pipes did not finish (it is bounded at %ds), so "
+                                    "one may have been left running" % PROC_SCAN)
+            if SCAN["incomplete"]:
+                cleanup_problem("the process table was not read in full within %ds, so a process the engine started may have been missed"
+                                % PROC_SCAN)
+            if still_mounted():
                 unmount = shutil.which("fusermount3") or shutil.which("fusermount")
                 if unmount:
                     for flags in (["-u"], ["-u", "-z"]):
-                        try:
-                            subprocess.run([unmount, *flags, str(mount)], stdout=subprocess.DEVNULL,
-                                           stderr=subprocess.DEVNULL, timeout=CLEANUP_WAIT, check=False)
-                        except (subprocess.TimeoutExpired, OSError) as exc:
-                            cleanup_problem("the unmount helper did not finish within %ds" % CLEANUP_WAIT
-                                            if isinstance(exc, subprocess.TimeoutExpired) else "the unmount helper could not be run")
-                        if not is_mounted(mount):
+                        trouble = run_unmount_helper([unmount, *flags, str(mount)])
+                        if trouble:
+                            cleanup_problem(trouble)
+                        if not still_mounted():
                             break
-            if is_mounted(mount) and not problem:
+            if still_mounted() and not problem:
                 problem = ("cleanup", "memprocfs stopped but the FUSE mount remained")
+            for what, child in LEFT:    # a check stuck on a server that has since died is gone by now; one that is not is named
+                if what == "mount check" and child.poll() is None:
+                    cleanup_problem("a mount check (pid %d) could not be ended and was left running" % child.pid)
             for drain in drains:
                 drain.finish(5)
             # A stream a drain thread is still reading is not closed here: close() waits for the read that thread is blocked in, which
@@ -1780,7 +2090,8 @@ def main():
     kept = {"partial_results": paged["all_results"], "partial_results_format": paged["all_results_format"]} if paged.get("all_results") else {}
     if interrupted is not None:
         interrupted_answer(interrupted, mode=mode, mount=str(mount), logs=logs, phases=timings,
-                           counts=counts if mode == "export" else None, secret_values=secret.summary(), **kept, **items)
+                           counts=counts if mode == "export" else None, secret_values=secret.summary(), **kept, **items,
+                           **({"cleanup_problems": cleanup_notes} if cleanup_notes else {}), **({"clean_up": clean_up_record} if clean_up_record else {}))
         raise SystemExit(128 + interrupted)
 
     if problem:
@@ -1793,6 +2104,7 @@ def main():
              counts=counts if mode == "export" else None,
              secret_values=secret.summary(),
              **kept,
+             **({"cleanup_problems": cleanup_notes} if cleanup_notes else {}), **({"clean_up": clean_up_record} if clean_up_record else {}),
              note="Mounting needs FUSE, which a sandbox may refuse. That is a limit on the host, not a finding "
                   "about the evidence, and the report should say so. The engine's own output is in the log files named; "
                   "the lines shown here are judged as text.",
@@ -1841,6 +2153,8 @@ def main():
         answer["limit_clamped_to"] = MAX_PAGE
         answer["limit_requested"] = limit_requested
     answer["truncated"] = paged["truncated"]
+    if clean_up_record:
+        answer["clean_up"] = clean_up_record
     answer["boundary"] = boundary_summary()
     answer["status"] = "complete" if complete else "partial"
     answer["status_basis"] = basis
