@@ -265,7 +265,7 @@ test("every field a lead depends on is kept: ids, correlation id, authentication
     assert.deepEqual([e.token_issuer_type, e.unique_token_identifier], ["AzureAD", "abcDEF123_uniq"]);
     assert.equal(e.device_detail.operatingSystem, "Windows 11");
     assert.equal(e.raw_record.id, "signin-1");
-    assert.deepEqual([e.record, e.line, e.event_index ?? null, e.parser], [1, 1, null, "signin_analyse/4"]);
+    assert.deepEqual([e.record, e.line, e.event_index ?? null, e.parser], [1, 1, null, "signin_analyse/6"]);
     assert.equal(e.source_file.endsWith("s.json"), true);
     assert.equal(out.single_factor_successes.length, 1);
     assert.equal(out.single_factor_successes[0].event_id, "signin-1");
