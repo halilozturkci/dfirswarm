@@ -40,7 +40,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "network_log_summary", "version": 9}
+TOOL = {"name": "network_log_summary", "version": 10}
 PARSER = "network_log_summary/5"
 
 
@@ -64,6 +64,7 @@ for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
     signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
 
 
+import stat
 import collections
 import datetime
 import errno
@@ -399,11 +400,29 @@ def holds_files(directory):
         return next(entries, None) is not None
 
 
+def open_regular(path, follow=True):
+    """A file opened for reading that is never waited on: the open does not block (a name that became a pipe since it was checked would otherwise wait
+    for a writer), the type is read from the descriptor, and anything but a regular file is refused. follow=False also refuses a symbolic link (for a
+    name the capture or the engine produced). The file object it returns reads in the ordinary, blocking way."""
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
 
 
 def fail(message, **extra):
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})     # one document: a stop that arrives while this is written waits, and the tool leaves with it
     print(json.dumps({"error": scrub(message), "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -478,12 +497,19 @@ class SecretValues:
         # after the read. With nothing withheld it stays an empty file, mode 0600, and the answer says written: 0.
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            before = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hasattr(signal, "pthread_sigmask") else None
+            try:
+                # made and registered with the stop signals held: a stop between the two would leave an empty values file that nothing removes
+                fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                self._fh = os.fdopen(fd, "w", encoding="utf-8")
+                STAGE["values"] = self
+            finally:
+                if before is not None:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, before)
         except FileExistsError:
             raise SecretValuesRefused("the values file already exists", self.path)
         except OSError as exc:
             raise SecretValuesRefused("the values file could not be created (%s)" % describe(exc), self.path)
-        self._fh = os.fdopen(fd, "w", encoding="utf-8")
 
     def add(self, finding_id, locator, value):
         if not self.enabled or self._fh is None:
@@ -777,11 +803,15 @@ class Source:
     """The log as a stream of bytes: plain, or gzip with a cap on what it may expand to."""
 
     def __init__(self, path, cap, deadline):
-        with open(path, "rb") as fh:
-            magic = fh.read(2)
+        self.raw = open_regular(path)
+        try:
+            magic = self.raw.read(2)
+            self.raw.seek(0)
+        except BaseException:
+            self.raw.close()
+            raise
         self.gzip = magic == b"\x1f\x8b"
         self.cap = cap
-        self.raw = open(path, "rb")
         self.fh = gzip.GzipFile(fileobj=ClockedFile(self.raw, deadline), mode="rb") if self.gzip else self.raw
         self.read_total = 0
 

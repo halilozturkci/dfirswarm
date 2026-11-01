@@ -50,7 +50,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "zeek_run", "version": 10}
+TOOL = {"name": "zeek_run", "version": 11}
 PARSER = "zeek_run/5"
 
 
@@ -74,7 +74,9 @@ for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
     signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
 
 
+import stat
 import datetime
+import contextlib
 import errno
 import hashlib
 import ipaddress
@@ -403,6 +405,22 @@ def holds_files(directory):
         return next(entries, None) is not None
 
 
+def open_regular(path, follow=True):
+    """A file opened for reading that is never waited on: the open does not block (a name that became a pipe since it was checked would otherwise wait
+    for a writer), the type is read from the descriptor, and anything but a regular file is refused. follow=False also refuses a symbolic link (for a
+    name the capture or the engine produced). The file object it returns reads in the ordinary, blocking way."""
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
 
@@ -417,29 +435,42 @@ class LogNames:
     def __init__(self, out_dir):
         self.out_dir, self.path, self.fh, self.count = out_dir, None, None, 0
 
-    def shown(self, files):
-        """The .log file names in `files`, with any withheld one renamed; the names as the answer shows them, sorted."""
-        out = []
+    def shown(self, files, deadline=None):
+        """(the .log file names in `files` as the answer shows them, sorted; the number of withheld names left unrenamed when `deadline` ran out).
+        The index lines of every withheld name are written and fsynced once, then the logs are renamed; the clock is looked at for every entry. A
+        name left unrenamed is not returned (it is not read or printed), and the caller says so."""
+        out, plan = [], []
+        left = 0
         for name in sorted(files):
             stem = name[:-4]
             if not (token_shaped(stem) or scrub(stem) != stem):
                 out.append(name)
+                continue
+            if deadline is not None and time.monotonic() > deadline:
+                left += 1
                 continue
             while True:
                 self.count += 1
                 kept = "withheld-%06d.log" % self.count
                 if not os.path.lexists(os.path.join(self.out_dir, kept)):
                     break
+            plan.append((name, stem, kept))
+        if plan:
             if self.fh is None:
                 self.path = os.path.join(self.out_dir, self.NAME)
                 fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 self.fh = os.fdopen(fd, "w", encoding="utf-8")
-            self.fh.write(json.dumps({"finding_id": "G%06d" % self.count, "log": kept[:-4], "real_log": stem}) + "\n")
+            for position, (name, stem, kept) in enumerate(plan):
+                self.fh.write(json.dumps({"finding_id": "G%06d" % (self.count - len(plan) + position + 1), "log": kept[:-4], "real_log": stem}) + "\n")
             self.fh.flush()
-            os.fsync(self.fh.fileno())
-            os.rename(os.path.join(self.out_dir, name), os.path.join(self.out_dir, kept))
-            out.append(kept)
-        return sorted(out)
+            os.fsync(self.fh.fileno())              # the real names are on disk before the first of them is renamed
+            for name, stem, kept in plan:
+                if deadline is not None and time.monotonic() > deadline:
+                    left += 1
+                    continue
+                os.rename(os.path.join(self.out_dir, name), os.path.join(self.out_dir, kept))
+                out.append(kept)
+        return sorted(out), left
 
     def close(self):
         if self.fh is not None:
@@ -448,6 +479,9 @@ class LogNames:
 
 
 def fail(message, **extra):
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})     # one document: a stop that arrives while this is written waits, and the tool leaves with it
+    STATE["last_word"] = None
     print(json.dumps({"error": scrub(message), "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -1008,7 +1042,7 @@ class LogReader:
         separator, set_separator, empty, unset = "\t", ",", "(empty)", "-"
         offset = 0
         since = 0
-        with open(self.path, "rb") as fh:
+        with open_regular(self.path, follow=False) as fh:
             while True:
                 raw = fh.readline(MAX_LINE + 1)
                 if not raw:
@@ -1219,18 +1253,32 @@ def inline_copy(stem, record, withheld):
 
 
 PROGRESS = {"stage": "arguments", "out_dir": None}
+STOP_LISTED = 200       # logs the answer to a stop names
+STOP_COUNTED = 100_000  # logs it counts before it says "more than"
 
 
 def last_word(signum):
     """What a stopped run says on stdout: partial, which stage it was in, and which logs were on disk."""
     out_dir = PROGRESS.get("out_dir")
+    logs, total = [], 0
     try:
-        logs = sorted(n[:-4] for n in os.listdir(out_dir) if n.endswith(".log")) if out_dir else []
+        with os.scandir(out_dir) if out_dir else contextlib.nullcontext([]) as entries:
+            for entry in entries:
+                if not entry.name.endswith(".log"):
+                    continue
+                total += 1
+                if len(logs) < STOP_LISTED:
+                    logs.append(entry.name[:-4])
+                elif total > STOP_COUNTED:
+                    break
     except OSError:
-        logs = []
+        pass
+    # the names are the engine's: one shaped like a token (a log not yet set aside by name, or one that was) is the word withheld, never the name
+    logs = sorted(("withheld" if (token_shaped(n) or scrub(n) != n) else n) for n in logs)
     print(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False,
                       "status_basis": "the tool was stopped by signal %d while it was %s; Zeek, if it was running, was killed with what it had started, and the logs it had written are whole files only up to the point it was stopped" % (signum, PROGRESS["stage"]),
-                      "interrupted_by_signal": signum, "stage": PROGRESS["stage"], "out_dir": out_dir, "logs_written_so_far": logs}), flush=True)
+                      "interrupted_by_signal": signum, "stage": PROGRESS["stage"], "out_dir": out_dir, "logs_written_so_far": logs,
+                      "logs_written_so_far_total": total if total <= STOP_COUNTED else None}), flush=True)
 
 
 def answer_out(text):
@@ -1338,19 +1386,24 @@ def main():
         fail("zeek could not be run (%s)" % describe(exc), command=argv)
     if timed_out:
         try:
-            partial = [n[:-4] for n in log_names.shown([n for n in os.listdir(out_dir) if n.endswith(".log")])]
+            partial = [n[:-4] for n in log_names.shown([n for n in os.listdir(out_dir) if n.endswith(".log")], started + MANIFEST_SECONDS - READ_MARGIN)[0]]
         except OSError:
             partial = []
+        partial_total, partial = len(partial), partial[:STOP_LISTED]
         fail("zeek did not finish in time and was killed with everything it had started", after_seconds=timeout, command=argv,
-             partial_output=out_dir, logs_written_so_far=partial, stdout=stdout_path, stderr=stderr_path)
+             partial_output=out_dir, logs_written_so_far=partial, logs_written_so_far_total=partial_total, stdout=stdout_path, stderr=stderr_path)
 
     try:
-        written = log_names.shown([n for n in os.listdir(out_dir) if n.endswith(".log")])
+        written, names_left = log_names.shown([n for n in os.listdir(out_dir) if n.endswith(".log")], started + MANIFEST_SECONDS - READ_MARGIN)
     except OSError as exc:
         fail("the names of the logs could not be set aside (%s)" % describe(exc), out_dir=out_dir)
     if not written:
         fail("zeek wrote no logs", exit_code=code, command=argv, stdout=stdout_path, stderr=stderr_path)
+    chmod_cut = False
     for name in os.listdir(out_dir):
+        if time.monotonic() > started + MANIFEST_SECONDS - READ_MARGIN:
+            chmod_cut = True
+            break          # the tool's own clock: the files left keep the modes the engine gave them, and the answer says so
         try:
             os.chmod(os.path.join(out_dir, name), 0o700 if os.path.isdir(os.path.join(out_dir, name)) else 0o600)
         except OSError:
@@ -1404,6 +1457,11 @@ def main():
                 files["records_with_a_hash"] += 1
 
     logs, problems, malformed, malformed_files, empty = {}, [], [], {}, []
+    if names_left:
+        problems.append({"why": "%d log(s) with a token-shaped name were not set aside under a withheld name before the tool's own clock ran out: they are whole in out_dir under the "
+                                "engine's names, not read, and not named here" % names_left})
+    if chmod_cut:
+        problems.append({"why": "the tool's own clock ran out while the modes of the files in out_dir were set: those not reached keep the modes the engine gave them"})
     hash_fields = []
     total_malformed = 0
     times_not_decoded = 0

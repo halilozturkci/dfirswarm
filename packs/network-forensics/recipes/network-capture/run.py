@@ -60,6 +60,8 @@ for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
     signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
 
 
+import errno
+import stat
 import shutil
 import select
 import subprocess
@@ -94,7 +96,11 @@ NEEDS_ONE_OF = {"http2.tsv": ["http2.streamid", "http2.type"], "quic.tsv": ["qui
 
 
 def target_of(arg):
-    text = open(arg, encoding="utf-8").read() if os.path.isfile(arg) else arg
+    if os.path.isfile(arg):
+        with open_regular(arg) as fh:
+            text = fh.read().decode("utf-8")
+    else:
+        text = arg
     target = json.loads(text)
     paths = target.get("paths") if isinstance(target, dict) else None
     if not isinstance(paths, list) or not paths or not isinstance(paths[0], str):
@@ -104,7 +110,7 @@ def target_of(arg):
 
 def detect(path):
     try:
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             magic = fh.read(4)
     except OSError as exc:
         return False, "unreadable: %s" % (exc.strerror or exc)
@@ -561,6 +567,22 @@ def truncated_packets(path, deadline=None):
 
 def describe(exc):
     return "%s: %s" % (type(exc).__name__, getattr(exc, "strerror", None) or exc)
+
+
+def open_regular(path, follow=True):
+    """A file opened for reading that is never waited on: the open does not block (a name that became a pipe since it was checked would otherwise wait
+    for a writer), the type is read from the descriptor, and anything but a regular file is refused. follow=False also refuses a symbolic link (for a
+    name the capture or the engine produced). The file object it returns reads in the ordinary, blocking way."""
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def first_line(argv, seconds=30):

@@ -8,7 +8,7 @@
   installs its handlers first thing in `main()` and answers with the stage until its receipt takes over.
 - The window that is left is the interpreter's own start and its compile of the script, before the first line has run. Measured with SIGTERM at a
   random offset of 0-250 ms (80 runs per script, one CPU, no network, 2026-11-01), 6 to 19 of 80 runs gave no JSON, all but one within 55 ms of
-  the start; the README and the manifests say so.
+  the start on a quiet host (a busy host sees more); the README and the manifests say so.
 - `pcap_summary` and `beacon_score` register the hidden `.<name>-*` file of a paging object as it is made, with the stop signals held between
   making and registering, and remove it on a failure, on a signal and on a write that fails (a full disk, a file size limit). A run stopped
   while it paged, or one whose write failed, no longer leaves a partial hidden file under `tool-output`.

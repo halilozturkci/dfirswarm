@@ -58,7 +58,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "pcap_extract", "version": 8}
+TOOL = {"name": "pcap_extract", "version": 9}
 PARSER = "pcap_extract/5"
 
 
@@ -426,11 +426,30 @@ def holds_files(directory):
         return next(entries, None) is not None
 
 
+def open_regular(path, follow=True):
+    """A file opened for reading that is never waited on: the open does not block (a name that became a pipe since it was checked would otherwise wait
+    for a writer), the type is read from the descriptor, and anything but a regular file is refused. follow=False also refuses a symbolic link (for a
+    name the capture or the engine produced). The file object it returns reads in the ordinary, blocking way."""
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
 
 
 def fail(message, **extra):
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})     # one document: a stop that arrives while this is written waits, and the tool leaves with it
+    STATE["last_word"] = None
     print(json.dumps({"error": scrub(message), "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -1149,8 +1168,7 @@ def shown_url(url):
 
 def file_digest(path):
     h = hashlib.sha256()
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(fd, "rb") as fh:
+    with open_regular(path, follow=False) as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -1686,7 +1704,7 @@ def decryption_secrets(path, seconds=20.0):
     deadline = time.monotonic() + seconds
     count = blocks = 0
     try:
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             head = fh.read(12)
             if len(head) < 12 or head[:4] != b"\x0a\x0d\x0d\x0a":
                 return 0, "not a pcapng file: it holds no Decryption Secrets Block"

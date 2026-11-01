@@ -47,7 +47,7 @@ the signal). The one window left is the interpreter's own start and its compile
 of the script, before the script's first line has run: a stop there gives no
 answer. Measured on 2026-11-01 (SIGTERM at a random offset of 0-250 ms after the
 start, 80 runs of each script, one CPU, no network), 6 to 19 of 80 runs gave no
-JSON, all but one of them within 55 ms of the start. No flow
+JSON, all but one of them within 55 ms of the start, on a quiet host; a busy host sees more (misses up to about 80 ms were seen). No flow
 export (NetFlow, IPFIX) is read by anything here: `skills/capture/what-you-have.md`
 says to identify the producer, the sampling and what its byte counters mean
 first, and that no flow reader is bundled; it gives no method for reading one.

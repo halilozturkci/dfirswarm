@@ -38,7 +38,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "beacon_score", "version": 8}
+TOOL = {"name": "beacon_score", "version": 9}
 
 
 def _before_start(signum, _frame):
@@ -128,6 +128,8 @@ def drop_temps():
 
 
 def fail(message, **extra):
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})     # one document: a stop that arrives while this is written waits, and the tool leaves with it
     drop_temps()
     print(json.dumps({"error": message, "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
@@ -350,6 +352,8 @@ class Stopped(BaseException):
 
 
 def _stop(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)     # the first signal counts: a second one starts no second answer
     raise Stopped(signum)
 
 

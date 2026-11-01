@@ -61,6 +61,46 @@ if point in ("during_imports", "second_signal"):
             def __getattr__(self, name):
                 return getattr(self.inner, name)
         sys.stdout = Writer(sys.stdout)
+elif point == "second_in_answer":
+    # the first signal (INJECT_SIGNAL) is sent once main() has installed its own handlers (the HUP handler is the last of the three); the second
+    # (INJECT_SECOND) arrives while the answer to the first is being written
+    real_signal = signal.signal
+    second = getattr(signal, os.environ.get("INJECT_SECOND", "SIGINT"))
+
+    def watching(sig, handler):
+        previous = real_signal(sig, handler)
+        if (not state["done"] and sig == signal.SIGHUP and callable(handler) and getattr(handler, "__name__", "") != "_before_start"
+                and getattr(handler, "__module__", None) != "builtins"):
+            kill()
+        return previous
+    signal.signal = watching
+
+    class Writer2:
+        def __init__(self, inner):
+            self.inner, self.sent = inner, False
+
+        def write(self, text):
+            if state["done"] and not self.sent:
+                self.sent = True
+                os.kill(os.getpid(), second)
+            return self.inner.write(text)
+
+        def __getattr__(self, name):
+            return getattr(self.inner, name)
+    sys.stdout = Writer2(sys.stdout)
+elif point == "after_values_open":
+    def values_opened(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        if not state["done"] and os.path.basename(str(path)) == "network-log-values.jsonl":
+            kill()
+        return fd
+    os.open = values_opened
+elif point == "isfile_true":
+    # no signal: os.path.isfile says yes for the paths that end with INJECT_ISFILE_SUFFIX (all of them when it is empty), as it would for a name that was a regular
+    # file when it was checked and a pipe by the time it is opened
+    suffix = os.environ.get("INJECT_ISFILE_SUFFIX", "")
+    real_isfile = os.path.isfile
+    os.path.isfile = lambda p: True if str(p).endswith(suffix) else real_isfile(p)
 elif point == "during_args":
     import json
     real_load = json.load
