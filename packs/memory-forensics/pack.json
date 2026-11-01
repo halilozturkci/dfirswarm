@@ -1,7 +1,7 @@
 {
   "id": "memory-forensics",
   "name": "Memory Forensics Pack",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Method and tooling for a memory image: what the container is before anything else, what can be read with no framework at all, processes and injection, network state, credential material, and the discipline that keeps a string in memory from becoming a claim about behaviour.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -28,10 +28,10 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "7303d6ebea9d4881f591a047942ba57fc011d0bddea998b03a1925c1309953b6",
+      "README.md": "a8cb394ed2a570667aa9189ee2fc450d4b011ca8e998cb18ccf48005fa9e4116",
       "goals/memory-triage.md": "16661eee801bceda2ea7010e733ce1ad677f1e38489834ddb1be782d95b0b985",
-      "requires/host.json": "6ab94202e654bee61f2223eae155976074e784bd66b201d816a2a19ae92a0bbd",
-      "requires/python.txt": "a0587a37c3cf6bfaf2947f4b8c6f56ba6f79a2e83f7141cfb1de950bb23a2fd0",
+      "requires/host.json": "0acbd4125515941f933809791a302f536589d85d3dc8d1730bf414585a5ae44f",
+      "requires/python.txt": "805da5f067cc98775d074649955d9cca3e18379ef9284f73d162d6aae998f0f6",
       "requires/symbols.windows.json": "d94b7dfa6ef6014bdf0f82952488e774a0f590500a872b87149f75256bddb105",
       "skills/INDEX.md": "a8804eab5c541081ef30b3bd42cc5b842008afe4904dc307ae9092674db5d328",
       "skills/acquire/avml-and-preserve.md": "d40ce2e11177261201ee6d3dd120caac30c4aae432b089cf5510d253515200cd",
@@ -41,7 +41,7 @@
       "skills/memory/router.md": "fed20cff3cdb70648fdab84d36c1a0a860135e0514de3f1022afce8369cf8741",
       "skills/network/state.md": "b8c5f5fc2e0a08b4fa739cbc3705b2b7a1a0a9ecaa48add5d09158ff273faa74",
       "skills/network/timestamps-dns.md": "1d5165f0064af6389bdf76d218c38a63374259b7f2f74712d50bdb5fa39760b6",
-      "skills/patterns/yara.md": "0cea61e4a0bc111f696fec70ed47de888637cd241779f389c5915e8837d0945c",
+      "skills/patterns/yara.md": "53875ca4790a5ef94766163a4dd0980430ec489ac2147eb786b19a3607079119",
       "skills/processes/injection.md": "1ebcee919230e1df158728c4360fb9f1f52d32952c69a0c709a6b52da1fbd93a",
       "skills/processes/kernel-integrity.md": "32d1b3653cfc3de5d87c50f19aaa03c7409b106f3dac58c93f3ce1fecef6ed73",
       "skills/processes/preserve-regions.md": "994df88602236c206e1cb9342f4dacf3da9538d177c7f1ebc7d1019a48652757",
@@ -57,20 +57,23 @@
       "skills/triage/volatility-catalogue.md": "dbbe0140769636f8f39dd2497dca58e369e62222089206dc10c5f9d3fe310c75",
       "skills/triage/volatility-plugins.md": "8d05f22a29bc0f4801bef06a4545df9b22ce458a28642eefce2f2cbc2ed43540",
       "skills/triage/volatility-symbols.md": "09d32c3953d3f1a890313b14703ef90551e4e5b3e2ef8bc27bb87906c7a18d91",
-      "skills/triage/volatility.md": "ddc48cdfca050d23bb5a9c01a450a4db9dd902bbbc735c3ef5e5f6a6ffac3bf1",
+      "skills/triage/volatility.md": "60354478825f341dfb74ba7f8c69fa684d757228175888aaaa9da5ba5ec687a4",
       "skills/triage/what-you-have.md": "9c694ae5c0c695fc243b486390fdd95a728ccef2fd2c01f4dd772a1b8e012355",
       "tools/mem_carve/manifest.json": "0f51c51c9ee84d517e29d2894c1ba1bb57d389b82090e0e3043d7024a0768673",
       "tools/mem_carve/run.py": "c5ae768971a392774f695f59218e1f13b5da551820509582d56a960481a42edf",
       "tools/mem_fs/manifest.json": "f5b842edb901136dba8be336cef9fa2da75edbd0379484b885315941f05a7d47",
       "tools/mem_fs/run.py": "d8a45d0cf6129e12b887b9141d148094b31262d8833df57eb8cda0c542983c07",
       "tools/mem_profile/manifest.json": "df7b7893ef88066b64e156cf12a6cac8f317c02c3fe2560b686701c47fd24fe9",
-      "tools/mem_profile/run.py": "7926facfc4c253eb0806529feac6f76c44b25ca70a599f038e2320d61f020c95"
+      "tools/mem_profile/run.py": "7926facfc4c253eb0806529feac6f76c44b25ca70a599f038e2320d61f020c95",
+      "tools/vol_readiness/manifest.json": "10c01ab600143cb801ef892324474e65f4020b8069eb86cb2a6f9737ef673411",
+      "tools/vol_readiness/run.py": "9cfcad8252d767ec26977ee83bb0a7dce692d6554c5c9864228fa3545956cee0"
     }
   },
   "tools": [
     "mem_carve",
     "mem_fs",
-    "mem_profile"
+    "mem_profile",
+    "vol_readiness"
   ],
   "skills": 25,
   "method_only": [

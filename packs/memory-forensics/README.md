@@ -23,7 +23,7 @@ Depends on the Computer Forensics Base Pack.
 | Pattern matching | `patterns/yara` |
 | Acquisition | `acquire/images` (`acquire/avml-and-preserve`) |
 
-**Three tools.** `mem_profile` says what a memory file's header shows before
+**Four tools.** `mem_profile` says what a memory file's header shows before
 anything is run against it (a crash dump's physical-memory runs with their file
 offsets, checked for order, overlap and payload; a LiME file's ranges; an ELF core's
 byte order) and answers "unrecognised" for anything else, because a flat capture and
@@ -37,6 +37,13 @@ when it returns, unless the clean-up failed (an engine that cannot be ended, an 
 that does not answer): the answer then names a `cleanup` problem and the mount may remain.
 Whether MemProcFS contacts a symbol server is governed by the job's network policy; the tool
 passes it no flag about that, and the pinned binary's behaviour was not verified in this review.
+`vol_readiness` asks, before an examination, whether Volatility 3 can be used here and, with an image, on that image: offline
+(every call carries `--offline`, and the tool fetches nothing), in four views that each say `ready`, `blocked` or `unknown`: the plugins `vol`
+lists (as it lists them, and whether the names asked for are among them), the symbol table of the image's kernel (a Windows table by PDB, GUID
+and age; a Linux or macOS banner matched exactly against `isfinfo`), whether a YARA binding imports in the Python that runs `vol`, and whether FUSE is
+usable (`/dev/fuse` opens and a `fusermount3` or `fusermount` is on PATH; absence is `blocked`). It is not a plugin result, writes nothing from the
+capture to a file, and was run against a stand-in `vol` in this review: the real Volatility's listing, `windows.info` and `isfinfo` output were not
+exercised here. On a host or image without `/dev/fuse` or a `fusermount3`/`fusermount` (the image build installs only `libfuse2`), the FUSE view answers `blocked`; that is correct, not a defect.
 
 **Sensitive output.** Memory holds whatever the machine held. `mem_fs` writes file
 content only when it runs as a job, only on `write_values: true`, and only under
@@ -109,8 +116,8 @@ architecture), and `gcc` and `make` are there for a scanner a case needs that no
 library provides. `avml` is declared, with its pinned download, so the operator has the exact binary to take
 to the source host; it is not installed in the image (`not_in_image`), because run in an
 analysis VM it captures that VM, not the subject.
-Volatility's YARA plugins need a YARA Python binding that no requirement here
-installs; `patterns/yara` says how to check.
+Volatility's YARA plugins need a YARA Python binding; `requires/python.txt` declares `yara-python` (pinned with `==`; its wheels for arm64 and for the
+image's Python 3.11 were not checked, and the owner's image rebuild applies it), and `vol_readiness` says whether it imports.
 
 MemProcFS is AGPL-3.0, the same licence as this harness, which is why the one
 wrapper here is for that and not for the other.
