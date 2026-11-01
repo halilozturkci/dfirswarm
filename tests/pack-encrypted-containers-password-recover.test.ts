@@ -263,7 +263,7 @@ test("SIGTERM while john is running ends the tool with one JSON answer and the c
     const text = Buffer.concat(chunks).toString("utf8");
     assert.equal(text.trim().split("\n").filter((l) => l.trim()).length, 1, "exactly one JSON document");
     const a = JSON.parse(text) as { status: string };
-    assert.match(a.status, /partial|interrupted/);
+    assert.match(a.status, /partial|failed/);
     // The stand-in john (slept 30s) must be gone well before its sleep would have ended on its own.
     await new Promise((r) => setTimeout(r, 300));
     const ps = await new Promise<string>((resolve) => {

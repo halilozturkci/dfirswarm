@@ -542,7 +542,7 @@ test("P3 a stop signal in the middle of writing the result leaves no half-writte
     assert.ok(sawTemporary, "the result was written under its final name at once, or finished before it could be stopped");
     assert.equal(code, 143);
     const answer = JSON.parse(run.stdout());
-    assert.equal(answer.status, "interrupted");
+    assert.deepEqual([answer.status, answer.interrupted], ["failed", true]);
     const left = await readdir(join(cwd, "out"));
     assert.deepEqual(left, [], `left in out/: ${left.join(", ")}`);
   });

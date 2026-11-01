@@ -39,8 +39,8 @@ from pathlib import Path
 
 # prefetch_mam keeps no result file, so it carries the STOP block alone: the PLACE and PAGE blocks are for tools that page.
 # BEGIN SHARED STOP
-# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
-# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
 # The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
 # the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
 # first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
@@ -85,7 +85,7 @@ def install_signal_handlers(last_word=None):
 
 
 def interrupted_answer(signum, **extra):
-    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
                       "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
                       "signal": signum, **extra}), flush=True)
 
@@ -105,7 +105,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
 
-PARSER = "prefetch_mam/4"
+PARSER = "prefetch_mam/5"
 MAX_FILE = 16 * 1024 * 1024
 DEADLINE_SECONDS = 54             # the manifest allows 60: the inflate (pure Python, about 2 s a megabyte) stops here, so that the answer is printed before the harness ends it
 PROGRESS = {"phase": "starting", "inflated": 0}

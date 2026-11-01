@@ -353,7 +353,7 @@ for (const variant of VARIANTS) {
         run.child.kill("SIGCONT");
         assert.equal(await run.closed, 143, name);
         const out = JSON.parse(run.out()) as Answer;
-        assert.equal(out.status, "interrupted", name);
+        assert.deepEqual([out.status, (out as { interrupted?: boolean }).interrupted], ["failed", true], name);
         assert.equal(out.signal, 15);
         assert.deepEqual((await readdir(dir)).filter((n) => n.startsWith(".")), [], `${name} left a temporary file`);
       }

@@ -49,6 +49,6 @@ test("the STOP block's own text is still the pinned encrypted lineage, unchanged
     const text = await readFile(join(ENC, name, "run.py"), "utf8");
     const start = text.indexOf("# BEGIN SHARED STOP");
     const end = text.indexOf("# END SHARED STOP") + "# END SHARED STOP".length;
-    assert.equal(end - start, 7673, `${name}: the STOP block's byte span changed`);
+    assert.equal(end - start, 7838, `${name}: the STOP block's byte span changed`);
   }
 });

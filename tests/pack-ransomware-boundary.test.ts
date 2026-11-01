@@ -348,6 +348,12 @@ else:
             raise FileExistsError(errno.EEXIST, "exists", str(path))
         return _open(path, flags, *a, **k)
     os.open = op
+    _link = os.link
+    def lk(src, dst, *a, **k):
+        if "tool-output" in str(dst) and not os.path.basename(str(dst)).startswith("."):
+            raise FileExistsError(errno.EEXIST, "exists", str(dst))
+        return _link(src, dst, *a, **k)
+    os.link = lk
 sys.argv = [script]
 runpy.run_path(script, run_name="__main__")
 `;
