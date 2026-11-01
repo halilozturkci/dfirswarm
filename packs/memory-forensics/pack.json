@@ -1,7 +1,7 @@
 {
   "id": "memory-forensics",
   "name": "Memory Forensics Pack",
-  "version": "1.7.13",
+  "version": "1.7.14",
   "description": "Method and tooling for a memory image: what the container is before anything else, what can be read with no framework at all, processes and injection, network state, credential material, and the discipline that keeps a string in memory from becoming a claim about behaviour.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -54,12 +54,12 @@
       "skills/triage/volatility-symbols.md": "09d32c3953d3f1a890313b14703ef90551e4e5b3e2ef8bc27bb87906c7a18d91",
       "skills/triage/volatility.md": "ddc48cdfca050d23bb5a9c01a450a4db9dd902bbbc735c3ef5e5f6a6ffac3bf1",
       "skills/triage/what-you-have.md": "9c694ae5c0c695fc243b486390fdd95a728ccef2fd2c01f4dd772a1b8e012355",
-      "tools/mem_carve/manifest.json": "e40c40f91ac81bcf1f2761521c248263892e94ddada6d986678d3734c1ababc4",
-      "tools/mem_carve/run.py": "1da2d2c32a9922a8e62aac495d67124aceb54ac6721846db0edf9146f61d1ee5",
-      "tools/mem_fs/manifest.json": "344ae092e62df1a95e0bd1c60dbe67d798958581838832de8280f18135460ba5",
-      "tools/mem_fs/run.py": "5b3ae3e04629900b90983cf39300bd625fffbc35d35215721b49fdd46a80357d",
-      "tools/mem_profile/manifest.json": "7ffa5876043c46a6ed52d5966fb878a5c4d9b0134708b0439bd4f2b41363f318",
-      "tools/mem_profile/run.py": "6b46792eb80a63bcf35411e8460cb10c71c72810f4fe49bc33dab58f0a55b96e"
+      "tools/mem_carve/manifest.json": "af6d854ff6b838c6acf641530866e4bd3914b4ef10e88ec790560b48d6788459",
+      "tools/mem_carve/run.py": "a4273a98cb880471f301b43821829a132e887b4336181d24c8a9b7fb6c46a620",
+      "tools/mem_fs/manifest.json": "902c148d2c3f8793a9162315d12dd174a971b950657b7d5a29e6a515b483a529",
+      "tools/mem_fs/run.py": "e95c69213240fe58f35ef5a7d0aa7ab0db19fd67851e60b366c296e656088ad3",
+      "tools/mem_profile/manifest.json": "b5058e35914edb30077a1e391fff5ff1ce2da6c7de3b6fb97602a00e989fc994",
+      "tools/mem_profile/run.py": "175115d98590a83bc7d9593bab32d4fe6a601c99595f906a80ec21d15912bbe1"
     }
   },
   "tools": [

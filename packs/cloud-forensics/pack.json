@@ -1,7 +1,7 @@
 {
   "id": "cloud-forensics",
   "name": "Cloud and SaaS Forensics Pack",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "Method and tooling for logs that belong to somebody else's computer, examined as supplied exports: what a cloud or SaaS export covers and what its silence can show, the Microsoft 365 unified audit log, Entra sign-ins, AWS CloudTrail, Google Workspace, and the tokens, grants and mailbox rules behind a cloud account.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -57,12 +57,12 @@
       "skills/logs/sources.md": "1ff58fa6b521168b1a1d439cfd2275cb636ce2dc2593f7861eb93829d02c92ff",
       "skills/logs/what-exists.md": "8b29caefc5a4930d4af9b52706d79ae93c87c30ec6d9b62efeb4157108922dc5",
       "skills/m365/unified-audit-log.md": "04ba5c0035ac630d1274dc377ae9f8b93ac56845ba01713737353ec618bafe53",
-      "tools/cloudtrail_parse/manifest.json": "94b961a7be11f84c4c4538e96fab0cbceb633a84586ed6c229bdeb08dfa81fa2",
-      "tools/cloudtrail_parse/run.py": "218f0f61f5a738c7f492325d4a4c9db1f15cf5230c71df030b9494c8564b5096",
-      "tools/signin_analyse/manifest.json": "3dcb4dbd71554fd5aea74d41257ef40fdf55792932b3e4918c74595f10109c22",
-      "tools/signin_analyse/run.py": "e3438531bfa81f997882d7be0c5a21cb3f90576ded0d163461370dc4033902af",
-      "tools/ual_parse/manifest.json": "fd803d553c6326fdba08b3a2bad9ae665b6d30cac79a1de03098f6afa1a419c3",
-      "tools/ual_parse/run.py": "97e3764035f9d9f607e7210e8e98bd1fa31d7476d77158ad18d861bb0a72e192"
+      "tools/cloudtrail_parse/manifest.json": "127ba09479569eaddd63e3afc206e16cb855700b3a0e514f79757f6570ae824b",
+      "tools/cloudtrail_parse/run.py": "af734b6a096868dcfef821f7761cab08d4a1bd9a5aa5c9a4f495dc913cee7a8f",
+      "tools/signin_analyse/manifest.json": "ac6d39ef964a0d647cf18737f21b9086d3ebe2151290cb8dfefbbef584e41fd8",
+      "tools/signin_analyse/run.py": "192f39dd10ae9316a87c8d12e398815ec4fbff742dcc0d610ce33cd5e7d969c1",
+      "tools/ual_parse/manifest.json": "94e2830d0081dc794989b34fae7864509521ae3a21977e97f66ef943888c649c",
+      "tools/ual_parse/run.py": "9eb6b5e071b75d5b5fd00124da73312e5e6980f8df3be2431b93857a3dcfa420"
     }
   },
   "tools": [

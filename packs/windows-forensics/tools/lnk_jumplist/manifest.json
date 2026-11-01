@@ -30,7 +30,7 @@
   "example": "{\"path\": \"work/extracted/AutomaticDestinations\", \"limit\": 20}",
   "by": "maintainer",
   "at": "2026-10-21T09:00:00.000Z",
-  "version": 4,
+  "version": 5,
   "use": {
     "magic": [
       {
@@ -56,5 +56,5 @@
       "write_strings"
     ]
   },
-  "sha256": "0498b09685cf88b0f884fcdef249dc5071c18b0d03fa87f91c5e2664d36f7136"
+  "sha256": "c0050dee8f2bbb3fb8bd2b5d6a642b0462a7094e69d2bcdd742ae9b626d617bb"
 }

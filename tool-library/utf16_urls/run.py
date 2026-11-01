@@ -40,7 +40,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-PARSER = "utf16_urls/4"
+PARSER = "utf16_urls/5"
 DEADLINE_SECONDS = 54             # the manifest allows 60: the scan stops here, so that the pages are placed and the answer printed before the harness ends it
 MAX_CHUNK = 32 * 1024 * 1024      # a window of this size costs about four times its size in memory (the window, its carry, the next read, the match)
 MAX_LIMIT = 10000                 # the largest inline page; the whole result is in the file the answer names
@@ -155,31 +155,54 @@ class LosslessPage:
 # The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
 # A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
 # <stem>-<n><suffix>. The name is taken first, with an exclusive create, so a result written at the same moment cannot be replaced either.
-def same_bytes(a, b):
-    """Whether two files hold the same bytes (read in blocks, never whole)."""
+# Only regular files are ever compared: both names are opened with O_NONBLOCK and O_NOFOLLOW and looked at with fstat before a byte is
+# read, so a FIFO, a device, a directory or a link at a name (the caller's own results_to, say) is another result's and cannot hold the
+# tool. The comparing of one call has PLACE_COMPARE_SECONDS in all; past it an earlier result is taken as different and this one takes
+# the next free name (nothing is replaced, but an identical rerun may then be named anew).
+PLACE_COMPARE_SECONDS = 5   # all the comparing one call to place_without_replacing does; past it an earlier result is taken as different
+
+
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
     try:
-        if os.path.getsize(a) != os.path.getsize(b):
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
             return False
-        with open(a, "rb") as fa, open(b, "rb") as fb:
-            while True:
-                x, y = fa.read(1 << 20), fb.read(1 << 20)
-                if x != y:
-                    return False
-                if not x:
-                    return True
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
     except OSError:
         return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
 
 
 def place_without_replacing(tmp, path):
     """Move the finished `tmp` to `path` and never replace what is there. The name is taken first, with an exclusive create, so a
-    result written at the same moment cannot be replaced either. Returns the path that holds it."""
+    result written at the same moment cannot be replaced either. Returns the path that holds it.
+    The comparing with earlier results has PLACE_COMPARE_SECONDS in all: past it an earlier result is taken as different and this
+    one takes the next free name."""
+    deadline = time.monotonic() + PLACE_COMPARE_SECONDS
     for n in range(1, 1000):
         candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
         try:
             fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except FileExistsError:
-            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
+            if not os.path.islink(candidate) and same_bytes(tmp, candidate, deadline):
                 os.unlink(tmp)
                 return candidate
             continue

@@ -45,8 +45,8 @@
   "example": "{\"path\": \"work/extracted/$MFT\", \"name\": \"\\\\.docx$\", \"limit\": 50}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 4,
-  "sha256": "3fd8d6b61ac5ea87088eeb3a9858bd192e62dc201d10166a69d64a4ef5839a27",
+  "version": 5,
+  "sha256": "8360d50ba0deb8437de2de9e084cbec810ca6293f5bf90637970feab278b77c2",
   "use": {
     "names": [
       "$MFT",
