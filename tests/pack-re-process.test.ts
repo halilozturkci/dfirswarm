@@ -187,7 +187,7 @@ const NETWORK_PROCESS_SHA = "318081f44222ce78d9fc6da2b1e1727401eb1a00fbc2c1702f7
 const NETWORK_WITHHOLDING_SHA = "fdd1ae506f0e017a7fb011e552ba9ac5dd015728d8eeadc534fbc88e3f72c0a5";
 
 test("the tool and the recipes that start programs carry one process block, the network pack's text, and nothing in the pack starts a program in a session or a group of its own", async () => {
-  const files = [join(TOOLS, "fuzzy_hash", "run.py"), RECIPE, CAPA_FLOSS];
+  const files = [join(TOOLS, "fuzzy_hash", "run.py"), join(TOOLS, "unpack_safe", "run.py"), RECIPE, CAPA_FLOSS];
   const blocks = await Promise.all(files.map(processBlock));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   assert.equal(sha(blocks[0]!), NETWORK_PROCESS_SHA);

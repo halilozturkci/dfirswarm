@@ -25,6 +25,7 @@ import type { Json, ZipEntry } from "./pack-re-harness.ts";
 import { buildPeDirs } from "./pack-re-doc-fixtures.ts";
 
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
+const UNPACK_SAFE = join(TOOLS, "unpack_safe", "run.py");
 const SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
 const NUMBER = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 } as const;
 
@@ -73,6 +74,17 @@ const CARRIERS: Carrier[] = [
     work: async (cwd, bin) => {
       await stub(bin, "ssdeep", `if [ "$1" = "-V" ]; then echo 2.14.1; exit 0; fi\nsleep 30`);
       await stub(bin, "tlsh", `if [ "$1" = "-version" ]; then echo 4.12.0; exit 0; fi\nsleep 30`);
+      await put(cwd, "inputs/sample.bin", "x".repeat(2000));
+      return { argv: [], stdin: JSON.stringify({ path: "inputs/sample.bin" }) };
+    },
+  },
+  {
+    name: "unpack_safe", script: UNPACK_SAFE, marker: MODULE_LEVEL,
+    work: async (cwd, bin) => {
+      await stub(bin, "upx", `if [ "$1" = "--version" ]; then echo upx 5.2.1; exit 0; fi
+if [ "$1" = "-t" ]; then exit 0; fi
+if [ "$1" = "-l" ]; then exit 0; fi
+sleep 60`);
       await put(cwd, "inputs/sample.bin", "x".repeat(2000));
       return { argv: [], stdin: JSON.stringify({ path: "inputs/sample.bin" }) };
     },

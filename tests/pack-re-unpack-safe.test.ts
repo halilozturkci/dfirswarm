@@ -224,10 +224,10 @@ test("hostile parameters are refused as JSON, never a traceback", async () => {
   });
 });
 
-test("without upx the tool says so, as JSON", async () => {
-  await withCwd(async (cwd) => {
+test("without upx the tool says so, as JSON", { skip: spawnSync("sh", ["-c", "command -v upx"]).status === 0 ? "upx is installed on this machine" : false }, async () => {
+  await withCwd(async (cwd, bin) => {
     await put(cwd, "work/x.exe", packed());
-    const out = refused(await tool(UNPACK, cwd, { path: "work/x.exe" }, { PATH: "/nonexistent" }));
+    const out = refused(await tool(UNPACK, cwd, { path: "work/x.exe" }, {}, bin));
     assert.match(out.error, /upx is not installed/);
   });
 });
