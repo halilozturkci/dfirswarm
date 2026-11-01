@@ -71,6 +71,7 @@ const WORD = {
   CyLR: "the name of a collector in a table of collectors, not a program the tool runs",
   uac: "the name of a collector in a table of collectors, not a program the tool runs",
   velociraptor: "the name of a collector in a table of collectors, not a program the tool runs",
+  java: "a file type or a language name in a table of names, not the program",
   pwsh: "a word in a list of program names to recognise in a command line, not a program the tool runs",
 };
 const w = (...programs: Array<keyof typeof WORD>): Record<string, string> => Object.fromEntries(programs.map((p) => [p, WORD[p]]));
@@ -90,7 +91,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "macos-forensics/tools/unified_log": { ...w("strings"), log: "the macOS system log command, looked for with which() only when sys.platform is darwin and for the live store; it is not in any image, and the reader this tool needs is unifiedlog_iterator (its requires)" },
   "mobile-forensics/recipes/android-aleapp": w("log"),
   "mobile-forensics/recipes/ios-ileapp": w("log"),
-  "ransomware-response/tools/encrypted_survey": w("7z", "log"),
+  "ransomware-response/tools/encrypted_survey": w("7z", "java", "log"),
   "reverse-engineering/recipes/capa-floss": w("strings"),
   "triage-collection/recipes/collection-intake": COLLECTORS,
   "triage-collection/tools/collection_coverage": COLLECTORS,
@@ -104,7 +105,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "windows-forensics/tools/evtx_carve": w("strings"),
   "windows-forensics/tools/evtx_query": w("strings"),
   "windows-forensics/tools/lnk_jumplist": w("strings"),
-  "windows-forensics/tools/lnk_parse": w("pwsh", "strings"),
+  "windows-forensics/tools/lnk_parse": w("java", "pwsh", "strings"),
   "windows-forensics/tools/regkv": w("strings"),
   "windows-forensics/tools/registry_recover": w("log"),
   "virtualization-backup-forensics/tools/snapshot_chain_check": { "qemu-img": "run only when it is installed, to read a disk format header; the pack pins that the tool declares no requires (tests/pack-virtualization-shared.test.ts), as nothing in it needs the program to answer" },

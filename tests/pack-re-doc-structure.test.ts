@@ -546,7 +546,7 @@ test("things that are not documents are JSON: unsupported formats, empty files, 
   await withCwd(async (cwd) => {
     await put(cwd, "work/junk.bin", Buffer.from("this is not a document at all"));
     const unsup = refused(await tool(DOC_STRUCTURE, cwd, { path: "work/junk.bin" }));
-    assert.equal(unsup.status, "unsupported");
+    assert.equal(unsup.status, "failed");
     await put(cwd, "work/empty.bin", "");
     assert.match(refused(await tool(DOC_STRUCTURE, cwd, { path: "work/empty.bin" })).error, /empty/);
     assert.match(refused(await tool(DOC_STRUCTURE, cwd, { path: "work" })).error, /not a regular file/);

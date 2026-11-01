@@ -622,7 +622,7 @@ test("a file that is none of the containers is unsupported, with its first bytes
   await withCwd(async (cwd) => {
     await put(cwd, "work/x.bin", "plain text, no container");
     const out = refused(await tool(DOC_PROBE, cwd, { path: "work/x.bin" }));
-    assert.equal(out.status, "unsupported");
+    assert.equal(out.status, "failed");
     assert.equal(out.head_hex, Buffer.from("plain te").toString("hex"));
   });
 });
@@ -692,7 +692,7 @@ test("a benign file that holds a PDF, RTF or ZIP signature away from offset 0 re
     for (const [name, data, note] of cases) {
       await put(cwd, `work/${name}`, data);
       const out = refused(await tool(DOC_PROBE, cwd, { path: `work/${name}` }));   // unsupported is a refusal: JSON and a non-zero exit
-      assert.equal(out.status, "unsupported", `${name}: ${out.status}`);
+      assert.equal(out.status, "failed", `${name}: ${out.status}`);
       assert.ok(out.notes.some((n: string) => note.test(n)), `${name}: ${JSON.stringify(out.notes)}`);
       assert.equal(out.container, undefined, name);
     }
@@ -719,7 +719,7 @@ test("a real structure away from offset 0 stays reported: an archive behind a pr
     const zip = buildZip([CONTENT_TYPES, DOC, { name: "word/vbaProject.bin", data: PROJECT }]);
     await put(cwd, "work/behind.bin", Buffer.concat([Buffer.from("JUNKJUNK".repeat(20)), zip]));
     const behind = refused(await tool(DOC_PROBE, cwd, { path: "work/behind.bin" }));
-    assert.equal(behind.status, "unsupported");
+    assert.equal(behind.status, "failed");
     assert.ok(behind.notes.some((n: string) => /ZIP end of central directory record at offset \d+ names a directory that lies inside the file/.test(n)), JSON.stringify(behind.notes));
     const rtf = await probe(cwd, "poly.rtf", "{\\rtf1\\ansi {\\*\\comment %PDF-1.4 }{\\object\\objemb{\\*\\objclass Package}{\\*\\objdata 0105000002000000}}}");
     assert.equal(rtf.container, "RTF");

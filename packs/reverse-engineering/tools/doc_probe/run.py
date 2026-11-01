@@ -118,7 +118,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "doc_probe", "version": 10}
+TOOL = {"name": "doc_probe", "version": 11}
 PARSER = "doc_probe/4"
 NOTE = ("Static container triage only. Markers, procedure names and external relationships do not prove execution or "
         "retrieval. Record parser coverage before drawing an absence conclusion.")
@@ -1604,7 +1604,7 @@ def main():
         claims, notes = containers(head, path, size)
         if not any(not why.startswith("a ZIP end of central directory record") for _name, why in claims):
             values.close()
-            fail("this is not a container this tool reads", status="unsupported", path=path, head_hex=head[:8].hex(),
+            fail("this is not a container this tool reads", path=path, head_hex=head[:8].hex(),
                  reads=["OOXML or ZIP", "PDF", "RTF", "OLE compound file"], notes=notes)
         try:
             body = read_as(claims[0][0], path, size, ctx, cfg, head)

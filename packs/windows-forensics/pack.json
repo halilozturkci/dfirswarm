@@ -1,7 +1,7 @@
 {
   "id": "windows-forensics",
   "name": "Windows Forensics Pack",
-  "version": "1.7.17",
+  "version": "1.7.18",
   "description": "Artefact-by-artefact method and tooling for a Windows examination: the file system and its journals, the hives, execution evidence, the event logs and the records inside a cleared one, accounts and remote access, persistence, PowerShell, browsers, shadow copies, memory, and the traces anti-forensics leaves.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -46,8 +46,8 @@
       "goals/data-left-the-building.md": "34c94782b1a636d54eac5d6d2397a482059374909b7f93ee96433f9c3668b68e",
       "goals/hidden-data.md": "14ee963bede22cf69b96033e483fad57ead72abd20e04ae7ccc1153de265fb78",
       "goals/intrusion-triage.md": "837d339c1f027f540d1f1fd1444a4d454c8736299767d30d8a45c450d86f073d",
-      "recipes/windows-artefacts/recipe.json": "f075594325ec0ce30be85757ac1fa0dc5800409906d8c2fd5111d8f78e963bd9",
-      "recipes/windows-artefacts/run.py": "72725ec2b249623122aa91f9093ef78f73c16510d8450d4847d439a79cce0542",
+      "recipes/windows-artefacts/recipe.json": "e172823fb73a24597662252efff22c05b77e9ac85cb7a7d56b1c5181bcb892c3",
+      "recipes/windows-artefacts/run.py": "3e536db8bc07ee7a41a8006b2c0552fa3ffc9563729cb7eb76a2443e42582b5f",
       "requires/host.json": "6196a1e719ca24769b3928c070dd7c122751135123f3f5625d6bbaf60303a676",
       "requires/python.txt": "135c5e6f3a1c487d1ffda9dd5938e2e540fbe0398aa8a465945b1db7c6f7eb65",
       "skills/INDEX.md": "2c492606067cf42a09b6be87d078dc295368713160580b67d81014002962c8c5",
