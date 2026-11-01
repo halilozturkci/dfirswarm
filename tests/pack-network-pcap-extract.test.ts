@@ -469,8 +469,7 @@ test("a stop signal kills the pass and leaves a receipt that says it was interru
     child.stdout.on("data", (c: Buffer) => stdout.push(c));
     child.stdin.end(await readFile(join(cwd, "args.json")));
     // The stand-in writes "started" after its pids: waiting for it (as long as a loaded machine needs) is waiting for a state.
-    for (let i = 0; i < 600 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
-    assert.ok(await exists(join(dir, "started")), "the pass started");
+    await untilExists(join(dir, "started"));
     const pid = await pidFile(join(dir, "child.pid"));
     try {
       const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); child.kill("SIGTERM"); });
@@ -801,7 +800,7 @@ test("every answer carries status and status_basis: a finished run, a refusal, a
     const stdout: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => stdout.push(c));
     child.stdin.end(JSON.stringify({ path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }));
-    for (let i = 0; i < 100 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
+    await untilExists(join(dir, "started"));
     const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); child.kill("SIGTERM"); });
     assert.equal(code, 143);
     const last = JSON.parse(Buffer.concat(stdout).toString("utf8"));
@@ -899,15 +898,14 @@ test("a stop signal still ends the pass's children when ps is slow: the tree is 
     const child = spawn("python3", [EXTRACT], { cwd, env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}`, ...env(cwd) } });
     child.stdout.on("data", () => undefined);
     child.stdin.end(JSON.stringify({ path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }));
-    for (let i = 0; i < 100 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
-    assert.ok(await exists(join(dir, "started")));
+    await untilExists(join(dir, "started"));
     const began = Date.now();
     const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); child.kill("SIGTERM"); });
     assert.equal(code, 143);
-    assert.ok(Date.now() - began < 8_000, `took ${Date.now() - began} ms: the tree walk waited on ps`);
+    // ps here sleeps 30 s: a walk that waited on it would take that long, so the bound is under it and far over what a loaded runner needs.
+    assert.ok(Date.now() - began < 20_000, `took ${Date.now() - began} ms: the tree walk waited on ps`);
     const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
-    await new Promise((r) => setTimeout(r, 300));
-    assert.throws(() => process.kill(pid, 0), /ESRCH/, "the sleeper the pass started is gone");
+    assert.equal(await gone(pid), true, "the sleeper the pass started is gone");
   });
 });
 
@@ -968,3 +966,12 @@ test("a request URI over 64 KiB keeps its host and path and has its query withhe
   assert.match(longPath, /^<over-long text withheld 70002 characters>$/);
   assert.equal(speed, "fast");
 });
+
+/** Waits for a file the stand-in writes once it is in the state a test needs; fails by name after a minute rather than going on without it. */
+async function untilExists(path: string, ms = 60_000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!(await exists(path))) {
+    if (Date.now() > until) assert.fail(`${path} was not written within ${ms} ms`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
