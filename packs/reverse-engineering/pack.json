@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.9.7",
+  "version": "1.10.0",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -22,6 +22,38 @@
     {
       "name": "make",
       "why": "declared for building a tool distributed as source from a tree the operator or a pack supplied; no skill names it, and nothing from the evidence is ever built or run"
+    },
+    {
+      "name": "analyzeHeadless",
+      "why": "Ghidra's headless analyzer, declared ahead of the skill that will describe the headless route as a method; no skill names it yet, and nothing from the evidence is ever installed into it as an extension or script"
+    },
+    {
+      "name": "java",
+      "why": "the JDK Ghidra's headless analyzer runs on; a runtime, never called by a skill on its own"
+    },
+    {
+      "name": "diec",
+      "why": "Detect It Easy's console program, declared ahead of the skill that will name it; no skill walks through it yet"
+    },
+    {
+      "name": "dotnet",
+      "why": "the .NET runtime a .NET decompiler runs on, declared ahead of that decompiler's own entry; a runtime, never called by a skill on its own"
+    },
+    {
+      "name": "qpdf",
+      "why": "declared for the second reading of a PDF that a later change to doc_structure will add; no skill names it yet"
+    },
+    {
+      "name": "osslsigncode",
+      "why": "declared for the Authenticode verification tool a later change adds; no skill names it yet"
+    },
+    {
+      "name": "lief",
+      "why": "a Python library for PE, ELF and Mach-O structure, declared ahead of the skill that will name it; no tool of this pack imports it yet"
+    },
+    {
+      "name": "msoffcrypto-tool",
+      "why": "a Python library for protected Office files, declared ahead of the second reading doc_structure will gain; no tool of this pack imports it yet"
     }
   ],
   "secrets": [],

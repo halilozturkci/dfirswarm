@@ -29,10 +29,11 @@
       "name": "floss",
       "package": "flare-floss",
       "optional": true,
-      "why": "Recover strings that plain extraction misses (strings a sample decodes or builds at runtime) by analysis and emulation of its code, without running the sample on a host. Recovery is incomplete and depends on the format, architecture and version; a recovered string is derived, not read at a file offset. Unpinned (declared, unverified): the release the image installs is what pip resolves, so a job records the output of `floss --version`.",
+      "why": "Recover strings that plain extraction misses (strings a sample decodes or builds at runtime) by analysis and emulation of its code, without running the sample on a host. Recovery is incomplete and depends on the format, architecture and version; a recovered string is derived, not read at a file offset. Pinned to flare-floss 3.2.0 with its whole dependency set in a hash lock (requires/locks/floss.txt: a wheel hash per architecture where PyPI has one, and the sdist), so the image installs nothing else; a job still records the output of `floss --version`.",
       "install": {
-        "brew": "python3 -m pip install flare-floss",
-        "apt": "python3 -m pip install flare-floss"
+        "brew": "python3 -m pip install flare-floss==3.2.0",
+        "apt": "python3 -m pip install flare-floss==3.2.0",
+        "pip_lock": "requires/locks/floss.txt"
       },
       "licence": "Apache-2.0",
       "redistributable": false
@@ -41,10 +42,11 @@
       "name": "olevba",
       "package": "oletools",
       "optional": true,
-      "why": "Extract VBA macro source from an Office document and name its auto-execution entry points. An entry-point name shows what a macro declares, not that anything ran. Unpinned (declared, unverified): the release the image installs is what pip resolves, so a job records the version the tool prints.",
+      "why": "Extract VBA macro source from an Office document and name its auto-execution entry points. An entry-point name shows what a macro declares, not that anything ran. Pinned to oletools 0.60.2 with its whole dependency set in a hash lock (requires/locks/olevba.txt: a wheel hash per architecture where PyPI has one, and the sdist); a job records the version the tool prints.",
       "install": {
-        "brew": "python3 -m pip install oletools",
-        "apt": "python3 -m pip install oletools"
+        "brew": "python3 -m pip install oletools==0.60.2",
+        "apt": "python3 -m pip install oletools==0.60.2",
+        "pip_lock": "requires/locks/olevba.txt"
       },
       "licence": "BSD-2-Clause",
       "redistributable": false
@@ -177,6 +179,128 @@
         "apt": "apt-get install -y make"
       },
       "licence": "GPL-3.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "analyzeHeadless",
+      "package": "ghidra",
+      "optional": true,
+      "why": "Ghidra's headless analyzer (support/analyzeHeadless): import a binary into a project kept under $OUT and run its analysis without the GUI, so decompiled functions and cross-references can be read as method, never as a script the evidence supplies. The release is a platform-independent zip (about 570 MB, so the largest download of the image) and needs a 64-bit JDK 21 or later, declared here as `java`. Nothing from the evidence becomes an extension or a script. Pinned to 12.2 (sha256 as the release publishes it).",
+      "install": {
+        "brew": "brew install --cask ghidra",
+        "apt": "pinned download 12.2 (install.download): upstream's platform-independent zip, which needs the JDK declared as java",
+        "download": {
+          "version": "12.2",
+          "amd64": {
+            "url": "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip",
+            "sha256": "2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67",
+            "bin": "ghidra_12.2_PUBLIC/support/analyzeHeadless"
+          },
+          "arm64": {
+            "url": "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip",
+            "sha256": "2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67",
+            "bin": "ghidra_12.2_PUBLIC/support/analyzeHeadless"
+          }
+        }
+      },
+      "licence": "Apache-2.0",
+      "redistributable": false
+    },
+    {
+      "name": "java",
+      "package": "Eclipse Temurin JDK 21",
+      "optional": true,
+      "why": "The 64-bit JDK Ghidra's headless analyzer runs on (analyzeHeadless finds `java` on PATH). Debian 12 carries no JDK 21, so the Eclipse Temurin 21.0.13+9 tarball is pinned per architecture (sha256 as Adoptium publishes it; about 205 MB each).",
+      "install": {
+        "brew": "brew install --cask temurin@21",
+        "apt": "pinned download 21.0.13+9 (install.download): Eclipse Temurin JDK per architecture",
+        "download": {
+          "version": "21.0.13+9",
+          "amd64": {
+            "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.13_9.tar.gz",
+            "sha256": "d7f5d5cf865a2902b70ff549b97586a7d3f234e016f041ab447ea740c7d66d1c",
+            "bin": "jdk-21.0.13+9/bin/java"
+          },
+          "arm64": {
+            "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jdk_aarch64_linux_hotspot_21.0.13_9.tar.gz",
+            "sha256": "e3522e707fc7dbe2a72c30746b1e7068301a0213ecd213d4491f35a14eb55578",
+            "bin": "jdk-21.0.13+9/bin/java"
+          }
+        }
+      },
+      "licence": "GPL-2.0-only WITH Classpath-exception-2.0 (Eclipse Temurin)",
+      "redistributable": false
+    },
+    {
+      "name": "diec",
+      "package": "Detect It Easy",
+      "optional": true,
+      "why": "Detect It Easy's console program: name the packer, protector, compiler and linker signatures it recognises in a file, as signature matches (a match is a hypothesis, a miss shows nothing). Pinned to 3.21 as upstream's Debian 12 package (sha256 as the release publishes it); upstream publishes no Linux arm64 build, so an arm64 image records it as not installed.",
+      "install": {
+        "brew": "brew install --cask die",
+        "apt": "pinned download 3.21 (install.download): upstream's .deb for Debian 12 (amd64 only)",
+        "download": {
+          "version": "3.21",
+          "amd64": {
+            "url": "https://github.com/horsicq/DIE-engine/releases/download/3.21/die_3.21_Debian_12_amd64.deb",
+            "sha256": "cf6078edce2403bf73584a284cc8aaba122c38a53c91560e136fc98c5ca6a648"
+          }
+        }
+      },
+      "licence": "MIT",
+      "redistributable": false
+    },
+    {
+      "name": "dotnet",
+      "package": ".NET runtime",
+      "optional": true,
+      "why": "The .NET runtime a .NET-based decompiler runs on (the ILSpy command line targets net10.0). Declared here because the re profile holds no Windows pack and a pack may not depend on another (the same pin the Windows pack declares: 10.0.14, which runs net10.0 programs). The decompiler's own entry is not declared yet: its package is a NuGet tool whose sha256 needs the file itself.",
+      "install": {
+        "brew": "brew install --cask dotnet",
+        "apt": "pinned download 10.0.14 (install.download)",
+        "download": {
+          "version": "10.0.14",
+          "apt_deps": [
+            "libicu72",
+            "libssl3"
+          ],
+          "amd64": {
+            "url": "https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-x64.tar.gz",
+            "sha256": "bd3a25b2c5b617934de7ca55fc410711afd772c0d95a1af9205db6c3cc2c59f1",
+            "bin": "dotnet"
+          },
+          "arm64": {
+            "url": "https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-arm64.tar.gz",
+            "sha256": "b7647c18ea4cf034daf2716b759fd7baf0083cd2501b156b521363c15cbad848",
+            "bin": "dotnet"
+          }
+        }
+      },
+      "licence": "MIT",
+      "redistributable": false
+    },
+    {
+      "name": "qpdf",
+      "package": "qpdf",
+      "optional": true,
+      "why": "A second reader of a PDF's structure: check and list its objects, streams and encryption with a parser that is not this pack's own, so the two readings can be compared. Debian 12 carries qpdf 11.3.0; upstream's 12.4.2 release binaries are not pinned because their layout cannot be checked without fetching them. The apt snapshot date pins the version.",
+      "install": {
+        "brew": "brew install qpdf",
+        "apt": "apt-get install -y qpdf"
+      },
+      "licence": "Apache-2.0",
+      "redistributable": false
+    },
+    {
+      "name": "osslsigncode",
+      "package": "osslsigncode",
+      "optional": true,
+      "why": "Verify an Authenticode signature with OpenSSL (`osslsigncode verify`) instead of handwritten cryptography, from trust material the case supplies. Upstream publishes source and Windows/macOS builds only, so the Debian 12 package (2.5) is declared; the apt snapshot date pins the version.",
+      "install": {
+        "brew": "brew install osslsigncode",
+        "apt": "apt-get install -y osslsigncode"
+      },
+      "licence": "GPL-3.0-or-later with an OpenSSL linking exception (upstream's COPYING; GitHub does not machine-read it)",
       "redistributable": false
     }
   ]
