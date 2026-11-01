@@ -118,7 +118,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "doc_probe", "version": 7}
+TOOL = {"name": "doc_probe", "version": 8}
 PARSER = "doc_probe/4"
 NOTE = ("Static container triage only. Markers, procedure names and external relationships do not prove execution or "
         "retrieval. Record parser coverage before drawing an absence conclusion.")
@@ -510,7 +510,8 @@ def shown_deep(value, key=""):
 
 def fail(message, **extra):
     status = extra.pop("status", "failed")
-    answer = {"error": scrub(message), "status": status, "tool": TOOL, **shown_deep(extra)}
+    basis = extra.pop("status_basis", None)
+    answer = {"error": scrub(message), "status": status, "status_basis": scrub(basis) if isinstance(basis, str) and basis else scrub(message), "tool": TOOL, **shown_deep(extra)}
     if VALUES[0] is not None:
         answer["secret_values"] = VALUES[0].summary()
     print_answer(answer)
@@ -1549,7 +1550,7 @@ def main():
     install_signal_handlers(lambda signum: interrupted_answer(signum, tool=TOOL))
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")

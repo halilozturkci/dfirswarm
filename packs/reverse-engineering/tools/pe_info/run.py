@@ -109,7 +109,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "pe_info", "version": 5}
+TOOL = {"name": "pe_info", "version": 6}
 PARSER = "pe_info/3"
 
 NOTE = ("Static structural inventory only. Size differences, entropy and imports are triage features, not proof "
@@ -1571,7 +1571,7 @@ def main():
     install_signal_handlers(lambda signum: interrupted_answer(signum, tool=TOOL))
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")

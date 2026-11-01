@@ -41,7 +41,7 @@ import xml.parsers.expat
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "pe_directories", "version": 2}
+TOOL = {"name": "pe_directories", "version": 3}
 PARSER = "pe_directories/1"
 NOTE = ("Static structure only. A directory shows what the file declares to its loader and tools, not what the code does: an export, a delay-load "
         "import, a TLS callback or a resource is a declaration, and a strong-name flag or a PDB path is a claim. Read `status`, `problems` and `coverage` "
@@ -1078,7 +1078,8 @@ def emit(result, spill=None, indent=2):
 
 def fail(message, **extra):
     status = extra.pop("status", "failed")
-    answer = {"error": message, "status": status, "tool": TOOL, **extra}
+    basis = extra.pop("status_basis", None)
+    answer = {"error": message, "status": status, "status_basis": basis if isinstance(basis, str) and basis else message, "tool": TOOL, **extra}
     if VALUES[0] is not None:
         answer["secret_values"] = VALUES[0].summary()
     emit(answer, None, None)
@@ -2547,7 +2548,7 @@ def main():
     install_signal_handlers()
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")

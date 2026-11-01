@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "fuzzy_hash", "version": 7}
+TOOL = {"name": "fuzzy_hash", "version": 8}
 PARSER = "fuzzy_hash/3"
 DEFAULT_ENGINE_TIMEOUT = 120
 TOTAL_BUDGET = 270                       # seconds for the whole call: the manifest's own limit is 300
@@ -424,7 +424,7 @@ def install_signal_handlers():
 def _first_word(signum):
     """The last word of a stop signal that comes before main() has set the tool's own: one answer that says it was stopped and had produced
     nothing yet. main() replaces it, and installs the handlers again."""
-    print(json.dumps({"error": "stopped by signal %d before the tool had begun its work" % signum, "status": "failed",
+    print(json.dumps({"error": "stopped by signal %d before the tool had begun its work" % signum, "status": "interrupted",
                       "status_basis": "the tool was stopped by signal %d before it had begun its work: nothing it read is an answer" % signum,
                       "tool": TOOL, "stopped_by_signal": signum}))
     sys.stdout.flush()
@@ -698,7 +698,7 @@ def engine_info(runner, name, version_argv, package):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")
@@ -725,7 +725,7 @@ def main():
 
     def last_word(signum):
         # A stop signal ends the engines (the handler did that) and the tool says it was stopped, with what it had.
-        print(json.dumps({"error": "stopped by signal %d before the engines finished" % signum, "status": "failed",
+        print(json.dumps({"error": "stopped by signal %d before the engines finished" % signum, "status": "interrupted",
                           "status_basis": "the tool was stopped by signal %d before the engines finished: the digests already computed are in `files`, and the engines were ended" % signum,
                           "tool": TOOL, "stopped_by_signal": signum, "files": runner.partial, "problems": runner.problems,
                           "logs": logs.names if logs.kept else None}))

@@ -70,7 +70,7 @@ test("SIGTERM, SIGINT and SIGHUP end the engine and what it started, and the too
         assert.equal(await gone(engine), true, `${how}: the engine survived`);
         assert.equal(await gone(child), true, `${how}: what the engine started survived`);
         const word = JSON.parse(run.stdout()) as Json;
-        assert.equal(word.status, "failed");
+        assert.equal(word.status, "interrupted");
         assert.match(word.error, /stopped by signal/);
       } finally {
         for (const pid of [engine, child]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }

@@ -51,8 +51,10 @@ NOT_COVERED = "execution, unpacking, decompilation, signature verification, or o
 def target_of(arg):
     text = open(arg, encoding="utf-8").read() if os.path.isfile(arg) else arg
     target = json.loads(text)
-    paths = target.get("paths") or []
-    if not paths or not isinstance(paths[0], str):
+    if not isinstance(target, dict):
+        raise ValueError("the target is not a JSON object")
+    paths = target.get("paths")
+    if not isinstance(paths, list) or not paths or not isinstance(paths[0], str):
         raise ValueError("the target names no path")
     return target, paths[0]
 
@@ -571,7 +573,7 @@ def read_json(path):
             return None, "the output is larger than %d bytes" % MAX_JSON
         with open(path, encoding="utf-8") as fh:
             value = json.load(fh)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         return None, "not JSON (%s)" % exc
     return (value, None) if isinstance(value, dict) else (None, "not a JSON object")
 
@@ -780,27 +782,22 @@ def refuse(message):
 
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("detect", "run"):
-        print(json.dumps({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR [--seconds N]"}))
-        return 2
+        return refuse("usage: run.py detect --target T | run --target T --out DIR [--seconds N]")
     args = dict(zip(argv[2::2], argv[3::2]))
     if "--target" not in args:
-        print(json.dumps({"ok": False, "error": "--target is required"}))
-        return 2
+        return refuse("--target is required")
     try:
         _target, path = target_of(args["--target"])
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}))
-        return 2
+    except (OSError, ValueError, RecursionError) as exc:
+        return refuse(str(exc) if not isinstance(exc, RecursionError) else "the target is nested too deeply")
     if not os.path.isfile(path):
-        print(json.dumps({"ok": False, "error": "the target is not a readable file"}))
-        return 2
+        return refuse("the target is not a readable file")
     fmt, why = detect(path)
     if argv[1] == "detect":
         print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
         return 0 if fmt else 1
     if "--out" not in args:
-        print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
-        return 2
+        return refuse("run needs --out DIR")
     if fmt is None:
         refused = make_out_dir(args["--out"])
         if refused:

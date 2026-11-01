@@ -32,7 +32,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-TOOL = {"name": "go_buildinfo", "version": 1}
+TOOL = {"name": "go_buildinfo", "version": 2}
 PARSER = "go_buildinfo/1"
 SCHEMA_VERSION = 1
 NOTE = ("A Go binary's build information is what the go command wrote into the file: the toolchain version, the module graph and the build settings. "
@@ -1580,7 +1580,6 @@ def scan(ctx, img, rep, start, end, label, seen):
             seen["count"] += 1
             if len(seen["offsets"]) < MAX_UNALIGNED:
                 seen["offsets"].append(at)
-            seen["all"].add(at)
         ctx.scan_left -= at + 1 - pos
         pos = at + 1
     return None, True
@@ -1588,7 +1587,7 @@ def scan(ctx, img, rep, start, end, label, seen):
 
 def locate(ctx, img, cont, rep):
     """(slice offset of the header, where it was found, whether every place that could hold it was looked at, unaligned copies)."""
-    seen = {"count": 0, "offsets": [], "all": set()}
+    seen = {"count": 0, "offsets": []}
     covered = True
     tried = []
     for places in (cont.named if cont else [], cont.data if cont else []):

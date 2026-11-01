@@ -800,3 +800,34 @@ test("a binary built by the machine's own Go toolchain is read: the version `go 
     assert.ok(!JSON.stringify(answer).includes("plain-words-here") || build.build_settings.rows.some((r: Json) => r.key === "-ldflags"));
   });
 });
+
+// --- round 2: the unaligned copies are counted, not kept ---------------------------------------------------------------------
+
+test("P3 millions of unaligned copies of the magic are counted with a bounded memory: the tool kept every offset in a set nothing read", async () => {
+  await withCwd(async (cwd) => {
+    const magic = Buffer.from("\xff Go buildinf:", "latin1");
+    const unit = Buffer.concat([magic, Buffer.alloc(4)]);                 // a stride of 18 from an odd start: never a multiple of 16 from the start
+    const copies = 3_000_000;
+    await put(cwd, "work/many.bin", elf(Buffer.concat([Buffer.alloc(5), Buffer.alloc(unit.length * copies).fill(unit)])));
+    const script = [
+      "import json, resource, subprocess, sys",
+      "p = subprocess.run(['python3', sys.argv[1]], input=json.dumps({'path': 'work/many.bin', 'max_seconds': 40}).encode(), capture_output=True)",
+      "a = json.loads(p.stdout)",
+      "b = a['builds'][0]",
+      "print(json.dumps({'rss_mb': resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss // 1024, 'count': b['unaligned_copies']['count'], 'status': a['status']}))",
+    ].join("\n");
+    const r = spawnSync("python3", ["-c", script, GO_BUILDINFO], { cwd, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" }, timeout: 120_000 });
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout) as Json;
+    assert.ok(out.count > 1_000_000, `copies counted: ${out.count} (${out.status})`);
+    assert.ok(out.rss_mb < 250, `peak memory ${out.rss_mb} MB for a ${(3_000_000 * 18 / 1e6).toFixed(0)} MB file`);
+  });
+});
+
+test("P2 the manifest says what the withholding bound was measured on, and the rates of uniformly random token-shaped strings", async () => {
+  const text = JSON.parse(await readFile(join(TOOLS, "go_buildinfo", "manifest.json"), "utf8")).description as string;
+  assert.match(text, /forced to hold a lower-case letter, a capital and a digit/);
+  assert.match(text, /drawn uniformly at random/);
+  assert.match(text, /about 11% of sk_live_ keys, about 5% of Slack webhook URLs and about 3% of 30-character AWS secret keys/);
+  assert.match(text, /rely on those rates, not on the bound above/);
+});

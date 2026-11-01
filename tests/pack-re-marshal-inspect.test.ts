@@ -16,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { TOOLS, asJob, body, put, refused, tool, withCwd } from "./pack-re-harness.ts";
+import { TOOLS, asJob, body, put, refused, startDetached, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 import { canaries, needles } from "./pack-re-canary-shapes.ts";
 
@@ -432,4 +432,139 @@ test("hostile parameters and special files are JSON refusals, never a traceback;
     }
     assert.ok(Date.now() - started < 20_000);
   });
+});
+
+// --- the clock goes by what is processed, not by how many objects (round 2, P1-A) -------------------------------------------------
+
+const LOAD = [
+  "import importlib.util, sys, time, json",
+  "spec = importlib.util.spec_from_file_location('mi', sys.argv[1])",
+  "m = importlib.util.module_from_spec(spec)",
+  "spec.loader.exec_module(m)",
+].join("\n");
+
+function python(script: string, ...argv: string[]): Json {
+  const r = spawnSync("python3", ["-c", `${LOAD}\n${script}`, MARSHAL, ...argv], { encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" }, timeout: 120_000 });
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout);
+}
+
+test("P1-A the reader reads the clock by bytes taken: with the clock already past, a tuple of longs of a million digits stops at the first one, not after all of them", () => {
+  const out = python([
+    "n = 1048576",
+    "stream = b'(' + (60).to_bytes(4, 'little') + b''.join(b'l' + n.to_bytes(4, 'little') + b'\\xff\\x7f' * n for _ in range(60))",
+    "reader = m.Reader(stream, 0, time.monotonic() - 1)",
+    "try:",
+    "    reader.obj()",
+    "    stopped = False",
+    "except m.Over:",
+    "    stopped = True",
+    "print(json.dumps({'stopped': stopped, 'objects': reader.objects}))",
+  ].join("\n"));
+  assert.equal(out.stopped, true);
+  assert.ok(out.objects <= 3, `objects read: ${out.objects}`);
+});
+
+test("P1-A a stream of 100 longs of a million digits (200 MiB) is partial at max_seconds, back within seconds, not complete after a minute", async () => {
+  await withCwd(async (cwd) => {
+    const n = 1_048_576;
+    const digits = Buffer.alloc(2 * n, 0);
+    for (let i = 0; i < n; i++) { digits[2 * i] = 0xff; digits[2 * i + 1] = 0x7f; }
+    const long = Buffer.concat([Buffer.from("l"), i32(n), digits]);
+    const count = 100;
+    const stream = Buffer.concat([Buffer.from("("), i32(count), ...Array.from({ length: count }, () => long)]);
+    const started = Date.now();
+    const res = await fails(cwd, stream, { max_seconds: 2, max_bytes: 512 * 1024 * 1024 }, "inputs/longs.bin");
+    assert.equal(res.status, "partial");
+    assert.ok(res.limits_hit.some((t: string) => /^time: the read stopped at max_seconds/.test(t)), res.limits_hit.join("|"));
+    assert.ok(Date.now() - started < 30_000, `took ${Date.now() - started} ms`);
+  });
+});
+
+test("P1-A the views read the clock by characters shown: with the clock already past, 16,000 strings of 4,096 characters stop within a few strings, not after a thousand nodes", () => {
+  const out = python([
+    "import random",
+    "texts = [''.join(random.choice('abcdefghijklmnopqrstuvwxyz0123456789') for _ in range(4096)) for _ in range(40)]",
+    "view = m.View(None, None, 10 ** 9, time.monotonic() - 1)",
+    "shown = 0",
+    "try:",
+    "    for t in texts * 30:",
+    "        view.v(t, ())",
+    "        shown += 1",
+    "except m.Over:",
+    "    pass",
+    "print(json.dumps({'shown': shown}))",
+  ].join("\n"));
+  assert.ok(out.shown <= 16, `strings shown before the stop: ${out.shown}`);
+});
+
+test("P1-A byte strings and big integers are charged to the clock too", () => {
+  const out = python([
+    "past = time.monotonic() - 1",
+    "view = m.View(None, None, 10 ** 9, past)",
+    "a = 0",
+    "try:",
+    "    for _ in range(40):",
+    "        view.v(m.Raw(bytes(range(256)) * 128, 0), ())",
+    "        a += 1",
+    "except m.Over:",
+    "    pass",
+    "view = m.View(None, None, 10 ** 9, past)",
+    "b = 0",
+    "try:",
+    "    for _ in range(4000):",
+    "        view.v(1 << 400_000, ())",
+    "        b += 1",
+    "except m.Over:",
+    "    pass",
+    "print(json.dumps({'bytes': a, 'ints': b}))",
+  ].join("\n"));
+  assert.ok(out.bytes <= 4, `byte strings shown: ${out.bytes}`);
+  assert.ok(out.ints <= 4, `integers shown: ${out.ints}`);
+});
+
+test("P3 a stop signal in the middle of writing the result leaves no half-written file under the result's name, and no temporary file", async () => {
+  await withCwd(async (cwd) => {
+    const words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega";
+    const items = Array.from({ length: 150_000 }, (_unused, i) => str(`${i} ${words}`));
+    await put(cwd, "inputs/big.bin", tuple(items));
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const run = startDetached(MARSHAL, cwd, { path: "inputs/big.bin", out_dir: "out", max_seconds: 45 });
+    let sawTemporary = false;
+    const until = Date.now() + 90_000;
+    while (Date.now() < until) {
+      const names = await readdir(join(cwd, "out")).catch(() => [] as string[]);
+      if (names.some((n) => /^\..*\.tmp$/.test(n))) { sawTemporary = true; run.signal("SIGTERM"); break; }
+      if (names.some((n) => /\.json$/.test(n))) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const code = await run.closed;
+    assert.ok(sawTemporary, "the result was written under its final name at once, or finished before it could be stopped");
+    assert.equal(code, 143);
+    const answer = JSON.parse(run.stdout());
+    assert.equal(answer.status, "interrupted");
+    const left = await readdir(join(cwd, "out"));
+    assert.deepEqual(left, [], `left in out/: ${left.join(", ")}`);
+  });
+});
+
+test("P3 the result file is complete JSON under its name once the call returns, and no temporary file is left beside it", async () => {
+  await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const res = await run(cwd, tuple([code()]), { out_dir: "out" });
+    const names = await readdir(join(cwd, "out"));
+    assert.deepEqual(names, [res.result_file.split("/").pop()]);
+    assert.equal(((await stat(join(cwd, "out", names[0]!))).mode & 0o777), 0o600);
+    JSON.parse(await readFile(join(cwd, "out", names[0]!), "utf8"));
+  });
+});
+
+test("P2 the manifest says what the withholding bound was measured on, and the rates of uniformly random token-shaped strings, in the pack copy and its twin", async () => {
+  for (const manifest of [join(TOOLS, "marshal_inspect", "manifest.json"), join(TOOLS, "..", "..", "..", "tool-library", "marshal_inspect", "manifest.json")]) {
+    const text = JSON.parse(await readFile(manifest, "utf8")).description as string;
+    assert.match(text, /forced to hold a lower-case letter, a capital and a digit/);
+    assert.match(text, /drawn uniformly at random/);
+    assert.match(text, /about 11% of sk_live_ keys, about 5% of Slack webhook URLs and about 3% of 30-character AWS secret keys/);
+    assert.match(text, /rely on those rates, not on the bound above/);
+  }
 });

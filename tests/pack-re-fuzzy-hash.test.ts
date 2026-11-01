@@ -17,7 +17,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { FUZZY, asJob, body, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { FUZZY, TOOLS, asJob, body, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 
 const TLSH_DIGEST = "T1" + "A1B2C3D4E5".repeat(7); // T1 and 70 hexadecimal digits: the digest of 128 buckets and a one-byte checksum
@@ -289,7 +289,7 @@ test("a stop signal keeps the digests already computed in its last word", async 
       run.signal("SIGTERM");
       await run.closed;
       const word = JSON.parse(run.stdout()) as Json;
-      assert.equal(word.status, "failed");
+      assert.equal(word.status, "interrupted");
       assert.equal(word.files[0].sha256, createHash("sha256").update("x".repeat(2000)).digest("hex"));
       assert.equal(word.files[0].ssdeep, SSDEEP_DIGEST, "the ssdeep digest finished before tlsh was stopped");
       assert.equal(word.files[0].tlsh, undefined);
@@ -373,10 +373,16 @@ test("a stop signal's last word carries a status_basis that says it was stopped 
       run.signal("SIGTERM");
       await run.closed;
       const word = JSON.parse(run.stdout()) as Json;
+      assert.equal(word.status, "interrupted");
       oneSentence(word.status_basis, "signal");
       assert.match(word.status_basis, /stopped by signal 15/);
     } finally {
       try { run.signal("SIGKILL"); } catch { /* gone */ }
     }
   });
+});
+
+test("P3 the manifest says a stop by signal is answered with status interrupted", async () => {
+  const text = JSON.parse(await readFile(join(TOOLS, "fuzzy_hash", "manifest.json"), "utf8")).description as string;
+  assert.match(text, /a stop by signal \(status `interrupted`\)/);
 });

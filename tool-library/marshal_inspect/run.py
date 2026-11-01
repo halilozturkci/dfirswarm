@@ -57,7 +57,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "marshal_inspect", "version": 2}
+TOOL = {"name": "marshal_inspect", "version": 3}
 PARSER = "marshal_inspect/2"
 SCHEMA_VERSION = 2
 NOTE = ("A marshal stream is data until something runs it, and this tool runs none of it. A constant, a name or a file name is what the file says, "
@@ -66,6 +66,8 @@ NOTE = ("A marshal stream is data until something runs it, and this tool runs no
 
 MAX_DEPTH = 200
 MAX_OBJECTS = 2_000_000
+READ_CLOCK_BYTES = 1 << 16          # the reader reads the clock each time this many more bytes have been taken
+VIEW_CLOCK_UNITS = 1 << 15          # the views read it each time this many characters (or 32 per node) have been shown
 MAX_LONG_DIGITS = 1 << 20           # digits of one `long`; a longer one is refused with the bound named
 OLDEST_MAGIC = 3450                 # 3.11's code objects begin here; 3.10 ended at 3439
 SUPPORTED = ("3.11", "3.12", "3.13")
@@ -84,7 +86,7 @@ FLAGS = (
     (0x20, "GENERATOR"), (0x80, "COROUTINE"), (0x100, "ITERABLE_COROUTINE"), (0x200, "ASYNC_GENERATOR"),
 )
 
-PAGES = []                          # the stop block removes a temporary file of each page; this tool writes none
+PAGES = []                          # the stop block removes the temporary file (`_tmp`) of each entry: the result file is written under a temporary name
 
 # BEGIN SHARED STOP
 # The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
@@ -1304,6 +1306,16 @@ class Reader:
         self.b, self.p, self.base, self.deadline = data, 0, base, deadline     # base: the stream's offset in the file
         self.refs, self.objects, self.depth_max, self.progress = [], 0, 0, 0
         self.codes = []
+        self.cost, self.next_check = 0, READ_CLOCK_BYTES
+
+    def clock(self, units):
+        """The clock by what is processed, not by how many objects: one `long` of a million digits costs as much as thousands of small objects, so
+        the clock is read each time READ_CLOCK_BYTES more bytes have been taken (before the work on them is done)."""
+        self.cost += units
+        if self.cost >= self.next_check:
+            self.next_check = self.cost + READ_CLOCK_BYTES
+            if time.monotonic() > self.deadline:
+                raise Over("time: the read stopped at max_seconds after %d objects, at offset %d" % (self.objects, self.at()))
 
     def at(self):
         return self.base + self.p
@@ -1311,6 +1323,7 @@ class Reader:
     def take(self, n):
         if n < 0 or self.p + n > len(self.b):
             raise StreamError("the stream is cut short: %d more byte(s) wanted at offset %d, %d left" % (n, self.at(), len(self.b) - self.p))
+        self.clock(n + 1)
         z = self.b[self.p:self.p + n]
         self.p += n
         return z
@@ -1363,6 +1376,8 @@ class Reader:
             v = struct.unpack("<q", self.take(8))[0]
         elif t == "l":
             n = self.i32()
+            if time.monotonic() > self.deadline:
+                raise Over("time: the read stopped at max_seconds after %d objects, at offset %d" % (self.objects, self.at()))
             if abs(n) > MAX_LONG_DIGITS:
                 raise StreamError("a long of %d digits at offset %d is over the %d this reader builds" % (abs(n), start, MAX_LONG_DIGITS))
             digits = [struct.unpack("<H", self.take(2))[0] for _ in range(self.count(abs(n), 2))]
@@ -1453,7 +1468,15 @@ class View:
         self.preview, self.nodes, self.budget, self.deadline, self.values = preview, nodes, budget, deadline, values
         self.spent = 0
         self.ticks = 0
+        self.cost, self.next_check = 0, VIEW_CLOCK_UNITS
         self.code = None
+
+    def clock(self, units):
+        self.cost += units
+        if self.cost >= self.next_check:
+            self.next_check = self.cost + VIEW_CLOCK_UNITS
+            if time.monotonic() > self.deadline:
+                raise Over("time: showing the stream stopped at max_seconds")
 
     def spend(self, n):
         self.spent += n
@@ -1462,8 +1485,7 @@ class View:
 
     def tick(self):
         self.ticks += 1
-        if not self.ticks & 0x3FF and time.monotonic() > self.deadline:
-            raise Over("time: showing the stream stopped at max_seconds")
+        self.clock(32)
 
     def field(self, x, nodes=None):
         self.nodes = nodes
@@ -1481,6 +1503,7 @@ class View:
 
     def text(self, text, path):
         n = len(text)
+        self.clock(min(n, SHOWN_TARGET) + 1)
         self.spend(n if self.preview is None else min(n, 2 * self.preview))
         shown = self.sanitise(text)
         changed = n > SHOWN_TARGET or shown != cell(text)
@@ -1497,10 +1520,9 @@ class View:
         """Whether the text of these bytes (read as Latin-1, and the NUL-split forms that UTF-16 makes) holds nothing the sanitiser would withhold."""
         for at in range(0, len(data), BYTES_WINDOW):
             window = data[at:at + BYTES_WINDOW + 256]
+            self.clock(len(window))
             if not PRINTABLE_TRIGGER.search(window):
                 continue
-            if time.monotonic() > self.deadline:
-                raise Over("time: showing the stream stopped at max_seconds")
             plain = cell(window.decode("latin-1"))
             if shown_path(plain) != plain:
                 return False
@@ -1509,6 +1531,7 @@ class View:
     def raw(self, raw, path):
         data = raw.data
         shown = data if self.preview is None else data[:self.preview]
+        self.clock(len(shown))
         self.spend(2 * len(shown))
         if self.bytes_clean(shown):
             out = {"bytes": len(data), "hex": Rendered(shown.hex())}
@@ -1563,6 +1586,7 @@ class View:
         if isinstance(x, float):
             return {"float": repr(x)} if x != x or x in (float("inf"), float("-inf")) else x
         if isinstance(x, int) and not isinstance(x, bool):
+            self.clock(x.bit_length() // 8 + 1)
             shown = shown_number(x)
             if shown is not x and shown != x:
                 self.withheld(path, hex(x))
@@ -1639,21 +1663,65 @@ def pyc_header(head):
     return info
 
 
-def create_result(directory, key):
-    """The result file, created exclusively, mode 0600, under a name no earlier call used (a rerun never replaces a file)."""
-    refused = own_dir(directory)
-    if refused:
-        raise OSError(errno.EPERM, refused)
-    stem = "%s-%s" % (TOOL["name"], hashlib.sha256(key.encode("utf-8", "surrogatepass")).hexdigest()[:12])
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    for n in range(1, 100):
-        name = "%s.json" % stem if n == 1 else "%s-%d.json" % (stem, n)
+class ResultFile:
+    """The whole result, written under a temporary name in its directory (exclusively, mode 0600) and given its final name only when it is
+    complete, so that a stop signal or a failure never leaves a half-written file under the name the answer would have given: the stop block
+    removes `_tmp`."""
+
+    def __init__(self, directory, key):
+        refused = own_dir(directory)
+        if refused:
+            raise OSError(errno.EPERM, refused)
+        self.directory = Path(directory)
+        self.stem = "%s-%s" % (TOOL["name"], hashlib.sha256(key.encode("utf-8", "surrogatepass")).hexdigest()[:12])
+        self._tmp = None
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        for n in range(1, 100):
+            name = ".%s.%d.%d.tmp" % (self.stem, os.getpid(), n)
+            try:
+                fd = os.open(str(self.directory / name), flags, 0o600)
+            except FileExistsError:
+                continue
+            self._tmp = str(self.directory / name)
+            self.fh = os.fdopen(fd, "w", encoding="ascii")
+            PAGES.append(self)
+            return
+        raise OSError(errno.EEXIST, "ninety-nine temporary files of this name already exist")
+
+    def publish(self):
+        """Close the file and give it its final name, a name no earlier call used (a rerun never replaces a file). Returns the path."""
+        self.fh.flush()
+        os.fsync(self.fh.fileno())
+        self.fh.close()
         try:
-            fd = os.open(str(Path(directory) / name), flags, 0o600)
-        except FileExistsError:
-            continue
-        return Path(directory) / name, os.fdopen(fd, "w", encoding="ascii")
-    raise OSError(errno.EEXIST, "ninety-nine files of this name already exist")
+            for n in range(1, 100):
+                name = "%s.json" % self.stem if n == 1 else "%s-%d.json" % (self.stem, n)
+                final = self.directory / name
+                try:
+                    os.link(self._tmp, str(final))
+                except FileExistsError:
+                    continue
+                except OSError:
+                    if os.path.lexists(str(final)):
+                        continue
+                    os.rename(self._tmp, str(final))      # a file system without links: the name was free a moment ago
+                    self._tmp = None
+                    return final
+                return final
+            raise OSError(errno.EEXIST, "ninety-nine files of this name already exist")
+        finally:
+            self.discard()
+
+    def discard(self):
+        """Remove the temporary file (it no longer exists once it was renamed)."""
+        tmp, self._tmp = self._tmp, None
+        if self in PAGES:
+            PAGES.remove(self)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def main():
@@ -1765,15 +1833,20 @@ def main():
     document = dict(summary, root=whole_root, codes=rows)
     result_path = None
     key = json.dumps([shown_name(path), offset, bytecode], sort_keys=True)
+    result = None
     try:
-        result_path, fh = create_result(rel_dir, key)
-        with fh:
-            json.dump(document, fh, indent=2, ensure_ascii=True)
-            fh.flush()
-            os.fsync(fh.fileno())
+        result = ResultFile(rel_dir, key)
+        json.dump(document, result.fh, indent=2, ensure_ascii=True)
+        result_path = result.publish()
     except (OSError, ValueError) as exc:
         problems.append("the whole result could not be written to a file: %s" % describe(exc))
         result_path = None
+        if result is not None:
+            try:
+                result.fh.close()
+            except (OSError, ValueError):
+                pass
+            result.discard()
     if error:
         status = "partial" if reader.progress else "failed"
         basis = error
