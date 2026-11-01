@@ -53,6 +53,35 @@ class FifoSwap(Case):
     def test_image_layout(self):
         self.drive("image_layout", {"image": "swapped.bin"})
 
+    def test_ioc_scan(self):
+        self.drive("ioc_scan", {"path": "swapped.bin", "needles": "x"})
+
+    def test_file_type(self):
+        self.drive("file_type", {"path": "swapped.bin"})
+
+    def test_archive_extract(self):
+        self.drive("archive_extract", {"path": "swapped.bin", "out_dir": "work/ex"})
+
+    def test_sqlite_query(self):
+        self.drive("sqlite_query", {"db_path": "swapped.bin", "sql": "select 1"})
+
+    def test_ad1_extract(self):
+        self.drive("ad1_extract", {"image": "swapped.bin", "out_dir": "work/a"})
+
+    def test_icat_extract_and_chunk_needles_by_inode(self):
+        from support import stand_in
+        d = self.path("bin")
+        os.makedirs(d)
+        stand_in(d, "icat", "exit 0\n")
+        old = os.environ["PATH"]
+        os.environ["PATH"] = d + os.pathsep + old
+        try:
+            self.drive("icat_extract", {"image": "swapped.bin", "inode": "5", "output": "work/i.bin"})
+            os.unlink(self.path("swapped.bin"))
+            self.drive("chunk_needles", {"image": "swapped.bin", "inode": 5, "needles": "x"})
+        finally:
+            os.environ["PATH"] = old
+
 
 if __name__ == "__main__":
     import unittest

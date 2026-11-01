@@ -70,7 +70,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 8}
+TOOL = {"name": "archive_extract", "version": 9}
 STARTED = time.monotonic()               # the run's clock starts with the tool: the archive hash and the 7z banner are on it too
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
@@ -1021,6 +1021,110 @@ def install_signal_handlers():
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
 
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back and the last word cleared (a signal in the middle of the write would cut the
+    document, and the last word would add a second one), on the bounded write above."""
+    STATE["last_word"] = None
+    _reconcile(answer)
+    _guarded_write(lambda: print(json.dumps(answer, **dumps_kwargs)))
+
+
+def open_regular(path):
+    """open(path, "rb") for a caller's path that was checked as a regular file a moment ago: opened without waiting (O_NONBLOCK) and looked at with
+    fstat on the descriptor, so a FIFO or a device put in its place is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
 
 def _early_last_word(signum):
     """Until main() has its own: a stop before the arguments are read gives one document, `failed` and `interrupted`, and depends on nothing
@@ -1044,8 +1148,7 @@ def in_job():
 
 
 def say(obj, code=0):
-    print(json.dumps(obj, ensure_ascii=True))
-    sys.stdout.flush()
+    print_answer(obj, ensure_ascii=True)
     raise SystemExit(code)
 
 
@@ -1211,7 +1314,7 @@ class Decomp:
 
     def __init__(self, path, kind, max_ratio):
         self.kind, self.max_ratio = kind, max_ratio
-        self.fh = open(path, "rb")
+        self.fh = open_regular(path)
         self.consumed = 0          # compressed bytes read from the file
         self.produced = 0          # decompressed bytes handed out
         self.buf = b""
@@ -1459,7 +1562,7 @@ class RawSlice:
     """`size` bytes of a file from `offset`: a plain tar member's data, read without tarfile, so that an archive which ends early gives what is there."""
 
     def __init__(self, path, offset, size):
-        self.fh = open(path, "rb")
+        self.fh = open_regular(path)
         self.fh.seek(offset)
         self.remaining = size
 
@@ -2097,7 +2200,7 @@ def read_rest(eng, stream, leftover, n):
 def zip_declared(path):
     """The member count and the central directory's size the end-of-central-directory record declares (zip64 too), read before zipfile loads it."""
     size = os.path.getsize(path)
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         fh.seek(max(0, size - 65557))
         tail = fh.read()
     at = tail.rfind(b"PK\x05\x06")
@@ -2108,7 +2211,7 @@ def zip_declared(path):
     if total == 0xFFFF or cd_bytes == 0xFFFFFFFF:
         loc = tail.rfind(b"PK\x06\x07", 0, at)
         if loc >= 0:
-            with open(path, "rb") as fh:
+            with open_regular(path) as fh:
                 fh.seek(struct.unpack_from("<Q", tail, loc + 8)[0])
                 rec = fh.read(56)
             if rec[:4] == b"PK\x06\x06":
@@ -2215,7 +2318,7 @@ def count_local_headers(path, cap=64 * 1024 * 1024):
     """How many local file headers (PK 03 04) the first `cap` bytes hold: a count for a zip whose directory is gone, not a listing."""
     count, tail = 0, b""
     try:
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             seen = 0
             while seen < cap:
                 block = fh.read(CHUNK)
@@ -2257,7 +2360,7 @@ def parse_gzip_header(head):
 
 def run_single(eng, path, kind, dec, from_index):
     """One compressed file that is not a tar: ONE member."""
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         head = fh.read(4096)
     name, mtime = parse_gzip_header(head) if kind == "gzip" else (None, None)
     base = os.path.basename(path)
@@ -2307,7 +2410,7 @@ def banner(program, seconds=15):
 def listing_records(path):
     """The records of `7z l -slt -ba` as dicts of bytes, one per blank-line-separated block, read a line at a time."""
     fields = {}
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         for line in fh:
             if len(line) > LISTING_LINE_MAX:
                 raise ArchiveError("7z printed a listing line of more than %d bytes" % LISTING_LINE_MAX)
@@ -2555,7 +2658,7 @@ def tar_header_ok(block):
 
 def detect(path):
     """(format, detail). Format is zip, 7z, tar, gzip, bzip2, xz, zstd, or an unsupported name, from the bytes."""
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         head = fh.read(4096)
     if head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
         return "zip", "zip signature at offset 0"
@@ -2573,7 +2676,7 @@ def detect(path):
     # A zip with something in front of it (a self-extractor): the end-of-central-directory record still says what it is.
     try:
         size = os.path.getsize(path)
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             fh.seek(max(0, size - 65557))
             if b"PK\x05\x06" in fh.read():
                 return "zip", "no signature at offset 0, but an end-of-central-directory record at the end (a zip with a prefix)"
@@ -2668,18 +2771,21 @@ def main():
     else:
         agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
         dest = resolve_output(os.path.join("work", agent, "archive_extract-" + digest))
-    if not args.get("out_dir") and dest.exists() and not resume:
-        k = 2
-        while Path("%s.%d" % (dest, k)).exists():
-            k += 1
-        dest = Path("%s.%d" % (dest, k))
-    if dest.exists() and not dest.is_dir():
-        fail("out_dir exists and is not a directory", out_dir=scrub(str(dest)))
-    if dest.exists() and any(dest.iterdir()) and not resume:
-        fail("out_dir already holds files: an extraction never writes over an earlier one. Pass a new out_dir, or resume: true (with from_index) "
-             "to go on in this one; the new manifest is written beside the earlier one", out_dir=scrub(str(dest)))
-    if resume and dest.exists() and not (dest / "extracted").is_dir():
-        fail("resume: true needs an out_dir an earlier run made (it has no extracted/ directory)", out_dir=scrub(str(dest)))
+    try:                    # exists(), is_dir() and iterdir() raise for a name too long, a directory that cannot be searched, a loop: a refusal, never a traceback
+        if not args.get("out_dir") and dest.exists() and not resume:
+            k = 2
+            while Path("%s.%d" % (dest, k)).exists():
+                k += 1
+            dest = Path("%s.%d" % (dest, k))
+        if dest.exists() and not dest.is_dir():
+            fail("out_dir exists and is not a directory", out_dir=scrub(str(dest)))
+        if dest.exists() and any(dest.iterdir()) and not resume:
+            fail("out_dir already holds files: an extraction never writes over an earlier one. Pass a new out_dir, or resume: true (with from_index) "
+                 "to go on in this one; the new manifest is written beside the earlier one", out_dir=scrub(str(dest)))
+        if resume and dest.exists() and not (dest / "extracted").is_dir():
+            fail("resume: true needs an out_dir an earlier run made (it has no extracted/ directory)", out_dir=scrub(str(dest)))
+    except (OSError, ValueError, RuntimeError) as exc:
+        fail("out_dir cannot be used: %s" % describe(exc), out_dir=scrub(str(args.get("out_dir") or dest)))
     try:
         dest.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(dest, 0o700)

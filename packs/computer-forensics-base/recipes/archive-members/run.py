@@ -110,6 +110,110 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+_shared_print_answer = print_answer
+
+
+def print_answer(answer, **dumps_kwargs):
+    _reconcile(answer)
+    _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
+
+
+def open_regular(path):
+    """open(path, "rb") for a caller's path that was checked as a regular file a moment ago: opened without waiting (O_NONBLOCK) and looked at with
+    fstat on the descriptor, so a FIFO or a device put in its place is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
 CHILD = {"proc": None}     # the 7z being read, ended by its pid on a stop
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -213,7 +317,7 @@ def zip_end_agrees(path):
     try:
         size = os.path.getsize(path)
         start = max(0, size - ZIP_TAIL)
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             fh.seek(start)
             tail = fh.read()
             at = len(tail)
@@ -243,7 +347,7 @@ def zip_end_agrees(path):
 def reads_as_tar(path):
     """Whether a tar header with a valid checksum reads at offset 0 (a plain tar: the first member of one that is compressed is not asked)."""
     try:
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             if fh.read(512)[257:262] != b"ustar":
                 return False
         with tarfile.open(path, mode="r:", tarinfo=BoundedInfo) as tf:
@@ -282,8 +386,8 @@ def detect(path):
     try:
         with _open_regular(path) as fh:
             head = fh.read(512)
-    except OSError as e:
-        return "unknown", "unreadable, so it cannot be told whether it is an archive: %s" % (e.strerror or e)
+    except (OSError, ValueError) as e:        # ValueError: a NUL or a lone surrogate in the path
+        return "unknown", "unreadable, so it cannot be told whether it is an archive: %s" % (getattr(e, "strerror", None) or e.__class__.__name__)
     if head.startswith(SEVEN_Z_MAGIC):
         return "7z", "7z signature"
     if head.startswith((b"PK\x03\x04", b"PK\x05\x06")):
@@ -407,7 +511,7 @@ class TarStream:
 
     def __init__(self, path, kind):
         self.kind = kind
-        self.fh = open(path, "rb")
+        self.fh = open_regular(path)
         self.consumed = 0
         self.delivered = 0
         self.buf = b""
@@ -617,7 +721,7 @@ def read_rest(stream, leftover, deadline, n, cov):
 def list_tar(path, w, deadline, max_members, cov):
     compressed = False
     kind = None
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         magic = fh.read(6)
     if magic[:2] == b"\x1f\x8b":
         compressed, kind = True, "gzip"
@@ -682,7 +786,7 @@ def tar_tail(path, last, n, cov):
     if end > size:
         cov["errors"].append("member %d's data runs %d bytes past the end of the file: the archive is truncated" % (n - 1, end - size))
         return
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         fh.seek(end)
         rest = fh.read(1 << 20)
     if rest.strip(b"\0"):
@@ -712,7 +816,7 @@ def zip_declared(path):
     end-of-central-directory record declares (zip64 too), read before
     zipfile loads the whole directory into memory."""
     size = os.path.getsize(path)
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         fh.seek(max(0, size - 65557))
         tail = fh.read()
     at = tail.rfind(b"PK\x05\x06")
@@ -723,7 +827,7 @@ def zip_declared(path):
     if total == 0xFFFF or cd_bytes == 0xFFFFFFFF:
         loc = tail.rfind(b"PK\x06\x07", 0, at)
         if loc >= 0:
-            with open(path, "rb") as fh:
+            with open_regular(path) as fh:
                 fh.seek(struct.unpack_from("<Q", tail, loc + 8)[0])
                 rec = fh.read(56)
             if rec[:4] == b"PK\x06\x06":
@@ -878,7 +982,12 @@ def list_7z(path, w, deadline, max_members, cov, out_dir):
 def run(path, out_dir):
     seconds, max_members = limits()
     deadline = time.monotonic() + seconds * 0.9
-    os.makedirs(out_dir, exist_ok=True)
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except (OSError, ValueError) as exc:        # a name too long, a loop, a file in the way, a directory that cannot be entered
+        print_answer({"ok": False, "status": "failed", "error": "--out cannot be used: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__),
+                      "status_basis": "the output directory could not be made, so nothing was run"})
+        sys.exit(2)
     fmt, why = detect(path)
     cov = {"recipe": "archive-members", "target": path, "format": fmt, "members": 0,
            "covered": "the archive's list of members", "not_covered": "member contents; archives inside the archive",
@@ -886,7 +995,7 @@ def run(path, out_dir):
     if fmt is None or fmt == "unknown":
         cov.update(status="unsupported", why=why, status_basis="no tar, zip or 7z structure was found in the file: " + why)
         json.dump(cov, open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
-        print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
+        print_answer({"ok": False, "status": "unsupported", "why": why})
         return 2
     # Said before the first member is read, so a run cut short at any point leaves a coverage file that says it did not finish.
     json.dump(dict(cov, status="partial", status_basis="the run had started and had listed nothing yet", why="started; the member list was not finished (the run stopped before its end)"),
@@ -949,25 +1058,25 @@ def run(path, out_dir):
 
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("detect", "run"):
-        print(json.dumps({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR"}))
+        print_answer({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR"})
         return 2
     args = dict(zip(argv[2::2], argv[3::2]))
     if "--target" not in args:
-        print(json.dumps({"ok": False, "error": "--target is required"}))
+        print_answer({"ok": False, "error": "--target is required"})
         return 2
     _t, path = target_of(args["--target"])
     if argv[1] == "detect":
         fmt, why = detect(path)
         if fmt == "unknown":
-            print(json.dumps({"applies": "unknown", "format": None, "why": why}))
+            print_answer({"applies": "unknown", "format": None, "why": why})
             return 2
-        print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
+        print_answer({"applies": fmt is not None, "format": fmt, "why": why})
         return 0 if fmt else 1
     if "--out" not in args:
-        print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
+        print_answer({"ok": False, "error": "run needs --out DIR"})
         return 2
     if not _is_regular(path):
-        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not a regular file, so nothing was run", "error": "not a regular file"}))
+        print_answer({"ok": False, "status": "failed", "status_basis": "the target is not a regular file, so nothing was run", "error": "not a regular file"})
         return 2
     return run(path, args["--out"])
 

@@ -47,6 +47,15 @@ if not isinstance(t, dict):
 paths = t.get("paths") or []
 if not isinstance(paths, list):
     paths = []
+def _ok(v):
+    try:
+        v.encode("utf-8")
+        return True
+    except (AttributeError, UnicodeEncodeError):
+        return False
+paths = [p if _ok(p) else "" for p in paths]      # a lone surrogate or a non-string cannot be printed: it is no path
+if not _ok(t.get("name") or ""):
+    t["name"] = ""
 print((paths[0] if paths else "") if field == "paths0" else (t.get("name") or (paths[0] if paths else "")))
 PY
 }
@@ -291,7 +300,8 @@ case "$cmd" in
     ;;
   run)
     [[ -n "$out" ]] || { final; echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
-    mkdir -p "$out"; : > "$out/index.tsv"; : > "$out/steps.jsonl"
+    mkdir -p "$out" 2>/dev/null && [[ -d "$out" && -w "$out" ]] || { final; echo '{"ok": false, "status": "failed", "error": "--out cannot be used: it is not a directory that can be made and written", "status_basis": "the output directory could not be made, so nothing was run"}'; exit 2; }
+    : > "$out/index.tsv"; : > "$out/steps.jsonl"
     # Said before the first step, so a run stopped anywhere leaves a coverage
     # file that says it did not finish.
     coverage partial "started; no step has finished (the run stopped before its end)"

@@ -45,6 +45,11 @@ class WriteFailures(Case):
         self.assertIn(doc.get("status"), ("complete", "partial", "failed"), name)
         if os.environ.get("WF_VERBOSE"):
             sys.stderr.write("%s: %s %s\n" % (name, doc.get("status"), (doc.get("error") or doc.get("status_basis") or "")[:150]))
+        # status, complete and ok are one fact: a partial or failed answer is never `complete: true`, a failed one is never `ok: true`
+        if doc["status"] in ("partial", "failed"):
+            self.assertIsNot(doc.get("complete"), True, "%s says complete with status %s: %r" % (name, doc["status"], doc))
+        if doc["status"] == "failed":
+            self.assertIsNot(doc.get("ok"), True, name)
         return doc
 
     def test_catalog_search_whose_all_matches_file_cannot_be_written(self):

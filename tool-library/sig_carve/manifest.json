@@ -34,6 +34,6 @@
   "example": "{\"path\": \"inputs/[UNALLOCATED]\", \"sig\": \"all\", \"max_hits\": 10}",
   "by": "s183906",
   "at": "2026-09-18T22:13:29.602Z",
-  "version": 10,
-  "sha256": "89ef7e45217fe9277d081e1ca38889debdeaa7befa6d33d336e6aca71903cd9c"
+  "version": 11,
+  "sha256": "f66a33aac5cfb243f642bbb716da5c55ab623b1e88c783a729dac80f0638a1ef"
 }

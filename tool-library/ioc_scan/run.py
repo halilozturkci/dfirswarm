@@ -100,9 +100,113 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+_shared_print_answer = print_answer
+
+
+def print_answer(answer, **dumps_kwargs):
+    _reconcile(answer)
+    _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
+
+
+def open_regular(path):
+    """open(path, "rb") for a caller's path that was checked as a regular file a moment ago: opened without waiting (O_NONBLOCK) and looked at with
+    fstat on the descriptor, so a FIFO or a device put in its place is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "ioc_scan", "version": 12}
+TOOL = {"name": "ioc_scan", "version": 13}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -637,7 +741,7 @@ def main():
         return ("the %d-second time budget was used inside a read, after the occurrences that start at or before offset %d: the counts and hits are for the "
                 "occurrences that start in [%d, %d); run again with start=%d to go on" % (max_seconds, cut[0], start, cut[0] + 1, cut[0] + 1))
     try:
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             fh.seek(start)
             while scanned < end and stopped is None:
                 data = fh.read(min(chunk, end - scanned))
@@ -703,9 +807,11 @@ def main():
         result["next_start"] = next_start
     if locators.error and result["truncated"]:
         result["status"] = "partial"
+        result["complete"] = False
         result["status_basis"] += "; the file that should hold every locator could not be written (all_results_error), so the occurrences past the page are counted, not listed"
     if secret.stopped_at is not None:
         result["status"] = "partial"
+        result["complete"] = False
         result["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"
     if unique_only and locators.hidden:
         result["repeats_hidden_inline"] = locators.hidden

@@ -958,6 +958,30 @@ test("arguments that are a JSON array, and a target that is not an object, are a
   }
 });
 
+test("a stop while ad1_extract writes gaps.jsonl closes it: every line is whole JSON and the file is not left open", async () => {
+  const cwd = dir("ad1-gapstop-");
+  mkdirSync(join(cwd, "inputs"));
+  // Non-zero data no item leads to, then the items (all reachable), then a 40 GiB hole at the end: the first gap is written when the walk
+  // reaches the first item, and the scan of the hole, which follows, takes long enough to be stopped in.
+  writeSparseAd1(join(cwd, "inputs", "cut.ad1"), ad1LogicalParts((put) => {
+    put(Buffer.alloc(8192, 0x41));
+    const items = [0, 1, 2, 3].map((i) => ad1Item(put, `f${i}`));
+    items[0].header.writeBigUInt64LE(BigInt(items[1].at), 0);
+    items[1].header.writeBigUInt64LE(BigInt(items[2].at), 0);
+    items[2].header.writeBigUInt64LE(BigInt(items[3].at), 0);
+    put({ hole: 40 * 1024 * 1024 * 1024 });
+    return items[0].at;
+  }));
+  const gaps = join(cwd, "work", "gapstop", "ad1_extract.gaps.jsonl");
+  const started = (): boolean => existsSync(gaps);
+  const r = await stopMidway([TOOL], cwd, JSON.stringify({ image: "inputs/cut.ad1", out_dir: "work/gapstop" }), started, "SIGTERM");
+  assert.equal(r.code, 128 + 15, `${r.stdout.slice(0, 300)} ${r.stderr.slice(-300)}`);
+  assert.equal(JSON.parse(r.stdout).interrupted, true);
+  const text = readFileSync(gaps, "utf8");
+  assert.ok(text.endsWith("\n"), "the gap found before the stop is in the file, and its last line is whole");
+  for (const line of text.split("\n").filter(Boolean)) JSON.parse(line);
+});
+
 test("file_type names an AD1 image and its encrypted form by their first bytes", async () => {
   const cwd = runDir();
   writeFileSync(join(cwd, "inputs", "enc.ad1"), Buffer.concat([B("ADCRYPT\0"), Buffer.alloc(600)]));

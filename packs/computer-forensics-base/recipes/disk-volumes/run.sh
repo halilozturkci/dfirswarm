@@ -48,6 +48,15 @@ if not isinstance(t, dict):
 paths = t.get("paths") or []
 if not isinstance(paths, list):
     paths = []
+def _ok(v):
+    try:
+        v.encode("utf-8")
+        return True
+    except (AttributeError, UnicodeEncodeError):
+        return False
+paths = [p if _ok(p) else "" for p in paths]      # a lone surrogate or a non-string cannot be printed: it is no path
+if not _ok(t.get("name") or ""):
+    t["name"] = ""
 if field == "paths0":
     print(paths[0] if paths else "")
 else:
@@ -355,7 +364,7 @@ case "$cmd" in
     ;;
   run)
     [[ -n "$out" ]] || { final; echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
-    mkdir -p "$out"
+    mkdir -p "$out" 2>/dev/null && [[ -d "$out" && -w "$out" ]] || { final; echo '{"ok": false, "status": "failed", "error": "--out cannot be used: it is not a directory that can be made and written", "status_basis": "the output directory could not be made, so nothing was run"}'; exit 2; }
     : > "$out/index.tsv"
     volumes=0
     candidate_volumes=0

@@ -137,6 +137,97 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+_shared_print_answer = print_answer
+
+
+def print_answer(answer, **dumps_kwargs):
+    _reconcile(answer)
+    _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
+
 NAME_MAX = 255
 SHOWN_ERRORS = 20
 MANIFEST = "ad1_extract.tsv"
@@ -241,6 +332,19 @@ def ad1_where(parent):
     return parent.decode("utf-8", "replace") if parent else "the root"
 
 
+def open_regular(path):
+    """open(path, "rb") for an image path: opened without waiting (O_NONBLOCK) and looked at with fstat on the descriptor, so a FIFO or a device
+    (named, or put in the place of the file after it was checked) is refused and never waited on."""
+    fd = _os.open(path, _os.O_RDONLY | getattr(_os, "O_NONBLOCK", 0))
+    try:
+        if _os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file")
+    except BaseException:
+        _os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
 class AD1:
     """An AD1 image opened read-only from its first segment (and the paths of
     the rest, when given; else beside it, x.ad2, x.ad3, ...). `missing` names
@@ -249,7 +353,7 @@ class AD1:
     could not be taken."""
 
     def __init__(self, first, more=()):
-        with open(first, "rb") as fh:
+        with open_regular(first) as fh:
             self.segment = ad1_segment_header(fh.read(0x30))
         if self.segment["index"] != 1:
             raise AD1Error("segment %d of %d of an AD1 image: the image is read from its first segment" % (self.segment["index"], self.segment["count"]))
@@ -263,7 +367,7 @@ class AD1:
             p = given[k - 1] if k <= len(given) else (stem + ext[:-1] + str(k) if beside else None)
             margin, span, present = self.segment["header"], self.segment["bytes"] - self.segment["header"], 0
             if p and _os.path.isfile(p):
-                with open(p, "rb") as fh:
+                with open_regular(p) as fh:
                     h = ad1_segment_header(fh.read(0x30))
                     size = _os.fstat(fh.fileno()).st_size
                 if h["index"] != k or h["count"] != count:
@@ -319,7 +423,7 @@ class AD1:
         if fh is None:
             if len(self._open) >= AD1_OPEN_MAX:
                 self._open.pop(next(iter(self._open))).close()
-            fh = open(self.paths[k], "rb")
+            fh = open_regular(self.paths[k])
         self._open[k] = fh
         return fh
 
