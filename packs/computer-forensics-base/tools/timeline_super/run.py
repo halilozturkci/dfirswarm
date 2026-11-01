@@ -37,10 +37,12 @@ Each program writes its log to out_dir (--logfile), its stdout and stderr to
 files there, and runs from out_dir: the run's own directory is read-only in an
 agent's VM and in a job's worker.
 """
+import errno
 import json
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -48,7 +50,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "timeline_super", "version": 7}
+TOOL = {"name": "timeline_super", "version": 8}
 DEFAULT_TIMEOUT = 1800
 TIMEOUT_MAX = 3300                # the manifest's own limit is 3600: the rest is for the version calls and the counting
 TOOL_SECONDS = 3500               # the whole call, counting included, ends before the manifest's limit
@@ -56,6 +58,7 @@ SAMPLE_MAX = 1000
 VERSION_TIMEOUT = 20
 LINE_MAX = 8 * 1024 * 1024        # a line past this is counted invalid, its tail skipped; the file keeps it whole
 MESSAGE_PREVIEW = 2000
+CLOCK_BYTES = 1 << 20              # the clock is read at least every this many bytes of psort's output
 INVALID_LISTED = 1000
 ZONE = re.compile(r"^[A-Za-z0-9_+\-/]{1,64}$")
 # BEGIN SHARED PROCESS
@@ -690,13 +693,25 @@ def install_signal_handlers():
 # END SHARED PROCESS
 
 
+def _early_last_word(signum):
+    """Until main() has its own: a stop before the arguments are read gives one document, `failed` and `interrupted`, and depends on nothing
+    defined later."""
+    sys.stdout.write(json.dumps({"ok": False, "tool": TOOL, "status": "failed", "interrupted": True, "signal": signum,
+                                 "status_basis": "the tool was stopped by signal %d before it had started a program, so it did nothing" % signum}) + "\n")
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _early_last_word
+install_signal_handlers()
+
+
 def emit(obj, code=0):
     print(json.dumps(obj, indent=2))
     raise SystemExit(code)
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error and ran nothing (see error)", **extra}))
     raise SystemExit(1)
 
 
@@ -824,6 +839,18 @@ def stamp_value(row):
         return None, raw
 
 
+def open_regular(path):
+    """The file opened without blocking and checked on the descriptor to be a regular file (a pipe put where psort's output was cannot hold the run)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.ESPIPE, "not a regular file")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def summarise(output, sample, out_dir, stop_at, invalid_path):
     """Valid and invalid lines of psort's JSON Lines, read line by line with a cap on
     a line's size, so a hostile line cannot fill memory and a bad one is not a count.
@@ -835,24 +862,35 @@ def summarise(output, sample, out_dir, stop_at, invalid_path):
     earliest = latest = None
     parsers_seen, head, bad = {}, [], []
     stopped_at_line = None
-    with open(output, "rb") as fh:
-        number, offset = 0, 0
+    with open_regular(output) as fh:
+        number, offset, since_check = 0, 0, 0
         while True:
             line = fh.readline(LINE_MAX + 1)
             if not line:
                 break
             start = offset
             number += 1
-            if number % 20000 == 0 and time.monotonic() > stop_at:
+            since_check += len(line)
+            # The clock is read every 20,000 lines and every CLOCK_BYTES bytes read: a file of a few enormous lines is as long as one of many small ones.
+            if (number % 20000 == 0 or since_check >= CLOCK_BYTES) and time.monotonic() > stop_at:
                 stopped_at_line = number
                 break
+            if since_check >= CLOCK_BYTES:
+                since_check = 0
             if len(line) > LINE_MAX and not line.endswith(b"\n"):
                 rest = 0
+                out_of_time = False
                 while True:
+                    if time.monotonic() > stop_at:
+                        out_of_time = True
+                        break
                     chunk = fh.readline(LINE_MAX)
                     rest += len(chunk)
                     if not chunk or chunk.endswith(b"\n"):
                         break
+                if out_of_time:
+                    stopped_at_line = number
+                    break
                 offset += len(line) + rest
                 oversized += 1
                 invalid += 1
@@ -910,8 +948,8 @@ def summarise(output, sample, out_dir, stop_at, invalid_path):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
-        fail("arguments are not valid JSON", reason=str(exc))
+    except (ValueError, RecursionError) as exc:
+        fail("arguments are not valid JSON", reason=str(exc)[:200])
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
 
@@ -966,7 +1004,6 @@ def main():
     sample = args.get("sample", 20)
     if not isinstance(sample, int) or isinstance(sample, bool) or not 0 <= sample <= SAMPLE_MAX:
         fail("sample must be a whole number from 0 to %d" % SAMPLE_MAX)
-    install_signal_handlers()
 
     call_started = time.monotonic()
     began = time.time()
@@ -1113,6 +1150,10 @@ def main():
                 result["problems"].append("%d line(s) of the output are not valid JSON events and are not in the count; see %s"
                                           % (summary["invalid_lines"], summary["invalid_lines_file"] or "the output file"))
 
+    empty = bool(output_ok and result.get("events") == 0 and result.get("invalid_lines") == 0 and not result["problems"] and result["export_exit"] == 0)
+    if output_ok and result.get("events") == 0 and result.get("invalid_lines") == 0:
+        result["problems"].append("the programs ran and wrote no event: an empty timeline is not evidence that the source holds nothing, and whether a parser "
+                                  "failed is not established (read the storage file's processing report, Plaso's pinfo)")
     clean = (not result["problems"] and result["export_exit"] == 0 and (mode == "export" or result["collect_exit"] == 0))
     if clean and output_ok:
         result["status"] = "complete"
@@ -1122,12 +1163,17 @@ def main():
         result["status"] = "failed"
         result["error"] = result["problems"][0] if result["problems"] else "no timeline was produced"
     result["status_basis"] = {"complete": "the programs exited 0, wrote their files and every output line parsed",
-                              "partial": "a program did not exit 0 or an output line did not parse, and what was written is kept (see problems)",
+                              "partial": ("the programs ran and wrote no event, so nothing is shown about the source (see problems)" if empty else
+                                          "a program did not exit 0, the counting did not finish, or an output line did not parse, and what was written is kept (see problems)"),
                               "failed": "no timeline was produced"}[result["status"]]
+    notes = process_notes()
+    if notes:
+        result["process_notes"] = notes
     result["coverage_note"] = ("complete here means the programs exited 0, wrote their files and every output line parsed. It does not say every "
                                "parser read every source: read the storage file's processing report (Plaso's pinfo) before a negative rests on it. "
                                "A timestamp in this timeline is what a parser read, in UTC; it is a pointer to an artefact, which the artefact's own "
                                "skill then examines.")
+    STATE["last_word"] = None
     emit(result, 0 if result["status"] == "complete" else 1)
 
 

@@ -126,9 +126,10 @@ PLASO_ZERO = re.compile(r"\bevents?\s+(?:extracted|written|exported|processed)\s
 SCAN_BYTES = 32 * 1024 * 1024
 
 
-def plaso_signals(out, names):
+def plaso_signals(out, names, unread=None):
     """The lines in these files of `out` that say Plaso failed or found nothing: [(file, kind, count, first line)].
-    A file is read to SCAN_BYTES, and a .gz that is not gzip is read as it is."""
+    A file is read to SCAN_BYTES, and a .gz that is not gzip is read as it is. When `unread` is a list, each file that goes on past
+    SCAN_BYTES is added to it as (file, bytes not read, or None when that is not known: the rest of a gzip stream is not measured)."""
     found = []
     for name in names:
         path = os.path.join(out, name)
@@ -137,11 +138,18 @@ def plaso_signals(out, names):
         counts, first = {"error": 0, "zero events": 0}, {}
         try:
             try:
-                with gzip.open(path, "rt", encoding="utf-8", errors="replace") as handle:
-                    lines = iter(handle.read(SCAN_BYTES).splitlines())
+                with gzip.open(path, "rb") as handle:
+                    raw = handle.read(SCAN_BYTES)
+                    more = bool(handle.read(1))
+                    left = None
             except (OSError, EOFError):
-                with open(path, "r", encoding="utf-8", errors="replace") as handle:
-                    lines = iter(handle.read(SCAN_BYTES).splitlines())
+                with open(path, "rb") as handle:
+                    raw = handle.read(SCAN_BYTES)
+                    more = bool(handle.read(1))
+                    left = max(0, os.path.getsize(path) - SCAN_BYTES) if more else 0
+            if more and unread is not None:
+                unread.append((name, left))
+            lines = iter(raw.decode("utf-8", "replace").splitlines())
             for line in lines:
                 for kind, rx in (("error", PLASO_ERROR), ("zero events", PLASO_ZERO)):
                     if rx.search(line):
@@ -234,8 +242,15 @@ def run(image, out, zone=None):
             if prc != 0:
                 errors.append("pinfo exited %d; the processing report may be incomplete (pinfo.stderr)" % prc)
     # The programs exited, and said what they did: a worker that was killed or an error line makes it partial, and so does a timeline of no events.
+    not_read = []
     signals = plaso_signals(out, ["log2timeline.stdout", "log2timeline.stderr", "log2timeline.log.gz", "psort.stdout", "psort.stderr", "psort.log.gz",
-                                  "pinfo.txt", "pinfo.stderr"])
+                                  "pinfo.txt", "pinfo.stderr"], not_read)
+    if not_read:
+        extra["plaso_signals_not_read"] = [{"file": f, "bytes_not_read": b if b is not None else "more follows the first %d bytes (a gzip stream: not measured)" % SCAN_BYTES}
+                                           for f, b in not_read]
+        for f, b in not_read:
+            errors.append("%s: only its first %d bytes were read for error and no-event lines; %s, so a line past them is not looked at"
+                          % (f, SCAN_BYTES, ("%d bytes were not read" % b) if b is not None else "the rest of the stream was not read"))
     for name, kind, count, first in signals:
         errors.append("%s: %d line(s) say %s, the first: %s" % (name, count, "an error" if kind == "error" else "no events were extracted or written", first))
     csv_path = os.path.join(out, "timeline.csv")

@@ -335,6 +335,65 @@ class TimelineSuper(Case):
         none = self.go(self.plaso(), out_dir="work/tl2", sample=0)
         self.assertEqual(none.json["sample"], [])
 
+    def test_a_run_that_parsed_no_event_is_not_a_plain_complete(self):
+        r = self.go(self.plaso(lines=[]))
+        self.assertEqual((r.code, r.json["status"], r.json["events"]), (1, "partial", 0))
+        self.assertTrue(any("wrote no event" in p for p in r.json["problems"]), r.json["problems"])
+        self.assertIn("no event", r.json["status_basis"])
+        self.assertIn("complete here means", r.json["coverage_note"])
+
+    def test_one_enormous_line_is_counted_on_the_clock_by_bytes_not_only_by_lines(self):
+        huge = self.path("huge.jsonl")
+        with open(huge, "wb") as fh:
+            fh.write(b"x" * (64 * 1024 * 1024))
+        bin_dir = self.plaso()
+        stand_in(bin_dir, "psort.py", 'echo "psort $*" >> "%s"\ncase "$1" in --version) echo "plaso - psort version 1"; exit 0;; esac\n'
+                 'while [ $# -gt 0 ]; do case "$1" in -w) cp "%s" "$2"; shift;; --logfile) echo log > "$2"; shift;; esac; shift; done\nexit 0\n' % (self.calls, huge))
+        with open(tool_path("timeline_super"), encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("TOOL_SECONDS = 3500 ", text)
+        patched = self.write("patched_timeline_super.py", text.replace("TOOL_SECONDS = 3500 ", "TOOL_SECONDS = 1 ", 1))
+        prelude = ("import os, time\n_fdopen = os.fdopen\n"
+                   "class Slow:\n"
+                   "    def __init__(self, f): self.f = f\n"
+                   "    def readline(self, n=-1):\n"
+                   "        time.sleep(0.3)\n"
+                   "        return self.f.readline(n)\n"
+                   "    def __enter__(self): self.f.__enter__(); return self\n"
+                   "    def __exit__(self, *a): return self.f.__exit__(*a)\n"
+                   "    def __getattr__(self, k): return getattr(self.f, k)\n"
+                   "os.fdopen = lambda fd, mode='r', *a, **k: Slow(_fdopen(fd, mode, *a, **k)) if mode == 'rb' else _fdopen(fd, mode, *a, **k)\n"
+                   "import sys\nexec(compile(open(sys.argv[1], encoding='utf-8').read(), sys.argv[1], 'exec'), {'__name__': '__main__'})\n")
+        env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"])
+        for k in ("JOB_ID", "OUT", "AGENT_ID", "SECRET_OUTPUT"):
+            env.pop(k, None)
+        began = time.monotonic()
+        proc = subprocess.run([sys.executable, "-c", prelude, patched], input=json.dumps({"out_dir": "work/tl", "source": self.write("inputs/disk.dd", b"\0" * 64)}),
+                              capture_output=True, text=True, cwd=self.dir, env=env, timeout=120)
+        took = time.monotonic() - began
+        said = json.loads(proc.stdout)
+        self.assertIs(said["summary_complete"], False, said)
+        self.assertEqual(said["status"], "partial")
+        self.assertTrue(any("counting psort's output stopped at the tool's time limit" in p for p in said["problems"]), said["problems"])
+        self.assertLess(took, 30)
+
+    def test_a_stop_signal_after_the_process_block_and_before_main_gives_one_json_document(self):
+        with open(tool_path("timeline_super"), encoding="utf-8") as fh:
+            text = fh.read()
+        end = text.index("# END SHARED PROCESS")
+        cut = text.index("install_signal_handlers()\n", end) + len("install_signal_handlers()\n")
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            script = self.write("prefix.py", text[:cut] + "\nimport os as _os, signal as _s, time as _t\n_os.kill(_os.getpid(), _s.%s)\n_t.sleep(30)\nprint('survived')\n" % sig.name)
+            proc = subprocess.run([sys.executable, script], cwd=self.dir, capture_output=True, text=True, timeout=60)
+            self.assertEqual(proc.returncode, 128 + sig, (sig.name, proc.stdout, proc.stderr))
+            said = json.loads(proc.stdout)
+            self.assertEqual((said["status"], said["interrupted"]), ("failed", True))
+
+    def test_arguments_nested_past_the_parser_are_json(self):
+        r = run_tool("timeline_super", None, self.dir, raw_input="[" * 100000)
+        self.assertEqual((r.code, r.json["status"]), (1, "failed"))
+        self.assertNotIn("Traceback", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
