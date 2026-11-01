@@ -41,7 +41,75 @@ import time
 from collections import Counter
 from pathlib import Path
 
-TOOL = {"name": "pe_info", "version": 3}
+PAGES = []                          # the pagers of this call: the stop block removes a temporary file of each (these write none)
+
+# BEGIN SHARED STOP
+# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
+# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+TOOL = {"name": "pe_info", "version": 6}
 PARSER = "pe_info/3"
 
 NOTE = ("Static structural inventory only. Size differences, entropy and imports are triage features, not proof "
@@ -151,7 +219,7 @@ def answer_base(status, error=None, partial=None, problems=None, limits=None, co
 
 def fail(message, **extra):
     status = extra.pop("status", "failed")
-    print(json.dumps({**answer_base(status, message), **extra}))
+    print_answer({**answer_base(status, message), **extra})
     raise SystemExit(1)
 
 
@@ -476,6 +544,21 @@ def show(ctx, field, text, offset):
     return shown
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
 # --- lossless paging: the answer a table gets when it is long, and the whole of it in a file ------------------------
 
 class LosslessPage:
@@ -484,6 +567,7 @@ class LosslessPage:
     taken) and is named in the answer. A table that cannot be written whole says so, and the call goes partial."""
 
     def __init__(self, tool, key, limit):
+        PAGES.append(self)
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
         self.page = []
@@ -505,7 +589,10 @@ class LosslessPage:
 
     def _open(self):
         try:
-            self.dir.mkdir(parents=True, exist_ok=True)
+            refused = own_dir(self.dir)
+            if refused:
+                self.not_written = refused
+                return
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             for n in range(1, 100):
                 name = "%s.jsonl" % self.stem if n == 1 else "%s-%d.jsonl" % (self.stem, n)
@@ -1481,9 +1568,10 @@ def positive_int(args, key, default, minimum=1, maximum=None):
 
 
 def main():
+    install_signal_handlers(lambda signum: interrupted_answer(signum, tool=TOOL))
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")
@@ -1545,7 +1633,7 @@ def main():
         coverage = stop.partial.pop("coverage", None)
         result = {**answer_base(stop.status, stop.message, stop.partial, ctx.problems, ctx.limits, coverage), "path": path, "bytes": size,
                   **stop.extra, "note": NOTE}
-        print(json.dumps(result, indent=2))
+        print_answer(result, indent=2)
         raise SystemExit(1)
     for name in ("sections", "segments"):
         if name in ctx.pages:
@@ -1564,7 +1652,7 @@ def main():
                                    "the field and where the string lies in the sample, which is the whole of it.")
     if ctx.problems_dropped:
         result["problems_not_listed"] = ctx.problems_dropped
-    print(json.dumps(result, indent=2))
+    print_answer(result, indent=2)
 
 
 if __name__ == "__main__":

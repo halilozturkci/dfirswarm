@@ -28,12 +28,12 @@ opened only when the leaf above points to them.
 | Rules | `rules/yara`, `rules/authoring` |
 
 Not provided, and the skills say so where it matters: a .NET metadata-table
-reader or decompiler, a Go build-information reader, a Python archive extractor
-or bytecode disassembler, a packer-signature detector, parse-only script tooling,
+reader or decompiler, a Python archive extractor, a bytecode disassembler or
+decompiler, a packer-signature detector, parse-only script tooling,
 a decompiler for native code, and a trust-aware Authenticode verifier. The new skills
 name only programs the pack declares.
 
-**Six tools of its own, and `file_type` from the base pack.** `file_type` reads
+**Eight tools of its own, and `file_type` from the base pack.** `file_type` reads
 what a file is from its bytes and says when the extension disagrees.
 `entropy_map` measures how evenly byte values are spread, window by window, and
 writes the whole profile to a file; it reports a measurement and does not
@@ -65,6 +65,20 @@ token-shaped text are withheld; a secret of another shape (a plain password, a
 token family the rules do not name, a token split across two fields) is printed,
 and some keys of a covered shape are too (the changelog gives the measured rates).
 A file whose secrets matter is read in a job with `secret_output: true`.
+`go_buildinfo` reads the build information a Go binary carries (the toolchain
+version, the main module, every dependency with its version, checksum and
+replacement, and the build settings such as `-ldflags`, `GOOS` and `vcs.revision`)
+from an ELF, PE or Mach-O file or every slice of a universal binary, in both
+header formats, executing nothing. It withholds by shape as the two above do; a
+binary built without a header, or stripped of one, answers `found: false`, which is
+not a finding that the file is not Go. `marshal_inspect` reads a Python `.pyc` or a
+marshal stream carved from a packed program as data (CPython 3.11 to 3.13: code
+objects with their names, constants and bytecode size, sha256 and hex), never
+calling `marshal.loads` and never running a line of it; the interpreter is named
+from the header's magic number and a version outside that range is `unsupported`.
+A constant can be a credential, so strings and byte strings are withheld by shape
+and kept whole only in a sealed file written with `write_values` in a job with
+`secret_output: true`. It unpacks no archive and decompiles nothing.
 
 **Two catalogue recipes.** `static-binary` recognises PE, ELF and Mach-O files
 by magic and structure and writes the parser's structure (long tables kept

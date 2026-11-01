@@ -148,7 +148,7 @@ or `tools/`.
 | `lnk_parse` | python3 | `s183902` | 6 | Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layo… |
 | `mam_pf_parse` | python3 | `s2f6600` | 1 | Decompress a MAM-wrapped Windows prefetch file and return executable name, version, run count, and non-zero l… |
 | `mam_scan` | python3 | `s183901` | 3 | Scan a raw dump or image region for MAM-compressed Prefetch records (the signature MAM\x04 and a declared siz… |
-| `marshal_inspect` | python3 | `sd29252` | 1 | Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and neve… |
+| `marshal_inspect` | python3 | `sd29252` | 3 | Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and neve… |
 | `master_icat` | bash | `s9a5f06` | 3 | Extract a file by inode from an E01 with icat. The HDFS master image and sector offset 2048 are the defaults;… |
 | `nested_vdi` | python3 | `sae6e7d` | 1 | Read a VirtualBox VDI that lies inside an E01 or raw image, in place: found by its NTFS data runs (a deleted … |
 | `prefetch_mam` | python3 | `sbe1803` | 4 | Read a Windows Prefetch file, MAM-compressed (MAM\x04) or plain (SCCA), field by field by the layout of its S… |

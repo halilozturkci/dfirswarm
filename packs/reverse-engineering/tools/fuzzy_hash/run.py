@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "fuzzy_hash", "version": 4}
+TOOL = {"name": "fuzzy_hash", "version": 8}
 PARSER = "fuzzy_hash/3"
 DEFAULT_ENGINE_TIMEOUT = 120
 TOTAL_BUDGET = 270                       # seconds for the whole call: the manifest's own limit is 300
@@ -45,7 +45,7 @@ def describe(exc):
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "status_basis": extra.pop("status_basis", message), "tool": TOOL, **extra}))
     raise SystemExit(1)
 
 
@@ -421,6 +421,19 @@ def install_signal_handlers():
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
 
+def _first_word(signum):
+    """The last word of a stop signal that comes before main() has set the tool's own: one answer that says it was stopped and had produced
+    nothing yet. main() replaces it, and installs the handlers again."""
+    print(json.dumps({"error": "stopped by signal %d before the tool had begun its work" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d before it had begun its work: nothing it read is an answer" % signum,
+                      "tool": TOOL, "stopped_by_signal": signum}))
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _first_word
+install_signal_handlers()
+# the stop handlers are installed here, at module level
+
 
 def file_problem(path):
     """Why `path` is not a file this tool can read, in words that fit: a missing file, a directory, a pipe, a loop."""
@@ -462,6 +475,21 @@ def sha256_of(path, deadline):
     return digest.hexdigest(), size, True
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
 class Logs:
     """Two files, one for every engine's standard output and one for its standard error, each invocation preceded by
     a header line. The child writes straight into them (appending), so what it prints is never held here."""
@@ -478,7 +506,9 @@ class Logs:
         self.fhs = {}
         self.error = None
         try:
-            self.dir.mkdir(parents=True, exist_ok=True)
+            refused = own_dir(self.dir)
+            if refused:
+                raise OSError(refused)
             for stream in ("stdout", "stderr"):
                 self.fhs[stream], self.names[stream] = self._create("fuzzy-hash-%s.%s.log" % (digest, stream))
         except OSError as exc:
@@ -668,7 +698,7 @@ def engine_info(runner, name, version_argv, package):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")
@@ -695,8 +725,9 @@ def main():
 
     def last_word(signum):
         # A stop signal ends the engines (the handler did that) and the tool says it was stopped, with what it had.
-        print(json.dumps({"error": "stopped by signal %d before the engines finished" % signum, "status": "failed", "tool": TOOL,
-                          "stopped_by_signal": signum, "files": runner.partial, "problems": runner.problems,
+        print(json.dumps({"error": "stopped by signal %d before the engines finished" % signum, "status": "interrupted",
+                          "status_basis": "the tool was stopped by signal %d before the engines finished: the digests already computed are in `files`, and the engines were ended" % signum,
+                          "tool": TOOL, "stopped_by_signal": signum, "files": runner.partial, "problems": runner.problems,
                           "logs": logs.names if logs.kept else None}))
         sys.stdout.flush()
 
@@ -752,6 +783,10 @@ def main():
         "comparison": comparison,
         "engines": engines,
         "status": "partial" if runner.problems else "complete",
+        "status_basis": (("%d problem(s), the first of them: %s (each names the engine, its status or the call's %d-second budget; see `problems`)"
+                          % (len(runner.problems), runner.problems[0][:300], TOTAL_BUDGET)) if runner.problems else
+                         "ssdeep and tlsh each ran on every file within the call's %d-second budget and answered: a digest of the engine's own shape, "
+                         "or its own insufficient_input" % TOTAL_BUDGET),
         "problems": runner.problems,
         "engine_timeout_seconds": timeout,
         "logs": {**logs.names, "format": "each invocation is preceded by a '## label: argv' line; the engine's whole output follows"} if logs.kept else None,

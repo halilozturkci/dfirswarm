@@ -1,6 +1,6 @@
 {
   "name": "entropy_map",
-  "description": "Shannon entropy across a file in windows. Returns a preview of the profile, the overall figure, the high-entropy runs (the whole list in a file when there are more than 1,000), the bytes processed and whether the pass finished. The complete profile is always written to a file (in a job, under $OUT) under a name that never replaces an earlier file. A window counts as high when its unrounded entropy is >= the threshold. Entropy measures how evenly byte values are spread; it does not identify packing, compression, encryption or intent.",
+  "description": "Shannon entropy across a file in windows. Returns a preview of the profile (at most 10,000 windows), the overall figure, the high-entropy runs (the whole list in a file when there are more than 1,000), the bytes processed and whether the pass finished. The complete profile is always written to a file (in a job, under $OUT), created exclusively with mode 0600, under a name that never replaces an earlier file. A window that would give the profile more than 4,000,000 rows is refused before anything is read, and the refusal names the cap and the smallest window that fits: the profile is never cut. A window counts as high when its unrounded entropy is >= the threshold. The tool's own clock (max_seconds) is looked at every MiB inside a window, so a 64 MiB window cannot run seconds past it; a window the clock stops is not measured and the profile ends at the last whole window. Every answer and refusal carries `status` (complete, partial or failed) and a one-sentence `status_basis`. Entropy measures how evenly byte values are spread; it does not identify packing, compression, encryption or intent. An output directory reached through a symbolic link (the directory itself, work/ or the agent's directory under it, or $OUT/tool-output in a job) is refused and nothing is written through it. A stop signal (SIGTERM, SIGINT or SIGHUP) ends it with one JSON answer and the exit code 128 plus the signal from the moment the module has run as far as its stop handlers, which are installed at module level and not when main() starts (only the start of the interpreter and the compiling of the file come before); a second signal does nothing while the first is answered, and no hidden temporary file is left.",
   "params": {
     "path": {
       "type": "string",
@@ -8,7 +8,7 @@
     },
     "window": {
       "type": "integer",
-      "description": "Window size in bytes, from 64 to 67108864 (default 4096)"
+      "description": "Window size in bytes, from 64 to 67108864 (default 4096); a window that gives more than 4,000,000 rows for this file is refused, naming the smallest that fits"
     },
     "threshold": {
       "type": "number",
@@ -16,7 +16,7 @@
     },
     "max_windows": {
       "type": "integer",
-      "description": "Rows of the profile kept in the answer (default 256); the complete profile is in the file"
+      "description": "Rows of the profile kept in the answer, 1 to 10000 (default 256); the complete profile is in the file"
     },
     "output_name": {
       "type": "string",
@@ -33,6 +33,6 @@
   "example": "{\"path\": \"work/extracted/sample.exe\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 2,
-  "sha256": "05f6a4d51ce7ca715d8a3100b4e616eeab8353a5d73ed334e4e9862a98c650be"
+  "version": 6,
+  "sha256": "05fbdb926669dffef64139cb8268d075886e7e55541c07feb5d327bcb5938c28"
 }

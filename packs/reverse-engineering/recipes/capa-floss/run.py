@@ -27,6 +27,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+from pathlib import Path
 
 # BEGIN SHARED WITHHOLDING
 # The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
@@ -690,6 +691,19 @@ def install_signal_handlers():
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
+
+def _first_word(signum):
+    """The last word of a stop signal that comes before main() has set the recipe's own: one answer that says it was stopped and had produced
+    nothing yet. main() replaces it, and installs the handlers again."""
+    print(json.dumps({"error": "stopped by signal %d before the recipe had begun its work" % signum, "status": "interrupted",
+                      "status_basis": "the recipe was stopped by signal %d before it had begun its work: nothing it read is an answer" % signum,
+                      "ok": False, "recipe": "capa-floss", "stopped_by_signal": signum}))
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _first_word
+install_signal_handlers()
+# the stop handlers are installed here, at module level
 
 
 # -- new code of the capa-floss recipe --
@@ -1453,11 +1467,18 @@ def assemble(state):
         status = "partial"
     else:
         status = "failed"
+    # One sentence saying which engine, or which stop of the recipe, decided the status.
+    if status == "complete":
+        basis = "every engine ran, exited 0 and printed output of the shape the recipe reads (%s)" % ", ".join("%s %s" % (e["id"], e["status"]) for e in engines.values())
+    else:
+        why = list(state["errors"]) + ["%s %s: %s" % (e["id"], e["status"], e["reason"]) for e in engines.values() if e["status"] != "complete"]
+        basis = "; ".join(why) if why else "an engine did not finish"
     coverage = {
         "recipe": "capa-floss",
         "target": state["shown"],
         "format": state["fmt"],
         "status": status,
+        "status_basis": basis,
         "covered": "what each engine that is installed wrote about the file, as the engine said it (see engines); a match is a hypothesis, a recovered string is derived",
         "not_covered": NOT_COVERED,
         "engines": {k: {kk: vv for kk, vv in v.items() if kk not in ("seconds",)} for k, v in engines.items()},
@@ -1499,20 +1520,55 @@ def receipt_names(out_dir):
     return new_name(out_dir, "coverage", ".json"), new_name(out_dir, "index", ".tsv")
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
+def make_out_dir(out_dir):
+    """Create the recipe's output directory and return None, or say why it was not: a symbolic link anywhere on the way inside the run
+    directory (own_dir) or as the directory itself when it is elsewhere. Nothing is written through a link."""
+    absolute = os.path.abspath(out_dir)
+    cwd = os.getcwd()
+    if absolute == cwd or absolute.startswith(cwd + os.sep):
+        return own_dir(Path(os.path.relpath(absolute, cwd)))
+    if os.path.islink(absolute):
+        return "%s is a symbolic link: refused, nothing written through it" % absolute
+    os.makedirs(absolute, exist_ok=True)
+    return None
+
+
+RECEIPT_TMP = []                    # temporary files of a receipt being written: a stop signal removes them before it writes the last receipt
+
+
 def write_receipt(out_dir, name, text):
     """`text` into this run's own receipt file, whole or not at all: a temporary file beside it, then a rename over it."""
     import tempfile
     fd, tmp = tempfile.mkstemp(prefix=".receipt-", suffix=".tmp", dir=out_dir)
+    RECEIPT_TMP.append(tmp)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
         os.chmod(tmp, 0o644)
         os.replace(tmp, os.path.join(out_dir, name))
+        RECEIPT_TMP.remove(tmp)
     except BaseException:
         try:
             os.unlink(tmp)
         except OSError:
             pass
+        if tmp in RECEIPT_TMP:
+            RECEIPT_TMP.remove(tmp)
         raise
 
 
@@ -1530,13 +1586,20 @@ def write_results(state):
         coverage["errors"].append("the final check withheld %d field(s) the sanitiser had let through: each is given by its length; a fault of this recipe, not of the file" % FINAL["fields"])
         if coverage["status"] == "complete":
             coverage["status"] = status = "partial"
+            coverage["status_basis"] = "the final check withheld %d field(s) the sanitiser had let through: a fault of this recipe, never of the file" % FINAL["fields"]
+    state["status_basis"] = coverage["status_basis"]
     write_receipt(out_dir, state["coverage_name"], json.dumps(coverage, indent=2) + "\n")
     write_receipt(out_dir, state["index_name"], "".join(l + "\n" for l in lines))
     return status
 
 
 def run(path, out_dir, fmt, budget):
-    os.makedirs(out_dir, mode=0o700, exist_ok=True)
+    existed = os.path.isdir(out_dir)
+    refused = make_out_dir(out_dir)
+    if refused:
+        raise OSError(errno.EPERM, refused)
+    if not existed:
+        os.chmod(out_dir, 0o700)
     started = time.monotonic()
     sample = os.path.abspath(path)
     state = {"out_dir": out_dir, "fmt": fmt, "shown": shown_path(path), "errors": [], "engines": {}, "matches": None}
@@ -1544,10 +1607,19 @@ def run(path, out_dir, fmt, budget):
 
     def last_word(signum):
         state["errors"].append("the recipe was stopped by signal %d; the program that was running was ended" % signum)
+        for tmp in list(RECEIPT_TMP):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            RECEIPT_TMP.remove(tmp)
         try:
             write_results(state)
         except OSError:
             pass
+        print(json.dumps({"ok": False, "status": "interrupted", "status_basis": state.get("status_basis") or "the recipe was stopped by signal %d" % signum,
+                          "format": fmt, "coverage": state["coverage_name"], "index": state["index_name"]}))
+        sys.stdout.flush()
 
     STATE["last_word"] = last_word
     install_signal_handlers()
@@ -1569,7 +1641,7 @@ def run(path, out_dir, fmt, budget):
         state["errors"].append("the recipe stopped on an unexpected error (%s): the engines' statuses are as far as it got" % scrub(describe(exc), "text"))
     sweep_orphans()
     final = write_results(state)
-    print(json.dumps({"ok": final == "complete", "status": final, "format": fmt, "coverage": state["coverage_name"], "index": state["index_name"]}))
+    print(json.dumps({"ok": final == "complete", "status": final, "status_basis": state["status_basis"], "format": fmt, "coverage": state["coverage_name"], "index": state["index_name"]}))
     return 0 if final in ("complete", "partial") else 2
 
 
@@ -1679,36 +1751,42 @@ def drop_if_empty(path):
     return False
 
 
+def refuse(message):
+    """An answer for a call the recipe did not start: a status and the one sentence that says why."""
+    print(json.dumps({"ok": False, "status": "failed", "status_basis": message, "error": message}))
+    return 2
+
+
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("detect", "run"):
-        print(json.dumps({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR [--seconds N]"}))
-        return 2
+        return refuse("usage: run.py detect --target T | run --target T --out DIR [--seconds N]")
     args = dict(zip(argv[2::2], argv[3::2]))
     if "--target" not in args:
-        print(json.dumps({"ok": False, "error": "--target is required"}))
-        return 2
+        return refuse("--target is required")
     try:
         _target, path = target_of(args["--target"])
     except (OSError, ValueError, RecursionError) as exc:
-        print(json.dumps({"ok": False, "error": scrub(str(exc) if not isinstance(exc, RecursionError) else "the target is nested too deeply")}))
-        return 2
+        return refuse(scrub(str(exc) if not isinstance(exc, RecursionError) else "the target is nested too deeply"))
     if not os.path.isfile(path):
-        print(json.dumps({"ok": False, "error": "the target is not a readable file"}))
-        return 2
+        return refuse("the target is not a readable file")
     fmt, why = detect(path)
     if argv[1] == "detect":
         print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
         return 0 if fmt else 1
     if "--out" not in args:
-        print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
-        return 2
+        return refuse("run needs --out DIR")
     if fmt is None:
-        os.makedirs(args["--out"], mode=0o700, exist_ok=True)
+        existed = os.path.isdir(args["--out"])
+        refused = make_out_dir(args["--out"])
+        if refused:
+            return refuse("the output directory cannot be written: %s" % scrub(refused, "text"))
+        if not existed:
+            os.chmod(args["--out"], 0o700)
         name, index = receipt_names(args["--out"])
         if index != "index.tsv":
             os.unlink(os.path.join(args["--out"], index))
-        write_receipt(args["--out"], name, json.dumps({"recipe": "capa-floss", "status": "unsupported", "why": why, "limits_hit": [], "errors": []}, indent=2))
-        print(json.dumps({"ok": False, "status": "unsupported", "why": why, "coverage": name}))
+        write_receipt(args["--out"], name, json.dumps({"recipe": "capa-floss", "status": "unsupported", "status_basis": why, "why": why, "limits_hit": [], "errors": []}, indent=2))
+        print(json.dumps({"ok": False, "status": "unsupported", "status_basis": why, "why": why, "coverage": name}))
         return 2
     budget = BUDGET_SECONDS
     if "--seconds" in args:
@@ -1717,14 +1795,12 @@ def main(argv):
         except ValueError:
             budget = 0
         if not 1 <= budget <= BUDGET_SECONDS:
-            print(json.dumps({"ok": False, "error": "--seconds is a whole number from 1 to %d" % BUDGET_SECONDS}))
-            return 2
+            return refuse("--seconds is a whole number from 1 to %d" % BUDGET_SECONDS)
     try:
         return run(path, args["--out"], fmt, budget)
     except OSError as exc:
         # an --out that cannot be made or written (a hand run; the harness gives a writable $OUT): said as JSON, never a traceback
-        print(json.dumps({"ok": False, "status": "failed", "error": "the output directory cannot be written: %s" % scrub(describe(exc), "text")}))
-        return 2
+        return refuse("the output directory cannot be written: %s" % scrub(describe(exc), "text"))
 
 
 if __name__ == "__main__":

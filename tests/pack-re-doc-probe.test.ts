@@ -636,3 +636,110 @@ test("budget arguments are typed", async () => {
     }
   });
 });
+
+// --- a signature away from offset 0 is a note; a real structure there is still reported -----------------------------------------------
+
+function pdfFile(): Buffer {
+  const objs = ["1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n", "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n"];
+  let text = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  for (const o of objs) { offsets.push(text.length); text += o; }
+  const xref = text.length;
+  text += `xref\n0 3\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(text, "latin1");
+}
+
+/** A PNG (ISO/IEC 15948: signature, IHDR, a tEXt chunk with the given text, IDAT, IEND, each with its length and CRC-32) */
+function pngFile(text: Buffer): Buffer {
+  const crc = (b: Buffer): number => {
+    let c = ~0;
+    for (const x of b) { c ^= x; for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1; }
+    return ~c >>> 0;
+  };
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc(body));
+    return Buffer.concat([length, body, sum]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("tEXt", Buffer.concat([Buffer.from("Comment\0"), text])), chunk("IDAT", Buffer.from([0x78, 0x9c, 0x63, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01])), chunk("IEND", Buffer.alloc(0))]);
+}
+
+/** A JPEG (ITU T.81: SOI, a JFIF APP0 segment, a COM segment with the given text, EOI) */
+function jpegFile(text: Buffer): Buffer {
+  const com = Buffer.alloc(4);
+  com.writeUInt16BE(0xfffe, 0);
+  com.writeUInt16BE(text.length + 2, 2);
+  return Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]), com, text, Buffer.from([0xff, 0xd9])]);
+}
+
+test("a benign file that holds a PDF, RTF or ZIP signature away from offset 0 reads as a note, never as partial or as that format", async () => {
+  await withCwd(async (cwd) => {
+    const cases: [string, Buffer, RegExp][] = [
+      ["jpeg-pk.jpg", jpegFile(Buffer.from("made by PK\x03\x04 tool")), /ZIP local file header signature \(PK\\x03\\x04\) occurs at offset \d+/],
+      ["png-pk.png", pngFile(Buffer.from("PK\x03\x04 then PK\x05\x06 later")), /ZIP local file header signature \(PK\\x03\\x04\) occurs at offset \d+/],
+      // an end record (APPNOTE 4.3.16) that claims five entries in a 100-byte directory at offset 0xffffff00: no directory inside the file
+      ["png-tail.png", Buffer.concat([pngFile(Buffer.from("x")), Buffer.from("PK\x05\x06\0\0\0\0\x05\0\x05\0\x64\0\0\0\0\xff\xff\xff\0\0", "latin1")]), /ZIP end-record signature\(s\) \(PK\\x05\\x06\) occur in the last 64 KiB/],
+      ["text-pdf.txt", Buffer.from("Notes: the sample began with %PDF- in the hex dump and nothing else was found.\n".repeat(3)), /bytes %PDF- occur at offset \d+ .* not followed by a version/],
+      ["text-rtf.txt", Buffer.from("A line that mentions {\\rtf in prose, then more text.\n".repeat(3)), /bytes \{\\rtf occur at offset \d+ .* not followed by a version/],
+    ];
+    for (const [name, data, note] of cases) {
+      await put(cwd, `work/${name}`, data);
+      const out = refused(await tool(DOC_PROBE, cwd, { path: `work/${name}` }));   // unsupported is a refusal: JSON and a non-zero exit
+      assert.equal(out.status, "unsupported", `${name}: ${out.status}`);
+      assert.ok(out.notes.some((n: string) => note.test(n)), `${name}: ${JSON.stringify(out.notes)}`);
+      assert.equal(out.container, undefined, name);
+    }
+    // A ZIP whose first stored member's text mentions a PDF header with no version: a complete OOXML-shaped package, one note
+    const docx = await probe(cwd, "mentions.docx", buildZip([{ name: "[Content_Types].xml", data: Buffer.from("see %PDF- spec"), method: 0 }, DOC]));
+    assert.notEqual(docx.status, "partial", JSON.stringify(docx.problems));
+    assert.ok(docx.notes.some((n: string) => /bytes %PDF- occur at offset \d+/.test(n)), JSON.stringify(docx.notes));
+    assert.equal(docx.also_read_as, undefined);
+  });
+});
+
+test("a PDF with bytes in front of its header is read as a PDF, complete, with a note on the offset", async () => {
+  await withCwd(async (cwd) => {
+    const out = await probe(cwd, "prefixed.pdf", Buffer.concat([Buffer.from("\r\n\r\n"), pdfFile()]));
+    assert.equal(out.container, "PDF");
+    assert.equal(out.status, "complete", JSON.stringify(out.problems));
+    assert.ok(out.notes.some((n: string) => /the PDF is at offset 4, not 0/.test(n)), JSON.stringify(out.notes));
+    assert.equal(out.pdf_header.offset, 4);
+  });
+});
+
+test("a real structure away from offset 0 stays reported: an archive behind a prefix is named, a PDF header with a version in an RTF is a second reading with a problem, a PDF with a ZIP appended is partial", async () => {
+  await withCwd(async (cwd) => {
+    const zip = buildZip([CONTENT_TYPES, DOC, { name: "word/vbaProject.bin", data: PROJECT }]);
+    await put(cwd, "work/behind.bin", Buffer.concat([Buffer.from("JUNKJUNK".repeat(20)), zip]));
+    const behind = refused(await tool(DOC_PROBE, cwd, { path: "work/behind.bin" }));
+    assert.equal(behind.status, "unsupported");
+    assert.ok(behind.notes.some((n: string) => /ZIP end of central directory record at offset \d+ names a directory that lies inside the file/.test(n)), JSON.stringify(behind.notes));
+    const rtf = await probe(cwd, "poly.rtf", "{\\rtf1\\ansi {\\*\\comment %PDF-1.4 }{\\object\\objemb{\\*\\objclass Package}{\\*\\objdata 0105000002000000}}}");
+    assert.equal(rtf.container, "RTF");
+    assert.equal(rtf.status, "partial");
+    assert.equal(rtf.also_read_as[0].container, "PDF");
+    const both = await probe(cwd, "both.pdf", Buffer.concat([pdfFile(), zip]));
+    assert.equal(both.status, "partial");
+    assert.ok(both.also_read_as.some((x: Json) => x.container === "ZIP"));
+  });
+});
+
+test("a relationship read the clock stopped counts its part as not_attempted, not failed with read 0", async () => {
+  await withCwd(async (cwd) => {
+    const type = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+    const rows: string[] = [];
+    for (let i = 0; i < 300_000; i++) rows.push(`<Relationship Id="rId${i}" Type="${type}" Target="http://h.example/${i}" TargetMode="External"/>`);
+    const part = Buffer.from(`<?xml version="1.0"?><Relationships xmlns="${REL_NS}">${rows.join("")}</Relationships>`);
+    const out = await probe(cwd, "many.docx", buildZip([CONTENT_TYPES, { name: "word/_rels/document.xml.rels", data: part }]), { max_seconds: 1 });
+    assert.equal(out.status, "partial");
+    assert.deepEqual({ read: out.relationship_parts.read, failed: out.relationship_parts.failed, not_attempted: out.relationship_parts.not_attempted }, { read: 0, failed: 0, not_attempted: 1 });
+    assert.ok(out.limits_hit.some((l: string) => /time: the relationship read stopped at max_seconds/.test(l)));
+  });
+});

@@ -50,7 +50,75 @@ import xml.parsers.expat
 import zipfile
 from pathlib import Path
 
-TOOL = {"name": "doc_probe", "version": 4}
+PAGES = []                          # the pagers of this call: the stop block removes a temporary file of each (these write none)
+
+# BEGIN SHARED STOP
+# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
+# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+TOOL = {"name": "doc_probe", "version": 8}
 PARSER = "doc_probe/4"
 NOTE = ("Static container triage only. Markers, procedure names and external relationships do not prove execution or "
         "retrieval. Record parser coverage before drawing an absence conclusion.")
@@ -442,10 +510,11 @@ def shown_deep(value, key=""):
 
 def fail(message, **extra):
     status = extra.pop("status", "failed")
-    answer = {"error": scrub(message), "status": status, "tool": TOOL, **shown_deep(extra)}
+    basis = extra.pop("status_basis", None)
+    answer = {"error": scrub(message), "status": status, "status_basis": scrub(basis) if isinstance(basis, str) and basis else scrub(message), "tool": TOOL, **shown_deep(extra)}
     if VALUES[0] is not None:
         answer["secret_values"] = VALUES[0].summary()
-    print(json.dumps(answer))
+    print_answer(answer)
     raise SystemExit(1)
 
 
@@ -472,6 +541,21 @@ def resolve_output(out, what="output"):
     return str(dest.relative_to(root))
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
 # --- lossless paging ------------------------------------------------------------------------------------------------
 
 class LosslessPage:
@@ -480,6 +564,7 @@ class LosslessPage:
     that cannot be written whole says so."""
 
     def __init__(self, tool, key, limit):
+        PAGES.append(self)
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
         self.page = []
@@ -500,7 +585,10 @@ class LosslessPage:
 
     def _open(self):
         try:
-            self.dir.mkdir(parents=True, exist_ok=True)
+            refused = own_dir(self.dir)
+            if refused:
+                self.not_written = refused
+                return
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             for n in range(1, 100):
                 name = "%s.jsonl" % self.stem if n == 1 else "%s-%d.jsonl" % (self.stem, n)
@@ -590,7 +678,9 @@ class SecretValues:
         # (O_EXCL does not follow a link, a dangling one included), instead of failing, or writing through it,
         # after the read. With nothing withheld it stays an empty file, mode 0600, and the answer says written: 0.
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            refused = own_dir(self.path.parent)
+            if refused:
+                raise SecretValuesRefused("the values file could not be created: %s" % refused)
             fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except FileExistsError:
             raise SecretValuesRefused("the values file already exists: %s" % self.path)
@@ -651,7 +741,9 @@ class Names:
         self.values.add(finding_id, {"kind": kind}, real)
         if self._fh is None and self.error is None:
             try:
-                self.dir.mkdir(parents=True, exist_ok=True)
+                refused = own_dir(self.dir)
+                if refused:
+                    raise OSError(refused)
                 for n in range(1, 100):
                     name = "%s.jsonl" % self.NAME if n == 1 else "%s-%d.jsonl" % (self.NAME, n)
                     try:
@@ -1028,7 +1120,7 @@ def probe_zip(path, size, ctx, args):
     targets = ctx.page("external_targets", args["external_limit"])
     out["code_related_parts"] = []
     out["external_targets"] = []
-    relationship_parts = {"read": 0, "failed": 0, "internal_relationships": 0}
+    relationship_parts = {"read": 0, "failed": 0, "not_attempted": 0, "internal_relationships": 0}
     out["relationship_parts"] = relationship_parts
     with open(path, "rb") as fh:
         try:
@@ -1194,7 +1286,7 @@ def read_relationships(archive, info, shown, name, budget, members, relationship
         return
     except OutOfTime:
         ctx.problem("%s: the relationship read stopped at the tool's own clock: the relationships before that point are listed" % shown)
-        relationship_parts["failed"] += 1
+        relationship_parts["not_attempted"] += 1
         members["not_attempted"] += 1
         row["relationships"] = "stopped_at_clock"
         return
@@ -1335,6 +1427,8 @@ def probe_ole(blob, ctx):
 # --- which container ----------------------------------------------------------------------------------------------------------------
 
 OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+PDF_HEADER_FORM = re.compile(rb"%PDF-\d\.\d")        # a PDF header as the specification writes it
+RTF_START_FORM = re.compile(rb"\{\\rtf\d")           # an RTF group start with its version
 
 
 def zip_evidence(path, size):
@@ -1351,7 +1445,7 @@ def containers(head, path, size):
     """The containers the file's bytes claim, the first being the one read first: a magic number at offset 0 decides, then a PDF
     header or an RTF group start in the first 1,024 bytes, in that order. A ZIP end record at the end of a file that is not a ZIP
     is a claim of its own, always listed last. Each is (name, what the bytes say)."""
-    found = []
+    found, notes = [], []
     if head[:8] == OLE_MAGIC:
         found.append(("OLE", "the OLE compound-file signature at offset 0"))
     if head[:4] in (b"PK\x03\x04", b"PK\x05\x06"):
@@ -1360,15 +1454,54 @@ def containers(head, path, size):
         found.append(("RTF", "an RTF group start ({\\rtf) at offset 0"))
     if head[:5] == b"%PDF-":
         found.append(("PDF", "a PDF header (%PDF-) at offset 0"))
-    for name, needle, label in (("PDF", b"%PDF-", "a PDF header (%%PDF-) at offset %d"), ("RTF", b"{\\rtf", "an RTF group start ({\\rtf) at offset %d")):
-        at = head.find(needle)
-        if at > 0 and not any(f[0] == name for f in found):
-            found.append((name, label % at + " (within the first %d bytes)" % HEAD_BYTES))
+    # Away from offset 0 only the form of a real header is a claim: `%PDF-` and a version digit pair, `{\rtf` and a version digit. The bytes
+    # alone (a text that mentions them, a metadata field that holds them) are a note, never a second reading of the file and never partial.
+    for name, form, needle, label, shape in (("PDF", PDF_HEADER_FORM, b"%PDF-", "a PDF header (%%PDF-) at offset %d", "%PDF-1.x"),
+                                              ("RTF", RTF_START_FORM, b"{\\rtf", "an RTF group start ({\\rtf1) at offset %d", "{\\rtf1")):
+        if any(f[0] == name for f in found):
+            continue
+        m = form.search(head, 1)
+        if m:
+            found.append((name, label % m.start() + " (within the first %d bytes)" % HEAD_BYTES))
+            notes.append("the %s is at offset %d, not 0: a reader that looks only at offset 0 does not take this file for a %s" % (name, m.start(), name))
+        else:
+            at = head.find(needle, 1)
+            if at > 0:
+                notes.append("the bytes %s occur at offset %d (within the first %d bytes) but are not followed by a version as a real header is (%s): not read as a %s"
+                             % (needle.decode("ascii"), at, HEAD_BYTES, shape, name))
     if not any(f[0] == "ZIP" for f in found):
         at = zip_evidence(path, size)
         if at is not None:
             found.append(("ZIP", "a ZIP end of central directory record at offset %d" % at))
-    return found
+            notes.append("a ZIP end of central directory record at offset %d names a directory that lies inside the file: an archive may be appended to, or hidden behind, "
+                         "other bytes; this tool reads it as a ZIP only beside a container the file begins as" % at)
+        else:
+            for sig, what in ((b"PK\x03\x04", "local file header"),):
+                where = head.find(sig, 1)
+                if where > 0:
+                    notes.append("a ZIP %s signature (PK\\x03\\x04) occurs at offset %d (within the first %d bytes), not at offset 0, and the end of the file holds no directory "
+                                 "a reader accepts: not read as a ZIP" % (what, where, HEAD_BYTES))
+            tail = zip_tail_signatures(path, size)
+            if tail:
+                notes.append("%d ZIP end-record signature(s) (PK\\x05\\x06) occur in the last 64 KiB, the first at offset %d, and none forms a directory inside the file: not read as a ZIP"
+                             % (len(tail), tail[0]))
+    return found, notes
+
+
+def zip_tail_signatures(path, size):
+    """The offsets of `PK\\x05\\x06` in the last 64 KiB (and the 22 bytes of the record before it) of the file, at most 20 of them."""
+    start = max(0, size - (65536 + 22))
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            blob = fh.read(size - start)
+    except OSError:
+        return []
+    out, at = [], blob.find(b"PK\x05\x06")
+    while at >= 0 and len(out) < 20:
+        out.append(start + at)
+        at = blob.find(b"PK\x05\x06", at + 1)
+    return out
 
 
 def read_as(name, path, size, ctx, cfg, head):
@@ -1414,9 +1547,10 @@ def file_problem(path):
 
 
 def main():
+    install_signal_handlers(lambda signum: interrupted_answer(signum, tool=TOOL))
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")
@@ -1465,12 +1599,13 @@ def main():
         fail("the file is empty", path=path)
     body, stop = {}, None
     zip_reading = None
+    notes = []
     try:
-        claims = containers(head, path, size)
+        claims, notes = containers(head, path, size)
         if not any(not why.startswith("a ZIP end of central directory record") for _name, why in claims):
             values.close()
             fail("this is not a container this tool reads", status="unsupported", path=path, head_hex=head[:8].hex(),
-                 reads=["OOXML or ZIP", "PDF", "RTF", "OLE compound file"])
+                 reads=["OOXML or ZIP", "PDF", "RTF", "OLE compound file"], notes=notes)
         try:
             body = read_as(claims[0][0], path, size, ctx, cfg, head)
         except Stop as exc:
@@ -1521,8 +1656,9 @@ def main():
     unread = bool(members and (members["encrypted"] or members["unsupported"] or members["failed"] or members["over_budget"] or members["not_attempted"]))
     head_out = {"tool": TOOL, "parser": PARSER, "path": shown, "bytes": size, "extension": scrub(extension, "names") or None}
     if stop is not None:
-        print(json.dumps({**head_out, **stop.partial, "status": "failed", "status_basis": stop.message, "error": stop.message,
-                          "problems": ctx.problems, "limits_hit": ctx.limits, "withheld": COUNTS, "secret_values": values.summary(), "note": NOTE}, indent=2))
+        print_answer({**head_out, **stop.partial, "status": "failed", "status_basis": stop.message, "error": stop.message,
+                          "problems": ctx.problems, "limits_hit": ctx.limits, "withheld": COUNTS, "secret_values": values.summary(), "note": NOTE,
+                          **({"notes": notes} if notes else {})}, indent=2)
         raise SystemExit(1)
     status = "partial" if (ctx.problems or ctx.limits or unread) else "complete"
     basis = ("every structure this tool reads was read in full" if status == "complete" else
@@ -1538,10 +1674,12 @@ def main():
                                          "run the job with secret_output: true.")
     if ctx.problems_dropped:
         result["problems_not_listed"] = ctx.problems_dropped
+    if notes:
+        result["notes"] = notes
     if values.enabled or COUNTS["urls"] or COUNTS["names"] or COUNTS["text"]:
         result["withheld_note"] = ("Credentials and token-shaped text in a URL or a name are withheld from this answer; the URL's length is kept. "
                                    "The whole target is in the values file when write_values was asked for in a secret_output job.")
-    print(json.dumps(result, indent=2))
+    print_answer(result, indent=2)
 
 
 if __name__ == "__main__":

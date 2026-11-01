@@ -41,7 +41,7 @@ import xml.parsers.expat
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "pe_directories", "version": 1}
+TOOL = {"name": "pe_directories", "version": 3}
 PARSER = "pe_directories/1"
 NOTE = ("Static structure only. A directory shows what the file declares to its loader and tools, not what the code does: an export, a delay-load "
         "import, a TLS callback or a resource is a declaration, and a strong-name flag or a PDB path is a claim. Read `status`, `problems` and `coverage` "
@@ -1078,7 +1078,8 @@ def emit(result, spill=None, indent=2):
 
 def fail(message, **extra):
     status = extra.pop("status", "failed")
-    answer = {"error": message, "status": status, "tool": TOOL, **extra}
+    basis = extra.pop("status_basis", None)
+    answer = {"error": message, "status": status, "status_basis": basis if isinstance(basis, str) and basis else message, "tool": TOOL, **extra}
     if VALUES[0] is not None:
         answer["secret_values"] = VALUES[0].summary()
     emit(answer, None, None)
@@ -2450,6 +2451,10 @@ HARD_SECONDS = 105                  # the manifest's 120 s less 15: the answer i
 PRINTING = [False]                  # the answer has begun to be written: a signal after that must not write a second one
 
 
+PARTIAL_BUILDING = [False]          # the partial answer of the hard limit is being built
+PARTIAL_WRITING = [False]           # and has begun to be written: no other document may follow it
+
+
 def _stopped_by_signal(signum, frame):
     """SIGINT, SIGTERM and SIGHUP end the call with one JSON answer and the exit code 128 + the signal, not a traceback and not silence. A signal
     while the partial answer of the hard limit is being built (not yet being written) is answered by a minimal failed document; one while a
@@ -2462,9 +2467,19 @@ def _stopped_by_signal(signum, frame):
     raise SystemExit(128 + signum)
 
 
+# The stop signals are answered from here on: _stopped_by_signal needs only TOOL, json, sys and the flags above, all defined before this line. The
+# SIGALRM hard limit is not armed here: only main() arms it, with its deadline.
+def install_stop_handlers():
+    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), _stopped_by_signal)
+
+
+install_stop_handlers()
+# the stop handlers are installed here, at module level
+
+
 HARD_GRACE = 5                      # seconds the partial answer of the hard limit has, before the failed one
-PARTIAL_BUILDING = [False]          # the partial answer of the hard limit is being built
-PARTIAL_WRITING = [False]           # and has begun to be written: no other document may follow it
 
 
 def _hard_limit_last(signum, frame):
@@ -2523,9 +2538,7 @@ def _hard_limit(signum, frame):
 
 
 def install_signal_handlers():
-    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
-        if hasattr(signal, name):
-            signal.signal(getattr(signal, name), _stopped_by_signal)
+    install_stop_handlers()
     if hasattr(signal, "setitimer") and hasattr(signal, "SIGALRM"):
         signal.signal(signal.SIGALRM, _hard_limit)
         signal.setitimer(signal.ITIMER_REAL, HARD_SECONDS)
@@ -2535,7 +2548,7 @@ def main():
     install_signal_handlers()
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")

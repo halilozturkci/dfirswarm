@@ -28,6 +28,7 @@ import struct
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PACK = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -50,8 +51,10 @@ NOT_COVERED = "execution, unpacking, decompilation, signature verification, or o
 def target_of(arg):
     text = open(arg, encoding="utf-8").read() if os.path.isfile(arg) else arg
     target = json.loads(text)
-    paths = target.get("paths") or []
-    if not paths or not isinstance(paths[0], str):
+    if not isinstance(target, dict):
+        raise ValueError("the target is not a JSON object")
+    paths = target.get("paths")
+    if not isinstance(paths, list) or not paths or not isinstance(paths[0], str):
         raise ValueError("the target names no path")
     return target, paths[0]
 
@@ -486,6 +489,19 @@ def install_signal_handlers():
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
 
+def _first_word(signum):
+    """The last word of a stop signal that comes before main() has set the recipe's own: one answer that says it was stopped and had produced
+    nothing yet. main() replaces it, and installs the handlers again."""
+    print(json.dumps({"error": "stopped by signal %d before the recipe had begun its work" % signum, "status": "interrupted",
+                      "status_basis": "the recipe was stopped by signal %d before it had begun its work: nothing it read is an answer" % signum,
+                      "ok": False, "recipe": "static-binary", "stopped_by_signal": signum}))
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _first_word
+install_signal_handlers()
+# the stop handlers are installed here, at module level
+
 
 def run_child(script, args, stdout_path, stderr_path, env, timeout):
     """Run a tool with its arguments on stdin and its output going straight to files, in THIS recipe's process group.
@@ -509,6 +525,34 @@ def run_child(script, args, stdout_path, stderr_path, env, timeout):
             ACTIVE.remove(proc)
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
+def make_out_dir(out_dir):
+    """Create the recipe's output directory and return None, or say why it was not: a symbolic link anywhere on the way inside the run
+    directory (own_dir) or as the directory itself when it is elsewhere. Nothing is written through a link."""
+    absolute = os.path.abspath(out_dir)
+    cwd = os.getcwd()
+    if absolute == cwd or absolute.startswith(cwd + os.sep):
+        return own_dir(Path(os.path.relpath(absolute, cwd)))
+    if os.path.islink(absolute):
+        return "%s is a symbolic link: refused, nothing written through it" % absolute
+    os.makedirs(absolute, exist_ok=True)
+    return None
+
+
 def new_name(out_dir, stem, ext):
     """A name in `out_dir` that nothing has: `stem.ext`, or `stem-2.ext`, ... The file is created at once, exclusively, so that a
     result an earlier run left in this directory is never opened for writing, let alone replaced."""
@@ -529,7 +573,7 @@ def read_json(path):
             return None, "the output is larger than %d bytes" % MAX_JSON
         with open(path, encoding="utf-8") as fh:
             value = json.load(fh)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         return None, "not JSON (%s)" % exc
     return (value, None) if isinstance(value, dict) else (None, "not a JSON object")
 
@@ -663,7 +707,9 @@ def write_results(state):
 
 
 def run(path, out_dir, fmt, budget):
-    os.makedirs(out_dir, exist_ok=True)
+    refused = make_out_dir(out_dir)
+    if refused:
+        raise OSError(errno.EPERM, refused)
     started = time.monotonic()
     env = dict(os.environ)
     # The tools write where $OUT says; a recipe's files belong in its own directory, whatever job called it.
@@ -683,6 +729,9 @@ def run(path, out_dir, fmt, budget):
             write_results(state)
         except OSError:
             pass
+        print(json.dumps({"ok": False, "status": "interrupted", "status_basis": "the recipe was stopped by signal %d; the passes that were running were ended" % signum,
+                          "format": fmt, "coverage": "coverage.json", "index": "index.tsv"}))
+        sys.stdout.flush()
 
     STATE["last_word"] = last_word
     install_signal_handlers()
@@ -725,31 +774,34 @@ def run(path, out_dir, fmt, budget):
     return 0 if final in ("complete", "partial") else 2
 
 
+def refuse(message):
+    """An answer for a call the recipe did not start."""
+    print(json.dumps({"ok": False, "status": "failed", "status_basis": message, "error": message}))
+    return 2
+
+
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("detect", "run"):
-        print(json.dumps({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR [--seconds N]"}))
-        return 2
+        return refuse("usage: run.py detect --target T | run --target T --out DIR [--seconds N]")
     args = dict(zip(argv[2::2], argv[3::2]))
     if "--target" not in args:
-        print(json.dumps({"ok": False, "error": "--target is required"}))
-        return 2
+        return refuse("--target is required")
     try:
         _target, path = target_of(args["--target"])
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}))
-        return 2
+    except (OSError, ValueError, RecursionError) as exc:
+        return refuse(str(exc) if not isinstance(exc, RecursionError) else "the target is nested too deeply")
     if not os.path.isfile(path):
-        print(json.dumps({"ok": False, "error": "the target is not a readable file"}))
-        return 2
+        return refuse("the target is not a readable file")
     fmt, why = detect(path)
     if argv[1] == "detect":
         print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
         return 0 if fmt else 1
     if "--out" not in args:
-        print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
-        return 2
+        return refuse("run needs --out DIR")
     if fmt is None:
-        os.makedirs(args["--out"], exist_ok=True)
+        refused = make_out_dir(args["--out"])
+        if refused:
+            return refuse("the output directory cannot be written: %s" % refused)
         with open(os.path.join(args["--out"], "coverage.json"), "w", encoding="utf-8") as fh:
             json.dump({"recipe": "static-binary", "status": "unsupported", "why": why, "limits_hit": [], "errors": []}, fh, indent=2)
         print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
@@ -763,7 +815,11 @@ def main(argv):
         if not 1 <= budget <= BUDGET_SECONDS:
             print(json.dumps({"ok": False, "error": "--seconds is a whole number from 1 to %d" % BUDGET_SECONDS}))
             return 2
-    return run(path, args["--out"], fmt, budget)
+    try:
+        return run(path, args["--out"], fmt, budget)
+    except OSError as exc:
+        # an --out that cannot be made or written (a symbolic link on the way, a hand run): said as JSON, never a traceback
+        return refuse("the output directory cannot be written: %s" % (getattr(exc, "strerror", None) or exc))
 
 
 if __name__ == "__main__":
