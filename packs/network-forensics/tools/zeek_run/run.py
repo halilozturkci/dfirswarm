@@ -41,22 +41,45 @@ token-shaped run, a key, a JWT, user-info, a Basic or Bearer credential is withh
 identifiers, hashes, fingerprints, addresses or times. That is by shape: a short secret in free text is not
 recognised. Zeek's own log files are kept whole: they are the evidence, and they are in the sealed directory.
 """
+import json
+import os
+import signal
+import sys
+
+TOOL = {"name": "zeek_run", "version": 8}
+PARSER = "zeek_run/5"
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
 import datetime
 import errno
 import hashlib
 import ipaddress
-import json
-import os
 import re
 import shutil
-import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "zeek_run", "version": 7}
-PARSER = "zeek_run/5"
 DEFAULT_TIMEOUT = 900
 MAX_TIMEOUT = 1100            # the manifest's outer limit is 1200
 MANIFEST_SECONDS = 1200       # the manifest's limit: the tool's own clock for reading the logs ends READ_MARGIN seconds before it

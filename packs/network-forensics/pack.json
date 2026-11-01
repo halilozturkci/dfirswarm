@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.6.9",
+  "version": "1.6.10",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. No flow-record reader (NetFlow, IPFIX) is bundled.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,10 +18,10 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "ba6fc96ec7a81ed79fa0e52c09c11a0607e8f07e2535739c701fdc9e9368722a",
+      "README.md": "484f75c419fef5740dfe003d77464a334c460fbfeff0a5693afff43befbb5119",
       "goals/what-left-the-network.md": "8e6dd6ae10d2bd8380b567e8bffb3bc644ac90602eed83edbd3773fd8ebdc811",
-      "recipes/network-capture/recipe.json": "d9192105ee0abcc5d00a6da5aa8db8fc1a55e408e51530d267f4e93c83e4af14",
-      "recipes/network-capture/run.py": "47a15df67f775956715f5369312abb2779c57e7e8efc3310d04016a455fabf1f",
+      "recipes/network-capture/recipe.json": "d93148ebf532c861910d48d97cbba43e09e6793c38c185fd4d666ac76032ccb0",
+      "recipes/network-capture/run.py": "201b51a962a700e1175ac8af31d53d62e80153f424540f292a183f54551b4b6c",
       "requires/host.json": "0157c345706a969bf277202f7a9bfc3399a28c2878c8502e1dbe789981670365",
       "requires/python.txt": "d5768d4bec0bea8ec8e736e2710a757309af18fa3f862dae2db201e154d45a4a",
       "skills/INDEX.md": "8589b8b32eacbbc5a7836a99ed2824e2743fc519eed7c748ad9bbda7574e96a5",
@@ -39,18 +39,18 @@
       "skills/sessions/objects.md": "22b63e82da1ecc6eda1ddf41b2e7e9d4ac801b3d9d154f5bd76e29b635265f36",
       "skills/sessions/reconstruct.md": "f2026e30fc6beea3eacc26d87d2e47c7f417430799f3b4f51e8abff35bd066a0",
       "tests/pack.test.sh": "f83730891c6dc137fa0aa1ddd26b6d1d3ba9bc9609ff6a277ffb7ed9a3d7d372",
-      "tools/beacon_score/manifest.json": "53de76e2d4431a7817a59bf8455e02fe3b7e1e71a2a36ec0a2d81cd1266e6ab5",
-      "tools/beacon_score/run.py": "b2e1ac3f109f4dc55ccece07626eff2d54a51bef66ff43a6ffd45fd48e4a0a64",
-      "tools/network_log_summary/manifest.json": "e9054402efcc608ca438b541f658e0317dff632e15f9d4f5d2715dc1e2e75217",
-      "tools/network_log_summary/run.py": "c58154fbaa493c1cc1750a0532cb75b2c4d030beee364181a7b2a4a27a928aa1",
-      "tools/pcap_extract/manifest.json": "dab3e3f530b487c00a4476c90f06befaa192b54c00060b824a1ed94f92c7906f",
-      "tools/pcap_extract/run.py": "a2f2638f14faeac10a10640be31a069f9460ba80d9de8d1c3377726fc22e83a7",
-      "tools/pcap_summary/manifest.json": "fd38e8223991203499d624e522d06c31e1255230a7fa7ff7405bc410f9052ae5",
-      "tools/pcap_summary/run.py": "5292ab50aa8afc9ffb6f4b008c5d233aa8d7a221f12654e3617457e2ecfdab68",
-      "tools/suricata_run/manifest.json": "38b182b67f207116c26de1fdcb14e90ed06009c9e9cc990406f6f63d1655cbfb",
-      "tools/suricata_run/run.py": "649b22fc0d794f2f96763ddcdbb2a69ebbf4b46516f3571f3d51a91fa25b9015",
-      "tools/zeek_run/manifest.json": "8c5ee54e189666459a33c25e124ee92bbbc6491a079d4ab511790378e78dc96e",
-      "tools/zeek_run/run.py": "6f0d95816b89720605c8edfdbda369be4cb89b7aabcbce0868ead2328a30768d"
+      "tools/beacon_score/manifest.json": "e5a95680a09a5c29a95677a854d621d1d407485ec87042df17e92c6b73dea95d",
+      "tools/beacon_score/run.py": "a1ad587d7d8ae6e639fc42d902ff3322497f675355f89b269ce41201e2240155",
+      "tools/network_log_summary/manifest.json": "7af2fd776efe3230f8a45f6b50d639959ab231f87dd12a426befbc8753803253",
+      "tools/network_log_summary/run.py": "b189f4325307c50c48723435e9ea472f6b82a86ab749c0b5e18369eadf58bf28",
+      "tools/pcap_extract/manifest.json": "595f3cb8e5cd82554bc239287c5348ef206d021d0118c1ed0965966b92556700",
+      "tools/pcap_extract/run.py": "111534014645ea3ff1efea7e2e9bab56c6813acd14e0760fddff99f41dbf8083",
+      "tools/pcap_summary/manifest.json": "81e23313957105cf668437dc7776116a7abb4015e2d60a9515f78a9b4152b4c3",
+      "tools/pcap_summary/run.py": "ce0f81a7d1cf93ddd485101ea65c4ef211fb570d87be0874a55da10773153ca0",
+      "tools/suricata_run/manifest.json": "86d4fee353707817064a43f55df474b3699298e08917c594db8a1d01e90e31f2",
+      "tools/suricata_run/run.py": "34b394031e39ec5d4288a0e5bf589ea370fbb6aafd1a2b1cb19b34c2b79ce7e6",
+      "tools/zeek_run/manifest.json": "32b2935f88a76a8247e9957c0150fb9bbad42fa57d07b0e86579128f84ae7a42",
+      "tools/zeek_run/run.py": "8065cf5e0b2c88dddd7d2af6c44cb20e2c11a4b10c8ca751c1940089ba79dc33"
     }
   },
   "tools": [

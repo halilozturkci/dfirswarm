@@ -41,22 +41,45 @@ SENSITIVE OUTPUT. EVE can carry URLs, host names, SNI, DNS names, file names and
 private (mode 0700, every file 0600, including what Suricata writes) and the answer says to run the tool as a job
 with secret_output: true. Inline alerts carry addresses, ports and the rule's signature only.
 """
+import json
+import os
+import signal
+import sys
+
+TOOL = {"name": "suricata_run", "version": 8}
+PARSER = "suricata_run/5"
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
 import collections
 import errno
 import hashlib
 import ipaddress
-import json
-import os
 import re
 import shutil
-import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "suricata_run", "version": 7}
-PARSER = "suricata_run/5"
 TEST_SECONDS = 120
 MAX_TIMEOUT = 1000            # the manifest's limit is 1200: --build-info (30 s) and the configuration test (120 s) come first
 MANIFEST_SECONDS = 1200       # the manifest's limit: the tool's own clock for reading eve.json ends READ_MARGIN seconds before it, counted from the start

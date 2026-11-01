@@ -45,23 +45,46 @@ temporary SQLite file beyond that, so memory does not follow the capture; the
 answer says so (spilled_to_disk). Whole results are kept on disk and named when
 a page is shorter than the result.
 """
+import json
+import os
+import signal
+import sys
+
+TOOL = {"name": "pcap_summary", "version": 8}
+PARSER = "pcap_summary/6"
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
 import collections
 import datetime
 import ipaddress
-import json
-import os
 import re
 import secrets
-import signal
 import sqlite3
 import struct
-import sys
 import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "pcap_summary", "version": 7}
-PARSER = "pcap_summary/6"
 LINKTYPES = {0: "null", 1: "Ethernet", 9: "PPP", 101: "raw IP", 105: "802.11",
              113: "Linux cooked", 127: "802.11 radiotap", 228: "IPv4", 229: "IPv6",
              276: "Linux cooked v2"}
@@ -387,12 +410,43 @@ def describe(exc):
 CLEANUP = []   # what to undo when the run ends early: the temporary aggregate file above all
 
 
+class signals_held:
+    """The stop signals wait, pending, while a hidden temporary file is made and registered for removal: a signal that arrives between
+    the two would run the clean-up before it knew of the file, and the process would leave with the file behind. Where the platform cannot
+    hold signals the registration still follows at once, so only the file's own creation is unprotected."""
+
+    def __enter__(self):
+        self.before = None
+        if hasattr(signal, "pthread_sigmask"):
+            self.before = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+        return self
+
+    def __exit__(self, *_exc):
+        if self.before is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, self.before)
+        return False
+
+
+_TEMPS = set()      # the hidden .<name>-* files of the paging objects that are not yet under their final names
+
+
+def drop_temps():
+    """A refused, failed, signalled or write-failed run leaves no hidden partial file in tool-output: only a finished file is moved to its name."""
+    for path in list(_TEMPS):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        _TEMPS.discard(path)
+
+
 def cleanup():
     while CLEANUP:
         try:
             CLEANUP.pop()()
         except Exception:  # noqa: BLE001 - best effort, and never a second failure over the first
             pass
+    drop_temps()
 
 
 def fail(message, **extra):
@@ -479,9 +533,27 @@ class LosslessPage:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
 
+    def _abandon(self):
+        """The file cannot be finished (a full disk, a size limit, a failed move): close it and remove it, so no hidden partial file stays."""
+        try:
+            if self._out is not None:
+                self._out.close()
+        except OSError:
+            pass
+        if self._tmp is not None:
+            _TEMPS.discard(str(self._tmp))
+            try:
+                os.unlink(self._tmp)
+            except OSError:
+                pass
+
     def _write(self, row):
-        self._out.write(json.dumps(row, ensure_ascii=True, default=str))
-        self._out.write("\n")
+        try:
+            self._out.write(json.dumps(row, ensure_ascii=True, default=str))
+            self._out.write("\n")
+        except OSError:
+            self._abandon()
+            raise
 
     def add(self, row):
         self.total += 1
@@ -490,8 +562,10 @@ class LosslessPage:
             return
         if self._out is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-            self._tmp = Path(name)
+            with signals_held():
+                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
+                self._tmp = Path(name)
+                _TEMPS.add(name)          # known to the clean-up from the moment it exists
             self._out = os.fdopen(fd, "w", encoding="utf-8")
             for kept in self.page:
                 self._write(kept)
@@ -500,10 +574,15 @@ class LosslessPage:
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
         if self._out is not None:
-            self._out.flush()
-            os.fsync(self._out.fileno())
-            self._out.close()
-            os.replace(self._tmp, self.path)
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                os.replace(self._tmp, self.path)
+            except OSError:
+                self._abandon()
+                raise
+            _TEMPS.discard(str(self._tmp))
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result

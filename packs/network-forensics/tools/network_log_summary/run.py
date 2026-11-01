@@ -35,22 +35,45 @@ anything is read) writes the unparsed lines' text and each redacted target's ori
 $OUT/network-log-values.jsonl and nowhere else; a second run in the same job is refused by name. The directory is
 private (mode 0700, files 0600): run the tool as a job with secret_output: true.
 """
+import json
+import os
+import signal
+import sys
+
+TOOL = {"name": "network_log_summary", "version": 7}
+PARSER = "network_log_summary/5"
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
 import collections
 import datetime
 import errno
 import gzip
 import ipaddress
-import json
-import os
 import re
-import signal
-import sys
 import time
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "network_log_summary", "version": 6}
-PARSER = "network_log_summary/5"
 COLUMNS = ["line", "byte_offset", "byte_length", "format", "parse_status", "timestamp_raw", "timestamp_utc", "timezone_source",
            "src", "dst", "src_port", "dst_port", "protocol", "method", "target", "referer", "status", "bytes", "action", "user",
            "user_agent", "elapsed_ms", "hierarchy", "mime", "in_if", "out_if", "nat_src", "nat_dst", "tcp_flags", "unparsed_tail", "decoding"]
@@ -724,6 +747,9 @@ def _stop(signum, _frame):
     raise Stopped(signum)
 
 
+STAGE = {"now": "checking its arguments", "values": None}   # what a stop that ends the run outside the read loop says it was doing
+
+
 class ClockedFile:
     """The file under a gzip stream, read through the tool's clock. Python's gzip reader walks the members of a stream inside one
     read: a stream of a few hundred thousand empty members returns nothing for seconds, and the tool's line loop never gets
@@ -775,6 +801,8 @@ def optional_int(args, key, default, minimum):
 
 
 def main():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _stop)     # first, before the arguments are read and before anything is opened; the read loop below answers a stop of its own
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -817,11 +845,13 @@ def main():
         elif os.path.lexists(os.path.join(os.environ["OUT"], SecretValues.NAME)):
             fail("the values file already exists", write_values="refused", written=False, values_file=os.path.join(os.environ["OUT"], SecretValues.NAME))
 
+    STAGE["now"] = "opening its outputs"
     os.umask(0o077)
     try:
         values = SecretValues(write_values)
     except SecretValuesRefused as exc:
         fail(str(exc), write_values="refused", written=False, values_file=exc.path)
+    STAGE["values"] = values
     try:
         os.makedirs(out_dir, mode=0o700, exist_ok=True)
         os.chmod(out_dir, 0o700)
@@ -846,8 +876,7 @@ def main():
         with open(normal_path, "x", encoding="utf-8", newline="\n") as normal, open(bad_path, "x", encoding="utf-8", newline="\n") as bad:
             normal.write("\t".join(COLUMNS) + "\n")
             bad.write("\t".join(UNPARSED_COLUMNS) + "\n")
-            for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-                signal.signal(signum, _stop)
+            STAGE["now"] = "reading the log"
             try:
                 while True:
                     raw = source.readline(max_line + 1)
@@ -1030,5 +1059,16 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except SystemExit:
         raise
+    except Stopped as stop:
+        # a stop outside the read loop (the arguments, the opening of the outputs): the loop answers its own, with the tables it wrote
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(signum, signal.SIG_IGN)
+        if STAGE["values"] is not None:
+            STAGE["values"].discard()
+        print(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False,
+                          "status_basis": "the tool was stopped by signal %d while it was %s; no line of the log had been normalised%s" %
+                                          (stop.signum, STAGE["now"], ", and the output directory may hold the empty tables it had begun to write" if STAGE["values"] is not None else ""),
+                          "interrupted_by_signal": stop.signum, "stage": STAGE["now"]}), flush=True)
+        os._exit(128 + stop.signum)
     except BaseException as exc:  # noqa: BLE001 - never a traceback, never a clean answer for a failure
         fail("unexpected failure: %s" % describe(exc))

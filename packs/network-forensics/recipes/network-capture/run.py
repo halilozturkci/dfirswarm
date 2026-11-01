@@ -36,11 +36,33 @@ If the list of fields cannot be read, the fields are asked for unchecked and the
 """
 import json
 import os
+import signal
+import sys
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"recipe": "network-capture", "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
 import shutil
 import select
-import signal
 import subprocess
-import sys
 import time
 
 MAGICS = {b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4", b"\x4d\x3c\xb2\xa1",
@@ -603,7 +625,21 @@ def field_names(tshark, wanted, seconds):
     return found, None
 
 
+PROGRESS = {"stage": "checking its arguments"}
+
+
+def early_word(signum):
+    """What a recipe stopped before its receipt's last word exists says on stdout: partial, the stage it was in, and that no listing had been started.
+    The last word that writes the receipt takes over once the receipt is ready."""
+    print(json.dumps({"ok": False, "status": "partial",
+                      "status_basis": "the recipe was stopped by signal %d while it was %s; no program had been started and no listing written%s" %
+                                      (signum, PROGRESS["stage"], ", and the output directory may hold the receipt it had begun to write" if PROGRESS["stage"] != "checking its arguments" else ""),
+                      "interrupted_by_signal": signum, "stage": PROGRESS["stage"]}), flush=True)
+
+
 def main():
+    STATE["last_word"] = early_word
+    install_signal_handlers()
     if len(sys.argv) < 4 or sys.argv[2] != "--target":
         print(json.dumps({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR"}))
         return 2
@@ -621,6 +657,7 @@ def main():
         print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
         return 2
     out_dir = sys.argv[sys.argv.index("--out") + 1]
+    PROGRESS["stage"] = "preparing the output directory"
     os.umask(0o077)       # the directory 0700, every file 0600, tshark's and capinfos's own output too
     try:
         os.makedirs(out_dir, mode=0o700, exist_ok=True)
@@ -669,7 +706,6 @@ def main():
         print(json.dumps({"ok": False, "status": "partial", "status_basis": data["status_basis"], "interrupted_by_signal": signum}), flush=True)
 
     STATE["last_word"] = last_word
-    install_signal_handlers()
     for tool_name, binary in (("tshark", tshark), ("capinfos", capinfos)):
         line, why_not = first_line([binary, "--version"], min(30, max(1, deadline - time.monotonic())))
         data["tools"][tool_name] = {"path": binary, "version": line, **({"version_error": why_not} if why_not else {})}

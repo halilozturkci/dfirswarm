@@ -53,21 +53,46 @@ can their names and the request URIs. The tool follows the secret-safe output pa
   * Nothing is placed on a command line but the capture's path, the output place and the caller's own display
     filter.
 """
+import json
+import os
+import signal
+import sys
+
+TOOL = {"name": "pcap_extract", "version": 7}
+PARSER = "pcap_extract/5"
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
 import array
 import binascii
 import datetime
 import errno
 import hashlib
 import ipaddress
-import json
-import os
 import re
 import select
 import shutil
-import signal
 import stat
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -76,8 +101,6 @@ try:
 except ImportError:  # pragma: no cover
     ctypes = None
 
-TOOL = {"name": "pcap_extract", "version": 6}
-PARSER = "pcap_extract/5"
 DEFAULT_PROTOCOLS = ["http", "ftp-data", "smb", "smb2", "tftp", "imf"]
 DEFAULT_DEADLINE = 3000
 MAX_DEADLINE = 3300           # the manifest's outer limit is 3600: the tool stops its own passes first, so nothing is left running

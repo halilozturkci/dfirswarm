@@ -33,20 +33,43 @@ What a result can and cannot say:
   - The whole interval list is kept: inline a bounded page, the rest in a file
     the answer names (and intervals.tsv in out_dir when one is given).
 """
-import array
-import datetime
 import json
-import math
 import os
-import re
-import secrets
 import signal
 import sys
+
+TOOL = {"name": "beacon_score", "version": 6}
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"tool": TOOL, "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
+import array
+import datetime
+import math
+import re
+import secrets
 import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "beacon_score", "version": 5}
 MAX_EPOCH = 4_102_444_800        # 2100-01-01: a number above it is not epoch seconds (milliseconds, microseconds, nanoseconds)
 MAX_EVENTS = 3_000_000          # measured: 336 MB resident at this many events (it was 1.19 GB for the same 3 million before the series was packed)
 MAX_INLINE_EVENTS = 500_000     # a series passed in `timestamps`: the arguments are parsed whole (about 50 MB resident at this many), so a longer one belongs in timestamps_file
@@ -63,7 +86,38 @@ def describe(exc):
     return "%s: %s" % (type(exc).__name__, getattr(exc, "strerror", None) or str(exc))
 
 
+class signals_held:
+    """The stop signals wait, pending, while a hidden temporary file is made and registered for removal: a signal that arrives between
+    the two would run the clean-up before it knew of the file, and the process would leave with the file behind. Where the platform cannot
+    hold signals the registration still follows at once, so only the file's own creation is unprotected."""
+
+    def __enter__(self):
+        self.before = None
+        if hasattr(signal, "pthread_sigmask"):
+            self.before = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+        return self
+
+    def __exit__(self, *_exc):
+        if self.before is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, self.before)
+        return False
+
+
+_TEMPS = set()      # the hidden .<name>-* files of the paging objects that are not yet under their final names
+
+
+def drop_temps():
+    """A refused, failed, signalled or write-failed run leaves no hidden partial file in tool-output: only a finished file is moved to its name."""
+    for path in list(_TEMPS):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        _TEMPS.discard(path)
+
+
 def fail(message, **extra):
+    drop_temps()
     print(json.dumps({"error": message, "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -123,9 +177,27 @@ class LosslessPage:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
 
+    def _abandon(self):
+        """The file cannot be finished (a full disk, a size limit, a failed move): close it and remove it, so no hidden partial file stays."""
+        try:
+            if self._out is not None:
+                self._out.close()
+        except OSError:
+            pass
+        if self._tmp is not None:
+            _TEMPS.discard(str(self._tmp))
+            try:
+                os.unlink(self._tmp)
+            except OSError:
+                pass
+
     def _write(self, row):
-        self._out.write(json.dumps(row, ensure_ascii=True, default=str))
-        self._out.write("\n")
+        try:
+            self._out.write(json.dumps(row, ensure_ascii=True, default=str))
+            self._out.write("\n")
+        except OSError:
+            self._abandon()
+            raise
 
     def add(self, row):
         self.total += 1
@@ -134,8 +206,10 @@ class LosslessPage:
             return
         if self._out is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-            self._tmp = Path(name)
+            with signals_held():
+                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
+                self._tmp = Path(name)
+                _TEMPS.add(name)          # known to the clean-up from the moment it exists
             self._out = os.fdopen(fd, "w", encoding="utf-8")
             for kept in self.page:
                 self._write(kept)
@@ -144,10 +218,15 @@ class LosslessPage:
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
         if self._out is not None:
-            self._out.flush()
-            os.fsync(self._out.fileno())
-            self._out.close()
-            os.replace(self._tmp, self.path)
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                os.replace(self._tmp, self.path)
+            except OSError:
+                self._abandon()
+                raise
+            _TEMPS.discard(str(self._tmp))
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
@@ -618,6 +697,7 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Stopped as stop:
+        drop_temps()
         print(json.dumps({"tool": TOOL, "status": "partial", "ok": False,
                           "status_basis": "the tool was stopped by signal %d while it was %s; no measurement had been answered yet" % (stop.signum, PROGRESS["stage"]),
                           "interrupted_by_signal": stop.signum, "values_read": PROGRESS["values_read"]}), flush=True)
