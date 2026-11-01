@@ -51,6 +51,7 @@ const SECOND: Record<string, string> = {
   "identify/by-format": "identify/headers",
   "volumes/bitlocker-opening": "volumes/bitlocker",
   "volumes/filevault-apfs": "volumes/luks-filevault",
+  "volumes/luks": "volumes/luks-filevault",
   "archives/formats": "archives/protected",
   "keys/recovery-key-scan": "keys/where-they-hide",
   "keys/other-sources": "keys/where-they-hide",
@@ -209,7 +210,7 @@ routerChecks({
   router: ROUTER,
   before: [
     "archives/formats", "archives/protected", "identify/by-format", "identify/headers", "keys/other-sources", "keys/recovery-key-scan",
-    "keys/where-they-hide", "volumes/bitlocker", "volumes/bitlocker-opening", "volumes/filevault-apfs", "volumes/luks-filevault",
+    "keys/where-they-hide", "volumes/bitlocker", "volumes/bitlocker-opening", "volumes/filevault-apfs", "volumes/luks", "volumes/luks-filevault",
     "recovery/authorised",
   ],
   profiles: ["disk", "full"],

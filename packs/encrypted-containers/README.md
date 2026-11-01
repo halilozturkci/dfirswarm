@@ -10,14 +10,14 @@ know it is the encrypted one.
 
 ## What it carries
 
-**Thirteen skills**: six decision leaves and six second-level leaves they point to
+**Fourteen skills**: six decision leaves and seven second-level leaves they point to
 ("only if X"); every leaf is at most 800 tokens. `identify/headers`
 (`identify/by-format`), `volumes/bitlocker` (`volumes/bitlocker-opening`),
-`volumes/luks-filevault` (`volumes/filevault-apfs`), `archives/protected`
+`volumes/luks-filevault` (`volumes/luks`, `volumes/filevault-apfs`), `archives/protected`
 (`archives/formats`), `keys/where-they-hide` (`keys/recovery-key-scan`,
 `keys/other-sources`), and `recovery/authorised`, which has no second-level leaf
-of its own. The thirteenth is the pack's router, `encrypted/router` (at
-most 400 tokens): it names the other twelve by the question each answers, holds no
+of its own. The fourteenth is the pack's router, `encrypted/router` (at
+most 400 tokens): it names the other thirteen by the question each answers, holds no
 rule, and is the one line a run shows for the pack when its skills index is over budget.
 
 **Nine tools.**

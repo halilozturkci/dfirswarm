@@ -16,4 +16,5 @@ Router: `encrypted/router`
 - `volumes/bitlocker` BitLocker protectors and authorised examination: A Windows volume may use BitLocker.
 - `volumes/bitlocker-opening` Opening a BitLocker volume with supplied material: The case supplies a recovery password, key file or escrow export to open the volume.
 - `volumes/filevault-apfs` FileVault and APFS volumes: An Apple volume is encrypted: legacy Core Storage FileVault 2 or APFS.
+- `volumes/luks` LUKS volumes, headers and keyslots: A volume, image or detached header may be LUKS.
 - `volumes/luks-filevault` Choosing the LUKS or FileVault examination route: A Linux or Apple volume appears encrypted.

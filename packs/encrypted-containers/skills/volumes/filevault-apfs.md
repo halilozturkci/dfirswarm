@@ -7,7 +7,7 @@ tools: [crypto_metadata]
 requires_host: [fvdeinfo, fsapfsinfo]
 ---
 
-Use only if the volume is an Apple one (Core Storage or APFS). Not for LUKS (`volumes/luks-filevault`).
+Use only if the volume is an Apple one (Core Storage or APFS). Not for LUKS (`volumes/luks`).
 
 **FileVault and APFS.** Say which layout you have. `crypto_metadata` picks `fvdeinfo` or
 `fsapfsinfo` by the signature at a byte offset and shows the counts they print; for an
@@ -19,7 +19,9 @@ fails on one, call that a tool limit, not a finding about the volume. For an APF
 limits its build documents (the macOS pack's `filesystem/apfs` states them, if that
 pack is loaded). Which volume is encrypted, and how, is read by a reader validated
 for that layout, or on an authorised macOS examination host: record the Mac model,
-the processor and security hardware, the OS build and how the data was acquired.
+the processor and security hardware, the OS build and how the data was acquired. If the
+macOS pack is loaded, its `filesystem/apfs` owns APFS structure and this note owns the
+encryption-route decision: check the run's skills index.
 
 Do not assume a user password or a recovery key makes a raw image readable away from
 the original hardware. A personal recovery key, an institutional recovery mechanism,

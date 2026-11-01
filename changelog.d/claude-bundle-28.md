@@ -67,3 +67,14 @@ volume that ends early, the output budget or the time limit keep it as an unveri
 and sha256, the offset, the kind of key used and the output's sha256. Selected files out of a
 volume are not provided. It was tested against stand-in modules and, where installed, the real
 pyAesCrypt; pybde and pyluksde were not run on a real volume.
+
+### Changed: encrypted-containers splits the LUKS route out of `volumes/luks-filevault`
+
+`volumes/luks` now holds the LUKS content (LUKS1 against LUKS2 metadata copies, digests,
+segments, tokens and keyslots, detached headers, header backups, plain dm-crypt, no repair
+on evidence; `crypto_id`, `crypto_metadata`, `cryptsetup luksDump`). `volumes/luks-filevault`
+keeps its id and becomes a thin router to `volumes/luks` and `volumes/filevault-apfs`, with
+the rules both routes share, so no two leaves hold the same text. `volumes/filevault-apfs`
+says, in conditional wording, that the macOS pack's `filesystem/apfs` owns APFS structure and
+this pack owns the encryption-route decision. The sentence-level register of the review still
+finds every rule.

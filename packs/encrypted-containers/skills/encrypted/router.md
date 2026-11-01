@@ -18,6 +18,7 @@ Volumes
 `volumes/bitlocker` BitLocker protectors
 `volumes/bitlocker-opening` opening it with supplied material
 `volumes/luks-filevault` LUKS or FileVault route
+`volumes/luks` LUKS header, keyslots, copies, backups
 `volumes/filevault-apfs` Apple volume, Core Storage or APFS
 
 Archives and documents
