@@ -36,7 +36,7 @@ async function fakeUpx(bin: string): Promise<void> {
   printf '   %s <-   %s   40.00%%   linux/amd64   x\\n' "$n" 100; exit 0;;
 -d) out="$3"; f="$5"
   if grep -q HANG "$f"; then echo $$ > "$PIDS/upx.pid"; sleep 60; exit 0; fi
-  if grep -q GROW "$f"; then yes AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > "$out"; exit 0; fi
+  if grep -q GROW "$f"; then yes AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > "$out" & echo $! > "$PIDS/yes.pid"; wait; exit 0; fi
   if grep -q FAILD "$f"; then echo "upx: $f: CompressedDataException" >&2; exit 1; fi
   if grep -q EMPTYOUT "$f"; then : > "$out"; exit 0; fi
   if grep -q EXTRA "$f"; then echo junk > "$(dirname "$out")/junk"; fi
@@ -135,8 +135,9 @@ test("the budget is checked against the listing before anything is written, and 
     assert.equal(listed.derivative, null);
     assert.ok(!listed.steps.some((s: Json) => s.label === "upx -d"), "upx -d was not started");
     await put(cwd, "work/grow.exe", "UPXOK NOLIST GROW");
+    await mkdir(join(cwd, "pids"), { recursive: true });
     const t0 = Date.now();
-    const grown = body(await tool(UNPACK, cwd, { path: "work/grow.exe", max_output_bytes: 1048576 }, {}, bin));
+    const grown = body(await tool(UNPACK, cwd, { path: "work/grow.exe", max_output_bytes: 1048576 }, { PIDS: join(cwd, "pids") }, bin));
     assert.equal(grown.status, "partial");
     assert.deepEqual(grown.limits_hit, ["max_output_bytes"]);
     assert.equal(grown.derivative, null);
@@ -144,7 +145,7 @@ test("the budget is checked against the listing before anything is written, and 
     assert.ok(Date.now() - t0 < 60_000);
     const left = await filesUnder(join(cwd, "work/s1/tool-output"));
     assert.deepEqual(left.filter((f) => f.includes("unpacked") || f.startsWith("stage-")), [], "the half-written file was removed");
-    assert.equal(spawnSync("sh", ["-c", "pgrep -x yes"], { encoding: "utf8" }).stdout.trim(), "", "the writer UPX started is gone");
+    assert.ok(await gone(await pidFile(join(cwd, "pids", "yes.pid")), 10_000), "the writer UPX started is gone");
   });
 });
 
