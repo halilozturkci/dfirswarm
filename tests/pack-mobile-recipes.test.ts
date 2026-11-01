@@ -19,6 +19,7 @@ import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promis
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPySnippet, withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const PACK = process.env.MOBILE_PACK ?? join(ROOT, "packs", "mobile-forensics");
 const RECIPES = join(PACK, "recipes");
@@ -78,8 +79,8 @@ async function coverage(out: string): Promise<Coverage> {
 }
 
 /** A recipe run under a wrapper that reports the peak resident memory (bytes) of the recipe's own process. */
-const MEASURE = String.raw`
-import resource, runpy, sys
+const MEASURE = peakRssPrelude() + String.raw`
+import runpy
 script = sys.argv[1]
 sys.argv = [script] + sys.argv[2:]
 try:
@@ -88,8 +89,7 @@ except SystemExit as exit:
     code = exit.code
 else:
     code = 0
-usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-sys.stderr.write("MAXRSS %d\n" % (usage if sys.platform == "darwin" else usage * 1024))
+sys.stderr.write("MAXRSS %d\n" % self_peak_bytes())
 sys.exit(code)
 `;
 

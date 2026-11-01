@@ -9,10 +9,11 @@ import json
 import os
 import random
 import re
-import resource
 import string
 import sys
 import time
+
+import peak_rss
 
 path, case = sys.argv[1], sys.argv[2]
 spec = importlib.util.spec_from_file_location("block", path)
@@ -32,8 +33,8 @@ def printed(secret, doc):
 
 
 def peak_mb():
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak / (1024 * 1024) if sys.platform == "darwin" else peak / 1024
+    # VmHWM of this image (tests/fixtures/peak_rss.py): the rusage peak would carry the parent's size from before exec
+    return peak_rss.self_peak_bytes() / (1024 * 1024)
 
 
 def timed(fn):

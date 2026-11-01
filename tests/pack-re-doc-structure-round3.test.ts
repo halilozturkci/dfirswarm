@@ -13,23 +13,24 @@ import { DOC_STRUCTURE, body, buildZip, put, tool, u16, withCwd } from "./pack-r
 import type { Json, Run } from "./pack-re-harness.ts";
 import { buildCfb, buildPdf, ovbaCompress, vbaDirStream } from "./pack-re-doc-fixtures.ts";
 import type { PdfObj } from "./pack-re-doc-fixtures.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 /** The tool with a hard wall limit and the child's peak RSS (and, with `rlimitMb`, an address-space limit it cannot pass). */
 export function bounded(cwd: string, args: Record<string, unknown>, killAfterMs: number, rlimitMb = 0): { run: Run; seconds: number; rssMb: number } {
-  const wrapper = [
-    "import json, resource, subprocess, sys, time",
+  const wrapper = peakRssPrelude() + [
+    "import json, resource, subprocess, time",
     "limit = int(sys.argv[3])",
     "def pre():",
     "    if limit:",
     "        resource.setrlimit(resource.RLIMIT_AS, (limit << 20, limit << 20))",
     "t = time.monotonic()",
     "try:",
-    "    p = subprocess.run([sys.executable, sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True, timeout=float(sys.argv[2]), preexec_fn=pre if limit and sys.platform != 'darwin' else None)",
+    "    p, peak = run_peak([sys.executable, sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True, timeout=float(sys.argv[2]), preexec_fn=pre if limit and sys.platform != 'darwin' else None)",
     "    code, out, err = p.returncode, p.stdout.decode('utf-8', 'replace'), p.stderr.decode('utf-8', 'replace')",
     "except subprocess.TimeoutExpired as exc:",
+    "    peak = exc.peak_bytes",
     "    code, out, err = None, (exc.stdout or b'').decode('utf-8', 'replace'), 'killed at the case limit'",
-    "r = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss",
-    "print(json.dumps({'code': code, 'stdout': out, 'stderr': err, 'seconds': time.monotonic() - t, 'rss_mb': r / (1 << 20) if sys.platform == 'darwin' else r / 1024}))",
+    "print(json.dumps({'code': code, 'stdout': out, 'stderr': err, 'seconds': time.monotonic() - t, 'rss_mb': peak / (1 << 20)}))",
   ].join("\n");
   const r = spawnSync("python3", ["-c", wrapper, DOC_STRUCTURE, String(killAfterMs / 1000), String(rlimitMb)], { cwd, input: JSON.stringify(args), encoding: "utf8", maxBuffer: 1 << 28, env: { ...process.env, AGENT_ID: "s1" } });
   assert.equal(r.status, 0, r.stderr);

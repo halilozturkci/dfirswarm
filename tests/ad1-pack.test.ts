@@ -23,6 +23,7 @@ import { JobService, type JobRecord } from "../scripts/job-service.ts";
 import { storePaths, verifyJournalText, type JournalLine } from "../scripts/evidence-store.ts";
 import { localWorker } from "./job-service-worker.ts";
 import { runPy } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 const CFB = join(ROOT, "packs", "computer-forensics-base");
@@ -611,14 +612,14 @@ test("what ad1_extract holds while it walks is the depth of the tree, not the nu
     dirs.push({ name: `d${k}`, folder: true, children: kids });
   }
   writeFileSync(join(d, "inputs", "big.ad1"), ad1Image(dirs));
-  const wrapper = "import json, resource, subprocess, sys\n" +
-    "p = subprocess.run([sys.executable, sys.argv[1]], input=sys.argv[2], capture_output=True, text=True)\n" +
-    "print(json.dumps({'out': p.stdout, 'peak': resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss}))\n";
+  const wrapper = peakRssPrelude() + "import json, subprocess\n" +
+    "p, peak = run_peak([sys.executable, sys.argv[1]], input=sys.argv[2], capture_output=True, text=True)\n" +
+    "print(json.dumps({'out': p.stdout, 'peak': peak}))\n";
   const r = spawnSync("python3", ["-c", wrapper, TOOL, JSON.stringify({ image: "inputs/big.ad1" })], { cwd: d, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
   const got = JSON.parse(r.stdout) as { out: string; peak: number };
   const res = JSON.parse(got.out);
   assert.deepEqual([res.processing_status, res.items, res.files, res.folders], ["complete", 100100, 100000, 100]);
-  const peak = got.peak * (process.platform === "darwin" ? 1 : 1024);
+  const peak = got.peak; // bytes, the tool's own image (tests/peak-rss.ts)
   assert.ok(peak < 60 * 1024 * 1024, `the peak was ${peak} bytes for 100,100 items (the earlier code needed 100 MB)`);
 });
 
