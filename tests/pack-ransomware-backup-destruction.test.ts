@@ -430,3 +430,216 @@ test("the manifest's claims hold and the shared blocks are the survey's", async 
   assert.ok(pack.tools.includes("backup_destruction_correlate"));
   assert.deepEqual(pack.depends.map((d) => d.split(/[<>=]/)[0]), ["computer-forensics-base"], "no dependency edge");
 });
+
+// ---- the fix round: the clock holds in every walk, every recogniser is linear, and the flags and statuses say what is true
+const MODULE_LOADER = `
+import importlib.util, json, sys, time
+spec = importlib.util.spec_from_file_location("bdc", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+`;
+function python(code: string, timeout: number): { out: J | null; stderr: string; status: number | null; signal: string | null } {
+  const r = spawnSync("python3", ["-I", "-c", MODULE_LOADER + code, CORRELATE], { encoding: "utf8", timeout, maxBuffer: 64 << 20 });
+  let out: J | null = null;
+  try { out = JSON.parse(r.stdout) as J; } catch { /* a timeout leaves no JSON */ }
+  return { out, stderr: r.stderr, status: r.status, signal: r.signal };
+}
+const WMI_DELETE = "Get-WmiObject Win32_ShadowCopy | % { $_.Delete() }";
+
+test("20,000 attempts and 20,000 exit records of one process id are matched by bisection, under the clock", async () => {
+  await withCwd(async (cwd) => {
+    const n = 20000;
+    const rows: string[] = [];
+    // the exit records first (cheap to read), so that the reading ends well inside the clock and the matching is what is timed
+    for (let i = 0; i < n; i++) rows.push(JSON.stringify(exit(2 * i + 1, "2020-01-01T00:00:00Z", VSSADMIN, "0x10")));
+    for (let i = 0; i < n; i++) rows.push(JSON.stringify(create(2 * i, "2030-01-01T00:00:00Z", VSSADMIN, "vssadmin delete shadows /all", "u", "0x10")));
+    const e = await put(cwd, "e.json", evtx([]));
+    const f = await put(cwd, "e.jsonl", rows.join("\n") + "\n");
+    const started = Date.now();
+    const { a } = await run(cwd, { events: [{ host: "h", file: e, result_file: f }], max_seconds: 20 });
+    const took = (Date.now() - started) / 1000;
+    assert.ok(took < 20 + 5, `the run took ${took} s with max_seconds 20`);
+    assert.equal(a.status, "partial");
+    assert.ok(/attempts have no process-exit record|time limit/.test(a.status_basis), a.status_basis);
+  });
+});
+
+test("the exit record found is the earliest at or after the start, and the matching walk stops at its clock and says so", () => {
+  const r = python(`
+ctx = m.Ctx(None, {})
+class P:
+    def add(self, row, evidence=None): return row
+ctx.page = P()
+hid = ctx.host("h")
+for i in range(20000):
+    ctx.add_exit(hid, 16, 2000000 - i, "0x%x" % i, {"i": i})        # arrives latest first
+ctx.add_exit(hid, 17, None, "0x5", {"untimed": True})
+ctx.add_exit(hid, 18, 100, "0x1", {"early": True})
+first = ctx.first_exit(hid, 16, 1990000.5)
+none_after = ctx.first_exit(hid, 18, 101)
+untimed_for_17 = ctx.first_exit(hid, 17, 5)
+before_all = ctx.first_exit(hid, 16, 0)
+ctx.pending = [(hid, 16, 1990000.5, "shadow_copies", "r", "O1", "u", "2030-01-01T00:00:00.000000Z", "vssadmin.exe")] * 20000
+m.set_deadline(100)
+t = time.monotonic()
+done = m.match_exits(ctx)
+elapsed = time.monotonic() - t
+m.set_deadline(-100)
+stopped = m.match_exits(ctx)
+print(json.dumps({"first": first[0], "none_after": none_after, "untimed": untimed_for_17[1], "before_all": before_all[0], "done": done, "elapsed": elapsed, "stopped": stopped}))
+`, 120000);
+  assert.ok(r.out, r.stderr);
+  assert.equal(r.out.first, 1990001);
+  assert.equal(r.out.none_after, null);
+  assert.equal(r.out.untimed, "0x5");
+  assert.equal(r.out.before_all, 1980001);
+  assert.deepEqual(r.out.done, [0, 0]);
+  assert.ok(r.out.elapsed < 5, `20,000 attempts matched in ${r.out.elapsed} s`);
+  assert.deepEqual(r.out.stopped, [0, 20000], "past the clock no attempt is matched, and the number left is returned");
+});
+
+test("every recogniser, Windows and Linux, is linear on 64 KiB texts of hostile shapes", () => {
+  const r = python(`
+N = 65536
+heads = ["vssadmin", "vssadmin.exe", "vssadmin delete", "wmic", "wmic shadowcopy", "diskshadow", "diskshadow.exe", "win32_shadowcopy", "remove-wmiobject",
+         "remove-ciminstance", "wbadmin", "wbadmin delete", "bcdedit", "bcdedit.exe", "zfs", "zfs destroy", "lvremove", "btrfs", "btrfs subvolume", "restic",
+         "borg", "rm", "rm -", "rm -r", "rm -rf", "shadowcopy", "delete", "backup", "snapshots", "recoveryenabled"]
+def shapes(h):
+    yield "repeat", (h + " ") * (N // (len(h) + 1))
+    yield "repeat-tight", h * (N // len(h))
+    for fill in ("r", " ", "a", "-", "\\t", "R", "@", "."):
+        yield "head+fill " + repr(fill), (h + fill * N)[:N]
+        yield "head+dash+fill+spaces " + repr(fill), (h + " -" + fill * (N // 2) + " " * N)[:N]
+        yield "head+dash+fill+x " + repr(fill), (h + " -" + fill * (N // 2) + "x" * N)[:N]
+        yield "repeat head+flags " + repr(fill), ((h + " -" + fill * 20 + "  ") * N)[:N]
+        yield "repeat head+fill+backup " + repr(fill), ((h + " -r" + fill * 30 + " backup") * N)[:N]
+patterns = [(r[0], r[3]) for r in m.RECOGNISERS] + [(r[0], r[2]) for r in m.LINUX_RECOGNISERS]
+worst = (0.0, "", "")
+count = 0
+for h in heads:
+    for shape, text in shapes(h):
+        for rid, pat in patterns:
+            t = time.perf_counter()
+            pat.search(text)
+            d = time.perf_counter() - t
+            count += 1
+            if d > worst[0]:
+                worst = (d, rid, h + "/" + shape)
+for rid, pat in patterns:
+    for text in ("rm -" + "r" * 32000 + " " * 32000, "rm -" + "r" * 12000 + " " * 12000, "rm " + "-r " * 20000, "rm -r " + "a" * 65000):
+        t = time.perf_counter()
+        pat.search(text)
+        d = time.perf_counter() - t
+        count += 1
+        if d > worst[0]:
+            worst = (d, rid, "rm-shapes")
+print(json.dumps({"worst_seconds": worst[0], "recogniser": worst[1], "shape": worst[2], "searches": count, "recognisers": len(patterns)}))
+`, 280000);
+  assert.ok(r.out, `a recogniser did not finish within 280 s: ${r.stderr} ${r.signal}`);
+  assert.equal(r.out.recognisers, 13);
+  assert.ok(r.out.worst_seconds < 1.5, `${r.out.recogniser} took ${r.out.worst_seconds} s on ${r.out.shape}`);
+});
+
+test("a 64 KiB shell-history command of the quadratic shape is read under the clock, and the commands beside it are still recognised", async () => {
+  await withCwd(async (cwd) => {
+    const hist = await put(cwd, "h.jsonl", [
+      { id: "H1", parser: "shell_history/14", user: "root", time: "2026-10-01T10:00:00Z", command: "rm -" + "r".repeat(32000) + " ".repeat(32000) },
+      { id: "H2", parser: "shell_history/14", user: "root", time: "2026-10-01T10:00:01Z", command: "rm -rf /srv/backups/old" },
+      { id: "H3", parser: "shell_history/14", user: "root", time: "2026-10-01T10:00:02Z", command: "rm  -fr   /srv/snapshots" }].map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const started = Date.now();
+    const { a } = await run(cwd, { shell_histories: [{ host: "lin1", file: hist }], max_seconds: 20 });
+    assert.ok((Date.now() - started) / 1000 < 15);
+    assert.equal(countsOf(a, "backups").command_seen, 2);
+  });
+});
+
+test("a command after both inventories, or before both, is not called a command without a change", async () => {
+  await withCwd(async (cwd) => {
+    const v1 = await put(cwd, "v1.json", vss(["a", "b"]));
+    const v2 = await put(cwd, "v2.json", vss(["a", "b"]));
+    const inv = [{ host: "h1", file: v1, collected_utc: "2026-10-01T09:00:00Z" }, { host: "h1", file: v2, collected_utc: "2026-10-01T11:00:00Z" }];
+    for (const [time, flag] of [["2026-10-01T12:00:00Z", "command_seen_after_the_last_inventory"], ["2026-10-01T08:00:00Z", "command_seen_before_the_first_inventory"], ["2026-10-01T10:00:00Z", "command_seen_without_inventory_change"]] as const) {
+      const e = await put(cwd, "e.json", evtx([script(1, time, WMI_DELETE)]));
+      const { a } = await run(cwd, { events: [{ host: "h1", file: e }], vss_inventories: inv });
+      assert.deepEqual(flagsOf(a, "shadow_copies"), [flag], time);
+    }
+    // a host clock that runs ahead moves a command back into the interval
+    const late = await put(cwd, "late.json", evtx([script(1, "2026-10-01T12:00:00Z", WMI_DELETE)]));
+    const { a } = await run(cwd, { events: [{ host: "h1", file: late }], vss_inventories: inv, host_clocks: { h1: { offset_seconds: 7200, uncertainty_seconds: 0 } } });
+    assert.deepEqual(flagsOf(a, "shadow_copies"), ["command_seen_without_inventory_change"]);
+  });
+});
+
+test("an outcome-only backup job is not called an attempted action", async () => {
+  await withCwd(async (cwd) => {
+    const audit = await put(cwd, "a.json", { parser: "backup_audit_normalise/2", status: "complete", events: [{ seq: 1, source_id: "S1", category: "backup_job", result: "ok", time_utc: "2026-10-01T02:00:00Z" }] });
+    const { a } = await run(cwd, { backup_audits: [{ host: "pbs", file: audit }] });
+    const flag = (a.summary as Array<{ flags: Array<{ flag: string; meaning: string }> }>)[0]!.flags.find((f) => f.flag === "reported_exit_without_verified_loss")!;
+    assert.doesNotMatch(flag.meaning, /attempted action/);
+    assert.match(flag.meaning, /reported outcome is not a loss/);
+  });
+});
+
+test("a shell history text file carries no status of its producer: that is said, and the producer's answer, when given, is checked", async () => {
+  await withCwd(async (cwd) => {
+    const hist = await put(cwd, "h.jsonl", JSON.stringify({ id: "H1", parser: "shell_history/14", user: "root", time: "2026-10-01T10:00:00Z", command: "ls" }) + "\n");
+    const alone = await run(cwd, { shell_histories: [{ host: "lin1", file: hist }] });
+    assert.equal(alone.a.status, "complete");
+    assert.match(alone.a.status_basis, /shell_histories text files were given without their answer/);
+    assert.deepEqual(alone.a.inputs_whose_producer_status_is_unknown, { shell_histories: 1 });
+    const partial = await put(cwd, "ans-p.json", { parser: "shell_history/14", status: "partial" });
+    const complete = await put(cwd, "ans-c.json", { parser: "shell_history/14", status: "complete" });
+    const p = await run(cwd, { shell_histories: [{ host: "lin1", file: hist, answer: partial }] });
+    assert.equal(p.a.status, "partial");
+    assert.match(p.a.status_basis, /input_status_not_complete:shell_histories: 1/);
+    const c = await run(cwd, { shell_histories: [{ host: "lin1", file: hist, answer: complete }] });
+    assert.equal(c.a.status, "complete");
+    assert.deepEqual(c.a.inputs_whose_producer_status_is_unknown, {});
+    const wrong = await put(cwd, "ans-w.json", { parser: "shell_history/13", status: "complete" });
+    const w = await tool(CORRELATE, cwd, { shell_histories: [{ host: "lin1", file: hist, answer: wrong }] });
+    assert.match(JSON.parse(w.stdout).error, /shell_history\/13/);
+  });
+});
+
+test("a chains table that is complete beside another table that was cut reads as complete", async () => {
+  await withCwd(async (cwd) => {
+    const chain = await put(cwd, "c.json", { parser: "snapshot_chain_check/2", status: "complete", truncated: true,
+      pages: { chains: { matched: 1, returned: 1, truncated: false }, edges: { matched: 900, returned: 200, truncated: true } }, chains: [{ leaf: "d1", status: "complete", chain_length: 2 }] });
+    const ok = await run(cwd, { chain_checks: [{ host: "pbs", file: chain }] });
+    assert.equal(ok.a.status, "complete", ok.a.status_basis);
+    const cut = await put(cwd, "c2.json", { parser: "snapshot_chain_check/2", status: "complete", truncated: true,
+      pages: { chains: { matched: 500, returned: 200, truncated: true } }, chains: [{ leaf: "d1", status: "complete", chain_length: 2 }] });
+    const bad = await run(cwd, { chain_checks: [{ host: "pbs", file: cut }] });
+    assert.equal(bad.a.status, "partial");
+    const audit = await put(cwd, "a.json", { parser: "backup_audit_normalise/2", status: "complete", truncated: true, pages: { events: { matched: 500, returned: 200, truncated: true } }, events: [] });
+    assert.equal((await run(cwd, { backup_audits: [{ host: "pbs", file: audit }] })).a.status, "partial");
+  });
+});
+
+test("an impossible calendar date is not a time: the row has none, and a verification or an inventory that carries one is refused", async () => {
+  await withCwd(async (cwd) => {
+    const e = await put(cwd, "e.json", evtx([script(1, "2026-02-30T10:00:00Z", WMI_DELETE)]));
+    const { a } = await run(cwd, { events: [{ host: "h", file: e }] });
+    assert.equal((a.observations as J[])[0]!.time_utc, null);
+    const bad = await tool(CORRELATE, cwd, { verifications: [{ host: "h", object: "backup_catalog", result: "lost", verified_utc: "2026-02-30T10:00:00Z" }] });
+    assert.match(JSON.parse(bad.stdout).error, /verification/);
+    const vss1 = await put(cwd, "v.json", vss(["a"]));
+    const worse = await tool(CORRELATE, cwd, { vss_inventories: [{ host: "h", file: vss1, collected_utc: "2026-02-30T10:00:00Z" }] });
+    assert.match(JSON.parse(worse.stdout).error, /collected_utc/);
+  });
+});
+
+test("the forms that fire as command_seen without being run, and the bounds of the fix round, are in the manifest", async () => {
+  const manifest = JSON.parse(await readFile(MANIFEST, "utf8")) as { description: string; params: Record<string, { description: string }> };
+  const text = manifest.description;
+  for (const form of ["man lvremove", "cat lvremove.txt", "echo rm -rf /backups"]) assert.ok(text.includes(form), form);
+  assert.match(text, /bounded only by the size of its inputs and the clock/);
+  assert.match(text, /bisection/);
+  assert.match(text, /20 seconds more/);
+  assert.match(text, /command_seen_after_the_last_inventory/);
+  assert.match(text, /2026-02-30/);
+  assert.match(text, /no sealed text file/);
+  assert.match(manifest.params.shell_histories!.description, /answer/);
+  const source = await readFile(CORRELATE, "utf8");
+  assert.match(source, /POST_GRACE = 20/);
+});

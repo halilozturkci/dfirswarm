@@ -18,6 +18,7 @@ Inputs are the answers of other tools, by reference (paths; nothing is imported 
 `parser`; an unknown version is refused by name. No event text is copied: a command is recognised from a field of the record, only a
 recogniser id and the record's own reference are printed, and the text stays in the log the record came from.
 """
+import bisect
 import builtins
 import collections
 import datetime
@@ -78,13 +79,15 @@ SCRIPT = {("microsoft-windows-powershell/operational", 4104): ("ScriptBlockText"
 SERVICE_OBJECT = "service_configuration"
 OBJECTS = ("shadow_copies", "backup_catalog", "boot_recovery", "service_configuration", "snapshots", "backups", "virtual_disks", "virtual_machines")
 # Linux commands in a shell history (a record of a command typed, not of a process started).
+# No recogniser has two open-ended repetitions of overlapping classes side by side (that is quadratic on a 64 KiB command): the rm pattern's are
+# bounded, the others have one run of separators between literals and bounded gaps, and a test times every recogniser on hostile texts of several shapes.
 LINUX_RECOGNISERS = [
     ("zfs_destroy_snapshot", "snapshots", re.compile(r"\bzfs\s+destroy\b[^;|&\n]{0,200}@")),
     ("lvremove", "snapshots", re.compile(r"\blvremove\b")),
     ("btrfs_subvolume_delete", "snapshots", re.compile(r"\bbtrfs\s+subvolume\s+delete\b")),
     ("restic_forget_or_prune", "backups", re.compile(r"\brestic\b.{0,80}\b(?:forget|prune)\b")),
     ("borg_delete_or_prune", "backups", re.compile(r"\bborg\b.{0,80}\b(?:delete|prune)\b")),
-    ("rm_recursive_on_a_backup_path", "backups", re.compile(r"\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+[^;|&\n]{0,100}(?:backups?|snapshots)\b")),
+    ("rm_recursive_on_a_backup_path", "backups", re.compile(r"\brm\s{1,8}-[a-zA-Z]{0,12}[rR][a-zA-Z]{0,12}\s{1,8}[^;|&\n]{0,100}(?:backups?|snapshots)\b")),
 ]
 # CloudTrail events that delete a snapshot or a backup: event name -> (event source, object).
 CLOUD_EVENTS = {"DeleteSnapshot": ("ec2.amazonaws.com", "snapshots"), "DeleteDBSnapshot": ("rds.amazonaws.com", "snapshots"),
@@ -440,6 +443,16 @@ def print_answer(answer, **dumps_kwargs):
 
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
+
+
+# The phases after the reading (matching exit records, comparing inventories, the summary) are linear and short, and what the reading found is
+# worth finishing; they run to at most this many seconds past max_seconds (840 + 20 stays below the manifest's 900). This is outside the shared
+# STOP block, whose out_of_time is the reading's clock.
+POST_GRACE = 20
+
+
+def late():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"] + POST_GRACE
 
 # BEGIN SHARED WITHHOLDING
 # The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
@@ -1311,7 +1324,8 @@ def normal_time(value):
     m = TIME.match(value)
     if not m:
         return None
-    return m.group(1) + "." + ((m.group(2) or "") + "000000")[:6] + "Z"
+    text = m.group(1) + "." + ((m.group(2) or "") + "000000")[:6] + "Z"
+    return text if seconds_of(text) is not None else None      # 2026-02-30 is not a time
 
 
 def seconds_of(iso):
@@ -1320,6 +1334,10 @@ def seconds_of(iso):
         return calendar.timegm(_time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S")) + int(iso[20:26]) / 1e6
     except (ValueError, OverflowError):
         return None
+
+
+def new_summary():
+    return {"counts": collections.Counter(), "times": {}, "comparisons": 0, "intact": 0, "interval": None, "span": None}
 
 
 class Ctx:
@@ -1331,8 +1349,9 @@ class Ctx:
         self.serial = 0
         self.summary = {}
         self.pending = []          # (hid, pid, seconds, object, recogniser, observation reference)
-        self.exits = collections.defaultdict(list)
+        self.exits = {}            # (host, pid) -> [records with a time, sorted; records with none; the first recorded]
         self.exit_n = 0
+        self.exit_seq = 0
         self.dropped = collections.Counter()
         self.filtered = 0
         self.page = None
@@ -1346,6 +1365,35 @@ class Ctx:
             self.hosts[name] = found
             self.names[found] = name
         return found
+
+    def add_exit(self, hid, pid, secs, status, source):
+        """Keep a process-exit record where the first one at or after a start is found by bisection: a (host, pid) with many records is not walked."""
+        self.exit_seq += 1
+        held = self.exits.get((hid, pid))
+        if held is None:
+            held = self.exits[(hid, pid)] = [[], [], None]
+        if secs is None:
+            held[1].append((self.exit_seq, status, source))
+        else:
+            bisect.insort(held[0], (secs, self.exit_seq, status, source))
+        if held[2] is None:
+            held[2] = (secs, status, source)
+
+    def first_exit(self, hid, pid, secs):
+        """(time, status, source) of the earliest exit record of the process at or after `secs` by its recorded time; one with no recorded time
+        only when none has a time at or after; with no start time, the first record read."""
+        held = self.exits.get((hid, pid))
+        if held is None:
+            return None
+        timed, untimed, first = held
+        if secs is None:
+            return first
+        i = bisect.bisect_left(timed, (secs,))
+        if i < len(timed):
+            return (timed[i][0], timed[i][2], timed[i][3])
+        if untimed:
+            return (None, untimed[0][1], untimed[0][2])
+        return None
 
     def uncertainty(self, hid):
         clock = self.clocks.get(self.names.get(hid))
@@ -1369,7 +1417,7 @@ class Ctx:
         key = (hid, obj)
         s = self.summary.get(key)
         if s is None:
-            s = self.summary[key] = {"counts": collections.Counter(), "times": {}, "comparisons": 0, "intact": 0, "interval": None}
+            s = self.summary[key] = new_summary()
         s["counts"][cls] += 1
         secs = seconds_of(time_iso) if time_iso else None
         if secs is not None:
@@ -1478,10 +1526,9 @@ def handle_event(ctx, hid, row):
         name_f, user_f, pid_f, status_f = EXIT[key]
         pid, status = pid_of(text_of(data, pid_f)), text_of(data, status_f)
         if pid is not None and status is not None and basename_lower(text_of(data, name_f)) in TOOL_IMAGES:
-            held = ctx.exits[(hid, pid)]
             if ctx.exit_n < TRACK_CAP:
                 ctx.exit_n += 1
-                held.append((seconds_of(when) if when else None, status[:20], source))
+                ctx.add_exit(hid, pid, seconds_of(when) if when else None, status[:20], source)
             else:
                 ctx.dropped["exit_records"] += 1
     return True
@@ -1539,6 +1586,16 @@ def stream_file(handler, path, facts):
         os.close(fd)
 
 
+def own_table_cut(doc, key, inline):
+    """Whether the answer shows only part of its table `key`: the table's own page record says so (the answer's top-level `truncated` is true
+    when any of its tables is cut, and a complete table beside a cut one is complete)."""
+    pages = doc.get("pages")
+    page = pages.get(key) if isinstance(pages, dict) else None
+    if isinstance(page, dict) and isinstance(page.get("truncated"), bool):
+        return page["truncated"]
+    return bool(doc.get("truncated"))
+
+
 def read_events(ctx, hid, doc, result_file, facts):
     read_rows(lambda row: handle_event(ctx, hid, row), doc, "events", result_file, facts,
               lambda d, inline: bool(d.get("truncated")) or (isinstance(d.get("count"), int) and d["count"] > len(inline)))
@@ -1573,7 +1630,7 @@ def handle_chain(ctx, hid, row):
     if not isinstance(row, dict) or not isinstance(row.get("status"), str):
         return False
     status = row["status"]
-    s = ctx.summary.setdefault((hid, "backups"), {"counts": collections.Counter(), "times": {}, "comparisons": 0, "intact": 0, "interval": None})
+    s = ctx.summary.setdefault((hid, "backups"), new_summary())
     if status == "complete":
         s["intact"] += 1
     elif status in CHAIN_LOSS:
@@ -1629,7 +1686,7 @@ def read_specs(args, kind):
     if not isinstance(value, list) or len(value) > MAX_INPUTS:
         fail("%s must be a list of at most %d objects" % (kind, MAX_INPUTS))
     allowed = {"events": {"host", "file", "result_file"}, "vss_inventories": {"host", "file", "collected_utc", "volume"}, "service_keys": {"host", "file", "collected_utc"},
-               "backup_audits": {"host", "file", "rows_file"}, "chain_checks": {"host", "file", "rows_file"}, "shell_histories": {"host", "file"},
+               "backup_audits": {"host", "file", "rows_file"}, "chain_checks": {"host", "file", "rows_file"}, "shell_histories": {"host", "file", "answer"},
                "cloud_trails": {"host", "file", "rows_file"}}[kind]
     out = []
     for item in value:
@@ -1640,7 +1697,10 @@ def read_specs(args, kind):
             fail("each entry of %s needs a host (a name) and a file (a path)" % kind)
         extra = {}
         if kind in ("shell_histories",):
-            pass
+            ans = item.get("answer")
+            if ans is not None and (not isinstance(ans, str) or not ans):
+                fail("answer is a path")
+            extra["answer"] = ans
         elif kind in ("backup_audits", "chain_checks", "cloud_trails"):
             rf = item.get("rows_file")
             if rf is not None and (not isinstance(rf, str) or not rf):
@@ -1682,11 +1742,32 @@ FLAG_TEXT = {
     "command_seen_without_inventory_change": "a destructive command was seen, and two complete inventories of this object show no change: the command is not shown to have taken effect",
     "command_seen_nothing_to_compare": "a destructive command was seen, and there are not two complete inventories of this object to compare: its effect is not observed",
     "inventory_change_without_command": "an inventory change was observed with no command or attempt in the logs read: the change has another explanation or the log was not read",
-    "reported_exit_without_verified_loss": "a process reported an exit status for an attempted action, and no loss was verified: an exit status is not a loss",
+    "command_seen_after_the_last_inventory": "a destructive command was seen with a recorded time (corrected by the host's clock offset, if given) later than the last of the complete inventories of this object: they agree, and say nothing about the command",
+    "command_seen_before_the_first_inventory": "a destructive command was seen with a recorded time (corrected by the host's clock offset, if given) earlier than the first of the complete inventories of this object: they agree, and say nothing about the command",
+    "reported_exit_without_verified_loss": "a source reported an outcome (a process's exit status, a product's or provider's result, the end of a backup job), and no loss was verified: a reported outcome is not a loss",
     "verified_loss_without_command": "a loss was verified with no command or attempt in the logs read: how it came about is not shown",
     "command_after_the_change_interval": "the recorded time of the command (corrected by the host's clock offset, if given) is later than the interval in which the change was observed, beyond the clock uncertainty: the clocks disagree with the order the evidence needs",
     "command_within_the_change_interval": "the recorded time of the command falls inside the interval in which the change was observed, or within the clock uncertainty of it: the clocks do not settle the order",
 }
+
+
+def match_exits(ctx):
+    """Give each attempted process its exit record (bisection, a clock before every attempt). Returns (attempts with no exit record, attempts
+    left unmatched because the time ran out)."""
+    no_exit = 0
+    pending = ctx.pending
+    for n, (hid, pid, secs, obj, rid, ref, user, when, program) in enumerate(pending):
+        if late():
+            return no_exit, len(pending) - n
+        match = ctx.first_exit(hid, pid, secs)
+        if match is None:
+            no_exit += 1
+            continue
+        status_zero = match[1].lower() in ("0x0", "0")
+        ctx.observe(hid, "reported_outcome", obj, when, user, match[2], {"recogniser": rid, "program": program, "attempt_observation": ref,
+                                                                          "exit_status_class": "zero" if status_zero else "nonzero",
+                                                                          "matched_by": "host and process id, the earliest exit record at or after the start by its recorded time (one with no time only when none has one)"})
+    return no_exit, 0
 
 
 def main():
@@ -1741,6 +1822,7 @@ def main():
     problems = collections.Counter()
     stopped = {}
     inputs_read = collections.Counter()
+    unchecked = collections.Counter()    # inputs whose producer's own status the tool could not see
     inventories = collections.defaultdict(list)
     services = collections.defaultdict(list)
 
@@ -1753,6 +1835,16 @@ def main():
             facts = {"rows": 0, "skipped": 0, "problems": [], "stopped_by_clock": False, "no_command": 0}
             try:
                 if kind == "shell_histories":
+                    if extra["answer"] is None:
+                        unchecked["shell_histories"] += 1
+                    else:
+                        adoc, awhy = read_doc(extra["answer"])
+                        if adoc is None:
+                            problems["input_unreadable:shell_histories_answer"] += 1
+                        else:
+                            check_parser(adoc, kind)
+                            if adoc.get("status") != "complete":
+                                problems["input_status_not_complete:shell_histories"] += 1
                     stream_file(lambda row: handle_history(ctx, hid, row, facts), path, facts)
                     if facts["no_command"]:
                         problems["history_rows_without_command"] += facts["no_command"]
@@ -1772,10 +1864,10 @@ def main():
                     problems["input_status_not_complete:" + kind] += 1
                 if kind == "backup_audits":
                     read_rows(lambda row: handle_audit(ctx, hid, row), doc, "events", extra["rows_file"], facts,
-                              lambda d, inline: bool(d.get("truncated")))
+                              lambda d, inline: own_table_cut(d, "events", inline))
                 elif kind == "chain_checks":
                     read_rows(lambda row: handle_chain(ctx, hid, row), doc, "chains", extra["rows_file"], facts,
-                              lambda d, inline: bool(d.get("truncated")))
+                              lambda d, inline: own_table_cut(d, "chains", inline))
                 elif kind == "cloud_trails":
                     read_rows(lambda row: handle_cloud(ctx, hid, row), doc, "records", extra["rows_file"], facts,
                               lambda d, inline: isinstance(d.get("record_count"), int) and d["record_count"] > len(inline))
@@ -1811,30 +1903,23 @@ def main():
                 stopped["input_cut_by_clock"] = stopped.get("input_cut_by_clock", 0) + 1
 
     # reported outcome: the exit record of each attempted process, matched by host and process id, the first at or after the start
-    no_exit = 0
-    for hid, pid, secs, obj, rid, ref, user, when, program in ctx.pending:
-        match = None
-        for (esecs, status, esource) in ctx.exits.get((hid, pid), ()):
-            if secs is None or esecs is None or esecs >= secs:
-                match = (esecs, status, esource)
-                break
-        if match is None:
-            no_exit += 1
-            continue
-        ok = status_zero = match[1].lower() in ("0x0", "0")
-        ctx.observe(hid, "reported_outcome", obj, when, user, match[2], {"recogniser": rid, "program": program, "attempt_observation": ref,
-                                                                          "exit_status_class": "zero" if status_zero else "nonzero",
-                                                                          "matched_by": "host and process id, the first exit record at or after the start"})
+    no_exit, matching_left = match_exits(ctx)
+    if matching_left:
+        stopped["attempts_not_matched"] = matching_left
 
     # inventory change: consecutive complete inventories of one host and volume
     for (hid, volume), items in inventories.items():
         items.sort(key=lambda t: (t[0] if t[0] is not None else 0, t[1]))
         for a, b in zip(items, items[1:]):
+            if late():
+                stopped["comparisons_not_made"] = stopped.get("comparisons_not_made", 0) + 1
+                continue
             if not (a[3] and b[3]):
                 problems["inventory_not_complete"] += 1
                 continue
-            s = ctx.summary.setdefault((hid, "shadow_copies"), {"counts": collections.Counter(), "times": {}, "comparisons": 0, "intact": 0, "interval": None})
+            s = ctx.summary.setdefault((hid, "shadow_copies"), new_summary())
             s["comparisons"] += 1
+            s["span"] = (a[0], b[0]) if s["span"] is None else (min(s["span"][0], a[0]), max(s["span"][1], b[0]))
             removed, added = len(a[2] - b[2]), len(b[2] - a[2])
             if removed or added:
                 ctx.observe(hid, "inventory_change_observed", "shadow_copies", None, None, {"kind": "vss_stores inventories", "volume": shown(volume, count=False) if volume else None},
@@ -1842,11 +1927,15 @@ def main():
     for (hid, name), items in services.items():
         items.sort(key=lambda t: (t[0] if t[0] is not None else 0, t[1]))
         for a, b in zip(items, items[1:]):
+            if late():
+                stopped["comparisons_not_made"] = stopped.get("comparisons_not_made", 0) + 1
+                continue
             if not (a[3] and b[3]):
                 problems["inventory_not_complete"] += 1
                 continue
-            s = ctx.summary.setdefault((hid, SERVICE_OBJECT), {"counts": collections.Counter(), "times": {}, "comparisons": 0, "intact": 0, "interval": None})
+            s = ctx.summary.setdefault((hid, SERVICE_OBJECT), new_summary())
             s["comparisons"] += 1
+            s["span"] = (a[0], b[0]) if s["span"] is None else (min(s["span"][0], a[0]), max(s["span"][1], b[0]))
             if a[2] != b[2]:
                 ctx.observe(hid, "inventory_change_observed", SERVICE_OBJECT, None, None, {"kind": "regkv service key", "service": shown(name, count=False)},
                             {"start_before": a[2], "start_after": b[2], "disabled_after": b[2] == 4}, interval=(a[1], b[1]))
@@ -1854,7 +1943,7 @@ def main():
     for v in clean_verifications:
         hid = ctx.host(v["host"])
         if v["result"] == "intact":
-            s = ctx.summary.setdefault((hid, v["object"]), {"counts": collections.Counter(), "times": {}, "comparisons": 0, "intact": 0, "interval": None})
+            s = ctx.summary.setdefault((hid, v["object"]), new_summary())
             s["intact"] += 1
             continue
         ctx.observe(hid, "recovery_loss_verified", v["object"], normal_time(v["verified_utc"]), None,
@@ -1867,11 +1956,22 @@ def main():
     summary_page = NoReplacePage(TOOL, ["summary"], limit)
     flag_counts = collections.Counter()
     for (hid, obj), s in sorted(ctx.summary.items(), key=lambda kv: (rank[ctx.names[kv[0][0]]], kv[0][1])):
+        if late():
+            stopped["summary_rows_not_written"] = stopped.get("summary_rows_not_written", 0) + 1
+            continue
         c = s["counts"]
         flags = []
         acted = c["command_seen"] or c["action_attempted"]
         if c["command_seen"] and s["comparisons"] and not c["inventory_change_observed"]:
-            flags.append("command_seen_without_inventory_change")
+            # an inventory that agrees says nothing about a command it does not cover: the order of the command and the inventories decides
+            clock = ctx.clocks.get(ctx.names[hid], (0, 0))
+            seen = s["times"].get("command_seen")
+            if seen and s["span"] and seen[0] - clock[0] - clock[1] > s["span"][1]:
+                flags.append("command_seen_after_the_last_inventory")
+            elif seen and s["span"] and seen[1] - clock[0] + clock[1] < s["span"][0]:
+                flags.append("command_seen_before_the_first_inventory")
+            else:
+                flags.append("command_seen_without_inventory_change")
         if c["command_seen"] and not s["comparisons"]:
             flags.append("command_seen_nothing_to_compare")
         if c["inventory_change_observed"] and not acted:
@@ -1908,6 +2008,12 @@ def main():
         reasons.append("%s: %d held back by a bound of the tool" % (code, n))
     if stopped.get("inputs_not_read"):
         reasons.append("the time limit (max_seconds %d) was reached: %d inputs were not read" % (max_seconds, stopped["inputs_not_read"]))
+    if stopped.get("attempts_not_matched"):
+        reasons.append("the time limit (max_seconds %d, and %d seconds more for the phases after the reading) was reached while exit records were being matched: %d attempts were not matched, so their outcome is neither reported nor counted as missing" % (max_seconds, POST_GRACE, stopped["attempts_not_matched"]))
+    if stopped.get("comparisons_not_made"):
+        reasons.append("the time limit (max_seconds %d, and %d seconds more for the phases after the reading) was reached while inventories were being compared: %d comparisons were not made" % (max_seconds, POST_GRACE, stopped["comparisons_not_made"]))
+    if stopped.get("summary_rows_not_written"):
+        reasons.append("the time limit (max_seconds %d, and %d seconds more for the phases after the reading) was reached while the summary was written: %d host and object rows of it are not written" % (max_seconds, POST_GRACE, stopped["summary_rows_not_written"]))
     if stopped.get("input_cut_by_clock"):
         reasons.append("the time limit (max_seconds %d) was reached while %d inputs were being read: the rows after the last one read are not counted" % (max_seconds, stopped["input_cut_by_clock"]))
     if not ctx.serial and not any(inputs_read.values()):
@@ -1916,6 +2022,9 @@ def main():
         reasons.append("%d strings held an identifier-shaped text that the first rule missed and were replaced at the output (see boundary)" % BOUNDARY["replaced"])
     complete = "partial" if reasons else "complete"
     basis = "; ".join(reasons) if reasons else "every input was read to its end, every answer read says complete, and the time limit was not reached"
+    if unchecked["shell_histories"]:
+        basis += ("; %d shell_histories text files were given without their answer: a text file carries no status of its producer, so they were read to their end and "
+                  "whether the producer read its sources to the end is not known" % unchecked["shell_histories"])
     answer = release({
         "parser": PARSER,
         "complete": complete,
@@ -1928,6 +2037,7 @@ def main():
         "observation_counts": {cls: sum(s["counts"][cls] for s in ctx.summary.values()) for cls in CLASSES},
         "flag_counts": dict(flag_counts),
         "inputs_read": dict(inputs_read),
+        "inputs_whose_producer_status_is_unknown": dict(unchecked),
         "observations_left_out_by_only_objects": ctx.filtered,
         "time_limit": {"max_seconds": max_seconds, "reached": bool(stopped), **stopped},
         "summary": summary_page.page,
