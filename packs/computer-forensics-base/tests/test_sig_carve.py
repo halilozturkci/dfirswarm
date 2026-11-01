@@ -223,5 +223,84 @@ class SigCarve(Case):
         self.assertEqual(os.listdir(folder), [], "a half-written results file was left behind")
 
 
+def load_tool():
+    """run.py as a module (its main() runs only when it is the program), for the pager it carries."""
+    import importlib.util
+    from support import tool_path
+    spec = importlib.util.spec_from_file_location("sig_carve_tool", tool_path("sig_carve"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class SigCarvePager(Case):
+    """The pager is the tool library's second LosslessPage generation, byte for byte."""
+
+    def in_dir(self, fn):
+        before = os.getcwd()
+        os.chdir(self.dir)
+        try:
+            return fn()
+        finally:
+            os.chdir(before)
+
+    def test_a_row_that_holds_a_name_that_is_not_utf8_pages_to_a_readable_file(self):
+        mod = load_tool()
+        env = {k: os.environ.pop(k, None) for k in ("JOB_ID", "OUT")}
+        try:
+            def run():
+                for pager_class in (mod.LosslessPage, mod.SafePage):
+                    page = pager_class("sig_carve-surrogate-%s" % pager_class.__name__, ["k"], 2)
+                    rows = [{"offset": i, "name": "caf\udcff-%d" % i} for i in range(5)]
+                    for row in rows:
+                        page.add(row)
+                    info = page.finish()
+                    self.assertEqual((info["matched"], info["returned"], info["truncated"]), (5, 2, True))
+                    lines = self.read(info["all_results"]).splitlines()
+                    self.assertEqual(len(lines), 5, pager_class.__name__)
+                    self.assertEqual([json.loads(x)["name"] for x in lines], [r["name"] for r in rows], "the lone surrogate is an escape, lost nowhere")
+            self.in_dir(run)
+        finally:
+            for k, v in env.items():
+                if v is not None:
+                    os.environ[k] = v
+
+    def test_the_library_pager_says_as_json_when_the_whole_result_cannot_be_written_and_exits_1(self):
+        import subprocess
+        import sys
+        from support import tool_path
+        if os.geteuid() == 0:
+            self.skipTest("root writes everywhere")
+        os.makedirs(self.path("work"))
+        os.chmod(self.path("work"), 0o555)
+        code = ("import importlib.util, sys\n"
+                "spec = importlib.util.spec_from_file_location('m', %r)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n"
+                "p = m.LosslessPage('sig_carve-ro', ['k'], 1)\nfor i in range(4): p.add({'offset': i})\np.finish()\n" % tool_path("sig_carve"))
+        env = {k: v for k, v in os.environ.items() if k not in ("JOB_ID", "OUT")}
+        try:
+            proc = subprocess.run([sys.executable, "-c", code], cwd=self.dir, env=env, capture_output=True, text=True, timeout=60)
+        finally:
+            os.chmod(self.path("work"), 0o755)
+        self.assertEqual(proc.returncode, 1)
+        self.assertNotIn("Traceback", proc.stderr)
+        said = json.loads(proc.stdout)
+        self.assertEqual(said["status"], "failed")
+        self.assertIn("cannot be written", said["error"])
+
+    def test_the_pager_is_the_library_s_second_generation_byte_for_byte(self):
+        from support import PACK_DIR, tool_path
+        library = os.path.join(PACK_DIR, "..", "..", "tool-library", "regkv", "run.py")
+        if not os.path.isfile(library):
+            self.skipTest("this copy of the pack has no tool library beside it")
+
+        def pager(path):
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            a = text.index("class LosslessPage")
+            return text[a:text.index("return result", text.index("def finish", a))]
+        self.assertEqual(pager(tool_path("sig_carve")), pager(library))
+        self.assertIn("_cannot_write", pager(tool_path("sig_carve")))
+
+
 if __name__ == "__main__":
     unittest.main()
