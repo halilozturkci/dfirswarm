@@ -11,6 +11,7 @@ Scope
 `scope/first-hour` first report, containment, preservation
 `scope/phase-timeline` phases, start and end
 `scope/triage-tools` survey and note scan counts
+`scope/triage-tools-names` withheld paths
 `intrusion/entry-and-spread` entry, persistence, spread
 
 Encryptor

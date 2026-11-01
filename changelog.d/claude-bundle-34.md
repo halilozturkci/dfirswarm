@@ -48,3 +48,15 @@ pack's 7.2 finds packed regions of executables). `encryptor/samples-and-notes` a
 name it. Measured: a full scan of a 64 MiB file at window 64 took 19.1 s at 23 MB resident and wrote 106,687,821
 bytes of profile; a 64 MiB window takes about 2.3 s, so a window is not started when the time left is less
 than 60 ns per byte of it. The carrier tests for the names, the stop block and the withholding block list it.
+
+### Changed: ransomware-response `scope/triage-tools` hands its Names paragraph to `scope/triage-tools-names` and gains the survey-versus-extent rule
+
+The Names paragraph (what the survey and the scan withhold from a path, and the printed and withheld
+shapes) moved word for word to a second-level leaf, `scope/triage-tools-names`, which `scope/triage-tools`
+points to in the text ("Only if ..."). A sentence-by-sentence register of the old leaf against the two new
+ones shows 31 of 31 sentences in place and none lost; the sentence that says to run the survey with
+`secret_output: true` where key material is expected stays in `scope/triage-tools`. `scope/triage-tools`
+now says when to use `encrypted_survey` (which files look encrypted, and their tails) and when
+`encryption_extent` (where in a file windows read high, and the ranges left unread), and that neither one
+alone shows that a file was encrypted. Measured: `scope/triage-tools` 800 to 713 tokens, the new leaf 375;
+the router 381 of 400, the index 848 of 1,000.

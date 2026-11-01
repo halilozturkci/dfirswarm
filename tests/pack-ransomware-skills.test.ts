@@ -52,6 +52,7 @@ const OLD_IDS = [
 ];
 const SECOND: Record<string, string> = {
   "scope/triage-tools": "scope/first-hour",
+  "scope/triage-tools-names": "scope/triage-tools",
   "scope/phase-timeline": "scope/first-hour",
   "encryptor/windows-evidence": "encryptor/traces",
   "encryptor/samples-and-notes": "encryptor/traces",
@@ -63,6 +64,8 @@ const SECOND: Record<string, string> = {
   "reporting/conclusions-and-controls": "reporting/for-regulators",
 };
 
+// A second-level leaf made by a later split (it is in SECOND below, and pointed to by its parent in the text).
+const SECOND_ADDED = ["scope/triage-tools-names"];
 // Leaves added after the split pass: each one is a leaf of its own, named once by the router and listed in the index.
 const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage", "intrusion/entry-and-spread", "recovery/preserve-and-restore"];
 
@@ -248,8 +251,8 @@ test("ransomware/router is the pack's only router, within 400 tokens, holds no r
   assert.deepEqual([...named].sort(), [...skills.keys()].filter((id) => id !== ROUTER).sort());
   assert.equal(BEFORE.length, 17);
   for (const id of BEFORE) assert.ok(skills.has(id), `${id} is still a skill`);
-  assert.equal(skills.size, BEFORE.length + ADDED.length + 1, "the router and the leaves added since are the only skills added");
-  for (const id of ADDED) assert.ok(skills.has(id), `${id} is a skill`);
+  assert.equal(skills.size, BEFORE.length + ADDED.length + SECOND_ADDED.length + 1, "the router and the leaves added since are the only skills added");
+  for (const id of [...ADDED, ...SECOND_ADDED]) assert.ok(skills.has(id), `${id} is a skill`);
   // The generated index names it as the pack's router, which is the line the harness reads.
   assert.match(await readFile(join(SKILLS, "INDEX.md"), "utf8"), /^Router: `ransomware\/router`$/m);
 });
@@ -262,7 +265,7 @@ test("the pack index is at most 1,000 tokens counted as the harness counts it: t
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => /^- `[^`]+`/.test(l));
   const parsed = await readPackIndex(PACK);
   assert.deepEqual(parsed.entries.map((e) => e.line), lines, "the harness reads every entry line of the file, and no other");
-  assert.equal(parsed.entries.length, BEFORE.length + ADDED.length + 1);
+  assert.equal(parsed.entries.length, BEFORE.length + ADDED.length + SECOND_ADDED.length + 1);
   assert.equal(parsed.router, ROUTER);
   assert.equal(lines.reduce((n, l) => n + estimateTokens(l), 0), parsed.tokens);
   assert.ok(parsed.tokens <= SKILL_BUDGET.pack, `the pack index is ${parsed.tokens} tokens of entries, over ${SKILL_BUDGET.pack}`);
@@ -362,6 +365,35 @@ test("the README no longer says there is no method for hypervisors or network st
   const nas = flat(skills.get("platforms/nas-storage")!.body);
   assert.match(nas, /One member of a RAID set, imaged alone, is not a logical acquisition/);
   for (const route of ["client", "management plane", "replication"]) assert.ok(nas.includes(route), `the NAS leaf names ${route}`);
+});
+
+test("scope/triage-tools gave its Names paragraph to a second-level leaf, kept the key-material sentence, and gained the survey-versus-extent rule", async () => {
+  const skills = await load(SKILLS);
+  const tt = flat(skills.get("scope/triage-tools")!.body);
+  const names = flat(skills.get("scope/triage-tools-names")!.body);
+  // the rule: both tools named, which one shows what, and that neither alone shows encryption
+  assert.ok(tt.includes("`encrypted_survey`") && tt.includes("`encryption_extent`"));
+  assert.match(tt, /`encrypted_survey` shows which files look encrypted, and their tails/);
+  assert.match(tt, /`encryption_extent` shows where in a file windows read high, and which ranges it left unread/);
+  assert.match(tt, /Neither one alone shows that a file was encrypted/);
+  assert.deepEqual(skills.get("scope/triage-tools")!.meta.tools, ["encrypted_survey", "ransom_note_scan", "file_type", "encryption_extent"]);
+  // the move: the sentences of the old Names paragraph are in the new leaf and no longer in the old one
+  for (const sentence of [
+    "Both tools withhold from every path each component that holds an identifier-shaped token",
+    "The shape is a deny-list: other shapes print.",
+    "a random 8-character token 3%, 12 characters 0.6%",
+    "About 6% of ordinary names are withheld: list the directory.",
+    "A second check replaces what slips through and marks the answer `partial`.",
+  ]) {
+    assert.ok(names.includes(sentence), `moved: ${sentence}`);
+    assert.ok(!tt.includes(sentence), `not repeated: ${sentence}`);
+  }
+  assert.match(tt, /Only if you say what a withheld path hides, or quote `paths_withheld`:\s*`scope\/triage-tools-names`/);
+  // what must survive the move (RAN-04): key material is expected in the survey's tails, so the job runs with secret_output: true
+  assert.match(tt, /`encrypted_survey` prints the last `tail_bytes` bytes of sampled files; where key material is expected there, run it with `secret_output: true` too\./);
+  for (const id of ["scope/triage-tools", "scope/triage-tools-names"]) assert.ok(TOKENS(skills.get(id)!.text) <= 800, id);
+  assert.deepEqual(skills.get("scope/triage-tools-names")!.meta.needs, []);
+  assert.doesNotMatch(skills.get("scope/triage-tools-names")!.text, /operator/i);
 });
 
 test("the two method leaves for entry and for preservation are named once, conditional about other packs' tools, and repeat no sentence of the leaves they sit beside", async () => {

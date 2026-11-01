@@ -26,3 +26,4 @@ Router: `ransomware/router`
 - `scope/first-hour` First-hour scope, containment and preservation: Suspected ransomware, destructive encryption or data extortion has just been reported.
 - `scope/phase-timeline` Keeping a phase timeline of the incident: You order the incident's phases, or must say when it began and ended.
 - `scope/triage-tools` What the survey and the note scan show: You run encrypted_survey or ransom_note_scan over an extracted tree and will quote a count.
+- `scope/triage-tools-names` What the triage tools withhold from a path: You say what the survey and the scan withhold from a path, or quote a withheld count.
