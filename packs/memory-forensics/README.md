@@ -7,14 +7,15 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Twenty-five skills**, fourteen decision leaves, ten second-level leaves they point to
+**Twenty-eight skills**, seventeen decision leaves, ten second-level leaves they point to
 ("only if X") and the router `memory/router` (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf); every leaf is at most 800 tokens.
 
 | Family | Skills |
 | --- | --- |
-| Triage | `triage/what-you-have` (second level: `triage/container-details`), `triage/no-framework` (`triage/carve-signatures`, `triage/paging-files`), `triage/address-spaces`, `triage/coverage` |
+| Triage | `triage/what-you-have` (second level: `triage/container-details`), `triage/no-framework` (`triage/carve-signatures`, `triage/paging-files`), `triage/address-spaces`, `triage/coverage`, `triage/memprocfs` |
 | Frameworks | `triage/volatility` (`triage/volatility-symbols`, `triage/volatility-plugins`, `triage/volatility-catalogue`) |
-| Symbols | `symbols/macos` (no support claim for any macOS version) |
+| Symbols | `symbols/macos` (no support claim for any macOS version), `symbols/linux` |
+| Artefacts | `artifacts/reconstruction` |
 | Processes | `processes/injection` (`processes/preserve-regions`), `processes/kernel-integrity` |
 | Time | `timeline/memory` |
 | Network | `network/state` (`network/timestamps-dns`) |

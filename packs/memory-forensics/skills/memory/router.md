@@ -24,6 +24,9 @@ Reading the image
 `triage/address-spaces` offset, physical or virtual address
 `triage/coverage` what a search covered
 `symbols/macos` macOS kernel and symbols
+`symbols/linux` Linux kernel table, exact match
+`triage/memprocfs` MemProcFS tree and FUSE needs
+`artifacts/reconstruction` hit to slice to record
 
 Processes and text
 `processes/injection` what ran, injected code

@@ -65,6 +65,7 @@ const SECOND: Record<string, string> = {
 // Leaves added after the router that need no new tool: each is a decision leaf of its own that the router names.
 const TOP_LEAVES_ADDED = [
   "triage/address-spaces", "triage/coverage", "symbols/macos", "timeline/memory", "processes/kernel-integrity",
+  "triage/memprocfs", "symbols/linux", "artifacts/reconstruction",
 ];
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
@@ -205,6 +206,9 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["tools/mem_profile/run.py", "triage/coverage", ["sampled_ranges", "file_pages_4k_estimate"]],
   ["tools/mem_carve/run.py", "triage/coverage", ["resume_start"]],
   ["tools/mem_profile/run.py", "timeline/memory", ["system_time_filetime"]],
+  ["tools/mem_fs/run.py", "triage/memprocfs", ["no_fuse", "blocked_by", "what_to_do", "cleanup"]],
+  ["tools/isf_intake/run.py", "symbols/linux", ["linux_banner"]],
+  ["tools/carve_handoff/run.py", "artifacts/reconstruction", ["fragmentation", "cut_complete", "validation", "parser_result"]],
 ];
 
 test("the tool fields a skill names are fields the tools write", async () => {
