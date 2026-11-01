@@ -242,13 +242,13 @@ test("a parameter or property named or shaped like a credential is withheld from
 
     const outside = refused(await tool(UAL, cwd, { path: "work/ev", write_values: true }));
     assert.match(outside.error, /write_values is refused outside a job/);
-    const sealed = body(await asJob(UAL, cwd, { path: "work/ev", write_values: true }, {}, "out", "jsealed"));
+    const sealed = body(await asJob(UAL, cwd, { path: "work/ev", write_values: true }, { SECRET_OUTPUT: "1" }, "out", "jsealed"));
     const file = join(cwd, "out", "ual-values.jsonl");
     assert.equal((await stat(file)).mode & 0o777, 0o600);
     const values = await readFile(file, "utf8");
     for (const needle of [PASSWORD, CLIENT_SECRET, JWT]) assert.ok(values.includes(needle));
     assert.equal(sealed.secret_values.written, 3);
-    const second = refused(await asJob(UAL, cwd, { path: "work/ev", write_values: true }, {}, "out", "jsealed"));
+    const second = refused(await asJob(UAL, cwd, { path: "work/ev", write_values: true }, { SECRET_OUTPUT: "1" }, "out", "jsealed"));
     assert.match(second.error, /the values file already exists/);
     assert.equal(await readFile(file, "utf8"), values);
   });

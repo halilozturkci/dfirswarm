@@ -331,13 +331,13 @@ test("a credential-shaped value in a record is withheld from every row, the raw 
 
     const outside = refused(await tool(SIGNIN, cwd, { path: `work/ev/${JWT}.json`, write_values: true }));
     assert.match(outside.error, /write_values is refused outside a job/);
-    const sealed = body(await asJob(SIGNIN, cwd, { path: `work/ev/${JWT}.json`, write_values: true }, {}, "out", "jsealed"));
+    const sealed = body(await asJob(SIGNIN, cwd, { path: `work/ev/${JWT}.json`, write_values: true }, { SECRET_OUTPUT: "1" }, "out", "jsealed"));
     const file = join(cwd, "out", "signin-values.jsonl");
     assert.equal((await stat(file)).mode & 0o777, 0o600);
     const values = await readFile(file, "utf8");
     assert.ok(values.includes(PASSWORD) && values.includes(JWT));
     assert.ok(sealed.secret_values.written >= 3);
-    const second = refused(await asJob(SIGNIN, cwd, { path: `work/ev/${JWT}.json`, write_values: true }, {}, "out", "jsealed"));
+    const second = refused(await asJob(SIGNIN, cwd, { path: `work/ev/${JWT}.json`, write_values: true }, { SECRET_OUTPUT: "1" }, "out", "jsealed"));
     assert.match(second.error, /the values file already exists/);
     assert.equal(await readFile(file, "utf8"), values);
   });

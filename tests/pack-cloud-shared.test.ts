@@ -562,7 +562,7 @@ test("SIGTERM flushes the values file: what the run withheld before the signal i
     await withDir(async (cwd) => {
       await put(cwd, "work/ev/big.json", make(300_000));
       await asJob(script, cwd, { path: "work/ev/missing" });
-      const { child, done } = spawnTool(script, cwd, { path: "work/ev/big.json", write_values: true, time_limit_seconds: 300, ...(name === "cloudtrail_parse" ? { link_sessions: false } : {}) }, { JOB_ID: "jflush", OUT: join(cwd, "out") });
+      const { child, done } = spawnTool(script, cwd, { path: "work/ev/big.json", write_values: true, time_limit_seconds: 300, ...(name === "cloudtrail_parse" ? { link_sessions: false } : {}) }, { JOB_ID: "jflush", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" });
       // The paged result is opened at the 501st row, so once a file is there the first record, which holds the secret, was withheld.
       let started = false;
       for (let i = 0; i < 1200 && !started; i++) {
@@ -578,5 +578,43 @@ test("SIGTERM flushes the values file: what the run withheld before the signal i
       assert.ok(file, `${name}: the values file is kept`);
       assert.ok((await readFile(join(cwd, "out", file!), "utf8")).includes(secret), `${name}: the withheld original reached the file before the process ended`);
     });
+  }
+});
+
+test("write_values is refused as JSON, before anything is created, in a job whose SECRET_OUTPUT is not 1: nothing is written under $OUT", async () => {
+  const secret = "Hunter2-correct-horse-9";
+  const cases: Array<[string, string, string, Record<string, unknown>]> = [
+    ["cloudtrail_parse", TRAIL, trail(ct({ eventID: "g-0", eventSource: "s3.amazonaws.com", eventName: "GetObject", userIdentity: ALICE, requestParameters: { password: secret } })), { link_sessions: false }],
+    ["signin_analyse", SIGNIN, JSON.stringify({ value: [{ id: "g-0", createdDateTime: "2026-02-14T09:00:00Z", userPrincipalName: "a@example.org", userId: "id-0", status: { errorCode: 0 }, password: secret }] }), {}],
+    ["ual_parse", UAL, JSON.stringify([{ Id: "u-0", Operation: "Send", UserId: "a@b.c", CreationTime: "2026-02-14T09:00:00Z", Password: secret }]), {}],
+  ];
+  const saved = process.env.SECRET_OUTPUT;
+  delete process.env.SECRET_OUTPUT;
+  try {
+    for (const [name, script, evidence, extra] of cases) {
+      await withDir(async (cwd) => {
+        await put(cwd, "work/ev/e.json", evidence);
+        // Unset, empty, and anything but the exact "1" (the harness sets "1" and nothing else).
+        const settings: Array<Record<string, string>> = [{}, { SECRET_OUTPUT: "" }, { SECRET_OUTPUT: "0" }, { SECRET_OUTPUT: "true" }, { SECRET_OUTPUT: "01" }, { SECRET_OUTPUT: " 1" }];
+        for (const env of settings) {
+          const out = refused(await asJob(script, cwd, { path: "work/ev/e.json", write_values: true, ...extra }, env));
+          const label = `${name} with ${JSON.stringify(env)}`;
+          assert.equal(out.status, "failed", label);
+          assert.equal(out.write_values, "refused", label);
+          assert.equal(out.written, false, label);
+          assert.match(out.error, /not run as secret output/, label);
+          assert.match(out.error, /Nothing was written/, label);
+          assert.ok(!JSON.stringify(out).includes(secret), label);
+          assert.deepEqual(await filesUnder(join(cwd, "out")), [], `${label}: nothing under $OUT`);
+        }
+        // With the variable the harness sets, the same call writes the file.
+        const ok = body(await asJob(script, cwd, { path: "work/ev/e.json", write_values: true, ...extra }, { SECRET_OUTPUT: "1" }));
+        assert.equal(ok.secret_values.requested, true, name);
+        assert.ok(ok.secret_values.written >= 1, name);
+      });
+    }
+  } finally {
+    if (saved === undefined) delete process.env.SECRET_OUTPUT;
+    else process.env.SECRET_OUTPUT = saved;
   }
 });

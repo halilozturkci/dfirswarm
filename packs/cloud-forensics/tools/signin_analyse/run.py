@@ -40,7 +40,8 @@ An empty list excludes nothing: the export may be a slice of the account's activ
 
 SECRET-SAFE OUTPUT (docs/packs.md, "Secrets and sensitive output"). A field whose name says it is a secret, and any text
 shaped like one, is withheld in every channel; the original goes to `signin-values.jsonl` under $OUT (mode 0600, created
-first) only when `write_values: true` is asked, in a job, which the skill says to run with `secret_output: true`. Names,
+first) only when `write_values: true` is asked, in a job run as secret output (the manifest makes a job with write_values one; otherwise it is refused and nothing
+is written). Names,
 addresses, locations and device identifiers are personal data, not secrets: they are in the answer; the case's own rules
 say where such output may go.
 """
@@ -619,8 +620,9 @@ class SecretValues:
 
     The secret-safe output pattern of recovery_key_scan (docs/packs.md, "Secrets and sensitive output"), copied
     unchanged but for the file's name and the tool named in the refusal. With `enabled` false it writes nothing and
-    `summary()` says so. Enabled, it is refused outside a job; inside one the file is created at once, before anything
-    is read (mode 0600, O_EXCL and O_NOFOLLOW: a file or a link already at that name is refused by name, a dangling link
+    `summary()` says so. Enabled, it is refused outside a job and in a job that was not run as secret output
+    (SECRET_OUTPUT is not "1"; the manifest's `secret_output` makes a job with write_values one); inside a secret job
+    the file is created at once, before anything is read (mode 0600, O_EXCL and O_NOFOLLOW: a file or a link already at that name is refused by name, a dangling link
     included), so with nothing withheld it stays an empty file and the answer says written: 0.
     """
 
@@ -639,6 +641,15 @@ class SecretValues:
                 "write_values is refused outside a job: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=%s with "
                 "secret_output: true, and ask again there. Nothing was written." % tool
+            )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise SecretValuesRefused(
+                "write_values is refused in a job that was not run as secret output: its files would "
+                "be sealed as ordinary output. The harness sets SECRET_OUTPUT=1 for a secret job's "
+                "process and it is not set here. Run this as job_run tool=%s (its manifest makes a "
+                "job with write_values secret output), or give a command job secret_output: true; "
+                "if that is refused the same way, this run's harness does not set the variable and "
+                "the values mode is not available in it. Nothing was written." % tool
             )
         self.path = Path(self.out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), name)

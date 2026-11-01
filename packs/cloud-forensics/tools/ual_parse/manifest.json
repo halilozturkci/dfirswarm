@@ -73,17 +73,22 @@
     },
     "write_values": {
       "type": "boolean",
-      "description": "Write the originals of the values withheld from the answer to a mode 0600 file under $OUT. Honoured only when the tool runs as a job (run it with secret_output: true); outside a job it is refused and nothing is written"
+      "description": "Write the originals of the values withheld from the answer to a mode 0600 file under $OUT. The manifest declares secret output for it: a job with write_values runs as secret output whether or not the agent set the flag, and its values file is sealed sensitive. Honoured only in a job whose SECRET_OUTPUT is 1; outside a job, or in a job that is not secret output, it is refused as JSON and nothing is written"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 600,
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  },
   "example": "{\"path\": \"inputs/ual.csv\", \"notable_only\": true}",
   "by": "maintainer",
   "at": "2026-10-27T12:00:00.000Z",
-  "version": 8,
-  "sha256": "97e3764035f9d9f607e7210e8e98bd1fa31d7476d77158ad18d861bb0a72e192",
+  "version": 9,
+  "sha256": "068a0bbdca7c3636bc606d54170e49735788e69fcc06e51b9265f3798bd217c1",
   "use": {
     "names": [
       "AuditLog*.csv",

@@ -34,7 +34,8 @@ can hold a secret. A field whose name says it is one (a password, a secret, a to
 Web Token, a private key block, a value assigned to a credential name, the common token families), is withheld in every
 channel: a row, a path, an error message, the file the answer names. The row says how many characters, and the original
 goes to `cloudtrail-values.jsonl` under $OUT (mode 0600, created first) only when `write_values: true` is asked, in a
-job, which the skill says to run with `secret_output: true`. A name and a shape recognise some secrets and never all:
+job run as secret output (the manifest makes a job with write_values one; otherwise it is refused and nothing is
+written). A name and a shape recognise some secrets and never all:
 run the tool as a `secret_output` job whenever the export may hold request parameters.
 """
 # ---- BEGIN SHARED BLOCK ----------------------------------------------------------------------------------------------
@@ -612,8 +613,9 @@ class SecretValues:
 
     The secret-safe output pattern of recovery_key_scan (docs/packs.md, "Secrets and sensitive output"), copied
     unchanged but for the file's name and the tool named in the refusal. With `enabled` false it writes nothing and
-    `summary()` says so. Enabled, it is refused outside a job; inside one the file is created at once, before anything
-    is read (mode 0600, O_EXCL and O_NOFOLLOW: a file or a link already at that name is refused by name, a dangling link
+    `summary()` says so. Enabled, it is refused outside a job and in a job that was not run as secret output
+    (SECRET_OUTPUT is not "1"; the manifest's `secret_output` makes a job with write_values one); inside a secret job
+    the file is created at once, before anything is read (mode 0600, O_EXCL and O_NOFOLLOW: a file or a link already at that name is refused by name, a dangling link
     included), so with nothing withheld it stays an empty file and the answer says written: 0.
     """
 
@@ -632,6 +634,15 @@ class SecretValues:
                 "write_values is refused outside a job: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=%s with "
                 "secret_output: true, and ask again there. Nothing was written." % tool
+            )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise SecretValuesRefused(
+                "write_values is refused in a job that was not run as secret output: its files would "
+                "be sealed as ordinary output. The harness sets SECRET_OUTPUT=1 for a secret job's "
+                "process and it is not set here. Run this as job_run tool=%s (its manifest makes a "
+                "job with write_values secret output), or give a command job secret_output: true; "
+                "if that is refused the same way, this run's harness does not set the variable and "
+                "the values mode is not available in it. Nothing was written." % tool
             )
         self.path = Path(self.out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), name)

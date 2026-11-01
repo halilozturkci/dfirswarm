@@ -65,17 +65,22 @@
     },
     "write_values": {
       "type": "boolean",
-      "description": "Write the originals of the values withheld from the answer to a mode 0600 file under $OUT. Honoured only when the tool runs as a job (run it with secret_output: true); outside a job it is refused and nothing is written"
+      "description": "Write the originals of the values withheld from the answer to a mode 0600 file under $OUT. The manifest declares secret output for it: a job with write_values runs as secret output whether or not the agent set the flag, and its values file is sealed sensitive. Honoured only in a job whose SECRET_OUTPUT is 1; outside a job, or in a job that is not secret output, it is refused as JSON and nothing is written"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 600,
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  },
   "example": "{\"path\": \"inputs/signins.json\"}",
   "by": "maintainer",
   "at": "2026-10-27T12:00:00.000Z",
-  "version": 8,
-  "sha256": "e3438531bfa81f997882d7be0c5a21cb3f90576ded0d163461370dc4033902af",
+  "version": 9,
+  "sha256": "6f66fff1ebaddbc10f91b55a88400f6cf8a2f0244dc28ed6bf0e001f472020cb",
   "use": {
     "names": [
       "*signin*",
