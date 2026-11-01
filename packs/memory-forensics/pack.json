@@ -1,7 +1,7 @@
 {
   "id": "memory-forensics",
   "name": "Memory Forensics Pack",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Method and tooling for a memory image: what the container is before anything else, what can be read with no framework at all, processes and injection, network state, credential material, and the discipline that keeps a string in memory from becoming a claim about behaviour.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -28,7 +28,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "a8cb394ed2a570667aa9189ee2fc450d4b011ca8e998cb18ccf48005fa9e4116",
+      "README.md": "6af305bdde1207b4c98201dade7da8f2568dd3d83fbada476e05a2d8813552ff",
       "goals/memory-triage.md": "16661eee801bceda2ea7010e733ce1ad677f1e38489834ddb1be782d95b0b985",
       "requires/host.json": "0acbd4125515941f933809791a302f536589d85d3dc8d1730bf414585a5ae44f",
       "requires/python.txt": "805da5f067cc98775d074649955d9cca3e18379ef9284f73d162d6aae998f0f6",
@@ -41,7 +41,7 @@
       "skills/memory/router.md": "fed20cff3cdb70648fdab84d36c1a0a860135e0514de3f1022afce8369cf8741",
       "skills/network/state.md": "b8c5f5fc2e0a08b4fa739cbc3705b2b7a1a0a9ecaa48add5d09158ff273faa74",
       "skills/network/timestamps-dns.md": "1d5165f0064af6389bdf76d218c38a63374259b7f2f74712d50bdb5fa39760b6",
-      "skills/patterns/yara.md": "53875ca4790a5ef94766163a4dd0980430ec489ac2147eb786b19a3607079119",
+      "skills/patterns/yara.md": "b2062131417e39c13042709b724c836bbcb04262454c9919626b086428c8d591",
       "skills/processes/injection.md": "1ebcee919230e1df158728c4360fb9f1f52d32952c69a0c709a6b52da1fbd93a",
       "skills/processes/kernel-integrity.md": "32d1b3653cfc3de5d87c50f19aaa03c7409b106f3dac58c93f3ce1fecef6ed73",
       "skills/processes/preserve-regions.md": "994df88602236c206e1cb9342f4dacf3da9538d177c7f1ebc7d1019a48652757",
@@ -55,7 +55,7 @@
       "skills/triage/no-framework.md": "b80e797e7eb3d3b7175ab073ff02e6c6c11fd0e7eb4c63b18ebab76f6cb2a3ab",
       "skills/triage/paging-files.md": "817769f8e71c453e04f02b120c43ec58f15a8039881c42e0e33dfcc45e936d06",
       "skills/triage/volatility-catalogue.md": "dbbe0140769636f8f39dd2497dca58e369e62222089206dc10c5f9d3fe310c75",
-      "skills/triage/volatility-plugins.md": "8d05f22a29bc0f4801bef06a4545df9b22ce458a28642eefce2f2cbc2ed43540",
+      "skills/triage/volatility-plugins.md": "f31917912ac5446ff7ef5f0a3e4f28b896e63d710710e70dfc75ec6d7c478227",
       "skills/triage/volatility-symbols.md": "09d32c3953d3f1a890313b14703ef90551e4e5b3e2ef8bc27bb87906c7a18d91",
       "skills/triage/volatility.md": "60354478825f341dfb74ba7f8c69fa684d757228175888aaaa9da5ba5ec687a4",
       "skills/triage/what-you-have.md": "9c694ae5c0c695fc243b486390fdd95a728ccef2fd2c01f4dd772a1b8e012355",
@@ -65,6 +65,8 @@
       "tools/mem_fs/run.py": "d8a45d0cf6129e12b887b9141d148094b31262d8833df57eb8cda0c542983c07",
       "tools/mem_profile/manifest.json": "df7b7893ef88066b64e156cf12a6cac8f317c02c3fe2560b686701c47fd24fe9",
       "tools/mem_profile/run.py": "7926facfc4c253eb0806529feac6f76c44b25ca70a599f038e2320d61f020c95",
+      "tools/mem_registry/manifest.json": "0cabfa0c5e6ec95b9c30c8b715f26034f8d6582b16a486a69f791ca39886cf68",
+      "tools/mem_registry/run.py": "38404d095285f03022d0915707fbc4987710c6734084c3133aa1ec5b8197536d",
       "tools/vol_readiness/manifest.json": "10c01ab600143cb801ef892324474e65f4020b8069eb86cb2a6f9737ef673411",
       "tools/vol_readiness/run.py": "9cfcad8252d767ec26977ee83bb0a7dce692d6554c5c9864228fa3545956cee0"
     }
@@ -73,6 +75,7 @@
     "mem_carve",
     "mem_fs",
     "mem_profile",
+    "mem_registry",
     "vol_readiness"
   ],
   "skills": 25,

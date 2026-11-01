@@ -3,7 +3,7 @@ id: triage/volatility-plugins
 title: Volatility plugins by operating system
 when: Choosing Windows, Linux or macOS plugins, or the option that writes a region to disk.
 needs: []
-tools: []
+tools: [mem_registry]
 requires_host: [vol]
 ---
 
@@ -22,6 +22,8 @@ Use only if you pick plugins for a Windows, Linux or macOS image. Not for the of
     windows.handles    what a process could reach
     windows.modules / windows.dlllist   kernel and per-process modules
     windows.svcscan    registered and residual services
+
+`mem_registry` lists the hives and reads one key of one hive through `vol`, offline; it withholds credential-named values and refuses SAM and SECURITY outside a secret-output job.
 
 As of October 2026, in 2.28.2, the older `windows.malfind` and `linux.malfind`
 names are deprecated forwarding classes of the `.malware.malfind` plugins (a
