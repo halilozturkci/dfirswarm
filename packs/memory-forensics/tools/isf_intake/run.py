@@ -18,7 +18,10 @@ for character, a banner found in the image. A near release is no match.
 The converter is run in this tool's own process group (never a session of its own), with the argv and the converter's version recorded in the answer. The
 produced table is read as it streams: its size and sha256 are counted, and the base64 `constant_data` of its `linux_banner` symbol is found
 without holding the table. It is written under a hidden name and placed without replacing an earlier file. A symbol table is not a secret, but it is local-only
-(triage/volatility-symbols): it is never to go into a thread or a report package.
+(triage/volatility-symbols), and it is never to go into a thread or a report package. This table is the one exception to "never in a job's output": the tool
+contract has a job write only under $OUT, so a ready table is there; the person copies it to the local symbols directory and removes it from $OUT before any
+report package or thread (the answer names the file: table.file, table.remove_before_report). "Character for character" means equal once the line end and NULs
+that follow a banner in the kernel's string are taken off; nothing else is.
 
 verdict `ready`: the table's banner equals a banner found in the image and the build identity agrees. It says the table can be selected for that
 kernel; it does not say the examination will work, that the running kernel is that banner's (an image can hold more than one banner: the answer counts
@@ -1939,7 +1942,8 @@ class Table:
 
 
 def normal(banner):
-    return banner.replace("\x00", "").rstrip("\n \x00")
+    """A banner without the line end and the NULs the kernel's string carries after its text (and nothing else removed: no space, no case, no digit)."""
+    return banner.rstrip("\n\x00")
 
 
 def parse_args(args):
@@ -1984,7 +1988,8 @@ def answer(p, verdict, basis, status, status_basis, **more):
            "status": status, "status_basis": status_basis, **more}
     out["notes"] = ["Ready means the table's banner is, character for character, a banner found in the image and the build identity agrees; it is not a claim that "
                     "an examination will work, that the running kernel is that banner's, or that any Linux or macOS version is supported. macOS is not handled.",
-                    "A symbol table is local-only: it is never to go into a thread or a report package (triage/volatility-symbols).",
+                    "A symbol table is local-only (triage/volatility-symbols). This tool's table is the one exception: the tool contract has a job write only under $OUT, so a "
+                    "ready table is there. Copy it to the local symbols directory and remove it from $OUT (the file named in table.file) before any report package or thread.",
                     "Not run against the real dwarf2json or Volatility here: the tests use stand-ins that follow their documented output."]
     notes = process_notes()
     if notes:
@@ -2101,7 +2106,8 @@ def main():
         name = "isf_intake-%s.json" % hashlib.sha256(produced.encode("utf-8", "surrogatepass")).hexdigest()[:16]
         final = table.place(name)
         TABLE["file"] = None
-        info.update({"kept": True, "file": shown(str(final), "path"), "sha256": table.digest.hexdigest(), "local_only": True})
+        info.update({"kept": True, "file": shown(str(final), "path"), "sha256": table.digest.hexdigest(), "local_only": True,
+                     "remove_before_report": "copy this file to the local symbols directory, then remove it from $OUT (in a job) before any report package or thread"})
         answer(p, "ready", "the table's linux_banner is, character for character, a banner found in the image and the build identity agrees; the table is in table.file "
                "(%d banner(s) were found in the image: which one the running kernel has is not decided here)" % len(banners), "complete",
                "the conversion ended with exit 0 and the table's banner was compared with the image's", converter=converter_info, table=info)

@@ -103,7 +103,8 @@ test("hivelist: one record per hive with its offset, plugin and version; SAM and
     assert.equal(out.volatility, "2.28.2");
     const rows: any[] = out.records.rows;
     assert.deepEqual(rows.map((r) => r.hive_offset), [SYSTEM, SAM, SECURITY, NTUSER, UNNAMED].map(hex));
-    assert.deepEqual(rows.map((r) => r.credential_class), [false, true, true, false, false]);
+    assert.deepEqual(rows.map((r) => r.credential_class), [false, true, true, false, true], "a hive whose path could not be read is taken as credential-class");
+    assert.deepEqual(rows.map((r) => r.unnamed), [false, false, false, false, true]);
     assert.ok(rows.every((r) => r.plugin === "windows.registry.hivelist.HiveList" && r.volatility === "2.28.2"));
     assert.deepEqual(out.coverage.hives_found, 5);
     assert.equal(out.coverage.hives_named, 4);
@@ -389,4 +390,25 @@ test("one real run, when a Volatility is on PATH (otherwise skipped, and said so
   const has = spawnSync("sh", ["-c", "command -v vol"], { encoding: "utf8" });
   if (has.status !== 0) { t.skip("no `vol` on PATH: the readings of the real hivelist and printkey output were not exercised"); return; }
   t.skip("a real run needs a small Windows image and its symbol table, which this repository does not carry (ask the owner for a public sample)");
+});
+
+test("an unnamed hive is refused like SAM outside a secret job; a placeholder row is counted and makes the answer partial; symbols_dir takes no semicolon", { timeout: 120 * SECOND }, async () => {
+  await withCwd(async (cwd, bin) => {
+    let env = await stubVol(cwd, bin, { help: { stdout: HELP, stderr: HELP_ERR }, hivelist: { stdout: HIVELIST() }, printkey: { stdout: PK_HEAD + pkRow(UNNAMED, "REG_SZ", "\\Run", "x", "y") } });
+    let out = parse(await runTool(REG, cwd, { path: "inputs/mem.raw", mode: "printkey", offset: hex(UNNAMED) }, env, bin));
+    assert.equal(out.status, "failed");
+    assert.equal(out.hive, "refused");
+    assert.ok(!(await argvLog(cwd)).some((c) => c.some((x) => x.includes("printkey") && x.includes("--offset"))), "printkey was not run on it");
+    // Volatility yields a placeholder row for a key it did not find; the quick renderer's form of it is UNVERIFIED, the guess is "-"
+    env = await stubVol(cwd, bin, { help: { stdout: HELP }, hivelist: { stdout: HIVELIST(false) }, printkey: { stdout: PK_HEAD + pkRow(SYSTEM, "Key", "\\REGISTRY\\MACHINE\\SYSTEM\\Absent", "-", "-") } });
+    out = parse(await runTool(REG, cwd, { path: "inputs/mem.raw", mode: "printkey", offset: hex(SYSTEM), key: "Absent" }, env, bin));
+    assert.equal(out.status, "partial");
+    assert.equal(out.coverage.records.unreadable, 1);
+    assert.equal(out.coverage.hives_read, 0);
+    assert.match(out.status_basis, /placeholders/);
+    await mkdir(join(cwd, "a;b"));
+    out = parse(await runTool(REG, cwd, { path: "inputs/mem.raw", symbols_dir: "a;b" }, env, bin));
+    assert.equal(out.status, "failed");
+    assert.match(out.error, /semicolon/);
+  });
 });

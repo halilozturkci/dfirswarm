@@ -430,3 +430,16 @@ test("one real run, when a Volatility is on PATH (otherwise skipped, and said so
   if (has.status !== 0) { t.skip("no `vol` on PATH: the readings of the real listing and of a plugin's output were not exercised"); return; }
   t.skip("a real run needs a small Windows image and its symbol table, which this repository does not carry (ask the owner for a public sample)");
 });
+
+test("symbols_dir takes no semicolon, and the listing is read in the layout argparse gives Volatility 3 (a dotted name per line under the PLUGIN section)", { timeout: 60 * SECOND }, async () => {
+  await withCwd(async (cwd, bin) => {
+    const real = "usage: vol [-h] ... PLUGIN ...\n\nPlugins:\n  PLUGIN\n    windows.pslist.PsList  Lists the processes\n    linux.lsof.Lsof  Lists open files\n";
+    const env = await stubVol(cwd, bin, { help: real, help_err: HELP_ERR, plugin_help: PLUGIN_HELP, run: { stdout: HEADER + row(4, "System") } });
+    const out = parse(await runTool(VIEWS, cwd, base, env, bin));
+    assert.equal(out.plugin, "windows.pslist.PsList");
+    assert.equal(out.status, "complete");
+    await mkdir(join(cwd, "a;b"));
+    const bad = parse(await runTool(VIEWS, cwd, { ...base, symbols_dir: "a;b" }, env, bin));
+    assert.match(bad.error, /semicolon/);
+  });
+});

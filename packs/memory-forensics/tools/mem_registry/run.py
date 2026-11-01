@@ -1653,6 +1653,14 @@ def argv_safe(value):
     return "./" + value if value.startswith("-") else value
 
 
+def symbols_arg(args):
+    """symbols_dir: one directory. Volatility's -s takes a semicolon-separated list of paths, so a semicolon would name a second path."""
+    value = text_arg(args, "symbols_dir")
+    if value and ";" in value:
+        fail("symbols_dir must not contain a semicolon: Volatility's -s reads a semicolon-separated list of paths")
+    return value
+
+
 def left(cap):
     """Seconds a step may take: at most `cap`, and what is left of the call's clock less the reserve; 0 when there is none."""
     return max(0.0, min(cap, CLOCK["deadline"] - time.monotonic() - RESERVE))
@@ -2006,7 +2014,7 @@ def parse_args(args):
                 write_values = False
         elif not isinstance(value, bool):
             fail("%s must be true or false" % name)
-    symbols_dir = text_arg(args, "symbols_dir")
+    symbols_dir = symbols_arg(args)
     seconds = args.get("max_seconds", DEFAULT_SECONDS)
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds != seconds or not MIN_SECONDS <= seconds <= MAX_SECONDS:
         fail("max_seconds must be a number from %d to %d" % (MIN_SECONDS, MAX_SECONDS))
@@ -2031,8 +2039,14 @@ TIME_RE = re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:[+
 
 
 def credential_hive(hive_path):
-    """A hive path (\\REGISTRY\\MACHINE\\SAM, \\SystemRoot\\System32\\Config\\SECURITY) that is a credential-class hive."""
+    """A hive path (\\REGISTRY\\MACHINE\\SAM, \\SystemRoot\\System32\\Config\\SECURITY) that is a credential-class hive. A hive whose path hivelist
+    could not read (an empty path) is taken as credential-class too: nothing shows that it is not SAM or SECURITY."""
+    if not hive_path.strip():
+        return True
     return re.split(r"[\\/]", hive_path.strip())[-1].lower() in ("sam", "security")
+
+
+ABSENT = ("", "-", "N/A", "Unreadable", "UnreadableValue", "<UnreadableValue>")   # UNVERIFIED: how the quick renderer prints an UnreadableValue is not confirmed
 
 
 def shown_key(key):
@@ -2190,7 +2204,7 @@ def main():
         page = LosslessPage("mem_registry_hives", {"path": p["path"], "mode": "hivelist", "hives": sorted(hives.items())}, p["limit"])
         for offset, hive_path in sorted(hives.items()):
             row = {"hive_offset": "0x%x" % offset, "hive_path": shown(hive_path, "path") if hive_path else None,
-                   "credential_class": bool(hive_path) and credential_hive(hive_path), "plugin": listed["hivelist"], "volatility": version}
+                   "credential_class": credential_hive(hive_path), "unnamed": not hive_path.strip(), "plugin": listed["hivelist"], "volatility": version}
             page.add(sealed(row))
         out["records"] = page.finish()
         out["records"]["rows"] = page.page
@@ -2209,7 +2223,7 @@ def main():
         seconds = left(CLOCK["deadline"] - time.monotonic())
         if seconds < 2:
             fail("the call's clock left no time to read the key")
-        counts = {"records": 0, "keys": 0, "values": 0, "withheld": 0, "binary": 0, "bad_rows": 0, "stopped": None}
+        counts = {"records": 0, "keys": 0, "values": 0, "withheld": 0, "binary": 0, "bad_rows": 0, "unreadable": 0, "stopped": None}
         state = {"header": None}
         page = LosslessPage("mem_registry_records", {"path": p["path"], "offset": p["offset"], "key": p["key"], "recurse": p["recurse"]}, p["limit"])
         sfile = SecretFile({"path": p["path"], "offset": p["offset"], "key": p["key"], "recurse": p["recurse"]}) if secret_ok else None
@@ -2238,6 +2252,10 @@ def main():
                 ended["stop"] = True
                 return
             counts["records"] += 1
+            # Volatility 3 (printkey.py, 2.28.2) yields a placeholder row (an UnreadableValue in the name, type or data) for a key it could not find or a page it could not
+            # read, and logs why at debug level only. How the quick renderer prints one is UNVERIFIED here; the cells of ABSENT are the guess.
+            if (rtype == "Key" and name in ABSENT) or rtype in ABSENT or (rtype != "Key" and data in ABSENT[1:]):
+                counts["unreadable"] += 1
             record = {"hive_offset": "0x%x" % p["offset"], "type": rtype if rtype in KNOWN_TYPES else "other", "key": shown_key(key),
                       "name": shown(name, "name") if name and name != "-" else None,
                       "last_write": c.get("Last Write Time") if TIME_RE.fullmatch(c.get("Last Write Time", "")) else shown(c.get("Last Write Time", ""), "name"),
@@ -2289,11 +2307,13 @@ def main():
             reasons.append("the engine's log says %d time(s) that pages were missing (coverage.pages_missing_lines)" % log2.missing)
             coverage["pages_missing_lines"] += log2.missing
             coverage["pages_missing_quoted"] = log2.quoted
-        coverage["hives_read"] = 1 if counts["records"] else 0
+        if counts["unreadable"]:
+            reasons.append("%d record(s) are placeholders for a key not found or a page not readable (coverage.records.unreadable; Volatility logs why at debug level only)" % counts["unreadable"])
+        coverage["hives_read"] = 1 if counts["records"] - counts["unreadable"] > 0 else 0
         if not counts["records"] and not why:
             reasons.append("printkey printed no record: the key may not exist in this hive, or its pages were not readable")
         coverage["note"] = "one hive was asked for; hives_read is 1 when it gave a record"
-        coverage["records"] = {k: counts[k] for k in ("records", "keys", "values", "withheld", "binary", "bad_rows")}
+        coverage["records"] = {k: counts[k] for k in ("records", "keys", "values", "withheld", "binary", "bad_rows", "unreadable")}
         out["coverage"] = coverage
         out["records"] = page.finish()
         out["records"]["rows"] = page.page
@@ -2307,7 +2327,8 @@ def main():
                     "rules; withholding is by shape, so a plain password or a name under 16 characters is printed.",
                     "A value under a credential-named key or value name is withheld by that name, not by what it holds: a secret under an "
                     "innocent name is printed if it does not look like one.",
-                    "Not run against the real Volatility here: the reading of hivelist and printkey output follows Volatility 3's documented columns."]
+                    "Not run against the real Volatility here: the columns of hivelist and printkey were read from the 2.28.2 source; how the quick renderer prints an "
+                    "unreadable cell, and the wording of the engine's log lines that coverage.pages_missing_lines counts, are UNVERIFIED."]
     notes = process_notes()
     if notes:
         out["process_notes"] = notes

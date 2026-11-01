@@ -1680,12 +1680,20 @@ def argv_safe(value):
     return "./" + value if value.startswith("-") else value
 
 
+def symbols_arg(args):
+    """symbols_dir: one directory. Volatility's -s takes a semicolon-separated list of paths, so a semicolon would name a second path."""
+    value = text_arg(args, "symbols_dir")
+    if value and ";" in value:
+        fail("symbols_dir must not contain a semicolon: Volatility's -s reads a semicolon-separated list of paths")
+    return value
+
+
 def parse_args(args):
     allowed = {"path", "symbols_dir", "views", "plugins", "max_seconds", "limit"}
     unknown = sorted(k for k in args if k not in allowed)
     if unknown:
         fail("unknown parameter; the parameters are %s" % ", ".join(sorted(allowed)), count=len(unknown))
-    path, symbols_dir = text_arg(args, "path"), text_arg(args, "symbols_dir")
+    path, symbols_dir = text_arg(args, "path"), symbols_arg(args)
     views = args.get("views")
     if views is None:
         views = ["plugins"] + (["symbols"] if path else [])
@@ -1953,6 +1961,11 @@ def banner_release(text):
     return found.group(1) if found else None
 
 
+# Volatility 3 2.28.2 (isfinfo.py) has one identifier column, "Identifying information"; the two older names are read too, and a header with
+# none of them is unknown, not blocked.
+ISF_IDENT_COLUMNS = ("Identifying information", "Linux banner", "Mac banner")
+
+
 def scan_isf(vol, p, wanted_banners, guid):
     """isfinfo, read as it streams: (state text or None, tables listed, tables with a Linux or Mac banner, banners found among `wanted_banners`,
     whether a line names `guid`). Only the counts and the matches are kept."""
@@ -1974,16 +1987,18 @@ def scan_isf(vol, p, wanted_banners, guid):
         acc["tables"] += 1
         if needle and needle in line.lower():
             acc["guid"] = True
-        for name in ("Linux banner", "Mac banner"):
+        for name in ISF_IDENT_COLUMNS:
             i = acc["header"].get(name)
             if i is not None and i < len(cols):
                 value = cols[i].strip()
                 if value and value not in ("-", "None", "N/A", "<NotAvailableValue>"):
-                    acc["with_banner"] += 1
+                    # Volatility 3 prints the identifier decoded (live) or as str() of the bytes (cached): b'...' with an escaped line end.
                     value = re.sub(r"(\\n|\\x00)+'?$", "", value)
                     value = re.sub(r"^b?['\"]", "", value).rstrip("'\" \t")
-                    if value in wanted_banners:
-                        acc["matched"].add(value)
+                    if value.startswith(("Linux version ", "Darwin Kernel Version")):
+                        acc["with_banner"] += 1
+                        if value in wanted_banners:
+                            acc["matched"].add(value)
 
     def on_out(chunk):
         data = acc["carry"] + chunk
@@ -2009,6 +2024,9 @@ def scan_isf(vol, p, wanted_banners, guid):
         return "`isfinfo` exited with status %s" % result["code"], None
     if acc["header"] is None:
         return "`isfinfo` printed no header line with a URI column, so its table is not in the form this tool reads", None
+    if not any(name in acc["header"] for name in ISF_IDENT_COLUMNS):
+        return ("`isfinfo` printed a header with none of the columns this tool reads the identifier from (%s): its table is not in the form read, "
+                "so no banner can be matched" % ", ".join(ISF_IDENT_COLUMNS)), None
     if acc["skipped"]:
         return "`isfinfo` printed %d line(s) longer than %d bytes, which were not read" % (acc["skipped"], MAX_LINE), None
     return None, acc

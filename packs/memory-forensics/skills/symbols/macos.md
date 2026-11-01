@@ -3,7 +3,7 @@ id: symbols/macos
 title: macOS memory, the kernel and its symbols, with no support claim
 when: The capture is from a Mac, or you are asked whether a macOS image can be read.
 needs: []
-tools: [mem_profile]
+tools: [mem_profile, isf_intake]
 requires_host: [vol]
 ---
 
@@ -24,4 +24,4 @@ When no matching table exists, report the macOS analysis that needs symbols as u
 **Does not show.** That any macOS version, 13 to 26 included, is supported; that Intel results hold for Apple silicon; that a banner in the image means a matching table exists.
 
 Record: the capture method; the kernel string, its offset and the architecture as established or "unverified"; the ISF's provenance, or "no ISF: unexamined".
-Sensitive output: none here; a symbol table is not a secret, but it stays local-only and never goes into a job's output or a thread.
+Sensitive output: none here; a symbol table is not a secret, but it stays local-only and never goes into a job's output or a thread (one exception: the Linux table `isf_intake` writes, `symbols/linux`).

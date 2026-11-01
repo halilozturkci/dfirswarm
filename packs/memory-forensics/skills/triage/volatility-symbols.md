@@ -3,7 +3,7 @@ id: triage/volatility-symbols
 title: Which symbol tables the image holds, and a missing one
 when: The error names a PDB, GUID and age, or you say which kernels the image reads.
 needs: []
-tools: []
+tools: [isf_intake]
 requires_host: [vol]
 ---
 
@@ -39,4 +39,4 @@ need the symbol were not run, and which checks that need no kernel symbols
 
 **Does not show.** That a table's presence in a listing covers the whole kernel family or a Windows release; that a listing without the GUID means the kernel cannot be read anywhere; that a supplied table is valid before it was validated.
 
-Sensitive output: none here; a symbol table is not a secret, but it stays local-only and never goes into a job's output or a thread.
+Sensitive output: none here; a symbol table is not a secret, but it stays local-only and never goes into a job's output or a thread (one exception: the Linux table `isf_intake` writes, `symbols/linux`).

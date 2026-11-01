@@ -12,7 +12,8 @@
  * entry that no longer applies. The per-pack rerun tests stay: this driver adds one uniform check.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { chmod } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,6 +31,8 @@ type Case = {
   build: (dir: string) => Promise<Args>;
   large: Args;
   small: Args;
+  /** Extra environment for both runs (a stand-in program on PATH, say), made under `dir`. */
+  env?: (dir: string) => Promise<Record<string, string>>;
 };
 type Entry = { tool: string; item: string; why: string };
 
@@ -57,7 +60,54 @@ async function put(dir: string, rel: string, data: string | Buffer): Promise<voi
   await writeFile(join(dir, rel), data);
 }
 
+/** A stand-in `vol` under dir/bin: its listing and its plugin output are the strings given; the image and the readiness receipt are written beside it. */
+async function standInVol(dir: string, help: string, plugin: string): Promise<Record<string, string>> {
+  const py = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" }).stdout.trim();
+  const script = [
+    `#!${py}`,
+    "import sys",
+    "a = sys.argv[1:]",
+    "if a[-1:] == ['--help'] and len(a) == 2:",
+    "    sys.stderr.write('Volatility 3 Framework 2.28.2\\n'); sys.stdout.write(" + JSON.stringify(JSON.stringify(help)).slice(0, 0) + "HELP)",
+    "elif a[-1:] == ['--help']:",
+    "    sys.stdout.write('usage: vol plugin [--pid PID]\\n')",
+    "else:",
+    "    sys.stdout.write(PLUGIN)",
+    "",
+  ].join("\n").replace("HELP", JSON.stringify(help)).replace("PLUGIN", JSON.stringify(plugin));
+  await put(dir, "bin/vol", script);
+  await chmod(join(dir, "bin", "vol"), 0o755);
+  await put(dir, "mem.raw", Buffer.alloc(8192));
+  await put(dir, "ready.json", JSON.stringify({ parser: "vol_readiness/1", verdict: "ready", views_requested: ["plugins", "symbols"], inputs: { path: "mem.raw" }, volatility: { version: "2.28.2" } }));
+  return { PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` };
+}
+
+const names300 = Array.from({ length: 300 }, (_, i) => `mod${i}.Plugin${i}`).join(",");
+const hives40 = Array.from({ length: 40 }, (_, i) => `0x${(0xf8a000010010 + i * 0x1000).toString(16)}\t\\REGISTRY\\USER\\u${i}\tDisabled\n`).join("");
+const procs60 = Array.from({ length: 60 }, (_, i) => `${100 + i}\t4\tp${i}.exe\n`).join("");
+
 const CASES: Case[] = [
+  {
+    tool: "memory-forensics/vol_readiness",
+    build: async () => ({ views: ["plugins"] }),
+    env: (dir) => standInVol(dir, `Plugins:\n  {${names300}}\n`, ""),
+    large: { limit: 100 },
+    small: { limit: 5 },
+  },
+  {
+    tool: "memory-forensics/mem_registry",
+    build: async () => ({ path: "mem.raw", mode: "hivelist" }),
+    env: (dir) => standInVol(dir, "Plugins:\n  {windows.registry.hivelist.HiveList,windows.registry.printkey.PrintKey}\n", `Offset\tFileFullPath\tFile output\n${hives40}`),
+    large: { limit: 20 },
+    small: { limit: 1 },
+  },
+  {
+    tool: "memory-forensics/vol_views",
+    build: async () => ({ path: "mem.raw", question: "windows.pslist", readiness: "ready.json" }),
+    env: (dir) => standInVol(dir, "Plugins:\n  {windows.pslist.PsList}\n", `PID\tPPID\tImageFileName\n${procs60}`),
+    large: { limit: 20 },
+    small: { limit: 1 },
+  },
   {
     tool: "windows-forensics/lnk_parse",
     build: async (dir) => {
@@ -267,9 +317,9 @@ export function rerunFailure(first: Run, second: Run, before: Map<string, string
 }
 
 /** Runs a tool twice in one job-shaped $OUT (a large page, then a small one) and says why the rerun is unsafe, or null. */
-async function exercise(script: string, dir: string, first: Args, second: Args): Promise<string | null> {
+async function exercise(script: string, dir: string, first: Args, second: Args, extra: Record<string, string> = {}): Promise<string | null> {
   await mkdir(join(dir, "out"), { recursive: true });
-  const env = { JOB_ID: "j000001", OUT: join(dir, "out") };
+  const env = { ...extra, JOB_ID: "j000001", OUT: join(dir, "out") };
   const one = await run(script, dir, env, first);
   const before = await snapshot(join(dir, "out"));
   const two = await run(script, dir, env, second);
@@ -315,8 +365,9 @@ test("every paging tool is rerun in one $OUT with a smaller limit, or is listed 
     const dir = await mkdtemp(join(tmpdir(), "paging-rerun-"));
     try {
       const shared = await c.build(dir);
+      const extra = c.env ? await c.env(dir) : {};
       const [pack, name] = c.tool.split("/");
-      const why = await exercise(join(ROOT, "packs", pack, "tools", name, "run.py"), dir, { ...shared, ...c.large }, { ...shared, ...c.small });
+      const why = await exercise(join(ROOT, "packs", pack, "tools", name, "run.py"), dir, { ...shared, ...c.large }, { ...shared, ...c.small }, extra);
       if (why) failures.set(c.tool, why);
     } finally {
       await rm(dir, { recursive: true, force: true });

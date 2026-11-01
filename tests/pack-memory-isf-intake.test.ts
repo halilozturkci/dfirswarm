@@ -329,3 +329,43 @@ test("one real run, when dwarf2json and vol are on PATH (otherwise skipped, and 
   if (has.status !== 0) { t.skip("no dwarf2json and vol on PATH: the real converter's output and Volatility's banner listing were not exercised"); return; }
   t.skip("a real run needs a kernel's debug file and a memory image of that kernel, which this repository does not carry");
 });
+
+test("equal means equal: a table banner that differs only by a trailing space is no match; the answer says the table is to be removed from $OUT before a report", { timeout: 120 * SECOND }, async () => {
+  await withCwd(async (cwd, bin) => {
+    let env = await stubs(cwd, bin, { banners: bannersOut(B91), d2j: { banner: B91 + " " } });
+    let out = parse(await runTool(ISF, cwd, args, env, bin));
+    assert.equal(out.verdict, "blocked");
+    assert.equal(out.table.banner_equals_a_banner_of_the_image, false);
+    env = await stubs(cwd, bin, { banners: bannersOut(B91), d2j: { banner: B91 + "\n\u0000\u0000" } });
+    out = parse(await runTool(ISF, cwd, args, env, bin));
+    assert.equal(out.verdict, "ready", "the line end and NULs the kernel's string carries are not part of the banner");
+    assert.match(out.table.remove_before_report, /remove it from \$OUT/);
+    assert.ok(out.notes.some((n: string) => /the one exception/.test(n)));
+  });
+});
+
+test("a vol that forks a child and ignores SIGTERM, and a converter that does: SIGTERM ends both, one document, exit 143", { timeout: 120 * SECOND }, async () => {
+  await withCwd(async (cwd, bin) => {
+    const kid = join(cwd, "kid.pid"), me = join(cwd, "vol.pid");
+    await stubs(cwd, bin, { banners: bannersOut(B91), d2j: { banner: B91 } });
+    // a vol that writes its pid, forks a sleeping child that writes its own pid and ignores SIGTERM, and waits
+    await writeFile(join(bin, "vol"), `#!${PY}
+import os, signal, subprocess, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+open("${me}", "w").write(str(os.getpid()))
+k = subprocess.Popen([sys.executable, "-c", "import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); open('${kid}', 'w').write(str(os.getpid())); time.sleep(300)"])
+time.sleep(300)
+`);
+    await chmod(join(bin, "vol"), 0o755);
+    const run = await runTool(ISF, cwd, args, { STUB_CFG: join(cwd, "stub.json") }, bin, "SIGTERM", 0, async () => (await pidOf(kid)) !== null && (await pidOf(me)) !== null);
+    assert.equal(run.code, 143, run.stderr);
+    const out = parse(run);
+    assert.equal(out.status, "failed");
+    assert.equal(out.interrupted, true);
+    assert.equal(run.stdout.trim().split("\n}\n").length, 1);
+    for (const f of [kid, me]) {
+      const pid = await pidOf(f);
+      assert.ok(pid && !alive(pid), `${f} is gone`);
+    }
+  });
+});

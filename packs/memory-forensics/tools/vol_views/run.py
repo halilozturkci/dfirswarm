@@ -1648,6 +1648,14 @@ def argv_safe(value):
     return "./" + value if value.startswith("-") else value
 
 
+def symbols_arg(args):
+    """symbols_dir: one directory. Volatility's -s takes a semicolon-separated list of paths, so a semicolon would name a second path."""
+    value = text_arg(args, "symbols_dir")
+    if value and ";" in value:
+        fail("symbols_dir must not contain a semicolon: Volatility's -s reads a semicolon-separated list of paths")
+    return value
+
+
 def left(cap):
     """Seconds a step may take: at most `cap`, and what is left of the call's clock less the reserve; 0 when there is none."""
     return max(0.0, min(cap, CLOCK["deadline"] - time.monotonic() - RESERVE))
@@ -2030,7 +2038,7 @@ def parse_args(args):
     if flags["dump"] and not flags["write_values"]:
         fail("dump writes what the plugin finds (process memory, files) to disk: it needs write_values: true, in a job run as secret output. "
              "Nothing was written and the image was not read.", dump="refused", written=False)
-    symbols_dir = text_arg(args, "symbols_dir")
+    symbols_dir = symbols_arg(args)
     seconds = args.get("max_seconds", DEFAULT_SECONDS)
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds != seconds or not MIN_SECONDS <= seconds <= MAX_SECONDS:
         fail("max_seconds must be a number from %d to %d" % (MIN_SECONDS, MAX_SECONDS))

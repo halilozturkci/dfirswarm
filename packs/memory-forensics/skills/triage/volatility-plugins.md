@@ -35,15 +35,14 @@ carries): plugin output and options change between versions.
 
 **Linux.** There is no exhaustive public cache: the ISF must match the exact
 kernel build, with its architecture, and a nearby distribution version is not a
-substitute. Establish the kernel banner and a matching ISF before any
+substitute (the cache claim is UNVERIFIED here). Establish the kernel banner and a matching ISF before any
 symbol-dependent analysis; as of October 2026, in 2.28.2, the plugins include
 `linux.pslist.PsList`, `linux.pstree.PsTree`, `linux.lsof.Lsof`,
 `linux.sockstat.Sockstat`, `linux.envars.Envars`, `linux.bash.Bash` and
 `linux.malware.malfind.Malfind`, whose option for writing regions is
 `--dump-regions` (not the Windows `--dump`; it has its own `--dump-maxsize`, 1 GB
 by default). This pack supplies no Linux or macOS ISF set; `isf_intake` converts
-the Linux debug material the operator supplies and is ready only on an exact
-banner match. Record the provenance, and validate the kernel's identity and
+the operator's Linux debug material, ready only on an exact banner match. Record the provenance, and validate the kernel's identity and
 architecture. Where the matching table is absent, symbol-dependent
 Linux analysis was not performed, and the report says so. A plugin being listed
 does not show that the captured kernel is supported. For macOS this pack makes no

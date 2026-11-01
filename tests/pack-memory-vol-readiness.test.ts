@@ -22,13 +22,18 @@ const SECOND = 1000;
 type Behaviour = { stdout?: string; stderr?: string; code?: number; sleep?: number; ignore_term?: boolean; pid?: string; flood_err?: number; flood_out?: number };
 type Config = { log: string; help?: Behaviour; info?: Behaviour; banners?: Behaviour; isfinfo?: Behaviour; other?: Behaviour };
 
-const HELP = "usage: vol [-h] [-c CONFIG] ...\n\nPlugins:\n  {banners.Banners,windows.info.Info,windows.pslist.PsList,windows.vadyarascan.VadYaraScan,linux.pslist.PsList}\n    banners.Banners  Attempts to identify banners\n    windows.info.Info  Show OS and kernel details\n";
+// The layout argparse gives Volatility 3 (cli/__init__.py: add_subparsers(title="Plugins", metavar="PLUGIN")): one dotted name per line under the section.
+const HELP = "usage: vol [-h] [-c CONFIG] ... PLUGIN ...\n\nPlugins:\n  PLUGIN\n    banners.Banners     Attempts to identify banners\n    linux.pslist.PsList  Lists the processes\n    windows.info.Info   Show OS and kernel details\n    windows.pslist.PsList  Lists the processes\n    windows.vadyarascan.VadYaraScan  Scans with YARA\n";
 const HELP_ERR = "Volatility 3 Framework 2.28.2\n";
 const GUID = "3844DBB920174967BE7AA4A2C20430FA";
 const INFO_OK = `Variable\tValue\nKernel Base\t0xf80000000000\nSymbols\tfile:///opt/symbols/windows/ntkrnlmp.pdb/${GUID}-2.json.xz\n`;
 const INFO_MISSING_ERR = `INFO volatility3.framework.automagic: DTB was found\nDEBUG fetch https://msdl.microsoft.com/download/symbols/ntkrnlmp.pdb/${GUID}2/ntkrnlmp.pd_ failed\n`;
-const ISF_HEAD = "URI\tValid\tNumber of base_types\tNumber of types\tNumber of symbols\tNumber of enums\tWindows info\tLinux banner\tMac banner\n";
-const isfRow = (uri: string, linux = "-", mac = "-"): string => `${uri}\tTrue\t1\t2\t3\t4\t-\t${linux}\t${mac}\n`;
+// isfinfo.py of Volatility 3 2.28.2 has these seven columns and no other: the identifier (a banner, or a GUID and age) is in the last.
+const ISF_HEAD = "URI\tValid\tNumber of base_types\tNumber of types\tNumber of symbols\tNumber of enums\tIdentifying information\n";
+const isfRow = (uri: string, ident = "-"): string => `${uri}\tTrue\t1\t2\t3\t4\t${ident}\n`;
+// An older layout with a column per kind, and a layout with no identifier column at all.
+const ISF_HEAD_OLD = "URI\tValid\tNumber of base_types\tNumber of types\tNumber of symbols\tNumber of enums\tWindows info\tLinux banner\tMac banner\n";
+const ISF_HEAD_NONE = "URI\tValid\tNumber of base_types\tNumber of types\tNumber of symbols\tNumber of enums\n";
 const BANNER = "Linux version 5.15.0-91-generic (buildd@lcy02) (gcc 11.4.0) #101-Ubuntu SMP Tue Nov 14 13:30:08 UTC 2023";
 const bannersOut = (...banners: string[]): string => "Offset\tBanner\n" + banners.map((b, i) => `0x${(0x1000 + i).toString(16)}\tb'${b}\\n'\n`).join("");
 
@@ -145,7 +150,7 @@ test("symbols, Linux and macOS: a banner is matched exactly against isfinfo's ba
     assert.equal(out.status, "partial");
     // a macOS banner is read the same way
     const mac = "Darwin Kernel Version 23.4.0: Wed Feb 21 21:44:31 PST 2024; root:xnu-10063.101.15~2/RELEASE_X86_64";
-    env = await stubVol(cwd, bin, { ...noWindows, banners: { stdout: bannersOut(mac) }, isfinfo: { stdout: ISF_HEAD + isfRow("file:///t/m.json.xz", "-", `'${mac}\\n'`) } });
+    env = await stubVol(cwd, bin, { ...noWindows, banners: { stdout: bannersOut(mac) }, isfinfo: { stdout: ISF_HEAD + isfRow("file:///t/m.json.xz", `'${mac}\\n'`) } });
     out = json<Answer>(await runTool(VOL, cwd, { path: "inputs/mem.raw", views: ["symbols"] }, env, bin));
     assert.equal(out.checks.symbols.operating_system, "macos");
     assert.equal(out.checks.symbols.verdict, "ready");
@@ -430,5 +435,48 @@ test("one real run, when a Volatility is on PATH (otherwise skipped, and said so
     const out = json<Answer>(await runTool(VOL, cwd, { views: ["plugins", "fuse"] }));
     assert.ok(["ready", "blocked", "unknown"].includes(out.verdict!));
     assert.ok(out.checks.plugins.plugins_listed > 10, "the real listing names plugins");
+  });
+});
+
+// ---- the real layout of isfinfo (Volatility 3 2.28.2, isfinfo.py) ----
+
+const decodedBanners = (...b: string[]): string => "Offset\tBanner\n" + b.map((x, i) => `0x${(0x1000 + i).toString(16)}\t${x}\n`).join("");
+
+test("isfinfo with the real column set: a table whose Identifying information is the image's banner is ready (decoded text, or the b'...' form of a cached table); a Windows identifier is no banner; an older layout is read too", { timeout: 120 * SECOND }, async () => {
+  await withCwd(async (cwd, bin) => {
+    const noWindows = { info: { stderr: "Unsatisfied requirement\n", code: 1 } };
+    const ask = async (cfg: any) => json<Answer>(await runTool(VOL, cwd, { path: "inputs/mem.raw", views: ["symbols"] }, await stubVol(cwd, bin, { ...noWindows, ...cfg }), bin));
+    // live mode: the identifier is the decoded text; the banner of banners.Banners is the decoded text too
+    let out = await ask({ banners: { stdout: decodedBanners(BANNER) }, isfinfo: { stdout: ISF_HEAD + isfRow(`file:///t/${GUID}-2.json.xz`, `${GUID}2`) + isfRow("file:///t/u.json.xz", BANNER) } });
+    assert.equal(out.checks.symbols.verdict, "ready", JSON.stringify(out.checks.symbols));
+    assert.equal(out.checks.symbols.banners_with_table, 1);
+    assert.equal(out.checks.symbols.tables_with_banner, 1, "a Windows identifier is no banner");
+    assert.equal(out.checks.symbols.tables_listed, 2);
+    // cached mode: str() of the bytes
+    out = await ask({ banners: { stdout: decodedBanners(BANNER) }, isfinfo: { stdout: ISF_HEAD + isfRow("file:///t/u.json.xz", `b'${BANNER}\\n'`) } });
+    assert.equal(out.checks.symbols.verdict, "ready");
+    // a table for a nearby build is no match, on the real layout too
+    out = await ask({ banners: { stdout: decodedBanners(BANNER) }, isfinfo: { stdout: ISF_HEAD + isfRow("file:///t/u.json.xz", BANNER.replace("11.4.0", "12.3.0")) } });
+    assert.equal(out.checks.symbols.verdict, "blocked");
+    assert.equal(out.checks.symbols.banners_with_table, 0);
+    // the older layout (a column per kind) is read as well
+    const oldRow = `file:///t/u.json.xz\tTrue\t1\t2\t3\t4\t-\t'${BANNER}\\n'\t-\n`;
+    out = await ask({ banners: { stdout: bannersOut(BANNER) }, isfinfo: { stdout: ISF_HEAD_OLD + oldRow } });
+    assert.equal(out.checks.symbols.verdict, "ready");
+    // a header with no identifier column at all is unknown, never blocked
+    out = await ask({ banners: { stdout: decodedBanners(BANNER) }, isfinfo: { stdout: ISF_HEAD_NONE + "file:///t/u.json.xz\tTrue\t1\t2\t3\t4\n" } });
+    assert.equal(out.checks.symbols.verdict, "unknown");
+    assert.match(out.checks.symbols.reason, /none of the columns this tool reads the identifier from/);
+    assert.equal(out.status, "partial");
+  });
+});
+
+test("symbols_dir with a semicolon is refused: Volatility's -s reads a semicolon-separated list", { timeout: 60 * SECOND }, async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await stubVol(cwd, bin, {});
+    await mkdir(join(cwd, "a;b"));
+    const out = json<Answer>(await runTool(VOL, cwd, { path: "inputs/mem.raw", views: ["symbols"], symbols_dir: "a;b" }, env, bin));
+    assert.equal(out.status, "failed");
+    assert.match(out.error ?? "", /semicolon/);
   });
 });
