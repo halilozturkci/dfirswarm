@@ -20,7 +20,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, truncate, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_PROBE, DOC_STRUCTURE, ENTROPY, FUZZY, PE_DIRECTORIES, PE_INFO, RE, RECIPE, TOOLS, buildElf, buildPe, buildZip, put, stub, withCwd } from "./pack-re-harness.ts";
+import { DOC_PROBE, DOC_STRUCTURE, ELF_DIRECTORIES, ENTROPY, FUZZY, PE_DIRECTORIES, PE_INFO, RE, RECIPE, TOOLS, buildElf, buildPe, buildZip, put, stub, withCwd } from "./pack-re-harness.ts";
 import type { Json, ZipEntry } from "./pack-re-harness.ts";
 import { buildPeDirs } from "./pack-re-doc-fixtures.ts";
 
@@ -113,6 +113,13 @@ sleep 60`);
       for (let i = 0; i < 100_001; i++) entries.push({ name: `m${String(i).padStart(6, "0")}.bin`, data: Buffer.from("x"), method: 0 });
       await put(cwd, "inputs/many.docx", buildZip(entries, { zip64: true }));
       return { argv: [], stdin: JSON.stringify({ path: "inputs/many.docx", max_seconds: 80 }) };
+    },
+  },
+  {
+    name: "elf_directories", script: ELF_DIRECTORIES, marker: MODULE_LEVEL,
+    work: async (cwd) => {
+      await put(cwd, "inputs/syms.so", buildElf({ cls: 64, needed: Array.from({ length: 4000 }, (_, i) => `lib${i}Name${i * 7}.so`) }));
+      return { argv: [], stdin: JSON.stringify({ path: "inputs/syms.so" }) };
     },
   },
   {
