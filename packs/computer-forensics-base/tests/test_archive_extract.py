@@ -1046,6 +1046,58 @@ def small_tar(*names):
     return buf.getvalue()
 
 
+class StartupAndClock(Case):
+    """The archive hash and the 7z banner are on the run's clock; the stop handlers are in from the PROCESS block on."""
+
+    def test_a_stop_signal_after_the_process_block_and_before_main_gives_one_json_document(self):
+        with open(tool_path("archive_extract"), encoding="utf-8") as fh:
+            text = fh.read()
+        end = text.index("# END SHARED PROCESS")
+        cut = text.index("install_signal_handlers()\n", end) + len("install_signal_handlers()\n")
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            script = self.write("prefix.py", text[:cut] + "\nimport os as _os, signal as _s, time as _t\n_os.kill(_os.getpid(), _s.%s)\n_t.sleep(30)\nprint('survived')\n" % sig.name)
+            proc = subprocess.run([sys.executable, script], cwd=self.dir, capture_output=True, text=True, timeout=60)
+            self.assertEqual(proc.returncode, 128 + sig, (sig.name, proc.stdout, proc.stderr))
+            said = json.loads(proc.stdout)
+            self.assertEqual((said["status"], said["interrupted"], said["signal"]), ("failed", True, int(sig)))
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_the_archive_hash_stops_at_the_runs_clock_and_says_why(self):
+        archive = make_zip(self.path("in/a.zip"), [("a.bin", os.urandom(3 * 1024 * 1024))], compress=zipfile.ZIP_STORED)
+        prelude = ("import os, time\n_fdopen = os.fdopen\n"
+                   "class Slow:\n"
+                   "    def __init__(self, f): self.f = f\n"
+                   "    def read(self, n=-1):\n"
+                   "        if n == 1 << 20: time.sleep(0.8)\n"
+                   "        return self.f.read(n)\n"
+                   "    def __enter__(self): self.f.__enter__(); return self\n"
+                   "    def __exit__(self, *a): return self.f.__exit__(*a)\n"
+                   "    def __getattr__(self, k): return getattr(self.f, k)\n"
+                   "os.fdopen = lambda fd, mode='r', *a, **k: Slow(_fdopen(fd, mode, *a, **k)) if mode == 'rb' else _fdopen(fd, mode, *a, **k)\n"
+                   "import sys\nexec(compile(open(sys.argv[1], encoding='utf-8').read(), sys.argv[1], 'exec'), {'__name__': '__main__'})\n")
+        began = time.monotonic()
+        proc = subprocess.run([sys.executable, "-c", prelude, tool_path("archive_extract")], input=json.dumps({"path": archive, "max_seconds": 1}),
+                              cwd=self.dir, capture_output=True, text=True, timeout=60)
+        took = time.monotonic() - began
+        said = json.loads(proc.stdout)
+        self.assertIsNone(said["archive"]["sha256"], said["archive"])
+        self.assertRegex(said["archive"]["sha256_skipped"], r"the time budget ran out after \d+ bytes of the archive were hashed")
+        self.assertLess(took, 10)
+        self.assertEqual(said["status"], "partial")
+
+    def test_a_banner_gets_only_the_time_left(self):
+        with open(tool_path("archive_extract"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn('banner(sevenz, STARTED + a["max_seconds"] - time.monotonic())', src)
+        self.assertIn("min(15, seconds)", src)
+
+    def test_arguments_nested_past_the_parser_are_json(self):
+        r = run_tool("archive_extract", None, self.dir, raw_input="[" * 100000)
+        self.assertEqual(r.code, 1)
+        self.assertIs(r.json["ok"], False)
+        self.assertNotIn("Traceback", r.stderr)
+
+
 class CompressedTarTail(Case):
     """A compressed tar is complete only when its whole stream has been read (archive_extract, as the archive-members recipe): after
     the tar's end blocks, a further tar in the same stream, a further compressed stream, bytes after the last stream, a trailer that

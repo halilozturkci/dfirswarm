@@ -70,7 +70,8 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 5}
+TOOL = {"name": "archive_extract", "version": 6}
+STARTED = time.monotonic()               # the run's clock starts with the tool: the archive hash and the 7z banner are on it too
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
 MAX_TOTAL_DEFAULT = 8 * 1024 ** 3
@@ -1021,6 +1022,18 @@ def install_signal_handlers():
 # END SHARED PROCESS
 
 
+def _early_last_word(signum):
+    """Until main() has its own: a stop before the arguments are read gives one document, `failed` and `interrupted`, and depends on nothing
+    defined later."""
+    sys.stdout.write(json.dumps({"ok": False, "tool": TOOL, "status": "failed", "interrupted": True, "signal": signum,
+                                 "status_basis": "the tool was stopped by signal %d before it had read its arguments, so it did nothing" % signum}) + "\n")
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _early_last_word
+install_signal_handlers()
+
+
 def describe(exc):
     code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
     return scrub("%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc)))
@@ -1611,7 +1624,7 @@ class Engine:
         self.members_fh = private_file(str(self.members_path))
         self.withheld_fh = None
         self.archive = archive_info
-        self.started = time.monotonic()
+        self.started = STARTED
         self.deadline = self.started + args["max_seconds"]
         self.counts = {}
         self.types = {}
@@ -2255,12 +2268,14 @@ def find_7z():
     return None
 
 
-def banner(program):
+def banner(program, seconds=15):
+    if seconds <= 0:
+        return None
     try:
         proc = spawn([program], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=dict(os.environ, LC_ALL="C"))
         ACTIVE.append(proc)
         try:
-            out, _, _ = communicate_bounded(proc, 15)
+            out, _, _ = communicate_bounded(proc, min(15, seconds))
         finally:
             if proc in ACTIVE:
                 ACTIVE.remove(proc)
@@ -2550,15 +2565,24 @@ def detect(path):
     return None, "not a zip, tar, gzip, bzip2, xz, zstd or 7z archive: its first bytes are %s" % head[:16].hex()
 
 
-def sha256_of(path, limit):
+def sha256_of(path, limit, deadline):
+    """(sha256, None), or (None, why it was not taken): the archive is larger than `limit`, or the run's clock ran out after some bytes.
+    Opened without blocking and checked to be a regular file on the descriptor; the clock is read for every block."""
     size = os.path.getsize(path)
     if size > limit:
-        return None
+        return None, "the archive is larger than %d bytes" % limit
     h = hashlib.sha256()
-    with open(path, "rb") as fh:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            raise OSError(0, "not a regular file any more")
+        done = 0
         for block in iter(lambda: fh.read(CHUNK), b""):
             h.update(block)
-    return h.hexdigest()
+            done += len(block)
+            if time.monotonic() > deadline:
+                return None, "the time budget ran out after %d bytes of the archive were hashed" % done
+    return h.hexdigest(), None
 
 
 # ---- main --------------------------------------------------------------------------------------------------------------
@@ -2566,8 +2590,8 @@ def sha256_of(path, limit):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
-        fail("arguments are not valid JSON", reason=str(exc))
+    except (ValueError, RecursionError) as exc:
+        fail("arguments are not valid JSON", reason=str(exc)[:200])
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
     path = args.get("path")
@@ -2616,7 +2640,6 @@ def main():
              supported=["zip", "tar (plain, gzip, bzip2, xz, zstd)", "gzip, bzip2, xz, zstd (a single file)", "7z (with the 7z program)"])
 
     os.umask(0o077)
-    install_signal_handlers()
     st = os.stat(path)
     digest = hashlib.sha256(("%s|%d|%d" % (os.path.abspath(path), size, st.st_mtime_ns)).encode("utf-8", "surrogateescape")).hexdigest()[:12]
     if args.get("out_dir"):
@@ -2658,13 +2681,13 @@ def main():
         if sevenz is None:
             fail("a 7z archive needs the 7z program (7z, 7zz or 7za), which is not on PATH; nothing was extracted", path=scrub(path), format="7z",
                  install="apt-get install -y p7zip-full, or brew install sevenzip")
-        info["program"] = {"path": sevenz, "banner": banner(sevenz)}
+        info["program"] = {"path": sevenz, "banner": banner(sevenz, STARTED + a["max_seconds"] - time.monotonic())}
     try:
-        info["sha256"] = sha256_of(path, HASH_ARCHIVE_MAX)
+        info["sha256"], why_not = sha256_of(path, HASH_ARCHIVE_MAX, STARTED + a["max_seconds"])
     except OSError as exc:
         fail("the archive cannot be read: %s" % describe(exc), path=scrub(path))
     if info["sha256"] is None:
-        info["sha256_skipped"] = "the archive is larger than %d bytes; the run's own record of the input has its sha256" % HASH_ARCHIVE_MAX
+        info["sha256_skipped"] = "%s; the run's own record of the input has its sha256" % why_not
     info["python"] = sys.version.split()[0]
     if resume:
         # A resume goes on in the directory of an earlier run of THIS archive: another archive's members would be mixed into it.

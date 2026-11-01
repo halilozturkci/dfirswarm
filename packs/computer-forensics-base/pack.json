@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.11.20",
+  "version": "1.11.21",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -62,7 +62,7 @@
       "tests/pack.test.sh": "4fd2b94956fed060021eba9d9fc9b812516dc7c6413cee639477aa36642cd053",
       "tests/run_tests.py": "91e0d82b456267b0f27e0bc7e4efbb7abf22f8be76879275166d66a8eb662d02",
       "tests/support.py": "ed8a4670ddbf90e4562e57319ea31501be0d0920571d7bdfdfe7e9392b37def8",
-      "tests/test_archive_extract.py": "d5284a200925dbc5ad4f2798afaa8d072cbb5a551a4c057b76c1af41bf8ee7da",
+      "tests/test_archive_extract.py": "1e9dba3430d792d91d954fa73354e832f72c785812f6415eecf12e213e30a5a8",
       "tests/test_archive_members.py": "3c7ed42a32080f1f2951d1ff78266bc71c8e755b00b582624dd657f19225c1a3",
       "tests/test_catalog_search.py": "17142b159732d841ec5eaf1df1693ecfd1eb7b7686c3333a57280930551b94eb",
       "tests/test_check_inputs.py": "2ecfb4865cf7a9f2fefff83c514ea37c5de2c5b14073d40d08ce678790ff2c0a",
@@ -85,8 +85,8 @@
       "tests/test_timestamp_decode.py": "6bd727211cdc2c3887a5e6cdbbd6a766a2de4282a76c66ce7fe52f805e7c6176",
       "tools/ad1_extract/manifest.json": "6e0cde5ebb3f95e8fabfd03e6593668414cbbef9b744310883851a4ac975f435",
       "tools/ad1_extract/run.py": "d2b87ab575b47a530e94506ae774e94ca7108f5b707cdc0540cb2d9e502094a1",
-      "tools/archive_extract/manifest.json": "1662399384d7c65c0bfb74a8f0e6e6ce4c7fbd39e39932cd8627de92744f5c70",
-      "tools/archive_extract/run.py": "9fbc59891ab22b4bcd8753f8ca5ead83c927836dfa7b7e9e0809113cd0814a3b",
+      "tools/archive_extract/manifest.json": "03e20396456d0a9bbc9634e08abeaa9201263573c83fde8a8b3a458ded168e4d",
+      "tools/archive_extract/run.py": "747acacafc48b40c96a96edf5f60aa1b9f544b3ae9d841981ef676a14214f2f4",
       "tools/catalog_search/manifest.json": "dae0e2a702e6a6671cbdd28d11b05ab14ea6b7cc2d0c8cb9f5a9c5739b8765a4",
       "tools/catalog_search/run.py": "94ce44ec16d2a80dbf9053b3848b3c4b14f64c3212d3b9b6ae127f5d4aeed94a",
       "tools/check_inputs/manifest.json": "a09f320ae7071c85399ae095528c2a9d3ec5d5d0a59bf1ce3d3aa15f8501772b",
