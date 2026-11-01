@@ -1,0 +1,40 @@
+{
+  "secret_output": [
+    { "tool": "reverse-engineering/doc_probe", "item": "PKG-XP-10", "why": "extract_to and write_values are declared by no secret_output" },
+    { "tool": "reverse-engineering/doc_structure", "item": "PKG-XP-10", "why": "extract_to and write_values are declared by no secret_output" },
+    { "tool": "reverse-engineering/pe_directories", "item": "PKG-XP-10", "why": "extract_to and write_values are declared by no secret_output" },
+    { "tool": "virtualization-backup-forensics/backup_audit_normalise", "item": "VIRT-09", "why": "write_text writes the text of the evidence and is declared by no secret_output" },
+    { "tool": "virtualization-backup-forensics/snapshot_chain_check", "item": "VIRT-09", "why": "write_text writes the text of the evidence and is declared by no secret_output" },
+    { "tool": "virtualization-backup-forensics/virtualization_inventory", "item": "VIRT-09", "why": "write_text writes the text of the evidence and is declared by no secret_output" }
+  ],
+  "version_label": [],
+  "status_pair": [
+    { "tool": "computer-forensics-base/ad1_extract", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/archive_extract", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/catalog_search", "item": "BASE-02", "why": "answers no JSON on stdout" },
+    { "tool": "computer-forensics-base/check_inputs", "item": "BASE-05", "why": "status is FAIL, not complete, partial or failed" },
+    { "tool": "computer-forensics-base/chunk_needles", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/feature_scan", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/file_type", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/icat_extract", "item": "PKG-XP-09", "why": "answers no JSON on stdout" },
+    { "tool": "computer-forensics-base/image_layout", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/ioc_scan", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/sig_carve", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/sqlite_query", "item": "BASE-02", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/sqlite_snapshot", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/timeline_super", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "computer-forensics-base/timestamp_decode", "item": "PKG-XP-09", "why": "a refusal answers without status" },
+    { "tool": "mobile-forensics/manifest_db", "item": "PKG-XP-11", "why": "a refusal answers without status" },
+    { "tool": "mobile-forensics/protobuf_peek", "item": "PKG-XP-11", "why": "a refusal answers without status" },
+    { "tool": "mobile-forensics/sqlite_freespace", "item": "PKG-XP-11", "why": "a refusal answers without status" },
+    { "tool": "triage-collection/collection_coverage", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" },
+    { "tool": "triage-collection/collection_id", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" },
+    { "tool": "triage-collection/collection_index", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" },
+    { "tool": "triage-collection/collection_manifest_parse", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" },
+    { "tool": "triage-collection/collection_manifest_verify", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" },
+    { "tool": "triage-collection/collection_path_map", "item": "PKG-XP-12", "why": "a refusal answers without status_basis" }
+  ],
+  "non_utf8_name": [
+    { "tool": "computer-forensics-base/image_layout", "item": "PKG-XP-09", "why": "a file named with the byte 0xff ends in a traceback and no JSON" }
+  ]
+}
