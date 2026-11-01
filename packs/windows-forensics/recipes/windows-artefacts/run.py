@@ -806,6 +806,12 @@ def target_value(raw):
 def detect(paths):
     deadline = time.monotonic() + DETECT_SECONDS
     for p in paths:
+        try:
+            kind = os.stat(p).st_mode
+        except (OSError, ValueError):
+            kind = None
+        if kind is not None and not (stat.S_ISREG(kind) or stat.S_ISDIR(kind)):
+            answer({"applies": "unknown", "status": "failed", "status_basis": "a target path is not a regular file or a directory, so nothing was examined", "why": "a target path is not a regular file or a directory (a FIFO, a device or a socket is not opened)"}, 2)
         if not os.path.exists(p):
             answer({"applies": "unknown", "status": "failed", "status_basis": "a target path does not exist, so nothing was examined", "why": "a target path does not exist"}, 2)
     found, cut, seen = walk(paths, deadline)

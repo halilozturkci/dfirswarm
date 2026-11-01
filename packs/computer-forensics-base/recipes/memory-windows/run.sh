@@ -186,7 +186,7 @@ done
 [[ -n "$target" ]] || { echo '{"ok": false, "error": "--target is required"}'; exit 2; }
 img="$(target_field "$target" paths0)"
 shown="$(target_field "$target" name)"
-[[ -n "$img" && -f "$img" ]] || { echo '{"ok": false, "error": "the target is not a readable file"}'; exit 2; }
+[[ -n "$img" && -f "$img" ]] || { echo '{"applies": "unknown", "why": "the target is not a regular file, so it cannot be told what it is", "ok": false, "error": "the target is not a readable file"}'; exit 2; }
 
 case "$cmd" in
   detect)
@@ -270,5 +270,5 @@ case "$cmd" in
     if [[ ${#notes[@]} -gt 0 ]]; then coverage partial "windows.info and the plugins that finished; symbols $symbols"; else coverage complete "windows.info and eleven plugins; symbols $symbols"; fi
     python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"]}))' "$out/coverage.json"
     ;;
-  *) echo '{"ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'; exit 2 ;;
+  *) echo '{"applies": "unknown", "why": "a usage error, so nothing was asked", "ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'; exit 2 ;;
 esac

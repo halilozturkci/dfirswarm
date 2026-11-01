@@ -33,9 +33,33 @@ def target_of(value):
     return paths[0]
 
 
+def _open_regular(path):
+    """The target opened for reading without waiting for it (an open of a FIFO named here would block until a writer came): the type is read from the
+    descriptor, and anything but a regular file is refused as an OSError, which detect reads as "cannot tell"."""
+    import errno
+    import stat
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        os.set_blocking(fd, True)
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _is_regular(path):
+    import stat
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except (OSError, ValueError):
+        return False
+
+
 def detect(path):
     try:
-        with open(path, "rb") as handle:
+        with _open_regular(path) as handle:
             if handle.read(len(MAGIC)) != MAGIC:
                 return False, "no Android backup signature"
             version = handle.readline(4096)

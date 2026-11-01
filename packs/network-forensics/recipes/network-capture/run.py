@@ -951,6 +951,7 @@ def main():
     if applies is not True:
         data.update(status="unsupported", status_basis="the file has no pcap or pcapng signature, so nothing was listed", finished=True, why=why)
         receipt.write()
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not a pcap or pcapng file, so nothing was listed", "error": why}))
         return 2
     tshark, capinfos = shutil.which("tshark"), shutil.which("capinfos")
     if not tshark or not capinfos:

@@ -814,7 +814,9 @@ import each other), and holds to this:
   limit); any other code is a failed detect. The census (`catalog/coverage.tsv`, `catalog/plan.json`) records exit 2 as
   "its detect step could not tell", never as "does not apply" and never as a failure of the step, and the job
   service's `detect_answered` rows carry `applies: true | false | "unknown"`; only `true` starts a recipe. A detect that can
-  tell neither way must exit 2, not 1: a 1 is a claim that the object is not for this recipe.
+  tell neither way must exit 2, not 1: a 1 is a claim that the object is not for this recipe. A call the recipe did not understand (a usage error) is not an answer
+  about the object: where a recipe prints JSON for it, it says `applies: "unknown"`; an argument parser's own usage message on stderr with exit 2 cannot be told
+  from "cannot tell" by the census, which records the exit code.
 - *A recipe marks a file it wrote `secret_bearing`, and a redacted package withholds it.* A recipe cannot declare
   `secret_output` (the seal refuses the key in `recipe.json`), so its coverage or receipt says which of its output
   files hold what the evidence holds: a JSON file with a `secret_bearing` object, `{ "<file>": "<why>" }`, the name a
@@ -822,7 +824,10 @@ import each other), and holds to this:
   reads the mark by its shape, never by the name of a recipe or a tool, and withholds each file it names whole, its
   digest and path kept in the private sidecar and never in the package, as it does for a sensitive job's output. A
   `secret_bearing` that is not a map of names to reasons is an answer field and marks nothing: plist_read's
-  `secret_bearing` (counts of what it withheld) and doc_structure's `secret_bearing_attributes` are of that kind.
+  `secret_bearing` (counts of what it withheld) and doc_structure's `secret_bearing_attributes` are of that kind. A mark the redaction cannot honour whole fails closed: a file that carries
+  the word and is over 8 MiB or is not JSON that parses, and a mark that names a link or anything but a regular file,
+  make it withhold every file of that directory and below, and the record says why. A receipt is found by `.json` in any
+  case, and every mark in it is read.
 - *The manifest declares it, and the harness enforces it.* The description
   says SENSITIVE and names the flag, and the manifest carries the key the job
   service reads, `"secret_output"`: `"required"` (every job of the tool) or

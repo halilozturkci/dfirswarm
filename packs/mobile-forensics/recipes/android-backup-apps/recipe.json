@@ -1,6 +1,6 @@
 {
   "id": "android-backup-apps",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "The broad extraction an Android adb backup would need: every app's data parsed into a searchable form. Declared so that the preparation of an adb backup is on the record as declined, with why, rather than missing.",
   "object": "Android adb backup",
   "order": 39,
@@ -30,5 +30,5 @@
     "coverage.json"
   ],
   "covers": "Nothing: it is declared, never run. Its detect step reads the backup's header only.",
-  "sha256": "b4e28914b6fbcfe18bfa8c73887827339b0d5f58781911fc6243901f421376de"
+  "sha256": "7fec31ff2c5968666f5ecf7158e562353501d271013d03229978e9a1261bc524"
 }

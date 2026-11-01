@@ -1035,7 +1035,8 @@ def run(path, out_dir, fmt, budget):
 
 def refuse(message):
     """An answer for a call the recipe did not start."""
-    print(json.dumps({"ok": False, "status": "failed", "status_basis": message, "error": message}))
+    # a detect that could not start answers the third state too (docs/packs.md, a recipe's detect step has three answers)
+    print(json.dumps({"applies": "unknown", "why": message, "ok": False, "status": "failed", "status_basis": message, "error": message}))
     return 2
 
 

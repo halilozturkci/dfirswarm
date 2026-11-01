@@ -1024,7 +1024,7 @@ def main():
         detect(image)
     if command == "run" and out:
         run(image, shown, Path(out))
-    answer({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR"}, 2)
+    answer({"applies": "unknown", "why": "a usage error, so nothing was asked", "ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR"}, 2)
 
 
 if __name__ == "__main__":
