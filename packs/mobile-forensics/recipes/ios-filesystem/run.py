@@ -706,7 +706,7 @@ def sqlite_base(path):
 
 def detect(path, budget=DEFAULT_BUDGET):
     if not os.path.isfile(path):
-        return False, "not a readable file"
+        return "unknown", "not a readable file, so it cannot be told what it holds"
     try:
         with TarList(path, budget) as listing:
             for member in listing.archive:
@@ -715,8 +715,10 @@ def detect(path, budget=DEFAULT_BUDGET):
                     return True, "tar members have an iOS full file-system root"
                 listing.archive.members = []
             if listing.watch.violation is not None:
-                return False, "tar has no iOS full file-system marker before a header the scan does not read (an extended header of %d bytes at offset %d)" % (listing.watch.violation, listing.watch.violation_at)
-    except (tarfile.TarError, OSError, EOFError) as exc:
+                return "unknown", "tar has no iOS full file-system marker before a header the scan does not read (an extended header of %d bytes at offset %d)" % (listing.watch.violation, listing.watch.violation_at)
+    except OSError as exc:
+        return "unknown", "the file could not be read, so it cannot be told what it holds: %s" % exc
+    except (tarfile.TarError, EOFError) as exc:
         return False, "not a readable tar: %s" % exc
     return False, "tar has no iOS full file-system marker"
 
@@ -876,12 +878,12 @@ def main():
     if args.command == "detect":
         applies, why = detect(path, args.max_decompressed_bytes)
         print(json.dumps({"applies": applies, "why": why}))
-        return 0 if applies else 1
+        return 2 if applies == "unknown" else 0 if applies else 1
     if not args.out:
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "run was given no output directory, so nothing was run", "error": "run needs --out DIR"}))
         return 2
     applies, why = detect(path, args.max_decompressed_bytes)
-    if not applies:
+    if applies is not True:
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not one this recipe reads, so nothing was run", "why": why}))
         return 2
     coverage = run(path, args.out, args.max_decompressed_bytes, args.max_seconds)

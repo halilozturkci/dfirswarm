@@ -588,7 +588,7 @@ def detect(path):
             fh.seek(seg["header"])
             logical = fh.read(20)
     except OSError as e:
-        return None, "unreadable: %s" % (e.strerror or e)
+        return "unknown", "unreadable, so it cannot be told whether it is an AD1 image: %s" % (e.strerror or e)
     except AD1Error as e:
         return None, str(e)
     if not logical.startswith(AD1_LOGICAL_MAGIC):
@@ -829,6 +829,9 @@ def main(argv):
     target, paths = target_of(args["--target"])
     if argv[1] == "detect":
         fmt, why = detect(paths[0])
+        if fmt == "unknown":
+            print(json.dumps({"applies": "unknown", "format": None, "why": why}))
+            return 2
         print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
         return 0 if fmt else 1
     if "--out" not in args:

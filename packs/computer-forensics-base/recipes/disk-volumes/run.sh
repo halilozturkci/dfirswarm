@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # disk-volumes: The Sleuth Kit's first pass over one disk image.
 #
-#   run.sh detect --target TARGET          exit 0 applies, 1 does not, 2 error
+#   run.sh detect --target TARGET          exit 0 applies, 1 does not, 2 cannot tell (applies: "unknown")
 #   run.sh run --target TARGET --out DIR
 #
 # TARGET is JSON, inline or a file: {"paths": [...], "name": "inputs/x.E01"};
@@ -233,7 +233,7 @@ case "$cmd" in
       fi
     done
     if ! have mmls && ! have fsstat; then
-      echo '{"applies": false, "why": "mmls and fsstat are not in this image"}'; exit 1
+      echo '{"applies": "unknown", "why": "mmls and fsstat are not in this image"}'; exit 2
     fi
     echo '{"applies": false, "why": "no partition table and no filesystem at sector 0, 63 or 2048"}'; exit 1
     ;;

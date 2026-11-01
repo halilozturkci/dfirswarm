@@ -43,7 +43,7 @@ def detect(path):
                 return False, "Android backup header has no numeric version"
         return True, "an Android adb backup (version %s)" % version[:-1].decode("ascii")
     except OSError as exc:
-        return False, str(exc)
+        return "unknown", "the file could not be read, so it cannot be told whether it is an Android backup: %s" % exc
 
 
 def main():
@@ -61,7 +61,7 @@ def main():
     if args.command == "detect":
         applies, why = detect(path)
         print(json.dumps({"applies": applies, "why": why}))
-        return 0 if applies else 1
+        return 2 if applies == "unknown" else 0 if applies else 1
     if args.out:
         os.makedirs(args.out, exist_ok=True)
         with open(os.path.join(args.out, "coverage.json"), "w", encoding="utf-8") as handle:

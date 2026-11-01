@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # memory-windows: Volatility 3's first pass over one Windows memory image.
 #
-#   run.sh detect --target TARGET          exit 0 applies, 1 does not, 2 error
+#   run.sh detect --target TARGET          exit 0 applies, 1 does not, 2 cannot tell (applies: "unknown")
 #   run.sh run --target TARGET --out DIR
 #
 # TARGET is JSON, inline or a file: {"paths": [...], "name": "inputs/x.mem"}.
@@ -191,7 +191,7 @@ shown="$(target_field "$target" name)"
 case "$cmd" in
   detect)
     looks_like_memory "$img" || { echo '{"applies": false, "why": "not memory by its name or file(1)"}'; exit 1; }
-    have vol || { echo '{"applies": false, "why": "looks like memory, but vol is not in this image"}'; exit 1; }
+    have vol || { echo '{"applies": "unknown", "why": "looks like memory, but vol is not in this image"}'; exit 2; }
     # What vol says about a file it does not recognise is kept, when the
     # caller gives a place for it (--probe-out), not thrown away.
     if [[ -n "$probe_out" ]]; then mkdir -p "$probe_out"; probe="$probe_out/windows.info.txt"; else probe="$(mktemp)"; fi
@@ -217,8 +217,8 @@ case "$cmd" in
       miss="$(kernel_missing "$probe" "$probe.stderr" "$shown" "$PROBE_TIMEOUT")"
       [[ -s "$probe" ]] || rm -f "$probe"
       [[ -n "$probe_out" ]] || rm -f "$probe" "$probe.stderr"
-      python3 -c 'import json, sys; print(json.dumps({"applies": False, "why": "offered to Volatility as memory; windows.info did not answer within %ss" % sys.argv[2], "missing": json.loads(sys.argv[1])}))' "$miss" "$PROBE_TIMEOUT"
-      exit 1
+      python3 -c 'import json, sys; print(json.dumps({"applies": "unknown", "why": "offered to Volatility as memory; windows.info did not answer within %ss" % sys.argv[2], "missing": json.loads(sys.argv[1])}))' "$miss" "$PROBE_TIMEOUT"
+      exit 2
     fi
     [[ -s "$probe" ]] || rm -f "$probe"
     [[ -n "$probe_out" ]] || rm -f "$probe" "$probe.stderr"

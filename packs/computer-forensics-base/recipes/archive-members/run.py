@@ -190,7 +190,7 @@ def detect(path):
         with open(path, "rb") as fh:
             head = fh.read(512)
     except OSError as e:
-        return None, "unreadable: %s" % (e.strerror or e)
+        return "unknown", "unreadable, so it cannot be told whether it is an archive: %s" % (e.strerror or e)
     if head.startswith(SEVEN_Z_MAGIC):
         return "7z", "7z signature"
     if head.startswith((b"PK\x03\x04", b"PK\x05\x06")):
@@ -789,7 +789,7 @@ def run(path, out_dir):
     cov = {"recipe": "archive-members", "target": path, "format": fmt, "members": 0,
            "covered": "the archive's list of members", "not_covered": "member contents; archives inside the archive",
            "limits_hit": [], "errors": []}
-    if fmt is None:
+    if fmt is None or fmt == "unknown":
         cov.update(status="unsupported", why=why, status_basis="no tar, zip or 7z structure was found in the file: " + why)
         json.dump(cov, open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
         print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
@@ -846,6 +846,9 @@ def main(argv):
     _t, path = target_of(args["--target"])
     if argv[1] == "detect":
         fmt, why = detect(path)
+        if fmt == "unknown":
+            print(json.dumps({"applies": "unknown", "format": None, "why": why}))
+            return 2
         print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
         return 0 if fmt else 1
     if "--out" not in args:

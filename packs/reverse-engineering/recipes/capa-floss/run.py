@@ -1555,7 +1555,7 @@ def detect(path):
                     return None, "ELF signature, and the file is shorter than its header (%d bytes)" % need
                 return "ELF", "ELF signature and a whole ELF header"
     except OSError as exc:
-        return None, "unreadable: %s" % (exc.strerror or exc)
+        return "unknown", "unreadable, so it cannot be told what it is: %s" % (exc.strerror or exc)
     return None, "no PE or ELF signature (the engines are run on those; Mach-O and raw shellcode are not offered)"
 
 
@@ -2030,11 +2030,14 @@ def main(argv):
         return refuse("the target is not a readable file")
     fmt, why = detect(path)
     if argv[1] == "detect":
+        if fmt == "unknown":
+            print(json.dumps({"applies": "unknown", "format": None, "why": why}))
+            return 2
         print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
         return 0 if fmt else 1
     if "--out" not in args:
         return refuse("run needs --out DIR")
-    if fmt is None:
+    if fmt is None or fmt == "unknown":
         existed = os.path.isdir(args["--out"])
         refused = make_out_dir(args["--out"])
         if refused:

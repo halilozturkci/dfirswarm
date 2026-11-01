@@ -113,7 +113,7 @@ def detect(path):
         with open_regular(path) as fh:
             magic = fh.read(4)
     except OSError as exc:
-        return False, "unreadable: %s" % (exc.strerror or exc)
+        return "unknown", "unreadable, so it cannot be told whether it is a capture: %s" % (exc.strerror or exc)
     if magic in MAGICS:
         return True, "pcap or pcapng file signature"
     return False, "no pcap or pcapng file signature"
@@ -933,7 +933,7 @@ def main():
     applies, why = detect(path)
     if mode == "detect":
         print(json.dumps({"applies": applies, "why": why}))
-        return 0 if applies else 1
+        return 2 if applies == "unknown" else 0 if applies else 1
     if mode != "run" or "--out" not in sys.argv[4:] or sys.argv.index("--out") + 1 >= len(sys.argv):
         print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
         return 2
@@ -948,7 +948,7 @@ def main():
         return 2
     receipt = Receipt(out_dir, target, path)
     data = receipt.data
-    if not applies:
+    if applies is not True:
         data.update(status="unsupported", status_basis="the file has no pcap or pcapng signature, so nothing was listed", finished=True, why=why)
         receipt.write()
         return 2

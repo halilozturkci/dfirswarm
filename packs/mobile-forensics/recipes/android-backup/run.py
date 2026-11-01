@@ -599,7 +599,9 @@ def detect(path):
         with open(path, "rb") as handle:
             details = header(handle)
         return True, "Android backup header version %d, encryption %s" % (details["version"], details["encryption"])
-    except (OSError, UnicodeError, ValueError) as exc:
+    except OSError as exc:
+        return "unknown", "the file could not be read, so it cannot be told whether it is an Android backup: %s" % exc
+    except (UnicodeError, ValueError) as exc:
         return False, str(exc)
 
 
@@ -752,7 +754,7 @@ def main():
     if args.command == "detect":
         applies, why = detect(path)
         print(json.dumps({"applies": applies, "why": why}))
-        return 0 if applies else 1
+        return 2 if applies == "unknown" else 0 if applies else 1
     if not args.out:
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "run was given no output directory, so nothing was run", "error": "run needs --out DIR"}))
         return 2
