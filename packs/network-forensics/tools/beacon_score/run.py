@@ -38,7 +38,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "beacon_score", "version": 6}
+TOOL = {"name": "beacon_score", "version": 7}
 
 
 def _before_start(signum, _frame):
@@ -63,9 +63,12 @@ for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
 
 import array
 import datetime
+import errno
 import math
 import re
 import secrets
+import select
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -74,6 +77,8 @@ MAX_EPOCH = 4_102_444_800        # 2100-01-01: a number above it is not epoch se
 MAX_EVENTS = 3_000_000          # measured: 336 MB resident at this many events (it was 1.19 GB for the same 3 million before the series was packed)
 MAX_INLINE_EVENTS = 500_000     # a series passed in `timestamps`: the arguments are parsed whole (about 50 MB resident at this many), so a longer one belongs in timestamps_file
 MAX_ARGUMENT_BYTES = 32 << 20   # the arguments are read up to this many bytes; more is refused before it is parsed
+ARGUMENT_COMMA_SLACK = 4096     # the commas the arguments may hold beyond one for each of MAX_INLINE_EVENTS events (the other parameters, a label, a path)
+ARGUMENT_READ_SECONDS = 45      # stdin must be closed by then (the manifest's limit is 60); BEACON_SCORE_ARGUMENT_SECONDS shortens it for the tests
 DEFAULT_LIMIT = 40
 MAX_VALUE_CHARS = 4096          # a longer line of a timestamps_file is not a time
 DEFAULT_SECONDS = 40            # the tool's own clock for reading; the manifest's limit is 60 seconds
@@ -383,7 +388,16 @@ def values_of(file_arg, raw, counters, deadline=None):
     be a time is counted and yields None; a blank line and a comment are not positions. A line the rest of which is skipped is
     skipped under the clock (`deadline`): a file with no line break in it is as long as the disk."""
     if file_arg is not None:
-        with open(file_arg, "r", encoding="utf-8", errors="replace") as fh:
+        # opened without blocking and looked at once: a name that became a pipe since main() checked it is refused, never waited on for a writer
+        fd = os.open(file_arg, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(errno.EINVAL, "not a regular file")
+            source = os.fdopen(fd, "r", encoding="utf-8", errors="replace")
+        except BaseException:
+            os.close(fd)
+            raise
+        with source as fh:
             index = 0
             while True:
                 line = fh.readline(MAX_VALUE_CHARS + 1)
@@ -415,17 +429,53 @@ def median_of(values):
     return (ordered[n // 2 - 1] + ordered[n // 2]) / 2
 
 
+def read_arguments(began):
+    """stdin up to MAX_ARGUMENT_BYTES + 1 bytes, until it is closed, under the tool's clock: a writer that never closes it ends the call as JSON at
+    ARGUMENT_READ_SECONDS, not at the harness's kill. A stop signal ends the wait at once (the handler raises)."""
+    try:
+        limit = float(os.environ["BEACON_SCORE_ARGUMENT_SECONDS"])
+    except (KeyError, ValueError):
+        limit = ARGUMENT_READ_SECONDS
+    try:
+        fd = sys.stdin.fileno()
+    except (AttributeError, ValueError, OSError) as exc:
+        fail("the arguments cannot be read: there is no standard input (%s)" % describe(exc))
+    chunks, total = [], 0
+    while total <= MAX_ARGUMENT_BYTES:
+        wait = began + limit - time.monotonic()
+        if wait <= 0:
+            fail("the arguments did not arrive within %g seconds: standard input was not closed by the writer" % limit)
+        try:
+            ready, _, _ = select.select([fd], [], [], min(wait, 1.0))
+            chunk = os.read(fd, min(1 << 20, MAX_ARGUMENT_BYTES + 1 - total)) if ready else None
+        except OSError as exc:
+            fail("the arguments could not be read (%s)" % describe(exc))
+        if chunk is None:
+            continue
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
+
+
 def main():
     began = time.monotonic()         # the clock starts here: reading the arguments is part of what max_seconds covers
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, _stop)
-    given = sys.stdin.buffer.read(MAX_ARGUMENT_BYTES + 1)
+    given = read_arguments(began)
     if len(given) > MAX_ARGUMENT_BYTES:
         # the rest is read and dropped (for a few seconds at most), so that the caller writing it is not left with a broken pipe instead of the answer
         drain_until = time.monotonic() + 5
         while time.monotonic() < drain_until and sys.stdin.buffer.read(1 << 20):
             pass
         fail("the arguments are larger than %d MiB: give the series as timestamps_file (one time per line, up to %d events), not inline" % (MAX_ARGUMENT_BYTES >> 20, MAX_EVENTS))
+    commas = given.count(b",")
+    if commas > MAX_INLINE_EVENTS + ARGUMENT_COMMA_SLACK:
+        # a list of MAX_INLINE_EVENTS events has that many commas less one, in any nesting: more than that cannot be an inline series within the cap, and is
+        # refused before the parse builds a Python object for each of up to 32 MiB of one-byte elements (428 MB resident for 32 MiB of 0.5,)
+        fail("the arguments hold %d commas, more than a series of at most %d events passed inline can: give the series as timestamps_file (one time per line, up to %d events)"
+             % (commas, MAX_INLINE_EVENTS, MAX_EVENTS))
     try:
         args = json.loads(given)
     except (ValueError, RecursionError) as exc:
