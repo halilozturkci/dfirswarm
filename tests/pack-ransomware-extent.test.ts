@@ -298,7 +298,7 @@ test("a rerun with a smaller clock keeps the larger earlier profile and names it
     assert.equal(ended.code, 0, ended.stderr);
     const second = JSON.parse(ended.stdout) as Answer;
     assert.equal(second.status, "partial");
-    assert.equal(second.time_limit.reached === false, true, "the per-file clock is in the file row, not the walk");
+    assert.equal(second.time_limit.reached, true, "the clock ended the file, and the answer says so");
     assert.equal(second.files[0]!.reason, "time_limit");
     assert.notEqual(second.profile!.file, bigName);
     assert.match(second.profile!.file, /-2\.jsonl$/);

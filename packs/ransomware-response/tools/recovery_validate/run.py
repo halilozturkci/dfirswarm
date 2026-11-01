@@ -1409,7 +1409,7 @@ def check_zip(ctx, fd, size):
     r["declared_compressed_bytes"] = comp
     r["declared_uncompressed_bytes"] = uncomp
     r["declared_ratio"] = round(uncomp / comp, 1) if comp else None
-    r["possible_zip_bomb"] = bool((comp and uncomp / comp > 1000) or uncomp > (1 << 40))
+    r["possible_zip_bomb"] = bool((comp == 0 and uncomp > 0) or (comp and uncomp / comp > 1000) or uncomp > (1 << 40))
     r["structure_ok"] = pos == len(cd) and count == total
     if count != total:
         r["directory_error"] = "entry_count_differs_from_the_end_record"
@@ -1721,6 +1721,9 @@ def check_item(ctx, item_id, shown_path, path, cpath, known_sha, given_format, f
                 cip.update({"opened": False, "reason": code, "error": text})
                 cfd = None
         scanned = scan_recovered(ctx, fd, size, cfd, cip.get("bytes", 0) if cip else 0, item_id)
+        if cip is not None and (cfd is None or cip.get("size_equal") is False):
+            c["ciphertexts_unread"] += 1
+            c["ciphertext_reasons"][cip.get("reason", "size_differs")] += 1
         credential = bool(CREDENTIAL_NAME.search(os.path.basename(path))) or bool(PRIVATE_KEY_HEAD.search(scanned["head"]))
         known = {"supplied": bool(known_sha), "source": ("list" if from_list else "item") if known_sha else None, "matches": None}
         if known_sha:
@@ -1868,7 +1871,8 @@ def main():
     items_page = NoReplacePage(TOOL, [granule, "items"], limit)
     counters = {"items_named": 0, "items_checked": 0, "items_partial": 0, "items_not_checked": 0, "bytes_read": 0,
                 "verdicts": collections.Counter({v: 0 for v in VERDICTS}), "partial_by_reason": collections.Counter(),
-                "directories_failed": 0, "not_checked_by_reason": collections.Counter()}
+                "directories_failed": 0, "not_checked_by_reason": collections.Counter(),
+                "ciphertexts_unread": 0, "ciphertext_reasons": collections.Counter()}
     PROGRESS["coverage"] = counters
     scratch = output_place(TOOL + "-scratch", ["s"])[0].parent
     ctx = {"counters": counters, "granule": granule, "budget": budget, "profile": profile, "check_sqlite": check_sqlite_flag, "scratch": scratch}
@@ -1897,7 +1901,7 @@ def main():
             if out_of_time():
                 stopped["tree_not_fully_walked"] = True
                 break
-            work(full, os.path.join(cipher_root, rel) if cipher_root else None, None, None, False)
+            work(full, os.path.join(cipher_root, rel) if cipher_root and os.path.lexists(os.path.join(cipher_root, rel)) else None, None, None, False)
 
     pages = {"items": finish_page(items_page)}
     OWN_NAMES.update(p["all_results"] for p in pages.values() if p.get("all_results"))
@@ -1917,6 +1921,9 @@ def main():
         reasons.append("the tree holds more than %d entries: the walk stopped there" % stopped["entry_bound"])
     if c["directories_failed"]:
         reasons.append("%d directories could not be listed" % c["directories_failed"])
+    if c["ciphertexts_unread"]:
+        reasons.append("%d ciphertexts could not be compared (%s)" % (c["ciphertexts_unread"], ", ".join("%s %d" % kv for kv in sorted(c["ciphertext_reasons"].items()))))
+    clock_cut = bool(c["partial_by_reason"].get("time_limit"))
     if profile_problem:
         reasons.append(profile_problem)
     if BOUNDARY["replaced"]:
@@ -1943,7 +1950,7 @@ def main():
                                  if provenance is not None else None),
         "coverage": {k: (dict(v) if isinstance(v, collections.Counter) else v) for k, v in counters.items()},
         "read_budget_bytes": budget.total,
-        "time_limit": {"max_seconds": max_seconds, "reached": bool(stopped), **stopped},
+        "time_limit": {"max_seconds": max_seconds, "reached": bool(stopped) or clock_cut, **stopped},
         "known_originals": ({"entries": len(known_table), "matched_by": "the file name, against the list read from the path given"} if hash_list_path is not None else None),
         "items": items_page.page,
         "profile": None if profile_problem else {"file": profile.shown, "rows": profile.rows,

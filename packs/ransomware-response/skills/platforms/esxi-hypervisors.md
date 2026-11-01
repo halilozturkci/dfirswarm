@@ -30,8 +30,8 @@ loses what the host kept in memory.
 **Tools.** If the virtualization-backup-forensics pack is loaded (check the run's
 tool inventory), `virtualization_inventory` lists the machines, disk files and
 snapshots that configuration files name, `snapshot_chain_check` tests whether a disk
-or snapshot chain is whole, and `backup_audit_normalise` turns a job or task record
-into events. Check that each answer says what it did not read, and say so where it
+or snapshot chain is whole, and `backup_audit_normalise` reads Proxmox task logs and
+exports whose fields the caller maps, and no other product's records. Check that each answer says what it did not read, and say so where it
 does not. Where the pack is not loaded, say that no tool read this evidence.
 
 **Shows.** Which layer a record belongs to; which machines, disks and snapshots the

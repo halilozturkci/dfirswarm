@@ -46,6 +46,9 @@ MAX_INPUTS = 100000
 MAX_HOSTS = 100000
 MAX_LINE = 1 << 20
 MAX_KIND = 100
+SAT = 1 << 50                # a byte or run sum is held at most this high (1 PiB); a sum that reaches it is shown as the cap and the answer is partial
+MAX_TIMELINE_KEYS = 100000   # distinct (host, kind) pairs of the timelines the index keeps; the events of others are counted under one kind per host
+OTHER_KINDS = "<other kinds>"
 FLUSH_KEYS = 20000           # aggregated keys held in memory before they are written to the index
 DEFAULT_LIMIT = 200
 VERDICTS = ("matches_known_original", "structurally_valid", "unrecovered", "inconclusive")
@@ -1286,7 +1289,7 @@ class Index:
         self.db.execute("BEGIN")
         self.db.executemany(
             "INSERT INTO agg(kind, host, input, key, a, b, c, d, first, last) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(kind, host, input, key) DO UPDATE SET "
-            "a=a+excluded.a, b=b+excluded.b, c=c+excluded.c, d=d+excluded.d, "
+            "a=a+excluded.a, b=MIN(b+excluded.b, %d), c=MIN(c+excluded.c, %d), d=MIN(d+excluded.d, %d), " % (SAT, SAT, SAT) +
             "first=CASE WHEN excluded.first IS NULL THEN first WHEN first IS NULL OR excluded.first < first THEN excluded.first ELSE first END, "
             "last=CASE WHEN excluded.last IS NULL THEN last WHEN last IS NULL OR excluded.last > last THEN excluded.last ELSE last END",
             [(k[0], k[1], k[2], k[3], v[0], v[1], v[2], v[3], v[4], v[5]) for k, v in buffer.items()])
@@ -1367,7 +1370,12 @@ def stream_rows(path, kind, host, input_no, ctx):
                 if len(line) > MAX_LINE:
                     facts["skipped"] += 1
                     while line and not line.endswith(b"\n"):
+                        if out_of_time():
+                            facts["stopped_by_clock"] = True
+                            break
                         line = readline(MAX_LINE + 1)
+                    if facts["stopped_by_clock"]:
+                        break
                     continue
                 try:
                     row = loads(line)
@@ -1383,7 +1391,15 @@ def stream_rows(path, kind, host, input_no, ctx):
                     if not isinstance(h, str) or not h or t is None or not isinstance(k, str) or not k or len(k) > MAX_KIND:
                         facts["skipped"] += 1
                         continue
-                    key = ("timeline", host_id(ctx, h), 0, k)
+                    hid_row = host_id(ctx, h)
+                    pair = (hid_row, k)
+                    if pair not in ctx["kinds"]:
+                        if len(ctx["kinds"]) < MAX_TIMELINE_KEYS:
+                            ctx["kinds"].add(pair)
+                        else:
+                            k = OTHER_KINDS
+                            ctx["folded"] += 1
+                    key = ("timeline", hid_row, 0, k)
                     cur = buffer.get(key)
                     if cur is None:
                         buffer[key] = [1, 0, 0, 0, t, t]
@@ -1420,12 +1436,12 @@ def stream_rows(path, kind, host, input_no, ctx):
                         add = (1, size, 0, 0)
                     cur = buffer.get(key)
                     if cur is None:
-                        buffer[key] = [add[0], add[1], add[2], add[3], None, None]
+                        buffer[key] = [add[0], min(add[1], SAT), min(add[2], SAT), min(add[3], SAT), None, None]
                     else:
                         cur[0] += add[0]
-                        cur[1] += add[1]
-                        cur[2] += add[2]
-                        cur[3] += add[3]
+                        cur[1] = min(cur[1] + add[1], SAT)
+                        cur[2] = min(cur[2] + add[2], SAT)
+                        cur[3] = min(cur[3] + add[3], SAT)
                 if len(buffer) >= FLUSH_KEYS:
                     index.flush(buffer)
     finally:
@@ -1510,7 +1526,7 @@ def main():
         index = Index(["index"])
     except (OSError, sqlite3.Error) as exc:
         fail("the index file could not be created (%s)" % (describe(exc) if isinstance(exc, OSError) else type(exc).__name__))
-    ctx = {"hosts": {}, "index": index, "buffer": {}}
+    ctx = {"hosts": {}, "index": index, "buffer": {}, "kinds": set(), "folded": 0}
     for name in expected:
         host_id(ctx, name)
     declared = collections.defaultdict(lambda: collections.Counter())
@@ -1611,7 +1627,12 @@ def main():
                 row["denominators"] = {"files": c["files"], "bytes": c["bytes"],
                                        "candidate_file_fraction": round(cand["files"] / c["files"], 4) if c["files"] else None,
                                        "fraction_basis": "this host's candidate files over the files in this host's census; not extrapolated to any other host"}
-        ext = db.execute("SELECT key, SUM(a), SUM(b), SUM(c), SUM(d) FROM agg WHERE kind='extent' AND host=? GROUP BY key ORDER BY key", (hid,)).fetchall()
+        sums = {}
+        for (key_, a_, b_, c_, d_) in db.execute("SELECT key, a, b, c, d FROM agg WHERE kind='extent' AND host=? ORDER BY key, input", (hid,)):
+            cur_ = sums.setdefault(key_, [0, 0, 0, 0])
+            for n_, v_ in enumerate((a_, b_, c_, d_)):
+                cur_[n_] += v_
+        ext = [(k_, *v_) for k_, v_ in sorted(sums.items())]
         if ext:
             files = sum(x[1] for x in ext)
             named = sum(x[2] for x in ext)
@@ -1626,7 +1647,12 @@ def main():
                 row["assessed_against_unassessed"] = {"census_bytes": cen_bytes, "assessed_bytes": inspected, "unassessed_bytes": max(cen_bytes - inspected, 0),
                                                       "assessed_exceeds_census": inspected > cen_bytes,
                                                       "basis": "bytes inspected by encryption_extent against the bytes in the census; the two sets of files may differ, and a host with a census is the only one with a denominator"}
-        rec = db.execute("SELECT key, SUM(a), SUM(b) FROM agg WHERE kind='recovery' AND host=? GROUP BY key ORDER BY key", (hid,)).fetchall()
+        sums = {}
+        for (key_, a_, b_) in db.execute("SELECT key, a, b FROM agg WHERE kind='recovery' AND host=? ORDER BY key, input", (hid,)):
+            cur_ = sums.setdefault(key_, [0, 0])
+            cur_[0] += a_
+            cur_[1] += b_
+        rec = [(k_, *v_) for k_, v_ in sorted(sums.items())]
         if rec:
             total["recovery_files_checked"] += sum(x[1] for x in rec)
             row["recovery_checks"] = {"inputs": len(inputs["recovery_checks"]), "by_verdict": {x[0]: {"files": x[1], "bytes": x[2]} for x in rec},
@@ -1662,6 +1688,11 @@ def main():
         reasons.append("the time limit (max_seconds %d) was reached while %d inputs were being read: the rows after the last one read are not counted" % (max_seconds, stopped["input_cut_by_clock"]))
     if not total["hosts"]:
         reasons.append("no host was found in the inputs")
+    capped = db.execute("SELECT COUNT(*) FROM agg WHERE b >= ? OR c >= ? OR d >= ?", (SAT, SAT, SAT)).fetchone()[0]
+    if capped:
+        reasons.append("%d sums reached the cap of 2^50 (1 PiB) and are shown as the cap: byte counts above it are at least that, not exact" % capped)
+    if ctx["folded"]:
+        reasons.append("%d timeline events had a kind past the first %d distinct (host, kind) pairs and are counted under the kind %s" % (ctx["folded"], MAX_TIMELINE_KEYS, OTHER_KINDS))
     if BOUNDARY["replaced"]:
         reasons.append("%d strings held an identifier-shaped text that the first rule missed and were replaced at the output (see boundary)" % BOUNDARY["replaced"])
     complete = "partial" if reasons else "complete"
@@ -1684,6 +1715,7 @@ def main():
                   "percentage. A host with no census is unknown.",
         "coverage_statement": statement,
         "time_limit": {"max_seconds": max_seconds, "reached": bool(stopped), **stopped},
+        "sum_cap": {"bytes_and_runs_per_key": SAT, "sums_at_the_cap": capped},
         "hosts": hosts_page.page,
         "timeline": timeline_page.page,
         "index": {"file": index.shown, "scope": "SQLite: the aggregates per host and key (agg), the inputs and their receipts, the coverage statements and the printing order of the hosts; no row of an input"},

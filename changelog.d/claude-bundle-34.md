@@ -59,8 +59,8 @@ ones shows 31 of 31 sentences in place and none lost; the sentence that says to 
 `secret_output: true` where key material is expected stays in `scope/triage-tools`. `scope/triage-tools`
 now says when to use `encrypted_survey` (which files look encrypted, and their tails) and when
 `encryption_extent` (where in a file windows read high, and the ranges left unread), and that neither one
-alone shows that a file was encrypted. Measured: `scope/triage-tools` 800 to 713 tokens, the new leaf 375;
-the router 381 of 400, the index 848 of 1,000.
+alone shows that a file was encrypted. Measured: `scope/triage-tools` 800 to 713 tokens, the new leaf 370;
+at the head of this bundle the router is 396 of 400 tokens and the index 885 of 1,000 (the harness's own estimator, 24 entries).
 
 ### Added: ransomware-response has a fourth tool, `recovery_validate`
 
@@ -101,8 +101,8 @@ characters of a note are compared, a note is held as its 128 smallest shingle ha
 two notes together hold at most 128 distinct shingles, otherwise an estimate with a standard error near 0.035 at
 0.8), and the grouping holds at most 50,000 notes: more are counted and make the answer partial. The parameter
 `template_threshold` (default 0.8, 0.5 to 1.0) sets the similarity at which two notes are one template. The
-parser changes from `ransom_note_scan/3` to `/4`: `ransomware_family_match` accepts `/4` and refuses unknown
-versions by name. The tool version goes from 9 to 10.
+parser changes from `ransom_note_scan/3` to `/4`; a reader of that output has to accept `/4` and refuse any other
+version by name. The tool version goes from 9 to 10.
 
 ### Added: ransomware-response has a leaf for services and data, `impact/services-and-data`
 
@@ -112,3 +112,16 @@ estimated, tested or confirmed. It names `ransomware_scope_report` and the field
 `assessed_against_unassessed`, `candidate_against_validated`, `estate_wide_percentage`, the scopes `unknown` and
 `conflict`), and says that no tool decides materiality. A test holds that each field it names is one the tool
 writes. The router, the index and the README name it; it is not `method_only` because it names a tool of the pack.
+
+### Fixed: ransomware-response new tools, after verification
+
+`ransomware_scope_report` read a line over 1 MiB in a loop with no clock: a multi-terabyte sparse file with no
+newline ran far past `max_seconds`. The loop now checks the clock between reads and the input is reported as cut
+by it. Byte and run sums are held at 2^50 per key and input (a sum that reaches it is shown as the cap and makes
+the answer partial) so that no sum overflows the index. The timeline index keeps the first 100,000 distinct
+(host, kind) pairs and counts later kinds under one kind, saying so. `encryption_extent` and `recovery_validate`:
+`time_limit.reached` is true when the clock ended a file; a counterpart or ciphertext that could not be compared
+(missing, not a regular file, unreadable, another size) makes the answer partial and is named; and
+`possible_zip_bomb` is true when the directory declares data in no compressed bytes. The ESXi leaf says that
+`backup_audit_normalise` reads Proxmox task logs and caller-mapped exports only. Every other read loop of the three
+tools and of `ransom_note_scan`'s grouping was checked for a clock: they have one per row, chunk, window or entry.

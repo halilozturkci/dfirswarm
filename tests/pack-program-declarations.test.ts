@@ -80,6 +80,7 @@ const COLLECTORS = w("7z", "CyLR", "log", "uac", "velociraptor");
 /** Words that are not calls. A tool or recipe that is not here and names a program in its source declares it. */
 const ALLOWED: Record<string, Record<string, string>> = {
   "computer-forensics-base/tools/file_type": w("7z"),
+  "ransomware-response/tools/encryption_extent": w("7z"),
   "encrypted-containers/tools/archive_probe": w("strings"),
   "encrypted-containers/tools/crypto_id": w("strings"),
   "encrypted-containers/tools/password_recover": w("7z", "strings"),

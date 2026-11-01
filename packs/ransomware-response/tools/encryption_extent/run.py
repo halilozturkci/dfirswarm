@@ -1582,6 +1582,9 @@ def inspect_file(ctx, file_id, shown_path, path, given_format, counterpart, auth
                                      "windows that were not inspected are not compared"})
         elif cmp_row is not None and "compared" not in cmp_row:
             cmp_row["compared"] = False
+        if cmp_row is not None and not cmp_row.get("compared"):
+            c["counterparts_unread"] += 1
+            c["counterpart_reasons"][cmp_row.get("reason", "not_compared")] += 1
         gaps = spans.gaps(size)
         inspected = spans.inspected()
         for g_off, g_len in gaps:
@@ -1883,7 +1886,8 @@ def main():
     files_page = NoReplacePage("encryption_extent", [policy, window, threshold, samples, "files"], limit)
     counters = {"files_named": 0, "files_inspected": 0, "files_partial": 0, "files_not_inspected": 0, "windows_inspected": 0,
                 "high_entropy_windows": 0, "high_entropy_runs": 0, "bytes_named": 0, "bytes_inspected": 0, "bytes_uninspected": 0,
-                "not_inspected_by_reason": collections.Counter(), "partial_by_reason": collections.Counter(), "empty_files": 0}
+                "not_inspected_by_reason": collections.Counter(), "partial_by_reason": collections.Counter(), "empty_files": 0,
+                "counterparts_unread": 0, "counterpart_reasons": collections.Counter()}
     PROGRESS["coverage"] = counters
     ctx = {"counters": counters, "window": window, "policy": policy, "samples": samples, "threshold": threshold, "budget": budget,
            "profile": profile, "layout": layout, "structure": check_structure}
@@ -1954,6 +1958,9 @@ def main():
     if stopped.get("census_rows_not_read"):
         reasons.append("the time limit (max_seconds %d) was reached while the census was being read: the rows after the last one read were not read "
                        "(their number is not known)" % max_seconds)
+    if c["counterparts_unread"]:
+        reasons.append("%d counterparts could not be compared (%s)" % (c["counterparts_unread"], ", ".join("%s %d" % kv for kv in sorted(c["counterpart_reasons"].items()))))
+    clock_cut = bool(c["partial_by_reason"].get("time_limit") or c["not_inspected_by_reason"].get("time_limit"))
     if profile_problem:
         reasons.append(profile_problem)
     if BOUNDARY["replaced"]:
@@ -1997,7 +2004,7 @@ def main():
         "coverage": {k: (dict(v) if isinstance(v, collections.Counter) else v) for k, v in counters.items()},
         "bytes_read": budget.read,
         "read_budget_bytes": budget.total,
-        "time_limit": {"max_seconds": max_seconds, "reached": bool(stopped), **stopped},
+        "time_limit": {"max_seconds": max_seconds, "reached": bool(stopped) or clock_cut, **stopped},
         "census": ({"file": "the census named by the census parameter", **census_facts} if census_path is not None else None),
         "files": files_page.page,
         "profile": None if profile_problem else {"file": profile.shown, "rows": profile.rows,
