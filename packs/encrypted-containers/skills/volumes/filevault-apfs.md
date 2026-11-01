@@ -3,13 +3,16 @@ id: volumes/filevault-apfs
 title: FileVault and APFS volumes
 when: An Apple volume is encrypted: legacy Core Storage FileVault 2 or APFS.
 needs: []
-tools: []
+tools: [crypto_metadata]
 requires_host: [fvdeinfo, fsapfsinfo]
 ---
 
 Use only if the volume is an Apple one (Core Storage or APFS). Not for LUKS (`volumes/luks-filevault`).
 
-**FileVault and APFS.** Say which layout you have. Use `fvdeinfo` (libfvde) for the
+**FileVault and APFS.** Say which layout you have. `crypto_metadata` picks `fvdeinfo` or
+`fsapfsinfo` by the signature at a byte offset and shows the counts they print; for an
+APFS container it also reads the container's software-crypto flag, which does not say
+that a volume is encrypted. Use `fvdeinfo` (libfvde) for the
 Core Storage layout that legacy FileVault 2 used; this pack does not establish that
 the build in the image reads an APFS volume, so test it on the object, and where it
 fails on one, call that a tool limit, not a finding about the volume. For an APFS container `fsapfsinfo` (libfsapfs) lists the volumes under the

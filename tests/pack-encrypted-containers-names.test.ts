@@ -15,6 +15,7 @@ const AP = join(TOOLS, "archive_probe", "run.py");
 const CID = join(TOOLS, "crypto_id", "run.py");
 const PR = join(TOOLS, "password_recover", "run.py");
 const TC = join(TOOLS, "tcrypt_header", "run.py");
+const CM = join(TOOLS, "crypto_metadata", "run.py");
 const NETWORK = join(ROOT, "packs", "network-forensics", "tools", "pcap_summary", "run.py");
 const WINDOWS = join(ROOT, "packs", "windows-forensics", "tools", "regkv", "run.py");
 
@@ -31,13 +32,13 @@ async function block(path: string, name: string): Promise<string> {
 
 test("the tools carry the same blocks, byte for byte", async () => {
   for (const name of ["WITHHOLDING", "NAMES", "STOP"]) {
-    const copies = await Promise.all([RKS, AP, CID, PR, TC].map((p) => block(p, name)));
+    const copies = await Promise.all([RKS, AP, CID, PR, TC, CM].map((p) => block(p, name)));
     for (const other of copies.slice(1)) assert.equal(other, copies[0], `${name} differs between the tools`);
     assert.ok(copies[0].length > 1000);
   }
   for (const name of ["PLACE", "PAGE"]) {
-    const copies = await Promise.all([RKS, AP].map((p) => block(p, name)));
-    assert.equal(copies[1], copies[0], `${name} differs`);
+    const copies = await Promise.all([RKS, AP, CM].map((p) => block(p, name)));
+    for (const other of copies.slice(1)) assert.equal(other, copies[0], `${name} differs`);
   }
   // The blocks that are another pack's are the other pack's text: the network withholding block, the network process block (the
   // archive_probe 7z child) and the windows no-replace paging blocks. Their owners converge them later; until then they are copies.
@@ -45,12 +46,13 @@ test("the tools carry the same blocks, byte for byte", async () => {
   assert.equal(await block(AP, "PROCESS"), await block(join(ROOT, "packs", "network-forensics", "tools", "pcap_extract", "run.py"), "PROCESS"));
   assert.equal(await block(PR, "PROCESS"), await block(AP, "PROCESS"));
   assert.equal(await block(TC, "PROCESS"), await block(AP, "PROCESS"));
+  assert.equal(await block(CM, "PROCESS"), await block(AP, "PROCESS"));
   assert.equal(await block(RKS, "PLACE"), await block(WINDOWS, "PLACE"));
   assert.equal(await block(RKS, "PAGE"), await block(WINDOWS, "PAGE"));
 });
 
 test("no tool starts a program in a session of its own", async () => {
-  for (const path of [RKS, AP, CID, PR, TC]) {
+  for (const path of [RKS, AP, CID, PR, TC, CM]) {
     const text = await readFile(path, "utf8");
     assert.doesNotMatch(text.replace(/^\s*#.*$/gm, "").replace(/"""[\s\S]*?"""/g, ""), /start_new_session|setsid|process_group/, path);
   }

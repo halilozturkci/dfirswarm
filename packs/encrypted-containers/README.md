@@ -20,7 +20,13 @@ of its own. The thirteenth is the pack's router, `encrypted/router` (at
 most 400 tokens): it names the other twelve by the question each answers, holds no
 rule, and is the one line a run shows for the pack when its skills index is over budget.
 
-**Five tools.**
+**Six tools.**
+`crypto_metadata` takes a volume image and a byte offset and runs the reader for the
+scheme the signature shows (`cryptsetup luksDump`, `bdeinfo`, `fvdeinfo`,
+`fsapfsinfo`): the key slots, segments, digests and tokens of LUKS, the key
+protectors of BitLocker, the counts the Core Storage and APFS readers print. It
+prints no key, salt, digest, UUID, label or identifier, only whether each is
+present, and a reader that is not installed is `unavailable`, never an empty list.
 `crypto_id` names the scheme from the first bytes of a volume or file and reads
 what a header holds without a key: the LUKS1 key-slot fields, the LUKS2 binary
 header (version, label, UUID). It prints no raw bytes of the file, and header text

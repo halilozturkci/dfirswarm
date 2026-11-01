@@ -3,7 +3,7 @@ id: volumes/luks-filevault
 title: Choosing the LUKS or FileVault examination route
 when: A Linux or Apple volume appears encrypted.
 needs: []
-tools: [crypto_id]
+tools: [crypto_id, crypto_metadata]
 requires_host: [cryptsetup]
 ---
 
@@ -15,8 +15,10 @@ the original encrypted object and its metadata as they came.
 
 **LUKS.** Use a `cryptsetup` that supports the version you see. `cryptsetup luksDump`
 reads the header's metadata: version, UUID, data offset, cipher parameters and the
-slots or keyslots. Do not use its options that disclose a volume key in a metadata
-job.
+slots or keyslots. `crypto_metadata` runs it on a copy of the header and returns the
+keyslots, segments, digests (never their salts) and tokens as records, or says
+`unavailable`: that is not an empty slot list. Do not use its options that disclose a
+volume key in a metadata job.
 
 LUKS1 has eight key slots. LUKS2 keeps keyslots, digests, segments and tokens as
 JSON metadata, and they only make sense read together. A slot is one unlock path in
@@ -38,7 +40,7 @@ key exists; anything about an APFS volume's encryption from a reader that does n
 support it.
 
 **Sensitive output.** `cryptsetup luksDump`'s volume-key option prints key material:
-leave it off for a metadata job. `crypto_id` prints no raw bytes of the file; it does print header facts (the LUKS UUID, cipher names from a closed list, a LUKS2 label, slot states, the sample's entropy), none of them key material.
+leave it off for a metadata job. `crypto_id` prints no raw bytes of the file; it does print header facts (the LUKS UUID, cipher names from a closed list, a LUKS2 label, slot states, the sample's entropy), none of them key material. `crypto_metadata` prints no salt, digest, UUID or label; it says whether each is present.
 
 **Both routes.** Use material the case supplies, within the recorded authority. Jobs
 that handle secret material run with `secret_output: true`; the ledger and the report
