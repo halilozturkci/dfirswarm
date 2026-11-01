@@ -50,7 +50,10 @@ is written whole. `ransom_note_scan` finds files whose names look like ransom
 notes and locates what is in them (identifier-like strings, addresses, wallets) by
 byte offset without printing them: it is a candidate inventory, a name match is not
 a confirmed note, and its values go only to a sealed job file
-(`write_values: true` in a job run with `secret_output: true`).
+(`write_values: true` in a job run with `secret_output: true`). It also groups notes by
+template similarity, computed on the text with every located value replaced by its kind,
+so that no group follows a withheld value; a group is an observation about text, not
+about an author.
 
 **One goal template**: `ransomware-case.md`. Its checks require every question to
 be answered under its heading, a timeline in UTC, an `Exfiltration conclusion:` line

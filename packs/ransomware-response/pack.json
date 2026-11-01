@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -76,7 +76,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "236f44825e0fce87e13e2db6d49b9c01556fc0b19cc5fd057029162400678d5c",
+      "README.md": "8ad5c89b1c777b1b5c49900703bbad0ef84540340338cfe2e2c30c933216ebc7",
       "goals/ransomware-case.md": "bb889a729a06a1633e49284a99cf333aab899c57cbe5f0d8748e43ec02b78d62",
       "requires/host.json": "e9738f0296f8c734625a6a03a3d771737bd62a83432aae3bb7c0b0f82e10374c",
       "requires/python.txt": "5a396319de276d1ea51953493ef8e4f2dd0d7cb87c67aac6fbd0e63c096d63b6",
@@ -108,8 +108,8 @@
       "tools/encrypted_survey/run.py": "68db06040a957cbe96c1f74cb1fee0f8976198f4a46532570436347504caf51f",
       "tools/encryption_extent/manifest.json": "7dbf66238747b11e636d4524211c3c58139e4bf357cc3eb6fbc90dee0f5f8242",
       "tools/encryption_extent/run.py": "ce4df7314c65609cc83318e29ab46436c16a64281addf18e664c535c916a7df6",
-      "tools/ransom_note_scan/manifest.json": "aa7527fa4dc2cb318b7af83b1725103351b588354009b977c49c4f11bd1fd0d7",
-      "tools/ransom_note_scan/run.py": "ddc71992fbc131529e14000207feb73545d66d78080ffdfcb00cb89aba0d2507",
+      "tools/ransom_note_scan/manifest.json": "bb29415d9327f995fee1e2de79798d04fa25cd0d6ea07f2ba301e18aa78adaa9",
+      "tools/ransom_note_scan/run.py": "5c3dd8f70178ed537cd5b43c328ec8b0cf4c7035167f2a2034be5242eba2cf86",
       "tools/ransomware_scope_report/manifest.json": "99edd332160dfcd521da07d64d08a2dbd7d151862dc76ca36e163eece561710a",
       "tools/ransomware_scope_report/run.py": "9ae93ccddb26d80b8a28601a60b732af21845b3d096fdb901f402df5e5a05c76",
       "tools/recovery_validate/manifest.json": "92647b94eb18adb5815f075c3f0b17a78cf3430f2687fcc872da0c4ec9683e69",

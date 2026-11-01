@@ -88,3 +88,17 @@ an input) in bounded memory; the answer is paged and the whole is in files. Meas
 rows (261 bytes each) was read in 76 s at 24 MB resident; a deep-tier suite asserts the bound.
 `scope/phase-timeline` and `reporting/conclusions-and-controls` name it and are no longer `method_only`. The
 carrier tests list the new tool, and `tests/node-tests.deep` lists its deep suite.
+
+### Added: ransomware-response `ransom_note_scan` groups notes by template similarity (parser ransom_note_scan/4)
+
+Notes are grouped by the overlap of the 3-token shingles of their text after every located indicator span has
+been replaced by its kind, so that no membership, count or order of a group follows a withheld value. Per group
+the answer gives the member note ids and directories (the first 20 in the row, every one in
+`template_group_members`), the copies, and the earliest and latest modification time as observations; no note,
+occurrence or exact-duplicate group is dropped, and the sealed values file is unchanged. Only the first 65,536
+characters of a note are compared, a note is held as its 128 smallest shingle hashes (the similarity is exact when
+two notes together hold at most 128 distinct shingles, otherwise an estimate with a standard error near 0.035 at
+0.8), and the grouping holds at most 50,000 notes: more are counted and make the answer partial. The parameter
+`template_threshold` (default 0.8, 0.5 to 1.0) sets the similarity at which two notes are one template. The
+parser changes from `ransom_note_scan/3` to `/4`: `ransomware_family_match` accepts `/4` and refuses unknown
+versions by name. The tool version goes from 9 to 10.
