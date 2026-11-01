@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.6.10",
+  "version": "1.6.11",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. No flow-record reader (NetFlow, IPFIX) is bundled.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -28,7 +28,7 @@
       "skills/beacons/periodicity.md": "82ad96c0851e7f01a3620f3716a72d6da1ed4c1e66c8f460d392c2a67baeb5a2",
       "skills/capture/carve-from-images.md": "8c463d5aff985edacb1ee6676fa5ad4a34e1d8216fa8bcbe67b5f63cd59e7673",
       "skills/capture/derivatives.md": "739ec5b87ee9a70a1b02f3c5b0a8dd073c0d05ff0c4124698300dd434ce1984b",
-      "skills/capture/what-you-have.md": "16dbf7f64a0d03ad0ead2cd88c56dfa76c52e44a0e488a3404c305142e74098b",
+      "skills/capture/what-you-have.md": "442ee14904c8d06278872786782ec8f019f689addf5b851c37302f22ab48b66a",
       "skills/correlate/host.md": "ee0f846f373c713c85fe93bf32237daf3973ea1a6ef8908048ba0ed2cc22a5ea",
       "skills/exfil/counters.md": "8e2bc069dba560f51f888dc82a0ef1f08b9cb3ec7f807175a6c078569c0a4af3",
       "skills/exfil/volume.md": "3382fc5dcc6b636694c3f3046500d19c4d3a48cd28c5fa9e185bc993ce419489",
@@ -45,8 +45,8 @@
       "tools/network_log_summary/run.py": "b189f4325307c50c48723435e9ea472f6b82a86ab749c0b5e18369eadf58bf28",
       "tools/pcap_extract/manifest.json": "595f3cb8e5cd82554bc239287c5348ef206d021d0118c1ed0965966b92556700",
       "tools/pcap_extract/run.py": "111534014645ea3ff1efea7e2e9bab56c6813acd14e0760fddff99f41dbf8083",
-      "tools/pcap_summary/manifest.json": "81e23313957105cf668437dc7776116a7abb4015e2d60a9515f78a9b4152b4c3",
-      "tools/pcap_summary/run.py": "ce0f81a7d1cf93ddd485101ea65c4ef211fb570d87be0874a55da10773153ca0",
+      "tools/pcap_summary/manifest.json": "0b8670023f84b6f3ea46947c2b1ebdab29234a5fac5b3bd04ba71c948289ce4d",
+      "tools/pcap_summary/run.py": "5329bd747fd690aa19fe882db2e37ad8ba5897123bd51168f7470673b531ecaf",
       "tools/suricata_run/manifest.json": "86d4fee353707817064a43f55df474b3699298e08917c594db8a1d01e90e31f2",
       "tools/suricata_run/run.py": "34b394031e39ec5d4288a0e5bf589ea370fbb6aafd1a2b1cb19b34c2b79ce7e6",
       "tools/zeek_run/manifest.json": "32b2935f88a76a8247e9957c0150fb9bbad42fa57d07b0e86579128f84ae7a42",

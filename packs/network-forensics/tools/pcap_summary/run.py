@@ -42,15 +42,17 @@ What the answer holds, and what it does not:
 
 Aggregates are held in memory up to max_memory_tuples keys and are kept in a
 temporary SQLite file beyond that, so memory does not follow the capture; the
-answer says so (spilled_to_disk). Whole results are kept on disk and named when
-a page is shorter than the result.
+answer says so (spilled_to_disk: true when the tuple or endpoint table, the
+talker or port table, or the tally of unknown pcapng block types was moved to
+the file). Whole results are kept on disk and named when a page is shorter than
+the result.
 """
 import json
 import os
 import signal
 import sys
 
-TOOL = {"name": "pcap_summary", "version": 8}
+TOOL = {"name": "pcap_summary", "version": 9}
 PARSER = "pcap_summary/6"
 
 
@@ -1663,7 +1665,7 @@ def main():
                 unsupported_page.add({"block_type": "0x%08x" % block_type, "blocks": blocks})
             unsupported_types = len(info.not_decoded) + info.unknown.distinct()
             unsupported_result = unsupported_page.finish()
-            spilled = spilled_here() or talkers.spilled or ports.spilled
+            spilled = spilled_here() or talkers.spilled or ports.spilled or info.unknown.spilled     # the block-type tally spills on its own, past TYPES_IN_MEMORY types
             pages = {conversations_name: rows_page.finish(), "top_talkers": talker_page.finish(), "top_ports": port_page.finish()}
             syn_times_file = syn_page.finish().get("all_results") if syn_rows_cut else None
         finally:
