@@ -275,6 +275,6 @@ test("the manifests and the skill list the pairs and groups that are printed, wi
   for (const text of ["first pass", "first_pass", "sorts as a withheld name too", "is read a second time", "pieces of 256 KiB"]) {
     assert.ok(scan.includes(text), `ransom_note_scan does not say: ${text}`);
   }
-  const skill = await read("skills/scope/triage-tools.md");
+  const skill = (await read("skills/scope/triage-tools.md")) + (await read("skills/scope/triage-tools-names.md"));
   for (const text of ["7 hex pairs", "deny-list", "8 or more hex pairs with one separator"]) assert.ok(skill.replace(/\s+/g, " ").includes(text), `the skill does not say: ${text}`);
 });

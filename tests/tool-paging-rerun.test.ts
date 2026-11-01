@@ -123,6 +123,46 @@ const CASES: Case[] = [
     small: { limit: 1 },
   },
   {
+    tool: "ransomware-response/encryption_extent",
+    build: async (dir) => {
+      const files: string[] = [];
+      for (let i = 0; i < 12; i++) {
+        await put(dir, `share/f${i}.docx.locked`, Buffer.from(Array.from({ length: 4096 }, (_, k) => (k * 131 + i * 17 + (k >> 3) * 29) & 0xff)));
+        files.push(`share/f${i}.docx.locked`);
+      }
+      return { policy: "full", files };
+    },
+    large: { limit: 6 },
+    small: { limit: 1 },
+  },
+  {
+    tool: "ransomware-response/recovery_validate",
+    build: async (dir) => {
+      const files: string[] = [];
+      for (let i = 0; i < 12; i++) {
+        await put(dir, `rec/f${i}.txt`, Buffer.from(`recovered text number ${i}\n`.repeat(20)));
+        files.push(`rec/f${i}.txt`);
+      }
+      return { items: files };
+    },
+    large: { limit: 6 },
+    small: { limit: 1 },
+  },
+  {
+    tool: "ransomware-response/ransomware_scope_report",
+    build: async (dir) => {
+      const censuses: Array<{ host: string; file: string }> = [];
+      for (let i = 0; i < 12; i++) {
+        const rows = [JSON.stringify({ record: "file", file: "x", bytes: 10 + i, status: "candidate" }), JSON.stringify({ record: "receipt", parser: "encrypted_survey/3", status: "complete" })];
+        await put(dir, `c${i}.jsonl`, Buffer.from(rows.join("\n") + "\n"));
+        censuses.push({ host: `host${i}`, file: `c${i}.jsonl` });
+      }
+      return { censuses };
+    },
+    large: { limit: 6 },
+    small: { limit: 1 },
+  },
+  {
     tool: "encrypted-containers/recovery_key_scan",
     build: async (dir) => {
       const key = (i: number) => Array.from({ length: 8 }, (_, g) => String(((i + 1) * 11 * (g + 3) * 7) % 11 * 0 + 111111 + ((i * 7 + g * 13) % 888888)).slice(0, 6).padEnd(6, "1")).join("-");

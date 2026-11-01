@@ -3,7 +3,7 @@ id: encryptor/samples-and-notes
 title: Recovered samples, tails and note placement
 when: You hold a recovered binary or script, repeated tails, or note placement.
 needs: []
-tools: [encrypted_survey, ransom_note_scan]
+tools: [encrypted_survey, ransom_note_scan, encryption_extent]
 requires_host: [yara]
 ---
 
@@ -23,6 +23,13 @@ format, against independent files and against supported family research before i
 means more than a coincidence. Note placement, renaming and encryption can each
 occur without the others.
 
+`encryption_extent` measures where in a named file, or in the survey's candidates
+given by their census, windows read as high entropy. You declare a policy
+(`sampling` or `full`); it names the bytes it did not inspect and checks the
+head and the end of the file against its format. Its `high_entropy_fraction` is a
+share of the inspected bytes, not a percentage encrypted: compressed formats
+read high too, and a pattern finer than its window is not located.
+
 **Sensitive output.** `ransom_note_scan` reaches values that can carry access: run
 it as a job with `secret_output: true`, cite a value by note id and offset, and never
 write one, or a hash of one, into the ledger or the report.
@@ -30,4 +37,4 @@ write one, or a hash of one, into the ledger or the report.
 **Does not show.** A note's place does not show an encrypted directory; a rule
 match does not show who ran what.
 
-Record: the sample's hash and source, the engine and ruleset (source, revision, hash), rule names and match locations, the survey's `status`, `status_basis` and `coverage`.
+Record: the sample's hash and source, the engine and ruleset (source, revision, hash), rule names and match locations, the survey's `status`, `status_basis` and `coverage`, the extent's policy and its uninspected ranges.
