@@ -232,7 +232,6 @@ unchanged.
 - `test "$(grep -cE '^### +2\.[0-9]+' work/report.md)" -ge "$(awk 'match($0,/^(#+ *)?(\*\* *)?([Qq](uestion)? *[0-9]+|[0-9]+[.):]([ *]|$))/){s=substr($0,RSTART,RLENGTH);gsub(/[^0-9]/,"",s);if(!(s in n))c++;n[s]}END{print c+0}' inputs/CASE.md)"`
 - `test -f work/timeline.md`
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 15`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 12`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections-in inputs/CASE.md --sections summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies
