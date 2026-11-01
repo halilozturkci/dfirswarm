@@ -76,6 +76,7 @@ import errno
 import functools
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -84,7 +85,18 @@ import tempfile
 import unicodedata
 from pathlib import Path
 
-PARSER = "ransom_note_scan/3"
+PARSER = "ransom_note_scan/4"
+# Template-similarity groups (see template_sketch): notes are grouped by the overlap of the 3-token shingles of their text after every located
+# indicator span has been replaced by its kind. The first TEMPLATE_CHARS characters of a note are compared, and a note is held as its
+# TEMPLATE_SKETCH smallest shingle hashes; a note is compared with earlier notes that share one of its TEMPLATE_KEYS smallest hashes (at most
+# TEMPLATE_PER_KEY earlier notes are kept per hash), and the groups are the connected components of "estimated similarity at or above the threshold".
+TEMPLATE_SHINGLE = 3
+TEMPLATE_CHARS = 65536
+TEMPLATE_SKETCH = 128
+TEMPLATE_KEYS = 8
+TEMPLATE_PER_KEY = 4
+TEMPLATE_MAX_NOTES = 50000
+DEFAULT_TEMPLATE_THRESHOLD = 0.8
 DEFAULT_MAX_SIZE = 200000
 MAX_SIZE_CEILING = 16 << 20
 DEFAULT_SECONDS, MAX_SECONDS = 480, 540    # the manifest allows 600: the walk stops here so that what it has is written and sealed
@@ -1714,7 +1726,7 @@ def format_hint(text):
 
 # --- arguments ----------------------------------------------------------------------
 
-KNOWN_PARAMS = {"root", "max_size", "limit", "write_values", "exclude_top_level_dirs", "max_seconds"}
+KNOWN_PARAMS = {"root", "max_size", "limit", "write_values", "exclude_top_level_dirs", "max_seconds", "template_threshold"}
 
 
 def int_param(args, key, default, low, high=None):
@@ -1726,6 +1738,96 @@ def int_param(args, key, default, low, high=None):
     if high is not None and value > high:
         fail("%s must be at most %d (a note is read whole into memory)" % (key, high))
     return value
+
+
+# --- template-similarity groups -------------------------------------------------------
+
+_TEMPLATE_TOKEN = re.compile(r"<[a-z_]+>|\w+")
+
+
+def template_sketch(text, spans):
+    """The sketch of a note for template grouping: the TEMPLATE_SKETCH smallest hashes of the 3-token shingles of its text, taken after every
+    located indicator span has been replaced by its kind, so that a victim identifier, an address or a wallet (the values the scan withholds)
+    is not in what is compared. Only the first TEMPLATE_CHARS characters are used. Returns (sketch, complete): `complete` is False when the clock
+    ran out, and None when the text has no token at all."""
+    end = min(len(text), TEMPLATE_CHARS)
+    pieces, at = [], 0
+    for start, stop, kind in sorted(spans):
+        if start < at:
+            continue                              # inside a span that was already replaced
+        pieces.append(text[at:start])
+        pieces.append(" <%s> " % kind)
+        at = stop
+        if at >= end:
+            break
+    if at < end:
+        pieces.append(text[at:end])
+    tokens = _TEMPLATE_TOKEN.findall("".join(pieces).lower())
+    n = min(TEMPLATE_SHINGLE, len(tokens))
+    if n == 0:
+        return None, True
+    hashes = set()
+    for i in range(len(tokens) - n + 1):
+        if i % 2048 == 0 and out_of_time():
+            return None, False
+        hashes.add(int.from_bytes(hashlib.blake2b(" ".join(tokens[i:i + n]).encode("utf-8", "replace"), digest_size=8).digest(), "big"))
+    return sorted(hashes)[:TEMPLATE_SKETCH], True
+
+
+def template_similarity(a, b):
+    """The Jaccard similarity of two notes' shingle sets, estimated from their sketches (exact when the two sets together hold no more than
+    TEMPLATE_SKETCH shingles, which is every note of about a hundred words)."""
+    sa, sb = set(a), set(b)
+    union = sorted(sa | sb)[:TEMPLATE_SKETCH]
+    return sum(1 for x in union if x in sa and x in sb) / len(union)
+
+
+class DirEntry:
+    """A directory as the answer prints it, for print_order: `name` is the printed text and `path` the real one (the tie-break is a keyed hash of it)."""
+
+    def __init__(self, name, path):
+        self.name = name
+        self.path = path
+
+
+class TemplateGroups:
+    """Notes joined into groups as they are read: a note is linked to the earlier notes that share one of its smallest shingle hashes and
+    whose similarity is at the threshold. The groups are the connected components, so a note that is similar to any member joins the group."""
+
+    def __init__(self, threshold):
+        self.threshold = threshold
+        self.parent = []
+        self.sketches = []
+        self.index = {}
+        self.notes = []             # (note_id, directory as printed, directory, mtime_ns, modified_utc)
+
+    def find(self, i):
+        root = i
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[i] != root:
+            self.parent[i], i = root, self.parent[i]
+        return root
+
+    def add(self, note, sketch):
+        i = len(self.parent)
+        self.parent.append(i)
+        self.sketches.append(sketch)
+        self.notes.append(note)
+        for h in sketch[:TEMPLATE_KEYS]:
+            for j in self.index.get(h, ()):
+                if self.find(j) != self.find(i) and template_similarity(sketch, self.sketches[j]) >= self.threshold:
+                    self.parent[self.find(j)] = self.find(i)
+        for h in sketch[:TEMPLATE_KEYS]:
+            held = self.index.setdefault(h, [])
+            if len(held) < TEMPLATE_PER_KEY:
+                held.append(i)
+
+    def groups(self):
+        members = {}
+        for i in range(len(self.parent)):
+            members.setdefault(self.find(i), []).append(i)
+        return sorted(members.values(), key=lambda m: (-len(m), m[0]))
 
 
 def main():
@@ -1750,6 +1852,10 @@ def main():
     exclude_top = args.get("exclude_top_level_dirs", DEFAULT_EXCLUDE_TOP)
     if not isinstance(exclude_top, list) or not all(isinstance(x, str) and x and "/" not in x for x in exclude_top):
         fail("exclude_top_level_dirs must be a list of directory names (no slash); [] excludes nothing")
+    template_threshold = args.get("template_threshold", DEFAULT_TEMPLATE_THRESHOLD)
+    if (isinstance(template_threshold, bool) or not isinstance(template_threshold, (int, float)) or not math.isfinite(template_threshold)
+            or not 0.5 <= template_threshold <= 1.0):
+        fail("template_threshold must be a number from 0.5 to 1.0 (the similarity of two notes' shingles at which they are one template)")
     unknown = sorted(k for k in args if k not in KNOWN_PARAMS)
     try:
         values = SecretValues(write_values)
@@ -1777,6 +1883,8 @@ def main():
     note_serial = finding_serial = 0
     bytes_read = 0
     stopped = {}
+    templates = TemplateGroups(template_threshold)
+    not_grouped = {"binary": 0, "no_text": 0, "scan_cut": 0, "clock": 0, "note_limit": 0}
     PROGRESS["coverage"] = counters
 
     # The first pass takes at most FIRST_PASS_SHARE of the time; the clock the rest of the run keeps is the one the caller set.
@@ -1817,12 +1925,14 @@ def main():
                             "encoding": None, "encoding_basis": decoded["basis"], "decode_errors": None,
                             "format_hint": "binary", "indicator_counts": {}})
                 by_class["binary_not_scanned"] = by_class.get("binary_not_scanned", 0) + 1
+                not_grouped["binary"] += 1
                 notes.add(row)
                 continue
 
             text = decoded["text"]
             offsets = Offsets(decoded)
             counts, note_values = {}, []
+            template_spans = []         # (start, end, kind) of the located spans in the first TEMPLATE_CHARS characters: what the template text masks
             cut = False
             for kind, pattern, group in KINDS:
                 if cut:
@@ -1833,6 +1943,8 @@ def main():
                         cut = True
                         break
                     value = m.group(group)
+                    if m.start(group) < TEMPLATE_CHARS:
+                        template_spans.append((m.start(group), m.end(group), kind))
                     finding_serial += 1
                     finding_id = "F%06d" % finding_serial
                     offset = offsets.at(m.start(group))
@@ -1894,6 +2006,18 @@ def main():
                 counters["notes_partly_scanned"] += 1
                 row["scan_stopped"] = ("the time limit (max_seconds) was reached while this note was being scanned: the indicators after the "
                                        "ones counted here were not looked for")
+            # Template grouping: on the text with every located indicator span replaced by its kind, so that no membership follows a value.
+            if cut:
+                not_grouped["scan_cut"] += 1
+            elif len(templates.parent) >= TEMPLATE_MAX_NOTES:
+                not_grouped["note_limit"] += 1
+            else:
+                sketch, finished = template_sketch(text, template_spans)
+                if sketch is None:
+                    not_grouped["no_text" if finished else "clock"] += 1
+                else:
+                    # the directory as the note's row prints it (a name that is also a value of this note is withheld), not counted a second time
+                    templates.add((note_id, shown(os.path.dirname(path), note_values, count=False), os.path.dirname(path), mtime_ns, modified), sketch)
             notes.add(row)
     finally:
         values.close()
@@ -1905,8 +2029,32 @@ def main():
     for kind, n in distinct.items():
         totals[kind]["distinct_values"] = n
 
+    group_page = NoReplacePage("ransom_note_scan", [real, "template groups"], limit)
+    member_page = NoReplacePage("ransom_note_scan", [real, "template group members"], limit)
+    group_count = 0
+    for members in templates.groups():
+        group_count += 1
+        gid = "T%04d" % group_count
+        times = [templates.notes[i][3] for i in members]
+        first, last = min(times), max(times)
+        printed_of = {templates.notes[i][2]: templates.notes[i][1] for i in members}
+        # in the order an answer prints names: by the printed text, the withheld ones in an order drawn afresh every run
+        directories = print_order([DirEntry(printed, raw) for raw, printed in printed_of.items()], lambda entry: False)
+        shown_directories = [d.name for d in directories[:20]]
+        group_page.add({"group_id": gid, "copies": len(members), "member_note_ids": [templates.notes[i][0] for i in members[:20]],
+                        "member_note_ids_shown": min(len(members), 20), "directories": shown_directories,
+                        "directories_total": len(directories), "directories_shown": len(shown_directories),
+                        "earliest_mtime_ns": first, "earliest_modified_utc": iso_utc(first),
+                        "latest_mtime_ns": last, "latest_modified_utc": iso_utc(last),
+                        "basis": "observation: notes whose text, with every located indicator span replaced by its kind, is similar at or above "
+                                 "the threshold; it says nothing about who wrote them or whether the same template was used by one actor"})
+        for i in members:
+            note_id, directory, _raw, mtime_ns, modified = templates.notes[i]
+            member_page.add({"group_id": gid, "note_id": note_id, "directory": directory, "mtime_ns": mtime_ns, "modified_utc": modified})
+
     pages = {"notes": finish_page(notes), "occurrences": finish_page(occurrences), "name_matches_not_read": finish_page(rejected),
-             "exceptions": finish_page(exceptions), "distinct_note_contents": finish_page(variants)}
+             "exceptions": finish_page(exceptions), "distinct_note_contents": finish_page(variants),
+             "template_groups": finish_page(group_page), "template_group_members": finish_page(member_page)}
     OWN_NAMES.update(page["all_results"] for page in pages.values() if page.get("all_results"))
     if values.shown:
         OWN_NAMES.add(values.shown)
@@ -1927,6 +2075,13 @@ def main():
     if stopped:
         reasons.append("the time limit (max_seconds %d) was reached: %d entries of the directory being read and at least %d directories were "
                        "not examined, so a note under them was not looked for" % (max_seconds, stopped["entries_not_examined"], stopped["directories_not_entered"]))
+    if not_grouped["note_limit"]:
+        reasons.append("%d notes were not grouped by template: the grouping holds at most %d notes (they keep their rows and their exact-duplicate groups)"
+                       % (not_grouped["note_limit"], TEMPLATE_MAX_NOTES))
+    if not_grouped["clock"]:
+        reasons.append("%d notes were not grouped by template: the time limit was reached while their text was being compared" % not_grouped["clock"])
+    if not_grouped["scan_cut"]:
+        reasons.append("%d notes were not grouped by template: they were only partly scanned" % not_grouped["scan_cut"])
     if BOUNDARY["replaced"]:
         reasons.append("%d strings held an identifier-shaped text that the first rule missed and were replaced at the output (see boundary)"
                        % BOUNDARY["replaced"])
@@ -1953,6 +2108,23 @@ def main():
         "occurrences": occurrences.page,
         "rejected": rejected.page,
         "distinct_note_contents": variants.page,
+        "template_groups": group_page.page,
+        "template_group_members": member_page.page,
+        "template_grouping": {
+            "algorithm": "3-token shingles of the note's text, after every located indicator span is replaced by its kind, lower-cased; a "
+                         "note is held as its %d smallest shingle hashes; two notes are one template when the estimated Jaccard similarity of "
+                         "their shingle sets is at or above the threshold, and a group is a connected set of such notes" % TEMPLATE_SKETCH,
+            "threshold": template_threshold,
+            "text_used": "the first %d characters of each note" % TEMPLATE_CHARS,
+            "notes_grouped": len(templates.parent),
+            "groups": group_count,
+            "notes_not_grouped": {k: v for k, v in not_grouped.items() if v},
+            "binary_notes_are_not_grouped": not_grouped["binary"],
+            "estimate": "exact when the two notes together hold at most %d distinct shingles; otherwise an estimate with a standard error "
+                        "near 0.035 at a similarity of 0.8" % TEMPLATE_SKETCH,
+            "note": "groups are observations about the text of notes: they are computed without the values the scan withholds, they say nothing "
+                    "about the author, and they discard no note, occurrence or exact-duplicate group",
+        },
         "earliest_observed_note_mtime": (
             {"note_id": earliest[1], "modified_utc": earliest[2], "mtime_ns": earliest[0],
              "clock": "filesystem modification time as collected, UTC; extraction, copying and a restore change it",
