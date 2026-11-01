@@ -25,10 +25,12 @@ async function fakeUpx(bin: string): Promise<void> {
   await stub(bin, "upx", `case "$1" in
 --version) echo "upx 5.2.1"; echo "UPX stand-in"; exit 0;;
 -t) f="$3"
+  if grep -q SLOWT "$f"; then sleep 60; fi
   if grep -q CORRUPT "$f"; then echo "upx: $f: CantUnpackException: file is possibly modified/hacked/protected; take care!" >&2; exit 1; fi
   if grep -q UPXOK "$f"; then echo "[OK] $f"; exit 0; fi
   echo "upx: $f: NotPackedException: not packed by UPX" >&2; exit 1;;
 -l) f="$3"
+  if grep -q SLOWL "$f"; then sleep 60; fi
   if grep -q NOLIST "$f"; then echo "     File size  Ratio  Format  Name"; exit 0; fi
   n=$(sed -n 's/.*expand=\\([0-9]*\\).*/\\1/p' "$f" | head -1)
   printf '   %s <-   %s   40.00%%   linux/amd64   x\\n' "$n" 100; exit 0;;
@@ -37,6 +39,7 @@ async function fakeUpx(bin: string): Promise<void> {
   if grep -q GROW "$f"; then yes AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > "$out"; exit 0; fi
   if grep -q FAILD "$f"; then echo "upx: $f: CompressedDataException" >&2; exit 1; fi
   if grep -q EMPTYOUT "$f"; then : > "$out"; exit 0; fi
+  if grep -q EXTRA "$f"; then echo junk > "$(dirname "$out")/junk"; fi
   n=$(sed -n 's/.*expand=\\([0-9]*\\).*/\\1/p' "$f" | head -1)
   head -c "$n" /dev/zero | tr '\\0' 'A' > "$out"; chmod 755 "$out"; exit 0;;
 esac
@@ -245,5 +248,37 @@ test("with the real upx: an ELF built here is packed, unpacked, and the derivati
     const out = body(await tool(UNPACK, cwd, { path: "work/hello.packed" }));
     assert.equal(out.status, "complete", JSON.stringify(out));
     assert.equal(sha(await readFile(join(cwd, out.derivative.path))), sha(original));
+  });
+});
+
+test("a call that spends max_seconds in upx -l or upx -t is partial with limits_hit time, and a step that never ran is not reported as failed", async () => {
+  await withCwd(async (cwd, bin) => {
+    await fakeUpx(bin);
+    await put(cwd, "work/slowl.exe", "UPXOK SLOWL expand=10");
+    const l = body(await tool(UNPACK, cwd, { path: "work/slowl.exe", max_seconds: 5 }, {}, bin));
+    assert.equal(l.status, "partial", JSON.stringify(l));
+    assert.deepEqual(l.limits_hit, ["time"]);
+    assert.equal(l.derivative, null);
+    assert.equal(l.steps.find((x: Json) => x.label === "upx -l").status, "timed_out");
+    assert.ok(!l.steps.some((x: Json) => x.label === "upx -d"), "upx -d never ran and is not listed as a failed step");
+    assert.match(l.status_basis, /upx -d was not attempted/);
+    await put(cwd, "work/slowt.exe", "UPXOK SLOWT expand=10");
+    const t = body(await tool(UNPACK, cwd, { path: "work/slowt.exe", max_seconds: 5 }, {}, bin));
+    assert.equal(t.status, "partial", JSON.stringify(t));
+    assert.deepEqual(t.limits_hit, ["time"]);
+    assert.equal(t.steps.find((x: Json) => x.label === "upx -t").status, "timed_out");
+    assert.doesNotMatch(t.status_basis, /failed/);
+  });
+});
+
+test("a stage directory with extra files from upx is removed, and the log is mode 0600", async () => {
+  await withCwd(async (cwd, bin) => {
+    await fakeUpx(bin);
+    await put(cwd, "work/extra.exe", "UPXOK EXTRA expand=100");
+    const out = body(await tool(UNPACK, cwd, { path: "work/extra.exe" }, {}, bin));
+    assert.equal(out.status, "complete");
+    const left = await filesUnder(join(cwd, "work/s1/tool-output"));
+    assert.deepEqual(left.filter((f) => f.startsWith("stage-")), [], left.join());
+    assert.equal((await stat(join(cwd, "work/s1/tool-output", out.log))).mode & 0o777, 0o600);
   });
 });

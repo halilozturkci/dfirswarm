@@ -683,6 +683,7 @@ def install_signal_handlers():
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
 
+LINKED = []                        # derivatives linked under their final name whose answer is not yet being written: a stop removes them
 STAGES = []                        # the directories this call made for the derivative: the last word of a stopped call removes what is left of them
 
 
@@ -702,6 +703,18 @@ def _clean_stages():
             pass
 
 
+def _remove_linked():
+    removed = []
+    for path in list(LINKED):
+        try:
+            os.unlink(path)
+            removed.append(str(path))
+        except OSError:
+            pass
+        LINKED.remove(path)
+    return removed
+
+
 def _first_word(signum):
     """The last word of a stop signal that comes before main() has set the tool's own: one answer, saying nothing had been done yet."""
     stopped_answer(signum)
@@ -719,6 +732,7 @@ def print_answer(answer):
     except (AttributeError, ValueError, OSError):
         pass
     STATE["last_word"] = None
+    LINKED.clear()                  # from here the answer is written: the derivative is the answer's
     print(json.dumps(answer, indent=2))
     sys.stdout.flush()
 
@@ -794,14 +808,14 @@ def output_dir():
     return Path("work") / agent / "tool-output"
 
 
-def create_exclusive(directory, name):
+def create_exclusive(directory, name, mode=0o644):
     """A new file named `name` (or `stem-N.ext`) in `directory`, created with O_EXCL and O_NOFOLLOW, never an existing one: (file object, name)."""
     stem, dot, ext = name.rpartition(".")
     flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
     for n in range(1, 1000):
         candidate = name if n == 1 else "%s-%d.%s" % (stem, n, ext)
         try:
-            fd = os.open(str(directory / candidate), flags, 0o644)
+            fd = os.open(str(directory / candidate), flags, mode)
         except FileExistsError:
             continue
         return os.fdopen(fd, "ab", buffering=0), candidate
@@ -825,7 +839,7 @@ class Steps:
 
     def open_log(self, key):
         digest = hashlib.sha256(key.encode("utf-8", "surrogatepass")).hexdigest()[:12]
-        self.log, self.log_name = create_exclusive(self.dir, "unpack-safe-%s.log" % digest)
+        self.log, self.log_name = create_exclusive(self.dir, "unpack-safe-%s.log" % digest, 0o600)
 
     def run(self, label, argv, seconds, watch=None):
         """Run one program; the record: label, argv, exit_code, timed_out, stopped_by_watch, seconds, text (the first 64 KiB of its output)."""
@@ -881,6 +895,8 @@ class Steps:
             for k in ("not_attempted", "launch_failed"):
                 if k in r:
                     row[k] = r[k]
+            row["status"] = ("not_attempted" if "not_attempted" in r else "launch_failed" if "launch_failed" in r else "timed_out" if r["timed_out"]
+                             else "stopped_by_budget" if r["stopped_by_watch"] else "ok" if r["exit_code"] == 0 else "failed")
             out.append(row)
         return out
 
@@ -967,7 +983,9 @@ def main():
     notes = []
 
     def last_word(signum):
-        stopped_answer(signum, original=original, steps=steps.shown(), log=steps.log_name)
+        removed = _remove_linked()
+        stopped_answer(signum, original=original, steps=steps.shown(), log=steps.log_name,
+                       removed_derivative=removed or None, note=("the derivative linked just before the stop was removed" if removed else None))
         _clean_stages()
 
     STATE["last_word"] = last_word
@@ -994,8 +1012,9 @@ def main():
         text = tested["text"]
         if "launch_failed" in tested:
             finish("failed", "upx could not be started: nothing was unpacked")
-        if tested["timed_out"] or tested["exit_code"] is None:
-            finish("failed", "upx -t did not finish within the call's time budget; nothing was unpacked", limits_hit=["time"] if tested["timed_out"] else [])
+        if tested["timed_out"] or "not_attempted" in tested:
+            finish("partial", "upx -t %s within the call's time budget of %d seconds: nothing was unpacked, and nothing is known about whether the file is UPX-packed" % (
+                "did not finish" if tested["timed_out"] else "was not run", seconds), limits_hit=["time"])
         if "NotPackedException" in text:
             hint = other_packer(fd)
             if hint:
@@ -1005,6 +1024,9 @@ def main():
         finish("failed", "upx -t reported a problem with the file (exit %s; UPX's words are in the log): nothing was unpacked and no derivative exists" % tested["exit_code"])
     listing = steps.run("upx -l", [upx, "-l", "--", path], max(1, deadline - time.monotonic()))
     expected = listed_unpacked_size(listing["text"]) if listing["exit_code"] == 0 else None
+    if listing["timed_out"] or "not_attempted" in listing:
+        finish("partial", "upx -l %s within the call's time budget of %d seconds: upx -d was not attempted, nothing was written" % (
+            "did not finish" if listing["timed_out"] else "was not run", seconds), limits_hit=["time"])
     if expected is not None and expected > budget:
         finish("partial", "upx lists an unpacked size of %d bytes, past the output budget of %d: nothing was written" % (expected, budget),
                limits_hit=["max_output_bytes"], expected_unpacked_bytes=expected)
@@ -1026,15 +1048,21 @@ def main():
 
     def drop():
         try:
-            os.unlink(produced)
+            for name in os.listdir(stage):                 # UPX's output and anything else it left in the directory this call made
+                os.unlink(os.path.join(stage, name))
         except OSError:
             pass
         try:
             os.rmdir(stage)
             STAGES.remove(str(stage))
         except OSError:
-            pass
+            notes.append("the stage directory %s could not be removed" % stage)
 
+    if "not_attempted" in unpack or "launch_failed" in unpack:
+        drop()
+        finish("partial" if "not_attempted" in unpack else "failed", "upx -d was %s: no derivative exists" % (
+            "not attempted, the call's time budget of %d seconds was spent" % seconds if "not_attempted" in unpack else "not started"),
+            limits_hit=["time"] if "not_attempted" in unpack else [])
     if unpack["stopped_by_watch"]:
         drop()
         finish("partial", "the unpacked file grew past the output budget of %d bytes and UPX was ended; the partial file was removed" % budget,
@@ -1082,6 +1110,7 @@ def main():
             notes.append("the derivative could not be linked under its final name (%s): it stays at %s" % (describe(exc), produced))
             break
         final = directory / candidate
+        LINKED.append(final)
         break
     if final is not None:
         drop()
