@@ -176,3 +176,32 @@ test("the scan after redaction finds what word replacement cannot: UTF-16 text, 
   await writeFile(join(clean, "a.txt"), "nothing sensitive\n");
   assert.deepEqual(leakScan(clean, sensitiveTokens(await readLedger(root, { raw: true }))).hits, []);
 });
+
+test("a file a recipe's coverage marks secret_bearing is withheld whole in a redacted package, its digest kept in the sidecar; an unmarked sibling stays; a count under the same key is no mark", async () => {
+  const { root, pkg } = await run();
+  const out = join(pkg, "store", "jobs", "j000002", "out");
+  await mkdir(join(out, "sub"), { recursive: true });
+  const rows = "1\t10.0.0.5\t/login?user=mira&token=Zq7kP2mR9xWd\n";
+  await writeFile(join(out, "http.tsv"), rows);
+  await writeFile(join(out, "dns.tsv"), "1\texample.org\n");
+  await writeFile(join(out, "sub", "tls.tsv"), "1\tsubject\n");
+  await writeFile(join(out, "outside.txt"), "not named by the mark\n");
+  // the mark, by its shape: a name beside the JSON and a reason; an escaping name, an absolute one and a non-string reason are no marks
+  await writeFile(join(out, "coverage.json"), JSON.stringify({ recipe: "any-recipe", secret_bearing: { "http.tsv": "URL query values", "sub/tls.tsv": "subject names", "../../../ledger.jsonl": "x", "/etc/hostname": "x", "dns.tsv": 3 } }));
+  // an answer field that counts, under the same key, marks nothing
+  await mkdir(join(pkg, "store", "jobs", "j000003", "out"), { recursive: true });
+  await writeFile(join(pkg, "store", "jobs", "j000003", "out", "answer.json"), JSON.stringify({ secret_bearing: { passwords: 2, tokens: 1 } }));
+  await writeFile(join(pkg, "store", "jobs", "j000003", "out", "passwords"), "kept\n");
+  const r = await redactPackage(root, pkg, { leaks: "list" });
+  assert.match(await readFile(join(out, "http.tsv"), "utf8"), /^\[withheld: sensitive content \(marked secret_bearing by store\/jobs\/j000002\/out\/coverage\.json: URL query values\); matched hidden-[0-9a-f]{24}\./);
+  assert.match(await readFile(join(out, "sub", "tls.tsv"), "utf8"), /^\[withheld: sensitive content \(marked secret_bearing by [^)]*subject names\)/);
+  assert.equal(await readFile(join(out, "dns.tsv"), "utf8"), "1\texample.org\n", "a sibling the mark gives a number for is not withheld");
+  assert.equal(await readFile(join(out, "outside.txt"), "utf8"), "not named by the mark\n", "an unmarked sibling stays");
+  assert.equal(await readFile(join(pkg, "store", "jobs", "j000003", "out", "passwords"), "utf8"), "kept\n", "a count under secret_bearing is an answer field, not a mark");
+  assert.ok(r.withheld.some((w) => w.path.endsWith("http.tsv") && /secret_bearing/.test(w.why) && /^hidden-[0-9a-f]{24}$/.test(w.sha256_of_original) && w.bytes === rows.length));
+  const rec = JSON.parse(await readFile(join(pkg, "REDACTIONS.json"), "utf8")) as { changes: Array<{ path: string; before_sha256: string }> };
+  assert.equal(rec.changes.find((c) => c.path === "store/jobs/j000002/out/http.tsv")?.before_sha256, sha(rows), "the record keeps the sha256 of the withheld file");
+  assert.doesNotMatch(JSON.stringify(rec), /Zq7kP2mR9xWd/, "and never its text");
+  const side = JSON.parse(await readFile(join(pkg, "..", `${pkg.slice(pkg.lastIndexOf("/") + 1)}.private.json`), "utf8")) as { map: Record<string, { sha256?: string; path?: string }> };
+  assert.ok(Object.values(side.map).some((m) => m.sha256 === sha(rows) && m.path === "store/jobs/j000002/out/http.tsv"), "the sidecar keeps the digest and the path of the withheld file");
+});

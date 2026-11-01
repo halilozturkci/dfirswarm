@@ -39,8 +39,8 @@
  * Nothing here knows a tool or an evidence format.
  */
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { attestationHash, disputeHash, ledgerHash, readLedger, sensitiveTokens, type LedgerAttestation, type LedgerDispute, type LedgerEntry, type SensitiveToken } from "../extensions/protocol.ts";
 import { leadEventHash, type LeadEvent } from "../extensions/leads.ts";
@@ -211,6 +211,33 @@ function bytesHoldWord(buf: Buffer, word: Buffer, unit: 1 | 2, short: boolean): 
 function sealedAsIs(rel: string): boolean {
   if (["MANIFEST.txt", "MANIFEST.txt.sig", "SIGNER.txt", "signer.pub", "REDACTIONS.txt", "REDACTIONS.json", "COMPONENTS.json", "custody.json.sig", "custody.json.tsr"].includes(rel)) return true;
   return /^release\/v\d+\/(release\.json(\.sig(\.tsr|\.ots)?)?|timestamp\.json|mirror-\d+\.json|print-\d+\.json|transparency-\d+\.json|case-file\.txt)$/.test(rel);
+}
+
+const MAX_MARK_FILE = 8 * 1024 * 1024;
+const MAX_MARKS = 10_000;
+
+/**
+ * The files a coverage or receipt marks secret_bearing: its `secret_bearing` object, `{ "<file>": "<why>" }`, read by shape. A name must be a plain relative
+ * path (no `..`, not absolute, no NUL) and the reason a string, one line, cut at 160 characters; any other entry is no mark. A file over 8 MiB or a mark list
+ * over 10,000 names is read no further than that: a marked file the cut leaves out is still reached by the sensitive job's own withholding, when it has one.
+ */
+export function secretBearingMarks(file: string): Array<{ name: string; why: string }> {
+  let doc: unknown;
+  try {
+    if (statSync(file).size > MAX_MARK_FILE) return [];
+    doc = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return [];
+  }
+  const mark = doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as Record<string, unknown>).secret_bearing : undefined;
+  if (!mark || typeof mark !== "object" || Array.isArray(mark)) return [];
+  const out: Array<{ name: string; why: string }> = [];
+  for (const [name, why] of Object.entries(mark as Record<string, unknown>)) {
+    if (out.length >= MAX_MARKS) break;
+    if (typeof why !== "string" || !name || name.includes("\0") || isAbsolute(name) || name.split(/[\\/]/).includes("..")) continue;
+    out.push({ name, why: why.replace(/\s+/g, " ").slice(0, 160) });
+  }
+  return out;
 }
 
 /** A JSON value with every string that holds a sensitive entry's words replaced whole; each replacement recorded by its pointer. */
@@ -570,6 +597,21 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
       const byPath = patterns.find((p) => p.rel.test(rel));
       if (byContent) withholdPath(rel, before, `bytes a sensitive job wrote (job ${byContent})`, byContent);
       else if (byPath) withholdPath(rel, before, byPath.why, byPath.job);
+    }
+  }
+  // A file a recipe's coverage or receipt marks secret_bearing, whole, by the mark's shape and never by the name of a tool or a recipe: a JSON file with a
+  // `secret_bearing` object that maps a file name (a plain relative path beside the JSON) to the reason as a string. A recipe cannot declare secret_output
+  // (the seal refuses the key in recipe.json), so this mark is how it says "this file holds what the evidence holds"; the file is withheld the way a
+  // sensitive job's output is, its digest and path in the private sidecar. A `secret_bearing` of counts (a number) or a list is an answer field, not a mark.
+  for (const abs of walk(dir)) {
+    const rel = relative(dir, abs).split("\\").join("/");
+    if (!/\.json$/.test(rel) || handled.has(rel) || sealedAsIs(rel)) continue;
+    for (const m of secretBearingMarks(abs)) {
+      const target = relative(dir, resolve(dirname(abs), m.name)).split("\\").join("/");
+      if (target.startsWith("..") || isAbsolute(target) || handled.has(target) || sealedAsIs(target) || !existsSync(join(dir, target))) continue;
+      const st = lstatSync(join(dir, target));
+      if (!st.isFile()) continue;
+      withholdPath(target, readFileSync(join(dir, target)), `marked secret_bearing by ${rel}: ${m.why}`, null);
     }
   }
   // A file a sensitive entry cites, whole; by a keyed id, its digest and path in the sidecar.

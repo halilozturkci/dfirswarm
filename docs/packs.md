@@ -808,6 +808,14 @@ import each other), and holds to this:
   manifest and skill say so for its own rule, with the rates measured on random plants. The place to
   use a file that holds what the rule misses is a `secret_output` job's sealed output: an agent reads
   it there, and each read is recorded.
+- *A recipe marks a file it wrote `secret_bearing`, and a redacted package withholds it.* A recipe cannot declare
+  `secret_output` (the seal refuses the key in `recipe.json`), so its coverage or receipt says which of its output
+  files hold what the evidence holds: a JSON file with a `secret_bearing` object, `{ "<file>": "<why>" }`, the name a
+  plain relative path beside that JSON file and the reason a string (network-capture writes it). `package --redact`
+  reads the mark by its shape, never by the name of a recipe or a tool, and withholds each file it names whole, its
+  digest and path kept in the private sidecar and never in the package, as it does for a sensitive job's output. A
+  `secret_bearing` that is not a map of names to reasons is an answer field and marks nothing: plist_read's
+  `secret_bearing` (counts of what it withheld) and doc_structure's `secret_bearing_attributes` are of that kind.
 - *The manifest declares it, and the harness enforces it.* The description
   says SENSITIVE and names the flag, and the manifest carries the key the job
   service reads, `"secret_output"`: `"required"` (every job of the tool) or
