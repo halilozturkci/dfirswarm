@@ -20,11 +20,12 @@ import { mkdir, mkdtemp, readFile, readdir, rm, truncate, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_PROBE, DOC_STRUCTURE, ENTROPY, FUZZY, PE_DIRECTORIES, PE_INFO, RE, RECIPE, TOOLS, buildElf, buildPe, buildZip, put, stub, withCwd } from "./pack-re-harness.ts";
+import { DOC_PROBE, DOC_STRUCTURE, ELF_DIRECTORIES, ENTROPY, FUZZY, PE_DIRECTORIES, PE_INFO, RE, RECIPE, TOOLS, buildElf, buildPe, buildZip, put, stub, withCwd } from "./pack-re-harness.ts";
 import type { Json, ZipEntry } from "./pack-re-harness.ts";
 import { buildPeDirs } from "./pack-re-doc-fixtures.ts";
 
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
+const UNPACK_SAFE = join(TOOLS, "unpack_safe", "run.py");
 const SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
 const NUMBER = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 } as const;
 
@@ -78,6 +79,17 @@ const CARRIERS: Carrier[] = [
     },
   },
   {
+    name: "unpack_safe", script: UNPACK_SAFE, marker: MODULE_LEVEL,
+    work: async (cwd, bin) => {
+      await stub(bin, "upx", `if [ "$1" = "--version" ]; then echo upx 5.2.1; exit 0; fi
+if [ "$1" = "-t" ]; then exit 0; fi
+if [ "$1" = "-l" ]; then exit 0; fi
+sleep 60`);
+      await put(cwd, "inputs/sample.bin", "x".repeat(2000));
+      return { argv: [], stdin: JSON.stringify({ path: "inputs/sample.bin" }) };
+    },
+  },
+  {
     name: "capa-floss", script: CAPA_FLOSS, marker: MODULE_LEVEL,
     work: async (cwd, bin) => {
       await stub(bin, "capa", `if [ "$1" = "--version" ]; then echo v; exit 0; fi\nsleep 60`);
@@ -101,6 +113,13 @@ const CARRIERS: Carrier[] = [
       for (let i = 0; i < 100_001; i++) entries.push({ name: `m${String(i).padStart(6, "0")}.bin`, data: Buffer.from("x"), method: 0 });
       await put(cwd, "inputs/many.docx", buildZip(entries, { zip64: true }));
       return { argv: [], stdin: JSON.stringify({ path: "inputs/many.docx", max_seconds: 80 }) };
+    },
+  },
+  {
+    name: "elf_directories", script: ELF_DIRECTORIES, marker: MODULE_LEVEL,
+    work: async (cwd) => {
+      await put(cwd, "inputs/syms.so", buildElf({ cls: 64, needed: Array.from({ length: 150_000 }, (_, i) => `lib${i}Name${i * 7}.so`) }));
+      return { argv: [], stdin: JSON.stringify({ path: "inputs/syms.so" }) };
     },
   },
   {

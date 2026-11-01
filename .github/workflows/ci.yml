@@ -405,6 +405,81 @@ jobs:
       - name: Pack-tool suites ${{ matrix.part }}
         run: su node -s /bin/bash -c 'node --experimental-strip-types --no-warnings scripts/test-node.ts --test-shard=${{ matrix.part }} --files-from="$RUNNER_TEMP/pack.list" "--test-skip-pattern=a walk of the whole file system with max_seconds 1"'
 
+  re-real-programs:
+    # The reverse-engineering pack's real-program cases (tests/pack-re-real-programs.test.ts):
+    # the pack's tools and recipes run against the programs they call, not the
+    # stand-ins the other suites use. The programs are installed from the pins
+    # in the pack's requires/ (the download's sha256 is checked before anything
+    # is unpacked; FLOSS installs from its hash lock with --require-hashes), so
+    # this job tests the versions the images carry (Python 3.11, the one the
+    # FLOSS lock is resolved for). It REPORTS: continue-on-error is on the JOB,
+    # so a failure of any step (the install of a program, a hash that does not
+    # match, a case) shows as a warning and does not fail CI green. Whether it
+    # should gate is the owner's call; to make it gate, drop continue-on-error
+    # from the job. It runs when the select job says the Python 3.11 job is
+    # needed (a pack, the tool library, an image file or a pack-tool suite
+    # changed, and every nightly run). amd64 only (the runner's architecture).
+    name: reverse-engineering · real programs (reports, does not gate)
+    needs: select
+    if: needs.select.outputs.py311 == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - run: git config --global init.defaultBranch main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - run: npm ci
+      - name: Install the programs the pack pins
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q yara ssdeep tlsh-tools binutils python3-venv xz-utils unzip
+          python3 -m venv "$RUNNER_TEMP/re-venv"
+          "$RUNNER_TEMP/re-venv/bin/pip" install --require-hashes -r packs/reverse-engineering/requires/locks/floss.txt
+          mkdir -p "$RUNNER_TEMP/re-bin"
+          echo "$RUNNER_TEMP/re-venv/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/re-bin" >> "$GITHUB_PATH"
+          python3 - <<'PY'
+          import hashlib, json, os, shutil, subprocess, tarfile, urllib.request, zipfile
+          host = json.load(open("packs/reverse-engineering/requires/host.json"))
+          bindir = os.path.join(os.environ["RUNNER_TEMP"], "re-bin")
+          work = os.path.join(os.environ["RUNNER_TEMP"], "re-dl")
+          os.makedirs(work, exist_ok=True)
+          for b in host["binaries"]:
+              d = (b.get("install") or {}).get("download")
+              if b["name"] not in ("capa", "r2", "upx") or not d:
+                  continue
+              e = d["amd64"]
+              path = os.path.join(work, e["url"].rsplit("/", 1)[1])
+              urllib.request.urlretrieve(e["url"], path)
+              got = hashlib.sha256(open(path, "rb").read()).hexdigest()
+              if got != e["sha256"]:
+                  raise SystemExit("%s: sha256 %s is not the pinned %s" % (b["name"], got, e["sha256"]))
+              if path.endswith(".deb"):
+                  subprocess.run(["sudo", "apt-get", "install", "-y", "-q", path], check=True)
+              else:
+                  dest = os.path.join(work, b["name"])
+                  os.makedirs(dest, exist_ok=True)
+                  if path.endswith(".zip"):
+                      zipfile.ZipFile(path).extractall(dest)
+                  else:
+                      tarfile.open(path).extractall(dest)
+                  prog = os.path.join(dest, e.get("bin", b["name"]))
+                  os.chmod(prog, 0o755)
+                  os.symlink(prog, os.path.join(bindir, b["name"]))
+              print("installed", b["name"], d["version"], got)
+          PY
+          for p in capa floss ssdeep tlsh r2 upx readelf yara; do printf '%s: ' "$p"; command -v "$p" || echo "NOT INSTALLED"; done
+      - name: The real-program cases
+        continue-on-error: true
+        run: node --experimental-strip-types --no-warnings --test tests/pack-re-real-programs.test.ts tests/pack-re-capa-floss.test.ts
+
   replay-impact:
     # A pull request's impact line (scripts/replay-impact.ts): every contract
     # fixture replayed under the pull request's base and under its head, each
@@ -716,7 +791,7 @@ jobs:
     #   - a part that has not started after the grace period, or was skipped,
     #     does not block, and a notice names it.
     # The timeout covers the grace period plus the longest part (90 minutes).
-    needs: [select, test, node-floor, node-24, python-311, replay-impact, pack-versions, guards-without-namespaces, microvm]
+    needs: [select, test, node-floor, node-24, python-311, re-real-programs, replay-impact, pack-versions, guards-without-namespaces, microvm]
     runs-on: ubuntu-24.04
     timeout-minutes: 115
     permissions:

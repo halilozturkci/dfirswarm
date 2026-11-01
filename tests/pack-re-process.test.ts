@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { readFile, readdir, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_PROBE, DOC_STRUCTURE, FUZZY, PE_DIRECTORIES, PE_INFO, RE, RECIPE, TOOLS, buildPe, childrenOf, gone, pidFile, put, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { DOC_PROBE, DOC_STRUCTURE, ELF_DIRECTORIES, FUZZY, PE_DIRECTORIES, PE_INFO, RE, RECIPE, TOOLS, buildPe, childrenOf, gone, pidFile, put, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
@@ -187,7 +187,7 @@ const NETWORK_PROCESS_SHA = "318081f44222ce78d9fc6da2b1e1727401eb1a00fbc2c1702f7
 const NETWORK_WITHHOLDING_SHA = "fdd1ae506f0e017a7fb011e552ba9ac5dd015728d8eeadc534fbc88e3f72c0a5";
 
 test("the tool and the recipes that start programs carry one process block, the network pack's text, and nothing in the pack starts a program in a session or a group of its own", async () => {
-  const files = [join(TOOLS, "fuzzy_hash", "run.py"), RECIPE, CAPA_FLOSS];
+  const files = [join(TOOLS, "fuzzy_hash", "run.py"), join(TOOLS, "unpack_safe", "run.py"), RECIPE, CAPA_FLOSS];
   const blocks = await Promise.all(files.map(processBlock));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   assert.equal(sha(blocks[0]!), NETWORK_PROCESS_SHA);
@@ -209,15 +209,15 @@ test("the tool and the recipes that start programs carry one process block, the 
 });
 
 test("the withholding blocks of doc_probe, doc_structure, pe_directories, pe_info and the capa-floss recipe are the network pack's text", async () => {
-  for (const path of [DOC_PROBE, DOC_STRUCTURE, PE_DIRECTORIES, PE_INFO, CAPA_FLOSS]) assert.equal(sha(await block(path, "WITHHOLDING")), NETWORK_WITHHOLDING_SHA, path);
+  for (const path of [DOC_PROBE, DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, PE_INFO, CAPA_FLOSS]) assert.equal(sha(await block(path, "WITHHOLDING")), NETWORK_WITHHOLDING_SHA, path);
 });
 
 test("doc_structure, pe_directories and the capa-floss recipe carry one ONE WAY OUT block (the sanitiser and the backstop), after the withholding block", async () => {
-  const blocks = await Promise.all([DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS].map((p) => block(p, "ONE WAY OUT")));
+  const blocks = await Promise.all([DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, CAPA_FLOSS].map((p) => block(p, "ONE WAY OUT")));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   assert.match(blocks[0]!, /^def shown_path\(text\):$/m);
   assert.match(blocks[0]!, /^def final_check\(value, safe=None, key=""\):$/m);
-  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS]) {
+  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, CAPA_FLOSS]) {
     const text = await readFile(path, "utf8");
     assert.ok(text.indexOf("# END SHARED WITHHOLDING") < text.indexOf("# BEGIN SHARED ONE WAY OUT"), `${path}: the one-way-out block follows the withholding block`);
     // one definition of each: no second sanitiser elsewhere in the file
@@ -231,7 +231,7 @@ test("the timeouts the pack sets itself are below the manifest's and the recipe'
   const total = Number(/^TOTAL_BUDGET = (\d+)/m.exec(fuzzy)![1]);
   const manifest = JSON.parse(await readFile(join(TOOLS, "fuzzy_hash", "manifest.json"), "utf8")) as Json;
   assert.ok(total < manifest.timeout_seconds, `fuzzy_hash budgets ${total} s of ${manifest.timeout_seconds}`);
-  for (const [tool, name] of [["doc_probe", "DEFAULT_SECONDS"], ["doc_structure", "DEFAULT_SECONDS"], ["pe_directories", "DEFAULT_SECONDS"], ["pe_info", "DEFAULT_SECONDS"], ["entropy_map", "DEFAULT_SECONDS"]] as const) {
+  for (const [tool, name] of [["doc_probe", "DEFAULT_SECONDS"], ["doc_structure", "DEFAULT_SECONDS"], ["pe_directories", "DEFAULT_SECONDS"], ["elf_directories", "DEFAULT_SECONDS"], ["pe_info", "DEFAULT_SECONDS"], ["entropy_map", "DEFAULT_SECONDS"]] as const) {
     const text = await readFile(join(TOOLS, tool, "run.py"), "utf8");
     const own = Number(new RegExp(`^MAX_SECONDS = (\\d+)`, "m").exec(text)![1]);
     const dflt = Number(new RegExp(`^${name} = (\\d+)`, "m").exec(text)![1]);
