@@ -19,7 +19,7 @@ ioc_scan with `start`; an inode: icat_extract it, then ioc_scan the file).
 """
 import json, re, shutil, sys, subprocess, os, time
 
-TOOL = {"name": "chunk_needles", "version": 9}
+TOOL = {"name": "chunk_needles", "version": 10}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -257,7 +257,9 @@ class SecretValues:
         # instead of failing, or writing through it, after the scan. With nothing found it
         # stays as an empty file, mode 0600, and the answer says written: 0.
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            refused = own_dir(self.path.parent)
+            if refused:
+                raise SecretValuesRefused("the values file could not be created: %s" % refused)
             fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except FileExistsError:
             raise SecretValuesRefused("the values file already exists: %s" % self.path)
@@ -359,11 +361,32 @@ def publish(tmp, path, shown):
         return candidate, shown_stem + suffix + ext
 
 
-class Locators:
-    """One needle's locators: an inline page, and the whole list in a file once it is more than the page."""
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
 
-    def __init__(self, tool, key, limit):
-        self.limit, self.page, self.total, self.stopped_at = limit, [], 0, None
+
+SHOWN_MAX = 120      # characters of a needle shown in a locator row; needle_index is the exact key
+
+
+class LocatorFile:
+    """The locators of every needle that went past its inline page, in ONE JSON Lines file: each row names its needle (needle_index,
+    the position in the needles given once a repeated one is dropped, and needle, its shown form), so the number of open files is one
+    however many needles there are. Rows are written in the order the scan finds them, and from the first that does not fit under the
+    cap none is written (the file holds every occurrence that starts before the offset it stopped at). A file that cannot be created
+    or written to its end is not kept: the answer says so (all_results_error) and is partial."""
+
+    def __init__(self, tool, key):
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         digest = hashlib.sha256(json.dumps(key, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
         name = "%s-%s.jsonl" % (self.tool, digest)
@@ -376,37 +399,45 @@ class Locators:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
         self.fh = self.tmp = self.error = None
-        self.written = 0
-        self.bytes = 0
+        self.written = self.bytes = 0
+        self.rows = {}                     # needle_index -> rows of it in the file
+        self.stopped_at = None
+        self.published = False
 
     def _open(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        refused = own_dir(self.path.parent)
+        if refused:
+            raise OSError(0, refused)
         fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.tool)
         self.tmp, self.fh = Path(name), os.fdopen(fd, "w", encoding="utf-8")
-        for row in self.page:
-            line = json.dumps(row, ensure_ascii=True) + "\n"
-            self.fh.write(line)
-            self.written += 1
-            self.bytes += len(line)
 
-    def add(self, row):
-        self.total += 1
-        if len(self.page) < self.limit:
-            self.page.append(row)
-            return
-        if self.fh is None and self.error is None:
+    def _lose(self, why):
+        self.error = "the whole result could not be written (%s); none of it was kept: the counts and the inline pages are of the whole scan" % why
+        self.discard()
+
+    def write(self, index, name, row):
+        """One row of needle `index`. True when it is in the file."""
+        if self.error is not None or self.stopped_at is not None:
+            return False
+        if self.fh is None:
             try:
                 self._open()
             except OSError as exc:
-                self.error = "the whole result could not be written (%s: %s)" % (self.path.parent, exc.strerror or exc)
-        if self.fh:
-            line = json.dumps(row, ensure_ascii=True) + "\n"
-            if self.stopped_at is None and self.written < ROW_CAP and self.bytes + len(line) <= LOCATORS_BYTES_MAX:
-                self.fh.write(line)
-                self.written += 1
-                self.bytes += len(line)
-            elif self.stopped_at is None:
-                self.stopped_at = row["off"]       # from the first row that did not fit on, none is written: the file is a prefix
+                self._lose("%s: %s" % (self.path.parent, exc.strerror or exc))
+                return False
+        line = json.dumps({"needle_index": index, "needle": name if len(name) <= SHOWN_MAX else name[:SHOWN_MAX] + "...", **row}, ensure_ascii=True) + "\n"
+        if self.written >= ROW_CAP or self.bytes + len(line) > LOCATORS_BYTES_MAX:
+            self.stopped_at = row["off"]       # from the first row that did not fit on, none is written: the file is a prefix
+            return False
+        try:
+            self.fh.write(line)
+        except OSError as exc:
+            self._lose("a write failed after %d rows: %s" % (self.written, exc.strerror or exc))
+            return False
+        self.written += 1
+        self.bytes += len(line)
+        self.rows[index] = self.rows.get(index, 0) + 1
+        return True
 
     def discard(self):
         """Close and remove the file being written, if it is still there: a run that did not finish keeps no half file."""
@@ -415,38 +446,89 @@ class Locators:
                 self.fh.close()
         except OSError:
             pass
+        self.fh = None
         if self.tmp is not None:
             try:
                 os.unlink(self.tmp)
             except OSError:
                 pass
+            self.tmp = None
+        self.rows = {}
 
     def finish(self):
-        info = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
-        if self.fh:
+        """Publish the file (never over one that is there). After this, `shown` names it, or `error` says why there is none."""
+        if self.fh is None:
+            return
+        try:
             self.fh.flush()
             os.fsync(self.fh.fileno())
             self.fh.close()
             self.path, self.shown = publish(self.tmp, self.path, self.shown)
             self.tmp = None
-            info["all_results"] = self.shown
-            info["earlier_answers"] = earlier_answers(self.path)
-            info["all_results_format"] = "JSON Lines, one locator per occurrence: finding_id, off, enc, context_length"
-            if self.stopped_at is not None:
-                info["all_results_complete"] = False
-                info["all_results_stopped_at_offset"] = self.stopped_at
-                info["all_results_cap_rows"] = ROW_CAP
-                info["all_results_cap_bytes"] = LOCATORS_BYTES_MAX
-                info["all_results_note"] = ("the file holds every occurrence that starts before all_results_stopped_at_offset, and is whole as far as it goes; "
-                                            "the counts and the inline page are of the whole scan")
-        if self.error:
-            info["all_results_error"] = self.error
+            self.fh = None
+            self.published = True
+        except OSError as exc:
+            self._lose("the file could not be completed: %s" % (exc.strerror or exc))
+
+
+class Locators:
+    """One needle's locators: an inline page, and the whole list in the shared LocatorFile once it is more than the page."""
+
+    def __init__(self, shared, index, name, limit):
+        self.shared, self.index, self.name, self.limit = shared, index, name, limit
+        self.page, self.total, self.spilled = [], 0, False
+
+    def add(self, row):
+        self.total += 1
+        if len(self.page) < self.limit:
+            self.page.append(row)
+            return
+        if not self.spilled:
+            self.spilled = True
+            for kept in self.page:             # this needle's page goes into the file first, so the file holds its whole list
+                self.shared.write(self.index, self.name, kept)
+        self.shared.write(self.index, self.name, row)
+
+    def finish(self):
+        s = self.shared
+        info = {"needle_index": self.index, "matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self.spilled:
+            have = s.rows.get(self.index, 0)
+            if s.published:
+                info["all_results"] = s.shown
+                info["earlier_answers"] = earlier_answers(s.path)
+                info["all_results_format"] = ("JSON Lines, one locator per occurrence of any needle that went past its page: needle_index (the position of the "
+                                              "needle in the needles given, a repeated one dropped), needle (its shown form), finding_id, off, enc, context_length")
+                info["all_results_rows"] = have
+                if have < self.total:
+                    info["all_results_complete"] = False
+                    info["all_results_stopped_at_offset"] = s.stopped_at
+                    info["all_results_cap_rows"] = ROW_CAP
+                    info["all_results_cap_bytes"] = LOCATORS_BYTES_MAX
+                    info["all_results_note"] = ("the file holds %d of this needle's %d occurrences. It reached its cap and stopped at offset %s: from there on no "
+                                                "row of any needle was written, and a needle that went past its page after that has none in it. The counts and "
+                                                "the inline page are of the whole scan" % (have, self.total, s.stopped_at))
+            if s.error:
+                info["all_results_error"] = s.error
         return info
 
 
+FAILED_BASIS = "the tool stopped with an error and scanned nothing (see error)"
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS, **extra}))
     sys.exit(1)
+
+
+def last_word(kind, value, _tb):
+    """An error nobody expected is an answer too: its class only, since its message can quote what was read."""
+    print(json.dumps({"error": "internal error: %s" % kind.__name__, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS}))
+    sys.stdout.flush()
+    os._exit(1)
+
+
+sys.excepthook = last_word
 
 
 def on_stdout(resolve, *given):
@@ -455,7 +537,14 @@ def on_stdout(resolve, *given):
         return resolve(*given)
     except SystemExit as exc:
         if isinstance(exc.code, str):
-            print(exc.code)
+            try:
+                said = json.loads(exc.code)
+            except ValueError:
+                said = {"error": exc.code}
+            if isinstance(said, dict):
+                said.setdefault("status", "failed")
+                said.setdefault("status_basis", FAILED_BASIS)
+            print(json.dumps(said))
             sys.exit(1)
         raise
 
@@ -471,8 +560,8 @@ def whole(args, key, default, low, high):
 
 try:
     args = json.load(sys.stdin)
-except ValueError as exc:
-    fail("arguments are not valid JSON", reason=str(exc))
+except (ValueError, RecursionError) as exc:
+    fail("arguments are not valid JSON", reason=str(exc)[:200])
 if not isinstance(args, dict):
     fail("arguments are a JSON object")
 needles = args.get("needles") or ""
@@ -483,6 +572,8 @@ elif isinstance(needles, str):
 else:
     fail("needles is a pipe-separated string or a list of strings")
 path = args.get("path") or ""
+if not isinstance(path, str):
+    fail("path is text")
 inode = args.get("inode")
 context = whole(args, "context", 60, 0, CONTEXT_MAX)          # 0 is 0, not the default
 max_hits = whole(args, "max_hits", 20, 1, HITS_MAX)
@@ -520,7 +611,8 @@ except SecretValuesRefused as exc:
 def scan_fh(fh, source, total=None):
     counts = {n: {"ascii": 0, "utf16le": 0} for n in need_list}
     key = [source["label"], source.get("image"), source.get("volume_offset_sectors"), source.get("inode"), source.get("sector_size"), context]
-    pages = {n: Locators("chunk_needles", key + [n], max_hits) for n in need_list}
+    shared = LocatorFile("chunk_needles", key + [need_list])
+    pages = {n: Locators(shared, i, n, max_hits) for i, n in enumerate(need_list)}
 
     def emit(at, name, enc, nb, buf, base, vi):
         i = at - base
@@ -573,34 +665,31 @@ def scan_fh(fh, source, total=None):
                     break
         if stopped is None and not drain(scanner.feed(b"", final=True)):
             stopped = cut[0] + 1
+        shared.finish()
         hits = {}
         for n in need_list:
             page = pages[n].finish()
             hits[n] = {**counts[n], "locations": pages[n].page, **page}
     finally:
-        for n in need_list:
-            pages[n].discard()                  # no half-written file is left when the run did not finish
+        shared.discard()                        # no half-written file is left when the run did not finish
     return hits, scanned, stopped
 
 
 if path:
     if not os.path.isfile(path):
-        print(json.dumps({"error": f"path not found: {path}"}))
-        sys.exit(1)
+        fail(f"path not found: {path}")
     source = {"kind": "file", "path": path, "bytes": os.path.getsize(path)}
     source["label"] = path
     with open(path, "rb") as f:
         hits, scanned, stopped = scan_fh(f, source, source["bytes"])
 else:
     if inode is None:
-        print(json.dumps({"error": "path or inode required"}))
-        sys.exit(1)
+        fail("path or inode required")
     if isinstance(inode, bool) or not (isinstance(inode, int) and inode >= 0 or isinstance(inode, str) and INODE.match(inode)):
         fail("inode is a Sleuth Kit address: a number, or number-type-id for an NTFS stream (168-128-4)", inode=inode)
     image = on_stdout(_resolve_image, args.get("image"))
     if not os.path.isfile(image):
-        print(json.dumps({"error": f"image not found: {image}"}))
-        sys.exit(1)
+        fail(f"image not found: {image}")
     given_offset = args.get("offset")
     if given_offset is not None and (isinstance(given_offset, bool) or not isinstance(given_offset, int) or given_offset < 0):
         fail("offset is a volume offset in sectors, a whole number", offset=given_offset)
@@ -626,15 +715,19 @@ else:
         err_text = errf.read().decode("utf-8", "replace").strip()
     if rc != 0 and stopped is None:
         secret.close()
-        print(json.dumps({"error": err_text or f"icat exit {rc}", "image": image, "inode": inode, "offset": offset, "scanned_bytes": scanned,
+        print(json.dumps({"error": err_text or f"icat exit {rc}", "tool": TOOL, "status": "failed", "status_basis": "icat failed, so what was found before it is not a result (see error)",
+                          "image": image, "inode": inode, "offset": offset, "scanned_bytes": scanned,
                           "note": "what was found before icat failed is not a result; any locator or values file written meanwhile is partial",
                           "secret_values": secret.summary()}))
         sys.exit(1)
 secret.close()
+# A needle whose list past the inline page is not whole in a file (the file could not be written, or reached its cap) is a loss the
+# counts do not show: it makes the answer partial, and the basis names the needles and where the rest is.
+lost = [h["needle_index"] for h in hits.values() if h.get("all_results_error") or h.get("all_results_complete") is False]
 answer = {
     "tool": TOOL, "source": source, "scanned_bytes": scanned, "hits": hits,
-    "complete": stopped is None and secret.stopped_at is None,
-    "status": "complete" if stopped is None else "partial",
+    "complete": stopped is None and secret.stopped_at is None and not lost,
+    "status": "complete" if stopped is None and not lost else "partial",
     "status_basis": ("the whole stream was read and every occurrence in it is reported" if stopped is None
                      else "the scan stopped at its clock before the end of the stream (see stopped): only occurrences that start before next_start are reported"),
     "match_policy": "every occurrence by its start offset in the scanned stream, overlapping ones included, case-sensitive; each needle as UTF-8 and as UTF-16LE",
@@ -648,6 +741,13 @@ if stopped is not None:
                          % (max_seconds, scanned, stopped,
                             "go on with ioc_scan path=%s start=%d and the same needles" % (path, stopped) if path else
                             "extract the inode (icat_extract) and go on with ioc_scan on the file, start=%d" % stopped))
+if lost:
+    shown = ", ".join(str(i) for i in lost[:10]) + (" and %d more" % (len(lost) - 10) if len(lost) > 10 else "")
+    answer["status_basis"] = answer["status_basis"].replace(
+        "the whole stream was read and every occurrence in it is reported",
+        "the whole stream was read and the count and the inline page of every needle are of all of it") + (
+        "; the list of locators past the inline page is not whole for %d needle(s) (needle_index %s: all_results_error or all_results_complete in "
+        "hits) and the rest of it is not on disk: scan again with max_hits at least the needle's count (matched), or with fewer needles" % (len(lost), shown))
 if secret.stopped_at is not None:
     answer["status"] = "partial"
     answer["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"

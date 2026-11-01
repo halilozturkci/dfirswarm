@@ -328,5 +328,141 @@ class ChunkNeedles(Case):
         self.assertEqual(row["source"], bad)
 
 
+class ChunkNeedlesLocators(Case):
+    """Every needle's locators past its page go to one file whose rows name their needle; a list that cannot be written whole makes the
+    answer partial; the locator directory is made by an own-directory walk that refuses a link anywhere on the way."""
+
+    def run_limited(self, args, nofile=None, env=None, timeout=120):
+        """The tool as a child with at most `nofile` open files (Linux), and its answer."""
+        import resource
+        import subprocess
+        import sys
+        from support import tool_path
+        e = dict(os.environ)
+        for k in ("JOB_ID", "OUT", "AGENT_ID", "SECRET_OUTPUT"):
+            e.pop(k, None)
+        e.update(env or {})
+
+        def limit():
+            if nofile:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (nofile, nofile))
+        proc = subprocess.run([sys.executable, tool_path("chunk_needles")], input=json.dumps(args), capture_output=True, text=True, cwd=self.dir,
+                              env=e, timeout=timeout, preexec_fn=limit)
+        return proc, json.loads(proc.stdout)
+
+    def test_a_thousand_needles_past_their_page_under_a_low_open_file_limit_lose_no_list(self):
+        if not hasattr(os, "fork"):
+            self.skipTest("an open-file limit is a Linux and macOS thing")
+        needles = ["n%04d" % i for i in range(1000)]
+        data = b"".join((b"." + n.encode()) * 3 for n in needles)
+        self.write("work/blob.bin", data)
+        proc, j = self.run_limited({"needles": needles, "path": "work/blob.bin", "max_hits": 1}, nofile=256)
+        self.assertEqual(proc.returncode, 0, proc.stdout[:300] + proc.stderr[-300:])
+        self.assertEqual((j["status"], j["complete"]), ("complete", True), j["status_basis"])
+        files = {h["all_results"] for h in j["hits"].values()}
+        self.assertEqual(len(files), 1, "one locator file for every needle")
+        self.assertFalse(any("all_results_error" in h for h in j["hits"].values()))
+        rows = [json.loads(x) for x in self.read(files.pop()).splitlines()]
+        per = {}
+        for x in rows:
+            per.setdefault(x["needle_index"], []).append(x["off"])
+        self.assertEqual(sorted(per), list(range(1000)))
+        for i, n in enumerate(needles):
+            self.assertEqual(sorted(per[i]), [m.start() for m in __import__("re").finditer(n.encode(), data)], n)
+            self.assertEqual(j["hits"][n]["needle_index"], i)
+            self.assertEqual(j["hits"][n]["all_results_rows"], 3)
+        self.assertTrue(all(x["needle"] == needles[x["needle_index"]] for x in rows), "each row names its needle")
+
+    def test_a_write_that_fails_makes_the_answer_partial_and_names_the_needles(self):
+        import subprocess
+        import sys
+        from support import tool_path
+        data = b"".join(b".needle-a.needle-b" for _ in range(40))
+        self.write("work/blob.bin", data)
+        prelude = ("import os, errno\n_fdopen = os.fdopen\n"
+                   "class Full:\n"
+                   "    def __init__(self, f): self.f, self.n = f, 0\n"
+                   "    def write(self, s):\n"
+                   "        self.n += len(s)\n"
+                   "        if self.n > 300: raise OSError(errno.ENOSPC, 'No space left on device')\n"
+                   "        return self.f.write(s)\n"
+                   "    def __getattr__(self, k): return getattr(self.f, k)\n"
+                   "os.fdopen = lambda fd, *a, **k: Full(_fdopen(fd, *a, **k))\n"
+                   "import sys\nsrc = open(sys.argv[1], encoding='utf-8').read()\nexec(compile(src, sys.argv[1], 'exec'), {'__name__': '__main__'})\n")
+        e = dict(os.environ)
+        for k in ("JOB_ID", "OUT", "AGENT_ID", "SECRET_OUTPUT"):
+            e.pop(k, None)
+        proc = subprocess.run([sys.executable, "-c", prelude, tool_path("chunk_needles")], input=json.dumps({"needles": "needle-a|needle-b", "path": "work/blob.bin", "max_hits": 2}),
+                              capture_output=True, text=True, cwd=self.dir, env=e, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stdout[:300] + proc.stderr[-300:])
+        j = json.loads(proc.stdout)
+        self.assertEqual((j["status"], j["complete"]), ("partial", False))
+        for n in ("needle-a", "needle-b"):
+            self.assertIn("a write failed", j["hits"][n]["all_results_error"])
+            self.assertEqual(j["hits"][n]["ascii"], 40)
+            self.assertNotIn("all_results", j["hits"][n])
+        self.assertIn("needle_index 0, 1", j["status_basis"])
+        self.assertIn("max_hits", j["status_basis"])
+        left = [n for _d, _s, names in os.walk(self.path("work")) for n in names if n.endswith(".jsonl") or n.startswith(".chunk_needles")]
+        self.assertEqual(left, [], "no half file is kept")
+
+    def test_a_locator_file_that_cannot_be_created_is_partial(self):
+        # work/<agent>/tool-output is a file, so the directory cannot be made
+        self.write("work/s1/tool-output", b"in the way")
+        self.write("inputs/blob.bin", b".needle" * 5)
+        proc, j = self.run_limited({"needles": "needle", "path": "inputs/blob.bin", "max_hits": 1}, env={"AGENT_ID": "s1"})
+        self.assertEqual((j["status"], j["complete"]), ("partial", False))
+        self.assertIn("all_results_error", j["hits"]["needle"])
+
+    def test_a_link_on_the_way_to_the_locator_directory_is_refused_and_nothing_is_written_through_it(self):
+        self.write("inputs/blob.bin", b".needle" * 5)
+        for where in ("work", "work/s1", "work/s1/tool-output"):
+            target = self.path("elsewhere-%s" % where.replace("/", "-"))
+            os.makedirs(target)
+            if where == "work/s1/tool-output":
+                os.makedirs(self.path("work/s1"), exist_ok=True)
+            elif where == "work/s1":
+                os.makedirs(self.path("work"), exist_ok=True)
+            os.symlink(target, self.path(where))
+            proc, j = self.run_limited({"needles": "needle", "path": "inputs/blob.bin", "max_hits": 1}, env={"AGENT_ID": "s1"})
+            self.assertEqual(os.listdir(target), [], where)
+            self.assertIn("symbolic link", j["hits"]["needle"]["all_results_error"], where)
+            self.assertEqual(j["status"], "partial", where)
+            os.unlink(self.path(where))
+        # in a job: $OUT/tool-output is the link
+        out = self.path("job-out")
+        os.makedirs(out)
+        target = self.path("elsewhere-job")
+        os.makedirs(target)
+        os.symlink(target, os.path.join(out, "tool-output"))
+        proc, j = self.run_limited({"needles": "needle", "path": "inputs/blob.bin", "max_hits": 1}, env={"JOB_ID": "j000050", "OUT": out})
+        self.assertEqual(os.listdir(target), [])
+        self.assertIn("symbolic link", j["hits"]["needle"]["all_results_error"])
+
+    def test_hostile_arguments_and_refusals_are_json_with_the_pair(self):
+        self.write("work/blob.bin", b"abc needle abc")
+        for raw in ("[" * 100000, "not json", "[]"):
+            r = run_tool("chunk_needles", None, self.dir, raw_input=raw)
+            self.assertEqual((r.code, r.json["status"]), (1, "failed"), raw[:20])
+            self.assertNotIn("Traceback", r.stderr)
+        for args in ({"needles": "x", "path": 5}, {"needles": "x", "path": ["a"]}, {"needles": "x", "path": "nope"}, {"needles": "x"},
+                     {"needles": "x", "path": "work/blob.bin", "max_hits": 0}, {"needles": ["a", 1], "path": "work/blob.bin"}):
+            r = run_tool("chunk_needles", args, self.dir)
+            self.assertEqual((r.code, r.json["status"]), (1, "failed"), args)
+            self.assertTrue(len(r.json["status_basis"]) > 20)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def test_a_link_at_the_values_directory_is_refused_by_name(self):
+        real = self.path("real-out")
+        os.makedirs(real)
+        link = self.path("out-link")
+        os.symlink(real, link)
+        self.write("inputs/blob.bin", b"x" * 10 + b"token=abc" + b"y" * 10)
+        proc, j = self.run_limited({"needles": "token=", "path": "inputs/blob.bin", "write_values": True}, env={"JOB_ID": "j000051", "OUT": link, "SECRET_OUTPUT": "1"})
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("symbolic link", j["error"])
+        self.assertEqual(os.listdir(real), [])
+
+
 if __name__ == "__main__":
     unittest.main()
