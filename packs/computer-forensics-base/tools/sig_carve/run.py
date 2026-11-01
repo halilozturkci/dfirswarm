@@ -179,7 +179,7 @@ def print_answer(answer, **dumps_kwargs):
     _reconcile(answer)
     _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
 
-TOOL = {"name": "sig_carve", "version": 11}
+TOOL = {"name": "sig_carve", "version": 12}
 WINDOW = 8 * 1024 * 1024
 BUDGET_SECONDS = 100              # inside the manifest's 120: past it the scan stops, says so, and names where to continue
 CONTEXT_MAX = 4096

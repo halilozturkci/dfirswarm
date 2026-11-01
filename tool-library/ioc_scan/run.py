@@ -206,7 +206,7 @@ def open_regular(path):
 
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "ioc_scan", "version": 13}
+TOOL = {"name": "ioc_scan", "version": 14}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536

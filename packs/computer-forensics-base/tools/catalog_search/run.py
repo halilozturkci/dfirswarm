@@ -169,7 +169,7 @@ class _Held:
 HELD = _Held()             # the hidden file of the match list being written
 PAGES.append(HELD)
 
-TOOL = {"name": "catalog_search", "version": 17}
+TOOL = {"name": "catalog_search", "version": 18}
 PATTERN_MAX = 4096
 LINE_MAX = 1 << 20
 BUDGET_SECONDS = 25

@@ -41,7 +41,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "feature_scan", "version": 9}
+TOOL = {"name": "feature_scan", "version": 10}
 STARTED = time.monotonic()
 DEFAULT_TIMEOUT = 900
 TIMEOUT_MAX = 1000                # the tool's own limit is 1200 seconds: the counting of what bulk_extractor wrote needs the rest

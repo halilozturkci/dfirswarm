@@ -204,7 +204,7 @@ def print_answer(answer, **dumps_kwargs):
 
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "sqlite_snapshot", "version": 6}
+TOOL = {"name": "sqlite_snapshot", "version": 7}
 CHUNK = 1 << 20
 MAX_BYTES_DEFAULT = 8 * 1024 ** 3
 MAX_BYTES_CEILING = 1024 ** 4

@@ -195,7 +195,7 @@ def print_answer(answer, **dumps_kwargs):
     _reconcile(answer)
     _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
 
-TOOL = {"name": "timestamp_decode", "version": 7}
+TOOL = {"name": "timestamp_decode", "version": 8}
 
 UTC = datetime.timezone.utc
 CTX = decimal.Context(prec=120, traps=[decimal.InvalidOperation, decimal.Overflow, decimal.DivisionByZero])

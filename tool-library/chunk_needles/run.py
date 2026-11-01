@@ -181,7 +181,7 @@ PAGES = []                 # objects with a hidden temporary file (_tmp) that a 
 CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
 PROGRESS = {"scanned": 0}
 
-TOOL = {"name": "chunk_needles", "version": 16}
+TOOL = {"name": "chunk_needles", "version": 17}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536

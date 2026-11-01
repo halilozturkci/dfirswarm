@@ -222,6 +222,38 @@ def print_answer(answer, **dumps_kwargs):
     _reconcile(answer)
     _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
 
+
+def _probe_out(directory):
+    """The output directory is written to once, up front: a directory that cannot be written (not owned, mounted read-only, a full disk) is a refusal
+    before anything is run, not a PermissionError in the middle of the coverage file."""
+    probe = _os.path.join(directory, ".write-probe-%d" % _os.getpid())
+    try:
+        fd = _os.open(probe, _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL, 0o600)
+        _os.close(fd)
+        _os.unlink(probe)
+    except (OSError, ValueError) as exc:
+        print_answer({"ok": False, "status": "failed", "error": "--out cannot be written: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__),
+                      "status_basis": "the output directory cannot be written, so nothing was run"})
+        _sys.exit(2)
+
+
+def _unexpected_recipe(kind, value, _tb):
+    """What nobody foresaw (a file that cannot be written half way, a target of an odd type) is an answer too: its class only, exit 2."""
+    why = "a path, a file or the target could not be used: %s" % kind.__name__
+    if len(_sys.argv) > 1 and _sys.argv[1] == "detect":
+        doc = {"applies": "unknown", "why": why, "ok": False, "error": why}
+    else:
+        doc = {"ok": False, "status": "failed", "error": why, "status_basis": "the recipe stopped on %s, so what it had written is not a complete result" % kind.__name__}
+    try:
+        _sys.stdout.write(json.dumps(doc) + "\n")
+        _sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    _os._exit(2)
+
+
+_sys.excepthook = _unexpected_recipe
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_ITEMS = 5_000_000
 COLUMNS = ["n", "type", "path", "path_b64", "size", "packed", "mtime", "tz", "mode", "uid", "gid", "link", "locator", "flags",
@@ -763,7 +795,13 @@ def refuse(message):
 
 
 def target_of(arg):
-    text = open(arg, encoding="utf-8").read() if os.path.isfile(arg) else arg
+    text = arg
+    if os.path.isfile(arg):
+        try:
+            with open(arg, encoding="utf-8") as fh:
+                text = fh.read(1 << 20)
+        except (OSError, ValueError) as exc:               # ValueError: bytes that are not UTF-8
+            refuse("the target file cannot be read as UTF-8 text: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__))
     try:
         t = json.loads(text)
     except (ValueError, RecursionError) as exc:
@@ -964,6 +1002,7 @@ def run(target, paths, out_dir):
         print_answer({"ok": False, "status": "failed", "error": "--out cannot be used: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__),
                       "status_basis": "the output directory could not be made, so nothing was run"})
         sys.exit(2)
+    _probe_out(out_dir)
     cov = {"recipe": "ad1-items", "target": paths[0], "format": "AD1", "items": 0, "files": 0, "folders": 0, "checked": 0,
            "mismatches": [], "no_stored_hash": 0, "unread_at_limit": 0, "segments_missing": [],
            "covered": "every item of the image's tree, with its metadata, and each file's content inflated and checked against the digests the image records",

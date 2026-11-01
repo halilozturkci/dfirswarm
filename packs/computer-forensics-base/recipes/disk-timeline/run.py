@@ -199,6 +199,38 @@ def print_answer(answer, **dumps_kwargs):
     _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
 
 
+def _probe_out(directory):
+    """The output directory is written to once, up front: a directory that cannot be written (not owned, mounted read-only, a full disk) is a refusal
+    before anything is run, not a PermissionError in the middle of the coverage file."""
+    probe = _os.path.join(directory, ".write-probe-%d" % _os.getpid())
+    try:
+        fd = _os.open(probe, _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL, 0o600)
+        _os.close(fd)
+        _os.unlink(probe)
+    except (OSError, ValueError) as exc:
+        print_answer({"ok": False, "status": "failed", "error": "--out cannot be written: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__),
+                      "status_basis": "the output directory cannot be written, so nothing was run"})
+        _sys.exit(2)
+
+
+def _unexpected_recipe(kind, value, _tb):
+    """What nobody foresaw (a file that cannot be written half way, a target of an odd type) is an answer too: its class only, exit 2."""
+    why = "a path, a file or the target could not be used: %s" % kind.__name__
+    if len(_sys.argv) > 1 and _sys.argv[1] == "detect":
+        doc = {"applies": "unknown", "why": why, "ok": False, "error": why}
+    else:
+        doc = {"ok": False, "status": "failed", "error": why, "status_basis": "the recipe stopped on %s, so what it had written is not a complete result" % kind.__name__}
+    try:
+        _sys.stdout.write(json.dumps(doc) + "\n")
+        _sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    _os._exit(2)
+
+
+_sys.excepthook = _unexpected_recipe
+
+
 def open_regular(path):
     """open(path, "rb") for a caller's path that was checked as a regular file a moment ago: opened without waiting (O_NONBLOCK) and looked at with
     fstat on the descriptor, so a FIFO or a device put in its place is refused and never waited on (a FIFO would hold the tool for ever)."""
@@ -224,7 +256,13 @@ NOT_COVERED = ("volume shadow copies (run with --vss_stores none); encrypted vol
 
 
 def target_of(value):
-    text = open(value, encoding="utf-8").read() if os.path.isfile(value) else value
+    text = value
+    if os.path.isfile(value):
+        try:
+            with open(value, encoding="utf-8") as fh:
+                text = fh.read(1 << 20)
+        except (OSError, ValueError) as exc:               # ValueError: bytes that are not UTF-8
+            raise ValueError("the target file cannot be read as UTF-8 text: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__))
     try:
         target = json.loads(text)
     except (ValueError, RecursionError) as exc:
@@ -232,6 +270,8 @@ def target_of(value):
     if not isinstance(target, dict):
         raise ValueError("the target is a JSON object with a paths list")
     paths = target.get("paths") or []
+    if not isinstance(paths, list):
+        raise ValueError("the target is a JSON object with a paths list")
     if not paths or not isinstance(paths[0], str):
         raise ValueError("the target names no path")
     return target, paths[0]
@@ -372,6 +412,7 @@ def run(image, out, zone=None):
         print_answer({"ok": False, "status": "failed", "error": "--out cannot be used: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__),
                       "status_basis": "the output directory could not be made, so nothing was run"})
         sys.exit(2)
+    _probe_out(out)
     extra = {"timezone": zone or "not given", "timezone_note": (
         "the zone given to log2timeline for the formats that store local time; psort writes its CSV in UTC" if zone else
         "none given: for the formats that store local time Plaso used its own default, which this recipe does not read back (the "

@@ -282,7 +282,7 @@ def open_regular(path):
 
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "sqlite_query", "version": 12}
+TOOL = {"name": "sqlite_query", "version": 13}
 DEFAULT_LIMIT = 100
 LIMIT_MAX = 10000
 INLINE_BYTES = 64 * 1024          # the inline page's JSON and its text form, each, as they are sent (ASCII-escaped, counted in bytes)
@@ -1835,6 +1835,7 @@ def values_mode(obj, given, db, size, side, status, snap, limit, budget, csv_mod
     uri = "file:%s?mode=ro&immutable=1" % urllib.parse.quote(db)
     started = time.monotonic()
     try:
+        open_regular(db).close()            # a FIFO put in the database's place after it was checked is refused, not opened by waiting
         conn = sqlite3.connect(uri, uri=True)
     except READ_ERRORS as exc:
         values_fail("cannot open the database (%s)" % sqlite_class(exc), db_path=db)
@@ -2342,6 +2343,7 @@ def main():
         say({"ok": False, "error": "sql holds no statement"}, 1)
     results, started = [], time.monotonic()
     try:
+        open_regular(db).close()            # a FIFO put in the database's place after it was checked is refused, not opened by waiting
         conn = sqlite3.connect(uri, uri=True)
     except sqlite3.Error as exc:
         say({"ok": False, "error": "cannot open the database: %s" % exc, "db_path": db}, 1)

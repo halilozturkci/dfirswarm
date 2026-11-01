@@ -30,6 +30,7 @@
 # written as partial before the first step, and the body file's times are read as
 # UTC (mactime -z UTC), which is the zone its timeline.csv says.
 set -uo pipefail
+trap "" XFSZ        # a write past a file-size limit fails with EFBIG and is reported, instead of ending the script with the signal and no answer
 
 have() { command -v "$1" >/dev/null 2>&1; }
 TMPF=""        # a temporary file outside the output directory (mktemp), removed when a stop ends the script

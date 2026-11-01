@@ -230,7 +230,7 @@ class _Held:
 HELD = _Held()             # the hidden file of the program output being kept
 PAGES.append(HELD)
 
-TOOL = {"name": "image_layout", "version": 8}
+TOOL = {"name": "image_layout", "version": 9}
 CHILD_TIMEOUT = 120
 TOTAL_BUDGET = 270          # seconds, under the manifest's 300
 SECTOR_MAX = 65536

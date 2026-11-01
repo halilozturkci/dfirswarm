@@ -29,6 +29,7 @@
 # says it. A probe that does not answer in time says that whether the image
 # holds the table is unknown, the same way: the start does not go on blind.
 set -uo pipefail
+trap "" XFSZ        # a write past a file-size limit fails with EFBIG and is reported, instead of ending the script with the signal and no answer
 
 have() { command -v "$1" >/dev/null 2>&1; }
 TMPF=""        # a temporary file outside the output directory (mktemp), removed when a stop ends the script
@@ -151,8 +152,11 @@ rec = {"step": rel, "argv": argv, "exit": int(rc), "seconds": int(seconds), "lim
 for key, path in (("output", file), ("stderr", file + ".stderr")):
     if os.path.isfile(path):
         rec[key] = {"file": os.path.relpath(path, out), "bytes": os.path.getsize(path)}
-with open(os.path.join(out, "steps.jsonl"), "a", encoding="utf-8") as fh:
-    fh.write(json.dumps(rec) + "\n")
+try:
+    with open(os.path.join(out, "steps.jsonl"), "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+except OSError as exc:              # a full disk or a file-size limit: said on stderr in a word, and the run goes on
+    sys.stderr.write("steps.jsonl could not be written: %s\n" % (exc.strerror or exc.__class__.__name__))
 PY
 }
 
@@ -228,7 +232,12 @@ path, status, covered, missing, *notes = sys.argv[1:]
 steps = []
 try:
     with open(os.path.join(os.path.dirname(path), "steps.jsonl"), encoding="utf-8") as fh:
-        steps = [json.loads(line) for line in fh if line.strip()]
+        for line in fh:
+            if line.strip():
+                try:
+                    steps.append(json.loads(line))
+                except ValueError:          # a record cut short by a full disk or a file-size limit is skipped, not a traceback
+                    pass
 except OSError:
     pass
 doc = {"recipe": "memory-windows", "status": status, "status_basis": covered, "covered": covered,
@@ -240,7 +249,11 @@ doc = {"recipe": "memory-windows", "status": status, "status_basis": covered, "c
 if os.environ.get("STOPPED_BY"):
     doc["interrupted"] = True
     doc["signal"] = os.environ["STOPPED_BY"]
-json.dump(doc, open(path, "w"), indent=2)
+try:
+    with open(path, "w") as out:
+        json.dump(doc, out, indent=2)
+except OSError as exc:         # the coverage file cannot be written: said on stderr, in a word, and the recipe goes on to its answer
+    sys.stderr.write("coverage.json could not be written: %s\n" % (exc.strerror or exc.__class__.__name__))
 PY
 }
 

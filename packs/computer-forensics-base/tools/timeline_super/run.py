@@ -50,7 +50,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "timeline_super", "version": 11}
+TOOL = {"name": "timeline_super", "version": 12}
 DEFAULT_TIMEOUT = 1800
 TIMEOUT_MAX = 3300                # the manifest's own limit is 3600: the rest is for the version calls and the counting
 TOOL_SECONDS = 3500               # the whole call, counting included, ends before the manifest's limit
