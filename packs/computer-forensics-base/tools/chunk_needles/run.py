@@ -19,7 +19,7 @@ ioc_scan with `start`; an inode: icat_extract it, then ioc_scan the file).
 """
 import json, re, shutil, sys, subprocess, os, time
 
-TOOL = {"name": "chunk_needles", "version": 10}
+TOOL = {"name": "chunk_needles", "version": 11}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -458,7 +458,7 @@ class Locators:
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra}))
     sys.exit(1)
 
 
@@ -468,7 +468,13 @@ def on_stdout(resolve, *given):
         return resolve(*given)
     except SystemExit as exc:
         if isinstance(exc.code, str):
-            print(exc.code)
+            try:
+                doc = json.loads(exc.code)
+            except ValueError:
+                doc = {"ok": False, "error": exc.code}
+            if isinstance(doc, dict):
+                doc = {"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % doc.get("error"), **doc}
+            print(json.dumps(doc))
             sys.exit(1)
         raise
 

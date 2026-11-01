@@ -505,7 +505,7 @@ def ad1_text(meta, key):
 
 
 def fail(message, **extra):
-    print(json.dumps({"ok": False, "error": message, **extra}))
+    print(json.dumps({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "error": message, **extra}))
     raise SystemExit(1)
 
 

@@ -38,7 +38,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-TOOL = {"name": "feature_scan", "version": 4}
+TOOL = {"name": "feature_scan", "version": 5}
 DEFAULT_TIMEOUT = 900
 TIMEOUT_MAX = 1000                # the tool's own limit is 1200 seconds: the counting of what bulk_extractor wrote needs the rest
 DISTINCT_CAP = 200_000            # distinct values remembered per feature file; past it the count is a lower bound
@@ -139,7 +139,7 @@ class SecretValues:
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra}))
     raise SystemExit(1)
 
 

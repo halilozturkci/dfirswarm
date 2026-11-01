@@ -21,7 +21,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "sig_carve", "version": 6}
+TOOL = {"name": "sig_carve", "version": 7}
 WINDOW = 8 * 1024 * 1024
 BUDGET_SECONDS = 100              # inside the manifest's 120: past it the scan stops, says so, and names where to continue
 CONTEXT_MAX = 4096
@@ -323,7 +323,7 @@ def _terminated(signum, _frame):
 
 
 def fail(message, **extra):
-    print(json.dumps({"ok": False, "error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "error": message, "tool": TOOL, **extra}))
     raise SystemExit(1)
 
 

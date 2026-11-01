@@ -68,6 +68,15 @@ const CASES: Case[] = [
     small: { limit: 1 },
   },
   {
+    tool: "computer-forensics-base/sig_carve",
+    build: async (dir) => {
+      await put(dir, "blob.bin", Buffer.concat(Array.from({ length: 40 }, () => Buffer.concat([Buffer.from("PK\x03\x04", "latin1"), Buffer.alloc(60)]))));
+      return { path: "blob.bin" };
+    },
+    large: { max_hits: 20 },
+    small: { max_hits: 2 },
+  },
+  {
     tool: "linux-forensics/auth_log",
     build: async (dir) => {
       await put(dir, "auth.log", lines(40, (i) => `Nov  1 10:00:${String(i % 60).padStart(2, "0")} host sshd[${100 + i}]: Failed password for invalid user u${i} from 10.0.0.${i + 1} port 22 ssh2`));

@@ -1,230 +1,49 @@
 {
   "uncovered": [
-    {
-      "tool": "cloud-forensics/signin_analyse",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "cloud-forensics/ual_parse",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "computer-forensics-base/sig_carve",
-      "item": "PKG-XP-09",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "encrypted-containers/archive_probe",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "linux-forensics/journal_export",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "linux-forensics/utmp_parse",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "macos-forensics/fsevents_parse",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "macos-forensics/knowledgec_query",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "macos-forensics/plist_read",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "memory-forensics/mem_carve",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "memory-forensics/mem_fs",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "memory-forensics/mem_profile",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "mobile-forensics/manifest_db",
-      "item": "PKG-XP-11",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "mobile-forensics/protobuf_peek",
-      "item": "PKG-XP-11",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "mobile-forensics/sqlite_freespace",
-      "item": "PKG-XP-11",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "network-forensics/beacon_score",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "network-forensics/pcap_summary",
-      "item": "coordinator: the pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "reverse-engineering/doc_probe",
-      "item": "PKG-XP-10",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "reverse-engineering/doc_structure",
-      "item": "PKG-XP-10",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "reverse-engineering/pe_directories",
-      "item": "PKG-XP-10",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "reverse-engineering/pe_info",
-      "item": "PKG-XP-10",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "triage-collection/collection_coverage",
-      "item": "PKG-XP-12",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "triage-collection/collection_id",
-      "item": "PKG-XP-12",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "triage-collection/collection_index",
-      "item": "PKG-XP-12",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "triage-collection/collection_manifest_parse",
-      "item": "PKG-XP-12",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "triage-collection/collection_manifest_verify",
-      "item": "PKG-XP-12",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "triage-collection/collection_path_map",
-      "item": "PKG-XP-12",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "virtualization-backup-forensics/backup_audit_normalise",
-      "item": "coordinator: the virtualization pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "virtualization-backup-forensics/snapshot_chain_check",
-      "item": "coordinator: the virtualization pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "virtualization-backup-forensics/virtualization_inventory",
-      "item": "coordinator: the virtualization pack's next package",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/amcache_apps",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/browser_history",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/esedb_query",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/evtx_carve",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/evtx_query",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/indx_carve",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/jumplist",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/lnk_jumplist",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/mam_scan",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/mft_records",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/registry_recover",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/regkv",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/shellbags",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/usn_journal",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    },
-    {
-      "tool": "windows-forensics/yara_scan",
-      "item": "WIN-02",
-      "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests"
-    }
+    { "tool": "cloud-forensics/signin_analyse", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "cloud-forensics/ual_parse", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "encrypted-containers/archive_probe", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "linux-forensics/journal_export", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "linux-forensics/utmp_parse", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "macos-forensics/fsevents_parse", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "macos-forensics/knowledgec_query", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "macos-forensics/plist_read", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "memory-forensics/mem_carve", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "memory-forensics/mem_fs", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "memory-forensics/mem_profile", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "mobile-forensics/manifest_db", "item": "PKG-XP-11", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "mobile-forensics/protobuf_peek", "item": "PKG-XP-11", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "mobile-forensics/sqlite_freespace", "item": "PKG-XP-11", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "network-forensics/beacon_score", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "network-forensics/pcap_summary", "item": "coordinator: the pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "reverse-engineering/doc_probe", "item": "PKG-XP-10", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "reverse-engineering/doc_structure", "item": "PKG-XP-10", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "reverse-engineering/pe_directories", "item": "PKG-XP-10", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "reverse-engineering/pe_info", "item": "PKG-XP-10", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "triage-collection/collection_coverage", "item": "PKG-XP-12", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "triage-collection/collection_id", "item": "PKG-XP-12", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "triage-collection/collection_index", "item": "PKG-XP-12", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "triage-collection/collection_manifest_parse", "item": "PKG-XP-12", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "triage-collection/collection_manifest_verify", "item": "PKG-XP-12", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "triage-collection/collection_path_map", "item": "PKG-XP-12", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "virtualization-backup-forensics/backup_audit_normalise", "item": "coordinator: the virtualization pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "virtualization-backup-forensics/snapshot_chain_check", "item": "coordinator: the virtualization pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "virtualization-backup-forensics/virtualization_inventory", "item": "coordinator: the virtualization pack's next package", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/amcache_apps", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/browser_history", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/esedb_query", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/evtx_carve", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/evtx_query", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/indx_carve", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/jumplist", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/lnk_jumplist", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/mam_scan", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/mft_records", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/registry_recover", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/regkv", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/shellbags", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/usn_journal", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" },
+    { "tool": "windows-forensics/yara_scan", "item": "WIN-02", "why": "no input builder in the driver yet; the rerun of this tool is held by its pack's own tests" }
   ],
   "failing": []
 }

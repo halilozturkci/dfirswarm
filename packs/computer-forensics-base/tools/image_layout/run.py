@@ -32,7 +32,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "image_layout", "version": 4}
+TOOL = {"name": "image_layout", "version": 5}
 CHILD_TIMEOUT = 120
 TOTAL_BUDGET = 270          # seconds, under the manifest's 300
 SECTOR_MAX = 65536
@@ -42,7 +42,7 @@ TSK_IMAGE_TYPES = {"ewf": "ewf", "vmdk": "vmdk", "vhd": "vhd", "aff": "aff"}
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra}))
     raise SystemExit(1)
 
 
@@ -181,7 +181,7 @@ class Keep:
     """The whole output of each program, in a file, named in the result."""
 
     def __init__(self, image):
-        self.digest = hashlib.sha256(os.path.abspath(image).encode()).hexdigest()[:12]
+        self.digest = hashlib.sha256(os.path.abspath(image).encode("utf-8", "surrogateescape")).hexdigest()[:12]
         job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
         if job and out:
             self.dir = Path(out) / "tool-output"
