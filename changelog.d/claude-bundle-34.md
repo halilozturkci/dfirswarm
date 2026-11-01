@@ -31,3 +31,20 @@ before a rebuild, consolidation, repair, decryption or reconnection, the emergen
 the evidence each loses, isolated recovery tests, identity remediation, clean-build decisions and
 authorised acceptance. Neither repeats a sentence of `scope/phase-timeline`, `scope/first-hour` or
 `recovery/what-is-possible`; a test holds that. The pack goes to 1.6.0.
+
+### Added: ransomware-response has a third tool, `encryption_extent`
+
+It measures where, in named files or in the candidate rows of an `encrypted_survey` census given by
+reference (the receipt's `parser` must be `encrypted_survey/3`; another is refused by name), windows of
+bytes read as high entropy, under a policy the caller declares (`sampling` or `full`). It reports per file
+the bytes inspected and the uninspected ranges, `high_entropy_fraction` (a share of the inspected bytes,
+never a percentage encrypted), the high-entropy runs, an observed block pattern when runs recur at equal
+spacing, the magic, footer and container directory of the file's format as booleans, a comparison with a
+plaintext counterpart, and findings against a layout the caller supplies. It prints no byte of a file. The
+whole profile is a JSON Lines file that a rerun never replaces. The entropy function is `encrypted_survey`'s
+(a test holds the two sources equal); the shared PLACE, PAGE, STOP, WITHHOLDING, NAMES and BACKSTOP blocks and
+`LosslessPage` are copied byte for byte. The default threshold is 7.5 (this pack's; the reverse-engineering
+pack's 7.2 finds packed regions of executables). `encryptor/samples-and-notes` and `recovery/what-is-possible`
+name it. Measured: a full scan of a 64 MiB file at window 64 took 19.1 s at 23 MB resident and wrote 106,687,821
+bytes of profile; a 64 MiB window takes about 2.3 s, so a window is not started when the time left is less
+than 60 ns per byte of it. The carrier tests for the names, the stop block and the withholding block list it.

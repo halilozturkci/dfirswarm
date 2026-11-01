@@ -101,6 +101,7 @@ test("a stop signal after the block has run and before main() installs the tool'
 test("SIGINT and SIGHUP in that gap end each lineage the same way", async () => {
   for (const file of [
     join(ROOT, "packs", "ransomware-response", "tools", "ransom_note_scan", "run.py"),
+    join(ROOT, "packs", "ransomware-response", "tools", "encryption_extent", "run.py"),
     join(ROOT, "packs", "macos-forensics", "tools", "plist_read", "run.py"),
     join(ROOT, "packs", "encrypted-containers", "tools", "crypto_id", "run.py"),
   ]) {

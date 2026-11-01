@@ -1,6 +1,6 @@
 # Ransomware Response Pack
 
-Evidence-led ransomware examination. Its two tools return candidates; what a
+Evidence-led ransomware examination. Its three tools return candidates and measurements; what a
 candidate shows has to be validated before anyone acts on it.
 
 Depends on the Computer Forensics Base Pack. It does not repeat the intrusion
@@ -23,7 +23,14 @@ and the router `ransomware/router` (at most 400 tokens; the prompt shows this on
 `reporting/for-regulators` (`reporting/notification-register`,
 `reporting/conclusions-and-controls`).
 
-**Two tools.** `encrypted_survey` identifies candidate files using extension and
+**Three tools.** `encryption_extent` measures where, in named files or in the candidates
+of an `encrypted_survey` census given by reference, windows of bytes read as high
+entropy, under a policy the caller declares (`sampling` or `full`). It names the bytes it did
+not inspect, checks the head and the end of a file against its format, compares with a
+plaintext counterpart when one is given, and judges a supplied layout. Its
+`high_entropy_fraction` is a share of the inspected bytes, never a percentage
+encrypted, and an intermittent pattern is an observed block pattern, never a family.
+`encrypted_survey` identifies candidate files using extension and
 entropy heuristics, samples selected windows and tails of the first candidates,
 and groups filesystem modification times by hour. These results guide the
 examination; they do not establish how much was encrypted, whether a file is

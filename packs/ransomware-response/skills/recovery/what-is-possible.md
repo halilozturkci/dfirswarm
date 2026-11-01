@@ -3,7 +3,7 @@ id: recovery/what-is-possible
 title: Assessing and validating recovery without destroying evidence
 when: The organisation needs a defensible recovery position and restoration plan.
 needs: []
-tools: [encrypted_survey, file_type]
+tools: [encrypted_survey, file_type, encryption_extent]
 requires_host: []
 ---
 
@@ -27,7 +27,7 @@ extension and entropy; a file in `noncandidate` was not shown to be unaffected, 
 in `read_failed` was not read. Compressed, packed and already-encrypted files are false
 positives; small files, names that are unchanged or that lose the original extension, and
 encryption outside the sampled windows are misses. Validate representative files with format-aware parsing and, where there is
-one, a trusted pre-incident copy; `file_type` says what the first bytes show. A readable
+one, a trusted pre-incident copy; `file_type` says what the first bytes show; `encryption_extent` shows where windows read high. A readable
 header is not an intact file, and an intact file is not a consistent application
 dataset. Report the population tested and the denominator, and do not extrapolate an
 unrepresentative sample to the estate.

@@ -24,6 +24,7 @@ const FAMILIES: Record<string, string> = {
   memory: join(PACKS, "memory-forensics", "tools", "mem_fs", "run.py"),
   "encrypted-containers": join(PACKS, "encrypted-containers", "tools", "crypto_id", "run.py"),
   ransomware: join(PACKS, "ransomware-response", "tools", "ransom_note_scan", "run.py"),
+  "ransomware-extent": join(PACKS, "ransomware-response", "tools", "encryption_extent", "run.py"),
   "reverse-engineering": DOC_PROBE,
   "tool-library": join(ROOT, "tool-library", "sqlite_query", "run.py"),
 };
