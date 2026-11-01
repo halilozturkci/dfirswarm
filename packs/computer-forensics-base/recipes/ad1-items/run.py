@@ -124,6 +124,7 @@ import bisect as _bisect
 import heapq as _heapq
 import os as _os
 import struct as _struct
+import time as _time
 import zlib as _zlib
 
 AD1_SEGMENT_MAGIC = b"ADSEGMENTEDFILE\x00"
@@ -145,7 +146,8 @@ AD1_CACHE_MAX = 32 << 20          # bytes (estimated) of the last metadata chain
 AD1_CACHE_CHAINS = 8              # and how many of them
 AD1_FOLD_AT = 1 << 16             # reached-range entries held before they are merged
 AD1_SLACK = 0                     # non-zero bytes of the data nothing may lead to before the walk is not called whole
-AD1_GAP_SCAN_MAX = 256 << 20      # bytes of unreached data read to count its non-zero bytes
+AD1_GAP_BLOCK = 1 << 20            # bytes of unreached data read at a time: the clock is looked at before each block
+AD1_GAPS_LISTED = 20              # gaps named one by one in the report: those with non-zero bytes, or not read to their end
 AD1_GUID_TABLES = (b"ATTRGUID", b"LOCSGUID")   # the two tables FTK Imager leaves after the items; the header points at them
 
 
@@ -219,6 +221,8 @@ class AD1:
         self._open = {}
         self._reached, self._lo, self._hi = _array.array("Q"), _array.array("Q"), _array.array("Q")
         self._chains, self._chains_held = {}, 0
+        self.packed_read = 0          # compressed bytes of content read so far, for a ratio against what is written
+        self.gap_report = None
         if self.read(0, 14) != AD1_LOGICAL_MAGIC:
             raise AD1Error("no ADLOGICALIMAGE header at the start of the image's data")
         (self.version,) = _struct.unpack("<I", self.read(16, 4))
@@ -342,11 +346,15 @@ class AD1:
             if at < end:
                 yield at, end
 
-    def unreferenced(self):
+    def unreferenced(self, deadline=None, sink=None):
         """(bytes, non-zero bytes, whole) of the image's data that no structure the walk read or was led to covers, or None while a
-        segment is not there. Zero bytes between structures are padding; the non-zero ones are content nothing led to. `whole` is
-        False when only the first AD1_GAP_SCAN_MAX unreached bytes were read for their non-zero ones. The image's own metadata chain
-        counts as reached, so it is read here if the caller has not."""
+        segment is not there. Every such stretch is read to its end, in blocks of AD1_GAP_BLOCK, and the clock (`deadline`, a
+        time.monotonic() value) is looked at before each block: zero bytes between structures are padding, the non-zero ones are
+        content nothing led to. `whole` is False when the clock stopped the read before the end of the unreached data; `gap_report`
+        then says where (stopped_at, an address) and how much was read, and counts the gaps that hold non-zero bytes or were not
+        read to their end, naming the first AD1_GAPS_LISTED of them; `sink`, when given, is called with every such gap (from, to,
+        read, nonzero_bytes), so the caller can keep them all. The image's own metadata chain counts as reached, so it is read here
+        if the caller has not."""
         if self.missing:
             return None
         if self.meta_addr:
@@ -355,15 +363,34 @@ class AD1:
             except AD1Error:
                 pass
         self._fold()
-        total, nonzero, scanned = 0, 0, 0
+        total, nonzero, read, stopped = 0, 0, 0, False
+        rep = {"gaps": 0, "gaps_with_nonzero_bytes": 0, "gaps_not_read_to_the_end": 0, "stopped_at": None, "listed": []}
         for lo, hi in self._gaps():
             total += hi - lo
-            while lo < hi and scanned < AD1_GAP_SCAN_MAX:
-                block = self.read(lo, min(hi - lo, 1 << 20, AD1_GAP_SCAN_MAX - scanned))
-                nonzero += len(block) - block.count(0)
-                scanned += len(block)
+            rep["gaps"] += 1
+            start, nz, got = lo, 0, 0
+            while lo < hi and not stopped:
+                if deadline is not None and _time.monotonic() > deadline:
+                    stopped = True
+                    rep["stopped_at"] = lo
+                    break
+                block = self.read(lo, min(hi - lo, AD1_GAP_BLOCK))
+                nz += len(block) - block.count(0)
+                got += len(block)
                 lo += len(block)
-        return total, nonzero, scanned >= total
+            nonzero += nz
+            read += got
+            rep["gaps_with_nonzero_bytes"] += 1 if nz else 0
+            rep["gaps_not_read_to_the_end"] += 1 if got < hi - start else 0
+            if nz or got < hi - start:
+                gap = {"from": start, "to": hi, "read": got, "nonzero_bytes": nz}
+                if len(rep["listed"]) < AD1_GAPS_LISTED:
+                    rep["listed"].append(gap)
+                if sink is not None:
+                    sink(gap)
+        rep.update({"bytes": total, "read": read, "nonzero_bytes": nonzero})
+        self.gap_report = rep
+        return total, nonzero, read >= total
 
     def metadata(self, addr):
         """[(category, key, text bytes, address)] of a metadata chain. An item that shares its chain with an earlier one gets the same
@@ -468,7 +495,9 @@ class AD1:
         for i, (start, end) in enumerate(self.chunks(item)):
             z = _zlib.decompressobj()
             try:
-                block = z.decompress(self.read(start, end - start), bound + 1)
+                packed = self.read(start, end - start)
+                self.packed_read += len(packed)
+                block = z.decompress(packed, bound + 1)
             except _zlib.error as e:
                 raise AD1Error("its chunk %d does not inflate: %s" % (i, e))
             if len(block) > bound or z.unconsumed_tail:
@@ -483,23 +512,26 @@ class AD1:
             raise AD1Error("its content is %d bytes, not its size of %d" % (total, item["size"]))
 
 
-def ad1_unaccounted(img):
+def ad1_unaccounted(img, deadline=None, sink=None):
     """None, or words, once a walk has reached the end of the tree: the image's data holds bytes that no item, name, metadata entry,
     chunk table or chunk led to. A zeroed or damaged next or child pointer ends a chain early with no error, and the format has no item
-    count, so the walk cannot tell a tree that ended from a tree that was cut: it says what it could not account for."""
-    left = img.unreferenced()
+    count, so the walk cannot tell a tree that ended from a tree that was cut: it says what it could not account for. The unreached data
+    is read to its end unless the clock (`deadline`) stops it, and then the words say where."""
+    left = img.unreferenced(deadline, sink)
     if left is None:
         return None
+    rep = img.gap_report
+    stopped = "" if left[2] else "; the read of the unreached data stopped at its time budget at address %d, %d of its %d bytes in" % (rep["stopped_at"], rep["read"], left[0])
     if left[1] <= AD1_SLACK:
         if left[2]:
             return None
-        # Only the first AD1_GAP_SCAN_MAX bytes of the unreached data were read, and they held nothing: that says nothing of the rest, where a
-        # zeroed pointer's lost items can sit behind a long run of zeros.
+        # The clock stopped the read, and what was read held nothing: that says nothing of the rest, where a zeroed pointer's lost items
+        # can sit behind a long run of zeros.
         return ("%d of the %d bytes of the image's data that no item, name, metadata entry, chunk table or chunk of the tree leads to were read for non-zero bytes "
-                "(the first %d MiB) and held none; the rest was not read, so the tree is not shown to account for the image's data and the list is not shown to be whole"
-                % (min(left[0], AD1_GAP_SCAN_MAX), left[0], AD1_GAP_SCAN_MAX >> 20))
+                "(up to address %d) and held none; the read stopped at its time budget, so the rest was not read, the tree is not shown to account for the "
+                "image's data and the list is not shown to be whole" % (rep["read"], left[0], rep["stopped_at"]))
     return ("%s%d bytes of the image's data that are not zero are reached by no item, name, metadata entry, chunk table or chunk of the tree: a zeroed or damaged "
-            "next or child pointer would leave exactly such bytes, and the format has no item count, so the list is not shown to be whole" % ("" if left[2] else "at least ", left[1]))
+            "next or child pointer would leave exactly such bytes, and the format has no item count, so the list is not shown to be whole%s" % ("" if left[2] else "at least ", left[1], stopped))
 
 
 def ad1_text(meta, key):
@@ -509,6 +541,40 @@ def ad1_text(meta, key):
             return v
     return None
 # --- end of the AD1 reader ----------------------------------------------------
+
+
+GAPS_FILE_MAX = 100_000           # rows in the file of gaps; the counts in the report go on past it
+
+
+class GapFile:
+    """The gaps of the image's data that no structure led to and that hold non-zero bytes or were not read to their end, one JSON line
+    each, in a file made new on the first one and cut at GAPS_FILE_MAX rows (`cut` says so)."""
+
+    def __init__(self, path):
+        self.path, self.fh, self.written, self.cut, self.error = path, None, 0, False, None
+
+    def add(self, gap):
+        if self.error or self.cut:
+            return
+        if self.written >= GAPS_FILE_MAX:
+            self.cut = True
+            return
+        try:
+            if self.fh is None:
+                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+                self.fh = os.fdopen(fd, "w", encoding="ascii")
+            self.fh.write(json.dumps(gap) + "\n")
+            self.written += 1
+        except OSError as exc:
+            self.error = "the gaps could not be written (%s)" % (exc.strerror or exc)
+
+    def close(self):
+        if self.fh is not None:
+            try:
+                self.fh.close()
+            except OSError as exc:
+                self.error = self.error or "the gaps were not all written (%s)" % (exc.strerror or exc)
+            self.fh = None
 
 
 def limits():
@@ -783,13 +849,30 @@ def run(target, paths, out_dir):
                 walked_all = not img.walk_errors
         cov["errors"] += img.walk_errors
         if walked_all and not cov["limits_hit"]:
-            left = img.unreferenced()
-            if left is not None:
-                cov["unreferenced_bytes"], cov["unreferenced_nonzero_bytes"] = left[0], left[1]
-            lost = ad1_unaccounted(img)
+            # The data nothing led to is read to its end under the listing's clock; the gaps that hold non-zero bytes or were not read
+            # to their end are all in unreferenced-gaps.jsonl (at most GAPS_FILE_MAX of them), the first AD1_GAPS_LISTED in the coverage.
+            gaps = GapFile(os.path.join(out_dir, "unreferenced-gaps.jsonl"))
+            try:
+                lost = ad1_unaccounted(img, list_deadline, gaps.add)
+            finally:
+                gaps.close()
+            rep = img.gap_report
+            if rep is not None:
+                cov["unreferenced_bytes"], cov["unreferenced_nonzero_bytes"] = rep["bytes"], rep["nonzero_bytes"]
+                cov["unreferenced_bytes_read"] = rep["read"]
+                cov["unreferenced_gaps"] = {k: rep[k] for k in ("gaps", "gaps_with_nonzero_bytes", "gaps_not_read_to_the_end", "stopped_at", "listed")}
+                if gaps.written or gaps.error:
+                    cov["unreferenced_gaps"]["file"] = "unreferenced-gaps.jsonl" if gaps.written else None
+                    cov["unreferenced_gaps"]["file_rows"] = gaps.written
+                    if gaps.cut:
+                        cov["unreferenced_gaps"]["file_cut_at_rows"] = GAPS_FILE_MAX
+                    if gaps.error:
+                        cov["unreferenced_gaps"]["file_error"] = gaps.error
             if lost:
                 cov["errors"].append(lost)
                 cov["unaccounted"] = True
+                if rep is not None and rep["stopped_at"] is not None:
+                    cov["limits_hit"].append("seconds: the read of the data nothing led to stopped at address %d, %d of its %d bytes in" % (rep["stopped_at"], rep["read"], rep["bytes"]))
         try:
             own = [{"category": c, "key": "0x%x" % k, "label": label(k), "text": esc(t)} for c, k, t, _a in img.metadata(img.meta_addr)]
         except AD1Error as e:

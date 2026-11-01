@@ -18,7 +18,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
-import { ad1Data, ad1Image, ad1Item, ad1Logical, ad1Segments, md5, sha1, sha256, type Ad1Node } from "./ad1-fixture.ts";
+import { ad1Data, ad1Image, ad1Item, ad1Logical, ad1LogicalParts, ad1Segments, md5, sha1, sha256, writeSparseAd1, type Ad1Node } from "./ad1-fixture.ts";
 import { JobService, type JobRecord } from "../scripts/job-service.ts";
 import { storePaths, verifyJournalText, type JournalLine } from "../scripts/evidence-store.ts";
 import { localWorker } from "./job-service-worker.ts";
@@ -778,7 +778,20 @@ function paddedCutImage(pad: number, linked: boolean): Buffer {
   return ad1Segments(data)[0];
 }
 
-test("a zero run longer than the gap scan ahead of the lost items is not a complete, verified answer", async () => {
+/** The same four items as paddedCutImage, with the pad a hole in the file (nothing is stored for it): written to `path`. */
+function writePaddedCutImage(path: string, pad: number, linked: boolean): void {
+  const parts = ad1LogicalParts((put) => {
+    put({ hole: pad });
+    const items = [0, 1, 2, 3].map((i) => ad1Item(put, `f${i}`));
+    items[1].header.writeBigUInt64LE(BigInt(items[2].at), 0);
+    items[2].header.writeBigUInt64LE(BigInt(items[3].at), 0);
+    if (linked) items[0].header.writeBigUInt64LE(BigInt(items[1].at), 0);
+    return items[0].at;
+  });
+  writeSparseAd1(path, parts);
+}
+
+test("data nothing led to is read to its end: items behind a 270 MiB zero hole are found, not left unread", async () => {
   const d = dir("ad1-gap-");
   const pad = 270 * 1024 * 1024;
   writeFileSync(join(d, "cut.ad1"), paddedCutImage(pad, false));
@@ -786,18 +799,89 @@ test("a zero run longer than the gap scan ahead of the lost items is not a compl
   assert.equal(tsv(join(out, "members.tsv")).length, 1, "three items are no longer in the tree");
   assert.equal(cov.status, "partial");
   assert.equal((cov as Record<string, unknown>).integrity_status, "unverified");
-  assert.match(cov.errors.join("\n"), /were read for non-zero bytes \(the first 256 MiB\) and held none; the rest was not read/);
+  assert.match(cov.errors.join("\n"), /\d+ bytes of the image's data that are not zero are reached by no item/);
+  assert.doesNotMatch(cov.errors.join("\n"), /the rest was not read/, "the zero run was read through, and what lies behind it was reached");
+  const gaps = (cov as Record<string, any>).unreferenced_gaps;
+  assert.equal(gaps.stopped_at, null);
+  assert.ok(gaps.gaps_with_nonzero_bytes >= 1 && gaps.listed.some((g: { nonzero_bytes: number }) => g.nonzero_bytes > 0), JSON.stringify(gaps));
+  assert.ok(Number((cov as Record<string, unknown>).unreferenced_bytes_read) >= pad, "every byte of the unreached data was read");
+  assert.ok(readFileSync(join(out, "unreferenced-gaps.jsonl"), "utf8").trim().split("\n").length >= 1, "every such gap is in the file");
   const cwd = runDir();
   writeFileSync(join(cwd, "inputs", "cut.ad1"), readFileSync(join(d, "cut.ad1")));
   const r = await runPy(TOOL, cwd, { image: "inputs/cut.ad1" }, undefined, { AGENT_ID: "s1" });
   const res = JSON.parse(r.stdout);
   assert.deepEqual([res.processing_status, res.integrity_status], ["partial", "unverified"]);
-  assert.match(res.errors.join("\n"), /the rest was not read/);
+  assert.match(res.errors.join("\n"), /reached by no item/);
+  assert.equal(res.unreferenced_data.stopped_at, null);
+  assert.ok(res.unreferenced_data.file.endsWith("ad1_extract.gaps.jsonl"));
   // A pad the scan reads to its end is padding, and a tree that leads to everything is complete.
   writeFileSync(join(d, "small.ad1"), paddedCutImage(8 * 1024 * 1024, true));
   const small = runRecipe([join(d, "small.ad1")]);
   assert.equal(small.cov.status, "complete", JSON.stringify(small.cov.errors));
   assert.equal(tsv(join(small.out, "members.tsv")).length, 4);
+});
+
+test("pads of 256 MiB and one block either side, built sparse, are read through: a lost item is never hidden behind the pad, a whole tree stays complete", () => {
+  const d = dir("ad1-pads-");
+  const MiB = 1024 * 1024;
+  for (const pad of [256 * MiB - MiB, 256 * MiB - 1, 256 * MiB, 256 * MiB + 1, 256 * MiB + MiB, 257 * MiB + 12345]) {
+    writePaddedCutImage(join(d, "cut.ad1"), pad, false);
+    const cut = runRecipe([join(d, "cut.ad1")]);
+    assert.equal(cut.cov.status, "partial", `pad ${pad}`);
+    assert.equal(cut.cov.integrity_status, "unverified", `pad ${pad}`);
+    assert.match(cut.cov.errors.join("\n"), /\d+ bytes of the image's data that are not zero are reached by no item/, `pad ${pad}`);
+    writePaddedCutImage(join(d, "whole.ad1"), pad, true);
+    const whole = runRecipe([join(d, "whole.ad1")]);
+    assert.equal(whole.cov.status, "complete", `pad ${pad}: ${JSON.stringify(whole.cov.errors)}`);
+    assert.equal(tsv(join(whole.out, "members.tsv")).length, 4, `pad ${pad}`);
+  }
+});
+
+test("a read of the unreached data that the clock stops says where, and is partial, never complete", async () => {
+  const d = dir("ad1-gap-clock-");
+  const big = 64 * 1024 * 1024 * 1024;       // a 64 GiB hole: a sparse file, so it costs no disk, and cannot be read in a second
+  writePaddedCutImage(join(d, "huge.ad1"), big, true);
+  const t0 = Date.now();
+  const rec = runRecipe([join(d, "huge.ad1")], { RECIPE_LISTING_SECONDS: "1" });
+  assert.ok(Date.now() - t0 < 60000, "the recipe ended near its clock");
+  assert.equal(rec.cov.status, "partial");
+  assert.equal(rec.cov.integrity_status, "unverified");
+  const stopped = (rec.cov as Record<string, any>).unreferenced_gaps.stopped_at;
+  assert.ok(typeof stopped === "number" && stopped > 0 && stopped < big, `stopped_at ${stopped}`);
+  assert.match(rec.cov.limits_hit.join("\n"), /^seconds: the read of the data nothing led to stopped at address \d+, \d+ of its \d+ bytes in$/m);
+  assert.match(rec.cov.errors.join("\n"), /the read stopped at its time budget, so the rest was not read/);
+  const cwd = runDir();
+  writePaddedCutImage(join(cwd, "inputs", "huge.ad1"), big, true);
+  const t1 = Date.now();
+  const r = await runPy(TOOL, cwd, { image: "inputs/huge.ad1", max_seconds: 1 }, undefined, { AGENT_ID: "s1" });
+  assert.ok(Date.now() - t1 < 60000, "the tool ended near its clock");
+  const res = JSON.parse(r.stdout);
+  assert.equal(res.processing_status, "partial");
+  assert.equal(res.integrity_status, "unverified");
+  assert.ok(res.unreferenced_data.stopped_at > 0 && res.unreferenced_data.stopped_at < big);
+  assert.match(res.errors.join("\n"), /stopped at its time budget/);
+  assert.match(res.stopped_by_budget, /the time budget of 1 seconds was reached while the data nothing led to was being read/);
+});
+
+test("ad1_extract holds what it writes to a ratio of what it read: a chunk sequence past max_ratio is partial and names the ratio", async () => {
+  const cwd = runDir();
+  const zeros = Buffer.alloc(8 * 1024 * 1024);
+  writeFileSync(join(cwd, "inputs", "zeros.ad1"), ad1Image([{ name: "zeros.bin", content: zeros }]));
+  const r = await runPy(TOOL, cwd, { image: "inputs/zeros.ad1", max_ratio: 10, out_dir: "work/s1/ratio" }, undefined, { AGENT_ID: "s1" });
+  const res = JSON.parse(r.stdout);
+  assert.equal(res.processing_status, "partial", JSON.stringify(res.errors));
+  assert.match(res.stopped_by_budget, /the expansion limit max_ratio of 10 was reached: \d+ bytes written from \d+ bytes of the image's content read \(more than 10 times\)/);
+  assert.equal(res.budgets.max_ratio, 10);
+  const rows = tsv(join(cwd, "work", "s1", "ratio", "ad1_extract.tsv"));
+  assert.equal(rows[0].check, "not-read");
+  assert.ok(Number(rows[0].size) < 3 * 1024 * 1024, "what was written is kept as a partial, a little past the ratio's slack");
+  // The default (1000) lets an ordinary image through, and the parameter is bounded.
+  const fine = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: "work/s1/fine" }, undefined, { AGENT_ID: "s1" });
+  assert.equal(JSON.parse(fine.stdout).processing_status, "complete");
+  for (const bad of [0, -1, 1_000_001, 1.5, "10", true]) {
+    const refused = await runPy(TOOL, cwd, { image: "inputs/zeros.ad1", max_ratio: bad, out_dir: "work/s1/bad" }, undefined, { AGENT_ID: "s1" });
+    assert.equal(JSON.parse(refused.stdout).ok, false, String(bad));
+  }
 });
 
 test("arguments that are a JSON array, and a target that is not an object, are answers and not tracebacks", () => {

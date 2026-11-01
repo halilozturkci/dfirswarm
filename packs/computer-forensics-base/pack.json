@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.11.16",
+  "version": "1.11.17",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -17,8 +17,8 @@
     "sha256": {
       "LICENCE": "1df0d6665bd036fc44a288726c699f4955ce7e17e3248a88a58dc38819203250",
       "README.md": "f3dcc6b33690b0e79b9aa98f4faa4b13a4476e95eb2694f6d1121b650a961e91",
-      "recipes/ad1-items/recipe.json": "7877a03f47d0d249a6282f093d089d57bd474418e516531df45f481197ebb3ef",
-      "recipes/ad1-items/run.py": "26aef41780d21d4812200e0b721f5654c3f2280b0a73ef07c712c1a7c7e5aa39",
+      "recipes/ad1-items/recipe.json": "91feb43f9b71161cc07d32768470669c1d52008f4ea5281d043dd94652a6eaf4",
+      "recipes/ad1-items/run.py": "77fea309c71c316d141b9c5301709dfc3bacd18c6e7c7cff84e5e61d75ffb652",
       "recipes/archive-members/recipe.json": "23d7002e6cb038d34880a181393172477918695c065b9866e64cab3e8a66aa36",
       "recipes/archive-members/run.py": "303b0720d742997c3f558fc10a2759955510d2ab1425ac201290f823b594f171",
       "recipes/disk-timeline/recipe.json": "2b10d23ba3719ff11c2a2ec2e06fb5d9fe2cfdcf008ffb5f8bbc17e8534a7c25",
@@ -82,8 +82,8 @@
       "tests/test_status_basis.py": "f6bd2e5f148003bfeb1a29a90711a853565e0ef487e39667cd1e858966ad3e18",
       "tests/test_timeline_super.py": "e20794b8cc2fe84b455795ca0453ce8d599877b612e424fc9c2ffa170ab8b299",
       "tests/test_timestamp_decode.py": "6bd727211cdc2c3887a5e6cdbbd6a766a2de4282a76c66ce7fe52f805e7c6176",
-      "tools/ad1_extract/manifest.json": "4d1a0485dfc540dc394626f3da627ade679bf64d71f1bf4d34dbe4592a92572b",
-      "tools/ad1_extract/run.py": "04121b86b8467d61f6ac91ad8540649a51b03c9a0966bb40686a0c30c44dc045",
+      "tools/ad1_extract/manifest.json": "6e0cde5ebb3f95e8fabfd03e6593668414cbbef9b744310883851a4ac975f435",
+      "tools/ad1_extract/run.py": "d2b87ab575b47a530e94506ae774e94ca7108f5b707cdc0540cb2d9e502094a1",
       "tools/archive_extract/manifest.json": "60a4149f40d42aaa4108a508868dd98004afeae5f28bbbe8c7188b497105560f",
       "tools/archive_extract/run.py": "c3a93c4791d37b9ca2f38d41bd91c056a122017d2de7778d4544ce80441d9ba1",
       "tools/catalog_search/manifest.json": "af679050717eed30ec4854dfb551ebdcf4be6f3b5e49bbd38103b8789c7b1796",
