@@ -40,7 +40,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "network_log_summary", "version": 7}
+TOOL = {"name": "network_log_summary", "version": 8}
 PARSER = "network_log_summary/5"
 
 

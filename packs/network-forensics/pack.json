@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.6.12",
+  "version": "1.6.13",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. No flow-record reader (NetFlow, IPFIX) is bundled.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -32,7 +32,7 @@
       "skills/correlate/host.md": "ee0f846f373c713c85fe93bf32237daf3973ea1a6ef8908048ba0ed2cc22a5ea",
       "skills/exfil/counters.md": "8e2bc069dba560f51f888dc82a0ef1f08b9cb3ec7f807175a6c078569c0a4af3",
       "skills/exfil/volume.md": "3382fc5dcc6b636694c3f3046500d19c4d3a48cd28c5fa9e185bc993ce419489",
-      "skills/logs/web-proxy-firewall.md": "ca3f311e4797e55842d0d0909bef82b01a83c2016e4e850b13edee1722690b0d",
+      "skills/logs/web-proxy-firewall.md": "40eca43441d979f7819fff22e8e83dd9e7ae3c2c80f79b0f17ecfc9e2ebcc199",
       "skills/metadata/dns-tls.md": "b582678d575ee247fd85c60583156a4e1e776c32d05ba1df4767c99087cd6f4d",
       "skills/metadata/fingerprints.md": "7fc9786942def4a443011873fd2a9e7b2b9b58cee512db22af110aae51cdeda9",
       "skills/network/router.md": "e0837ac164fe9cb9eecceb526e27bdf6c37ff50f540863264bea70674a76a416",
@@ -41,8 +41,8 @@
       "tests/pack.test.sh": "f83730891c6dc137fa0aa1ddd26b6d1d3ba9bc9609ff6a277ffb7ed9a3d7d372",
       "tools/beacon_score/manifest.json": "d16c7158f1c953ce6daf32b7dcc0caa60d27b7e7cc02d704f324c3be925cd512",
       "tools/beacon_score/run.py": "3be55cd62ce16a25b57ffaf6f6a9a2e7e39aba66539d44caee4816bc334f5dc1",
-      "tools/network_log_summary/manifest.json": "7af2fd776efe3230f8a45f6b50d639959ab231f87dd12a426befbc8753803253",
-      "tools/network_log_summary/run.py": "b189f4325307c50c48723435e9ea472f6b82a86ab749c0b5e18369eadf58bf28",
+      "tools/network_log_summary/manifest.json": "425926e9aceb62fb2eaa2cfe612a4d6a51d79979ea658339d9aa962df1232060",
+      "tools/network_log_summary/run.py": "00b2d0266e577efd4636c3aedabb73cb9658dfaec6fed1f0d3321ca15afd8358",
       "tools/pcap_extract/manifest.json": "595f3cb8e5cd82554bc239287c5348ef206d021d0118c1ed0965966b92556700",
       "tools/pcap_extract/run.py": "111534014645ea3ff1efea7e2e9bab56c6813acd14e0760fddff99f41dbf8083",
       "tools/pcap_summary/manifest.json": "0b8670023f84b6f3ea46947c2b1ebdab29234a5fac5b3bd04ba71c948289ce4d",

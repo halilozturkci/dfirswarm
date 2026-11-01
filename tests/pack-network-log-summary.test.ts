@@ -607,3 +607,29 @@ test("a line over max_line_bytes is skipped whole and counted once (the skip loo
     assert.equal(out.read_error, null);
   });
 });
+
+test("a target or referer over 64 KiB loses its parameter names with its values, and the skill and the manifest say so: the residual is written, and no value is printed", async () => {
+  await withCwd(async (cwd) => {
+    const rng = createRng(20261101);
+    const value = (): string => Array.from({ length: 24 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(rng() * 36)]).join("");
+    const [canaryA, canaryB] = [value(), value()];
+    const filler = "pad=1&".repeat(12_000); // 72,000 characters: over the limit whatever comes first
+    const line = `10.0.0.1 - - [10/Oct/2026:13:55:36 +0000] "GET /index.html?secretname=${canaryA}&${filler} HTTP/1.1" 200 5 "http://ref.example.test/p?refname=${canaryB}&${filler}" "ua"\n`;
+    await put(cwd, "inputs/long.log", line);
+    const run = await tool(LOGS, cwd, { path: "inputs/long.log", out_dir: "work/o" }, {});
+    const out = body(run);
+    assert.equal(out.parsed, 1);
+    const [row] = await table(cwd, "work/o");
+    assert.match(row.target, /^\/index\.html\?<over-long query or fragment withheld \d+ characters>$/);
+    assert.match(row.referer, /^http:\/\/ref\.example\.test\/p\?<over-long query or fragment withheld \d+ characters>$/);
+    // the residual, as the manifest and the skill state it: the parameter names go with the values
+    assert.doesNotMatch(row.target + row.referer, /secretname|refname|pad=/, "no parameter name survives past the limit");
+    const everything = await everythingUnder(cwd, run.stdout, ["work/o"]);
+    for (const canary of [canaryA, canaryB]) assert.ok(!everything.includes(canary), "a value past the limit is printed");
+    const manifest = JSON.parse(await readFile(join(LOGS, "..", "manifest.json"), "utf8")).description as string;
+    assert.match(manifest, /the parameter names go with the values, a residual/);
+    const skill = await readFile(join(LOGS, "..", "..", "..", "skills", "logs", "web-proxy-firewall.md"), "utf8");
+    assert.match(skill, /the query and fragment of a target or referer over 64 KiB, parameter names too/);
+    assert.ok(Buffer.byteLength(skill) / 4.245 <= 800, "the leaf stays within its 800 tokens");
+  });
+});
