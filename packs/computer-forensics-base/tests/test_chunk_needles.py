@@ -439,6 +439,38 @@ class ChunkNeedlesLocators(Case):
         self.assertEqual(os.listdir(target), [])
         self.assertIn("symbolic link", j["hits"]["needle"]["all_results_error"])
 
+    def test_the_search_for_the_image_keeps_at_most_200_names_and_is_on_a_clock(self):
+        import subprocess
+        import sys
+        from support import tool_path
+        for i in range(201):
+            self.write("inputs/set/d%03d/image%03d.bin" % (i % 7, i), b"x")
+            self.write("catalog/set_d%03d_image%03d.bin/partitions.txt" % (i % 7, i), "p\n")
+        r = run_tool("chunk_needles", {"needles": "x", "inode": 5}, self.dir)
+        self.assertEqual((r.code, r.json["status"]), (1, "failed"))
+        self.assertIn("more than 200 images", r.json["error"])
+        self.assertLess(len(r.stdout), 2000)
+        # a tree the search cannot finish inside its clock (a stand-in scandir that takes half a second a directory, a one-second clock)
+        with open(tool_path("chunk_needles"), encoding="utf-8") as fh:
+            src = fh.read().replace("RESOLVE_SECONDS = 60 ", "RESOLVE_SECONDS = 1 ", 1)
+        self.assertIn("RESOLVE_SECONDS = 1 ", src)
+        self.write("patched_run.py", src)
+        prelude = ("import os, sys, time\n_scandir = os.scandir\n"
+                   "def slow(*a, **k):\n    time.sleep(0.4)\n    return _scandir(*a, **k)\n"
+                   "os.scandir = slow\n"
+                   "exec(compile(open(sys.argv[1], encoding='utf-8').read(), sys.argv[1], 'exec'), {'__name__': '__main__'})\n")
+        for n in range(201):          # fewer than 200 catalogued images, so only the clock can stop it
+            if n >= 150:
+                os.unlink(self.path("catalog/set_d%03d_image%03d.bin/partitions.txt" % (n % 7, n)))
+        env = dict(os.environ)
+        for k in ("JOB_ID", "OUT", "AGENT_ID", "SECRET_OUTPUT"):
+            env.pop(k, None)
+        proc = subprocess.run([sys.executable, "-c", prelude, self.path("patched_run.py")], input=json.dumps({"needles": "x", "inode": 5}),
+                              capture_output=True, text=True, cwd=self.dir, env=env, timeout=60)
+        j = json.loads(proc.stdout)
+        self.assertEqual((proc.returncode, j["status"]), (1, "failed"))
+        self.assertIn("used its 1 seconds", j["error"])
+
     def test_hostile_arguments_and_refusals_are_json_with_the_pair(self):
         self.write("work/blob.bin", b"abc needle abc")
         for raw in ("[" * 100000, "not json", "[]"):

@@ -19,7 +19,7 @@ ioc_scan with `start`; an inode: icat_extract it, then ioc_scan the file).
 """
 import json, re, shutil, sys, subprocess, os, time
 
-TOOL = {"name": "chunk_needles", "version": 10}
+TOOL = {"name": "chunk_needles", "version": 11}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -36,6 +36,8 @@ CLOCK_EVERY = 256                  # and between this many matches of one feed: 
 STARTED = time.monotonic()
 SECTOR_MAX = 65536
 INODE = re.compile(r"^\d+(-\d+(-\d+)?)?$")
+RESOLVE_SECONDS = 60               # the search for the image under inputs/ (when image= is not given)
+CANDIDATES_MAX = 200               # and the images it keeps before it asks the caller to say which
 
 # BEGIN SHARED SCAN
 # The same text is in ioc_scan, chunk_needles and sig_carve (tests/test_scan_core.py holds the copies equal and holds the
@@ -135,20 +137,40 @@ def _resolve_image(explicit=None):
     baking one in. One candidate is used; several mean the caller must say which.
     An image is known by its extension or, lacking one (a raw `dd` of a web
     server named after the host), by the catalogue: the kickoff writes
-    catalog/<input>/partitions.txt for every input it read as a disk."""
-    import glob, os
+    catalog/<input>/partitions.txt for every input it read as a disk.
+    The search is on a clock (RESOLVE_SECONDS, read for every entry) and keeps at most CANDIDATES_MAX names:
+    a tree it cannot finish, or one with more images than that, is said, and the caller passes image=."""
+    import glob, os, time
     if explicit:
         return explicit
+    deadline = time.monotonic() + RESOLVE_SECONDS
     cands = []
     for ext in ("*.E01", "*.e01", "*.raw", "*.dd", "*.001", "*.img", "*.vhd", "*.vhdx"):
         cands += glob.glob(os.path.join("inputs", ext))
-    seen = set()
     for root_dir in _inputs_roots():
-        for base, _dirs, files in os.walk(root_dir, followlinks=False):
-            for f in files:
-                p = os.path.join(base, f)
-                if os.path.isfile(os.path.join("catalog", _catalogue_slug(p), "partitions.txt")):
-                    cands.append(p)
+        stack = [root_dir]
+        while stack:
+            here = stack.pop()
+            try:
+                scan = os.scandir(here)
+            except OSError:
+                continue
+            with scan:
+                for entry in scan:
+                    if time.monotonic() > deadline:
+                        raise SystemExit(json.dumps({"ok": False, "error": "looking for the image under inputs/ used its %d seconds before it was done; pass image=" % RESOLVE_SECONDS}))
+                    try:
+                        is_dir = entry.is_dir()
+                        if is_dir and entry.is_symlink():
+                            continue                         # a directory link is a name and not a place to walk
+                    except OSError:
+                        continue
+                    if is_dir:
+                        stack.append(entry.path)
+                    elif os.path.isfile(os.path.join("catalog", _catalogue_slug(entry.path), "partitions.txt")):
+                        cands.append(entry.path)
+                        if len(set(cands)) > CANDIDATES_MAX:
+                            raise SystemExit(json.dumps({"ok": False, "error": "more than %d images under inputs/; pass image=" % CANDIDATES_MAX}))
     cands = sorted(set(cands))
     if len(cands) == 1:
         return cands[0]
