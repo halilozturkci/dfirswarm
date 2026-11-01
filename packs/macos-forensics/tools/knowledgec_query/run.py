@@ -320,10 +320,26 @@ class LosslessPage:
 
 
 # BEGIN SHARED BOUNDARY
-# WINDOWS BOUNDARY v1: the same text is in every windows-forensics tool that prints names, paths, event data, registry data or table
-# cells from evidence (a windows-forensics test holds the copies equal), so that the shared-block task can converge it with the other
-# withholding blocks. It is the owner-approved HYBRID design: an allow-list for identifier-shaped fields, a deny-list for free text,
-# and an independent backstop on the way out.
+# BOUNDARY v2, the one text: the same text is in every tool that prints names, paths, event data, registry data, identifiers or table
+# cells from evidence (tests/pack-boundary-shared.test.ts finds every copy under packs/ and tool-library/ and holds them equal, but for the one
+# variant it declares until the three virtualization tools move onto this text). It is the owner-approved HYBRID design: an allow-list for
+# identifier-shaped fields, a deny-list for free text, and an independent backstop on the way out.
+#
+# THE CALLS A TOOL MAKES, and what the virtualization block called each (its tools move onto this text; the table is what they map to):
+#   FIELDS, KEY_KINDS, bind_fields(table, key_kinds)           the table of field kinds, which the CALLER passes in (this text holds no tool's table);
+#                                                              it was _FIELDS, _INHERIT and field_kind(); a digit run in a field name stands for any number
+#                                                              (`ethernet#.address`), and a field the table does not list has the kind of the field above it
+#   T(kind, text), show(s, kind, field)                        one string judged by its kind                         (the Shower, boundary_text, seal_text, seal_head)
+#   sealed_text(text, kind, field), print_order(items, ...)    what an answer prints for a string; nothing counted    (seal_text without the count)
+#   bind_values(enabled, tool), close_values(), values_summary()  the values file of a secret_output job            (bind_run(values, seconds))
+#   seal_stop_after(seconds)                                   the clock: nothing is judged after it                  (bind_run's seconds, RUN["deadline"])
+#   row_object(row)                                            one row of a paging file                               (row_text(row, where))
+#   answer_object(doc), emit(doc)                              an answer, sealed and read back                        (answer_text(doc), backstop(value, where))
+#   boundary_summary()                                         the "boundary" object; stopped_by is in it when judging stopped
+#   OWN_NAMES                                                  the exact strings the run made and shows as they are   (OWN_NAMES)
+# The kinds of a field: text (the default), name, path, key, url, host, hex, and the typed ones guid, digest, sid, mac, ip, time, number, version
+# and, for virtualized storage and machines, vmfs (a VMFS volume id), device (naa., eui., wwn-0x, vml. and t10. ids), iqn, vmuuid (the VMware
+# uuid of a machine), cid (a disk's content id), winhost (the name Windows gives a machine nobody named).
 #
 # LAYER 1, an allow-list per field type. A string the evidence supplied is shown as it is only when it fits the plain grammar of the
 # type of the field it fills: a name (registry key and value names, event field names, provider and channel names, table and column
@@ -372,6 +388,8 @@ class LosslessPage:
 # partial; what stays readable past that point is the names the tool made itself (OWN_NAMES) and strings of 15 characters or fewer of letters,
 # digits, `_` and `.` that do not start like a vendor token (and, in a field of a typed kind, fit the grammar of its type). The seal stop is 3.5 seconds before the
 # tool's time limit: the string in progress finishes after it, and one string of 256 KiB takes up to 2.3 seconds to judge on a loaded machine (the worst measured).
+# A run has a second bound: past MAX_JUDGED_CHARS characters judged (the final answer is always judged), a string not judged before is withheld by its size in the
+# same way. boundary.stopped_by says which bound stopped the judging and boundary.strings_withheld_by_the_stop how many strings it withheld; the answer is partial.
 # NOT RECOGNISED, by design: a secret that does not look like one (a plain password, a pronounceable passphrase, a UUID-shaped key,
 # anything under 16 characters in a name, a secret hidden in words or in an encoding this block does not read).
 import collections
@@ -391,9 +409,12 @@ _BIGRAMS_TEXT = "aaabacadaeafagahaiajakalamanaoapaqarasatauavawaxayazbabbbcbdbeb
 _BIGRAMS = frozenset(_BIGRAMS_TEXT[i:i + 2] for i in range(0, len(_BIGRAMS_TEXT), 2))
 BOUNDARY = {"withheld": 0, "by": collections.Counter(), "replaced": 0, "replaced_by": collections.Counter(), "where": [], "not_listed": 0}
 OWN_NAMES = set()               # exact strings this run made and shows as they are (file names of its own results)
-FIELDS = {}                     # a JSON key -> the kind of what it holds (a tool fills this in); other keys hold free text
+FIELDS = {}                     # a JSON key -> the kind of what it holds (a tool fills this in, or passes it to bind_fields); a key it does not list has the kind of the key above it (text at the top)
 KEY_KINDS = {}                  # a JSON key holding a dict -> the kind of that dict's own keys (registry value names are paths); default: name
 MAX_WHERE = 200
+MAX_JUDGED_CHARS = 400000000    # characters one run may have judged (every string of its answers and paging files); past it a string not judged before is withheld by its size
+FINAL_GRACE_CHARS = 4000000     # the final answer may always be judged: the cap is raised by this much, and is not spent again by the strings already withheld
+_STOP = {"cap": MAX_JUDGED_CHARS, "chars": 0, "by": None, "strings": 0}   # why judging stopped (None: it did not), and how many strings it withheld by their size
 
 
 class T(str):
@@ -415,7 +436,8 @@ _CHECKS = ("a PEM marker", "a named secret", "a token prefix", "user-info", "not
            "a base64 run with / and +", "a padded base64 run", "a random-looking run", "a part of a secret-shaped text", "the judging time ran out")
 _LABELS = ("not a plain name", "token-shaped text", "user-info", "secret value", "private key", "long number", "rest of a long string",
            "binary data over the judged size", "binary data holding a secret-shaped text", "invisible characters in a name", "not a port", "query value", "fragment",
-           "not a guid", "not a digest", "not a sid", "not a mac", "not a ip", "not a time", "not a number", "not a version") + \
+           "not a guid", "not a digest", "not a sid", "not a mac", "not a ip", "not a time", "not a number", "not a version",
+           "not a vmfs", "not a device", "not a iqn", "not a vmuuid", "not a cid", "not a winhost") + \
           tuple("backstop: " + c for c in _CHECKS) + tuple("backstop: in binary data: " + c for c in _CHECKS)
 _MARK = re.compile(r"<withheld [0-9]{1,10} (?:characters|bytes)(?:: (?:%s))?>|\[withheld: [0-9]{1,10} (?:characters|bytes)\]"
                    % "|".join(re.escape(x) for x in sorted(_LABELS, key=len, reverse=True)))
@@ -828,7 +850,38 @@ _TYPED = {
     "time": re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T ][0-9:.]+(?:Z|[+-][0-9:]+)?)?|D:[0-9]{8,14}(?:[Zz+-][0-9']*)?|[0-9]{1,18}"),
     "number": re.compile(r"-?[0-9]{1,18}(?:\.[0-9]{1,18})?|0x[0-9A-Fa-f]{1,16}|(?:true|false|null)"),
     "version": re.compile(r"v?[0-9]+(?:\.[0-9A-Za-z]+){1,4}(?:[-+][0-9A-Za-z.]+)?"),
+    # the identifiers of virtualized storage and machines: a VMFS volume id (8-8-4-12 hexadecimal digits), a SCSI device id (naa. with 16 or 32 digits, eui. and
+    # wwn-0x with 16, vml. with 20 to 40, t10. with a vendor, a model and a serial), an iSCSI name, the VMware uuid of a machine (16 bytes, a `-` after the
+    # eighth), the content id of a disk (8 digits) and the name Windows gives a machine nobody named (WIN- and 11 capitals and digits)
+    "vmfs": re.compile(r"[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{12}"),
+    "device": re.compile(r"naa\.(?:[0-9a-fA-F]{16}|[0-9a-fA-F]{32})|eui\.[0-9a-fA-F]{16}|wwn-0x[0-9a-fA-F]{16}|vml\.[0-9a-fA-F]{20,40}|t10\.[A-Za-z0-9_.+-]{8,120}"),
+    "iqn": re.compile(r"iqn\.[0-9]{4}-[0-9]{2}\.[a-z0-9][a-z0-9.-]{0,60}(?::[A-Za-z0-9._-]{1,40})?"),
+    "vmuuid": re.compile(r"[0-9a-f]{2}(?: [0-9a-f]{2}){7}-[0-9a-f]{2}(?: [0-9a-f]{2}){7}"),
+    "cid": re.compile(r"[0-9a-f]{8}"),
+    "winhost": re.compile(r"WIN-[A-Z0-9]{11}"),
 }
+_NAMING_IDS = frozenset(("device", "iqn"))          # the ids that hold a name a person chose (a t10. vendor, model and serial; an iSCSI name): what they hold must read as a name, not as random text
+_KNOWN_KINDS = frozenset(("text", "name", "path", "key", "url", "host", "hex", "label")) | frozenset(_TYPED)
+_NUMBER_RUN = re.compile(r"[0-9]+")
+
+
+def bind_fields(table, key_kinds=None):
+    """The field kinds of a tool, passed in by the tool (this text holds none): `table` maps a JSON key to the kind of what it holds, or to a function of
+    the key of one item for a dict whose items have kinds of their own; `key_kinds` maps a key holding a dict to the kind of that dict's own keys. A kind
+    this text does not know is refused (a misspelt kind would judge the field as free text without a word)."""
+    for name, kind in list(table.items()) + list((key_kinds or {}).items()):
+        if not isinstance(name, str) or not (callable(kind) or kind in _KNOWN_KINDS):
+            raise ValueError("a field kind this text does not know: %r" % (name,))
+    FIELDS.update(table)
+    KEY_KINDS.update(key_kinds or {})
+
+
+def _field_entry(name):
+    """What FIELDS says of the field `name`; a digit run in a name stands for any number (`ethernet0.address` is `ethernet#.address`)."""
+    entry = FIELDS.get(name)
+    if entry is None and name and any(c.isdigit() for c in name):
+        entry = FIELDS.get(_NUMBER_RUN.sub("#", name))
+    return entry
 
 
 # ---- layer 2: position and prefix rules -------------------------------------------------------------------------------------------
@@ -994,7 +1047,9 @@ def _show(s, kind, field):
     if len(s) > MAX_ONE_STRING:
         return _show(s[:MAX_ONE_STRING], kind, field) + _withheld(s[MAX_ONE_STRING:], "rest of a long string", field)
     if kind in _TYPED:
-        return s if len(s) <= 3 or _TYPED[kind].fullmatch(s) else _withheld(s, "not a %s" % kind, field)
+        if len(s) <= 3 or (_TYPED[kind].fullmatch(s) and not (kind in _NAMING_IDS and s[:4] in ("t10.", "iqn.") and _bad_runs(s, _JOIN_NAME))):
+            return s
+        return _withheld(s, "not a %s" % kind, field)
     if kind == "hex":
         return _show_hex(s, field)
     flat = _flat(s)
@@ -1164,13 +1219,16 @@ _S_HEX = re.compile(r"[0-9A-Fa-f-]+")
 _S_IDS = re.compile(r"\{?[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\}?|S-1-[0-9]{1,2}(?:-[0-9]{1,10}){1,15}|[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.]+Z?")
 _S_MARK = re.compile(r"<withheld [0-9]{1,10} (?:characters|bytes)(?:: [a-z][a-z ,/+-]{0,60}(?:: [a-z][a-z ,/+-]{0,60})?)?>|\[withheld: [0-9]{1,10} (?:characters|bytes)\]")
 _S_DIGEST_LABEL = re.compile(r"(?i)(?:md5|sha-?1|sha-?256|sha-?384|sha-?512|imphash|hashes?|filehash|ssdeep|tlsh)[\"'=:> \t]{1,6}(?:(?:md5|sha-?1|sha-?256|imphash)=)?[0-9a-f]{32,128}")
-_TYPED_KINDS = frozenset(("guid", "digest", "sid", "mac", "ip", "time", "number", "version", "hex", "label"))
+_TYPED_KINDS = frozenset(("guid", "digest", "sid", "mac", "ip", "time", "number", "version", "hex", "label", "vmfs", "device", "iqn", "vmuuid", "cid", "winhost"))
 # what a typed field may hold, by the characters of its type (apart from the grammar the first layer checks, and wider than it)
 _S_TYPED = {
     "guid": re.compile(r"[0-9A-Fa-f{}-]{1,64}"), "sid": re.compile(r"[Ss0-9-]{1,400}"), "mac": re.compile(r"[0-9A-Fa-f:-]{1,64}"),
     "ip": re.compile(r"[0-9A-Fa-f:.]{1,64}(?:%[0-9A-Za-z_.-]{1,16})?"), "time": re.compile(r"[0-9TtZzDd:.,+' -]{1,64}"),
     "number": re.compile(r"-?[0-9.]{1,64}|0[xX][0-9A-Fa-f]{1,16}|true|false|null"), "version": re.compile(r"(?=.{1,64}\Z)[vV]?[0-9]+(?:\.[0-9A-Za-z]{1,16}){0,6}(?:[-+][0-9A-Za-z.]{1,32}){0,3}"),
     "digest": re.compile(r"(?:sha256:|sha1:|md5:)?[0-9A-Fa-f]{16,128}|T1[0-9A-Fa-f]{16,80}|[0-9]{1,6}:[A-Za-z0-9+/]+:[A-Za-z0-9+/]+"),
+    "vmfs": re.compile(r"[0-9A-Fa-f-]{1,40}"), "cid": re.compile(r"[0-9A-Fa-f]{1,16}"), "vmuuid": re.compile(r"[0-9A-Fa-f -]{1,64}"),
+    "winhost": re.compile(r"[Ww][Ii][Nn]-[A-Za-z0-9]{1,16}"), "iqn": re.compile(r"iqn\.[0-9A-Za-z.:_-]{1,120}"),
+    "device": re.compile(r"(?:naa|eui|vml|t10)\.[A-Za-z0-9_.+-]{1,130}|wwn-0x[0-9A-Fa-f]{1,32}"),
 }
 _S_LONG = re.compile(r"[A-Za-z0-9+/_-]{19}")           # the shortest run any check below needs (19 digits); the hexadecimal run needs 40, the others 20
 _S_PLAIN_NUM = re.compile(r"[0-9TZ:.+ -]+")
@@ -1343,9 +1401,28 @@ def _unjudged(text, kind=None):
     return grammar is None or len(text) <= 3 or grammar.fullmatch(text) is not None
 
 
-def _late():
+def _late(n=0):
+    """Whether judging must stop for the string about to be judged, which has `n` characters (counted against the cap of the run, unless the string is
+    only being judged to see what an answer would print). It says why, once, in _STOP["by"]: the cap of characters, or the clock of the seal."""
+    if n and not _QUIET[0]:
+        _STOP["chars"] += n
+        if _STOP["chars"] > _STOP["cap"]:
+            if _STOP["by"] is None:
+                _STOP["by"] = "the cap of %d characters judged in one run" % MAX_JUDGED_CHARS
+            return True
     deadline = _CLOCK["deadline"]
-    return deadline is not None and time.monotonic() > deadline
+    if deadline is not None and time.monotonic() > deadline:
+        if _STOP["by"] is None:
+            _STOP["by"] = "the judging time (the budget of one answer or row, or the seal stop of the tool)"
+        return True
+    return False
+
+
+def _stopped(value, where):
+    """A string not judged because judging stopped: withheld whole, by its size, counted (what is let through is only _unjudged)."""
+    if not _QUIET[0]:
+        _STOP["strings"] += 1
+    return _replace(value, where, "the judging time ran out", True)
 
 
 def seal_stop_after(seconds):
@@ -1508,9 +1585,9 @@ def _seal(value, kind, field, where, guard, fname=""):
     `where` is the tuple of (sealed key or position, position) on the way down."""
     if isinstance(value, str):
         k = getattr(value, "kind", kind)
-        if _late():
+        if _late(len(value)):
             # past the budget the rest is withheld whole, fail closed; what is let through is only a name of this run's own and a short plain string (_unjudged)
-            return value if _unjudged(value, k) else _replace(value, where, "the judging time ran out", True)
+            return value if _unjudged(value, k) else _stopped(value, where)
         out = show(value, k, field)
         if guard:
             check = _verdict(out, k)
@@ -1522,14 +1599,14 @@ def _seal(value, kind, field, where, guard, fname=""):
     if value is None or isinstance(value, _SCALARS):
         return value
     if isinstance(value, dict):
-        hook = FIELDS.get(fname)
+        hook = _field_entry(fname)
         hook = hook if callable(hook) else None
         kk = KEY_KINDS.get(fname, "name")
         out, dupes = {}, {}
         for idx, (key, v) in enumerate(value.items()):
             if isinstance(key, str):
-                if _late():
-                    sk = key if _unjudged(key) else _replace(key, where + (("(key)", idx),), "the judging time ran out", True)
+                if _late(len(key)):
+                    sk = key if _unjudged(key) else _stopped(key, where + (("(key)", idx),))
                 else:
                     sk = _KEYS.get((kk, field, key, guard))
                     if sk is None:
@@ -1572,7 +1649,7 @@ def _seal(value, kind, field, where, guard, fname=""):
 
 
 def _kind_of(field, inherited):
-    k = FIELDS.get(field)
+    k = _field_entry(field)
     return k if isinstance(k, str) else inherited
 
 
@@ -1605,9 +1682,10 @@ def row_object(row):
 
 
 def boundary_summary():
+    stopped = {"stopped_by": _STOP["by"], "strings_withheld_by_the_stop": _STOP["strings"]} if _STOP["by"] is not None else {}
     return {"strings_withheld": BOUNDARY["withheld"], "withheld_by_reason": dict(BOUNDARY["by"]),
             "strings_replaced_by_the_backstop": BOUNDARY["replaced"], "replaced_by_check": dict(BOUNDARY["replaced_by"]),
-            "replaced_at": list(BOUNDARY["where"]), "replaced_not_listed": BOUNDARY["not_listed"], "values": values_summary(),
+            "replaced_at": list(BOUNDARY["where"]), "replaced_not_listed": BOUNDARY["not_listed"], "values": values_summary(), **stopped,
             "note": "every key and value of this answer and of its paging files was judged by the type of its field: a name, path, key or URL is shown only when it "
                     "fits a plain grammar (a path component by component), free text has token-shaped runs, user-info and the value after a secret's name withheld, "
                     "and a second check written apart from both read it back. A withheld text is <withheld N characters: reason>. Not recognised: a secret that does "
@@ -1627,14 +1705,19 @@ def _last_look(obj):
 
 def answer_object(doc):
     """The answer (or an error answer), sealed and read back. A string the backstop had to replace makes a complete answer partial."""
+    _STOP["cap"] = max(_STOP["cap"], _STOP["chars"]) + FINAL_GRACE_CHARS            # (the final answer is always judged: the cap of the run does not take it)
     out = _timed(lambda: _seal(doc, "text", "", (), True))
     if isinstance(out, dict):
         out["boundary"] = _last_look(boundary_summary())
-        if BOUNDARY["replaced"] > 0 and out.get("status") == "complete":
+        if (BOUNDARY["replaced"] > 0 or _STOP["by"] is not None) and out.get("status") == "complete":
             out["status"] = "partial"
             basis = out.get("status_basis")
-            out["status_basis"] = "%s%d string(s) still held a secret-shaped text when the answer was checked on its way out and were replaced (see boundary)" % (
-                basis + "; " if isinstance(basis, str) and basis else "", BOUNDARY["replaced"])
+            why = []
+            if BOUNDARY["replaced"] > 0:
+                why.append("%d string(s) still held a secret-shaped text when the answer was checked on its way out and were replaced" % BOUNDARY["replaced"])
+            if _STOP["by"] is not None:
+                why.append("judging the strings stopped at %s: %d string(s) after it were withheld by their size" % (_STOP["by"], _STOP["strings"]))
+            out["status_basis"] = "%s%s (see boundary)" % (basis + "; " if isinstance(basis, str) and basis else "", "; ".join(why))
     return out
 
 

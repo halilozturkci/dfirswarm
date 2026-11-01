@@ -7,7 +7,6 @@
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPy, withCwd } from "./tool-library-harness.ts";
@@ -365,17 +364,4 @@ test("regkv: string values of 262,144 characters made of PEM markers with no end
     assert.ok(![run.stdout, ...(await reachable(cwd))].some((t) => t.includes(token.slice(4, 20))), "the token is not printed");
     assert.ok(["complete", "partial"].includes(out.status));
   });
-});
-
-test("the windows-forensics tools that carry the SHARED BOUNDARY block carry it identically", async () => {
-  const { readdir: ls } = await import("node:fs/promises");
-  const begin = "# BEGIN SHARED BOUNDARY";
-  const end = "# END SHARED BOUNDARY";
-  const found: Record<string, string> = {};
-  for (const name of await ls(WIN)) {
-    const text = await readFile(join(WIN, name, "run.py"), "utf8").catch(() => "");
-    if (text.includes(begin)) found[name] = text.slice(text.indexOf(begin), text.indexOf(end) + end.length);
-  }
-  assert.ok(Object.keys(found).length >= 1);
-  assert.equal(new Set(Object.values(found).map((b) => createHash("sha256").update(b).digest("hex"))).size, 1, `the block differs between ${Object.keys(found).join(", ")}`);
 });
