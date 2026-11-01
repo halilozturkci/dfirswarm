@@ -51,3 +51,19 @@ next volume is named, and a member declared enormously larger than its packed si
 counted, never unpacked. A ZIP is listed through 7z only: its structure stays
 `archive_probe`'s, so the ZIP reader is not copied. The first `limit` members are inline
 and all of them are in the file the answer names. `archives/formats` names it.
+
+### Added: encrypted-containers writes decrypted evidence under the job's output from a sealed key reference
+
+A new tool, `materialise_decrypted`, runs only in a `secret_output` job (it refuses as JSON
+before reading anything otherwise) and takes an operation (`bitlocker_image` through pybde,
+`luks_image` through pyluksde, `aescrypt_decrypt` through pyAesCrypt), the evidence, and a path
+to a 0600 file in the job that holds the key. The key is read inside the tool and handed to the
+module in memory: the tool starts no program, and the key is on no command line, in no
+environment, answer, path, JSON key or file, and a module's exception text is never shown.
+Output is a 0600 `.partial` file first: a key that does not work removes it, a whole result is
+placed under its final name without replacing anything, and a container that is cut short, a
+volume that ends early, the output budget or the time limit keep it as an unverified
+`.partial`. A provenance file beside each output holds the reader's version, the evidence's size
+and sha256, the offset, the kind of key used and the output's sha256. Selected files out of a
+volume are not provided. It was tested against stand-in modules and, where installed, the real
+pyAesCrypt; pybde and pyluksde were not run on a real volume.

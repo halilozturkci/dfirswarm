@@ -15,6 +15,7 @@ const AP = join(TOOLS, "archive_probe", "run.py");
 const CID = join(TOOLS, "crypto_id", "run.py");
 const PR = join(TOOLS, "password_recover", "run.py");
 const TC = join(TOOLS, "tcrypt_header", "run.py");
+const MD = join(TOOLS, "materialise_decrypted", "run.py");
 const AM = join(TOOLS, "archive_metadata", "run.py");
 const SS = join(TOOLS, "crypto_selftest", "run.py");
 const CM = join(TOOLS, "crypto_metadata", "run.py");
@@ -39,7 +40,7 @@ test("the tools carry the same blocks, byte for byte", async () => {
     assert.ok(copies[0].length > 1000);
   }
   for (const name of ["PLACE", "PAGE"]) {
-    const copies = await Promise.all([RKS, AP, CM, SS, AM].map((p) => block(p, name)));
+    const copies = await Promise.all([RKS, AP, CM, SS, AM, MD].map((p) => block(p, name)));
     for (const other of copies.slice(1)) assert.equal(other, copies[0], `${name} differs`);
   }
   // The blocks that are another pack's are the other pack's text: the network withholding block, the network process block (the
@@ -48,6 +49,7 @@ test("the tools carry the same blocks, byte for byte", async () => {
   assert.equal(await block(AP, "PROCESS"), await block(join(ROOT, "packs", "network-forensics", "tools", "pcap_extract", "run.py"), "PROCESS"));
   assert.equal(await block(PR, "PROCESS"), await block(AP, "PROCESS"));
   assert.equal(await block(TC, "PROCESS"), await block(AP, "PROCESS"));
+  assert.equal(await block(MD, "PROCESS"), await block(AP, "PROCESS"));
   assert.equal(await block(AM, "PROCESS"), await block(AP, "PROCESS"));
   assert.equal(await block(SS, "PROCESS"), await block(AP, "PROCESS"));
   assert.equal(await block(CM, "PROCESS"), await block(AP, "PROCESS"));
@@ -56,7 +58,7 @@ test("the tools carry the same blocks, byte for byte", async () => {
 });
 
 test("no tool starts a program in a session of its own", async () => {
-  for (const path of [RKS, AP, CID, PR, TC, CM, SS, AM]) {
+  for (const path of [RKS, AP, CID, PR, TC, CM, SS, AM, MD]) {
     const text = await readFile(path, "utf8");
     assert.doesNotMatch(text.replace(/^\s*#.*$/gm, "").replace(/"""[\s\S]*?"""/g, ""), /start_new_session|setsid|process_group/, path);
   }
@@ -315,7 +317,7 @@ test("the output check replaces what the first layer would have let through (san
 
 test("the output check alone does not catch a number of 10 to 20 digits or an identifier of up to 23 characters: only the rule withholds them", async () => {
   const strings = [`docs/${pick(DIGITS, 12)}.bin`, `docs/${pick(DIGITS, 20)}.bin`, `docs/${pick(ALNUM, 12)}Qz1.bin`];
-  for (const path of [RKS, AP, CID, PR, TC]) {
+  for (const path of [RKS, AP, CID, PR, TC, MD]) {
     const run = await runPySnippet(BACKSTOP, [path], { strings });
     assert.equal(run.code, 0, run.stderr);
     const got = JSON.parse(run.stdout) as { rows: Array<{ name: string }>; replaced: number };

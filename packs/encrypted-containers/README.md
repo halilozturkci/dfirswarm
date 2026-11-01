@@ -20,7 +20,10 @@ of its own. The thirteenth is the pack's router, `encrypted/router` (at
 most 400 tokens): it names the other twelve by the question each answers, holds no
 rule, and is the one line a run shows for the pack when its skills index is over budget.
 
-**Eight tools.**
+**Nine tools.**
+`materialise_decrypted` is the one tool that writes decrypted evidence: inside a `secret_output` job, from a
+key in a sealed 0600 file (never an argument), through pybde, pyluksde or pyAesCrypt, to a raw image or file under
+`$OUT` with a provenance file; a key that does not work leaves nothing, and what is not whole stays an unverified `.partial`.
 `archive_metadata` says what protects a 7-Zip or RAR archive, from the start header or the block
 headers and then through 7z: whether the headers (the names) and the members are encrypted,
 whether the set of volumes is whole; it lists a ZIP through 7z, and never extracts.
