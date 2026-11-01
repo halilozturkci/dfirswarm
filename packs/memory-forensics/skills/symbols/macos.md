@@ -1,6 +1,6 @@
 ---
 id: symbols/macos
-title: macOS memory, the kernel and its symbols, with no support claim
+title: macOS memory and kernel symbols, with no support claim
 when: The capture is from a Mac, or you are asked whether a macOS image can be read.
 needs: []
 tools: [mem_profile, isf_intake]

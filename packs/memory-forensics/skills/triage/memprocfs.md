@@ -1,7 +1,7 @@
 ---
 id: triage/memprocfs
 title: MemProcFS and its FUSE prerequisite
-when: You will read an image as a MemProcFS file tree, or a mount failed or its readiness is in question.
+when: You will read an image as a MemProcFS tree, or a mount failed or its readiness is in doubt.
 needs: []
 tools: [mem_fs, vol_readiness]
 requires_host: [memprocfs]
