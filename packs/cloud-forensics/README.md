@@ -7,10 +7,11 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Ten skills**: the pack's router, `cloud/router` (at most 400 tokens: it names the other nine by the question each
+**Eleven skills**: the pack's router, `cloud/router` (at most 400 tokens: it names the other ten by the question each
 answers, holds no rule, and is the one line a run shows for the pack when its skills index is over budget), and
 `logs/what-exists` and `logs/sources` (what an export covers and which sources to
-inventory), `m365/unified-audit-log`, `entra/signins`, `aws/cloudtrail`, `google/workspace` and
+inventory), `m365/unified-audit-log`, `entra/signins`, `aws/cloudtrail` and `aws/cloudtrail-integrity` (the
+operator's digest check, cited), `google/workspace` and
 `google/workspace-access`, `identity/tokens` and `identity/grants`.
 
 **Three tools**, all readers of exports that were supplied (nothing here connects to a tenant). `ual_parse` reads a

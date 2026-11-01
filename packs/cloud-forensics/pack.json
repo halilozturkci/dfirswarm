@@ -1,7 +1,7 @@
 {
   "id": "cloud-forensics",
   "name": "Cloud and SaaS Forensics Pack",
-  "version": "1.4.6",
+  "version": "1.5.0",
   "description": "Method and tooling for logs that belong to somebody else's computer, examined as supplied exports: what a cloud or SaaS export covers and what its silence can show, the Microsoft 365 unified audit log, Entra sign-ins, AWS CloudTrail, Google Workspace, and the tokens, grants and mailbox rules behind a cloud account.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,10 +18,6 @@
     {
       "name": "pwsh",
       "why": "an operator's acquisition runtime for Microsoft 365 collection; no skill or tool of this pack runs it, and the agent examines supplied exports offline and never connects to a tenant"
-    },
-    {
-      "name": "aws",
-      "why": "an operator's acquisition capability for CloudTrail, Config and GuardDuty records; no skill or tool of this pack runs it (`aws/cloudtrail` only reads supplied exports, and its id spells the program), and an agent never connects to an account with it"
     }
   ],
   "method_only": [
@@ -42,13 +38,14 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "1343dfb9780cff60a5c664b17af8796d7d65b16d446dec0b8c715d51fa5798f1",
+      "README.md": "bc552c841e140ae206c0769f44154daecd702f12e43cde6ccd561bacaac8ea53",
       "goals/tenant-compromise.md": "52bb72bead930eaf3e4a0f01f76162aaf30feae7ca44a5a7aa7307f2ee9dc0d8",
       "requires/host.json": "67f5c2ace76741baaa57edafda54a79edf0305a0645de2493f3c6c6e5b11ab2b",
       "requires/python.txt": "eb9148a62031d80af4795335b759dbe15552ed2df3b5b97648fbcda6b32b64de",
-      "skills/INDEX.md": "dc5c072ff20da259b4b316a3a6e96ea5a87cf52040ece8099efd635a00f0f89a",
-      "skills/aws/cloudtrail.md": "fd40e09cdff829feed25a5a53e6b45c7ff783baf1bb91719f1ce1583bf6e4988",
-      "skills/cloud/router.md": "a802777a992013d5fa60162c78d788f9283b9c08e4e7e6795a3ff5c2a53d6371",
+      "skills/INDEX.md": "ec2b0768c10a7ae50d835b9c8ef99e8af9ebfdab6fc010b6c999a07337506cee",
+      "skills/aws/cloudtrail-integrity.md": "7c0f0fb6540ddbbcfbb32cc020cdb9d8ba1711c61e88ac98739260ae76e761fc",
+      "skills/aws/cloudtrail.md": "de2becc72fec819d92b4db3f5ce3fbb6f9bc31bb8008a7daae8acbb95d25f9c5",
+      "skills/cloud/router.md": "5d3290dc0ee03b4c58dbbaa6c28110ec067b795cace5750ca0a647e7a5ac50ff",
       "skills/entra/signins.md": "068452016ed964aa2a61fb0634b92f71845bb0364b386b6b8d5a88d813ecb2f5",
       "skills/google/workspace-access.md": "af272db6d3ff4edee0831de2920c81050dc3623ace590dd3a70dbe861eaf9a08",
       "skills/google/workspace.md": "a8e5c5dc0150a693bf0bf54a410dcd1a7b9bf01461afd32e12c36c708f2a566a",
@@ -70,5 +67,5 @@
     "signin_analyse",
     "ual_parse"
   ],
-  "skills": 10
+  "skills": 11
 }
