@@ -1,7 +1,84 @@
 #!/usr/bin/env python3
 import hashlib, json, re, signal, sys, os, tempfile, time
 
-TOOL = {"name": "catalog_search", "version": 13}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _Held:
+    _tmp = None
+
+
+HELD = _Held()             # the hidden file of the match list being written
+PAGES.append(HELD)
+
+TOOL = {"name": "catalog_search", "version": 14}
 PATTERN_MAX = 4096
 LINE_MAX = 1 << 20
 BUDGET_SECONDS = 25
@@ -44,12 +121,11 @@ def _answer(result, code=0):
             result[key] = result[key][:LISTED_MAX]
     if "status" not in result:
         result["status"], result["status_basis"] = _status(result)
-    sys.stdout.write(json.dumps(result) + "\n")
-    sys.stdout.flush()
+    print_answer(result)
     sys.exit(code)
 
 
-def _last_word(kind, value, _tb):
+def _unexpected(kind, value, _tb):
     """An exception nobody expected is an answer too: the class only, never a message, which could quote the evidence."""
     budget_class = globals().get("_Budget")
     if budget_class is not None and issubclass(kind, budget_class):
@@ -62,7 +138,7 @@ def _last_word(kind, value, _tb):
     os._exit(1)
 
 
-sys.excepthook = _last_word
+sys.excepthook = _unexpected
 
 def _catalogue_slug(path):
     """The directory name the kickoff's catalogue gives an input: its path under
@@ -428,9 +504,19 @@ tmp = None
 stopped_at = None
 too_long = 0
 last_line = 0
+
+
+def _stopped(signum):
+    print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "which": which, "file": path,
+                      "matched_so_far": total, "searched_to_line": last_line,
+                      "status_basis": "the tool was stopped by signal %d during the search: the matches counted so far are a lower bound, and the file of every match was not kept" % signum}), flush=True)
+
+
+install_signal_handlers(_stopped)
 try:
     os.makedirs(keep_dir, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=keep_dir, prefix=".catalog-search-")
+    HELD._tmp = tmp
     all_out = os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape")
 except OSError as e:
     all_out, keep_error = None, "%s: %s" % (keep_dir, e.strerror or e)

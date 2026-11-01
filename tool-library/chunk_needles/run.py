@@ -19,7 +19,78 @@ ioc_scan with `start`; an inode: icat_extract it, then ioc_scan the file).
 """
 import json, re, shutil, sys, subprocess, os, time
 
-TOOL = {"name": "chunk_needles", "version": 12}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
+PROGRESS = {"scanned": 0}
+
+TOOL = {"name": "chunk_needles", "version": 13}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -439,6 +510,10 @@ class LocatorFile:
         self.stopped_at = None
         self.published = False
 
+    @property
+    def _tmp(self):
+        return self.tmp
+
     def _open(self):
         refused = own_dir(self.path.parent)
         if refused:
@@ -552,18 +627,18 @@ FAILED_BASIS = "the tool stopped with an error and scanned nothing (see error)"
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS, **extra}))
+    print_answer({"error": message, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS, **extra})
     sys.exit(1)
 
 
-def last_word(kind, value, _tb):
+def unexpected(kind, value, _tb):
     """An error nobody expected is an answer too: its class only, since its message can quote what was read."""
     print(json.dumps({"error": "internal error: %s" % kind.__name__, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS}))
     sys.stdout.flush()
     os._exit(1)
 
 
-sys.excepthook = last_word
+sys.excepthook = unexpected
 
 
 def on_stdout(resolve, *given):
@@ -579,7 +654,7 @@ def on_stdout(resolve, *given):
             if isinstance(said, dict):
                 said.setdefault("status", "failed")
                 said.setdefault("status_basis", FAILED_BASIS)
-            print(json.dumps(said))
+            print_answer(said)
             sys.exit(1)
         raise
 
@@ -643,10 +718,32 @@ except SecretValuesRefused as exc:
     fail(str(exc), write_values="refused")
 
 
+def _stopped(signum):
+    proc = CHILD["proc"]
+    if proc is not None:
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - best effort: the process is ended with the tool anyway
+            pass
+    try:
+        secret.close()
+    except Exception:  # noqa: BLE001
+        pass
+    print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "scanned_bytes": PROGRESS["scanned"],
+                      "secret_values": secret.summary(),
+                      "status_basis": "the tool was stopped by signal %d: the icat it was reading (if any) was ended, the counts and locators so far were not kept, and a values file "
+                                      "already begun holds the rows written before the stop" % signum}), flush=True)
+
+
+install_signal_handlers(_stopped)
+
+
 def scan_fh(fh, source, total=None):
     counts = {n: {"ascii": 0, "utf16le": 0} for n in need_list}
     key = [source["label"], source.get("image"), source.get("volume_offset_sectors"), source.get("inode"), source.get("sector_size"), context]
     shared = LocatorFile("chunk_needles", key + [need_list])
+    PAGES.append(shared)
     pages = {n: Locators(shared, i, n, max_hits) for i, n in enumerate(need_list)}
 
     def emit(at, name, enc, nb, buf, base, vi):
@@ -692,6 +789,7 @@ def scan_fh(fh, source, total=None):
                 block = data[off:off + FEED] if len(data) > FEED else data
                 inside = not drain(scanner.feed(block))
                 scanned += len(block)
+                PROGRESS["scanned"] = scanned
                 if inside:
                     stopped = cut[0] + 1
                     break
@@ -742,6 +840,7 @@ else:
     # cannot stall the pipe being read.
     with tempfile.TemporaryFile() as errf:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
+        CHILD["proc"] = proc
         hits, scanned, stopped = scan_fh(proc.stdout, source)
         if stopped is not None:
             proc.kill()                       # icat is blocked writing to a pipe nobody reads any more; its exit is not a failure
@@ -750,10 +849,10 @@ else:
         err_text = errf.read().decode("utf-8", "replace").strip()
     if rc != 0 and stopped is None:
         secret.close()
-        print(json.dumps({"error": err_text or f"icat exit {rc}", "tool": TOOL, "status": "failed", "status_basis": "icat failed, so what was found before it is not a result (see error)",
+        print_answer({"error": err_text or f"icat exit {rc}", "tool": TOOL, "status": "failed", "status_basis": "icat failed, so what was found before it is not a result (see error)",
                           "image": image, "inode": inode, "offset": offset, "scanned_bytes": scanned,
                           "note": "what was found before icat failed is not a result; any locator or values file written meanwhile is partial",
-                          "secret_values": secret.summary()}))
+                          "secret_values": secret.summary()})
         sys.exit(1)
 secret.close()
 # A needle whose list past the inline page is not whole in a file (the file could not be written, or reached its cap) is a loss the
@@ -786,4 +885,4 @@ if lost:
 if secret.stopped_at is not None:
     answer["status"] = "partial"
     answer["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"
-print(json.dumps(answer))
+print_answer(answer)

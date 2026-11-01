@@ -39,7 +39,74 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "check_inputs", "version": 8}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+TOOL = {"name": "check_inputs", "version": 9}
 MANIFEST = "inputs.json"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SPECIALS = {"fifo": stat.S_ISFIFO, "socket": stat.S_ISSOCK, "char": stat.S_ISCHR, "block": stat.S_ISBLK}
@@ -52,7 +119,7 @@ NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 def done(obj, code):
-    print(json.dumps(obj))
+    print_answer(obj)
     sys.exit(code)
 
 
@@ -64,7 +131,7 @@ def refuse(obj):
     done(obj, 1)
 
 
-def last_word(kind, value, _tb):
+def unexpected(kind, value, _tb):
     """An error nobody expected is an answer too: its class only, since its message can quote a name from the evidence."""
     print(json.dumps({"tool": TOOL, "status": "failed", "ok": False, "error": "internal error: %s" % kind.__name__,
                       "status_basis": "the tool stopped with an error and checked nothing (see error)"}))
@@ -72,7 +139,7 @@ def last_word(kind, value, _tb):
     os._exit(1)
 
 
-sys.excepthook = last_word
+sys.excepthook = unexpected
 
 
 class Capped:
@@ -203,6 +270,15 @@ if not isinstance(files, list):
 hash_deadline = STARTED + budget
 deadline = hash_deadline + max(1, min(60, budget // 5))
 receipts = Receipts()
+
+
+def _stopped(signum):
+    print(json.dumps({"tool": TOOL, "ok": False, "status": "partial", "interrupted": True, "signal": signum, "receipts_file": receipts.shown if receipts.created else None,
+                      "receipts": receipts.count,
+                      "status_basis": "the tool was stopped by signal %d: the files checked so far have a row in the receipts file, the rest were not checked, and nothing here is a pass" % signum}), flush=True)
+
+
+install_signal_handlers(_stopped)
 
 # --- the whole manifest first -------------------------------------------------------------------
 malformed, duplicates, digest_missing = Capped(), Capped(), Capped()

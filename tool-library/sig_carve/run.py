@@ -21,7 +21,74 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "sig_carve", "version": 7}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+TOOL = {"name": "sig_carve", "version": 8}
 WINDOW = 8 * 1024 * 1024
 BUDGET_SECONDS = 100              # inside the manifest's 120: past it the scan stops, says so, and names where to continue
 CONTEXT_MAX = 4096
@@ -346,14 +413,8 @@ def earlier_answers(path):
 PAGES = []                         # the pages being written: a SIGTERM removes their half files before the scan ends
 
 
-def _terminated(signum, _frame):
-    for page in PAGES:
-        page.discard()
-    raise SystemExit(128 + signum)
-
-
 def fail(message, **extra):
-    print(json.dumps({"ok": False, "error": message, "tool": TOOL, **extra}))
+    print_answer({"ok": False, "error": message, "tool": TOOL, **extra})
     raise SystemExit(1)
 
 
@@ -394,8 +455,6 @@ def main():
     carry_len = max(len(h) for h in headers.values()) - 1
     pages = {name: SafePage("sig_carve-" + name, [path, name, size, context, start], max_hits) for name in chosen}
     PAGES.extend(pages.values())
-    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
-        signal.signal(sig, _terminated)
     deadline = time.monotonic() + BUDGET_SECONDS
     totals = {name: 0 for name in chosen}
     capped = {}
@@ -410,6 +469,13 @@ def main():
 
     scanned = start
     stopped, read_error = None, None
+
+    def _stopped(signum):
+        print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "source": {"path": path},
+                          "scanned": {"start": start, "end": scanned, "complete": False},
+                          "status_basis": "the tool was stopped by signal %d: [start, end) was read, no half-written results file was kept, and the counts so far were not kept; "
+                                          "run again with start=%d to go on" % (signum, scanned)}), flush=True)
+    install_signal_handlers(_stopped)
     try:
         fh = open(path, "rb")
     except OSError as exc:
@@ -490,7 +556,7 @@ def main():
         scan["stopped"] = stopped
     if read_error:
         scan["read_error"] = read_error
-    print(json.dumps({
+    print_answer({
         "tool": TOOL,
         "status": "complete" if complete else "partial" if not read_error else "failed",
         "status_basis": ("the whole requested range was read and every header in it is reported" if complete else
@@ -502,7 +568,7 @@ def main():
         "signatures": results,
         "note": "A hit is where a header's bytes occur, not a file: cut it with file_carver or read it in place and check it with a parser of that format. "
                 "A signature that is not listed here, an encrypted or compressed region and a file split across the scan's source are not found by this scan.",
-    }, indent=2))
+    }, indent=2)
     # Exit 0 means the engine ran: a stop at the time budget is a valid answer for [start, end) with the position to go on from
     # (scanned.complete is false and scanned.stopped says where). A read error is a failure.
     sys.exit(1 if read_error else 0)

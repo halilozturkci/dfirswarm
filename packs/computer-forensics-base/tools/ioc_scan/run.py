@@ -33,7 +33,76 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-TOOL = {"name": "ioc_scan", "version": 8}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+TOOL = {"name": "ioc_scan", "version": 9}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -307,6 +376,7 @@ class Locators:
         self.written = 0
         self.bytes = 0
         self.stopped_at = None
+        PAGES.append(self)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".ioc_scan-")
@@ -328,6 +398,10 @@ class Locators:
             self.page.append(row)
         elif show is False:
             self.hidden += 1
+
+    @property
+    def _tmp(self):
+        return self.tmp
 
     def discard(self):
         """Close and remove the file being written, if it is still there: the whole result is not kept when the run did not finish."""
@@ -369,7 +443,7 @@ class Locators:
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print_answer({"error": message, "tool": TOOL, **extra})
     sys.exit(1)
 
 
@@ -502,6 +576,16 @@ def main():
     scanner = StreamScan([v[2] for v in variants], before=BEFORE, after=context, start=start)
     deadline = started + max_seconds
     scanned = start
+
+    def _stopped(signum):
+        try:
+            secret.close()
+        except Exception:  # noqa: BLE001
+            pass
+        print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "path": path, "scanned_end": scanned, "secret_values": secret.summary(),
+                          "status_basis": "the tool was stopped by signal %d: the counts and locators so far were not kept (the half-written locators file was removed), and a values "
+                                          "file already begun holds the rows written before the stop; scan again from start=%d" % (signum, start)}), flush=True)
+    install_signal_handlers(_stopped)
     stopped = None
     next_start = None
     taken, cut = [0], [None]
@@ -591,7 +675,7 @@ def main():
     if unique_only and locators.hidden:
         result["repeats_hidden_inline"] = locators.hidden
         result["repeats_note"] = "occurrences whose context repeats one already listed are not in the inline page; every one is in all_results"
-    print(json.dumps(result, indent=2))
+    print_answer(result, indent=2)
 
 
 if __name__ == "__main__":
