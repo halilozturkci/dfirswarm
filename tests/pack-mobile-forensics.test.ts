@@ -3372,7 +3372,7 @@ t.run_main(main)
         const child = spawn("python3", ["-c", code, script], { cwd, env: { ...process.env, ...AGENT } });
         const out: Buffer[] = [], err: Buffer[] = [];
         let paused = 0; // seconds the reader held the pipe shut, by construction: a timer never fires early, so the run took at least this long
-        const guard = setTimeout(() => child.kill("SIGKILL"), 60000);
+        const guard = setTimeout(() => child.kill("SIGKILL"), 180000); // the reader's pauses alone are 0.25 s a chunk of the answer, up to about a minute a tool at a small pipe chunk; the guard is far over that
         child.stdout.on("data", (c: Buffer) => {
           out.push(c);
           child.stdout.pause();

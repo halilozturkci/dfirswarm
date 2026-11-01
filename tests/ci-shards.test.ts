@@ -280,6 +280,12 @@ test("a job runs the pack-tool suites on the images' Python 3.11, in the images'
   assert.match(skipped, /test\("lnk_jumplist: a walk of the whole file system with max_seconds 1 ends by its clock/, "the skipped case is named as the job skips it");
   assert.match(skipped, /runTool\("lnk_jumplist", cwd, \{ path: "\/", max_seconds: 1 \}\)/, "and it walks the root, the file system whose size it relies on");
   assert.equal(job.match(/--test-skip-pattern/g)?.length, 1, "one case is left out, no more");
+  // Two uids share the job: root in the container (the steps), the runner's own (the files it writes into $RUNNER_TEMP before every step).
+  // A chown of $RUNNER_TEMP to the node user locks the runner out of its own step files, and the next step fails.
+  const commands = job.split("\n").filter((l) => !/^\s*#/.test(l));
+  assert.deepEqual(commands.filter((l) => /\bchown\b/.test(l)).map((l) => l.trim()), ['chown -R node:node "$GITHUB_WORKSPACE"'], "the only chown is of the workspace");
+  assert.ok(!commands.some((l) => /\b(chown|chmod)\b[^\n]*RUNNER_TEMP/.test(l)), "$RUNNER_TEMP is not handed to the node user");
+  assert.match(job, /if \[ "\$ALL" = true \] && \[ ! -s "\$RUNNER_TEMP\/pack\.list" \]; then[^\n]*exit 1; fi/, "a run that runs everything fails on an empty list");
   assert.match(job, /su node -s \/bin\/bash -c 'node --experimental-strip-types/, "the suites run as the image's unprivileged user");
   // The list is the pack-tool suites among the select job's (a narrow run), or all of them: nothing else narrows it.
   assert.match(job, /ALL: \$\{\{ needs\.select\.outputs\.all \}\}\n\s+NODE_LIST: \$\{\{ needs\.select\.outputs\.node \}\}/, "the list is built from the select job's outputs");

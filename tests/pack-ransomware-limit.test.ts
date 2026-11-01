@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet, withCwd } from "./tool-library-harness.ts";
 import { NOTES, SURVEY } from "./ransomware-pack-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const FILES = 100_000;
 const SECONDS = 30;
@@ -36,12 +37,11 @@ type Measured = { code: number | null; elapsed: number; rssMiB: number; stdout: 
 
 /** Run a tool with its arguments on stdin, from `cwd`, through a small parent that reports the child's peak resident set. */
 function measure(script: string, cwd: string, args: unknown): Promise<Measured> {
-  const driver = String.raw`
-import json, resource, subprocess, sys, time
+  const driver = peakRssPrelude() + String.raw`
+import json, subprocess, time
 t = time.monotonic()
-p = subprocess.run([sys.executable, sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True)
-rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-rss = rss / (1024 * 1024) if sys.platform == "darwin" else rss / 1024
+p, peak = run_peak([sys.executable, sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True)
+rss = peak / (1024 * 1024)
 sys.stdout.write(json.dumps({"code": p.returncode, "elapsed": time.monotonic() - t, "rssMiB": rss, "stdout": p.stdout.decode("utf-8", "replace"), "stderr": p.stderr.decode("utf-8", "replace")}))
 `;
   return new Promise((resolve, reject) => {

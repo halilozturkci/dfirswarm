@@ -16,6 +16,9 @@ never above the true peak, and a peak reached in the last millisecond of a run c
 be missed (the reading is then low, never high; a child that ends before its first
 sample reads 0).
 
+Only the direct child is sampled: the memory of a grandchild it starts (an engine behind a
+wrapper) is not counted, where ru_maxrss of children counted every descendant that was waited for.
+
 Used two ways: imported by name (tests/fixtures is on sys.path when a script of it
 runs), or prepended as text to a `python3 -c` wrapper (tests/peak-rss.ts: peakRssPrelude()).
 """

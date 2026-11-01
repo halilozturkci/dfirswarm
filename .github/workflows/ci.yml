@@ -375,8 +375,12 @@ jobs:
           apt-get update -q
           apt-get install -y -q --no-install-recommends ca-certificates git python3 python3-venv python3-pip jq sqlite3 file xxd socat procps binutils bsdextrautils less unzip p7zip-full xz-utils bzip2 zstd curl libimage-exiftool-perl ripgrep
           python3 -c 'import sys; print(sys.version); assert sys.version_info[:2] == (3, 11), "the images run Python 3.11"'
-          # The suites run as the image's own user, in a copy of the checkout it owns.
-          chown -R node:node "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+          # The suites run as the image's own user, in the checkout it owns. Only the
+          # workspace changes hands: $RUNNER_TEMP is the runner's (another uid), which
+          # writes every later step's script and its GITHUB_ENV, GITHUB_OUTPUT and
+          # GITHUB_STEP_SUMMARY files there. The node user reads pack.list from it and
+          # writes only under the workspace and /tmp.
+          chown -R node:node "$GITHUB_WORKSPACE"
       - name: npm ci
         run: su node -s /bin/bash -c 'npm ci'
       - name: The pack-tool suites this run needs
@@ -391,7 +395,8 @@ jobs:
             printf '%s\n' "$NODE_LIST"
           fi | { grep -E '^tests/pack-[^/]+\.test\.ts$' || true; } > "$RUNNER_TEMP/pack.list"
           echo "$(wc -l < "$RUNNER_TEMP/pack.list") pack-tool suite(s) on Python $(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')" | tee -a "$GITHUB_STEP_SUMMARY"
-          chown node:node "$RUNNER_TEMP/pack.list"
+          # Everything was asked for and nothing was found: a green job of no suites would say nothing.
+          if [ "$ALL" = true ] && [ ! -s "$RUNNER_TEMP/pack.list" ]; then echo "no pack-tool suite found in a run that runs everything" >&2; exit 1; fi
       # One case is left out here, by its name: lnk_jumplist's walk of "/" with a
       # one-second clock (tests/pack-windows-forensics-links-contract.test.ts)
       # needs a file system too big to walk in a second, which a hosted runner

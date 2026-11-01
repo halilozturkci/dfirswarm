@@ -110,6 +110,9 @@ const READERS = [
   "tests/pack-windows-forensics-links.test.ts",
   "tests/pack-windows-forensics-lnk-jumplist-limits.test.ts",
   "tests/fixtures/windows-boundary-driver.py",
+  "tests/pack-encrypted-containers-p3.test.ts",
+  "tests/pack-ransomware-limit.test.ts",
+  "tests/pack-windows-forensics-browser-contract.test.ts",
 ];
 
 test("none of the suites that bound a tool's memory reads ru_maxrss itself", () => {

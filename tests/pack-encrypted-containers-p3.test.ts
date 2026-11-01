@@ -9,6 +9,7 @@ import { chmod, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const ENC = join(ROOT, "packs", "encrypted-containers", "tools");
 const SCAN = join(ENC, "recovery_key_scan", "run.py");
@@ -124,19 +125,17 @@ test("archive_probe refuses a symlinked $OUT/tool-output directory in a job: not
 
 // --- ENC-08: a huge flat directory is walked in bounded memory, and a stop names the unreached part within the grace ---
 
-const CHUNKED_WALK = String.raw`
-import json, os, resource, subprocess, sys, time
+const CHUNKED_WALK = peakRssPrelude() + String.raw`
+import json, os, subprocess, time
 call = json.load(sys.stdin)
 t0 = time.time()
-rss0 = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-p = subprocess.run(["python3", sys.argv[1]], input=json.dumps(call["args"]).encode(), capture_output=True, cwd=sys.argv[2],
+p, peak = run_peak(["python3", sys.argv[1]], input=json.dumps(call["args"]).encode(), capture_output=True, cwd=sys.argv[2],
                     env={**os.environ, "AGENT_ID": "s1", **call.get("env", {})})
-u = resource.getrusage(resource.RUSAGE_CHILDREN)
 try:
     out = json.loads(p.stdout)
 except ValueError:
     out = None
-print(json.dumps({"code": p.returncode, "wall": time.time() - t0, "out": out, "err": p.stderr.decode()[-800:], "max_rss_kb": u.ru_maxrss - rss0}))
+print(json.dumps({"code": p.returncode, "wall": time.time() - t0, "out": out, "err": p.stderr.decode()[-800:], "max_rss_kb": peak // 1024}))
 `;
 
 const MAKE_FLAT_DIR = String.raw`
