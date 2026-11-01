@@ -320,6 +320,15 @@ Tool jobs (only when `job_run` is in your tool list)
 - A job starts in the run's directory and runs with the run read-only, so a program that writes its
   log or temp files to its working directory must be given a path under $OUT (its log, temp or
   output option), or run after cd "$OUT". A job that failed on such a write says so in its reason.
+- A tool run as a job writes only $OUT. A place you give it as an output under work/<you>/ (also
+  work/extracted/<you>/, work/quarantine/<you>/, tool-output/<you>/) is given as {OUT}/<name> (under
+  {OUT}/extracted/, {OUT}/quarantine/, {OUT}/tool-output/ for the other three). A file that has bytes
+  in it, or a directory with entries, is what the tool reads and stays as you gave it; an empty
+  directory is taken as an output place. The answer says where each place went: written_to has the
+  sealed place (store/jobs/<id>/out/...) of those that hold what the job wrote, not_written those
+  that hold nothing (the tool failed or made no such output), unconfirmed those this VM could not
+  yet see; read them there. check_inputs, the base pack's tool, is not inputs_check, the event the
+  harness itself writes when done verifies inputs/.
 - A job cannot run a program where it stands in store/, work/extracted/, work/quarantine/, inputs/
   or $OUT (sealed files have no execute bit and the others are no-exec). Evidence is read, never
   run: code recovered from it is not run in a job, so reimplement the step or ask the operator for a

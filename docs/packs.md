@@ -799,6 +799,15 @@ import each other), and holds to this:
   is a `UnicodeDecodeError`): the answer says the row and what the error's code
   decides (the time budget, the authorizer, a value over the length limit),
   never the message or the class, and no decision reads the message.
+- *What the shape rule misses is printed, and a `secret_output` job is where such a file is used.* A tool
+  that withholds by the shape of a string (a name that is not plain, a token prefix, user-info, a long
+  random-looking run) withholds what has the shape. A secret of another shape (a plain password, a
+  pronounceable passphrase, a UUID-shaped key, a short value in a name) is printed in the answer: the
+  rule is a floor for what a post quotes, not a classifier
+  ([ADR 0018](adr/0018-sensitive-outputs-are-used-by-agents-and-every-access-is-recorded.md)). The tool's
+  manifest and skill say so for its own rule, with the rates measured on random plants. The place to
+  use a file that holds what the rule misses is a `secret_output` job's sealed output: an agent reads
+  it there, and each read is recorded.
 - *The manifest declares it, and the harness enforces it.* The description
   says SENSITIVE and names the flag, and the manifest carries the key the job
   service reads, `"secret_output"`: `"required"` (every job of the tool) or
