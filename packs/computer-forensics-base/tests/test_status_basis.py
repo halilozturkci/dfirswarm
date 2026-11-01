@@ -25,6 +25,22 @@ class StatusBasis(Case):
         self.assertEqual(self.check("timestamp_decode", {"value": "1700000000"}).json["status"], "complete")
         self.write("inputs.json", json.dumps({"files": []}))
         self.assertEqual(self.check("check_inputs", {}).json["status"], "OK")
+        self.write("catalog/Disk.E01/p2048/filelist.txt", "r/r 5-128-1:\tUsers/a/file.log\n")
+        self.write("catalog/Disk.E01/partitions.txt", "002:  000:000   0000002048   ...   NTFS\n")
+        self.assertEqual(self.check("catalog_search", {"pattern": "file"}).json["status"], "complete")
+        db = self.path("s.db")
+        import sqlite3
+        conn = sqlite3.connect(db)
+        conn.execute("create table t(x)")
+        conn.commit()
+        conn.close()
+        self.assertEqual(self.check("sqlite_query", {"db_path": db, "sql": "select * from t"}).json["status"], "complete")
+
+    def test_the_two_query_tools_say_failed_on_nothing_and_on_a_missing_path(self):
+        for name, args in (("catalog_search", {}), ("catalog_search", {"pattern": "x", "catalog": "nowhere"}),
+                           ("sqlite_query", {}), ("sqlite_query", {"db_path": "missing.db", "sql": "select 1"})):
+            r = self.check(name, args)
+            self.assertEqual((r.json["status"], r.json["ok"]), ("failed", False), (name, args))
 
     def test_a_refusal_says_failed_and_why(self):
         r = run_tool("file_carver", {"path": self.write("work/x.bin", b"\0" * 64), "offset": 0, "sig_type": "PNG"}, self.dir)

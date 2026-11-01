@@ -1,12 +1,68 @@
 #!/usr/bin/env python3
 import hashlib, json, re, signal, sys, os, tempfile, time
 
-TOOL = {"name": "catalog_search", "version": 11}
+TOOL = {"name": "catalog_search", "version": 12}
 PATTERN_MAX = 4096
 LINE_MAX = 1 << 20
 BUDGET_SECONDS = 25
 # What reading a revision's index could not do, said in the answer instead of read as an empty list.
 INDEX_PROBLEMS = {}
+# A refusal lists the names it could have taken (catalogues, revisions, filesystems): at most this many, with the count.
+LISTED_MAX = 200
+
+
+def _status(result):
+    """status and status_basis for an answer that has none (docs/packs.md, "The tool contract"): failed on a refusal or an error;
+    partial when the clock, an unsearchable line or a match file that could not be written left something undone; complete otherwise."""
+    if result.get("ok") is False or "error" in result:
+        return "failed", "the tool stopped with an error and read no result (see error)"
+    if result.get("interrupted"):
+        return "partial", ("the search stopped at its time budget (see interrupted): matched is a lower bound, and the matches found up to there "
+                           "are counted and paged%s" % (", with every one in the file all_matches names" if result.get("all_matches") else ""))
+    if result.get("lines_not_searched"):
+        return "partial", ("%d line(s) were longer than the tool reads and were not searched (lines_not_searched); every other line was, "
+                           "so matched is a lower bound" % result["lines_not_searched"])
+    if result.get("all_matches_error"):
+        return "partial", ("the search finished and this page is right, but the file that should hold every match could not be written "
+                           "(all_matches_error): the rest is reached only by paging with offset=")
+    if result.get("which") == "generations":
+        return "complete", "every generation the revision lists was checked against the pattern; matched counts all of them and this page holds %d" % result.get("returned", 0)
+    if result.get("all_matches"):
+        return "complete", ("every line of the catalogue file was searched; matched counts all of them, this page holds %d, and every match is in the "
+                            "file all_matches names" % result.get("returned", 0))
+    return "complete", ("every line of the catalogue file was searched; matched counts all of them and this page holds %d%s"
+                        % (result.get("returned", 0), "" if result.get("next_offset") is None else ", the rest by next_offset"))
+
+
+def _answer(result, code=0):
+    """Print the one answer, with its status and status_basis, and end. A refusal's lists of names are cut at LISTED_MAX with
+    their count (the catalogue holds the whole)."""
+    result = dict(result)
+    if result.get("ok") is False or "error" in result:
+        for key in [k for k, v in result.items() if isinstance(v, list) and len(v) > LISTED_MAX]:
+            result[key + "_total"] = len(result[key])
+            result[key] = result[key][:LISTED_MAX]
+    if "status" not in result:
+        result["status"], result["status_basis"] = _status(result)
+    sys.stdout.write(json.dumps(result) + "\n")
+    sys.stdout.flush()
+    sys.exit(code)
+
+
+def _last_word(kind, value, _tb):
+    """An exception nobody expected is an answer too: the class only, never a message, which could quote the evidence."""
+    budget_class = globals().get("_Budget")
+    if budget_class is not None and issubclass(kind, budget_class):
+        sys.stdout.write(json.dumps({"ok": False, "error": "the time budget ran out before the search began", "status": "partial",
+                                     "status_basis": "the search's time budget ran out while the catalogue was being located, so no file was searched"}) + "\n")
+    else:
+        sys.stdout.write(json.dumps({"ok": False, "error": "internal error: %s" % kind.__name__, "status": "failed",
+                                     "status_basis": "the tool stopped with an error and read no result (see error)"}) + "\n")
+    sys.stdout.flush()
+    os._exit(1)
+
+
+sys.excepthook = _last_word
 
 def _catalogue_slug(path):
     """The directory name the kickoff's catalogue gives an input: its path under
@@ -55,8 +111,8 @@ def _resolve_image(explicit=None):
     if len(cands) == 1:
         return cands[0]
     if not cands:
-        raise SystemExit('{"ok": false, "error": "no disk image under inputs/; pass image="}')
-    raise SystemExit('{"ok": false, "error": "several images under inputs/; pass image=", "candidates": %s}' % json.dumps(cands))
+        _answer({"ok": False, "error": "no disk image under inputs/; pass image="}, 1)
+    _answer({"ok": False, "error": "several images under inputs/; pass image=", "candidates": cands}, 1)
 
 
 
@@ -74,9 +130,9 @@ def _revision(wanted=None):
         try:
             n = int(wanted)
         except (TypeError, ValueError):
-            raise SystemExit(json.dumps({"ok": False, "error": "revision is a whole number", "revisions": done}))
+            _answer({"ok": False, "error": "revision is a whole number", "revisions": done}, 1)
         if n not in done:
-            raise SystemExit(json.dumps({"ok": False, "error": "no complete revision %s here (yet)" % n, "revisions": done}))
+            _answer({"ok": False, "error": "no complete revision %s here (yet)" % n, "revisions": done}, 1)
         return n
     return done[-1] if done else None
 
@@ -99,8 +155,8 @@ def _index(rev, strict=False):
         why = "%s: %s" % (path, getattr(e, "strerror", None) or e)
         INDEX_PROBLEMS[rev] = why
         if strict:
-            raise SystemExit(json.dumps({"ok": False, "error": "revision_unavailable", "revision": rev, "why": why,
-                                         "hint": "the revision's index could not be read; nothing here says the catalogue holds no generations"}))
+            _answer({"ok": False, "error": "revision_unavailable", "revision": rev, "why": why,
+                                         "hint": "the revision's index could not be read; nothing here says the catalogue holds no generations"}, 1)
         return []
     return [g for g in listed if isinstance(g, dict) and g.get("id")]
 
@@ -150,8 +206,8 @@ def _resolve_catalog(explicit=None, rev=None):
     if explicit:
         if explicit in gens:
             if not os.path.isdir(gens[explicit]):
-                raise SystemExit(json.dumps({"ok": False, "error": "generation %s is listed by revision %s but its directory %s is not here" % (explicit, rev, gens[explicit]),
-                                             "hint": "the catalogue was copied without it, or it was removed; nothing here says what it held"}))
+                _answer({"ok": False, "error": "generation %s is listed by revision %s but its directory %s is not here" % (explicit, rev, gens[explicit]),
+                                             "hint": "the catalogue was copied without it, or it was removed; nothing here says what it held"}, 1)
             return gens[explicit]
         catalog_real = os.path.realpath(root)
         for cand in (explicit, os.path.join(root, explicit)):
@@ -165,30 +221,28 @@ def _resolve_catalog(explicit=None, rev=None):
                 if gid:
                     listed = {g["id"] for g in _index(rev, strict=True)} if rev is not None else set()
                     if gid not in listed:
-                        raise SystemExit(json.dumps({"ok": False, "error": "%s is not in catalogue revision %s" % (gid, rev), "candidates": sorted(listed)}))
+                        _answer({"ok": False, "error": "%s is not in catalogue revision %s" % (gid, rev), "candidates": sorted(listed)}, 1)
                 return cand
-        raise SystemExit(json.dumps({"ok": False, "error": "no catalogue %s" % explicit, "candidates": subs + sorted(gens)}))
+        _answer({"ok": False, "error": "no catalogue %s" % explicit, "candidates": subs + sorted(gens)}, 1)
     if not os.path.isdir(root):
-        raise SystemExit('{"ok": false, "error": "no catalog/ in this run; pass catalog="}')
+        _answer({"ok": False, "error": "no catalog/ in this run; pass catalog="}, 1)
     if len(subs) == 1:
         return os.path.join(root, subs[0])
     if not subs:
-        raise SystemExit(json.dumps({"ok": False, "error": "no catalogue here yet%s; pass catalog=" % (" (the kickoff's recipes may still be running: each revision is announced on the board)" if rev is not None else ""), "candidates": sorted(gens)}))
+        _answer({"ok": False, "error": "no catalogue here yet%s; pass catalog=" % (" (the kickoff's recipes may still be running: each revision is announced on the board)" if rev is not None else ""), "candidates": sorted(gens)}, 1)
     # A disk and a memory image catalogue two directories, and only the
     # disk's has filesystems (partitions.txt): with one such, it is the one.
     disks = [d for d in subs if os.path.isfile(os.path.join(root, d, "partitions.txt"))]
     if len(disks) == 1:
         return os.path.join(root, disks[0])
-    raise SystemExit('{"ok": false, "error": "several catalogues; pass catalog=", "candidates": %s}' % json.dumps(subs + sorted(gens)))
+    _answer({"ok": False, "error": "several catalogues; pass catalog=", "candidates": subs + sorted(gens)}, 1)
 
 try:
     args = json.load(sys.stdin)
 except ValueError as exc:
-    print(json.dumps({"ok": False, "error": "arguments are not valid JSON", "reason": str(exc)}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "arguments are not valid JSON", "reason": str(exc)}, 1)
 if not isinstance(args, dict):
-    print(json.dumps({"ok": False, "error": "arguments are a JSON object"}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "arguments are a JSON object"}, 1)
 pattern = args.get("pattern") or ""
 which = args.get("which") or "filelist"
 flags = re.IGNORECASE if args.get("ignore_case", True) else 0
@@ -196,37 +250,33 @@ LIMIT_MAX = 1000
 try:
     limit = 50 if args.get("limit") is None else int(args["limit"])
     offset = 0 if args.get("offset") is None else int(args["offset"])
-except (TypeError, ValueError):
-    print(json.dumps({"ok": False, "error": "limit and offset must be whole numbers"}))
-    sys.exit(1)
+except (TypeError, ValueError, OverflowError):
+    _answer({"ok": False, "error": "limit and offset must be whole numbers"}, 1)
 if not 1 <= limit <= LIMIT_MAX or offset < 0:
-    print(json.dumps({"ok": False, "error": "limit is a whole number from 1 to %d (every match is kept in a file when the page is not all of them) and offset is not negative" % LIMIT_MAX}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "limit is a whole number from 1 to %d (every match is kept in a file when the page is not all of them) and offset is not negative" % LIMIT_MAX}, 1)
 exclude = args.get("exclude") or ""
 if not isinstance(pattern, str) or not isinstance(exclude, str):
-    print(json.dumps({"ok": False, "error": "pattern and exclude are strings"}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "pattern and exclude are strings"}, 1)
+for name in ("which", "catalog", "partition"):
+    if args.get(name) is not None and not isinstance(args[name], str):
+        _answer({"ok": False, "error": "%s is a string" % name}, 1)
 for name, text in (("pattern", pattern), ("exclude", exclude)):
     if len(text) > PATTERN_MAX:
-        print(json.dumps({"ok": False, "error": "%s is %d characters; this tool takes at most %d" % (name, len(text), PATTERN_MAX)}))
-        sys.exit(1)
+        _answer({"ok": False, "error": "%s is %d characters; this tool takes at most %d" % (name, len(text), PATTERN_MAX)}, 1)
 try:
     budget = int(args.get("max_seconds") or BUDGET_SECONDS)
     if not 1 <= budget <= BUDGET_SECONDS:
         raise ValueError
-except (TypeError, ValueError):
-    print(json.dumps({"ok": False, "error": "max_seconds is a whole number from 1 to %d" % BUDGET_SECONDS}))
-    sys.exit(1)
+except (TypeError, ValueError, OverflowError):
+    _answer({"ok": False, "error": "max_seconds is a whole number from 1 to %d" % BUDGET_SECONDS}, 1)
 try:
     rx = re.compile(pattern, flags)
 except re.error as e:
-    print(json.dumps({"error": str(e)}))
-    sys.exit(1)
+    _answer({"error": str(e)}, 1)
 try:
     ex = re.compile(exclude, flags) if exclude else None
 except re.error as e:
-    print(json.dumps({"ok": False, "error": "exclude is not a regular expression: %s" % e}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "exclude is not a regular expression: %s" % e}, 1)
 
 
 def earlier_answers(path):
@@ -293,8 +343,7 @@ if which == "generations":
                                  "(a pattern that backtracks badly does this; simplify it)" % budget)
     if offset + len(page) < len(kept):
         result["next_offset"] = offset + len(page)
-    print(json.dumps(result))
-    sys.exit(0)
+    _answer(result)
 base = os.path.normpath(_resolve_catalog(args.get("catalog") if isinstance(args, dict) else None, revision))
 
 
@@ -319,18 +368,15 @@ if which in ("partitions", "members"):
     part = None
 elif want:
     if want not in parts:
-        print(json.dumps({"ok": False, "error": "no filesystem at %s in %s; pass partition= one of these" % (want, base), "partitions": parts}))
-        sys.exit(1)
+        _answer({"ok": False, "error": "no filesystem at %s in %s; pass partition= one of these" % (want, base), "partitions": parts}, 1)
     part = want
 elif len(parts) == 1:
     part = parts[0]
 elif not parts:
     about = _this_generation()
-    print(json.dumps({"ok": False, "error": "the catalogue %s holds no filesystem listing (see its partitions.txt and README.md)" % base, **({"generation": about} if about else {})}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "the catalogue %s holds no filesystem listing (see its partitions.txt and README.md)" % base, **({"generation": about} if about else {})}, 1)
 else:
-    print(json.dumps({"ok": False, "error": "several filesystems in %s; pass partition= one of these" % base, "partitions": parts}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "several filesystems in %s; pass partition= one of these" % base, "partitions": parts}, 1)
 files = {"filelist": "filelist.txt", "timeline": "timeline.csv", "bodyfile": "bodyfile.txt", "fsstat": "fsstat.txt"}
 if which == "partitions":
     path = os.path.join(base, "partitions.txt")
@@ -340,14 +386,12 @@ elif which == "members":
 elif which in files:
     path = os.path.join(base, part, files[which])
 else:
-    print(json.dumps({"error": "which must be filelist|timeline|bodyfile|fsstat|partitions|members|generations"}))
-    sys.exit(1)
+    _answer({"error": "which must be filelist|timeline|bodyfile|fsstat|partitions|members|generations"}, 1)
 if not os.path.isfile(path):
     have = sorted(os.listdir(os.path.dirname(path))) if os.path.isdir(os.path.dirname(path)) else []
     # A partial generation says why, and where its readable form is.
     about = _this_generation()
-    print(json.dumps({"ok": False, "error": "%s is not in the catalogue" % path, **({"generation": about} if about else {}), "there": have}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "%s is not in the catalogue" % path, **({"generation": about} if about else {}), "there": have}, 1)
 # Every match goes to a file as it is found; the call returns one page of
 # them. When that page is not all of them, the file is kept and named, so the
 # rest is read from it (or paged with offset=) instead of searched for again
@@ -457,4 +501,4 @@ if all_out:
         os.unlink(tmp)
 elif more or offset:
     result["all_matches_error"] = "the whole match set could not be written (%s); page through it with offset=" % keep_error
-print(json.dumps(result))
+_answer(result)

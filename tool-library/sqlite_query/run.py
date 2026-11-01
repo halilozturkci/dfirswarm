@@ -109,7 +109,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-TOOL = {"name": "sqlite_query", "version": 7}
+TOOL = {"name": "sqlite_query", "version": 8}
 DEFAULT_LIMIT = 100
 LIMIT_MAX = 10000
 INLINE_BYTES = 64 * 1024          # the inline page's JSON and its text form, each, as they are sent (ASCII-escaped, counted in bytes)
@@ -450,10 +450,57 @@ def scrub_answer(obj):
     return out
 
 
+def answer_status(obj):
+    """`status` (complete, partial or failed) and a one-sentence `status_basis` for an answer that has none (docs/packs.md, "The
+    tool contract"). `ok` and `complete` keep their meaning. The sentence is fixed text: it names keys of the answer, never a
+    value or a name from the evidence, so it is as safe in values mode as anywhere."""
+    if "status" in obj and "status_basis" in obj:
+        return obj
+    out = dict(obj)
+    values = out.get("mode") == "values_to_file"
+    if out.get("ok") is False:
+        if out.get("timed_out") or out.get("values_file_error"):
+            out["status"] = "partial"
+            out["status_basis"] = ("the read stopped at its time budget (timed_out), so what was read before the stop is kept and named (%s) "
+                                   "and the rest of the result was not read" % ("the values file and rows_read_before_the_stop" if values else "rows_read_before_the_stop")
+                                   if out.get("timed_out") else
+                                   "the values file could not be written to the end (values_file_error): values_file_holds and values_file_state say how far it got")
+        else:
+            out["status"] = "failed"
+            out["status_basis"] = "the tool stopped with an error or a refusal and returned no result of the request (see error)"
+        return out
+    if out.get("complete") is False:
+        why = []
+        if out.get("values_file_stopped_at_row"):
+            why.append("the values file stopped at its size cap (values_file_stopped_at_row, resume)")
+        if out.get("cells_not_exported"):
+            why.append("some cells were not exported (cells_not_exported)")
+        if out.get("locators_file_error"):
+            why.append("the locators file could not be written (locators_file_error)")
+        if out.get("locators_file_stopped_at_row"):
+            why.append("the locators file stopped at its size cap (locators_file_stopped_at_row)")
+        if out.get("rows_file_error") or out.get("rows_file_stopped_at_row"):
+            why.append("the file that should hold every row could not be written to the end (rows_file_error or rows_file_stopped_at_row)")
+        out["status"] = "partial"
+        out["status_basis"] = ("the request ran but not all of its result was delivered: " + "; ".join(why)) if why else \
+            "the request ran but not all of its result was delivered (complete is false)"
+        return out
+    out["status"] = "complete"
+    if values:
+        out["status_basis"] = ("every row of the table's range was read and exported to the values file, and the locators file holds every row "
+                               "(row_count, secret_values and locators_file say how many)")
+    elif out.get("truncated"):
+        out["status_basis"] = ("every statement ran to its end; the inline page holds the first rows and the file rows_file names holds every "
+                               "row (row_count counts them all)")
+    else:
+        out["status_basis"] = "every statement ran to its end and every row of the result is in this answer (row_count counts them)"
+    return out
+
+
 def say(obj, code=0):
     if VALUES_MODE[0]:
         obj = scrub_answer(obj)
-    print(json.dumps(obj))
+    print(json.dumps(answer_status(obj)))
     raise SystemExit(code)
 
 
@@ -2167,7 +2214,9 @@ def main():
         if results:
             out["completed_statements"] = results
         say(out, 1)
-    out.update({"ok": True, "returncode": 0, "stderr": "", "complete": True})
+    # A page that is not the whole result is complete only when the file that holds the whole was written to its end.
+    whole = not any(r.get("truncated") and (r.get("rows_file_error") or r.get("rows_file_stopped_at_row")) for r in results)
+    out.update({"ok": True, "returncode": 0, "stderr": "", "complete": whole})
     if len(results) == 1:
         out.update(results[0])
     else:
@@ -2176,8 +2225,14 @@ def main():
     if any(r.get("truncated") for r in results):
         out["truncated"] = True
         out["note"] = "an inline page is not the result: the whole of it is in rows_file; read it to the end before concluding"
-    print(json.dumps(out))
+    print(json.dumps(answer_status(out)))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RecursionError:
+        say({"ok": False, "error": "internal error: the arguments or the data nest too deeply to read"}, 1)
+    except Exception as exc:
+        # An error nobody expected is an answer too: its class only, since its message can quote what was read.
+        say({"ok": False, "error": "internal error: %s" % type(exc).__name__}, 1)

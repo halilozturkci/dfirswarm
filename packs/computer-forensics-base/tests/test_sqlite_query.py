@@ -1486,5 +1486,124 @@ class SqliteQueryValuesFinal(Case):
         self.assertEqual(self.read(plain), "x")
 
 
+class SqliteQueryStatus(Case):
+    """Every answer carries `status` (complete, partial or failed) and a one-sentence `status_basis`, with `ok` and `complete`
+    kept for the readers that use them (docs/packs.md, "The tool contract")."""
+
+    def db(self, rows=5):
+        path = self.path("s.db")
+        conn = sqlite3.connect(path)
+        conn.execute("create table t(x)")
+        conn.executemany("insert into t values(?)", [(i,) for i in range(rows)])
+        conn.commit()
+        conn.close()
+        return path
+
+    def pair(self, r, status):
+        self.assertIsNotNone(r.json, r.stdout + r.stderr)
+        self.assertEqual(r.json.get("status"), status, r.json)
+        basis = r.json.get("status_basis")
+        self.assertTrue(isinstance(basis, str) and len(basis) > 20 and basis.count(".") <= 1, basis)
+
+    def test_a_clean_run_is_complete(self):
+        r = run_tool("sqlite_query", {"db_path": self.db(), "sql": "select x from t"}, self.dir)
+        self.pair(r, "complete")
+        self.assertEqual((r.json["ok"], r.json["complete"]), (True, True))
+
+    def test_a_row_budget_page_is_complete_when_the_file_holds_the_whole(self):
+        r = run_tool("sqlite_query", {"db_path": self.db(50), "sql": "select x from t", "limit": 1}, self.dir)
+        self.pair(r, "complete")
+        self.assertTrue(r.json["truncated"])
+        self.assertIn("rows_file", r.json)
+        self.assertIn("rows_file", r.json["status_basis"])
+
+    def test_a_page_whose_file_stopped_at_its_cap_is_partial_and_not_complete(self):
+        out = in_process("m.FILE_BYTES = 300", {"db_path": self.db(2000), "sql": "select x from t", "limit": 1}, {}, self.dir)
+        j = json.loads(out.stdout)
+        self.assertTrue(j["truncated"] and j.get("rows_file_stopped_at_row"), j)
+        self.assertEqual((j["status"], j["complete"], j["ok"]), ("partial", False, True), j)
+        self.assertIn("rows_file", j["status_basis"])
+
+    def test_a_clock_stop_is_partial(self):
+        sql = "with recursive c(x) as (select 1 union all select x+1 from c) select count(*) from c"
+        r = run_tool("sqlite_query", {"db_path": self.db(), "sql": sql, "max_seconds": 1}, self.dir, timeout=60)
+        self.pair(r, "partial")
+        self.assertEqual((r.json["ok"], r.json["complete"], r.json.get("timed_out")), (False, False, True))
+
+    def test_a_refused_statement_and_malformed_sql_are_failed(self):
+        db = self.db()
+        for sql in ("delete from t", "select from from", "select load_extension('x')", "pragma user_version=3"):
+            r = run_tool("sqlite_query", {"db_path": db, "sql": sql}, self.dir)
+            self.pair(r, "failed")
+            self.assertIs(r.json["ok"], False, sql)
+
+    def test_every_refusal_of_main_is_failed_with_the_pair(self):
+        db = self.db()
+        for args in ({}, {"db_path": db}, {"db_path": self.path("nope.db"), "sql": "select 1"}, {"db_path": db, "sql": "select 1", "limit": 0},
+                     {"db_path": db, "sql": "select 1", "max_seconds": "x"}, {"db_path": db, "sql": "select 1", "csv": "no"},
+                     {"db_path": db, "sql": "select 1", "readonly": False}, {"db_path": db, "sql": "select 1", "apply_wal": True},
+                     {"db_path": db, "sql": "x\0y"}, {"db_path": self.dir, "sql": "select 1"}, {"db_path": db, "sql": " "}):
+            r = run_tool("sqlite_query", args, self.dir)
+            self.pair(r, "failed")
+            self.assertEqual(r.code, 1, args)
+        self.write("empty.db", b"")
+        self.pair(run_tool("sqlite_query", {"db_path": self.path("empty.db"), "sql": "select 1"}, self.dir), "failed")
+        self.write("text.db", b"not sqlite at all, just text" * 40)
+        self.pair(run_tool("sqlite_query", {"db_path": self.path("text.db"), "sql": "select 1"}, self.dir), "failed")
+        self.pair(run_tool("sqlite_query", None, self.dir, raw_input="{not json"), "failed")
+        self.pair(run_tool("sqlite_query", None, self.dir, raw_input="[1]"), "failed")
+        self.pair(run_tool("sqlite_query", None, self.dir, raw_input="[" * 100000), "failed")
+
+    def values_job(self, rows=3, **env_extra):
+        path = self.path("inputs/v.db")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        conn = sqlite3.connect(path)
+        conn.execute("create table t(a text, b text)")
+        conn.executemany("insert into t values(?, ?)", [("a%d" % i, "b%d" % i) for i in range(rows)])
+        conn.commit()
+        conn.close()
+        out = self.path("job-out")
+        os.makedirs(out, exist_ok=True)
+        return path, out, dict({"JOB_ID": "j000900", "OUT": out, "SECRET_OUTPUT": "1"}, **env_extra)
+
+    def test_a_values_file_job_is_complete_and_a_refused_one_failed(self):
+        db, out, env = self.values_job()
+        r = run_tool("sqlite_query", {"db_path": db, "table": "t", "write_values": True}, self.dir, env=env)
+        self.pair(r, "complete")
+        self.assertEqual((r.json["ok"], r.json["complete"], r.json["mode"]), (True, True, "values_to_file"))
+        outside = run_tool("sqlite_query", {"db_path": db, "table": "t", "write_values": True}, self.dir)
+        self.pair(outside, "failed")
+        self.assertEqual(outside.json["write_values"], "refused")
+        absent = run_tool("sqlite_query", {"db_path": db, "table": "nothing_here", "write_values": True}, self.dir, env=dict(env, JOB_ID="j000901"))
+        self.pair(absent, "failed")
+
+    def test_a_values_file_that_stopped_at_its_cap_is_partial(self):
+        db, out, env = self.values_job(rows=60)
+        proc = in_process("m.FILE_BYTES = 1500\nm.LOCATORS_BYTES = 10 ** 9", {"db_path": db, "table": "t", "write_values": True}, env, self.dir)
+        j = json.loads(proc.stdout)
+        self.assertTrue(j.get("values_file_stopped_at_row"), j)
+        self.assertEqual((j["status"], j["complete"]), ("partial", False), j)
+        self.assertIn("values_file_stopped_at_row", j["status_basis"])
+        self.assertNotIn("a1", j["status_basis"])
+
+    def test_an_unexpected_error_is_a_failed_answer_with_the_pair_not_a_traceback(self):
+        db = self.db()
+        # The tool runs as __main__ with its statement splitter replaced by one that raises, the way an unforeseen error would.
+        child = subprocess.run([sys.executable, "-c",
+                                "import importlib.util, sys\n"
+                                "spec = importlib.util.spec_from_file_location('__main__', sys.argv[1])\n"
+                                "m = importlib.util.module_from_spec(spec)\n"
+                                "src = open(sys.argv[1]).read().replace('def statements(', 'def statements_unused(', 1) + '\\ndef statements(*a, **k):\\n    raise KeyError(\"secret-looking-text\")\\n'\n"
+                                "sys.argv = [sys.argv[1]]\n"
+                                "exec(compile(src, sys.argv[0], 'exec'), {'__name__': '__main__', '__file__': sys.argv[0]})\n",
+                                tool_path("sqlite_query")], input=json.dumps({"db_path": db, "sql": "select 1"}), capture_output=True, text=True,
+                               cwd=self.dir, timeout=60)
+        self.assertNotIn("Traceback", child.stderr)
+        j = json.loads(child.stdout)
+        self.assertEqual((j["status"], j["ok"]), ("failed", False), j)
+        self.assertNotIn("secret-looking-text", child.stdout)
+        self.assertEqual(child.returncode, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1169,7 +1169,10 @@ test("sqlite_query says a file is not SQLite, and whether it looks encrypted, in
       assert.equal(body.header_hex.slice(0, 8), "504b0304");
       assert.match(body.reading, /another format/);
       r = await runPy(script, cwd, { db_path: "work/none.db", sql: "select 1;" });
-      assert.deepEqual(JSON.parse(r.stdout), { ok: false, error: "database not found", db_path: "work/none.db" });
+      assert.deepEqual(JSON.parse(r.stdout), {
+        ok: false, error: "database not found", db_path: "work/none.db",
+        status: "failed", status_basis: "the tool stopped with an error or a refusal and returned no result of the request (see error)",
+      });
     });
   }
 });
@@ -1298,7 +1301,10 @@ test("catalog_search takes a catalogue by the name the index gives it, and bad i
     assert.match(r.stdout, /Data\/secret\.txt/);
     r = await runPy(join(tools, "catalog_search", "run.py"), cwd, { pattern: "x", which: "filelist", catalog: "Case5.E01" });
     assert.notEqual(r.code, 0);
-    assert.deepEqual(JSON.parse(r.stdout + r.stderr), { ok: false, error: "no catalogue Case5.E01", candidates: ["Case4.E01", "memdump.mem"] });
+    assert.deepEqual(JSON.parse(r.stdout + r.stderr), {
+      ok: false, error: "no catalogue Case5.E01", candidates: ["Case4.E01", "memdump.mem"],
+      status: "failed", status_basis: "the tool stopped with an error and read no result (see error)",
+    });
     // A disk and a memory catalogue: the disk's is the one with filesystems.
     await writeFile(join(cwd, "catalog", "Case4.E01", "partitions.txt"), "002:  000:000   0000002048   ...   NTFS\n");
     r = await runPy(join(tools, "catalog_search", "run.py"), cwd, { pattern: "NTUSER", which: "filelist", partition: "p2048" });

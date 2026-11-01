@@ -123,7 +123,7 @@ or `tools/`.
 | `amcache_apps` | python3 | `maintainer` | 8 | Application and file inventory from Amcache.hve (presence, not execution): path, hash, publisher, version and… |
 | `browser_history` | python3 | `maintainer` | 5 | Query a browser history database from a copy of it and its -wal, -shm and -journal sidecars, made in a privat… |
 | `catalog_grep` | python3 | `s864a02` | 1 | Grep catalog/AF-Case2.E01/p0/filelist.txt for a pattern; return matching lines. |
-| `catalog_search` | python3 | `sd1d100` | 11 | Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or a… |
+| `catalog_search` | python3 | `sd1d100` | 12 | Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or a… |
 | `check_inputs` | python3 | `sfcc304` | 7 | Diff inputs/ against inputs.json (size and sha256). The manifest is validated whole first: a malformed entry,… |
 | `chunk_needles` | python3 | `sd1d102` | 9 | Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return p… |
 | `contact_sheet` | python3 | `s10d40e` | 1 | Tile many images into labelled contact sheets to look at: a directory, a list of paths or a tar read in place… |
@@ -158,7 +158,7 @@ or `tools/`.
 | `regkv` | python3 | `s9f2005` | 9 | Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole:… |
 | `sig_carve` | python3 | `s183906` | 5 | A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, an… |
 | `sigscan_e01` | python3 | `s5d1001` | 3 | Scan an E01/raw image for a byte signature via TSK img_cat (logical media, not the EWF wrapper). Returns offs… |
-| `sqlite_query` | python3 | `s881002` | 7 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
+| `sqlite_query` | python3 | `s881002` | 8 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
 | `usn_journal` | python3 | `maintainer` | 5 | Parse an NTFS change journal ($UsnJrnl:$J) into records from v2, v3 and v4 entries: name, USN, timestamp (ISO… |
 | `utf16_urls` | python3 | `s5d1003` | 4 | String candidates for URLs, file: and Visited: entries and 192.168.x.x addresses in a file; not a browser par… |
 | `volrun` | python3 | `s69d306` | 2 | Run a Volatility 3 plugin against a memory image with typed arguments. Returns stdout/stderr. |
