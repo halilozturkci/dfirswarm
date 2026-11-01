@@ -62,10 +62,14 @@ const SECOND: Record<string, string> = {
   "credentials/key-schedules": "credentials/material",
   "acquire/avml-and-preserve": "acquire/images",
 };
+// Leaves added after the router that need no new tool: each is a decision leaf of its own that the router names.
+const TOP_LEAVES_ADDED = [
+  "triage/address-spaces", "triage/coverage", "symbols/macos", "timeline/memory", "processes/kernel-integrity",
+];
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, OLD_IDS.length + Object.keys(SECOND).length + 1, "the pack's leaves and its router");
+  assert.equal(skills.size, OLD_IDS.length + Object.keys(SECOND).length + TOP_LEAVES_ADDED.length + 1, "the pack's leaves and its router");
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= 800, `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
@@ -197,6 +201,10 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["tools/mem_profile/run.py", "triage/container-details", ["physical_start", "file_offset"]],
   ["tools/mem_profile/run.py", "triage/what-you-have", ["file_pages_4k_estimate"]],
   ["tools/mem_fs/run.py", "processes/preserve-regions", ["write_values", "export-manifest.jsonl"]],
+  ["tools/mem_profile/run.py", "triage/address-spaces", ["physical_start", "file_offset"]],
+  ["tools/mem_profile/run.py", "triage/coverage", ["sampled_ranges", "file_pages_4k_estimate"]],
+  ["tools/mem_carve/run.py", "triage/coverage", ["resume_start"]],
+  ["tools/mem_profile/run.py", "timeline/memory", ["system_time_filetime"]],
 ];
 
 test("the tool fields a skill names are fields the tools write", async () => {
@@ -223,7 +231,6 @@ const BEFORE = [
   "triage/carve-signatures", "triage/container-details", "triage/no-framework", "triage/paging-files", "triage/volatility",
   "triage/volatility-catalogue", "triage/volatility-plugins", "triage/volatility-symbols", "triage/what-you-have",
 ];
-
 test("memory/router is the pack's only router, within 500 tokens, holds no rule, and names every other skill exactly once; every old id is alive", async () => {
   const skills = await load(SKILLS);
   const routers = [...skills.values()].filter((s) => s.meta.router === "true");
@@ -244,7 +251,8 @@ test("memory/router is the pack's only router, within 500 tokens, holds no rule,
   assert.deepEqual([...named].sort(), [...skills.keys()].filter((id) => id !== ROUTER).sort());
   assert.equal(BEFORE.length, 19);
   for (const id of BEFORE) assert.ok(skills.has(id), `${id} is still a skill`);
-  assert.equal(skills.size, BEFORE.length + 1, "the router is the only skill added");
+  assert.equal(skills.size, BEFORE.length + TOP_LEAVES_ADDED.length + 1, "the router and the leaves added since are the only skills added");
+  for (const id of TOP_LEAVES_ADDED) assert.ok(skills.has(id), `${id} is a skill`);
   // The generated index names it as the pack's router, which is the line the harness reads.
   assert.match(await readFile(join(SKILLS, "INDEX.md"), "utf8"), /^Router: `memory\/router`$/m);
 });
@@ -257,7 +265,7 @@ test("the pack index lists the entry lines of INDEX.md as the harness counts the
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => /^- `[^`]+`/.test(l));
   const parsed = await readPackIndex(PACK);
   assert.deepEqual(parsed.entries.map((e) => e.line), lines, "the harness reads every entry line of the file, and no other");
-  assert.equal(parsed.entries.length, BEFORE.length + 1);
+  assert.equal(parsed.entries.length, BEFORE.length + TOP_LEAVES_ADDED.length + 1);
   assert.equal(parsed.router, ROUTER);
   assert.equal(lines.reduce((n, l) => n + estimateTokens(l), 0), parsed.tokens);
   assert.ok(parsed.entries.every((e) => e.tokens <= SKILL_BUDGET.entry), "every entry is within the entry budget");
@@ -301,4 +309,73 @@ test("a run that carries this pack with others is over the run's index budget, a
   assert.ok(fits.shown_tokens <= SKILL_BUDGET.run, `with the routers the section is ${fits.shown_tokens} tokens`);
   const bare = await section(family, FAMILY);
   assert.ok(bare.shown_tokens > SKILL_BUDGET.run, `without the family's routers the section is ${bare.shown_tokens} tokens, over the run's ${SKILL_BUDGET.run}`);
+});
+
+// ---- The leaves that need no new tool (address spaces, coverage, macOS symbols, memory time, kernel integrity). ----
+
+/** Every tool that exists in any pack of the repository: a leaf may list and name only these. */
+async function knownTools(): Promise<Set<string>> {
+  const tools = new Set<string>();
+  for (const pack of await readdir(join(ROOT, "packs"))) {
+    for (const e of await readdir(join(ROOT, "packs", pack, "tools")).catch(() => [])) tools.add(e);
+  }
+  return tools;
+}
+
+test("each added leaf opens Use when ... Not for ..., has Shows, Does not show, Record and Sensitive output, and names only tools that exist", async () => {
+  const skills = await load(SKILLS);
+  const tools = await knownTools();
+  const baseIds = new Set((await load(BASE_SKILLS)).keys());
+  for (const id of TOP_LEAVES_ADDED) {
+    const s = skills.get(id);
+    assert.ok(s, `${id} exists`);
+    const first = s.body.trim().split("\n")[0];
+    assert.match(first, /^Use when .*\bNot for\b/, `${id} opens with Use when ... Not for ...`);
+    for (const heading of [/\*\*Shows\.\*\*/, /\*\*Does not show\.\*\*/, /^Record:/m, /^Sensitive output:/m]) assert.match(s.body, heading, `${id} has ${heading}`);
+    assert.ok(TOKENS(s.text) <= 800 && s.text.split("\n").length <= 300, `${id} is within the leaf budget`);
+    for (const t of (s.meta.tools as string[]) ?? []) assert.ok(tools.has(t), `${id} lists ${t}, which is not a tool`);
+    // A name that looks like one of this pack's tools is one of them.
+    for (const m of s.body.matchAll(/`(mem_[a-z_]+)`/g)) assert.ok(tools.has(m[1]), `${id} names ${m[1]}, which is not a tool`);
+    // A leaf points to the leaf that holds a rule; it does not repeat one. Each backticked skill id it names exists.
+    for (const m of s.body.matchAll(/`([a-z0-9-]+\/[a-z0-9-]+)`/g)) assert.ok(skills.has(m[1]) || baseIds.has(m[1]), `${id} points to ${m[1]}, which is not a skill`);
+  }
+});
+
+test("an added leaf needs at most one of the two base skills that are over 690 tokens, and the chains it needs are the ones named", async () => {
+  const skills = await load(SKILLS);
+  const base = await load(BASE_SKILLS);
+  const BIG = ["evidence/coverage", "timeline/clocks"];
+  for (const id of TOP_LEAVES_ADDED) {
+    const needs = (skills.get(id)!.meta.needs as string[]) ?? [];
+    assert.ok(needs.filter((n) => BIG.includes(n)).length <= 1, `${id} needs both of ${BIG.join(" and ")}`);
+  }
+  assert.deepEqual(skills.get("triage/coverage")!.meta.needs, ["evidence/coverage"]);
+  assert.deepEqual(skills.get("timeline/memory")!.meta.needs, ["timeline/clocks"]);
+  for (const id of ["symbols/macos", "triage/address-spaces", "processes/kernel-integrity"]) assert.deepEqual(skills.get(id)!.meta.needs, [], `${id} needs nothing`);
+  // Each chain stays under the 1,750-token warning at any size up to the leaf limit.
+  for (const id of ["triage/coverage", "timeline/memory"]) {
+    const dep = String(skills.get(id)!.meta.needs[0]);
+    assert.ok(TOKENS(base.get(dep)!.text) + 800 <= 1750, `${id}: ${dep} plus a full leaf is over 1,750`);
+  }
+});
+
+test("symbols/macos makes no support claim for any macOS version and marks Intel against Apple silicon as unverified", async () => {
+  const body = flat((await load(SKILLS)).get("symbols/macos")!.body);
+  assert.match(body, /makes no support claim for any macOS version, 13 to 26 included/);
+  assert.match(body, /\*\*Intel against Apple silicon\.\*\* Unverified/);
+  assert.match(body, /`triage\/volatility-symbols`/, "it points to the symbol rule instead of copying it");
+  // No sentence says a version is supported, other than to deny it.
+  for (const sentence of body.split(/(?<=[.;:])\s+/)) {
+    if (/\b(supports?|supported|works? with)\b/i.test(sentence)) assert.match(sentence, /\b(no|not|never|nor|without)\b/i, `a sentence that speaks of support denies it: ${sentence}`);
+  }
+});
+
+test("the added leaves reach no verdict from a discrepancy alone: 'rootkit' and 'tampering' appear only in a sentence that denies them", async () => {
+  const skills = await load(SKILLS);
+  for (const id of TOP_LEAVES_ADDED) {
+    for (const sentence of flat(skills.get(id)!.body).split(/(?<=[.;])\s+/)) {
+      if (/rootkit|tamper(ed|ing)?\b/i.test(sentence)) assert.match(sentence, /\b(No|no|not|needs? evidence|without)\b/, `${id}: ${sentence}`);
+    }
+  }
+  assert.match(flat(skills.get("processes/kernel-integrity")!.body), /No rootkit from a discrepancy alone/);
 });

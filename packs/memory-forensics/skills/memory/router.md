@@ -21,10 +21,14 @@ Reading the image
 `triage/volatility-catalogue` kickoff catalogue receipts
 `triage/no-framework` no usable framework
 `triage/carve-signatures` hives, logs, PE by signature
+`triage/address-spaces` offset, physical or virtual address
+`triage/coverage` what a search covered
+`symbols/macos` macOS kernel and symbols
 
 Processes and text
 `processes/injection` what ran, injected code
 `processes/preserve-regions` preserving a region before relying on it
+`processes/kernel-integrity` module and driver views that differ
 `strings/discipline` a string is an observation
 `patterns/yara` rules or byte patterns over an image
 
@@ -33,3 +37,6 @@ Network and secrets
 `network/timestamps-dns` network times, DNS cache
 `credentials/material` credentials, keys, tokens exposed
 `credentials/key-schedules` AES key schedules
+
+Time
+`timeline/memory` which clock a memory time belongs to

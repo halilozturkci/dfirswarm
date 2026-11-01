@@ -13,10 +13,15 @@ Router: `memory/router`
 - `network/timestamps-dns` Timestamps and DNS cache entries from memory: A network object carries a time, or you read a DNS cache entry from an image.
 - `patterns/yara` YARA over an image or a dumped region: You have case rules or a precise byte pattern to test against an image or a dumped process region.
 - `processes/injection` Process anomalies and candidate code modification: You need what was running, or are asked whether code was injected into a process.
+- `processes/kernel-integrity` Comparing module, driver and kernel views: Kernel views disagree, or someone asks whether the kernel was tampered with.
 - `processes/preserve-regions` Preserving a process region before you rely on it: You will argue from a process's memory, or read a MemProcFS tree with mem_fs.
 - `strings/discipline` A string in memory is an observation: Any claim built on text found in a memory image.
+- `symbols/macos` macOS memory, the kernel and its symbols, with no support claim: The capture is from a Mac, or you are asked whether a macOS image can be read.
+- `timeline/memory` Times in a memory capture and what each one dates: A time from a memory image goes on a timeline, or memory events are ordered against disk or logs.
+- `triage/address-spaces` Which address space a number is in: A number from memory needs a place, or a raw region is compared with a rebuilt executable.
 - `triage/carve-signatures` Carving structures from an image by signature: Using mem_carve or sig_carve to find hives, event logs, Prefetch or PE headers in a raw image.
 - `triage/container-details` Locators, saved states and VMware memory: A crash dump, LiME file, hiberfil.sys or .vmem, or an offset to translate.
+- `triage/coverage` What a memory search covered: Before writing "not in memory", or when a plugin or scan returned nothing, stopped early or gave a count.
 - `triage/no-framework` A memory image no framework can read: The job image lacks a usable framework, symbols or dependencies; or you want an answer first.
 - `triage/paging-files` The page file and the hibernation file: pagefile.sys, swap or hiberfil.sys is in the evidence next to, or instead of, a RAM capture.
 - `triage/volatility` Volatility, offline, with the right symbols: Selecting Volatility plugins, or diagnosing an unsatisfied symbol or translation requirement.

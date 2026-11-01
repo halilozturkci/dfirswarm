@@ -7,14 +7,16 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Twenty skills**, nine decision leaves, ten second-level leaves they point to
+**Twenty-five skills**, fourteen decision leaves, ten second-level leaves they point to
 ("only if X") and the router `memory/router` (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf); every leaf is at most 800 tokens.
 
 | Family | Skills |
 | --- | --- |
-| Triage | `triage/what-you-have` (second level: `triage/container-details`), `triage/no-framework` (`triage/carve-signatures`, `triage/paging-files`) |
+| Triage | `triage/what-you-have` (second level: `triage/container-details`), `triage/no-framework` (`triage/carve-signatures`, `triage/paging-files`), `triage/address-spaces`, `triage/coverage` |
 | Frameworks | `triage/volatility` (`triage/volatility-symbols`, `triage/volatility-plugins`, `triage/volatility-catalogue`) |
-| Processes | `processes/injection` (`processes/preserve-regions`) |
+| Symbols | `symbols/macos` (no support claim for any macOS version) |
+| Processes | `processes/injection` (`processes/preserve-regions`), `processes/kernel-integrity` |
+| Time | `timeline/memory` |
 | Network | `network/state` (`network/timestamps-dns`) |
 | Credentials | `credentials/material` (`credentials/key-schedules`) |
 | Strings | `strings/discipline` |
