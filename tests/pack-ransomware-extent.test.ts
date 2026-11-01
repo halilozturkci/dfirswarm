@@ -23,14 +23,14 @@ type FileRow = {
   file: string; file_id: number; status: string; reason?: string; bytes?: number; bytes_inspected?: number; bytes_uninspected?: number;
   uninspected_ranges_total?: number; uninspected_ranges?: Range[]; high_entropy_fraction?: number | null; high_entropy_windows?: number;
   high_entropy_runs_total?: number; high_entropy_runs?: Range[]; block_pattern?: { observed: boolean; run_bytes?: number; period_bytes?: number; runs: number };
-  structure?: { expected_format: string | null; magic_present: boolean | null; footer_present: boolean | null; container_parses: boolean | null; checked: boolean; reason?: string };
+  structure?: { expected_format: string | null; magic_present: boolean | null; footer_present: boolean | null; container_parses: boolean | null; checked: boolean; reason?: string; expected_from?: string | null };
   counterpart?: { compared: boolean; reason?: string; windows_compared?: number; windows_equal?: number; windows_differ?: number; first_differing_offset?: number | null; last_differing_offset?: number | null };
   layout?: { findings: Array<{ rule: number; result: string }> };
   entropy_histogram?: Record<string, number>; alternative_explanation?: string; uncertainty?: string[];
 };
 type Answer = {
   status: string; complete: string; status_basis: string; partial_reasons: string[]; files: FileRow[]; coverage: Record<string, unknown> & { not_inspected_by_reason: Record<string, number> };
-  profile: { file: string; rows: number } | null; pages: { files: { matched: number; all_results?: string } }; time_limit: { reached: boolean };
+  profile: { file: string; rows: number } | null; pages: { files: { matched: number; returned: number; truncated: boolean; all_results?: string } }; time_limit: { reached: boolean };
   threshold: { value: number; reachable_by_random_data: boolean }; paths_withheld: number; error?: string; interrupted?: boolean; boundary?: unknown;
 };
 

@@ -172,7 +172,7 @@ test("a binary note, a note with no words, and a partly scanned note are not gro
 });
 
 test("a directory named like a value of its note, or holding an identifier, is withheld in the group rows too, and swapping the raw names changes no row", async () => {
-  const rows = [];
+  const rows: Array<{ copies: number; total: number; shown: string[] }> = [];
   for (const dirs of [["9F8E7D6C5B4A3210", "1A2B3C4D5E6F7081", "plain"], ["AAAAAAAA11112222", "BBBBBBBB33334444", "plain"]]) {
     await withCwd(async (cwd) => {
       const t = words(50);

@@ -15,8 +15,9 @@ pack is loaded; check the run's tool inventory", `mentions:` only); no
 dependency is added. `encryptor/backup-infrastructure` now points to the two
 leaves for hypervisors and network storage instead of repeating them, and
 `ransomware/router`, the index, the README and the `method_only` list name both.
-The pack goes to 1.5.0 (1.6.0 with the next entry). Measured: the router 329 of 400 tokens before and 364
-after, the index 663 of 1,000 before and 736 after, the leaves 719 and 634.
+Measured: the leaves are 719 and 634 tokens; the router, which names every leaf of the
+pack once, went from 329 of 400 tokens to 396 with all the leaves this bundle adds, and the index
+from 663 of 1,000 to 885.
 
 ### Added: ransomware-response has two more method leaves, `intrusion/entry-and-spread` and `recovery/preserve-and-restore`
 
@@ -30,7 +31,7 @@ run's tool inventory"). `recovery/preserve-and-restore` states the minimum prese
 before a rebuild, consolidation, repair, decryption or reconnection, the emergency exceptions and
 the evidence each loses, isolated recovery tests, identity remediation, clean-build decisions and
 authorised acceptance. Neither repeats a sentence of `scope/phase-timeline`, `scope/first-hour` or
-`recovery/what-is-possible`; a test holds that. The pack goes to 1.6.0.
+`recovery/what-is-possible`; a test holds that.
 
 ### Added: ransomware-response has a third tool, `encryption_extent`
 
