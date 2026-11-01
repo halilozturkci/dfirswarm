@@ -70,6 +70,73 @@ import time
 import unicodedata
 from pathlib import Path
 
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
 NAME_MAX = 255
 SHOWN_ERRORS = 20
 MANIFEST = "ad1_extract.tsv"
@@ -574,7 +641,7 @@ class GapFile:
 
 
 def fail(message, **extra):
-    print(json.dumps({"ok": False, "error": message, **extra}))
+    print_answer({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error and extracted nothing (see error)", "error": message, **extra})
     raise SystemExit(1)
 
 
@@ -749,8 +816,8 @@ def write_file(img, item, dest, notes, used, stop):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as e:
-        fail("arguments are JSON on stdin: %s" % e)
+    except (ValueError, RecursionError) as e:
+        fail("arguments are JSON on stdin: %s" % str(e)[:200])
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
     image = args.get("image")
@@ -825,6 +892,31 @@ def main():
         img.close()
         fail("cannot write in out_dir: %s" % (e.strerror or e), out_dir=str(out_arg))
     stopped = None
+
+    writing = [None]                      # the file being written, so that a stop can keep it under a name that says it is not whole
+
+    def _stopped(signum):
+        try:
+            man.flush()
+        except (OSError, ValueError):
+            pass
+        kept = None
+        if writing[0] is not None and os.path.lexists(writing[0]):
+            k, kept = 0, str(writing[0]) + ".partial"
+            while os.path.lexists(kept):
+                k += 1
+                kept = "%s.partial.%d" % (writing[0], k)
+            try:
+                os.rename(writing[0], kept)
+            except OSError:
+                kept = None
+        coverage("partial", {"integrity_status": "unverified", "interrupted": True, "signal": signum})
+        print(json.dumps({"ok": False, "status": "partial", "processing_status": "partial", "integrity_status": "unverified", "interrupted": True, "signal": signum,
+                          "image": image, "out_dir": str(out_arg), "manifest": os.path.join(str(out_arg), MANIFEST), "coverage": os.path.join(str(out_arg), COVERAGE),
+                          **counts, "partial_file": os.path.relpath(kept, str(out_arg)) if kept else None,
+                          "status_basis": "the tool was stopped by signal %d: what was written is in out_dir (the file being written is kept under a .partial name, and is not the item), "
+                                          "the manifest lists the items before the stop, and nothing is claimed about the rest" % signum}), flush=True)
+    install_signal_handlers(_stopped)
     coverage("incomplete")                # said before the first item, so a run cut short leaves this file
     with man:
         man.write("n\ttype\tpath\tpath_b64\tlocator\twritten\tsize\tsha256\tcheck\tnote\n")
@@ -906,7 +998,9 @@ def main():
                 md5 = (ad1_text(item["meta"], 0x5001) or b"").strip().decode("ascii", "replace").lower()
                 sha1 = (ad1_text(item["meta"], 0x5002) or b"").strip().decode("ascii", "replace").lower()
                 this_file[0] = 0
+                writing[0] = dest
                 size, hs, check, why, kept, kept_hash = write_file(img, item, dest, notes, used, stop)
+                writing[0] = None
                 if hs is None:
                     errors.append("item %d (%s, %s): %s" % (n, esc(raw_path), locator, why))
                     if reached[0] and why == reached[0]:
@@ -1023,7 +1117,7 @@ def main():
                 result["errors_file_error"] = "the whole list could not be written: %s" % (e.strerror or e)
     if not in_job:
         result["note"] = "written where you called it, not sealed: run it as a job (job_run tool=ad1_extract) to have the files sealed into the store, citable as job:<id>/<path>, and catalogued by the derived catalogue"
-    print(json.dumps(result))
+    print_answer(result)
     # Exit 0 means the tool ran and what it examined is whole or said not to be: complete, or partial only because a budget stopped it
     # between items (processing_status says partial and stopped_by_budget says which). An item that broke or could not be written, a
     # manifest that could not be written, a segment that is not there: 1.

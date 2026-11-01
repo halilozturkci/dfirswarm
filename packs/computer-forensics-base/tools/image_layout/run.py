@@ -32,7 +32,112 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "image_layout", "version": 4}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+CHILD = {"proc": None}     # the program being run, ended by its pid on a stop
+
+
+def run_child(argv, timeout, **kwargs):
+    """subprocess.run with its output captured, with the child recorded so that a stop can end it by its pid."""
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
+    CHILD["proc"] = proc
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
+    finally:
+        CHILD["proc"] = None
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
+def end_child():
+    proc = CHILD["proc"]
+    if proc is not None:
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - best effort
+            pass
+
+
+class _Held:
+    _tmp = None
+
+
+HELD = _Held()             # the hidden file of the program output being kept
+PAGES.append(HELD)
+
+TOOL = {"name": "image_layout", "version": 5}
 CHILD_TIMEOUT = 120
 TOTAL_BUDGET = 270          # seconds, under the manifest's 300
 SECTOR_MAX = 65536
@@ -42,7 +147,7 @@ TSK_IMAGE_TYPES = {"ewf": "ewf", "vmdk": "vmdk", "vhd": "vhd", "aff": "aff"}
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print_answer({"error": message, "tool": TOOL, **extra})
     raise SystemExit(1)
 
 
@@ -65,7 +170,7 @@ def run(argv, deadline):
         return {"kind": "skipped", "stdout": "", "stderr": "not run: the tool's time budget (%ds) was used" % TOTAL_BUDGET, "code": None}
     env = dict(os.environ, LC_ALL="C", LANG="C")
     try:
-        p = subprocess.run(argv, capture_output=True, timeout=budget, env=env)
+        p = run_child(argv, budget, env=env)
     except subprocess.TimeoutExpired:
         return {"kind": "timeout", "stdout": "", "stderr": "%s timed out after %ds" % (argv[0], budget), "code": None}
     except OSError as exc:
@@ -199,6 +304,7 @@ class Keep:
         try:
             self.dir.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".image_layout-")
+            HELD._tmp = tmp
             with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
                 fh.write(text)
             os.replace(tmp, self.dir / name)
@@ -298,6 +404,12 @@ def main():
         "container_basis": basis,
         "notes": [],
     }
+
+    def _stopped(signum):
+        end_child()
+        print(json.dumps({"tool": TOOL, "image": image, "status": "partial", "interrupted": True, "signal": signum, "container": container,
+                          "status_basis": "the tool was stopped by signal %d: the program it was running was ended, and what it had found so far was not kept; run it again" % signum}), flush=True)
+    install_signal_handlers(_stopped)
     split = split_raw_note(image)
     if split:
         out["notes"].append(split)
@@ -479,7 +591,7 @@ def main():
     out["not_measured"] = ("Snapshots, backing files and the other segments of a split set are not read; "
                            "a file system fsstat reads here is not shown to be intact or complete, and an "
                            "encrypted volume looks like any other it cannot read.")
-    print(json.dumps(out, indent=2))
+    print_answer(out, indent=2)
 
 
 if __name__ == "__main__":

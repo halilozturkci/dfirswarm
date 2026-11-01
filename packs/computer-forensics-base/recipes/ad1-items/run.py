@@ -64,6 +64,73 @@ import re
 import sys
 import time
 
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_ITEMS = 5_000_000
 COLUMNS = ["n", "type", "path", "path_b64", "size", "packed", "mtime", "tz", "mode", "uid", "gid", "link", "locator", "flags",
@@ -587,7 +654,7 @@ def limits():
 
 def refuse(message):
     """A target that cannot be read is an answer on stdout, as every other refusal here is, not a traceback."""
-    print(json.dumps({"ok": False, "error": message}))
+    print_answer({"ok": False, "error": message})
     sys.exit(2)
 
 
@@ -783,7 +850,7 @@ def run(target, paths, out_dir):
         if "integrity_status" not in cov:
             cov["integrity_status"] = "mismatch" if cov["mismatches"] else "unverified" if cov["files"] > cov["checked"] or cov["no_stored_hash"] or cov.get("unaccounted") else "verified" if cov["files"] else "not_applicable"
         write_cov()
-        print(json.dumps({"ok": code == 0, "status": status, "format": "AD1", "items": cov["items"]}))
+        print_answer({"ok": code == 0, "status": status, "format": "AD1", "items": cov["items"]})
         return code
 
     # Said before the first read: a run cut short leaves a coverage file that says it was, never none.
@@ -792,6 +859,19 @@ def run(target, paths, out_dir):
     cov["why"] = "started; the run did not reach its end"
     write_cov()
     del cov["why"]
+
+    def _stopped(signum):
+        cov["status"] = "partial"
+        cov["interrupted"] = True
+        cov["signal"] = signum
+        cov["status_basis"] = "the recipe was stopped by signal %d: the items listed before the stop are in members.tsv, and nothing is claimed about the rest" % signum
+        cov["integrity_status"] = "unverified"
+        try:
+            write_cov()
+        except OSError:
+            pass
+        print(json.dumps({"ok": False, "status": "partial", "interrupted": True, "signal": signum, "format": "AD1", "items": cov["items"]}), flush=True)
+    install_signal_handlers(_stopped)
     img_source = b""
     try:
         img = AD1(paths[0], paths[1:])

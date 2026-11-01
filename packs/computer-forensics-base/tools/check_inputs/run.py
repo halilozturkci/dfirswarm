@@ -269,16 +269,17 @@ if not isinstance(files, list):
 # SECONDS_MAX + 60 seconds after it began, inside the tool's own 1800.
 hash_deadline = STARTED + budget
 deadline = hash_deadline + max(1, min(60, budget // 5))
-receipts = Receipts()
 
 
 def _stopped(signum):
-    print(json.dumps({"tool": TOOL, "ok": False, "status": "partial", "interrupted": True, "signal": signum, "receipts_file": receipts.shown if receipts.created else None,
-                      "receipts": receipts.count,
+    mine = globals().get("receipts")
+    print(json.dumps({"tool": TOOL, "ok": False, "status": "partial", "interrupted": True, "signal": signum,
+                      "receipts_file": mine.shown if mine is not None and mine.created else None, "receipts": mine.count if mine is not None else 0,
                       "status_basis": "the tool was stopped by signal %d: the files checked so far have a row in the receipts file, the rest were not checked, and nothing here is a pass" % signum}), flush=True)
 
 
 install_signal_handlers(_stopped)
+receipts = Receipts()
 
 # --- the whole manifest first -------------------------------------------------------------------
 malformed, duplicates, digest_missing = Capped(), Capped(), Capped()

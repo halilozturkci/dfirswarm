@@ -44,7 +44,76 @@ import time
 import urllib.parse
 from pathlib import Path
 
-TOOL = {"name": "sqlite_snapshot", "version": 2}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+TOOL = {"name": "sqlite_snapshot", "version": 3}
 CHUNK = 1 << 20
 MAX_BYTES_DEFAULT = 8 * 1024 ** 3
 MAX_BYTES_CEILING = 1024 ** 4
@@ -357,7 +426,7 @@ def in_job():
 
 
 def say(obj, code=0):
-    print(json.dumps(obj, ensure_ascii=True))
+    print_answer(obj, ensure_ascii=True)
     sys.stdout.flush()
     raise SystemExit(code)
 
@@ -661,16 +730,23 @@ def main():
     def write_receipt():
         write_json_atomic(receipt_path, receipt)
 
-    def on_signal(signum, _frame):
-        receipt["status"] = "interrupted"
+    def last_word(signum):
+        """The receipt says it was stopped (a stop is not a status: partial, with interrupted true), the copy under way is named as a .partial
+        file, and one document is printed. Nothing of the evidence's names or bytes is in it."""
+        receipt["status"] = "partial"
+        receipt["ok"] = False
+        receipt["interrupted"] = True
+        receipt["signal"] = signum
+        left = sorted(n for n in os.listdir(dest / "original") if n.endswith(".partial")) if (dest / "original").is_dir() else []
         receipt["problems"].append("stopped by signal %d; files named .partial are incomplete" % signum)
         try:
             write_receipt()
         except OSError:
             pass
-        os._exit(128 + signum)
-    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(sig, on_signal)
+        print(json.dumps({"ok": False, "tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "snapshot_dir": rel_dest,
+                          "receipt": receipt_path, "partial_files": left,
+                          "status_basis": "the tool was stopped by signal %d: the receipt says so, and any copy under way is kept as a .partial file that is not the evidence's bytes" % signum}), flush=True)
+    install_signal_handlers(last_word)
     write_receipt()
 
     # 1. The copy of the set, hashed as it is read.

@@ -541,6 +541,17 @@ def main():
         secret = SecretValues(write_values)
     except SecretValuesRefused as exc:
         fail(str(exc), write_values="refused")
+    progress = {"scanned": start}
+
+    def _stopped(signum):
+        try:
+            secret.close()
+        except Exception:  # noqa: BLE001
+            pass
+        print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "path": path, "scanned_end": progress["scanned"], "secret_values": secret.summary(),
+                          "status_basis": "the tool was stopped by signal %d: the counts and locators so far were not kept (the half-written locators file was removed), and a values "
+                                          "file already begun holds the rows written before the stop; scan again from start=%d" % (signum, start)}), flush=True)
+    install_signal_handlers(_stopped)
     locators = Locators([path, needles, start, end, context, unique_only, size], max_hits)
     counts = defaultdict(int)
     seen = set()
@@ -576,16 +587,6 @@ def main():
     scanner = StreamScan([v[2] for v in variants], before=BEFORE, after=context, start=start)
     deadline = started + max_seconds
     scanned = start
-
-    def _stopped(signum):
-        try:
-            secret.close()
-        except Exception:  # noqa: BLE001
-            pass
-        print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "path": path, "scanned_end": scanned, "secret_values": secret.summary(),
-                          "status_basis": "the tool was stopped by signal %d: the counts and locators so far were not kept (the half-written locators file was removed), and a values "
-                                          "file already begun holds the rows written before the stop; scan again from start=%d" % (signum, start)}), flush=True)
-    install_signal_handlers(_stopped)
     stopped = None
     next_start = None
     taken, cut = [0], [None]
@@ -616,6 +617,7 @@ def main():
                     block = data[off:off + FEED] if len(data) > FEED else data
                     inside = not drain(scanner.feed(block))
                     scanned += len(block)
+                    progress["scanned"] = scanned
                     if inside:
                         stopped, next_start = stop_inside_a_feed(), cut[0] + 1
                         break

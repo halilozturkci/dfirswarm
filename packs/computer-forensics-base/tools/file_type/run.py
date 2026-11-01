@@ -36,7 +36,104 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "file_type", "version": 5}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+CHILD = {"proc": None}     # the program being run, ended by its pid on a stop
+
+
+def run_child(argv, timeout, **kwargs):
+    """subprocess.run with its output captured, with the child recorded so that a stop can end it by its pid."""
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
+    CHILD["proc"] = proc
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
+    finally:
+        CHILD["proc"] = None
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
+def end_child():
+    proc = CHILD["proc"]
+    if proc is not None:
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - best effort
+            pass
+
+TOOL = {"name": "file_type", "version": 6}
 BUDGET_SECONDS = 100          # under the manifest's 120
 LIBMAGIC_TIMEOUT = 10
 ERRORS_SHOWN = 50
@@ -127,7 +224,7 @@ TEXTY = bytes(range(0x20, 0x7f)) + b"\r\n\t\f\b"
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print_answer({"error": message, "tool": TOOL, **extra})
     raise SystemExit(1)
 
 
@@ -168,8 +265,7 @@ def libmagic(path):
     if not _libmagic["state"]:
         return None
     try:
-        p = subprocess.run([_libmagic["state"], "-b", "--", path], capture_output=True, timeout=LIBMAGIC_TIMEOUT,
-                           env=dict(os.environ, LC_ALL="C"))
+        p = run_child([_libmagic["state"], "-b", "--", path], LIBMAGIC_TIMEOUT, env=dict(os.environ, LC_ALL="C"))
     except (subprocess.TimeoutExpired, OSError):
         return None
     text = p.stdout.decode("utf-8", "replace").strip()
@@ -348,12 +444,17 @@ class Results:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
         self.tmp, self.fh, self.error = None, None, None
+        PAGES.append(self)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".file_type-")
             self.tmp, self.fh = Path(tmp), os.fdopen(fd, "w", encoding="utf-8")
         except OSError as exc:
             self.error = "the whole result could not be kept (%s: %s)" % (self.path.parent, exc.strerror or exc)
+
+    @property
+    def _tmp(self):
+        return self.tmp
 
     def add(self, entry):
         if self.fh:
@@ -409,10 +510,16 @@ def main():
         return path + p[len(root):] if top and (p == root or p.startswith(root.rstrip(os.sep) + os.sep)) else p
 
     deadline = time.monotonic() + BUDGET_SECONDS
+    counts = {"discovered": 0, "examined": 0, "mismatches": 0, "unrecognised": 0, "links": 0, "not_regular": 0, "errors": 0, "not_attempted": 0, "not_hashed": 0}
+
+    def _stopped(signum):
+        end_child()
+        print(json.dumps({"tool": TOOL, "path": path, "status": "partial", "interrupted": True, "signal": signum, "discovered": counts["discovered"], "examined": counts["examined"],
+                          "status_basis": "the tool was stopped by signal %d: the files looked at so far were not kept (the half-written results file was removed); run it again" % signum}), flush=True)
+    install_signal_handlers(_stopped)
     results = Results([path, mismatch_only, limit, head_hex])
     not_attempted = []
     page, errors = [], []
-    counts = {"discovered": 0, "examined": 0, "mismatches": 0, "unrecognised": 0, "links": 0, "not_regular": 0, "errors": 0, "not_attempted": 0, "not_hashed": 0}
     inline_total = 0
     stopped = None
     for target, problem in walk(root):
@@ -502,7 +609,7 @@ def main():
         out["not_attempted_note"] = "%d entries were not looked at; the first %d are named, every one is in all_results" % (counts["not_attempted"], ERRORS_SHOWN)
     if counts["errors"] > ERRORS_SHOWN:
         out["errors_note"] = "%d errors; the first %d are listed, the rest are in all_results" % (counts["errors"], ERRORS_SHOWN)
-    print(json.dumps(out, indent=2))
+    print_answer(out, indent=2)
 
 
 if __name__ == "__main__":

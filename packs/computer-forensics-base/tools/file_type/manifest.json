@@ -1,6 +1,6 @@
 {
   "name": "file_type",
-  "description": "Say what a file is from its first bytes, and whether that agrees with its extension, for a file or a directory walked in sorted order. Identifies with a table of forensic signatures (PE, ELF, Mach-O universal vs Java class by their own fields, archives, registry hives, event logs, prefetch at offset 4 and compressed MAM, shortcuts, AD1 and E01, memory captures) and, for what the table does not know, the installed `file` (libmagic) when present. An identification is a reading of the first bytes, not a validation. A type nothing knows is unrecognised and its extension_matches is null, neither match nor mismatch. Hashes every regular file it opens (SHA-256; a file the time budget ends in has no digest, and its entry says how far it got); plain text is consistent with any extension that is not a binary format's; a directory that cannot be listed is an error entry; symbolic links and non-regular files are listed, never opened or followed. examined counts files actually opened; the first bytes are returned only with head_hex: true; every result is kept in all_results when the inline page (limit, mismatch_only) is not the whole, and unreadable files are reported as errors whatever mismatch_only says. earlier_answers says how many other files answer the same question.",
+  "description": "Say what a file is from its first bytes, and whether that agrees with its extension, for a file or a directory walked in sorted order. Identifies with a table of forensic signatures (PE, ELF, Mach-O universal vs Java class by their own fields, archives, registry hives, event logs, prefetch at offset 4 and compressed MAM, shortcuts, AD1 and E01, memory captures) and, for what the table does not know, the installed `file` (libmagic) when present. An identification is a reading of the first bytes, not a validation. A type nothing knows is unrecognised and its extension_matches is null, neither match nor mismatch. Hashes every regular file it opens (SHA-256; a file the time budget ends in has no digest, and its entry says how far it got); plain text is consistent with any extension that is not a binary format's; a directory that cannot be listed is an error entry; symbolic links and non-regular files are listed, never opened or followed. examined counts files actually opened; the first bytes are returned only with head_hex: true; every result is kept in all_results when the inline page (limit, mismatch_only) is not the whole, and unreadable files are reported as errors whatever mismatch_only says. earlier_answers says how many other files answer the same question. SIGTERM, SIGINT and SIGHUP end it with one JSON answer (partial, with interrupted true and the signal, and what was done), exit 128 plus the signal, and the removal of the hidden file it was writing; the program it was running is ended by its pid.",
   "params": {
     "path": {
       "type": "string",
@@ -29,6 +29,6 @@
   ],
   "by": "maintainer",
   "at": "2026-10-01T12:00:00.000Z",
-  "version": 5,
-  "sha256": "b83c353803f498deea684a49f6acdc88ba4efbec7e6bb37a68c640dc1660ca61"
+  "version": 6,
+  "sha256": "772441f008dbbc805df7bb647a1e4ddabd0d88c4cf972ca94ec5d827aef9c448"
 }

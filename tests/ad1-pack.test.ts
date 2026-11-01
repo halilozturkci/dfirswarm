@@ -12,9 +12,9 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -881,6 +881,66 @@ test("ad1_extract holds what it writes to a ratio of what it read: a chunk seque
   for (const bad of [0, -1, 1_000_001, 1.5, "10", true]) {
     const refused = await runPy(TOOL, cwd, { image: "inputs/zeros.ad1", max_ratio: bad, out_dir: "work/s1/bad" }, undefined, { AGENT_ID: "s1" });
     assert.equal(JSON.parse(refused.stdout).ok, false, String(bad));
+  }
+});
+
+/** An image whose second file is 512 MiB of zeros (8,192 small chunks): reading it takes seconds, so a stop can come in the middle of it. */
+function bigZeroImage(): Buffer {
+  return ad1Image([{ name: "a.txt", content: B("first") }, { name: "zeros.bin", content: Buffer.alloc(512 * 1024 * 1024) }]);
+}
+
+async function stopMidway(argv: string[], cwd: string, stdin: string, ready: () => boolean, signal: "SIGTERM" | "SIGINT" | "SIGHUP"): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const child = spawn("python3", argv, { cwd, env: { ...process.env, AGENT_ID: "s1" }, stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (c: Buffer) => { stdout += c.toString("utf8"); });
+  child.stderr.on("data", (c: Buffer) => { stderr += c.toString("utf8"); });
+  child.stdin.end(stdin);
+  const closed = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
+  const end = Date.now() + 30000;
+  while (Date.now() < end && child.exitCode === null && !ready()) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(child.exitCode, null, `it ended before it could be signalled: ${stdout.slice(0, 300)} ${stderr.slice(-300)}`);
+  assert.ok(ready(), "it never reached the point to signal");
+  child.kill(signal);
+  const code = await closed;
+  return { code, stdout, stderr };
+}
+
+test("a stop signal in the middle of ad1_extract and of the ad1-items recipe gives one document, exit 128 + the signal, and keeps the half-written file apart", async () => {
+  const NUMBER = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 } as const;
+  const cwd = dir("ad1-stop-");
+  mkdirSync(join(cwd, "inputs"));
+  writeFileSync(join(cwd, "inputs", "big.ad1"), bigZeroImage());
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    const out = join(cwd, "work", `x-${signal}`);
+    const growing = (): boolean => {
+      try { return statSync(join(out, "zeros.bin")).size > 16 * 1024 * 1024; } catch { return false; }
+    };
+    const r = await stopMidway([TOOL], cwd, JSON.stringify({ image: "inputs/big.ad1", out_dir: `work/x-${signal}` }), growing, signal);
+    assert.equal(r.code, 128 + NUMBER[signal], `${signal}: ${r.stdout.slice(0, 300)} ${r.stderr.slice(-300)}`);
+    const said = JSON.parse(r.stdout);
+    assert.deepEqual([said.status, said.interrupted, said.signal, said.integrity_status], ["partial", true, NUMBER[signal], "unverified"]);
+    assert.match(said.partial_file, /zeros\.bin\.partial/);
+    assert.ok(existsSync(join(cwd, said.partial_file.startsWith("work") ? said.partial_file : join("work", `x-${signal}`, said.partial_file))), "the half-written file is kept");
+    assert.ok(!existsSync(join(out, "zeros.bin")), "and does not keep the item's own name");
+    const cov = JSON.parse(readFileSync(join(out, "ad1_extract.coverage.json"), "utf8"));
+    assert.deepEqual([cov.processing_status, cov.interrupted], ["partial", true]);
+    assert.deepEqual(readdirSync(out).filter((n) => n.startsWith(".")), [], "no hidden temporary file");
+  }
+  // The recipe lists 20,000 items: that takes seconds, and a stop comes once the listing has begun.
+  writeFileSync(join(cwd, "inputs", "many.ad1"), ad1Image(Array.from({ length: 20000 }, (_, i) => ({ name: `f${i}.txt`, content: B("x") }))));
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    const out = join(cwd, `recipe-${signal}`);
+    mkdirSync(out);
+    const listed = (): boolean => {
+      try { return readFileSync(join(out, "members.tsv"), "utf8").split("\n").length > 50; } catch { return false; }
+    };
+    const r = await stopMidway([RECIPE, "run", "--target", JSON.stringify({ paths: [join(cwd, "inputs", "many.ad1")] }), "--out", out], cwd, "", listed, signal);
+    assert.equal(r.code, 128 + NUMBER[signal], `${signal}: ${r.stdout.slice(0, 300)} ${r.stderr.slice(-300)}`);
+    const said = JSON.parse(r.stdout);
+    assert.deepEqual([said.status, said.interrupted, said.signal], ["partial", true, NUMBER[signal]]);
+    const cov = JSON.parse(readFileSync(join(out, "coverage.json"), "utf8"));
+    assert.deepEqual([cov.status, cov.interrupted, cov.signal], ["partial", true, NUMBER[signal]]);
   }
 });
 

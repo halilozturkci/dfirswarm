@@ -40,6 +40,75 @@ import subprocess
 import sys
 import time
 
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+CHILD = {"proc": None}     # the Plaso program being run, ended by its pid on a stop
+
 # What `complete` says: the pipeline finished. Plaso's own processing report says what each parser did.
 PIPELINE_NOTE = ("complete means log2timeline and psort both exited 0, wrote their files, said no error and no zero event count in what they "
                  "printed, in their logs or in pinfo's report, and the timeline holds an event; it does not say every parser read every "
@@ -182,7 +251,12 @@ def step(out, name, argv):
     # cwd=out: what a step writes where it stands lands in out, never in the
     # (read-only) directory the job started in.
     with open(os.path.join(out, name + ".stdout"), "wb") as so, open(os.path.join(out, name + ".stderr"), "wb") as se:
-        return subprocess.run(argv, stdout=so, stderr=se, cwd=out).returncode
+        proc = subprocess.Popen(argv, stdout=so, stderr=se, cwd=out)
+        CHILD["proc"] = proc
+        try:
+            return proc.wait()
+        finally:
+            CHILD["proc"] = None
 
 
 def run(image, out, zone=None):
@@ -204,6 +278,22 @@ def run(image, out, zone=None):
         return 1, "coverage.refused.json"
     began = time.time()
     write_coverage(out, "partial", "started; log2timeline or psort did not finish (stopped before its end)", ["the run ended before Plaso did"], extra)
+
+    def _stopped(signum):
+        proc = CHILD["proc"]
+        if proc is not None:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001 - best effort
+                pass
+        try:
+            write_coverage(out, "partial", "the recipe was stopped by signal %d: the program running was ended, and what it had written is in out, not counted" % signum,
+                           ["stopped by signal %d before Plaso finished" % signum], dict(extra, interrupted=True, signal=signum))
+        except OSError:
+            pass
+        print(json.dumps({"ok": False, "status": "partial", "interrupted": True, "signal": signum, "coverage": "coverage.json"}), flush=True)
+    install_signal_handlers(_stopped)
     l2t = program("log2timeline", "log2timeline.py")
     psort = program("psort", "psort.py")
     if not l2t or not psort:
@@ -312,7 +402,7 @@ def main():
     result = {"ok": rc == 0, "status": status}
     if coverage_file != "coverage.json":
         result["coverage"] = coverage_file
-    print(json.dumps(result))
+    print_answer(result)
     return rc
 
 

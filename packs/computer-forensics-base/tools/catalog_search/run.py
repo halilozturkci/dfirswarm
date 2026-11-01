@@ -78,7 +78,7 @@ class _Held:
 HELD = _Held()             # the hidden file of the match list being written
 PAGES.append(HELD)
 
-TOOL = {"name": "catalog_search", "version": 14}
+TOOL = {"name": "catalog_search", "version": 15}
 PATTERN_MAX = 4096
 LINE_MAX = 1 << 20
 BUDGET_SECONDS = 25
@@ -139,58 +139,6 @@ def _unexpected(kind, value, _tb):
 
 
 sys.excepthook = _unexpected
-
-def _catalogue_slug(path):
-    """The directory name the kickoff's catalogue gives an input: its path under
-    inputs/ with every byte outside [A-Za-z0-9._-] made "_" (evidence-catalog.sh)."""
-    import os, re
-    rel = os.fsencode(os.path.relpath(path, "inputs"))
-    return os.fsdecode(re.sub(rb"[^A-Za-z0-9._-]", b"_", rel))
-
-
-def _inputs_roots():
-    """inputs/, and each set held in place as a link directly under it (inputs.json names the sets): the only links followed.
-    Any other link under inputs/ is a name and not a place to walk: following one could leave the evidence for the rest of the file system."""
-    import json, os
-    roots = ["inputs"]
-    try:
-        with open("inputs.json", encoding="utf-8") as fh:
-            sets = json.load(fh).get("sets") or []
-    except (OSError, ValueError, AttributeError):
-        sets = []
-    for entry in sets:
-        name = entry.get("name") if isinstance(entry, dict) else None
-        if isinstance(name, str) and name and "/" not in name and os.path.islink(os.path.join("inputs", name)):
-            roots.append(os.path.join("inputs", name))
-    return roots
-
-
-def _resolve_image(explicit=None):
-    """A pack tool belongs to no case: find the image under inputs/ instead of
-    baking one in. One candidate is used; several mean the caller must say which.
-    An image is known by its extension or, lacking one (a raw `dd` of a web
-    server named after the host), by the catalogue: the kickoff writes
-    catalog/<input>/partitions.txt for every input it read as a disk."""
-    import glob, os
-    if explicit:
-        return explicit
-    cands = []
-    for ext in ("*.E01", "*.e01", "*.raw", "*.dd", "*.001", "*.img", "*.vhd", "*.vhdx"):
-        cands += glob.glob(os.path.join("inputs", ext))
-    for root_dir in _inputs_roots():
-        for base, _dirs, files in os.walk(root_dir, followlinks=False):
-            for f in files:
-                p = os.path.join(base, f)
-                if os.path.isfile(os.path.join("catalog", _catalogue_slug(p), "partitions.txt")):
-                    cands.append(p)
-    cands = sorted(set(cands))
-    if len(cands) == 1:
-        return cands[0]
-    if not cands:
-        _answer({"ok": False, "error": "no disk image under inputs/; pass image="}, 1)
-    _answer({"ok": False, "error": "several images under inputs/; pass image=", "candidates": cands}, 1)
-
-
 
 # Directories of catalog/ that are the catalogue's machinery, not a catalogue.
 RESERVED = {"gen", "revisions", "probes"}

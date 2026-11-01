@@ -152,6 +152,7 @@ class SigCarve(Case):
             sys.stdin = io.StringIO(json.dumps(dict({"path": src, "sig": "PNG", "window_bytes": 64, "context": 0}, **kw)))
             out = io.StringIO()
             old_handlers = [signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)]
+            old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])         # the tool's print_answer holds the stop signals back for good: this process is not the tool
             try:
                 with contextlib.redirect_stdout(out):
                     try:
@@ -159,6 +160,7 @@ class SigCarve(Case):
                     except SystemExit as exc:
                         code = exc.code
             finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
                 for s, h in zip((signal.SIGTERM, signal.SIGHUP, signal.SIGINT), old_handlers):
                     signal.signal(s, h)
                 sys.stdin = sys.__stdin__
@@ -201,7 +203,7 @@ class SigCarve(Case):
         import sys
         import time
         from support import tool_path
-        data = b"".join(b"\0" * 30 + PNG for _ in range(50)) + b"\0" * (6 * 1024 * 1024)
+        data = b"".join(b"\0" * 30 + PNG for _ in range(50)) + b"\0" * (48 * 1024 * 1024)
         src = self.write("dump.bin", data)
         proc = subprocess.Popen([sys.executable, tool_path("sig_carve")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.dir,
                                 env={k: v for k, v in os.environ.items() if k not in ("JOB_ID", "OUT")})

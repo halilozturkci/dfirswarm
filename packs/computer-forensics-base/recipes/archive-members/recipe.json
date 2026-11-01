@@ -1,6 +1,6 @@
 {
   "id": "archive-members",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "List the members of a tar (plain or compressed), zip or 7z archive without extracting any: path, type, size, time, mode, link target and where each member sits in the archive. A compressed tar is complete only when its whole stream has been read: a further tar, a further stream, bytes after the last stream or a failed integrity check make it partial, with the offset named.",
   "object": "archive",
   "order": 30,
@@ -50,5 +50,5 @@
   ],
   "purpose": "inventory",
   "covers": "The archive's own list of members. It opens no member, searches no contents and lists no archive inside the archive: a member is extracted with the archive_extract tool, which takes the member number n of members.tsv (from_index) and writes each member under its own bounded, link-free rules, then catalogued on its own. A tar compressed with zstd is not listed here (archive_extract reads it where a zstd reader exists).",
-  "sha256": "303b0720d742997c3f558fc10a2759955510d2ab1425ac201290f823b594f171"
+  "sha256": "c46581dd3fd553e1bb4c7f62312c47f0c73a685178799743efaa5c7ce78bdcd4"
 }
