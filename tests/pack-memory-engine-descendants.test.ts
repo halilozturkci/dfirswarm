@@ -128,7 +128,8 @@ test("an unmount helper that does not answer is a named problem of the clean-up,
     const fast = join(cwd, "mem_fs_fast.py");
     const text = await readFile(FS, "utf8");
     assert.match(text, /^CLEANUP_WAIT = 20$/m);
-    await writeFile(fast, text.replace(/^CLEANUP_WAIT = 20$/m, "CLEANUP_WAIT = 2"));
+    assert.match(text, /^UNMOUNT_WAIT = 12\b/m);
+    await writeFile(fast, text.replace(/^CLEANUP_WAIT = 20$/m, "CLEANUP_WAIT = 2").replace(/^UNMOUNT_WAIT = 12\b/m, "UNMOUNT_WAIT = 2"));
     await chmod(fast, 0o755);
     await writeFile(join(bin, "fusermount3"), "#!/bin/sh\nsleep 30\n");
     await chmod(join(bin, "fusermount3"), 0o755);
