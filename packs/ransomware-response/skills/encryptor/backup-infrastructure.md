@@ -5,7 +5,6 @@ when: A backup server, immutable store, hypervisor or recovery setting was affec
 needs: []
 tools: []
 requires_host: []
-mentions: [virtualization_inventory, snapshot_chain_check, backup_audit_normalise]
 ---
 
 Use only if a backup server, an immutable or versioned store, a hypervisor, network storage or a boot-recovery setting was affected. Not for the recovery inventory (`encryptor/destroyed-backups`).
@@ -22,18 +21,10 @@ expiry, legal holds, lifecycle changes and the administrative rights that can
 bypass them. Do not infer protection from a product label. Establish that the
 keys and the whole backup chain are still available.
 
-**Hypervisors and network storage.** Preserve the management-plane audit records,
-the storage and snapshot inventories, the replication history and task outcomes.
-Separate a guest's compromise from the host's or the storage's. A virtual-machine
-snapshot is not an independent backup, and the loss of a base or dependent disk can
-invalidate a chain. A share that became unavailable does not show that its data or
-snapshots were destroyed. If the virtualization-backup-forensics pack is loaded
-(check the run's tool inventory), its `virtualization_inventory` lists the virtual
-machines, disk files and snapshots that hypervisor configuration files name,
-`snapshot_chain_check` tests whether a disk or snapshot chain is whole, and
-`backup_audit_normalise` turns a backup or hypervisor job record into events;
-check that each answer says what it did not read, and say so where it does not.
-Where it is not loaded, say that no tool read this evidence.
+**Hypervisors and network storage.** For a hypervisor read `platforms/esxi-hypervisors`;
+for network storage read `platforms/nas-storage`. They hold what to preserve, how
+to separate a guest's compromise from the host's or the storage's, and which tools
+of the virtualization pack read the evidence, if it is loaded.
 
 **Boot recovery and stopped services.** Record changes to the recovery
 configuration (the boot manager's recovery and boot-status settings, the recovery

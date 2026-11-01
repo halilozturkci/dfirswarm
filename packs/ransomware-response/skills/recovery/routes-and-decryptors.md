@@ -3,7 +3,7 @@ id: recovery/routes-and-decryptors
 title: Partial damage, deleted originals, decryptors
 when: Files are partly encrypted, originals may be deleted, or a decryptor is to be tested.
 needs: []
-tools: [file_carver]
+tools: [file_carver, recovery_validate]
 requires_host: []
 ---
 
@@ -30,7 +30,11 @@ source and instructions. Test on disposable copies of representative files, larg
 files and the relevant formats included, never over an original. Compare what comes
 back with trusted originals where they exist, and check structure and application
 behaviour: a success message is not enough. Never run a decryptor that came from the
-evidence.
+evidence. `recovery_validate` checks what came back, run separately: it hashes the
+output, tests the structure of its format, compares with known originals and the
+ciphertext, and names the unrecovered ranges. Its verdict is one of
+`matches_known_original`, `structurally_valid`, `unrecovered`, `inconclusive`; a
+decryptor's exit code is not evidence, and a valid structure is not the original.
 
 **Sensitive output.** Jobs that extract or handle recovered key material run with
 `secret_output: true`. Do not place a key, a password or a hash of either in a

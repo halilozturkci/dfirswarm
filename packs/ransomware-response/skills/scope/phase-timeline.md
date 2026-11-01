@@ -3,7 +3,7 @@ id: scope/phase-timeline
 title: Keeping a phase timeline of the incident
 when: You order the incident's phases, or must say when it began and ended.
 needs: []
-tools: []
+tools: [ransomware_scope_report]
 requires_host: []
 ---
 
@@ -17,6 +17,11 @@ necessarily the first compromised one. Keep each original timestamp, its source
 zone, clock offset and precision beside the UTC value. Do not infer dwell time
 from a typical campaign, and do not treat encryption as the adversary's last
 action.
+
+`ransomware_scope_report` takes timelines of events (host, time, kind) with the
+censuses and checks of several hosts by reference, and gives each host's first and
+last event beside its denominators. Those are the events given, not the phases'
+start and end; a host without a census is unknown.
 
 **Does not show.** That the earliest observed artefact is the start of the compromise; that the first encrypted asset was the first compromised; that encryption was the last action or that the dwell time matches a typical campaign.
 

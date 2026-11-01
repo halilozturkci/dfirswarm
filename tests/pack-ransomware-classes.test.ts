@@ -344,7 +344,7 @@ test("the manifests, the skill and the changelog name the classes that are print
   assert.ok(scan.includes("is read a second time, and matched a second time only when it holds a piece of such a name"));
   assert.ok(scan.includes("the URL and identifier patterns too"));
   assert.ok(!scan.includes("each note is read twice"));
-  const skill = await read("packs/ransomware-response/skills/scope/triage-tools.md");
+  const skill = (await read("packs/ransomware-response/skills/scope/triage-tools.md")) + (await read("packs/ransomware-response/skills/scope/triage-tools-names.md"));
   for (const text of ["deny-list", "pairs joined by 2 characters", "MAC and IPv6", "8 or more hex pairs with one separator"]) {
     assert.ok(skill.replace(/\s+/g, " ").includes(text), `the skill does not say: ${text}`);
   }
