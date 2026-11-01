@@ -220,3 +220,196 @@ test("mem_carve with no hit and a FIFO planted at its own results_to names the r
     assert.ok(names.includes("hits-2.jsonl"), names.join(","));
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Part 2: PLACE (a stop between taking the name and the move), STOP (the word of the early answer), PAGE (the abort loop)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The block's own text, run, with a stop injected at the first step after the final name is taken. */
+const PLACE_STOP_CASES = String.raw`
+import json, os, sys, signal, time, errno, re, hashlib
+from pathlib import Path
+src = open(sys.argv[1], encoding="utf8").read()
+name, d, mode = sys.argv[2], Path(sys.argv[3]), sys.argv[4]
+begin, end = src.index("# BEGIN SHARED " + name), src.index("# END SHARED " + name)
+GUARD = {"depth": 0, "pending": None, "stopping": False}
+def checkpoint():
+    pass
+exec(src[begin:end], globals())
+signal.alarm(20)
+tmp = d / ".tmp-result"
+tmp.write_bytes(b"result bytes\n" * 50)
+final = d / "hits.jsonl"
+class Stop(BaseException):
+    pass
+if mode == "kill":
+    # SIGKILL at the first step after the name is taken: the move of the old way, the removal of the hidden name of the new one
+    def die(*a, **k):
+        os.kill(os.getpid(), signal.SIGKILL)
+    real_unlink = os.unlink
+    def unlink(p, *a, **k):
+        if str(p) == str(tmp):
+            die()
+        return real_unlink(p, *a, **k)
+    os.replace = die
+    os.unlink = unlink
+    place_without_replacing(tmp, final)
+elif mode == "unwind":
+    # a file system with no hard links, and a stop that unwinds (the signal handler raises) right after the empty name is created
+    def nolink(*a, **k):
+        raise OSError(errno.EPERM, "no hard links here")
+    os.link = nolink
+    real_close = os.close
+    def handler(signum, frame):
+        raise Stop()
+    signal.signal(signal.SIGTERM, handler)
+    def close(fd):
+        real_close(fd)
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(0.05)
+    os.close = close
+    try:
+        place_without_replacing(tmp, final)
+        print(json.dumps({"stopped": False}))
+    except Stop:
+        os.close = real_close
+        print(json.dumps({"stopped": True, "final_exists": os.path.lexists(final), "tmp_exists": tmp.exists()}))
+elif mode == "nolink":
+    # a file system with no hard links, nothing stopping: the older way still places the file, and keeps the rules
+    def nolink(*a, **k):
+        raise OSError(errno.EPERM, "no hard links here")
+    os.link = nolink
+    got = place_without_replacing(tmp, final)
+    again = d / ".tmp-again"
+    again.write_bytes(b"result bytes\n" * 50)
+    same = place_without_replacing(again, final)
+    print(json.dumps({"first": got.name, "size": got.stat().st_size, "again": same.name, "again_tmp_gone": not again.exists(), "tmp_gone": not tmp.exists()}))
+`;
+
+function runPlaceStop(file: string, block: string, dir: string, mode: string) {
+  return py(PLACE_STOP_CASES, [rel(file), block, dir, mode]);
+}
+
+for (const [file, block] of PLACE_CARRIERS) {
+  test(`${file}: a stop right after the final name is taken leaves no empty file at it`, async () => {
+    await scratch(async (dir) => {
+      const killed = runPlaceStop(file, block, dir, "kill");
+      assert.equal(killed.signal, "SIGKILL", `${file}: ${killed.stderr}`);
+      const final = join(dir, "hits.jsonl");
+      const names = await readdir(dir);
+      if (names.includes("hits.jsonl")) assert.equal((await readFile(final)).length, 650, `${file}: a file at the final name after SIGKILL is the whole result`);
+      assert.ok(names.includes(".tmp-result") || names.includes("hits.jsonl"), "the result is somewhere");
+    });
+    await scratch(async (dir) => {
+      const r = runPlaceStop(file, block, dir, "unwind");
+      assert.equal(r.status, 0, `${file}: ${r.stderr}`);
+      assert.deepEqual(JSON.parse(r.stdout), { stopped: true, final_exists: false, tmp_exists: true }, `${file}: no hard links, a stop that unwinds`);
+    });
+    await scratch(async (dir) => {
+      const r = runPlaceStop(file, block, dir, "nolink");
+      assert.equal(r.status, 0, `${file}: ${r.stderr}`);
+      assert.deepEqual(JSON.parse(r.stdout), { first: "hits.jsonl", size: 650, again: "hits.jsonl", again_tmp_gone: true, tmp_gone: true }, `${file}: no hard links, no stop`);
+    });
+  });
+}
+
+const STOP_CARRIERS = {
+  windows: [
+    "packs/ransomware-response/tools/ransom_note_scan/run.py",
+    "packs/ransomware-response/tools/encrypted_survey/run.py",
+    "packs/windows-forensics/tools/regkv/run.py",
+    "packs/windows-forensics/tools/lnk_parse/run.py",
+    "packs/reverse-engineering/tools/pe_info/run.py",
+    "tool-library/regkv/run.py",
+  ],
+  encrypted: [
+    "packs/encrypted-containers/tools/crypto_id/run.py",
+    "packs/encrypted-containers/tools/archive_probe/run.py",
+    "packs/encrypted-containers/tools/recovery_key_scan/run.py",
+    "packs/encrypted-containers/tools/password_recover/run.py",
+    "packs/encrypted-containers/tools/tcrypt_header/run.py",
+  ],
+};
+
+/** The STOP block's own text, run: SIGTERM at once, so the generic last word of the early window is what is answered. */
+const STOP_CASE = String.raw`
+import json, os, sys, signal, time
+src = open(sys.argv[1], encoding="utf8").read()
+begin, end = src.index("# BEGIN SHARED STOP"), src.index("# END SHARED STOP")
+seal = lambda answer: answer
+exec(src[begin:end], globals())
+os.kill(os.getpid(), signal.SIGTERM)
+time.sleep(10)
+`;
+
+for (const [lineage, files] of Object.entries(STOP_CARRIERS)) {
+  for (const file of files) {
+    test(`${file}: SIGTERM in the early window answers status failed with interrupted true, never status interrupted (${lineage} lineage)`, () => {
+      const r = py(STOP_CASE, [rel(file)]);
+      assert.equal(r.status, 143, `${file}: ${r.signal ?? ""} ${r.stderr}`);
+      const answer = JSON.parse(r.stdout) as Record<string, unknown>;
+      assert.equal(answer.status, "failed", file);
+      assert.equal(answer.interrupted, true, file);
+      assert.equal(answer.signal, 15, file);
+      assert.match(String(answer.status_basis), /^[^.]*stopped by signal 15[^.]*$/, `${file}: one sentence`);
+    });
+  }
+}
+
+test("no carrier of the STOP block, in either lineage, can print a status of interrupted", async () => {
+  let n = 0;
+  for (const file of await runFiles()) {
+    const text = await readFile(file, "utf8");
+    const m = text.match(/^# BEGIN SHARED STOP$[\s\S]*?^# END SHARED STOP$/m);
+    if (!m || file.includes("macos-forensics")) continue; // the macOS lineage is not changed by this sweep
+    n += 1;
+    assert.doesNotMatch(m[0], /"status": "interrupted"/, file);
+  }
+  assert.ok(n >= 35, `${n} carriers`);
+});
+
+/** A failure that ends a memory tool while a second signal lands in the loop that drops the pages' temporary files. */
+const PAGE_CASE = String.raw`
+import contextlib, importlib.util, io, json, os, signal, sys, tempfile
+spec = importlib.util.spec_from_file_location("m", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+d = tempfile.mkdtemp()
+os.chdir(d)
+os.environ.pop("JOB_ID", None)
+os.environ.pop("OUT", None)
+os.environ["AGENT_ID"] = "s1"
+signal.signal(signal.SIGTERM, m._on_signal)
+signal.alarm(20)
+real = m.LosslessPage("t", ["k"], 1)
+for i in range(3):
+    real.add({"n": i})
+class Boom:
+    def abort(self):
+        os.kill(os.getpid(), signal.SIGTERM)   # the signal lands in the middle of the loop
+m.PAGES.insert(0, Boom())
+buf = io.StringIO()
+code = None
+try:
+    with contextlib.redirect_stdout(buf):
+        m.fail("a refusal")
+except SystemExit as exc:
+    code = exc.code
+except BaseException as exc:  # noqa: BLE001
+    code = "raised " + type(exc).__name__
+left = sorted(os.listdir(os.path.join(d, "work", "s1", "tool-output")))
+print(json.dumps({"code": code, "out": buf.getvalue(), "left": left}))
+`;
+
+for (const tool of ["mem_carve", "mem_fs", "mem_profile"]) {
+  test(`${tool}: a signal in the loop that drops the pages' temporary files gives one answer and leaves no hidden page file`, () => {
+    const r = py(PAGE_CASE, [rel("packs", "memory-forensics", "tools", tool, "run.py")]);
+    assert.equal(r.status, 0, `${tool}: ${r.signal ?? ""} ${r.stderr}`);
+    const got = JSON.parse(r.stdout) as { code: unknown; out: string; left: string[] };
+    assert.equal(got.code, 1, `${tool}: ${JSON.stringify(got.code)}`);
+    const docs = got.out.trim().split("\n").filter((l) => l.trim() !== "");
+    const whole = JSON.parse(got.out) as { status?: string };
+    assert.equal(whole.status, "failed", `${tool}: one document, the failed answer (${docs.length} lines)`);
+    assert.deepEqual(got.left, [], `${tool}: no hidden page file is left`);
+  });
+}

@@ -55,7 +55,7 @@
   "by": "sbe1801",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 9,
-  "sha256": "d3cd046849d269cc481cb4a235e855a39e615bad7df48379f35ffcd5f83737e8",
+  "sha256": "85d66bf3f60157f61b08d8dc0b9c48fd12c2ab7541c913f3bbbf5c18e2cdcf34",
   "use": {
     "extensions": [
       ".evtx"

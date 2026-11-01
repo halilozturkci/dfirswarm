@@ -91,10 +91,10 @@
       "skills/scope/first-hour.md": "cec879bfca6d5dbd754bcf314f247a0ae679259e4fe77a3d6659eca9b788d686",
       "skills/scope/phase-timeline.md": "fadd923ba83a6b5ca7f9aecbe967094bddc74c6afcde2d572e79fbc59e7bf5a8",
       "skills/scope/triage-tools.md": "ffc65896b8186aa2c133e2ef8de795b9f1c2e128d8b0286da3e1f29620982b9c",
-      "tools/encrypted_survey/manifest.json": "4a0e2047fcd609bee01d78eb779a35973dc772c23dcb931955fbda9285b62c63",
-      "tools/encrypted_survey/run.py": "059aa1d983af53a7d182382045a07a1e8aa634417f027f3feea2a070c7aec5b0",
-      "tools/ransom_note_scan/manifest.json": "c5839288c24b6f3e5ff9804b16f64c614e83bb559437e7f8709f4b8c6a43154c",
-      "tools/ransom_note_scan/run.py": "822751e2fe04c06048490c77f90fa0f6bda622806c5ce25de9b4c2ff7cb50001"
+      "tools/encrypted_survey/manifest.json": "917db356a29abdf6d3ed44e9b94f3d771f31f12f577b0a65c1160ece3251260e",
+      "tools/encrypted_survey/run.py": "68db06040a957cbe96c1f74cb1fee0f8976198f4a46532570436347504caf51f",
+      "tools/ransom_note_scan/manifest.json": "aa7527fa4dc2cb318b7af83b1725103351b588354009b977c49c4f11bd1fd0d7",
+      "tools/ransom_note_scan/run.py": "ddc71992fbc131529e14000207feb73545d66d78080ffdfcb00cb89aba0d2507"
     }
   },
   "tools": [

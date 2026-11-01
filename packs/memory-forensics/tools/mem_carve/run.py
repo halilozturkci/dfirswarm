@@ -158,6 +158,11 @@ SYNC_EVERY = 256 << 20      # bytes of an explicit hit list written between two 
 # read, so a FIFO, a device, a directory or a link at a name (the caller's own results_to, say) is another result's and cannot hold the
 # tool. The comparing of one call has PLACE_COMPARE_SECONDS in all; past it an earlier result is taken as different and this one takes
 # the next free name (nothing is replaced, but an identical rerun may then be named anew).
+# The name is taken with a hard link of the finished file, so it never holds an empty file, whatever stops the tool and when (SIGKILL
+# included). Where the file system refuses the link, the name is taken with an exclusive create and the file is moved over it: a stop
+# that unwinds (an exception) takes the empty name back while it is still the empty file this call made; a stop that ends the process
+# without unwinding (SIGKILL, the handlers of the STOP block) between the create and the move leaves the empty name, and the next run takes -2.
+# abort_pages() drops the temporary files of all the pages under that guard; the module's fail() calls it before it answers.
 # The module that carries this block defines GUARD (a dict with "depth") and checkpoint().
 PLACE_COMPARE_SECONDS = 5   # all the comparing one call to place_without_replacing does; past it an earlier result is taken as different
 
@@ -191,32 +196,65 @@ def same_bytes(a, b, deadline=None):
                 fh.close()
 
 
+def _take_name(tmp, candidate):
+    """Give the finished `tmp` the name `candidate` if it is free, and say whether it now has it (False: the name is taken, by a file, a
+    link, a FIFO or a directory). The name is taken with a hard link, so it never holds an empty file; where the file system refuses the
+    link it is taken with an exclusive create and the file is moved over it, and a stop that unwinds in between takes the empty name back."""
+    try:
+        os.link(tmp, candidate)
+    except FileExistsError:
+        return False
+    except OSError:
+        pass                                   # no hard links here: the older way, below
+    else:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass                               # the hidden name stays beside the placed file; the stop path of the page removes it
+        return True
+    fd = made = None
+    try:
+        fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        made = os.fstat(fd)
+        closing, fd = fd, None
+        os.close(closing)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return True
+    except FileExistsError:
+        return False
+    except BaseException:
+        try:
+            if made is None and fd is not None:
+                made = os.fstat(fd)
+        except OSError:
+            pass
+        try:
+            if fd is not None:
+                os.close(fd)
+        except OSError:
+            pass
+        try:
+            now = os.lstat(candidate)
+            if made is not None and (now.st_mode & 0o170000) == 0o100000 and now.st_size == 0 and (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino):
+                os.unlink(candidate)           # the empty name this call took is not left behind
+        except OSError:
+            pass
+        raise
+
+
 def place_without_replacing(tmp, path):
-    """Move the finished `tmp` to `path` and never replace what is there, a file or a link: the name is taken first with an
-    exclusive create that does not follow links; a file of the same bytes is named again, any other result takes the next free
-    <stem>-<n><suffix>. Returns the path that holds it.
-    The comparing with earlier results has PLACE_COMPARE_SECONDS in all: past it an earlier result is taken as different and this
-    one takes the next free name."""
+    """Move the finished `tmp` to `path` and never replace what is there. A name that is taken (by a file, a link, a FIFO or a directory) is
+    left as it is: a regular file of the same bytes is named again, any other result takes the next free <stem>-<n><suffix>. Returns the
+    path that holds it. The comparing with earlier results has PLACE_COMPARE_SECONDS in all: past it an earlier result is taken as
+    different and this one takes the next free name."""
     deadline = time.monotonic() + PLACE_COMPARE_SECONDS
     for n in range(1, 1000):
         candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
-        try:
-            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        except FileExistsError:
-            if not os.path.islink(candidate) and same_bytes(tmp, candidate, deadline):
-                os.unlink(tmp)
-                return candidate
-            continue
-        os.close(fd)
-        try:
-            os.replace(tmp, candidate)         # only replaces the empty file this call just made
-        except OSError:
-            try:
-                os.unlink(candidate)           # the empty name this call took is not left behind
-            except OSError:
-                pass
-            raise
-        return candidate
+        if _take_name(tmp, candidate):
+            return candidate
+        if not os.path.islink(candidate) and same_bytes(tmp, candidate, deadline):
+            os.unlink(tmp)
+            return candidate
     raise OSError(errno.EEXIST, "no free name beside %s" % path)
 
 
@@ -239,6 +277,18 @@ def place_visibly(tmp, wanted):
 
 
 PAGES = []
+
+
+def abort_pages():
+    """Drop the hidden temporary file of every page that was being written, under the signal guard (GUARD["depth"], as emit holds it for an
+    answer): a signal that lands in the loop is held until it is over, so that no page's file is left and the answer that follows is the one
+    answer."""
+    GUARD["depth"] += 1
+    try:
+        for page in list(PAGES):
+            page.abort()
+    finally:
+        GUARD["depth"] -= 1
 
 
 class LosslessPage:
@@ -470,8 +520,7 @@ def interrupted_answer(signum, **extra):
 
 
 def fail(message, **extra):
-    for page in list(PAGES):    # a page that was being written is dropped with its hidden temporary file, whatever ended the call
-        page.abort()
+    abort_pages()               # a page that was being written is dropped with its hidden temporary file, whatever ended the call
     emit(json.dumps({"error": message, "status": "failed",
                      "status_basis": "the call was refused or ended before an answer; nothing in this document is a finding",
                      **extra}))

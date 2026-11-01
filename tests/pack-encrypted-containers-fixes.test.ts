@@ -385,7 +385,7 @@ for (const [name, num] of [["SIGTERM", 15], ["SIGINT", 2], ["SIGHUP", 1]] as con
       assert.doesNotMatch(run.stderr, /Traceback/);
       assert.equal(run.code, 128 + num, run.stdout);
       const got = JSON.parse(run.stdout) as Json;
-      assert.deepEqual([got.status, got.signal, got.path], ["interrupted", num, "work/s.7z"]);
+      assert.deepEqual([got.status, got.interrupted, got.signal, got.path], ["failed", true, num, "work/s.7z"]);
       const child = Number((await readFile(pidFile, "utf8")).trim());
       await new Promise((r) => setTimeout(r, 300));
       assert.equal(alive(child), false, "the 7z child is still running");
@@ -532,7 +532,7 @@ for (const [name, num] of [["SIGTERM", 15], ["SIGINT", 2], ["SIGHUP", 1]] as con
       const run = await signalled(ID, cwd, { path: "work/slow.bin" }, { PYTHONPATH: join(cwd, "site") }, name, async () => Date.now() - started > 700);
       assert.doesNotMatch(run.stderr, /Traceback/);
       assert.equal(run.code, 128 + num, run.stdout);
-      assert.equal((JSON.parse(run.stdout) as Json).status, "interrupted");
+      assert.deepEqual([(JSON.parse(run.stdout) as Json).status, (JSON.parse(run.stdout) as Json).interrupted], ["failed", true]);
     });
   });
 }
@@ -693,7 +693,7 @@ for (const [name, num] of [["SIGTERM", 15], ["SIGINT", 2], ["SIGHUP", 1]] as con
   });
 }
 
-test("recovery_key_scan stops hard when a read never returns: the temporary files go, the answer says interrupted", async () => {
+test("recovery_key_scan stops hard when a read never returns: the temporary files go, the answer says failed with interrupted true", async () => {
   await withCwd(async (cwd) => {
     const env = await slowTree(cwd, 4);
     for (let i = 0; i < 6; i++) await writeFile(join(cwd, "work", "ev", `n${i}.txt`), `${recoveryKey()}\n`);
@@ -702,7 +702,7 @@ test("recovery_key_scan stops hard when a read never returns: the temporary file
     const started = Date.now();
     const run = await signalled(SCAN, cwd, { path: "work/ev", limit: 1 }, { ...env, SLOW_PAUSE: "40", JOB_ID: "j000021", OUT: outDir }, "SIGTERM", async () => Date.now() - started > 900);
     assert.equal(run.code, 143, run.stdout + run.stderr);
-    assert.equal((JSON.parse(run.stdout) as Json).status, "interrupted");
+    assert.deepEqual([(JSON.parse(run.stdout) as Json).status, (JSON.parse(run.stdout) as Json).interrupted], ["failed", true]);
     assert.deepEqual((await readdir(outDir, { recursive: true })).filter((n) => /(^|\/)\./.test(n)), []);
   });
 });

@@ -245,6 +245,6 @@ test("the MAM code both tools share is one text, the STOP block is regkv's in bo
   assert.doesNotMatch(scan + pf, /\bLosslessPage\(/);
   assert.match(pf, /^DEADLINE_SECONDS = \d+ /m);
   assert.match(scan, /^DEADLINE_SECONDS = \d+ /m);
-  assert.equal(STOP_STATUS, "interrupted");
+  assert.equal(STOP_STATUS, "failed");
   assert.deepEqual(readdirSync(WIN).filter((n) => n === "mam_scan" || n === "prefetch_mam").sort(), ["mam_scan", "prefetch_mam"]);
 });

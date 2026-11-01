@@ -79,11 +79,11 @@
   "example": "{\"path\": \"work/extracted/sample.exe\"}",
   "by": "maintainer",
   "at": "2026-11-01T00:00:00.000Z",
-  "version": 2,
+  "version": 3,
   "secret_output": {
     "when_args": [
       "write_values"
     ]
   },
-  "sha256": "704cc5ee6258c09fa9be56f048d6d533920c715234368c021af90ded2ee4197d"
+  "sha256": "ce85102cc3f8bdd5013460299164625000a043633c6a5a8e0c31b4910e4ed242"
 }

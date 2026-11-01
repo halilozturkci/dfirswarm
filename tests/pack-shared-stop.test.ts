@@ -22,10 +22,10 @@ import { ROOT } from "./tool-library-harness.ts";
 
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 const PINS: Record<string, string> = {
-  windows: "37604b4f9798ed2e8633c23b95bde6edd5eec069ec000a7f35d8f13e61243145",
+  windows: "74c974d75fdd178bc86ebd2f724b41c9292864c5d4b310dcde05ae7fa58e2fd6",
   macos: "c2e19b97dbdc3943294c42a9573427e487199059969d25cee3171a7d908a1675",
-  encrypted: "1c2073b19c6881895643b72d190304b9386356c9e7f74a2e6625efeecc95ab11",
-  page: "832d9e44b8104db9938f1baaf67c5e48bdbe0da1ebcd28a32ce3d61ac692a3ab",
+  encrypted: "cb1cd7b46f1e0068532f6039cebc91fc124bb9bc6190e99626c5f8a76b818e62",
+  page: "d62d778d19bb357ad67a63bf2dcb007ed4582eec5992eb37690554048ced5713",
 };
 
 async function carriers(marker: string): Promise<string[]> {

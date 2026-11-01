@@ -148,10 +148,10 @@ or `tools/`.
 | `lnk_parse` | python3 | `s183902` | 7 | Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layo… |
 | `mam_pf_parse` | python3 | `s2f6600` | 1 | Decompress a MAM-wrapped Windows prefetch file and return executable name, version, run count, and non-zero l… |
 | `mam_scan` | python3 | `s183901` | 4 | Scan a raw dump or image region for MAM-compressed Prefetch records (the signature MAM\x04 and a declared siz… |
-| `marshal_inspect` | python3 | `sd29252` | 3 | Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and neve… |
+| `marshal_inspect` | python3 | `sd29252` | 4 | Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and neve… |
 | `master_icat` | bash | `s9a5f06` | 3 | Extract a file by inode from an E01 with icat. The HDFS master image and sector offset 2048 are the defaults;… |
 | `nested_vdi` | python3 | `sae6e7d` | 1 | Read a VirtualBox VDI that lies inside an E01 or raw image, in place: found by its NTFS data runs (a deleted … |
-| `prefetch_mam` | python3 | `sbe1803` | 4 | Read a Windows Prefetch file, MAM-compressed (MAM\x04) or plain (SCCA), field by field by the layout of its S… |
+| `prefetch_mam` | python3 | `sbe1803` | 5 | Read a Windows Prefetch file, MAM-compressed (MAM\x04) or plain (SCCA), field by field by the layout of its S… |
 | `recyclebin_i` | python3 | `maintainer` | 6 | Parse $Recycle.Bin $I metadata (version 1 and 2 records, unsigned fields): the original path, original size a… |
 | `reg_hive_query` | python3 | `sbe1805` | 1 | Query a Windows registry hive file (regipy) and return a key's values and subkey names as JSON. |
 | `regkeys` | python3 | `sf4b205` | 4 | Dump a registry key's values and subkeys from a hive with regipy. Text values are decoded, REG_BINARY comes b… |

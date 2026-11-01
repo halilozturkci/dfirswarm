@@ -22,7 +22,7 @@ import { basename, dirname, join } from "node:path";
 import { WIN, stub } from "./windows-pack-harness.ts";
 
 /** The status word of the STOP block's answer. One constant, so that a sweep that renames the word changes one line. */
-export const STOP_STATUS = "interrupted";
+export const STOP_STATUS = "failed";   // with interrupted: true (a stop is not a status of its own)
 export const SIGNAL_NUMBER = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 } as const;
 export type StopSignal = keyof typeof SIGNAL_NUMBER;
 export type Moment = "early" | "temp" | "child" | "print";
@@ -327,7 +327,8 @@ export function assertStopped(run: StopRun, signal: StopSignal = run.sent): { an
   }
   assert.ok(answer !== null && typeof answer === "object" && !Array.isArray(answer), `${where} the document is not an object`);
   const doc = answer as Record<string, unknown>;
-  if (doc.status === STOP_STATUS) {
+  // the tools that carry the STOP block answer failed with interrupted true; a tool with a stop of its own may still say "interrupted" (listed as open)
+  if ((doc.status === STOP_STATUS && doc.interrupted === true) || doc.status === "interrupted") {
     assert.equal(run.code, 128 + SIGNAL_NUMBER[signal], `${where} exit code`);
     if (doc.signal !== undefined) assert.equal(doc.signal, SIGNAL_NUMBER[signal], `${where} the signal named`);
     return { answered: true, answer: doc };
