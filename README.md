@@ -92,7 +92,7 @@ When the evidence cannot answer something a reference service can (a domain's re
 | `mobile-forensics` | 11 | 3 | 1 |
 | `memory-forensics` | 20 | 3 | 1 |
 | `network-forensics` | 13 | 6 | 1 |
-| `reverse-engineering` | 21 | 8 | 1 |
+| `reverse-engineering` | 21 | 9 | 1 |
 | `encrypted-containers` | 13 | 5 | 1 |
 | `cloud-forensics` | 11 | 3 | 1 |
 | `ransomware-response` | 18 | 2 | 1 |
@@ -102,7 +102,7 @@ When the evidence cannot answer something a reference service can (a domain's re
 A **pack** is a directory an operator installs once and names at kickoff: skills
 an agent fetches by name, tools seeded into the run, the host binaries the case
 needs, and goal templates with their own checks. **Thirteen ship in this
-repository** under the same licence as the harness: 264 skills, 87 tools and 15
+repository** under the same licence as the harness: 264 skills, 88 tools and 15
 goal templates across Windows, Linux, macOS, mobile, memory, network, reverse
 engineering, encrypted containers, cloud, ransomware, triage collections, and
 virtualization and backup, all on one base pack.

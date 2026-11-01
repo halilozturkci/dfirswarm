@@ -62,10 +62,10 @@
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "0a7a2a0b3f83fbe56728e36b0ed50bcab84a25d2949fac38405c7836775ae912",
       "goals/sample-triage.md": "0f6798ec18204b277c9430d5a74359cf7c5142131ccfc5071293b3dd1bd0ad12",
-      "recipes/capa-floss/recipe.json": "79434f85682bc1d0f607c304700a1536d4bca099290cfb34c88b9340d41afb8c",
-      "recipes/capa-floss/run.py": "53d772971ee61b71e33ddc42f9eb72408c4993d814b8caeca2e33b2e4d196818",
-      "recipes/static-binary/recipe.json": "53e5b8c5190eef940572b043908d63c9eb31f7418cb0a4c282e32837354abfe3",
-      "recipes/static-binary/run.py": "a26cde4a42ec1d595bdab592a144ccdf70ed34a3e62937a6d93fad3845717b9f",
+      "recipes/capa-floss/recipe.json": "fc5f8d643e9716b0fb9382b77c743bd268876f6b2be5638c05e765c52b0d3beb",
+      "recipes/capa-floss/run.py": "55c39e2becc923250deafbb2d3606622e574a318aaa53a0730d4110a803284fe",
+      "recipes/static-binary/recipe.json": "97412d41c8e82df6075805027141c351ae2a26621ec4924f2aa6238a4e39d566",
+      "recipes/static-binary/run.py": "b4b7788e1d8b1a8e4bf59938de21f18d61211148c6a84b56c53b31a0e19572b9",
       "requires/host.json": "e438c1f441995fb30448e0c8b09b454fc402842a0496536a27e1a3e8be58000e",
       "requires/locks/floss.txt": "83949fd4edbc82abdb527a7957d401e4a18f40a4c70f6bec104e4edbf4808d0d",
       "requires/locks/olevba.txt": "0fa1a024d9ce875c81addf1f3fc6f6e0ec794fc08fba4744c0f1d791f2758faa",
@@ -81,7 +81,7 @@
       "skills/elf/structure.md": "913d82302d83dc52d253971d7436811be92be563b1d47bb164abef96eda4f7aa",
       "skills/macho/structure.md": "58fdbd9009abac5db96e488db9ace1ebd935084b38f96c29634cd3b4c6fa9b26",
       "skills/managed/clr.md": "8bf03cdc3eb78cd5a4813cd39a32df65b722a95a9ed330479cf29920b595140e",
-      "skills/packing/static-recovery.md": "b253d8af43bcb8a23c1460561aa2c9948ce42e0587b75bf1e058fbda2136db6b",
+      "skills/packing/static-recovery.md": "d0bcfcf7c6b3ba1d8076907a9fd94931022cfa41823c99e4be569e98eef345a5",
       "skills/pe/signature-and-resources.md": "b07ac934578b5b471917189812d9a651a7c52f5107826af100cbbd2326d68781",
       "skills/pe/structure.md": "555340ce97d7f18ddf8de1eeeb1b1ce345c2498f4ff219004812cc98f8eafb0a",
       "skills/reverse-engineering/router.md": "733871064383e7b724fe7f0d79962b909d260a0e4729e8bcdd354e564f3513ac",
@@ -108,7 +108,9 @@
       "tools/pe_directories/manifest.json": "9a82db7cdc03f7817d26291f706b333ab7794dd69fd5fcb7e19946f0e3d4bcda",
       "tools/pe_directories/run.py": "1ccf8962ba0409c19380435b9bfd509645b37147552b14c7b011deeaeac08ac9",
       "tools/pe_info/manifest.json": "772d626b65f084da0f03c5cc73494be8183d944ec26f3e5a26305a482d366e46",
-      "tools/pe_info/run.py": "7c86009c5fa4cec5974c66fb36fa1fd6a982bb7756875fd352486c8b83901915"
+      "tools/pe_info/run.py": "7c86009c5fa4cec5974c66fb36fa1fd6a982bb7756875fd352486c8b83901915",
+      "tools/unpack_safe/manifest.json": "3d7c76d1085bfdd9563a60e1369802f04d9656662a6b1e8cf5c5d0bbe3816c99",
+      "tools/unpack_safe/run.py": "b9bed2307c705fef7e83e0d8716863c1a5cfa776fc6537b8fe29a3db179d5588"
     }
   },
   "tools": [
