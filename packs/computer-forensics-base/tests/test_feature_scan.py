@@ -7,7 +7,10 @@ report.xml and, for the net scanner, packets.pcap.
 import importlib.util
 import json
 import os
+import signal
 import stat
+import subprocess
+import sys
 import tracemalloc
 import unittest
 
@@ -186,6 +189,124 @@ class FeatureScan(Case):
         self.assertEqual(nothing.json["secret_values"]["values_file"], "store/jobs/j000014/out/feature-scan-values.jsonl")
         path = os.path.join(out, "feature-scan-values.jsonl")
         self.assertEqual((os.path.getsize(path), stat.S_IMODE(os.stat(path).st_mode)), (0, 0o600))
+
+
+class FeatureScanProcess(Case):
+    """bulk_extractor runs through the PROCESS block; what it wrote is counted on the clock; a stop ends it and what it started."""
+
+    def scan_with(self, program_text, args=None, shebang=True, source=None, env=None, timeout=60):
+        bin_dir = self.path("bin")
+        os.makedirs(bin_dir, exist_ok=True)
+        program = os.path.join(bin_dir, "bulk_extractor")
+        with open(program, "w", encoding="utf-8") as fh:
+            fh.write(("#!/bin/sh\n" if shebang else "") + program_text)
+        os.chmod(program, 0o755)
+        src = self.write("inputs/blob.raw", b"\0" * 64)
+        a = {"path": src, "out_dir": "work/features"}
+        a.update(args or {})
+        e = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"])
+        for k in ("JOB_ID", "OUT", "AGENT_ID", "SECRET_OUTPUT"):
+            e.pop(k, None)
+        e.update(env or {})
+        return subprocess.run([sys.executable, source or tool_path("feature_scan")], input=json.dumps(a), capture_output=True, text=True,
+                              cwd=self.dir, env=e, timeout=timeout)
+
+    def test_a_program_that_cannot_be_executed_is_a_json_failure_naming_it(self):
+        proc = self.scan_with('echo "not a program the kernel can run"\n', shebang=False)
+        self.assertEqual(proc.returncode, 1)
+        self.assertNotIn("Traceback", proc.stderr)
+        said = json.loads(proc.stdout)
+        self.assertEqual(said["status"], "failed")
+        self.assertIn("bulk_extractor could not be started", said["error"])
+        self.assertTrue(said["program"].endswith("/bulk_extractor"))
+        self.assertEqual([n for n in os.listdir(self.path("work")) if n.startswith(".")], [], "no hidden file is left")
+
+    def test_what_the_clock_leaves_no_time_to_count_is_named_and_the_status_is_partial(self):
+        with open(tool_path("feature_scan"), encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("COUNT_SECONDS = 1150 ", text)
+        patched = self.write("patched_feature_scan.py", text.replace("COUNT_SECONDS = 1150 ", "COUNT_SECONDS = 0 ", 1))
+        proc = self.scan_with(stub_body(), source=patched)
+        said = json.loads(proc.stdout)
+        self.assertEqual((proc.returncode, said["status"], said["exit_code"]), (1, "partial", 0))
+        self.assertTrue(said["not_counted"], said)
+        self.assertIn("not_counted", said["status_basis"])
+        for secret in (SECRET_ADDRESS, CARD):
+            self.assertNotIn(secret, proc.stdout)
+
+    def test_a_feature_file_with_a_line_longer_than_a_block_is_read_on_the_clock_and_counted(self):
+        proc = self.scan_with('while [ $# -gt 0 ]; do case "$1" in -o) OUTDIR="$2"; shift;; esac; shift; done\nmkdir -p "$OUTDIR"\n'
+                              'python3 -c \'import sys; sys.stdout.write("10\\t" + "A" * (3 << 20) + "\\tctx\\n20\\tb\\tctx\\n")\' > "$OUTDIR/email.txt"\nexit 0\n')
+        said = json.loads(proc.stdout)
+        self.assertEqual(said["status"], "complete", said)
+        email = [f for f in said["features"] if f["feature"] == "email"][0]
+        self.assertEqual((email["lines"], email["lines_longer_than_a_block"]), (2, 1))
+
+    def test_each_stop_signal_ends_the_engine_and_what_it_started_and_answers_once(self):
+        import time
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            work = os.path.join(self.dir, "run-%d" % sig)
+            os.makedirs(work)
+            bin_dir = os.path.join(work, "bin")
+            os.makedirs(bin_dir)
+            pids = os.path.join(work, "pids")
+            with open(os.path.join(bin_dir, "bulk_extractor"), "w") as fh:
+                fh.write('#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in -o) OUTDIR="$2"; shift;; esac; shift; done\nmkdir -p "$OUTDIR"\nprintf "1\\tx\\tc\\n" > "$OUTDIR/email.txt"\n'
+                         'sleep 60 &\necho "$$ $!" > "%s"\nwait\n' % pids)
+            os.chmod(os.path.join(bin_dir, "bulk_extractor"), 0o755)
+            with open(os.path.join(work, "blob.raw"), "wb") as fh:
+                fh.write(b"\0" * 64)
+            e = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"])
+            with open(os.path.join(work, "args.json"), "w") as af:
+                af.write(json.dumps({"path": "blob.raw", "out_dir": "work/features"}))
+            with open(os.path.join(work, "args.json")) as stdin:
+                proc = subprocess.Popen([sys.executable, tool_path("feature_scan")], stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=work, env=e)
+            end = time.monotonic() + 20
+            while time.monotonic() < end:
+                if os.path.exists(pids):
+                    with open(pids) as pf:
+                        words = pf.read().split()
+                    if len(words) == 2:
+                        break
+                time.sleep(0.05)
+            engine, child = [int(x) for x in words]
+            proc.send_signal(sig)
+            stdout, stderr = proc.communicate(timeout=30)
+            self.assertEqual(proc.returncode, 128 + sig, (sig.name, stdout, stderr))
+            said = json.loads(stdout)
+            self.assertEqual((said["status"], said["interrupted"], said["signal"]), ("partial", True, int(sig)))
+            time.sleep(0.3)
+            for pid in (engine, child):
+                try:
+                    os.kill(pid, 0)
+                    with open("/proc/%d/status" % pid) as sf:
+                        gone = "Z" in sf.read().split("State:")[1].split("\n")[0]
+                except (ProcessLookupError, OSError):
+                    gone = True
+                self.assertTrue(gone, "pid %d survived %s" % (pid, sig.name))
+            self.assertEqual([n for n in os.listdir(os.path.join(work, "work")) if n.startswith(".")], [], "a hidden temporary file was left")
+            self.assertEqual(stat.S_IMODE(os.stat(os.path.join(work, "work", "features")).st_mode), 0o700, "what was written is private after a stop too")
+
+    def test_a_stop_signal_after_the_process_block_and_before_main_gives_one_json_document(self):
+        with open(tool_path("feature_scan"), encoding="utf-8") as fh:
+            text = fh.read()
+        end = text.index("# END SHARED PROCESS")
+        cut = text.index("install_signal_handlers()\n", end) + len("install_signal_handlers()\n")
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            script = self.write("prefix.py", text[:cut] + "\nimport os as _os, signal as _s, time as _t\n_os.kill(_os.getpid(), _s.%s)\n_t.sleep(30)\nprint('survived')\n" % sig.name)
+            proc = subprocess.run([sys.executable, script], cwd=self.dir, capture_output=True, text=True, timeout=60)
+            self.assertEqual(proc.returncode, 128 + sig, (sig.name, proc.stdout, proc.stderr))
+            self.assertEqual((json.loads(proc.stdout)["status"], json.loads(proc.stdout)["interrupted"]), ("failed", True))
+
+    def test_hostile_arguments_are_json(self):
+        for raw in ("[" * 100000, "not json"):
+            r = run_tool("feature_scan", None, self.dir, raw_input=raw)
+            self.assertEqual(r.code, 1)
+            self.assertNotIn("Traceback", r.stderr)
+        for args in ({"path": "x\0y", "out_dir": "work/f"}, {"path": "inputs/blob.raw", "out_dir": "work/f\0"}):
+            r = run_tool("feature_scan", args, self.dir)
+            self.assertEqual(r.code, 1)
+            self.assertNotIn("Traceback", r.stderr)
 
 
 if __name__ == "__main__":

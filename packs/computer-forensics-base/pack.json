@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.11.21",
+  "version": "1.11.22",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -68,7 +68,7 @@
       "tests/test_check_inputs.py": "2ecfb4865cf7a9f2fefff83c514ea37c5de2c5b14073d40d08ce678790ff2c0a",
       "tests/test_chunk_needles.py": "06bd6f7d1b96733796d5f92fb42c9d648a7f398fc5a457f22660b20fff1ff97c",
       "tests/test_disk_volumes.py": "f49e22ffef010883f614aec91544ff620319618fe9e426fd7134e2f1f7c0cd87",
-      "tests/test_feature_scan.py": "bc8354f308a0c990d4011a8abb14345c2fde4dbdefe44585446ffb5c0d2a8ded",
+      "tests/test_feature_scan.py": "a41c04d1a8244d2aeb4cb5513004be89aaffceb484118b06869acf5dfcb7a805",
       "tests/test_file_carver.py": "9e154ffa6495f14c318b1bfd6fe43cf6812a00c913d9cb454571c79ddb3b8fb0",
       "tests/test_file_type.py": "9fbeb3e2db8d81d7b7e2ae4e5cb7f58d227a0606f0429765b2f78a4ce1272dc0",
       "tests/test_icat_extract.py": "58b7385f836255b6684f4ba80b4d5ffdbac024b83fb0188aec18d47953fa9127",
@@ -93,8 +93,8 @@
       "tools/check_inputs/run.py": "97b1577ee6c34ba4553a664107780234f91c5b36c9ae259d60524ee51839efd1",
       "tools/chunk_needles/manifest.json": "2d399672d2086ccb46e3665d6e6d625e5c0d36e0a1c41a3229211d659f2a5252",
       "tools/chunk_needles/run.py": "86bc73e0f804acc9211fa6820f41a008318572a0cee4247ac665ddfc2ea319e3",
-      "tools/feature_scan/manifest.json": "4fbeb5bc27aa7206c9f49c74e20d31293dd90df5a07161fe2798dd56b64d7873",
-      "tools/feature_scan/run.py": "65240193b13587082cb154f0af0d24eed0c08321c9afaee191969fc78d6629dc",
+      "tools/feature_scan/manifest.json": "c6e2a1e4c20fded96fe2ce8d688c3fee300353e1f9c6c3d319723e497badac81",
+      "tools/feature_scan/run.py": "e41e786d089af9139fe93744879ce386bd7aec6d3568d1b3d947d4e2c7c451c3",
       "tools/file_carver/manifest.json": "bb61198cc0053ca31e2ae3b1831c883ceff0b433005cc516f3a4cc3528e67393",
       "tools/file_carver/run.py": "be88d7d9898293603c2fa5031a0e5c14f6a007c3d8dbde13097b3910fc4c18d5",
       "tools/file_type/manifest.json": "0685d8e1f0667daedb1f540ad08ee2bfb10809250f5c70c08974cf09ca49fc87",
