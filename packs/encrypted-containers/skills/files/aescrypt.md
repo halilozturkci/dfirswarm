@@ -21,7 +21,7 @@ before the file is named a result. A library tool for AES Crypt version 2 may be
 run's tool inventory (the tool library, loaded on request): use it only when the case asks
 for it by name.
 
-Tell the failures apart as far as the format lets you. A container whose length is not that
+Tell the failures apart as far as the format lets you. A version 2 container whose length is not that
 of a whole file is a cut copy, and nothing is decrypted. A wrong password and a damaged file
 both fail the HMAC and look alike: say that the attempt failed, not which of the two it was.
 Plaintext that was written before the HMAC passed is never a result; it stays an unverified
