@@ -116,6 +116,7 @@
   "tools": [
     "doc_probe",
     "doc_structure",
+    "elf_directories",
     "entropy_map",
     "fuzzy_hash",
     "go_buildinfo",
