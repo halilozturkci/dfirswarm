@@ -9,8 +9,15 @@
 # With a partition table (`mmls`): partitions.txt and, per filesystem
 # partition, p<start>/{fsstat.txt, bodyfile.txt, filelist.txt, timeline.csv}.
 # With none but a filesystem at sector 0 (`fsstat`): the same under p0. Each
-# step is time-boxed (RECIPE_STEP_SECONDS, default 900) and keeps what it wrote
-# to stderr whole beside its output as <file>.stderr. index.tsv lists what was
+# step is time-boxed (RECIPE_STEP_SECONDS, default 900, and never more than the
+# recipe's own clock has left: RECIPE_SECONDS, default 14400 as recipe.json's
+# limits.seconds, less a margin of a twentieth, at most 60 seconds). A step that
+# the clock leaves no time for is not started, and coverage.json names it in
+# limits_hit. A step keeps what it wrote
+# to stderr whole beside its output as <file>.stderr. A TERM, INT or HUP ends
+# the one step running (by the pid it was started with), writes coverage.json as
+# partial and interrupted, answers once as JSON and exits 128 plus the signal.
+# index.tsv lists what was
 # written (file, what) and coverage.json what was and was not covered, with an
 # inventory of every allocated partition entry and what became of it: read
 # (fsstat read a file system there), failed (it was tried and fsstat or a step
@@ -90,33 +97,112 @@ PY
 
 STEP_TIMEOUT="${RECIPE_STEP_SECONDS:-900}"
 PROBE_TIMEOUT="${RECIPE_PROBE_SECONDS:-120}"
+[[ "$STEP_TIMEOUT" =~ ^[0-9]+$ && "$PROBE_TIMEOUT" =~ ^[0-9]+$ ]] || { echo '{"ok": false, "error": "RECIPE_STEP_SECONDS and RECIPE_PROBE_SECONDS are whole numbers"}'; exit 2; }
+# The recipe's own clock: recipe.json's limits.seconds (a test holds the two equal), less a margin of a twentieth, at most a minute, for
+# the index and the coverage. SECONDS is the shell's own count of seconds since it began.
+TOTAL_SECONDS="${RECIPE_SECONDS:-14400}"
+[[ "$TOTAL_SECONDS" =~ ^[0-9]+$ ]] || TOTAL_SECONDS=14400
+MARGIN=$((TOTAL_SECONDS / 20)); (( MARGIN > 60 )) && MARGIN=60
+DEADLINE=$((TOTAL_SECONDS - MARGIN))
 out=""
+cmd=""
 notes=()
+unstarted=()   # the steps the recipe's clock left no time for, by their command line
+cut_short=()   # the steps that were given only the time the clock had left, and used it
+stopped_by=""
 inventory=()   # one "start<TAB>description<TAB>outcome<TAB>why" per allocated partition entry
-# probe <cmd...>: a detect-time call with a deadline, like every other step.
-probe() { perl -e 'alarm shift; exec @ARGV' "$PROBE_TIMEOUT" "$@"; }
+
+exec 3>&1     # the real standard output, for the stop answer: the redirections of the step being waited for are still in force when a trap runs
+# --- steps and stopping ---------------------------------------------------------------------------------------------------------
+# Every step is started in the background and waited for, so that a signal to this script is acted on at once (a trap waits for a
+# foreground command to end) and the step to end is known by its pid. perl's alarm then exec makes the command the process itself.
+CHILD=""
+alive() { # alive <pid>: running, and not a zombie waiting to be reaped
+  kill -0 "$1" 2>/dev/null || return 1
+  local st
+  st="$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "/proc/$1/status" 2>/dev/null)"
+  [[ "$st" != Z ]]
+}
+bg() { # bg <seconds> <cmd...>: the command with a deadline; its redirections are the caller's
+  local secs="$1" rc
+  shift
+  perl -e 'alarm shift; exec @ARGV' "$secs" "$@" 3>&- &
+  CHILD=$!
+  wait "$CHILD"
+  rc=$?
+  CHILD=""
+  return "$rc"
+}
+# boxed <cmd...>: bg with RECIPE_STEP_SECONDS or what the recipe's clock has left, whichever is less; 125 when there is none left.
+boxed() {
+  local secs="$STEP_TIMEOUT" left=$((DEADLINE - SECONDS)) label="$*" rc
+  if (( left <= 0 )); then
+    unstarted+=("${label:0:160}")
+    return 125
+  fi
+  local limited=0
+  if (( left < secs )); then secs=$left; limited=1; fi
+  bg "$secs" "$@"
+  rc=$?
+  if (( rc == 142 && limited )); then cut_short+=("${label:0:160}"); fi
+  return "$rc"
+}
+probe() { bg "$PROBE_TIMEOUT" "$@"; } # a detect-time call with a deadline, like every other step
+on_signal() { # on_signal <name> <number>
+  local name="$1" num="$2" pids p i
+  trap '' TERM INT HUP                  # a second signal while this one is answered changes nothing: the answer is one document
+  pids="$CHILD"
+  [[ -n "$pids" ]] || pids="$(jobs -p 2>/dev/null)"
+  for p in $pids; do kill -TERM "$p" 2>/dev/null; done
+  for p in $pids; do
+    i=0
+    while (( i < 30 )) && alive "$p"; do sleep 0.1; i=$((i + 1)); done
+    if alive "$p"; then kill -KILL "$p" 2>/dev/null; fi
+    wait "$p" 2>/dev/null
+  done
+  if [[ "$cmd" == run && -n "$out" && -d "$out" ]]; then
+    stopped_by="SIG$name"
+    notes+=("stopped by SIG$name: the step that was running was ended and the steps after it were not run")
+    coverage partial "interrupted by SIG$name: what was written before it is kept, and the steps after it were not run"
+    echo "{\"ok\": false, \"status\": \"partial\", \"interrupted\": true, \"signal\": \"SIG$name\"}" >&3
+  elif [[ "$cmd" == detect ]]; then
+    echo "{\"applies\": false, \"interrupted\": true, \"signal\": \"SIG$name\", \"why\": \"the probe was stopped by SIG$name before it could tell\"}" >&3
+  else
+    echo "{\"ok\": false, \"interrupted\": true, \"signal\": \"SIG$name\"}" >&3
+  fi
+  exit $((128 + num))
+}
+trap 'on_signal TERM 15' TERM
+trap 'on_signal INT 2' INT
+trap 'on_signal HUP 1' HUP
 note_entry() { # note_entry <start> <description> <outcome> <why>
   inventory+=("$(printf '%s\t%s\t%s\t%s' "$1" "$2" "$3" "$4")")
 }
 
 # Run a command with a deadline; stdout to a file, stderr whole beside it as
-# <file>.stderr when there is any. Prints "ok" or a reason naming that file.
+# <file>.stderr when there is any. Sets STEP_R to "ok" or a reason naming that file (not printed: a command substitution would be a
+# foreground step the stop handling cannot see).
+STEP_R=""
 run_step() { # run_step <outfile> <cmd...>
   local file="$1"; shift
   local rc=0
-  perl -e 'alarm shift; exec @ARGV' "$STEP_TIMEOUT" "$@" > "$file" 2> "$file.stderr" || rc=$?
+  boxed "$@" > "$file" 2> "$file.stderr" || rc=$?
   [[ -s "$file.stderr" ]] || rm -f "$file.stderr"
   if [[ "$rc" -eq 0 ]]; then
-    echo ok
+    STEP_R=ok
     return 0
   fi
   [[ -s "$file" ]] || rm -f "$file"
+  if [[ "$rc" -eq 125 ]]; then
+    STEP_R="not started (the recipe's time limit left none for it)"
+    return 0
+  fi
   local err=""
   if [[ -f "$file.stderr" ]]; then
     err="$(head -c 200 "$file.stderr" | tr '\n' ' ')"
     err="$err; all of stderr: ${file#"$out/"}.stderr"
   fi
-  echo "failed (exit $rc${err:+: $err})"
+  STEP_R="failed (exit $rc${err:+: $err})"
 }
 
 index_row() { # index_row <file relative to out> <what>
@@ -124,15 +210,21 @@ index_row() { # index_row <file relative to out> <what>
   printf '%s\t%s\n' "$1" "$2" >> "$out/index.tsv"
 }
 
-fsstat_boxed() { perl -e 'alarm shift; exec @ARGV' "$STEP_TIMEOUT" fsstat "$@"; }
+fsstat_boxed() { boxed fsstat "$@"; }
 
-# reads_a_file_system <start> <img>: does fsstat read one there (a time-boxed call, its words discarded).
+# reads_a_file_system <start> <img>: does fsstat read one there (a time-boxed call, its words kept only to look for the answer).
 reads_a_file_system() {
-  perl -e 'alarm shift; exec @ARGV' "$STEP_TIMEOUT" fsstat -o "$1" "$2" 2>/dev/null | grep -q '^File System Type:'
+  local f rc=0
+  f="$(mktemp)"
+  boxed fsstat -o "$1" "$2" > "$f" 2>/dev/null || rc=$?
+  if (( rc == 125 )); then rm -f "$f"; return 2; fi        # not started: it is not known whether a file system is there
+  grep -q '^File System Type:' "$f" 2>/dev/null && rc=0 || rc=1
+  rm -f "$f"
+  return "$rc"
 }
 
 volume() { # volume <img> <shown name> <start> <description>
-  local img="$1" shown="$2" start="$3" desc="$4" pdir r
+  local img="$1" shown="$2" start="$3" desc="$4" pdir r why
   [[ "$start" =~ ^[0-9]+$ ]] || return  # a start sector is digits; it names a directory
   pdir="$out/p$start"
   mkdir -p "$pdir"
@@ -142,18 +234,20 @@ volume() { # volume <img> <shown name> <start> <description>
     note_entry "$start" "$desc" failed "fsstat is not in this image"
     return
   fi
-  r="$(run_step "$pdir/fsstat.txt" fsstat -o "$start" "$img")"
+  run_step "$pdir/fsstat.txt" fsstat -o "$start" "$img"; r="$STEP_R"
   if [[ "$r" != ok ]]; then
     notes+=("candidate partition at sector $start is not a readable filesystem: $r")
-    note_entry "$start" "$desc" failed "fsstat did not read a file system there"
+    why="fsstat did not read a file system there"
+    [[ "$r" == "not started"* ]] && why="fsstat was not started (the recipe's time limit left none for it)"
+    note_entry "$start" "$desc" failed "$why"
     index_row "p$start/fsstat.txt" "fsstat output for unreadable candidate at sector $start ($desc)"
     # Keep the historical best-effort fls probes as diagnostics. They do not
     # make the candidate a readable volume, even if they leave partial output.
     if have fls; then
-      r="$(run_step "$pdir/bodyfile.txt" fls -m / -r -o "$start" "$img")"
+      run_step "$pdir/bodyfile.txt" fls -m / -r -o "$start" "$img"; r="$STEP_R"
       [[ "$r" == ok ]] || notes+=("fls body file at sector $start: $r")
       index_row "p$start/bodyfile.txt" "diagnostic body-file probe for unreadable candidate at sector $start"
-      r="$(run_step "$pdir/filelist.txt" fls -r -p -o "$start" "$img")"
+      run_step "$pdir/filelist.txt" fls -r -p -o "$start" "$img"; r="$STEP_R"
       [[ "$r" == ok ]] || notes+=("fls path list at sector $start: $r")
       index_row "p$start/filelist.txt" "diagnostic path-list probe for unreadable candidate at sector $start"
     fi
@@ -163,10 +257,10 @@ volume() { # volume <img> <shown name> <start> <description>
   note_entry "$start" "$desc" read "fsstat read a file system"
   index_row "p$start/fsstat.txt" "filesystem header at sector $start ($desc)"
   if have fls; then
-    r="$(run_step "$pdir/bodyfile.txt" fls -m / -r -o "$start" "$img")"
+    run_step "$pdir/bodyfile.txt" fls -m / -r -o "$start" "$img"; r="$STEP_R"
     [[ "$r" == ok ]] || notes+=("fls body file at sector $start: $r")
     index_row "p$start/bodyfile.txt" "body file (fls -m -r), every file with MAC times, for mactime/grep"
-    r="$(run_step "$pdir/filelist.txt" fls -r -p -o "$start" "$img")"
+    run_step "$pdir/filelist.txt" fls -r -p -o "$start" "$img"; r="$STEP_R"
     [[ "$r" == ok ]] || notes+=("fls path list at sector $start: $r")
     index_row "p$start/filelist.txt" "path list (fls -r -p): inode, type and full path per line; icat -o $start $shown <inode>"
   else
@@ -176,25 +270,43 @@ volume() { # volume <img> <shown name> <start> <description>
     notes+=("mactime missing: no timeline.csv for the filesystem at sector $start")
   elif [[ -s "$pdir/bodyfile.txt" ]]; then
     # The body file's times are epoch seconds; -z UTC and TZ=UTC make the rendering the UTC the row says.
-    r="$(TZ=UTC run_step "$pdir/timeline.csv" mactime -b "$pdir/bodyfile.txt" -d -y -z UTC)"
+    TZ=UTC run_step "$pdir/timeline.csv" mactime -b "$pdir/bodyfile.txt" -d -y -z UTC; r="$STEP_R"
     [[ "$r" == ok ]] || notes+=("mactime at sector $start: $r")
     index_row "p$start/timeline.csv" "MAC timeline (mactime -d -y -z UTC): date, size, MACB, mode, uid, gid, inode, name — UTC"
   fi
 }
 
+# probe_fs <fsstat arguments>: does fsstat read a file system there, as a detect-time call (no pipe: a pipeline is a foreground wait).
+probe_fs() {
+  local f rc=1
+  f="$(mktemp)"
+  probe fsstat "$@" > "$f" 2>/dev/null || true
+  grep -q '^File System Type:' "$f" 2>/dev/null && rc=0
+  rm -f "$f"
+  return "$rc"
+}
+
 coverage() { # coverage <status> <covered> — notes become errors
-  python3 - "$out/coverage.json" "$1" "$2" "${#notes[@]}" "${notes[@]+"${notes[@]}"}" "${inventory[@]+"${inventory[@]}"}" <<'PY'
-import json, sys
-path, status, covered, n_notes, *rest = sys.argv[1:]
-n = int(n_notes)
-notes, entries = rest[:n], rest[n:]
+  STOPPED_BY="$stopped_by" python3 - "$out/coverage.json" "$1" "$2" "${#notes[@]}" "${#unstarted[@]}" "${#cut_short[@]}" "${notes[@]+"${notes[@]}"}" "${unstarted[@]+"${unstarted[@]}"}" "${cut_short[@]+"${cut_short[@]}"}" "${inventory[@]+"${inventory[@]}"}" <<'PY'
+import json, os, sys
+path, status, covered, n_notes, n_unstarted, n_cut, *rest = sys.argv[1:]
+n, u, c = int(n_notes), int(n_unstarted), int(n_cut)
+notes, unstarted, cut, entries = rest[:n], rest[n:n + u], rest[n + u:n + u + c], rest[n + u + c:]
+limits_hit = ["seconds: not started, the recipe's time limit left none for it: " + s for s in unstarted] + ["seconds: stopped at the recipe's time limit: " + s for s in cut]
+if limits_hit and status == "complete":
+    status = "partial"
+    covered += "; the recipe's time limit stopped or left out steps (see limits_hit)"
 inventory = []
 for e in entries:
     start, desc, outcome, why = (e.split("\t") + ["", "", "", ""])[:4]
     inventory.append({"start_sector": int(start) if start.isdigit() else start, "description": desc, "outcome": outcome, "why": why})
-json.dump({"recipe": "disk-volumes", "status": status, "status_basis": covered, "covered": covered,
-           "not_covered": "file contents, carving, encrypted volumes, volume shadow copies",
-           "inventory": inventory, "limits_hit": [], "errors": notes}, open(path, "w"), indent=2)
+doc = {"recipe": "disk-volumes", "status": status, "status_basis": covered, "covered": covered,
+       "not_covered": "file contents, carving, encrypted volumes, volume shadow copies",
+       "inventory": inventory, "limits_hit": limits_hit, "errors": notes}
+if os.environ.get("STOPPED_BY"):
+    doc["interrupted"] = True
+    doc["signal"] = os.environ["STOPPED_BY"]
+json.dump(doc, open(path, "w"), indent=2)
 PY
 }
 
@@ -221,14 +333,14 @@ case "$cmd" in
     if have mmls && probe mmls "$img" >/dev/null 2>&1; then
       echo '{"applies": true, "why": "a partition table (mmls)"}'; exit 0
     fi
-    if have fsstat && probe fsstat "$img" 2>/dev/null | grep -q '^File System Type:'; then
+    if have fsstat && probe_fs "$img"; then
       echo '{"applies": true, "why": "a filesystem at sector 0 (fsstat)"}'; exit 0
     fi
     # A volume carved or copied out of a disk can keep the disk's offset
     # with no table before it (Ali Hadi #10's recovered Kali prefix: ext4
     # at sector 2048). The two usual starts are tried.
     for o in 63 2048; do
-      if have fsstat && probe fsstat -o "$o" "$img" 2>/dev/null | grep -q '^File System Type:'; then
+      if have fsstat && probe_fs -o "$o" "$img"; then
         echo "{\"applies\": true, \"why\": \"a filesystem at sector $o with no partition table (fsstat -o $o)\"}"; exit 0
       fi
     done
@@ -248,7 +360,7 @@ case "$cmd" in
     mmls_rc=127
     if have mmls; then
       mmls_rc=0
-      perl -e 'alarm shift; exec @ARGV' "$STEP_TIMEOUT" mmls "$img" > "$out/partitions.txt" 2> "$out/mmls.stderr" || mmls_rc=$?
+      boxed mmls "$img" > "$out/partitions.txt" 2> "$out/mmls.stderr" || mmls_rc=$?
       [[ -s "$out/mmls.stderr" ]] || rm -f "$out/mmls.stderr"
     fi
     if [[ "$mmls_rc" -eq 0 ]]; then
@@ -266,8 +378,13 @@ case "$cmd" in
         esac
         case "$desc" in
           *Swap*|*swap*|*Microsoft\ reserved*|*Microsoft\ Reserved*|*BIOS\ boot*|*BIOS\ Boot*|*Logical\ Volume\ Manager*|*LVM*|*RAID*|*raid*)
-            if reads_a_file_system "$start" "$img"; then
+            reads_a_file_system "$start" "$img"; fsrc=$?
+            if [[ "$fsrc" -eq 0 ]]; then
               volume "$img" "$shown" "$start" "$desc"
+              continue
+            elif [[ "$fsrc" -eq 2 ]]; then
+              notes+=("fsstat was not started for the candidate at sector $start ($desc): the recipe's time limit left none for it")
+              note_entry "$start" "$desc" failed "fsstat was not started (the recipe's time limit left none for it)"
               continue
             fi ;;
         esac
@@ -303,6 +420,8 @@ case "$cmd" in
       rm -f "$out/partitions.txt"
       if [[ "$mmls_rc" -eq 127 ]]; then
         notes+=("mmls is not in this image: whether the image has a partition table was not asked")
+      elif [[ "$mmls_rc" -eq 125 ]]; then
+        notes+=("mmls was not started (the recipe's time limit left none for it): whether the image has a partition table is not established")
       elif [[ "$mmls_rc" -ge 128 ]]; then
         notes+=("mmls did not finish within ${STEP_TIMEOUT} seconds (exit $mmls_rc): whether the image has a partition table is not established")
       fi
@@ -336,6 +455,12 @@ case "$cmd" in
           fi
         else
           rm -f "$out/.fsstat.tmp"
+          if [[ ${#unstarted[@]} -gt 0 ]]; then
+            notes+=("no partition table was read and no file system was found, but the recipe's time limit left no time for every step (limits_hit names them): the image is not shown to have none")
+            coverage partial "nothing was read before the recipe's time limit"
+            echo '{"ok": false, "status": "partial"}'
+            exit 2
+          fi
           notes+=("no partition table (mmls), and no filesystem at sector 0, 63 or 2048 (fsstat)")
           coverage unsupported "nothing"
           echo '{"ok": false, "status": "unsupported"}'

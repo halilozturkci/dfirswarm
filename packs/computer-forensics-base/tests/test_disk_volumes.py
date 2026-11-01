@@ -215,5 +215,132 @@ class DiskVolumes(Case):
         self.assertEqual(json.loads(self.read("out/coverage.json"))["errors"], [])
 
 
+class DiskVolumesStopAndClock(Case):
+    """A stop signal ends the step running, by its pid, and the recipe answers once; the steps share one clock inside recipe.json's seconds."""
+    CLEAN = MMLS_FORGED.replace("%s\n", "")
+
+    def start(self, bin_dir, out, args=("run",), env=None):
+        e = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"])
+        e.update(env or {})
+        target = json.dumps({"paths": [self.path("disk.img")], "name": "disk.img"})
+        argv = ["bash", recipe_path("disk-volumes", "run.sh"), *args, "--target", target] + (["--out", out] if "run" in args else [])
+        return subprocess.Popen(argv, cwd=self.dir, env=e, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    def wait_for(self, path, secs=15):
+        import time
+        end = time.monotonic() + secs
+        while time.monotonic() < end:
+            if os.path.exists(path):
+                with open(path) as fh:
+                    text = fh.read().strip()
+                if text:
+                    return int(text)
+            time.sleep(0.05)
+        self.fail("%s never appeared" % path)
+
+    def gone(self, pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        # a zombie is not running either
+        try:
+            with open("/proc/%d/status" % pid) as fh:
+                return "Z" in fh.read().split("State:")[1].split("\n")[0]
+        except (OSError, IndexError):
+            return False
+
+    def blocking_stubs(self, where):
+        """mmls (or fsstat) is the step that blocks: it records its pid and becomes a sleep."""
+        d = self.path("bin")
+        os.makedirs(d, exist_ok=True)
+        self.write("mmls.txt", self.CLEAN)
+        pidfile = self.path("step.pid")
+        block = 'echo $$ > "%s"\nexec sleep 60\n' % pidfile
+        stand_in(d, "mmls", block if where == "mmls" else 'cat "%s"\n' % self.path("mmls.txt"))
+        stand_in(d, "fsstat", block if where == "fsstat" else "echo 'File System Type: Ext4'\n")
+        stand_in(d, "fls", "echo 'r/r 12:\ta'\n")
+        self.write("disk.img", b"\0" * 65536)
+        return d, pidfile
+
+    def test_each_stop_signal_ends_the_step_running_and_answers_once_with_exit_128_plus_the_signal(self):
+        import signal
+        for where in ("mmls", "fsstat"):
+            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                bin_dir, pidfile = self.blocking_stubs(where)
+                out = self.path("out-%s-%d" % (where, sig))
+                proc = self.start(bin_dir, out)
+                pid = self.wait_for(pidfile)
+                proc.send_signal(sig)
+                try:
+                    stdout, stderr = proc.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    self.fail("%s during %s: the recipe did not stop" % (sig.name, where))
+                self.assertEqual(proc.returncode, 128 + sig, (where, sig.name, stdout, stderr))
+                said = json.loads(stdout)                     # one document
+                self.assertEqual((said["interrupted"], said["signal"], said["status"]), (True, sig.name, "partial"))
+                cov = json.loads(self.read(out + "/coverage.json"))
+                self.assertEqual((cov["status"], cov["interrupted"], cov["signal"]), ("partial", True, sig.name))
+                self.assertTrue(any("stopped by " + sig.name in e for e in cov["errors"]), cov["errors"])
+                self.assertTrue(self.gone(pid), "the step (pid %d) was left running" % pid)
+                os.unlink(pidfile)
+
+    def test_a_second_signal_while_the_first_is_answered_changes_nothing(self):
+        import signal
+        bin_dir, pidfile = self.blocking_stubs("fsstat")
+        proc = self.start(bin_dir, self.path("out"))
+        self.wait_for(pidfile)
+        proc.send_signal(signal.SIGTERM)
+        proc.send_signal(signal.SIGHUP)
+        stdout, _ = proc.communicate(timeout=30)
+        self.assertEqual(len(stdout.strip().splitlines()), 1, stdout)
+        json.loads(stdout)
+        self.assertIn(proc.returncode, (128 + signal.SIGTERM, 128 + signal.SIGHUP))
+
+    def test_a_signal_during_detect_is_one_document_too(self):
+        import signal
+        bin_dir, pidfile = self.blocking_stubs("mmls")
+        proc = self.start(bin_dir, "", args=("detect",))
+        pid = self.wait_for(pidfile)
+        proc.send_signal(signal.SIGTERM)
+        stdout, _ = proc.communicate(timeout=30)
+        said = json.loads(stdout)
+        self.assertEqual((proc.returncode, said["applies"], said["interrupted"]), (143, False, True))
+        self.assertTrue(self.gone(pid))
+
+    def test_the_steps_share_one_clock_and_the_ones_it_left_no_time_for_are_named(self):
+        import time
+        d = self.path("bin")
+        os.makedirs(d)
+        self.write("mmls.txt", self.CLEAN)
+        stand_in(d, "mmls", 'cat "%s"\n' % self.path("mmls.txt"))
+        stand_in(d, "fsstat", "exec perl -e 'sleep 2; print \"File System Type: NTFS\\n\"'\n")
+        stand_in(d, "fls", "exec perl -e 'sleep 2'\n")
+        self.write("disk.img", b"\0" * 65536)
+        began = time.monotonic()
+        proc = self.start(d, self.path("out"), env={"RECIPE_SECONDS": "3"})
+        stdout, stderr = proc.communicate(timeout=60)
+        took = time.monotonic() - began
+        self.assertEqual(proc.returncode, 0, stdout + stderr)
+        self.assertLess(took, 6, "a 3-second recipe clock over 2-second steps ended after %.1f s" % took)
+        cov = json.loads(self.read("out/coverage.json"))
+        self.assertEqual(cov["status"], "partial")
+        hit = "\n".join(cov["limits_hit"])
+        self.assertRegex(hit, r"not started, the recipe's time limit left none for it: fls -r -p -o 2048")
+        self.assertRegex(hit, r"not started, the recipe's time limit left none for it: fsstat -o 2560")
+        self.assertRegex(hit, r"stopped at the recipe's time limit: fls -m / -r -o 2048")
+        self.assertEqual([e["outcome"] for e in cov["inventory"]], ["read", "failed"])
+        self.assertIn("not started", cov["inventory"][1]["why"])
+
+    def test_the_default_clock_is_the_recipes_own_limit(self):
+        with open(recipe_path("disk-volumes", "run.sh"), encoding="utf-8") as fh:
+            script = fh.read()
+        with open(os.path.join(os.path.dirname(recipe_path("disk-volumes", "run.sh")), "recipe.json"), encoding="utf-8") as fh:
+            limit = json.load(fh)["limits"]["seconds"]
+        self.assertIn('TOTAL_SECONDS="${RECIPE_SECONDS:-%d}"' % limit, script)
+
+
 if __name__ == "__main__":
     unittest.main()

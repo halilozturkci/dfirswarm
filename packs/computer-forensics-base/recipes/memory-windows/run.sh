@@ -12,7 +12,9 @@
 # (RECIPE_STEP_SECONDS, default 900) with its stderr kept whole beside it,
 # plus index.tsv, steps.jsonl (one record per step: the command, its exit, how
 # long it took and what it wrote) and coverage.json, which a run writes as
-# partial before its first step and again after each outcome.
+# partial before its first step and again after each outcome. A TERM, INT or HUP
+# ends the one step running (by the pid it was started with), writes coverage.json
+# as partial and interrupted, answers once as JSON and exits 128 plus the signal.
 #
 # Volatility always runs with --offline: the symbol tables are the ones the
 # image holds, and nothing is fetched. An image with no table for the
@@ -69,8 +71,60 @@ looks_like_memory() {
 
 STEP_TIMEOUT="${RECIPE_STEP_SECONDS:-900}"
 PROBE_TIMEOUT="${RECIPE_PROBE_SECONDS:-30}"
+[[ "$STEP_TIMEOUT" =~ ^[0-9]+$ && "$PROBE_TIMEOUT" =~ ^[0-9]+$ ]] || { echo '{"ok": false, "error": "RECIPE_STEP_SECONDS and RECIPE_PROBE_SECONDS are whole numbers"}'; exit 2; }
 out=""
+cmd=""
 notes=()
+stopped_by=""
+
+exec 3>&1     # the real standard output, for the stop answer: the redirections of the step being waited for are still in force when a trap runs
+# --- steps and stopping ---------------------------------------------------------------------------------------------------------
+# Every step is started in the background and waited for, so that a signal to this script is acted on at once (a trap waits for a
+# foreground command to end) and the step to end is known by its pid. perl's alarm then exec makes the command the process itself.
+CHILD=""
+alive() { # alive <pid>: running, and not a zombie waiting to be reaped
+  kill -0 "$1" 2>/dev/null || return 1
+  local st
+  st="$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "/proc/$1/status" 2>/dev/null)"
+  [[ "$st" != Z ]]
+}
+bg() { # bg <seconds> <cmd...>: the command with a deadline; its redirections are the caller's
+  local secs="$1" rc
+  shift
+  perl -e 'alarm shift; exec @ARGV' "$secs" "$@" 3>&- &
+  CHILD=$!
+  wait "$CHILD"
+  rc=$?
+  CHILD=""
+  return "$rc"
+}
+on_signal() { # on_signal <name> <number>
+  local name="$1" num="$2" pids p i
+  trap '' TERM INT HUP                  # a second signal while this one is answered changes nothing: the answer is one document
+  pids="$CHILD"
+  [[ -n "$pids" ]] || pids="$(jobs -p 2>/dev/null)"
+  for p in $pids; do kill -TERM "$p" 2>/dev/null; done
+  for p in $pids; do
+    i=0
+    while (( i < 30 )) && alive "$p"; do sleep 0.1; i=$((i + 1)); done
+    if alive "$p"; then kill -KILL "$p" 2>/dev/null; fi
+    wait "$p" 2>/dev/null
+  done
+  if [[ "$cmd" == run && -n "$out" && -d "$out" ]]; then
+    stopped_by="SIG$name"
+    notes+=("stopped by SIG$name: the step that was running was ended and the steps after it were not run")
+    coverage partial "interrupted by SIG$name: what was written before it is kept, and the steps after it were not run"
+    echo "{\"ok\": false, \"status\": \"partial\", \"interrupted\": true, \"signal\": \"SIG$name\"}" >&3
+  elif [[ "$cmd" == detect ]]; then
+    echo "{\"applies\": false, \"interrupted\": true, \"signal\": \"SIG$name\", \"why\": \"the probe was stopped by SIG$name before it could tell\"}" >&3
+  else
+    echo "{\"ok\": false, \"interrupted\": true, \"signal\": \"SIG$name\"}" >&3
+  fi
+  exit $((128 + num))
+}
+trap 'on_signal TERM 15' TERM
+trap 'on_signal INT 2' INT
+trap 'on_signal HUP 1' HUP
 
 # step_record <outfile> <exit> <seconds> <limit> <cmd...>: one line of
 # steps.jsonl per step, written whatever the step's outcome was.
@@ -89,20 +143,23 @@ with open(os.path.join(out, "steps.jsonl"), "a", encoding="utf-8") as fh:
 PY
 }
 
+# Sets STEP_R to "ok" or a reason naming the stderr file (not printed: a command substitution would be a foreground step the stop
+# handling cannot see).
+STEP_R=""
 run_step() { # run_step <limit> <outfile> <cmd...>
   local limit="$1" file="$2"; shift 2
   local rc=0 began="$SECONDS"
-  perl -e 'alarm shift; exec @ARGV' "$limit" "$@" > "$file" 2> "$file.stderr" || rc=$?
+  bg "$limit" "$@" > "$file" 2> "$file.stderr" || rc=$?
   [[ -s "$file.stderr" ]] || rm -f "$file.stderr"
   if [[ "$rc" -ne 0 ]]; then [[ -s "$file" ]] || rm -f "$file"; fi
   step_record "$file" "$rc" "$((SECONDS - began))" "$limit" "$@"
-  if [[ "$rc" -eq 0 ]]; then echo ok; return 0; fi
+  if [[ "$rc" -eq 0 ]]; then STEP_R=ok; return 0; fi
   local err=""
   if [[ -f "$file.stderr" ]]; then
     err="$(head -c 200 "$file.stderr" | tr '\n' ' ')"
     err="$err; all of stderr: ${file#"$out/"}.stderr"
   fi
-  echo "failed (exit $rc${err:+: $err})"
+  STEP_R="failed (exit $rc${err:+: $err})"
 }
 
 index_row() { [[ -f "$out/$1" ]] && printf '%s\t%s\n' "$1" "$2" >> "$out/index.tsv"; return 0; }
@@ -152,7 +209,7 @@ PY
 }
 
 coverage() {
-  python3 - "$out/coverage.json" "$1" "$2" "${missing_json:-[]}" "${notes[@]+"${notes[@]}"}" <<'PY'
+  STOPPED_BY="$stopped_by" python3 - "$out/coverage.json" "$1" "$2" "${missing_json:-[]}" "${notes[@]+"${notes[@]}"}" <<'PY'
 import json, os, sys
 path, status, covered, missing, *notes = sys.argv[1:]
 steps = []
@@ -161,12 +218,16 @@ try:
         steps = [json.loads(line) for line in fh if line.strip()]
 except OSError:
     pass
-json.dump({"recipe": "memory-windows", "status": status, "status_basis": covered, "covered": covered,
-           "not_covered": "every other Volatility plugin; YARA without supplied rules; non-Windows images; unsupported hibernation or crash-dump variants",
-           "missing": json.loads(missing),
-           "limits_hit": [note for note in notes if "exit 142" in note],
-           "errors": notes,
-           "steps": steps}, open(path, "w"), indent=2)
+doc = {"recipe": "memory-windows", "status": status, "status_basis": covered, "covered": covered,
+       "not_covered": "every other Volatility plugin; YARA without supplied rules; non-Windows images; unsupported hibernation or crash-dump variants",
+       "missing": json.loads(missing),
+       "limits_hit": [note for note in notes if "exit 142" in note],
+       "errors": notes,
+       "steps": steps}
+if os.environ.get("STOPPED_BY"):
+    doc["interrupted"] = True
+    doc["signal"] = os.environ["STOPPED_BY"]
+json.dump(doc, open(path, "w"), indent=2)
 PY
 }
 
@@ -196,7 +257,7 @@ case "$cmd" in
     # caller gives a place for it (--probe-out), not thrown away.
     if [[ -n "$probe_out" ]]; then mkdir -p "$probe_out"; probe="$probe_out/windows.info.txt"; else probe="$(mktemp)"; fi
     rc=0
-    perl -e 'alarm shift; exec @ARGV' "$PROBE_TIMEOUT" vol --offline -vv -q -f "$img" windows.info > "$probe" 2> "$probe.stderr" || rc=$?
+    bg "$PROBE_TIMEOUT" vol --offline -vv -q -f "$img" windows.info > "$probe" 2> "$probe.stderr" || rc=$?
     [[ -s "$probe.stderr" ]] || rm -f "$probe.stderr"
     if [[ "$rc" -eq 0 ]] && grep -qi "NTBuildLab\|Kernel Base\|SystemTime" "$probe"; then
       rm -f "$probe" "$probe.stderr"; echo '{"applies": true, "why": "Volatility windows.info names a Windows image"}'; exit 0
@@ -235,7 +296,7 @@ case "$cmd" in
     # the run after windows.info, whose output is kept, with the kernel named.
     symbols="held in the image"
     VOLNET=(--offline)
-    r="$(run_step "$STEP_TIMEOUT" "$out/windows.info.txt" vol --offline -q -f "$img" windows.info)"
+    run_step "$STEP_TIMEOUT" "$out/windows.info.txt" vol --offline -q -f "$img" windows.info; r="$STEP_R"
     index_row "windows.info.txt" "OS, build, capture time of $shown (vol --offline windows.info)"
     index_row "windows.info.txt.stderr" "what vol --offline windows.info said on stderr"
     index_row "steps.jsonl" "one record per step: the command, its exit, how long it took and what it wrote"
@@ -258,7 +319,7 @@ case "$cmd" in
     finished=0
     coverage partial "windows.info finished; no plugin has yet (this file is rewritten after each step, so a run stopped part way says how far it got)"
     for plugin in pslist psscan pstree cmdline netscan malfind vadinfo handles modules svcscan dlllist; do
-      r="$(run_step "$STEP_TIMEOUT" "$out/$plugin.txt" vol ${VOLNET[@]+"${VOLNET[@]}"} -q -f "$img" "windows.$plugin")"
+      run_step "$STEP_TIMEOUT" "$out/$plugin.txt" vol ${VOLNET[@]+"${VOLNET[@]}"} -q -f "$img" "windows.$plugin"; r="$STEP_R"
       [[ "$r" == ok ]] || notes+=("vol windows.$plugin on $shown: $r")
       index_row "$plugin.txt" "vol windows.$plugin over $shown"
       finished=$((finished + 1))
