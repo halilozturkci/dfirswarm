@@ -1,8 +1,5 @@
 {
   "secret_output": [
-    { "tool": "reverse-engineering/doc_probe", "item": "PKG-XP-10", "why": "extract_to and write_values are declared by no secret_output" },
-    { "tool": "reverse-engineering/doc_structure", "item": "PKG-XP-10", "why": "extract_to and write_values are declared by no secret_output" },
-    { "tool": "reverse-engineering/pe_directories", "item": "PKG-XP-10", "why": "extract_to and write_values are declared by no secret_output" },
     { "tool": "virtualization-backup-forensics/backup_audit_normalise", "item": "VIRT-09", "why": "write_text writes the text of the evidence and is declared by no secret_output" },
     { "tool": "virtualization-backup-forensics/snapshot_chain_check", "item": "VIRT-09", "why": "write_text writes the text of the evidence and is declared by no secret_output" },
     { "tool": "virtualization-backup-forensics/virtualization_inventory", "item": "VIRT-09", "why": "write_text writes the text of the evidence and is declared by no secret_output" }

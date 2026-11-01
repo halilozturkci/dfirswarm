@@ -118,7 +118,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "doc_probe", "version": 9}
+TOOL = {"name": "doc_probe", "version": 10}
 PARSER = "doc_probe/4"
 NOTE = ("Static container triage only. Markers, procedure names and external relationships do not prove execution or "
         "retrieval. Record parser coverage before drawing an absence conclusion.")
@@ -666,9 +666,9 @@ class SecretValues:
         self.shown = None
         if not enabled:
             return
-        if not (self.job and self.out):
+        if not (self.job and self.out and os.environ.get("SECRET_OUTPUT") == "1"):
             raise SecretValuesRefused(
-                "write_values is refused outside a job: a value written here would be an ordinary "
+                "write_values is refused outside a job run as secret output: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=doc_probe with "
                 "secret_output: true, and ask again there. Nothing was written."
             )
