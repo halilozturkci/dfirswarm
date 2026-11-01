@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "icat_extract", "version": 10}
+TOOL = {"name": "icat_extract", "version": 11}
 BLOCK = 1 << 20
 MAX_BYTES_DEFAULT = 32 * 1024 ** 3
 MAX_BYTES_CEILING = 1024 ** 4
@@ -208,6 +208,8 @@ if not isinstance(d, dict):
     fail("arguments are a JSON object")
 inode = d.get("inode")
 output = d.get("output")
+if d.get("image") is not None and (not isinstance(d.get("image"), str) or "\0" in d.get("image")):
+    fail("image is a string without a NUL byte")
 image = on_stdout(_resolve_image, d.get("image"))
 if inode is None or not isinstance(output, str) or not output:
     fail("need inode and output")

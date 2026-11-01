@@ -38,7 +38,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-TOOL = {"name": "feature_scan", "version": 5}
+TOOL = {"name": "feature_scan", "version": 6}
 DEFAULT_TIMEOUT = 900
 TIMEOUT_MAX = 1000                # the tool's own limit is 1200 seconds: the counting of what bulk_extractor wrote needs the rest
 DISTINCT_CAP = 200_000            # distinct values remembered per feature file; past it the count is a lower bound
@@ -244,7 +244,7 @@ def main():
         fail("arguments are a JSON object")
 
     path = args.get("path")
-    if not isinstance(path, str) or not path:
+    if not isinstance(path, str) or not path or "\0" in path:
         fail("path is required: an image or any blob")
     if not os.path.isfile(path):
         fail("no such file", path=path)
@@ -252,7 +252,12 @@ def main():
     out_dir = args.get("out_dir")
     if not isinstance(out_dir, str) or not out_dir:
         fail("out_dir is required: a directory under work/ that does not exist yet")
-    out_dir = resolve_output(out_dir, "out_dir")
+    if "\0" in out_dir:
+        fail("out_dir is a string without a NUL byte: a directory under work/ that does not exist yet")
+    try:
+        out_dir = resolve_output(out_dir, "out_dir")
+    except OSError as exc:
+        fail("out_dir cannot be used: %s" % (exc.strerror or exc))
     job_out = os.environ.get("OUT") if os.environ.get("JOB_ID") else None
     if job_out:
         # A job writes in one place, $OUT: a directory elsewhere would fail halfway, or leave bytes outside the sealed output.

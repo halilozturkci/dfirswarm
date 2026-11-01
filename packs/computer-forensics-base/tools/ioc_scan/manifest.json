@@ -53,8 +53,8 @@
   "example": "{\"path\": \"inputs/[UNALLOCATED]\", \"needles\": \"sysinternals|psexec|http://|https://|IEUser\", \"max_hits\": 30, \"length\": 50000000}",
   "by": "s183900",
   "at": "2026-09-18T22:16:43.028Z",
-  "version": 9,
-  "sha256": "f2f3b6f5ef69af79d8aff699fddd3d92f8aaaac8967d9d6fb50585e34a9ea2c0",
+  "version": 10,
+  "sha256": "695ebf4baeebbffe2fbec222a11bb749f5a3b7e4981b74b4e0e580d1462e34d9",
   "secret_output": {
     "when_args": [
       "write_values"

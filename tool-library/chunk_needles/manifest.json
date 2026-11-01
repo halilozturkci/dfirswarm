@@ -62,8 +62,8 @@
   ],
   "by": "sd1d102",
   "at": "2026-09-18T14:26:18.665Z",
-  "version": 11,
-  "sha256": "facb2243b9f7a32c13fddb7e04479724b7671e91c35f929edfc50268715b8189",
+  "version": 12,
+  "sha256": "971bdf45601e3a8179de6858026a5493795adcd6c377868deafb2618519a2ea4",
   "secret_output": {
     "when_args": [
       "write_values"
