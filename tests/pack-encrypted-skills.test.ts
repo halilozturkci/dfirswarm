@@ -60,8 +60,8 @@ const SECOND: Record<string, string> = {
 // The pack's one router: shown alone when a run's index is over budget, and names every other skill once (routerChecks below).
 const ROUTER = "encrypted/router";
 
-// New leaves added after the split (not part of its id lineage): recovery/authorised (PKG-ENC-04, john's governance leaf).
-const ADDED_AFTER_SPLIT = ["recovery/authorised"];
+// New leaves added after the split (not part of its id lineage): recovery/authorised (PKG-ENC-04, john's governance leaf), and the four leaves of PKG-ENC-16: layered reading, VeraCrypt and TrueCrypt, OpenPGP messages, AES Crypt files.
+const ADDED_AFTER_SPLIT = ["recovery/authorised", "volumes/layered-reading", "volumes/veracrypt-truecrypt", "messages/openpgp", "files/aescrypt"];
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
@@ -211,7 +211,7 @@ routerChecks({
   before: [
     "archives/formats", "archives/protected", "identify/by-format", "identify/headers", "keys/other-sources", "keys/recovery-key-scan",
     "keys/where-they-hide", "volumes/bitlocker", "volumes/bitlocker-opening", "volumes/filevault-apfs", "volumes/luks", "volumes/luks-filevault",
-    "recovery/authorised",
+    "recovery/authorised", "volumes/layered-reading", "volumes/veracrypt-truecrypt", "messages/openpgp", "files/aescrypt",
   ],
   profiles: ["disk", "full"],
 });

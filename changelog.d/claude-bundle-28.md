@@ -78,3 +78,16 @@ the rules both routes share, so no two leaves hold the same text. `volumes/filev
 says, in conditional wording, that the macOS pack's `filesystem/apfs` owns APFS structure and
 this pack owns the encryption-route decision. The sentence-level register of the review still
 finds every rule.
+
+### Added: encrypted-containers gets four leaves: layered reading, VeraCrypt/TrueCrypt, OpenPGP messages, AES Crypt files
+
+`volumes/layered-reading` (evidence wrapper, virtual disk, partition, encryption, file
+system, with the offset of each layer in its own units; the user-space readers pyvhdi,
+pyluksde, pybde, pytsk3, dfvfs and pyAesCrypt; `materialise_decrypted` for a validated
+extraction; it needs the base pack's `filesystem/layers`), `volumes/veracrypt-truecrypt`
+(entropy and size as leads, file against device hosting, hidden and backup headers, and
+`tcrypt_header` as the reader once the case supplies a password, not "no reader is provided"),
+`messages/openpgp` (`gpg --list-packets` under a home directory below `$OUT`, no key retrieval,
+no network, key ids and not persons) and `files/aescrypt` (the container, the HMAC, the failures
+that look alike). The `unreferenced_ok` entries for gpg, libvhdi-python, libluksde-python,
+pytsk3 and pyAesCrypt leave `pack.json`, because a skill now names each.
