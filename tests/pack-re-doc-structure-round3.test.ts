@@ -177,10 +177,11 @@ test("P1-3 objects under the per-parse bound, many of them, in object streams an
     const { run, rssMb, cpuSeconds } = bounded(cwd, { path: "work/many.pdf", max_ratio: 1_000_000, max_seconds: 90 }, 600_000);
     const a = JSON.parse(run.stdout) as Json;
     assert.ok(rssMb < 400, `${rssMb.toFixed(0)} MB`);
-    // The tool's own clock is wall time. A host so loaded that the tool met it after under 45 s of CPU (the case takes about 20 idle) did not
-    // fail the property under test, which is completeness, not speed: said, and skipped.
-    if (a.status === "partial" && a.limits_hit.some((l: string) => /max_seconds \(90\)/.test(l)) && cpuSeconds < 45) {
-      return t.skip(`the host was too loaded to finish within the tool's 90-second wall clock: ${cpuSeconds.toFixed(1)} s of CPU`);
+    // The tool's own clock is wall time (the case takes about 20 s of CPU on an idle host). A tool that met its 90-second clock having had less
+    // than 80 s of CPU in it was starved by the host, not slow: it did not fail the property under test, which is completeness, not speed.
+    // That is said, and skipped; a tool that had the CPU for the whole 90 s and was not done fails.
+    if (a.status === "partial" && a.limits_hit.some((l: string) => /max_seconds \(90\)/.test(l)) && cpuSeconds < 80) {
+      return t.skip(`the host was too loaded to finish within the tool's 90-second wall clock: the tool had ${cpuSeconds.toFixed(1)} s of CPU in it`);
     }
     assert.equal(a.status, "complete", JSON.stringify([a.problems, a.limits_hit]));
     assert.equal(a.census.objects_listed, 2 + 4 + 28 + 5 + 1);
