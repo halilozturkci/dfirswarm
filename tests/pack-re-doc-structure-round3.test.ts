@@ -160,7 +160,9 @@ test("P1-3 a 118 KB file of four object streams, seven members each of 999,000 n
     const { run, cpuSeconds, rssMb } = bounded(cwd, { path: "work/mem.pdf", max_ratio: 1_000_000, max_seconds: 90 }, 600_000);
     const a = JSON.parse(run.stdout) as Json;
     assert.ok(rssMb < 400, `${rssMb.toFixed(0)} MB`);
-    assert.ok(cpuSeconds < 60, `${cpuSeconds.toFixed(1)} s of CPU`);
+    // 21 s of CPU idle; the same work has been measured at 70 s of CPU on a host with every core busy (hyperthreads and caches shared), so the
+    // bound is the tool's own 90-second clock less a margin: a tool that was still computing at its clock would have used all of it.
+    assert.ok(cpuSeconds < 85, `${cpuSeconds.toFixed(1)} s of CPU`);
     // The count of members the bound left unread is a count of members the tool got to before its own wall clock: a tool starved by the host
     // (it met its 90-second clock with under 80 s of CPU in it) has not got to all of them. Said, and skipped.
     if (a.limits_hit.some((l: string) => /max_seconds \(90\)/.test(l)) && cpuSeconds < 80) {
