@@ -126,6 +126,7 @@ const PLACE_CARRIERS: Array<[string, string]> = [
   ["packs/ransomware-response/tools/encryption_extent/run.py", "PLACE"],
   ["packs/ransomware-response/tools/recovery_validate/run.py", "PLACE"],
   ["packs/ransomware-response/tools/ransomware_scope_report/run.py", "PLACE"],
+  ["packs/ransomware-response/tools/backup_destruction_correlate/run.py", "PLACE"],
   ["tool-library/yara_scan/run.py", "PLACE"],
   ["packs/memory-forensics/tools/mem_carve/run.py", "PAGE"],
   ["packs/memory-forensics/tools/mem_fs/run.py", "PAGE"],
@@ -199,7 +200,7 @@ test("every copy of the comparison in the tree is the one fixed text (the macOS 
   const groups = [...seen.entries()].sort((a, b) => b[1].length - a[1].length);
   assert.equal(groups.length, 2, JSON.stringify(groups.map(([k, v]) => [k.slice(0, 10), v.length])));
   assert.equal(groups[0][0], SAME_BYTES_SHA);
-  assert.equal(groups[0][1].length, 59, "56 carriers before the three tools of ransomware-response added since (encryption_extent, recovery_validate, ransomware_scope_report)");
+  assert.equal(groups[0][1].length, 60, "56 carriers before the four tools of ransomware-response added since (encryption_extent, recovery_validate, ransomware_scope_report)");
   assert.deepEqual(groups[1][1], ["packs/macos-forensics/tools/unified_log/run.py"]);
 });
 
@@ -323,6 +324,7 @@ const STOP_CARRIERS = {
     "packs/ransomware-response/tools/encryption_extent/run.py",
     "packs/ransomware-response/tools/recovery_validate/run.py",
     "packs/ransomware-response/tools/ransomware_scope_report/run.py",
+    "packs/ransomware-response/tools/backup_destruction_correlate/run.py",
     "packs/windows-forensics/tools/regkv/run.py",
     "packs/windows-forensics/tools/lnk_parse/run.py",
     "packs/reverse-engineering/tools/pe_info/run.py",

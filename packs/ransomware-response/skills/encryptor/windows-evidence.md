@@ -3,7 +3,7 @@ id: encryptor/windows-evidence
 title: NTFS records and Windows events
 when: The chain rests on MFT or USN records, or on service, task or log-clear events.
 needs: []
-tools: []
+tools: [backup_destruction_correlate]
 requires_host: []
 mentions: [mft_records, usn_journal, prefetch_mam, amcache_apps, regkv, evtx_query]
 ---
@@ -31,7 +31,9 @@ the clearing of the Security log: do not expect it in every incident, do not rea
 its absence as evidence against cleanup, and look at other clearing records,
 interrupted collection, retention and central copies. Clearing can also be
 authorised administration. `evtx_query` and `regkv`, where that pack is loaded,
-read these; otherwise say they were not read.
+read these; otherwise say they were not read. To see what a log says was done to the
+backups, `backup_destruction_correlate` reads an `evtx_query` answer by reference: it
+recognises a destructive command in a record and prints the record's reference, not its text.
 
 **Does not show.** That an MFT timestamp is a deletion time; that a service installation is execution; that the absence of a 1102 record is evidence against cleanup; that a record exists in every incident.
 

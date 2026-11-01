@@ -136,6 +136,23 @@ const CASES: Case[] = [
     small: { limit: 1 },
   },
   {
+    // Run 2 asks for less than run 1 asks for (one object of two), so its table is a different, smaller one under the same name: a tool that
+    // replaces the file named by its arguments fails here, which a rerun that writes the same table twice could not show.
+    tool: "ransomware-response/backup_destruction_correlate",
+    build: async (dir) => {
+      const row = (i: number, image: string, cmd: string) => ({ timestamp: "2026-10-01T10:00:00Z", event_id: 4688, channel: "Security", record_id: i, data: { NewProcessName: image, CommandLine: cmd, SubjectUserName: "u", NewProcessId: `0x${i + 1}` } });
+      const rows = [
+        ...Array.from({ length: 6 }, (_, i) => row(i, "C:\\Windows\\System32\\vssadmin.exe", "vssadmin delete shadows /all")),
+        ...Array.from({ length: 4 }, (_, i) => row(10 + i, "C:\\Windows\\System32\\wbadmin.exe", "wbadmin delete catalog")),
+      ];
+      await put(dir, "answer.json", JSON.stringify({ parser: "evtx_query/4", status: "complete", events: [] }));
+      await put(dir, "rows.jsonl", rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+      return { events: [{ host: "h1", file: "answer.json", result_file: "rows.jsonl" }] };
+    },
+    large: { limit: 6 },
+    small: { limit: 1, only_objects: ["backup_catalog"] },
+  },
+  {
     tool: "ransomware-response/recovery_validate",
     build: async (dir) => {
       const files: string[] = [];

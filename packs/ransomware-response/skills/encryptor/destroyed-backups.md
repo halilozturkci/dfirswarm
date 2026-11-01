@@ -3,7 +3,7 @@ id: encryptor/destroyed-backups
 title: Recovery impairment and surviving recovery paths
 when: Backups, snapshots, catalogues or recovery services may have been altered.
 needs: []
-tools: []
+tools: [backup_destruction_correlate]
 requires_host: []
 mentions: [vss_stores]
 ---
@@ -35,6 +35,12 @@ loss. Finding no stores can also mean protection was disabled, retention or stor
 pressure removed them, the acquisition did not include them, the parser failed or
 the wrong volume was searched. State the volumes and snapshots covered, and check
 for surviving copies, before concluding that a path was lost.
+
+`backup_destruction_correlate` keeps five observations apart per host and object, from
+answers given by reference: command seen, action attempted, reported outcome, inventory
+change and verified loss. It reports a command with no inventory change, and a change
+with no command, as such. A command that ran is not a copy that is gone; only a
+verification made apart from the logs says a path was lost.
 
 Only if a backup server, an immutable store, a hypervisor, network storage or a boot-recovery setting was affected: `encryptor/backup-infrastructure`.
 

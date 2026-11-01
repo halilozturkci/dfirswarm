@@ -2,7 +2,7 @@
   "about": "Every shared block under packs/ and tool-library/: a family is the name in its BEGIN/END markers (`# BEGIN SHARED X` ... `# END SHARED X`, or the dashed `# ---- BEGIN X ----` ... `# ---- END X ----`), a variant is one text of it (the lines strictly between the markers, digested), carriers is how many files hold that text, example is one of them. The first variant of a family is its base; every other variant says why it exists. tests/shared-blocks-census.test.ts fails on a family or a variant that is not declared here, on a changed number of carriers, and on a BEGIN without its END. When a sweep or an adoption adds or removes carriers, change `carriers` in the same change; when a new variant is meant, add it with its reason. A block that changes everywhere at once needs no edit here (the file declares counts, not digests).",
   "lossless_page": "Recommendation on `LosslessPage` (not marked, converted or counted here): the class is in 67 files in several textual variants, and the largest group, the windows pack's tools and their tool-library twins, carries one text (slice it as tests/tool-library.test.ts does, from `class LosslessPage` to its `return result`). It is a block in every sense but the markers. Recommendation: mark it as a block (`# BEGIN SHARED LOSSLESS PAGE`) in the windows lineage first, where the text is already one, declare that family here, and leave the other variants unmarked until each pack's own package converges its pager; do not mark all 67 at once, because the PAGE block and NoReplacePage already sit beside it in the same files and a sweep of the class would be one more writer on them. The owner decides.",
   "families": {
-    "BACKSTOP": { "variants": [ { "carriers": 5, "example": "packs/ransomware-response/tools/encrypted_survey/run.py" } ] },
+    "BACKSTOP": { "variants": [ { "carriers": 6, "example": "packs/ransomware-response/tools/encrypted_survey/run.py" } ] },
     "BOUNDARY": { "variants": [
       { "carriers": 13, "example": "packs/windows-forensics/tools/regkv/run.py" },
       { "carriers": 3, "example": "packs/virtualization-backup-forensics/tools/virtualization_inventory/run.py", "why": "the virtualization pack's own text, until its three tools move onto the windows text (the BOUNDARY step 2 package)" }
@@ -14,14 +14,14 @@
     "HIVE BOUNDS": { "variants": [ { "carriers": 6, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "NAMES": { "variants": [
       { "carriers": 5, "example": "packs/encrypted-containers/tools/archive_probe/run.py" },
-      { "carriers": 5, "example": "packs/ransomware-response/tools/encrypted_survey/run.py", "why": "ransomware-response's own names text, not the encrypted-containers one" }
+      { "carriers": 6, "example": "packs/ransomware-response/tools/encrypted_survey/run.py", "why": "ransomware-response's own names text, not the encrypted-containers one" }
     ] },
     "ONE WAY OUT": { "variants": [ { "carriers": 7, "example": "packs/reverse-engineering/recipes/capa-floss/run.py" } ] },
     "PAGE": { "variants": [
-      { "carriers": 32, "example": "packs/windows-forensics/tools/regkv/run.py" },
+      { "carriers": 33, "example": "packs/windows-forensics/tools/regkv/run.py" },
       { "carriers": 3, "example": "packs/memory-forensics/tools/mem_carve/run.py", "why": "the memory pack's own pager text" }
     ] },
-    "PLACE": { "variants": [ { "carriers": 36, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
+    "PLACE": { "variants": [ { "carriers": 37, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "PROCESS": { "variants": [
       { "carriers": 19, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
       { "carriers": 11, "example": "packs/windows-forensics/recipes/windows-artefacts/run.py", "why": "the windows lineage: its stop and process handling differs from the general text" }
@@ -34,10 +34,10 @@
     ] },
     "SHOWN": { "variants": [ { "carriers": 2, "example": "packs/memory-forensics/tools/mem_fs/run.py" } ] },
     "STOP": { "variants": [
-      { "carriers": 33, "example": "packs/windows-forensics/tools/regkv/run.py", "why": "the windows lineage (the windows pack, and the ransomware-response and reverse-engineering tools that adopted its text)" },
+      { "carriers": 34, "example": "packs/windows-forensics/tools/regkv/run.py", "why": "the windows lineage (the windows pack, and the ransomware-response and reverse-engineering tools that adopted its text)" },
       { "carriers": 5, "example": "packs/encrypted-containers/tools/archive_probe/run.py", "why": "the encrypted-containers lineage" },
       { "carriers": 4, "example": "packs/macos-forensics/tools/fsevents_parse/run.py", "why": "the macOS lineage" }
     ] },
-    "WITHHOLDING": { "variants": [ { "carriers": 33, "example": "packs/computer-forensics-base/tools/archive_extract/run.py" } ] }
+    "WITHHOLDING": { "variants": [ { "carriers": 34, "example": "packs/computer-forensics-base/tools/archive_extract/run.py" } ] }
   }
 }

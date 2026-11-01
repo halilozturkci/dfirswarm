@@ -3,7 +3,7 @@ id: platforms/esxi-hypervisors
 title: ESXi hosts, management plane and datastores
 when: An ESXi host, its management server, guests or datastores were encrypted or altered.
 needs: []
-tools: []
+tools: [backup_destruction_correlate]
 requires_host: []
 mentions: [virtualization_inventory, snapshot_chain_check, backup_audit_normalise]
 ---
@@ -31,7 +31,9 @@ loses what the host kept in memory.
 tool inventory), `virtualization_inventory` lists the machines, disk files and
 snapshots that configuration files name, `snapshot_chain_check` tests whether a disk
 or snapshot chain is whole, and `backup_audit_normalise` reads Proxmox task logs and
-exports whose fields the caller maps, and no other product's records. Check that each answer says what it did not read, and say so where it
+exports whose fields the caller maps, and no other product's records. Their
+answers go by reference to `backup_destruction_correlate`, which counts a missing base
+as a loss and a deleted snapshot with a whole chain as an action only. Check that each answer says what it did not read, and say so where it
 does not. Where the pack is not loaded, say that no tool read this evidence.
 
 **Shows.** Which layer a record belongs to; which machines, disks and snapshots the

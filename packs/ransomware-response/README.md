@@ -1,6 +1,6 @@
 # Ransomware Response Pack
 
-Evidence-led ransomware examination. Its five tools return candidates, measurements and counts; what a
+Evidence-led ransomware examination. Its six tools return candidates, measurements and counts; what a
 candidate shows has to be validated before anyone acts on it.
 
 Depends on the Computer Forensics Base Pack. It does not repeat the intrusion
@@ -23,7 +23,12 @@ and the router `ransomware/router` (at most 400 tokens; the prompt shows this on
 `reporting/for-regulators` (`reporting/notification-register`,
 `reporting/conclusions-and-controls`).
 
-**Five tools.** `ransomware_scope_report` takes sealed outputs by reference (censuses,
+**Six tools.** `backup_destruction_correlate` keeps five observations apart per host and
+object (command seen, action attempted, reported outcome, inventory change, verified loss)
+from the answers of other packs' tools given by reference, each versioned by its `parser`.
+It copies no event text, reports a command with no change and a change with no command as
+such, and never turns "a delete command ran" into "the backups are gone".
+`ransomware_scope_report` takes sealed outputs by reference (censuses,
 extent and recovery outputs, timelines, a recipe's coverage) and reports scope per host
 with denominators, assessed against unassessed bytes, candidate against validated
 findings and a machine-readable coverage statement. A host with no census is
@@ -74,7 +79,8 @@ And preserve before you restore. Every hour of restoration changes the sources.
 ## Not in this pack
 
 No family rules or reference data ship with it, no public-decryptor catalogue, and
-no tool of its own for hypervisor or backup records. `yara` is declared for rules the
+no tool of its own that reads hypervisor or backup records (`backup_destruction_correlate`
+takes the answers of the other packs' readers by reference). `yara` is declared for rules the
 case supplies.
 
 For hypervisors and network storage the pack carries the method, in the
