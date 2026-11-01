@@ -1961,7 +1961,7 @@ def read_notes(img, elf, ctx, out):
                 break
             namesz, descsz, typ = elf.u("III", pos)
             name_at = pos + 12
-            desc_at = name_at + (namesz + pad - 1) // pad * pad
+            desc_at = name_at + (namesz + 3) // 4 * 4        # the owner is padded to 4; the descriptor and the next note to the segment's alignment (8 for GNU property notes)
             nxt = desc_at + (descsz + pad - 1) // pad * pad
             row = {"source": label, "offset": pos, "type": typ, "owner_size": namesz, "desc_size": descsz}
             if name_at + namesz > end or desc_at + descsz > end:
