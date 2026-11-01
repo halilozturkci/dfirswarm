@@ -257,7 +257,8 @@ test("a job runs the pack-tool suites on the images' Python 3.11, in the images'
   // The image is the one the base Dockerfile ends in, by the same digest: a digest moved there (scripts/apt-snapshot-bump.sh --digests) and not here fails this.
   const from = [...BASE_DOCKERFILE.matchAll(/^FROM (node:24-bookworm-slim@sha256:[0-9a-f]{64})$/gm)].map((m) => m[1]);
   assert.equal(from.length, 1, "images/base.Dockerfile has one node:24-bookworm-slim stage, pinned by digest");
-  assert.match(job, new RegExp(String.raw`^ {4}container:\n {6}image: ${from[0].replace(/[.:@]/g, "\$&")}$`, "m"), "the job's container is the base image's node stage, by its digest");
+  const image = from[0].replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
+  assert.match(job, new RegExp(String.raw`^ {4}container:\n {6}image: ${image}\n(?: {6}#[^\n]*\n)* {6}options: --init$`, "m"), "the job's container is the base image's node stage, by its digest, with an init that reaps what the suites kill (a zombie is still a pid to a stop-signal case)");
   assert.match(job, /^ {4}runs-on: ubuntu-24\.04$/m);
   // python3 comes from the images' own apt sources (the snapshot date in images/debian-snapshot, the sources text of the Dockerfile) and is checked to be 3.11.
   assert.match(job, /d="\$\(tr -d '\[:space:\]' < images\/debian-snapshot\)"/, "the snapshot date is read from images/debian-snapshot");
@@ -273,7 +274,12 @@ test("a job runs the pack-tool suites on the images' Python 3.11, in the images'
   const n = shards[0][1];
   assert.ok(shards.every(([, m]) => m === n), "the parts name different shard counts");
   assert.deepEqual(shards.map(([i]) => i).sort(), Array.from({ length: n }, (_, k) => k + 1), "the parts must be shards 1..N, each once");
-  assert.match(job, /scripts\/test-node\.ts --test-shard=\$\{\{ matrix\.part \}\} --files-from="\$RUNNER_TEMP\/pack\.list"/, "each part runs its own shard of the pack list through scripts/test-node.ts");
+  assert.match(job, /scripts\/test-node\.ts --test-shard=\$\{\{ matrix\.part \}\} --files-from="\$RUNNER_TEMP\/pack\.list" "--test-skip-pattern=a walk of the whole file system with max_seconds 1"'/, "each part runs its own shard of the pack list through scripts/test-node.ts, with the one case it names left out");
+  // The one case left out exists, under that name, and says why it cannot run on a small root (it walks "/").
+  const skipped = readFileSync(join(ROOT, "tests/pack-windows-forensics-links-contract.test.ts"), "utf8");
+  assert.match(skipped, /test\("lnk_jumplist: a walk of the whole file system with max_seconds 1 ends by its clock/, "the skipped case is named as the job skips it");
+  assert.match(skipped, /runTool\("lnk_jumplist", cwd, \{ path: "\/", max_seconds: 1 \}\)/, "and it walks the root, the file system whose size it relies on");
+  assert.equal(job.match(/--test-skip-pattern/g)?.length, 1, "one case is left out, no more");
   assert.match(job, /su node -s \/bin\/bash -c 'node --experimental-strip-types/, "the suites run as the image's unprivileged user");
   // The list is the pack-tool suites among the select job's (a narrow run), or all of them: nothing else narrows it.
   assert.match(job, /ALL: \$\{\{ needs\.select\.outputs\.all \}\}\n\s+NODE_LIST: \$\{\{ needs\.select\.outputs\.node \}\}/, "the list is built from the select job's outputs");

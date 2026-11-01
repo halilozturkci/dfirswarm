@@ -354,6 +354,12 @@ jobs:
     timeout-minutes: 60
     container:
       image: node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
+      # A container's first process here is the runner's `tail -f /dev/null`,
+      # which reaps nothing: a program the suites kill is re-parented to it and
+      # stays a zombie, and the stop-signal suites ask whether it is gone.
+      # --init puts tini there. (Found by running the suites without it: the
+      # Suricata and pcap_extract stop cases failed on a zombie.)
+      options: --init
     strategy:
       fail-fast: false
       matrix:
@@ -386,8 +392,13 @@ jobs:
           fi | { grep -E '^tests/pack-[^/]+\.test\.ts$' || true; } > "$RUNNER_TEMP/pack.list"
           echo "$(wc -l < "$RUNNER_TEMP/pack.list") pack-tool suite(s) on Python $(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')" | tee -a "$GITHUB_STEP_SUMMARY"
           chown node:node "$RUNNER_TEMP/pack.list"
+      # One case is left out here, by its name: lnk_jumplist's walk of "/" with a
+      # one-second clock (tests/pack-windows-forensics-links-contract.test.ts)
+      # needs a file system too big to walk in a second, which a hosted runner
+      # has and this image's root has not (the walk finishes: complete). It runs
+      # in the Linux and macOS jobs.
       - name: Pack-tool suites ${{ matrix.part }}
-        run: su node -s /bin/bash -c 'node --experimental-strip-types --no-warnings scripts/test-node.ts --test-shard=${{ matrix.part }} --files-from="$RUNNER_TEMP/pack.list"'
+        run: su node -s /bin/bash -c 'node --experimental-strip-types --no-warnings scripts/test-node.ts --test-shard=${{ matrix.part }} --files-from="$RUNNER_TEMP/pack.list" "--test-skip-pattern=a walk of the whole file system with max_seconds 1"'
 
   replay-impact:
     # A pull request's impact line (scripts/replay-impact.ts): every contract
