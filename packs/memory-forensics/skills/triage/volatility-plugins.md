@@ -3,7 +3,7 @@ id: triage/volatility-plugins
 title: Volatility plugins by operating system
 when: Choosing Windows, Linux or macOS plugins, or the option that writes a region to disk.
 needs: []
-tools: [mem_registry]
+tools: [mem_registry, isf_intake]
 requires_host: [vol]
 ---
 
@@ -41,10 +41,10 @@ symbol-dependent analysis; as of October 2026, in 2.28.2, the plugins include
 `linux.sockstat.Sockstat`, `linux.envars.Envars`, `linux.bash.Bash` and
 `linux.malware.malfind.Malfind`, whose option for writing regions is
 `--dump-regions` (not the Windows `--dump`; it has its own `--dump-maxsize`, 1 GB
-by default). This pack supplies no Linux or macOS ISF set and no converter:
-require an ISF made from matching kernel debug material that the case or the
-operator supplies, record its provenance, and validate the captured kernel's
-identity and architecture. Where the matching table is absent, symbol-dependent
+by default). This pack supplies no Linux or macOS ISF set; `isf_intake` converts
+the Linux debug material the operator supplies and is ready only on an exact
+banner match. Record the provenance, and validate the kernel's identity and
+architecture. Where the matching table is absent, symbol-dependent
 Linux analysis was not performed, and the report says so. A plugin being listed
 does not show that the captured kernel is supported. For macOS this pack makes no
 support claim for any version: the same rule applies, and an unsupported target is

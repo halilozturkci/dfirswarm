@@ -1,7 +1,7 @@
 {
   "id": "memory-forensics",
   "name": "Memory Forensics Pack",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Method and tooling for a memory image: what the container is before anything else, what can be read with no framework at all, processes and injection, network state, credential material, and the discipline that keeps a string in memory from becoming a claim about behaviour.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -28,7 +28,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "a3803beddd9b3c10ee6b2ce4a7b0bc9f8f4d02a050f6fd354c339067ea18d6c0",
+      "README.md": "5be6e8679a4098806e7fe16b3dea50db7455f687c5b786014b9dd633b08f3c8f",
       "goals/memory-triage.md": "16661eee801bceda2ea7010e733ce1ad677f1e38489834ddb1be782d95b0b985",
       "requires/host.json": "0acbd4125515941f933809791a302f536589d85d3dc8d1730bf414585a5ae44f",
       "requires/python.txt": "805da5f067cc98775d074649955d9cca3e18379ef9284f73d162d6aae998f0f6",
@@ -55,12 +55,14 @@
       "skills/triage/no-framework.md": "b80e797e7eb3d3b7175ab073ff02e6c6c11fd0e7eb4c63b18ebab76f6cb2a3ab",
       "skills/triage/paging-files.md": "817769f8e71c453e04f02b120c43ec58f15a8039881c42e0e33dfcc45e936d06",
       "skills/triage/volatility-catalogue.md": "dbbe0140769636f8f39dd2497dca58e369e62222089206dc10c5f9d3fe310c75",
-      "skills/triage/volatility-plugins.md": "f31917912ac5446ff7ef5f0a3e4f28b896e63d710710e70dfc75ec6d7c478227",
+      "skills/triage/volatility-plugins.md": "ed7a0344725d46b7336cb35327bcdc83ca03fe31a1bf5b9de80b730b46374e0d",
       "skills/triage/volatility-symbols.md": "09d32c3953d3f1a890313b14703ef90551e4e5b3e2ef8bc27bb87906c7a18d91",
       "skills/triage/volatility.md": "c5fa0cceacfa987a3971c6190664c5720577d4d0aca21ceae5cf9551ee1b2ef8",
       "skills/triage/what-you-have.md": "9c694ae5c0c695fc243b486390fdd95a728ccef2fd2c01f4dd772a1b8e012355",
       "tools/carve_handoff/manifest.json": "ea812e4755a4bdc5c549442bcddb0ea06277e414e258cee68a2d030264d0401d",
       "tools/carve_handoff/run.py": "0d8beab7e3da46df0c2979ab06d43fde5b293ac7d12a4700936a22ad29180eaf",
+      "tools/isf_intake/manifest.json": "46d80237deb42c32ebc7a9d25721b5a73116d0be6d37cd6048983cb24beb7b87",
+      "tools/isf_intake/run.py": "9ebf4c02cbc2e7e7dc3bf67d22412965b09b4cd0d730083138221960c9b96049",
       "tools/mem_carve/manifest.json": "0f51c51c9ee84d517e29d2894c1ba1bb57d389b82090e0e3043d7024a0768673",
       "tools/mem_carve/run.py": "c5ae768971a392774f695f59218e1f13b5da551820509582d56a960481a42edf",
       "tools/mem_fs/manifest.json": "f5b842edb901136dba8be336cef9fa2da75edbd0379484b885315941f05a7d47",
@@ -77,6 +79,7 @@
   },
   "tools": [
     "carve_handoff",
+    "isf_intake",
     "mem_carve",
     "mem_fs",
     "mem_profile",

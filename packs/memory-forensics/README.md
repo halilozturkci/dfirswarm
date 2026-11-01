@@ -23,7 +23,7 @@ Depends on the Computer Forensics Base Pack.
 | Pattern matching | `patterns/yara` |
 | Acquisition | `acquire/images` (`acquire/avml-and-preserve`) |
 
-**Seven tools.** `mem_profile` says what a memory file's header shows before
+**Eight tools.** `mem_profile` says what a memory file's header shows before
 anything is run against it (a crash dump's physical-memory runs with their file
 offsets, checked for order, overlap and payload; a LiME file's ranges; an ELF core's
 byte order) and answers "unrecognised" for anything else, because a flat capture and
@@ -50,6 +50,8 @@ exercised here. On a host or image without `/dev/fuse` or a `fusermount3`/`fuser
 `carve_handoff` takes one hit of `mem_carve` (`kind`, `signature_offset`) and readies it for the parser that reads it, without parsing: the structure's start (a plain Prefetch record four bytes before `SCCA`, only when those bytes are a known version), the cut by `mem_carve`'s own rule, the header checks and, for a registry hive (base-block checksum, sequence numbers, chain of bins) and an event log file or chunk (chunks, header checksum), whether the pages stay adjacent in the image. It hashes the slice only for a family that cannot be a credential store (a hive, a SQLite database and a property list never are hashed) and writes slice bytes only with `write_values` in a job run as secret output. It names the windows-forensics tools that read the family (`regkv`, `evtx_carve`, `mam_scan`, `prefetch_mam`) and calls none of them, so it depends on that pack not at all.
 
 `vol_views` puts one named question to the installed Volatility on an image, offline, and keeps the engine's whole answer: `question` names a plugin as the installed `vol` lists it (a name it does not list is refused, and none is guessed), `readiness` is the `ready` answer of `vol_readiness` for that image, and the output comes back with its scope and a status. Every line is split at its tabs and each cell judged by the same rules as the other tools, paged with the whole judged output in a file whose size and sha256 are given; the raw output and the files a plugin's own dump option exports are kept only with `write_values` in a job run as secret output, with their digests in a `manifest.jsonl` beside them and never in the answer. A Linux or macOS question stays blocked until `vol_readiness` finds a table for it. Run against a stand-in `vol` in this review, like the other two Volatility tools.
+
+`isf_intake` turns the debug material an operator supplies for a Linux kernel (a vmlinux or debug-symbols file, or a System.map) into an ISF with `dwarf2json`, and says `ready` only when the table's own `linux_banner` is, character for character, a banner `vol` finds in the image and the stated build identity agrees (a near release is no match; a System.map has no banner and cannot be ready). It records the converter's version and argv, keeps a table only when it is ready, and promises nothing beyond the match; macOS is not handled. **`dwarf2json` is not yet declared in `requires/host.json`**: its pin needs the sha256 of a release asset, which the release page does not list and which needs a download (an owner decision); until then the tool fails with verdict `blocked` where `dwarf2json` is not on PATH. Run against stand-ins in this review.
 
 **Sensitive output.** Memory holds whatever the machine held. `mem_fs` writes file
 content only when it runs as a job, only on `write_values: true`, and only under
