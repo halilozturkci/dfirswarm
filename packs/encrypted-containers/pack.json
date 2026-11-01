@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.8.5",
+  "version": "1.8.6",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -62,7 +62,7 @@
       "tools/archive_probe/run.py": "f23ea0efd278bf9ea289402629ca0ddca01b62864ca977ed4f0cc077b1a62132",
       "tools/crypto_id/manifest.json": "824c2b0fcf3f36f8a84467d764fb96e8ae358a55841c53658f3227a978429bba",
       "tools/crypto_id/run.py": "8593e2b27b2af71cc72b63813d9714d6bc1ee234410f1269fd892ce5e90b5c2f",
-      "tools/password_recover/manifest.json": "14cf3ede317ed0548cc83e0b392bf9f7068b154b465c5d971581568ccdbafd18",
+      "tools/password_recover/manifest.json": "d840375d42d4b5a2b5978a00ed3dd29c48b4586171dba2f8cb0990c5913ad923",
       "tools/password_recover/run.py": "f11139fdb36b3612a51e01deec89d235332a9e3c7e47a007e8a7aa0e0b7e30b5",
       "tools/recovery_key_scan/manifest.json": "b4cc22c6e1de8b093536472b5f45ca0f23693c11e1d0c476296df125b162791d",
       "tools/recovery_key_scan/run.py": "602f72b4bd6a543105354487ed24b950e0841ce388626f21b3d2c1859abdc658",

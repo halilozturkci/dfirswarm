@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # disk-volumes: The Sleuth Kit's first pass over one disk image.
 #
-#   run.sh detect --target TARGET          exit 0 applies, 1 does not, 2 error
+#   run.sh detect --target TARGET          exit 0 applies, 1 does not, 2 cannot tell (applies: "unknown")
 #   run.sh run --target TARGET --out DIR
 #
 # TARGET is JSON, inline or a file: {"paths": [...], "name": "inputs/x.E01"};
@@ -326,7 +326,7 @@ done
 [[ -n "$target" ]] || { echo '{"ok": false, "error": "--target is required"}'; exit 2; }
 img="$(target_field "$target" paths0)"
 shown="$(target_field "$target" name)"
-[[ -n "$img" && -f "$img" ]] || { echo '{"ok": false, "error": "the target is not a readable file"}'; exit 2; }
+[[ -n "$img" && -f "$img" ]] || { echo '{"applies": "unknown", "why": "the target is not a regular file, so it cannot be told what it is", "ok": false, "error": "the target is not a readable file"}'; exit 2; }
 
 case "$cmd" in
   detect)
@@ -345,7 +345,7 @@ case "$cmd" in
       fi
     done
     if ! have mmls && ! have fsstat; then
-      echo '{"applies": false, "why": "mmls and fsstat are not in this image"}'; exit 1
+      echo '{"applies": "unknown", "why": "mmls and fsstat are not in this image"}'; exit 2
     fi
     echo '{"applies": false, "why": "no partition table and no filesystem at sector 0, 63 or 2048"}'; exit 1
     ;;
@@ -476,7 +476,7 @@ case "$cmd" in
     python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"], "volumes": int(sys.argv[2]), "candidate_volumes": int(sys.argv[3])}))' "$out/coverage.json" "$volumes" "$candidate_volumes"
     ;;
   *)
-    echo '{"ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'
+    echo '{"applies": "unknown", "why": "a usage error, so nothing was asked", "ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'
     exit 2
     ;;
 esac

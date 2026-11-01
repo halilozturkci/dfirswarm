@@ -104,7 +104,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "timestamp_decode", "version": 4}
+TOOL = {"name": "timestamp_decode", "version": 5}
 
 UTC = datetime.timezone.utc
 CTX = decimal.Context(prec=120, traps=[decimal.InvalidOperation, decimal.Overflow, decimal.DivisionByZero])
@@ -126,7 +126,7 @@ SHOWN_DIGITS = 9
 
 
 def fail(message, **extra):
-    print_answer({"error": message, "tool": TOOL, **extra})
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra})
     raise SystemExit(1)
 
 

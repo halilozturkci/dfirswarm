@@ -86,7 +86,7 @@ try:  # Python 3.11 and later; the module was sre_parse before
 except ImportError:  # pragma: no cover
     import sre_constants, sre_parse
 
-PARSER = "sqlite_freespace/4"
+PARSER = "sqlite_freespace/5"
 TOOL = "sqlite_freespace"
 VALUES_NAME = "sqlite-freespace-values.jsonl"
 VALUES_FORMAT = ("JSON Lines, mode 0600, one row for every fragment found: finding_id, file (the real path), page, where, encoding, "
@@ -325,7 +325,8 @@ def emit(text):
 
 
 def fail(message, **extra):
-    answer = {"error": scrub(str(message)), **{k: (scrub(v) if isinstance(v, str) else v) for k, v in extra.items()}}
+    answer = {"error": scrub(str(message)), "status": "failed", "status_basis": "the tool stopped with an error: %s" % scrub(str(message)),
+              **{k: (scrub(v) if isinstance(v, str) else v) for k, v in extra.items()}}
     emit(dumps(wrap_up(answer)))
     raise SystemExit(1)
 

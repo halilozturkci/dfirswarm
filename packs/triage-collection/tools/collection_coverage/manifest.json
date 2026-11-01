@@ -50,8 +50,8 @@
   "example": "{\"root\": \"inputs/collection\", \"questions\": [{\"id\": \"q1\", \"what\": \"the SYSTEM hive\", \"source_paths\": [\"*/config/system\"]}]}",
   "by": "maintainer",
   "at": "2026-10-21T12:00:00.000Z",
-  "version": 6,
-  "sha256": "c7050a8b23388193d157247cfc2d7fd0ba1e90a186b8d28d2239a99fa5a44552",
+  "version": 7,
+  "sha256": "054042dc268c3b7b2053fae9e2b618569a90488bd26c355c948d342f22e18a9b",
   "use": {
     "names": [
       "*_CopyLog.csv",

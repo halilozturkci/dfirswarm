@@ -48,7 +48,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-TOOL = {"name": "doc_structure", "version": 4}
+TOOL = {"name": "doc_structure", "version": 6}
 PARSER = "doc_structure/1"
 NOTE = ("Static structure only. A structure shows what the file holds, not what an application would do with it: an action, a macro, "
         "a field or an external target does not show that anything ran or was fetched. Record what was read and what was not before "
@@ -1271,9 +1271,9 @@ class SecretValues:
         self.shown = None
         if not enabled:
             return
-        if not (self.job and self.out):
+        if not (self.job and self.out and os.environ.get("SECRET_OUTPUT") == "1"):
             raise SecretValuesRefused(
-                "write_values is refused outside a job: a value written here would be an ordinary "
+                "write_values is refused outside a job run as secret output: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=doc_structure with "
                 "secret_output: true, and ask again there. Nothing was written."
             )
@@ -6287,7 +6287,7 @@ def main():
                         body = probe_rtf(blob, ctx, extractor)
                     else:
                         values.close()
-                        fail("this is not a container this tool reads", status="unsupported", path=path, head_hex=head[:4].hex(),
+                        fail("this is not a container this tool reads", path=path, head_hex=head[:4].hex(),
                              reads=["OLE compound file", "OOXML or ZIP", "PDF", "RTF"])
                 finally:
                     blob.close()

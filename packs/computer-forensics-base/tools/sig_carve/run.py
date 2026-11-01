@@ -88,7 +88,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "sig_carve", "version": 8}
+TOOL = {"name": "sig_carve", "version": 9}
 WINDOW = 8 * 1024 * 1024
 BUDGET_SECONDS = 100              # inside the manifest's 120: past it the scan stops, says so, and names where to continue
 CONTEXT_MAX = 4096
@@ -414,7 +414,7 @@ PAGES = []                         # the pages being written: a SIGTERM removes 
 
 
 def fail(message, **extra):
-    print_answer({"ok": False, "error": message, "tool": TOOL, **extra})
+    print_answer({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "error": message, "tool": TOOL, **extra})
     raise SystemExit(1)
 
 

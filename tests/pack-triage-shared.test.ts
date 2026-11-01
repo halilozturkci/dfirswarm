@@ -152,7 +152,7 @@ const MANIFEST_TOOLS = ["collection_manifest_parse", "collection_manifest_verify
 const NAMES = ["collection_id", "collection_index", ...MANIFEST_TOOLS];
 
 test("every manifest has a use, a raised version, the sha256 of its script and a description that says what is and is not measured", async () => {
-  const versions: Record<string, number> = { collection_id: 7, collection_index: 7, collection_manifest_parse: 5, collection_manifest_verify: 5, collection_path_map: 6, collection_coverage: 6 };
+  const versions: Record<string, number> = { collection_id: 8, collection_index: 8, collection_manifest_parse: 6, collection_manifest_verify: 6, collection_path_map: 7, collection_coverage: 7 };
   for (const name of NAMES) {
     const manifest: Json = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
     assert.ok(manifest.use?.names?.length >= (name === "collection_id" ? 5 : 1), `${name} says what it reads`);

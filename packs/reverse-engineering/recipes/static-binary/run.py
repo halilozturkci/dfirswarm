@@ -109,7 +109,7 @@ def detect(path):
                     return None, "the first slice does not begin with a Mach-O magic (0xCAFEBABE is also the first word of a Java class file)"
                 return "Mach-O", "universal-binary signature, a plausible architecture table and a Mach-O first slice"
     except OSError as exc:
-        return None, "unreadable: %s" % (exc.strerror or exc)
+        return "unknown", "unreadable, so it cannot be told what it is: %s" % (exc.strerror or exc)
     return None, "no PE, ELF or Mach-O signature"
 
 
@@ -1035,7 +1035,8 @@ def run(path, out_dir, fmt, budget):
 
 def refuse(message):
     """An answer for a call the recipe did not start."""
-    print(json.dumps({"ok": False, "status": "failed", "status_basis": message, "error": message}))
+    # a detect that could not start answers the third state too (docs/packs.md, a recipe's detect step has three answers)
+    print(json.dumps({"applies": "unknown", "why": message, "ok": False, "status": "failed", "status_basis": message, "error": message}))
     return 2
 
 
@@ -1053,11 +1054,14 @@ def main(argv):
         return refuse("the target is not a readable file")
     fmt, why = detect(path)
     if argv[1] == "detect":
+        if fmt == "unknown":
+            print(json.dumps({"applies": "unknown", "format": None, "why": why}))
+            return 2
         print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
         return 0 if fmt else 1
     if "--out" not in args:
         return refuse("run needs --out DIR")
-    if fmt is None:
+    if fmt is None or fmt == "unknown":
         refused = make_out_dir(args["--out"])
         if refused:
             return refuse("the output directory cannot be written: %s" % refused)

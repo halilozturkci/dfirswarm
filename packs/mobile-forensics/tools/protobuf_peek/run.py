@@ -98,7 +98,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-PARSER = "protobuf_peek/3"
+PARSER = "protobuf_peek/4"
 TOOL = "protobuf_peek"
 VALUES_NAME = "protobuf-values.jsonl"
 VALUES_FORMAT = ("JSON Lines, mode 0600: finding_id, source (the real file), field_path, offset, payload_offset, "
@@ -339,7 +339,8 @@ def emit(text):
 
 
 def fail(message, **extra):
-    answer = {"error": scrub(str(message)), **{k: (scrub(v) if isinstance(v, str) else v) for k, v in extra.items()}}
+    answer = {"error": scrub(str(message)), "status": "failed", "status_basis": "the tool stopped with an error: %s" % scrub(str(message)),
+              **{k: (scrub(v) if isinstance(v, str) else v) for k, v in extra.items()}}
     emit(dumps(wrap_up(answer)))
     raise SystemExit(1)
 

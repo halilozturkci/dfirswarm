@@ -82,6 +82,11 @@ export type Lane = "short" | "general" | "kickoff" | "derived";
 /** An import hashes its source before and after the copy up to this size; above it, size and mtime only. */
 export const IMPORT_HASH_BOUND = 2 * 1024 * 1024 * 1024;
 
+/** What a detect step's exit code says of whether the recipe applies: 0 applies, 1 does not, 2 cannot tell ("unknown"); any other code is a failed detect, recorded as not applying with its rc. */
+export function detectApplies(rc: string): boolean | "unknown" {
+  return rc === "0" ? true : rc === "2" ? "unknown" : false;
+}
+
 /**
  * What an import runs in its worker: each regular file under the source
  * copied into $OUT (links and special files named and left out), hashed
@@ -2336,7 +2341,7 @@ export class JobService {
       await this.o.notify(job.requester.agent, `A broad extraction applies and is not run unasked (job ${job.id}): ${unasked.join("; ")}. One that can run is started with catalog_request target=<ref> recipe=<id> when the case needs it.`).catch(() => undefined);
     }
     if (!applied && job.requester.agent !== "system") {
-      const whys = answered.map((a) => `${a.recipe}: ${a.why || "does not apply"}`);
+      const whys = answered.map((a) => `${a.recipe}: ${a.rc === "2" ? `could not tell (${a.why || "its detect step gave no reason"})` : a.why || "does not apply"}`);
       this.delivered.add(job.id);
       await this.journal.append({ type: "job_notified", job: job.id, to: job.requester.agent, how: "post" });
       await this.o.notify(job.requester.agent, `No recipe of this run catalogues ${targets.map((t) => t.name ?? t.ref).join(", ")} (job ${job.id}): ${whys.join("; ") || "none was asked"}. Open it with a job_run command; a forged tool that declares "recipe": true can be named as recipe=tool:<name>.`).catch(() => undefined);
@@ -2349,7 +2354,7 @@ export class JobService {
     const got = new Set(answered.map((a) => `${a.t}\u0000${a.recipe}`));
     const missing = new Map<number, string[]>();
     for (const q of job.spec.pairs ?? []) if (!got.has(`${q.t}\u0000${q.recipe}`)) missing.set(q.t, [...(missing.get(q.t) ?? []), q.recipe]);
-    const rows = answered.map((a) => ({ sha256: targets[a.t]?.sha256 ?? "", ref: targets[a.t]?.ref ?? "", recipe: a.recipe, applies: a.rc === "0", rc: a.rc, why: a.why }));
+    const rows = answered.map((a) => ({ sha256: targets[a.t]?.sha256 ?? "", ref: targets[a.t]?.ref ?? "", recipe: a.recipe, applies: detectApplies(a.rc), rc: a.rc, why: a.why }));
     const unanswered = [...missing].map(([t, recipes]) => ({ sha256: targets[t]?.sha256 ?? "", ref: targets[t]?.ref ?? "", recipes }));
     this.derivedProcessed.add(job.id);
     await this.journal.append({ type: "detect_answered", job: job.id, status: job.status ?? job.state, rows, unanswered });

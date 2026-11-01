@@ -641,7 +641,7 @@ class GapFile:
 
 
 def fail(message, **extra):
-    print_answer({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error and extracted nothing (see error)", "error": message, **extra})
+    print_answer({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "error": message, **extra})
     raise SystemExit(1)
 
 
@@ -821,7 +821,7 @@ def main():
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
     image = args.get("image")
-    if not isinstance(image, str) or not image:
+    if not isinstance(image, str) or not image or "\0" in image:
         fail("image is required: the AD1 image's first segment (.ad1)")
     want_n, want_addr = parse_members(args.get("members"))
     budgets = {}
@@ -837,8 +837,14 @@ def main():
         stem = stem[:-4]
     in_job = bool(os.environ.get("OUT") and os.environ.get("JOB_ID"))
     out_arg = args.get("out_dir") or (os.path.join(os.environ["OUT"], stem) if in_job else os.path.join("work", os.environ.get("AGENT_ID") or "ad1", "ad1", stem))
-    out = resolve_output(out_arg)
-    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+    if not isinstance(out_arg, str) or "\0" in out_arg:
+        fail("out_dir is a string without a NUL byte: a new or empty directory", out_dir=str(out_arg)[:200])
+    try:
+        out = resolve_output(out_arg)
+        holds_something = out.exists() and (not out.is_dir() or any(out.iterdir()))
+    except OSError as e:
+        fail("out_dir cannot be used: %s" % (e.strerror or e), out_dir=out_arg[:200])
+    if holds_something:
         fail("out_dir already holds something: name a new or empty directory", out_dir=str(out_arg))
     try:
         img = AD1(image)

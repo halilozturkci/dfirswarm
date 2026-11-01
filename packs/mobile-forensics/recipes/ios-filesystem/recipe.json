@@ -1,6 +1,6 @@
 {
   "id": "ios-filesystem",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Inventory the mobile-forensic structures inside an iOS full file-system tar without extracting it: core databases, their WAL/SHM companions, Biome/SEGB, unified logs, keychain, photos metadata and app-container mappings. The tar (plain, gzip, bzip2 or xz) is followed header by header beside the tar library: it is complete only when its two end-of-archive blocks came, no zero block stood alone between members, nothing but zeros follows them, and the members the library listed are the headers counted. A compressed tar is decoded within an output budget (--max-decompressed-bytes, default 32 GiB).",
   "object": "iOS full file-system archive",
   "order": 35,
@@ -35,5 +35,5 @@
   ],
   "purpose": "inventory",
   "covers": "The paths, sizes and archive timestamps of mobile-forensic structures in one iOS full file-system tar, plus SQLite companion presence. Member names are kept as the archive spelled them (path_b64 is the exact bytes), every occurrence of a duplicated name is its own row with its position, and a database that occurs twice keeps both sizes. A database family is found by its suffix or as the file a -wal, -shm or -journal belongs to, and each occurrence has its type (a link has the size 0 and is not an empty database); a database with neither a suffix nor a companion is not found by name. A tar cut short, ended by a header the library refuses, holding an extended header too large to read, holding a zero block with a header after it (read past, as GNU tar does, and said) or data after its end blocks (not read, and said), ending after one zero block instead of two, a compressed tar that expands past its decompression budget, a GNU long-name, long-link or pax header whose data block was wiped (it starts with a zero byte), or a listing that passes its own time limit (--max-seconds, default 900 s; a coverage.json that says partial is written before the listing starts) is partial, with where. A run never writes over an earlier run's output. It extracts nothing, parses no artifact content, decrypts no protected data and does not claim that a listed path contains responsive records.",
-  "sha256": "e4d2ecb568698b3ab2b9bd24287235b04034fa8ef661a4e896334b2508f72136"
+  "sha256": "d61ac3d2d6f05cd430846c7151e732d197eb6082f1e3b71e4a8a8b069c36a64c"
 }

@@ -88,7 +88,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 RUN = {"proc": None, "size": 0}      # the icat running and the bytes written, for a stop
 
-TOOL = {"name": "icat_extract", "version": 11}
+TOOL = {"name": "icat_extract", "version": 12}
 OFFSET_MAX = 1 << 40              # sectors: an explicit offset above this is not a volume offset (512 TiB at 512 bytes a sector)
 BLOCK = 1 << 20
 MAX_BYTES_DEFAULT = 32 * 1024 ** 3
@@ -247,7 +247,7 @@ FAILED_BASIS = "the tool stopped with an error and extracted nothing (see error)
 
 
 def fail(msg, **extra):
-    print_answer({"error": msg, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS, **extra})
+    print_answer({"error": msg, "status": "failed", "status_basis": "the tool stopped with an error: %s" % msg, "tool": TOOL, **extra})
     sys.exit(1)
 
 
@@ -262,20 +262,18 @@ sys.excepthook = unexpected
 
 
 def on_stdout(resolve, *given):
-    """The image and offset resolvers end with SystemExit(<JSON text>), which Python prints on stderr: the answer belongs on stdout."""
+    """The image and offset resolvers end with SystemExit(<JSON text>), which Python prints on stderr: the answer belongs on stdout, with the status pair."""
     try:
         return resolve(*given)
     except SystemExit as exc:
         if isinstance(exc.code, str):
             try:
-                said = json.loads(exc.code)
+                doc = json.loads(exc.code)
             except ValueError:
-                said = {"error": exc.code}
-            if isinstance(said, dict):
-                said.setdefault("tool", TOOL)
-                said.setdefault("status", "failed")
-                said.setdefault("status_basis", FAILED_BASIS)
-            print_answer(said)
+                doc = {"ok": False, "error": exc.code}
+            if isinstance(doc, dict):
+                doc = {"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % doc.get("error"), "tool": TOOL, **doc}
+            print_answer(doc)
             sys.exit(1)
         raise
 

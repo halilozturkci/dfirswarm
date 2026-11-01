@@ -90,7 +90,7 @@ PAGES = []                 # objects with a hidden temporary file (_tmp) that a 
 CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
 PROGRESS = {"scanned": 0}
 
-TOOL = {"name": "chunk_needles", "version": 13}
+TOOL = {"name": "chunk_needles", "version": 14}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -627,7 +627,7 @@ FAILED_BASIS = "the tool stopped with an error and scanned nothing (see error)"
 
 
 def fail(message, **extra):
-    print_answer({"error": message, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS, **extra})
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra})
     sys.exit(1)
 
 
@@ -648,13 +648,12 @@ def on_stdout(resolve, *given):
     except SystemExit as exc:
         if isinstance(exc.code, str):
             try:
-                said = json.loads(exc.code)
+                doc = json.loads(exc.code)
             except ValueError:
-                said = {"error": exc.code}
-            if isinstance(said, dict):
-                said.setdefault("status", "failed")
-                said.setdefault("status_basis", FAILED_BASIS)
-            print_answer(said)
+                doc = {"ok": False, "error": exc.code}
+            if isinstance(doc, dict):
+                doc = {"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % doc.get("error"), **doc}
+            print_answer(doc)
             sys.exit(1)
         raise
 
@@ -682,8 +681,8 @@ elif isinstance(needles, str):
 else:
     fail("needles is a pipe-separated string or a list of strings")
 path = args.get("path") or ""
-if not isinstance(path, str):
-    fail("path is text")
+if not isinstance(path, str) or "\0" in path:
+    fail("path is a string without a NUL byte")
 inode = args.get("inode")
 context = whole(args, "context", 60, 0, CONTEXT_MAX)          # 0 is 0, not the default
 max_hits = whole(args, "max_hits", 20, 1, HITS_MAX)
@@ -813,13 +812,18 @@ if path:
         fail(f"path not found: {path}")
     source = {"kind": "file", "path": path, "bytes": os.path.getsize(path)}
     source["label"] = path
-    with open(path, "rb") as f:
-        hits, scanned, stopped = scan_fh(f, source, source["bytes"])
+    try:
+        with open(path, "rb") as f:
+            hits, scanned, stopped = scan_fh(f, source, source["bytes"])
+    except OSError as exc:
+        fail("cannot read %s: %s" % (path, exc.strerror or exc))
 else:
     if inode is None:
         fail("path or inode required")
     if isinstance(inode, bool) or not (isinstance(inode, int) and inode >= 0 or isinstance(inode, str) and INODE.match(inode)):
         fail("inode is a Sleuth Kit address: a number, or number-type-id for an NTFS stream (168-128-4)", inode=inode)
+    if args.get("image") is not None and (not isinstance(args.get("image"), str) or "\0" in args.get("image")):
+        fail("image is a string without a NUL byte")
     image = on_stdout(_resolve_image, args.get("image"))
     if not os.path.isfile(image):
         fail(f"image not found: {image}")

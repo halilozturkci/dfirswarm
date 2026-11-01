@@ -1,6 +1,6 @@
 {
   "id": "static-binary",
-  "version": "1.1.5",
+  "version": "1.1.7",
   "description": "Catalogue a PE, ELF or Mach-O executable without running it: pe_info's structure (long tables kept whole in files) and a complete entropy profile, with a status taken from what the parsers say they read. The output directory (--out) reached through a symbolic link, directly or by a directory above it inside the run directory, is refused as JSON and nothing is written through it. A stop signal (SIGTERM, SIGINT or SIGHUP) ends the programs it started and answers once, with the exit code 128 plus the signal, from the moment the module has run as far as its stop handlers (installed at module level); the receipt says the recipe was stopped, and no hidden temporary file is left.",
   "object": "executable file",
   "order": 40,
@@ -76,5 +76,5 @@
   ],
   "purpose": "inventory",
   "covers": "Static headers, sections or segments, imports or linked libraries, and whole-file entropy, as far as the parsers' own status says (coverage.json: status, warnings, omissions, limits_hit, errors; a zero exit code is not completeness). It does not execute, unpack, decompile, verify a signature or claim observed behaviour.",
-  "sha256": "b4b7788e1d8b1a8e4bf59938de21f18d61211148c6a84b56c53b31a0e19572b9"
+  "sha256": "75f46a3caff3742b54980ad8ccbf39ffed4da2a6c2600795e0f382726580ac4c"
 }

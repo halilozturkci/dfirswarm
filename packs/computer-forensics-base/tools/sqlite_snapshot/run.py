@@ -113,7 +113,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "sqlite_snapshot", "version": 3}
+TOOL = {"name": "sqlite_snapshot", "version": 4}
 CHUNK = 1 << 20
 MAX_BYTES_DEFAULT = 8 * 1024 ** 3
 MAX_BYTES_CEILING = 1024 ** 4
@@ -432,7 +432,7 @@ def say(obj, code=0):
 
 
 def fail(message, **extra):
-    say({"ok": False, "error": scrub(message), "tool": TOOL, **extra}, 1)
+    say({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % scrub(message), "error": scrub(message), "tool": TOOL, **extra}, 1)
 
 
 def whole(args, key, default, low, high):
@@ -917,4 +917,4 @@ if __name__ == "__main__":
     except (SystemExit, KeyboardInterrupt):
         raise
     except Exception as exc:   # noqa: BLE001 - a defect in this tool or a database it did not foresee: said as JSON, never a traceback
-        say({"ok": False, "error": "internal error: %s: %s" % (type(exc).__name__, scrub(str(exc))), "tool": TOOL}, 1)
+        say({"ok": False, "status": "failed", "status_basis": "the tool stopped with an internal error: %s" % type(exc).__name__, "error": "internal error: %s: %s" % (type(exc).__name__, scrub(str(exc))), "tool": TOOL}, 1)

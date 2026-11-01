@@ -148,7 +148,7 @@ def mbr_partitions(head):
 
 def detect(path):
     if not os.path.isfile(path):
-        return False, "not a readable file"
+        return "unknown", "not a readable file, so it cannot be told whether it is a disk image"
     try:
         with open(path, "rb") as fh:
             head = fh.read(65536)
@@ -158,7 +158,7 @@ def detect(path):
                 fh.seek(size - 512)
                 tail = fh.read(512)
     except OSError as exc:
-        return False, str(exc)
+        return "unknown", "unreadable, so it cannot be told whether it is a disk image: %s" % exc
     containers = [
         (0, b"EVF\x09\x0d\x0a\xff\x00", "an EWF image (Plaso reads it through libewf)"),
         (0, b"EVF2\x0d\x0a\x81\x00", "an EWF2 image (Plaso reads it through libewf)"),
@@ -385,11 +385,11 @@ def main():
     applies, why = detect(image)
     if args.command == "detect":
         print(json.dumps({"applies": applies, "why": why}))
-        return 0 if applies else 1
+        return 2 if applies == "unknown" else 0 if applies else 1
     if not args.out:
         print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
         return 2
-    if not applies:
+    if applies is not True:
         print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
         return 2
     zone = target.get("timezone") if isinstance(target, dict) else None

@@ -41,7 +41,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "feature_scan", "version": 5}
+TOOL = {"name": "feature_scan", "version": 7}
 STARTED = time.monotonic()
 DEFAULT_TIMEOUT = 900
 TIMEOUT_MAX = 1000                # the tool's own limit is 1200 seconds: the counting of what bulk_extractor wrote needs the rest
@@ -793,7 +793,7 @@ class SecretValues:
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error and ran nothing (see error)", **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra}))
     raise SystemExit(1)
 
 
@@ -1026,7 +1026,12 @@ def main():
         out_dir.encode("utf-8")
     except UnicodeEncodeError:
         fail("path and out_dir are text that can be written as UTF-8 (a lone surrogate cannot)")
-    out_dir = resolve_output(out_dir, "out_dir")
+    if "\0" in out_dir:
+        fail("out_dir is a string without a NUL byte: a directory under work/ that does not exist yet")
+    try:
+        out_dir = resolve_output(out_dir, "out_dir")
+    except (OSError, RuntimeError, ValueError) as exc:
+        fail("out_dir cannot be used: %s" % (getattr(exc, "strerror", None) or exc))
     job_out = os.environ.get("OUT") if os.environ.get("JOB_ID") else None
     if job_out:
         # A job writes in one place, $OUT: a directory elsewhere would fail halfway, or leave bytes outside the sealed output.

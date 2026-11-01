@@ -1,0 +1,3 @@
+### Fixed: mobile-forensics manifest_db, protobuf_peek and sqlite_freespace answer every refusal with the status pair
+
+The three tools answered a refusal (`{}`, a path that is not there, a path of the wrong type) as JSON with an `error` and no `status` or `status_basis`; only their stop-signal answers carried the pair. Their failure function now prints `status: "failed"`, a one-sentence `status_basis` ("the tool stopped with an error: ..." with the same scrubbed message the `error` field carries) and exits 1. The versions of the tools and their `PARSER` labels are raised together. The mobile entries of `tests/tool-contract-allowed.json` are removed, and `tests/pack-mobile-forensics-refusals.test.ts` holds the refusals.

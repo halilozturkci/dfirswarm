@@ -133,7 +133,7 @@ def end_child():
         except Exception:  # noqa: BLE001 - best effort
             pass
 
-TOOL = {"name": "file_type", "version": 6}
+TOOL = {"name": "file_type", "version": 7}
 BUDGET_SECONDS = 100          # under the manifest's 120
 LIBMAGIC_TIMEOUT = 10
 ERRORS_SHOWN = 50
@@ -224,7 +224,7 @@ TEXTY = bytes(range(0x20, 0x7f)) + b"\r\n\t\f\b"
 
 
 def fail(message, **extra):
-    print_answer({"error": message, "tool": TOOL, **extra})
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra})
     raise SystemExit(1)
 
 

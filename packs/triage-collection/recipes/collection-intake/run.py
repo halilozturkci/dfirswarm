@@ -2353,7 +2353,8 @@ def detect(path):
     deadline = time.monotonic() + float(os.environ.get("COLLECTION_INTAKE_DETECT_SECONDS", "120"))
     fmt, why = sniff(path, lambda: time.monotonic() > deadline)
     if fmt is None:
-        return (1 if "neither a zip nor a tar" in (why or "") or "not a tar archive" in (why or "") else 2), {"applies": False, "why": why}
+        not_archive = "neither a zip nor a tar" in (why or "") or "not a tar archive" in (why or "")
+        return (1 if not_archive else 2), {"applies": False if not_archive else "unknown", "why": why}
     census = Census()
     stopped = None
     n = 0
@@ -2391,7 +2392,7 @@ def detect(path):
                                                        "its records are inside the encrypted payload and are not read" % (len(sealed), esc(sealed[0])),
                    **({"listing_note": stopped} if stopped else {})}
     if stopped:
-        return 2, {"applies": False, "why": "no collector record among the %d members listed, and the listing stopped (%s): could not tell" % (n, stopped)}
+        return 2, {"applies": "unknown", "why": "no collector record among the %d members listed, and the listing stopped (%s): could not tell" % (n, stopped)}
     return 1, {"applies": False, "why": "no member of the %d is named like a collector's record" % n}
 
 
