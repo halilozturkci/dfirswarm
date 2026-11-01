@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.10.2",
+  "version": "1.11.0",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -16,20 +16,8 @@
   },
   "method_only": [
     {
-      "path": "skills/encryptor/backup-infrastructure.md",
-      "why": "a method leaf about backup servers, immutable storage and boot recovery; it names no tool or program of this pack and points to the two platform leaves for hypervisors and network storage"
-    },
-    {
-      "path": "skills/encryptor/destroyed-backups.md",
-      "why": "a method leaf about recovery impairment; the pack's tools survey encrypted files and ransom notes, and the shadow-copy reader it points to (`vss_stores`) belongs to the windows-forensics pack and is only mentioned"
-    },
-    {
       "path": "skills/encryptor/traces.md",
       "why": "a method leaf about the chain from deployment to execution to file effect; it names no tool or program of this pack (the two survey tools are in encryptor/samples-and-notes), and the readers it points to belong to windows-forensics"
-    },
-    {
-      "path": "skills/encryptor/windows-evidence.md",
-      "why": "a method leaf about NTFS records and Windows events; the readers it points to (`mft_records`, `usn_journal`, `evtx_query`, `regkv` of windows-forensics) belong to another pack and are only mentioned"
     },
     {
       "path": "skills/exfil/before-encryption.md",
@@ -42,10 +30,6 @@
     {
       "path": "skills/intrusion/entry-and-spread.md",
       "why": "a method leaf about reconstructing entry, persistence and spread; it names no tool of this pack, and the readers it mentions (`evtx_query`, `auth_log`, `cloudtrail_parse`, `network_log_summary`) belong to other packs and are only mentioned"
-    },
-    {
-      "path": "skills/platforms/esxi-hypervisors.md",
-      "why": "a method leaf about the host, the management plane, the guest and the datastore of an ESXi environment; the three tools it mentions (`virtualization_inventory`, `snapshot_chain_check`, `backup_audit_normalise`) belong to the virtualization-backup-forensics pack and are only mentioned, if that pack is loaded"
     },
     {
       "path": "skills/platforms/nas-storage.md",
@@ -76,23 +60,23 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "1c5e25d6c1fa6a2718f96382980f965adfc6c02d1b7070ed9bd26e9c5b9661c6",
+      "README.md": "2eebdfc6d19e7a380d28b453f5b66b1b74aaf4eb5c015133cec87623de62040b",
       "goals/ransomware-case.md": "bb889a729a06a1633e49284a99cf333aab899c57cbe5f0d8748e43ec02b78d62",
       "requires/host.json": "e9738f0296f8c734625a6a03a3d771737bd62a83432aae3bb7c0b0f82e10374c",
       "requires/python.txt": "5a396319de276d1ea51953493ef8e4f2dd0d7cb87c67aac6fbd0e63c096d63b6",
       "skills/INDEX.md": "510b2e3a47245ab9cb464e2b9db4e919e0db7fa6cca404dc025fa6c20dc8eb83",
-      "skills/encryptor/backup-infrastructure.md": "cb9ba78fa9715708f68debf372c524be259c8acb05c849f75252f617edd15531",
-      "skills/encryptor/destroyed-backups.md": "25145bd5dcb74d38767b35275f8f7c6d7ccc945d4c84ee077ee79602b7de857d",
+      "skills/encryptor/backup-infrastructure.md": "6dfb17662545572071fae08dc192839c5f1fe44e22b5146711086a2bde280bb6",
+      "skills/encryptor/destroyed-backups.md": "88741458b5d852e5093371e52ac3d6a443e711dbe1499c580997ccb7772f5793",
       "skills/encryptor/samples-and-notes.md": "00577b4819b53d149e6d180cd5384d16d85dfe8ac36cf6b7b5a31ceaa49f961e",
       "skills/encryptor/traces.md": "fba0be38a774b1776d5e0ae683ebf2ef1e78dc906f8d88d6ff58aaca29058cb8",
-      "skills/encryptor/windows-evidence.md": "d45716c6594458d0e1a9821237c3a15897189222c07b87376095893564882bac",
+      "skills/encryptor/windows-evidence.md": "f377850e42f8a03ce0b80f8875c122fd3d8e26db348a40791ff87bef5ab5312f",
       "skills/exfil/before-encryption.md": "6c42dbf8bcc6c9c2bb4b2d37861754facfb9af82c883d95ca804b4cf0c652f9f",
       "skills/exfil/measure-and-claims.md": "7c8bf8ed8f82fa0b64f5c450045abcb0ba614c1ed620a706a5040c9a5e238118",
       "skills/identify/family.md": "39eb3c5c83497b2f380738eb870441e26dc58348ab80695eac1eaa0ea2a05812",
       "skills/identify/samples-and-decryptors.md": "08b0cbdbf1c422972c71963854ecc6b619dee888a2f09af4987804539179727e",
       "skills/impact/services-and-data.md": "ed62c87cb2a654dea8f718d003d239efb577df6e95eecdc73aae93a1532aa346",
       "skills/intrusion/entry-and-spread.md": "137e49cb9f8a015f051fc78ab82016c8dee266118b2d4ee12de65b0d1aa42d91",
-      "skills/platforms/esxi-hypervisors.md": "32c333b30d3cc0126fb018d38c1e347d6578231c8de05a748565358e4171e58e",
+      "skills/platforms/esxi-hypervisors.md": "ba44fbd5339956c1da9004f1e2878f89f4bee8549618ba2813769b51376baf11",
       "skills/platforms/nas-storage.md": "48229ad42fa98748cc1ca13dadde9d9927852b659aa739ba45417df37a909a85",
       "skills/ransomware/router.md": "e0595d66f7ddc9df0d92d6b79a2fc315485a23b502217dfb2fd2396fa6d5757a",
       "skills/recovery/preserve-and-restore.md": "8aeb94f76d1abd9828d1d16210ce401e8faf26387f1affa505b7230f62c5077b",
@@ -105,6 +89,8 @@
       "skills/scope/phase-timeline.md": "c076da1b61c8657850b8dfe356a87cf3eeba2a2e68c6fd0572d4d971d16623dd",
       "skills/scope/triage-tools-names.md": "184d73620b040296206fccb56827cb13e3fa834bc035e6f0b91b8a49a2f0299a",
       "skills/scope/triage-tools.md": "2d8ca3366f1b39ea7ff0bde4984076550edf302336794a5d554a0d66a386a148",
+      "tools/backup_destruction_correlate/manifest.json": "9a2134464de1d6af43dd0fa1e63d1baf77fe58a20a7bf8949eead52b9e1ea1ff",
+      "tools/backup_destruction_correlate/run.py": "d769414ad4a4d912ac9d48f6b34540f4bafd492af247eb59ed18fec48bd6c015",
       "tools/encrypted_survey/manifest.json": "917db356a29abdf6d3ed44e9b94f3d771f31f12f577b0a65c1160ece3251260e",
       "tools/encrypted_survey/run.py": "68db06040a957cbe96c1f74cb1fee0f8976198f4a46532570436347504caf51f",
       "tools/encryption_extent/manifest.json": "517ba17b3f1fa30a654e887cdff170378ae7ac516bc51b68424aa18d1084d6fd",
@@ -118,6 +104,7 @@
     }
   },
   "tools": [
+    "backup_destruction_correlate",
     "encrypted_survey",
     "encryption_extent",
     "ransom_note_scan",

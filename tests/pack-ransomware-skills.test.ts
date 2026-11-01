@@ -325,7 +325,7 @@ test("the README no longer says there is no method for hypervisors or network st
   assert.match(infraText, /`platforms\/esxi-hypervisors`/);
   assert.match(infraText, /`platforms\/nas-storage`/);
   for (const tool of ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"]) assert.ok(!infraText.includes(tool), `${tool} is not repeated in backup-infrastructure`);
-  assert.deepEqual(infra.meta.tools, []);
+  assert.deepEqual(infra.meta.tools, ["backup_destruction_correlate"]);
   assert.deepEqual(infra.meta.needs, []);
   assert.ok(TOKENS(infra.text) <= 800, `the leaf is ${TOKENS(infra.text).toFixed(0)} tokens`);
   const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { depends: string[]; method_only: Array<{ path: string; why: string }> };
@@ -335,7 +335,8 @@ test("the README no longer says there is no method for hypervisors or network st
     const leaf = skills.get(id);
     assert.ok(leaf, `${id} exists`);
     assert.deepEqual(leaf.meta.mentions, ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"], `${id} mentions the three tools`);
-    assert.deepEqual(leaf.meta.tools, [], `${id} lists no tool`);
+    const names = id === "platforms/esxi-hypervisors" ? ["backup_destruction_correlate"] : [];
+    assert.deepEqual(leaf.meta.tools, names, `${id} lists the tools it names`);
     assert.deepEqual(leaf.meta.needs, [], `${id} needs nothing`);
     const text = flat(leaf.body).trim();
     assert.match(text, /^Use when .* Not for /);
@@ -348,8 +349,12 @@ test("the README no longer says there is no method for hypervisors or network st
     assert.doesNotMatch(leaf.text, /operator/i, `${id} does not use the word operator`);
     // a method leaf: the tools it mentions are another pack's, so it is method_only with a reason that says so
     const entry = pack.method_only.find((m) => m.path === `skills/${id}.md`);
-    assert.ok(entry, `${id} is method_only`);
-    assert.match(entry.why, /belong to the virtualization-backup-forensics pack and are only mentioned/);
+    if (names.length) {
+      assert.equal(entry, undefined, `${id} names a tool of this pack, so it is not method_only`);
+    } else {
+      assert.ok(entry, `${id} is method_only`);
+      assert.match(entry.why, /belong to the virtualization-backup-forensics pack and are only mentioned/);
+    }
     // the router and the index name it once
     const router = skills.get(ROUTER)!;
     assert.equal(router.body.split(`\`${id}\``).length - 1, 1, `the router names ${id} once`);

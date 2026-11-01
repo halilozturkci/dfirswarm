@@ -1,0 +1,62 @@
+{
+  "name": "backup_destruction_correlate",
+  "description": "Keep five separate observations per host and object of what was done to the recovery paths, and never turn one into another. The classes are `command_seen` (a command line or script text that names a destructive action, recognised in a field of a record), `action_attempted` (a record that the action was started: a process-creation record of the program that carries it, a backup product's audit record of a deletion, a cloud API call recorded by the provider), `reported_outcome` (what the source reports of the action: the exit status of a process-exit record, the result of an audit record, the outcome of a cloud call; a report, not an effect), `inventory_change_observed` (a difference between two complete inventories of the same host, ordered by the `collected_utc` the caller gives: shadow-copy stores, a service's start type) and `recovery_loss_verified` (a verification made apart from the logs: a record the caller supplies, or a snapshot-chain check that shows a base or a dependent file missing). Each row carries the host, the actor as the record gives it, the source record's reference, the time as recorded with its uncertainty (the caller's `host_clocks`, else stated unknown) and the alternative explanations. A command that ran is not a copy that is gone: a destructive command with two complete inventories that show no change, a change with no command or attempt in the logs read, an exit status with no verified loss, a verified loss with no command, and a command whose recorded time (corrected by the host's clock offset) falls inside, or after, the interval in which the change was observed, are each reported as a flag of the host and object, with its meaning; the tool never says that the backups are gone, only what each observation shows. The inputs are the answers of other tools, by reference (paths; nothing is imported from them and none is run), each versioned by its `parser`, and an unknown version is refused by name: `events` (evtx_query/4: the rows of its `result_file`, or its inline events when no file is given; Security 4688 and 4689, Sysmon 1 and PowerShell 4104 are read, other events are not), `vss_inventories` (vss_stores/5), `service_keys` (regkv/4: the `Start` value of a service key), `backup_audits` (backup_audit_normalise/2: the categories snapshot_delete, retention_prune, retention_gc, retention_remove, disk_delete and vm_delete as an action with its result, and backup_job, backup_end, backup_error and archive_created as an outcome only; /3 is not read until it exists), `chain_checks` (snapshot_chain_check/2: a chain with status broken, extent_missing or data_file_missing is a verified loss, `complete` is intact, and any other status is neither and is counted in the reasons), `shell_histories` (the sealed text file of shell_history/14, whose rows carry the command; a row of another parser is refused by name) and `cloud_trails` (cloudtrail_parse/6: DeleteSnapshot, DeleteDBSnapshot, DeleteDBClusterSnapshot, DeleteBackupVault, DeleteRecoveryPoint and DeleteBackupPlan from their event sources). An inventory taken from an answer that did not say `complete` is not compared: a store missing from a partial listing is not a store removed. No event text is copied: a command is recognised from the field of a record (at most the first 65,536 characters of it) by a fixed list of recognisers, and the answer prints the recogniser's id, the channel, the event id and the record id, so that the text stays in the log; a command line can hold a secret and none reaches the answer, the pages or any file, so the tool declares no secret output. The recognisers are: vssadmin delete shadows, vssadmin resize shadowstorage, wmic shadowcopy delete, diskshadow delete shadows, a Win32_ShadowCopy class delete, wbadmin delete catalog, backup or systemstatebackup, bcdedit recoveryenabled no and bootstatuspolicy ignoreallfailures, and for Linux zfs destroy of a snapshot, lvremove, btrfs subvolume delete, restic forget or prune, borg delete or prune, and rm -r on a path named backup or snapshots; they are text patterns, so a command that does the same in another way is not seen. Process-exit records are matched to a process-creation record by host and process id (the first exit at or after the start); an attempt with no exit record is counted in the reasons. Sigma content is not used. The actor and every host name are printed through the rule encrypted_survey uses for a path component (its manifest states the shape of an identifier and the rates at which it misses and withholds): a name with an identifier-shaped token is withheld, and each row carries a `host_id` (H1, H2, ...) not derived from the name; hosts are summarised in the order of the text printed for them, the withheld ones in an order drawn afresh every run. A second check reads every string of the answer and of the files it names on the way out and replaces one still identifier-shaped, making a complete answer partial. The observations are paged: rows beyond `limit` (and past about 512 KiB inline) are written whole as JSON Lines and named in pages; a file already there is never replaced, even by a rerun with other inputs or `only_objects`: the new one takes the next free name (`-2`, `-3`). `only_objects` limits the rows to the named objects and counts the rest. `status` (also `complete`) is `complete` only when every input was read to its end, every answer read says complete, no row was skipped, no bound of the tool was reached, every attempt has an exit record and the time limit was not reached; otherwise `partial` with `status_basis` and `partial_reasons`. Bounds: at most 20000 inputs, 100,000 hosts (each with at most eight objects: shadow_copies, backup_catalog, boot_recovery, service_configuration, snapshots, backups, virtual_disks and virtual_machines, and a verification names one of them), 100,000 process records and 100,000 exit records held to be matched, 20000 verifications, an answer document of at most 16 MiB and a result-file line of at most 1 MiB (a longer one is skipped under the clock, one read at a time). Memory does not follow the number of rows: 500,000 event rows (268,559,214 bytes, 100,000 of them recognised, so 100,000 observations) were read in 15.1 s at 40 MB resident and wrote 68,046,673 bytes of observations (about 680 bytes each). The tool's own clock `max_seconds` (default 780, at most 840, below the manifest's 900) is checked before every row, line and input; the job's own timeout_seconds is not passed to the tool. It reads only regular files, opened without following a link and without blocking (a named pipe is refused), and writes only under the output directory. A stop signal (SIGTERM, SIGINT, SIGHUP) ends it with one JSON answer (status failed, interrupted, exit code 128 + the signal) after removing the pages it was writing. The handlers are installed when the tool's module code has run as far as its stop block: the start of the interpreter and the compiling of the file come first, and a stop signal in that window can end the tool with no JSON answer at all. SIGKILL cannot be caught: a tool killed that way leaves the hidden temporary files of the pages in tool-output, and, in a window of microseconds, an empty file at a result name; delete them.",
+  "params": {
+    "events": {
+      "type": "array",
+      "description": "evtx_query answers: a list of {host, file, result_file}; file is the answer's JSON (parser evtx_query/4), result_file the path of its JSON Lines result when the answer shows only part of its events inline"
+    },
+    "vss_inventories": {
+      "type": "array",
+      "description": "vss_stores answers: a list of {host, file, collected_utc, volume}; collected_utc (ISO 8601 UTC, Z) is required, because the order of two inventories is the evidence of a change; volume (optional) keeps the inventories of two volumes apart"
+    },
+    "service_keys": {
+      "type": "array",
+      "description": "regkv answers for a service key: a list of {host, file, collected_utc}; the Start value of two answers for the same service is compared"
+    },
+    "backup_audits": {
+      "type": "array",
+      "description": "backup_audit_normalise answers (parser backup_audit_normalise/2): a list of {host, file, rows_file}; rows_file is the JSON Lines of its events when the answer shows only part inline"
+    },
+    "chain_checks": {
+      "type": "array",
+      "description": "snapshot_chain_check answers (parser snapshot_chain_check/2): a list of {host, file, rows_file}; rows_file is the JSON Lines of its chains when the answer shows only part inline"
+    },
+    "shell_histories": {
+      "type": "array",
+      "description": "The sealed text files of shell_history (rows of parser shell_history/14 that carry the command): a list of {host, file}"
+    },
+    "cloud_trails": {
+      "type": "array",
+      "description": "cloudtrail_parse answers (parser cloudtrail_parse/6): a list of {host, file, rows_file}; rows_file is the JSON Lines of its records when the answer shows only part inline"
+    },
+    "verifications": {
+      "type": "array",
+      "description": "Verifications made apart from the logs, as the caller records them: a list of {host, object, result (lost, partial or intact), verified_utc, method, source}. A lost or partial result is a recovery_loss_verified observation; an intact one is counted. They are recorded as given; the tool does not verify them"
+    },
+    "host_clocks": {
+      "type": "object",
+      "description": "Per host name, {offset_seconds, uncertainty_seconds}: the host's clock minus a reference, and how far that is known. Used to order a command against the interval of a change; the recorded times in the rows are not corrected"
+    },
+    "only_objects": {
+      "type": "array",
+      "description": "Keep only the observations of these objects (shadow_copies, backup_catalog, boot_recovery, service_configuration, snapshots, backups, virtual_disks, virtual_machines); the others are counted in observations_left_out_by_only_objects"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows shown inline per table (default 200); every row is counted and a table with more is written whole as JSON Lines and named in pages. The rows shown inline also stop at about 512 KiB whatever limit says"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out no further row is read, what was read is reported, and the answer is partial"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 900,
+  "example": "{\"events\": [{\"host\": \"fileserver1\", \"file\": \"work/s1/evtx-answer.json\", \"result_file\": \"work/s1/tool-output/evtx_query-security.jsonl\"}], \"vss_inventories\": [{\"host\": \"fileserver1\", \"file\": \"work/s1/vss-before.json\", \"collected_utc\": \"2026-10-01T09:00:00Z\"}, {\"host\": \"fileserver1\", \"file\": \"work/s1/vss-after.json\", \"collected_utc\": \"2026-10-01T11:00:00Z\"}]}",
+  "by": "maintainer",
+  "at": "2026-11-01T12:00:00.000Z",
+  "version": 1,
+  "sha256": "d769414ad4a4d912ac9d48f6b34540f4bafd492af247eb59ed18fec48bd6c015"
+}
