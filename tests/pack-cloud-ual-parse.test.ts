@@ -381,6 +381,70 @@ test("an export whose own ResultCount is larger than the rows it holds was not e
   });
 });
 
+// ---- ResultIndex: repeated, missing and out-of-range values ---------------------------------------------------------------------
+
+const RC_HEAD = "RecordId,CreationDate,RecordType,Operation,UserId,AuditData,ResultCount,ResultIndex";
+/** One search's rows as the portal exports them: every row carries the search's ResultCount and its own ResultIndex (null: the cell is empty). */
+function searchRows(count: number | string, indices: Array<number | string | null>, tag = "r"): string[] {
+  return indices.map((ix, i) => [`${tag}${i}`, "2026-02-14T09:00:00Z", "ExchangeAdmin", "Send", "a@b.c", csvCell(JSON.stringify(audit({ Id: `${tag}${i}` }))), String(count), ix === null ? "" : String(ix)].join(","));
+}
+const rcCsv = (...rows: string[][]): string => [RC_HEAD, ...rows.flat()].join("\r\n") + "\r\n";
+/** One file of the directory, alone. */
+const one = async (cwd: string, name: string, text: string): Promise<Json> => {
+  await put(cwd, `work/ev/${name}`, text);
+  return body(await tool(UAL, cwd, { path: `work/ev/${name}` }));
+};
+const range = (from: number, to: number): number[] => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+test("a search exported with repeated and missing ResultIndex values is partial and names them, even when its highest index equals ResultCount and its rows equal it too", async () => {
+  await withDir(async (cwd) => {
+    // 1, 1, 3, 4 ... 100 against a ResultCount of 100: a repeat at 1, a gap at 2.
+    const out = await one(cwd, "rc.csv", rcCsv(searchRows(100, [1, ...range(1, 1), ...range(3, 100)])));
+    assert.equal(out.coverage.rows_read, 100);
+    assert.equal(out.status, "partial");
+    const m = out.pagination_markers.find((x: Json) => x.keys[0] === "ResultIndex");
+    assert.ok(m, JSON.stringify(out.pagination_markers));
+    assert.deepEqual([m.result_count, m.rows, m.distinct_indices, m.repeated_indices, m.first_repeated, m.missing_indices, m.first_missing, m.out_of_range_indices], [100, 100, 99, 1, [1], 1, [2], 0]);
+    assert.match(out.file_problems.join(" "), /hold 99 distinct ResultIndex value\(s\) of the 100 expected: 1 repeated \(first: \[ ?1 ?\]\), 1 missing \(first: \[ ?2 ?\]\)/);
+    // The same rows with every index once, in a shuffled order, are whole.
+    const shuffled = range(1, 100).sort((a, b) => ((a * 37) % 101) - ((b * 37) % 101));
+    const whole = await one(cwd, "rc.csv", rcCsv(searchRows(100, shuffled)));
+    assert.equal(whole.status, "complete");
+    assert.equal(whole.pagination_markers.length, 0);
+  });
+});
+
+test("ResultIndex: several searches in one file are checked apart by their ResultCount; indices outside 1 to ResultCount, rows without one beside rows with one, and counts too many or too large to check are all named, and nothing allocates for a hostile count", async () => {
+  await withDir(async (cwd) => {
+    const two = await one(cwd, "two.csv", rcCsv(searchRows(3, [1, 2, 3], "a"), searchRows(2, [2, 1], "b")));
+    assert.equal(two.status, "complete", "two searches, each whole");
+    const half = await one(cwd, "half.csv", rcCsv(searchRows(3, [1, 2, 3], "a"), searchRows(4, [1, 2, 4], "b")));
+    assert.equal(half.status, "partial", "one of the two searches has a gap");
+    assert.deepEqual(half.pagination_markers.map((m: Json) => [m.result_count, m.first_missing]), [[4, [3]]]);
+
+    const outside = await one(cwd, "out.csv", rcCsv(searchRows(3, [0, 1, 2, 3, 4])));
+    assert.equal(outside.status, "partial");
+    const o = outside.pagination_markers.find((m: Json) => m.keys[0] === "ResultIndex");
+    assert.deepEqual([o.out_of_range_indices, o.first_out_of_range, o.repeated_indices, o.missing_indices], [2, [0, 4], 0, 0]);
+
+    const mixed = await one(cwd, "mixed.csv", rcCsv(searchRows(3, [1, null, 3])));
+    assert.equal(mixed.status, "partial");
+    assert.match(mixed.file_problems.join(" "), /2 row\(s\) carry a ResultIndex and 1 carry none/);
+
+    // Huge values: no allocation, no crash, and never complete.
+    const huge = await one(cwd, "huge.csv", rcCsv(searchRows(5, ["1000000000000000000000000000000", 1, 2, 3, 4])));
+    assert.equal(huge.status, "partial");
+    assert.equal(huge.pagination_markers.find((m: Json) => m.keys[0] === "ResultIndex").out_of_range_indices, 1);
+    const bigCount = await one(cwd, "bigcount.csv", rcCsv(searchRows("1099511627776", [1, 2, 3])));
+    assert.equal(bigCount.status, "partial", "a ResultCount of 2^40 over three rows is not whole");
+    const notChecked = await one(cwd, "nc.csv", rcCsv(searchRows("1099511627776", [1, 2, 3]).concat(searchRows(3, [1, 2, 3], "x"))));
+    assert.match(notChecked.file_problems.join(" "), /3 row\(s\) carry a ResultCount this tool does not check the indices of/);
+    const many = await one(cwd, "many.csv", rcCsv(...range(1, 70).map((c) => searchRows(c, range(1, c), `s${c}-`))));
+    assert.equal(many.status, "partial", "more distinct counts than the tool tracks: named, never whole");
+    assert.match(many.file_problems.join(" "), /more than 64 distinct counts/);
+  });
+});
+
 test("the operation census of every row and a time printed raw are withheld like everything else", async () => {
   await withDir(async (cwd) => {
     const out = await run(cwd, { "n.json": JSON.stringify([audit({ Operation: JWT, CreationTime: "password=Hunter2xyz" })]) });

@@ -2312,6 +2312,101 @@ def choose_time(cands, order, assume_utc):
     return parsed[0] if parsed else (None, None, parse_stamp(None))
 
 
+_NOT_FULL_BYTE = re.compile(rb"[^\xff]")
+
+
+class ResultIndexes:
+    """The ResultIndex values of one file, held against the ResultCount beside them. The rows of one search carry the same count and
+    the indices 1 to that count, each once, in any order; rows with another count belong to another search, so each count is its own
+    group. A group is a bitmap of one bit per index (a count of 5,000,000 is 625 KB), so a repeat is found when it is read and a gap
+    when the file ends, whatever the order. Memory is bounded: all bitmaps together hold at most TRACK_BITS bits and there are at most
+    MAX_COUNTS groups; rows of a count beyond that are counted, not checked, and the answer says so (a read is never whole on what it did
+    not check). The first FIRST_PROBLEMS repeated, missing and out-of-range indices of a group are named, the rest counted."""
+    TRACK_BITS = 1 << 28
+    MAX_COUNTS = 64
+
+    def __init__(self):
+        self.groups = {}
+        self.used = 0
+        self.with_index = self.without_index = self.no_count = self.not_checked = 0
+        self.not_checked_counts = set()
+
+    def add(self, count, index):
+        if index is None:
+            self.without_index += 1
+            return
+        self.with_index += 1
+        if count is None:
+            self.no_count += 1
+            return
+        g = self.groups.get(count)
+        if g is None:
+            if count < 1 or len(self.groups) >= self.MAX_COUNTS or self.used + count > self.TRACK_BITS:
+                self.not_checked += 1
+                if len(self.not_checked_counts) < FIRST_PROBLEMS:
+                    self.not_checked_counts.add(count)
+                return
+            self.used += count
+            g = self.groups[count] = {"bits": bytearray((count + 7) >> 3), "rows": 0, "repeated": 0, "first_repeated": [], "out_of_range": 0, "first_out": []}
+        g["rows"] += 1
+        if 1 <= index <= count:
+            at, mask = (index - 1) >> 3, 1 << ((index - 1) & 7)
+            if g["bits"][at] & mask:
+                g["repeated"] += 1
+                if len(g["first_repeated"]) < FIRST_PROBLEMS:
+                    g["first_repeated"].append(index)
+            else:
+                g["bits"][at] |= mask
+        else:
+            g["out_of_range"] += 1
+            if len(g["first_out"]) < FIRST_PROBLEMS:
+                g["first_out"].append(index)
+
+    @staticmethod
+    def first_missing(bits, count, n):
+        out = []
+        for m in _NOT_FULL_BYTE.finditer(bits):
+            for bit in range(8):
+                index = m.start() * 8 + bit + 1
+                if index <= count and not bits[m.start()] >> bit & 1:
+                    out.append(index)
+                    if len(out) >= n:
+                        return out
+        return out
+
+    def findings(self, shown, said_for=None):
+        """(entry for the answer's pagination_markers, sentence for the file's problems) for each thing wrong with the indices. `said_for` is
+        the count whose missing indices the ResultCount sentence of the file already says (rows fewer than the count): not said twice."""
+        found = []
+        if self.with_index and self.without_index:
+            found.append(({"file": shown, "keys": ["ResultIndex"], "rows_with_result_index": self.with_index, "rows_without_result_index": self.without_index},
+                          "%d row(s) carry a ResultIndex and %d carry none or one that is not a number: the indices cannot show the search was exported whole" % (self.with_index, self.without_index)))
+        if self.not_checked:
+            found.append(({"file": shown, "keys": ["ResultIndex"], "rows_not_checked": self.not_checked, "counts_not_checked": sorted(self.not_checked_counts)},
+                          "%d row(s) carry a ResultCount this tool does not check the indices of (more than %d distinct counts, or more indices than it holds): their ResultIndex values were not checked" % (
+                              self.not_checked, self.MAX_COUNTS)))
+        named = 0
+        for count in sorted(self.groups):
+            g = self.groups[count]
+            distinct = int.from_bytes(g["bits"], "little").bit_count()
+            missing = count - distinct
+            if not (g["repeated"] or g["out_of_range"] or (missing and count != said_for)):
+                continue
+            named += 1
+            if named > FIRST_PROBLEMS:
+                continue
+            first_missing = self.first_missing(g["bits"], count, FIRST_PROBLEMS) if missing else []
+            found.append(({"file": shown, "keys": ["ResultIndex"], "result_count": count, "rows": g["rows"], "distinct_indices": distinct,
+                           "repeated_indices": g["repeated"], "first_repeated": g["first_repeated"], "missing_indices": missing, "first_missing": first_missing,
+                           "out_of_range_indices": g["out_of_range"], "first_out_of_range": g["first_out"]},
+                          "the %d row(s) of ResultCount %d hold %d distinct ResultIndex value(s) of the %d expected: %d repeated (first: %s), %d missing (first: %s), %d outside 1 to %d (first: %s)" % (
+                              g["rows"], count, distinct, count, g["repeated"], g["first_repeated"][:5], missing, first_missing[:5], g["out_of_range"], count, g["first_out"][:5])))
+        if named > FIRST_PROBLEMS:
+            found.append(({"file": shown, "keys": ["ResultIndex"], "more_counts_with_problems": named - FIRST_PROBLEMS},
+                          "%d more ResultCount group(s) have repeated, missing or out-of-range indices and are counted, not listed" % (named - FIRST_PROBLEMS)))
+        return found
+
+
 class Census:
     def __init__(self, limit):
         self.files = LosslessPage("file_census", limit)
@@ -2460,6 +2555,7 @@ def main():
             census.rejected.start_file()
             order = {"value": date_order, "basis": "declared" if date_order else None, "tried": False, "seen": None, "contradicted": 0}
             result_count = max_index = None
+            indexes = ResultIndexes()
             records = rejected = payload_bad = size_rejects = 0
             first_reject = None
             stopped_all_rejected = False
@@ -2501,11 +2597,20 @@ def main():
                             payload_flagged = True
                             census.rejected.note({"file": shown, "record": info["record"], "line": info["line"], "reason": detail, "kind": "payload"})
                         rc, ri = first_of(outer, o_keys, "ResultCount"), first_of(outer, o_keys, "ResultIndex")
+                        count_now = index_now = None
                         try:
-                            result_count = max(result_count or 0, int(rc)) if rc is not None else result_count
-                            max_index = max(max_index or 0, int(ri)) if ri is not None else max_index
+                            count_now = int(rc) if rc is not None else None
                         except (TypeError, ValueError, OverflowError):
                             pass
+                        try:
+                            index_now = int(ri) if ri is not None else None
+                        except (TypeError, ValueError, OverflowError):
+                            pass
+                        if count_now is not None:
+                            result_count = max(result_count or 0, count_now)
+                        if index_now is not None:
+                            max_index = max(max_index or 0, index_now)
+                        indexes.add(count_now, index_now)
                         cands = time_candidates(audit, outer, o_keys)
                         raw, source, st = choose_time(cands, order["value"], assume_utc)
                         if st["status"] == "ambiguous_date_order" and not order["tried"]:
@@ -2605,6 +2710,10 @@ def main():
                 census.pagination.append({"file": shown, "keys": ["ResultCount"], "result_count": result_count, "rows": records, "highest_result_index": max_index})
                 problems.append("the export's own ResultCount says %d records matched the search; this file holds %d (the highest ResultIndex is %s): the search was not exported whole" % (
                     result_count, records, max_index))
+            count_says = result_count is not None and (records < result_count or (max_index is not None and max_index < result_count))
+            for entry, sentence in indexes.findings(shown, result_count if count_says else None):
+                census.pagination.append(entry)
+                problems.append(sentence)
             if src.error:
                 problems.extend(src.problem_lines())
             if src.capped:
