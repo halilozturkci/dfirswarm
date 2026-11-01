@@ -55,7 +55,7 @@ import threading
 import zlib
 from datetime import datetime, timedelta, timezone
 
-PARSER = "archive_probe/6"
+PARSER = "archive_probe/7"
 LIMIT_CEILING = 1000   # as archive_extract's: a page kept in memory is bounded, whatever the caller asks
 
 
@@ -2897,6 +2897,113 @@ def probe_ole(blob, fd):
     return heuristic_status(out, "the file was searched for the stream names of an encrypted package")
 
 
+STRUCTURE_MAX_BYTES = 16 << 20
+STRUCTURE_FOUND = (True, False, None)
+
+
+def structure_item(item):
+    """One item of a doc_structure result's encryption_summary, kept to scalars and passed through the withholding rule."""
+    out = {}
+    if not isinstance(item, dict):
+        return out
+    for key, value in list(item.items())[:12]:
+        if not isinstance(key, str) or len(key) > 40:
+            continue
+        if isinstance(value, bool) or (isinstance(value, int) and abs(value) < (1 << 53)):
+            out[key] = value
+        elif isinstance(value, str):
+            out[key] = withhold(value[:160])
+    return out
+
+
+def read_structure(spec, path, size):
+    """A doc_structure result named by the caller (a job reference: a file of the run), validated before anything of it is shown: it must lie inside
+    the run's directory without a link on the way, be a regular file of at most STRUCTURE_MAX_BYTES, be JSON of doc_structure's shape, describe a file of
+    this one's size and name (and, where it records a sha256, this file's), and carry an encryption_summary. Anything else is REJECTED with the
+    reason, and nothing of its content is shown. The reading is reported beside the byte search; it does not change the search's status."""
+    out = {"declared": shown(spec), "accepted": False}
+    try:
+        base = os.path.realpath(os.getcwd())
+        absolute = os.path.abspath(spec)
+        if os.path.commonpath([base, absolute]) != base or os.path.realpath(absolute) != absolute:
+            out["rejected"] = "the result is not a file inside the run's directory, or a link is on the way to it"
+            return out
+        fd = os.open(absolute, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            st = os.fstat(fd)
+            if (st.st_mode & 0o170000) != 0o100000:
+                out["rejected"] = "the result is not a regular file"
+                return out
+            if st.st_size > STRUCTURE_MAX_BYTES:
+                out["rejected"] = "the result is larger than %d bytes" % STRUCTURE_MAX_BYTES
+                return out
+            raw = b""
+            while len(raw) < st.st_size:
+                if stop_wanted():
+                    out["rejected"] = "the tool's time limit was reached before the result was read"
+                    return out
+                chunk = os.read(fd, 1 << 20)
+                if not chunk:
+                    break
+                raw += chunk
+        finally:
+            os.close(fd)
+        doc = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, RecursionError, UnicodeError):
+        out["rejected"] = "the result could not be read as JSON"
+        return out
+    if not isinstance(doc, dict) or doc.get("tool") != "doc_structure" or not isinstance(doc.get("parser"), str) or not doc["parser"].startswith("doc_structure/"):
+        out["rejected"] = "the file is not a doc_structure result (its tool and parser fields are not doc_structure's)"
+        return out
+    if doc.get("status") not in ("complete", "partial"):
+        out["rejected"] = "the result's status is not complete or partial"
+        return out
+    summary = doc.get("encryption_summary")
+    if not isinstance(summary, dict) or summary.get("found") not in STRUCTURE_FOUND or isinstance(summary.get("found"), int) and not isinstance(summary.get("found"), bool):
+        out["rejected"] = "the result carries no usable encryption_summary"
+        return out
+    if isinstance(doc.get("bytes"), bool) or doc.get("bytes") != size:
+        out["rejected"] = "the result describes a file of another size (%s bytes, this file has %d)" % (doc.get("bytes") if isinstance(doc.get("bytes"), int) else "unstated", size)
+        return out
+    named = doc.get("path")
+    if not isinstance(named, str) or named.replace("\\", "/").rsplit("/", 1)[-1] != shown(os.path.basename(path)):
+        if not (isinstance(named, str) and "withheld" in named):
+            out["rejected"] = "the result describes a file of another name"
+            return out
+        out["matched_by"] = "size only: a part of the name is withheld in the result"
+    else:
+        out["matched_by"] = "size and name"
+    digest = doc.get("sha256")
+    if digest is not None:
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+            out["rejected"] = "the result's sha256 is not a sha256"
+            return out
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            while True:
+                if stop_wanted():
+                    out["rejected"] = "the tool's time limit was reached before the file's sha256 was checked"
+                    return out
+                block = fh.read(1 << 20)
+                if not block:
+                    break
+                h.update(block)
+        if h.hexdigest() != digest.lower():
+            out["rejected"] = "the result's sha256 is not this file's"
+            return out
+        out["matched_by"] += " and sha256"
+    items = summary.get("items")
+    out.update({"accepted": True, "tool": "doc_structure", "parser": withhold(doc["parser"][:40]), "result_status": doc["status"],
+                "encryption_found": summary["found"],
+                "basis": withhold(summary["basis"][:400]) if isinstance(summary.get("basis"), str) else None,
+                "items": len(items) if isinstance(items, list) else None,
+                "item_summaries": [structure_item(i) for i in items[:10]] if isinstance(items, list) else [],
+                "note": "Read from the caller's doc_structure result, not by this tool: it is only as good as that result, which does not "
+                        "record the file's hash (a result that does is checked against it). The byte search above stays a heuristic "
+                        "and no marker is not 'not encrypted'."})
+    return out
+
+
 def last_word(signum):
     interrupted_answer(signum, path=PATH_SHOWN[0])
 
@@ -2927,6 +3034,9 @@ def main():
         if os.path.exists(path):
             fail("not a regular file (a device, a pipe or a socket): name a file, or read an image made from the device", path=shown(path))
         fail("no such file", path=shown(path))
+    structure = args.get("structure")
+    if structure is not None and (not isinstance(structure, str) or not structure or len(structure) > 4096 or "\x00" in structure):
+        fail("structure must be the path of a doc_structure result file (a non-empty string without NUL, at most 4096 characters)")
     limit = args.get("limit", 200)
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= LIMIT_CEILING:
         fail("limit must be an integer from 1 to %d" % LIMIT_CEILING)
@@ -2970,6 +3080,12 @@ def main():
                     "OLE compound file"],
              next_reader="crypto_id names other schemes from the first bytes")
 
+    if structure is not None:
+        if body.get("container") in ("PDF", "OLE compound file"):
+            body["structure_reading"] = read_structure(structure, path, size)
+        else:
+            body["structure_reading"] = {"declared": shown(structure), "accepted": False,
+                                         "rejected": "a doc_structure result is read for a PDF or an OLE compound file only; this is %s" % body.get("container", "another container")}
     answer = {
         "path": shown(path), "bytes": size, "parser": PARSER, "max_metadata_bytes": max_metadata, "max_seconds": seconds, **body,
         "names_withheld": NAMES["strings"],

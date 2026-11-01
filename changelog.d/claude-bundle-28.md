@@ -25,3 +25,15 @@ It also imports `pybde`, `pyvhdi`, `pyluksde`, `pytsk3`, `dfvfs` and `pyAesCrypt
 a child interpreter with a version and an open test, and lists the `*2john` helpers
 on PATH by name. A verdict is about the sample only, never about a real volume. A
 rerun in the same job replaces no sample. `identify/by-format` names it.
+
+### Added: encrypted-containers archive_probe reads a doc_structure result by reference
+
+`archive_probe` takes an optional `structure`: the path, inside the run, of a
+doc_structure result file. For a PDF or an OLE file it validates the file (inside the
+run with no link on the way, a regular file of at most 16 MiB, doc_structure's shape,
+the same size and name as the file probed, a sha256 where the result records one) and
+reports its encryption reading as `structure_reading` beside the byte search, with its
+source named. A result that fails a check is rejected with the reason and none of its
+content is shown. The byte search stays a heuristic, the status stays partial, and no
+marker is not "not encrypted". doc_structure/1 does not record the file's hash, so
+the match is by size and name. `archives/protected` says so.

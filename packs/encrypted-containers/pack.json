@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -46,7 +46,7 @@
       "requires/python.txt": "5f0b11bd01ea0400f7948b789c74181bf5f9b226c5afe61733deb25e0287a239",
       "skills/INDEX.md": "cd573527a47dd034bd7df16d6f27f4ed9dffa06a87dfbb94caf47748ae303bb1",
       "skills/archives/formats.md": "29296400a2c8cb3655b8488cd77c83f1bf4c521ac59689439f131bfc8a1f6a83",
-      "skills/archives/protected.md": "b41cdaa13f191b8ef3ae71c287c06c657a69e597d71ce686d66d339d6192905d",
+      "skills/archives/protected.md": "5edc7d5b1b3ed3efbbc5476e75f5c248685ad41e2e11ab2f9a714d6f2ed3f9f1",
       "skills/encrypted/router.md": "a9d1089b442f9aebb56b819e2b4ae2129c5d83a6bb766db640d9614c953ef42f",
       "skills/identify/by-format.md": "2b07f41624d479e7aacac9a1be9ff4fb3cfdff09cd383f8d3b12ca0d740a7511",
       "skills/identify/headers.md": "63589019145d78b8f67d6ee21c11bf893b844cc02d36553c4393d8a08d87ad51",
@@ -58,8 +58,8 @@
       "skills/volumes/bitlocker.md": "88a2351b9f83c05b274f8c5e1e63021b6e7aad6fcc6e60423fd1680c3062f146",
       "skills/volumes/filevault-apfs.md": "49226cd8c8f62022ee0f87d3e96279645c4cf0b669dcb8bd7f9252f4ad3424c5",
       "skills/volumes/luks-filevault.md": "385f1dacfea4cebe905b25b965d24bf57799dd87e041e1d8c6798342d38f1670",
-      "tools/archive_probe/manifest.json": "f512e9037f09331c325f858062d6e628d5bba476b3683e2d8bd5a8d7fef8443c",
-      "tools/archive_probe/run.py": "f23ea0efd278bf9ea289402629ca0ddca01b62864ca977ed4f0cc077b1a62132",
+      "tools/archive_probe/manifest.json": "e03324c858569dfca10ef8bb55524c5b79a67f8cb912fed77fb8a34f60ebbd9f",
+      "tools/archive_probe/run.py": "8301ea516a9768482013ed3ddd24bd73b623208ee52e5648d47935a19a0781fc",
       "tools/crypto_id/manifest.json": "824c2b0fcf3f36f8a84467d764fb96e8ae358a55841c53658f3227a978429bba",
       "tools/crypto_id/run.py": "8593e2b27b2af71cc72b63813d9714d6bc1ee234410f1269fd892ce5e90b5c2f",
       "tools/crypto_metadata/manifest.json": "d608633c5ad1f3791c414ffd4f7cf8c2f49a4ba30695308638018526a1a844eb",
