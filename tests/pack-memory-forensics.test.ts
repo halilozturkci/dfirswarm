@@ -871,10 +871,10 @@ test("each memory tool's manifest names the start-up window in which a stop ends
 
 test("mem_fs states its clean-up bound with /proc and with the ps fallback, and the total inside the manifest's timeout", async () => {
   const manifest = JSON.parse(await memText("tools", "mem_fs", "manifest.json")) as { description: string; params: Record<string, { description: string }>; timeout_seconds: number };
-  assert.match(manifest.description, /at most 88 s where \/proc is read, 108 s where the process table falls back to ps/);
-  assert.match(manifest.params.timeout_seconds.description, /88 s \(108 s where the process table falls back to ps\)/);
-  assert.ok(480 + 2 + 108 <= manifest.timeout_seconds);
-  assert.match((await memText("tools", "mem_fs", "run.py")).replace(/\s+/g, " "), /which is 88 s where \/proc is read; .{0,120}so the bound is 108 s.{0,80}480 \+ 2 \+ 108 = 590/);
+  assert.match(manifest.description, /at most 100 s where \/proc is read, 112 s where the process table falls back to ps/);
+  assert.match(manifest.params.timeout_seconds.description, /100 s \(112 s where the process table falls back to ps\)/);
+  assert.ok(480 + 2 + 112 <= manifest.timeout_seconds);
+  assert.match((await memText("tools", "mem_fs", "run.py")).replace(/\s+/g, " "), /the bound is 100 s\..{0,200}the bound is 112 s\..{0,120}480 \+ 2 \+ 112 = 594/);
 });
 
 test("the README and the preserve-regions leaf say a failed clean-up may leave the mount, and the goal's Q6 depends on the windows pack", async () => {
