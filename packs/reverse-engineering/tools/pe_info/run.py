@@ -44,8 +44,8 @@ from pathlib import Path
 PAGES = []                          # the pagers of this call: the stop block removes a temporary file of each (these write none)
 
 # BEGIN SHARED STOP
-# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
-# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
 # The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
 # the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
 # first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
@@ -90,7 +90,7 @@ def install_signal_handlers(last_word=None):
 
 
 def interrupted_answer(signum, **extra):
-    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
                       "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
                       "signal": signum, **extra}), flush=True)
 
@@ -109,7 +109,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "pe_info", "version": 6}
+TOOL = {"name": "pe_info", "version": 7}
 PARSER = "pe_info/3"
 
 NOTE = ("Static structural inventory only. Size differences, entropy and imports are triage features, not proof "

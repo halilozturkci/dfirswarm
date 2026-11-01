@@ -109,7 +109,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-TOOL = {"name": "sqlite_query", "version": 7}
+TOOL = {"name": "sqlite_query", "version": 8}
 DEFAULT_LIMIT = 100
 LIMIT_MAX = 10000
 INLINE_BYTES = 64 * 1024          # the inline page's JSON and its text form, each, as they are sent (ASCII-escaped, counted in bytes)
@@ -732,20 +732,33 @@ def earlier_answers(path):
         return 0
 
 
-def same_bytes(a, b):
-    """Two files with the same bytes (compared in blocks, never whole)."""
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
     try:
-        if os.path.getsize(a) != os.path.getsize(b):
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
             return False
-        with open(a, "rb") as fa, open(b, "rb") as fb:
-            while True:
-                x, y = fa.read(1 << 20), fb.read(1 << 20)
-                if x != y:
-                    return False
-                if not x:
-                    return True
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
     except OSError:
         return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
 
 
 def publish(tmp, path, shown, left=None):

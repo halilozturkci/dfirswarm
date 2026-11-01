@@ -217,19 +217,33 @@ def shown_output(path):
         return str(path)
 
 
-def same_bytes(a, b):
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
     try:
-        if os.path.getsize(a) != os.path.getsize(b):
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
             return False
-        with open(a, "rb") as fa, open(b, "rb") as fb:
-            while True:
-                x, y = fa.read(CHUNK), fb.read(CHUNK)
-                if x != y:
-                    return False
-                if not x:
-                    return True
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(CHUNK), fb.read(CHUNK)
+            if x != y:
+                return False
+            if not x:
+                return True
     except OSError:
         return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
 
 
 def publish(tmp, path):

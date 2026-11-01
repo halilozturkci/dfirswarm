@@ -54,8 +54,8 @@
   "example": "{\"path\":\"work/extracted/evtx/Security.evtx\",\"event_ids\":[4624,4672],\"limit\":5}",
   "by": "sbe1801",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 8,
-  "sha256": "0884fdbfc8a99cdc71220b13b773498e99e52e025eeeca5f718489da001d53f1",
+  "version": 9,
+  "sha256": "85d66bf3f60157f61b08d8dc0b9c48fd12c2ab7541c913f3bbbf5c18e2cdcf34",
   "use": {
     "extensions": [
       ".evtx"

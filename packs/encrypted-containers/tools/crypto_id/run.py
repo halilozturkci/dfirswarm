@@ -51,6 +51,7 @@ from collections import Counter
 # the tool. SIGALRM ends it when the read can be interrupted, and a watchdog thread, which needs neither a signal nor the read to return,
 # ends it when not; either prints ONE JSON answer, status partial, and exits 0. A page fault in a mapped file can be ended by neither (it
 # holds the interpreter): a tool that maps a file reads the part it maps through a descriptor first, where the thread can run.
+# The last word of a stop by signal says status failed and interrupted true (the statuses are complete, partial and failed; a stop is not a status).
 import signal
 import threading
 import time
@@ -178,7 +179,7 @@ def interrupted_answer(signum, **extra):
                                           "volume or share that is not available, or a pipe); the tool was ended there, and nothing it had read is "
                                           "an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
         return
-    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
                       "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
                       "signal": signum, **extra}), flush=True)
 

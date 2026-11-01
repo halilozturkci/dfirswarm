@@ -80,7 +80,7 @@
   "by": "maintainer",
   "at": "2026-10-27T12:00:00.000Z",
   "version": 11,
-  "sha256": "929245504c3dc34ebc0dd91fc62a5d72cf40fcd9f9c509c737bf67a818325b8c",
+  "sha256": "3b7bbea54ebd3754a4f191dc9769a2eab29308cdf6447d80e57692b9f6b914b8",
   "use": {
     "names": [
       "*signin*",
