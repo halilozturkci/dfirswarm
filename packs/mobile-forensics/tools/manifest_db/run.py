@@ -86,7 +86,7 @@ import unicodedata
 import warnings
 from pathlib import Path
 
-PARSER = "manifest_db/4"
+PARSER = "manifest_db/5"
 TOOL = "manifest_db"
 VALUES_NAME = "manifest-db-values.jsonl"   # no values are written: the shared block names a file it never opens
 VALUES_FORMAT = "not used"
@@ -323,7 +323,8 @@ def emit(text):
 
 
 def fail(message, **extra):
-    answer = {"error": scrub(str(message)), **{k: (scrub(v) if isinstance(v, str) else v) for k, v in extra.items()}}
+    answer = {"error": scrub(str(message)), "status": "failed", "status_basis": "the tool stopped with an error: %s" % scrub(str(message)),
+              **{k: (scrub(v) if isinstance(v, str) else v) for k, v in extra.items()}}
     emit(dumps(wrap_up(answer)))
     raise SystemExit(1)
 
