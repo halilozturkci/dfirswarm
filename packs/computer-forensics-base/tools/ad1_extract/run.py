@@ -672,7 +672,10 @@ def resolve_output(out):
     $OUT (the one place a job writes); called directly, inside the run
     directory (not the run directory itself); never under inputs/."""
     root = Path.cwd().resolve()
-    dest = Path(out).resolve() if Path(out).is_absolute() else (root / out).resolve()
+    try:
+        dest = Path(out).resolve() if Path(out).is_absolute() else (root / out).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:     # a symlink loop, a name too long, a lone surrogate
+        fail("out_dir cannot be resolved: %s" % (exc.__class__.__name__ if not getattr(exc, "strerror", None) else exc.strerror), out_dir=str(out))
     if os.environ.get("OUT") and os.environ.get("JOB_ID"):
         job_out = Path(os.environ["OUT"]).resolve()
         if dest != job_out and job_out not in dest.parents:

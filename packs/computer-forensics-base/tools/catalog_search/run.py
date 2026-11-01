@@ -263,7 +263,7 @@ def _resolve_catalog(explicit=None, rev=None):
 
 try:
     args = json.load(sys.stdin)
-except ValueError as exc:
+except (ValueError, RecursionError) as exc:
     _answer({"ok": False, "error": "arguments are not valid JSON", "reason": str(exc)}, 1)
 if not isinstance(args, dict):
     _answer({"ok": False, "error": "arguments are a JSON object"}, 1)

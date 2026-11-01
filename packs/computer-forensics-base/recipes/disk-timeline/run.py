@@ -123,7 +123,7 @@ def target_of(value):
     text = open(value, encoding="utf-8").read() if os.path.isfile(value) else value
     try:
         target = json.loads(text)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise ValueError("the target is not valid JSON: %s" % exc)
     if not isinstance(target, dict):
         raise ValueError("the target is a JSON object with a paths list")

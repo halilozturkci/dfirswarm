@@ -2140,7 +2140,7 @@ def main():
     install_signal_handlers(_stopped)
     try:
         obj = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         say({"ok": False, "error": "arguments are not valid JSON", "reason": str(exc)}, 1)
     if not isinstance(obj, dict):
         say({"ok": False, "error": "arguments are a JSON object"}, 1)

@@ -39,7 +39,7 @@ import json, os, sys
 arg, field = sys.argv[1], sys.argv[2]
 try:
     t = json.load(open(arg, encoding="utf-8")) if os.path.isfile(arg) else json.loads(arg)
-except (ValueError, OSError):
+except (ValueError, OSError, RecursionError):
     t = None
 if not isinstance(t, dict):
     sys.exit(0)        # nothing is printed: the caller answers "the target is not a readable file" as JSON

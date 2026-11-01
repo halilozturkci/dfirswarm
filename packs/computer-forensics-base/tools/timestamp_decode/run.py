@@ -252,7 +252,7 @@ def main():
     try:
         # A JSON number is kept as the text it was written in, never read through a float.
         args = json.load(sys.stdin, parse_float=str, parse_int=int)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments are a JSON object")

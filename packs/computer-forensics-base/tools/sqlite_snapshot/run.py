@@ -448,7 +448,10 @@ def resolve_output(out):
     """Where `out` really lands, as a path under the run directory; a place outside it, the run directory itself or
     anything under inputs/ is refused, and in a job so is anything outside $OUT, the one place a job writes."""
     root = Path.cwd().resolve()
-    dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    try:
+        dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:     # a symlink loop, a name too long, a lone surrogate
+        fail("out_dir cannot be resolved: %s" % (exc.__class__.__name__ if not getattr(exc, "strerror", None) else exc.strerror), out_dir=scrub(str(out)))
     if dest == root or root not in dest.parents:
         fail("out_dir must stay inside the run directory", out_dir=scrub(str(out)))
     inputs = root / "inputs"
@@ -615,7 +618,7 @@ def pages_changed(a, b, page):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
