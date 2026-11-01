@@ -67,7 +67,7 @@ const SECOND: Record<string, string> = {
 // A second-level leaf made by a later split (it is in SECOND below, and pointed to by its parent in the text).
 const SECOND_ADDED = ["scope/triage-tools-names"];
 // Leaves added after the split pass: each one is a leaf of its own, named once by the router and listed in the index.
-const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage", "intrusion/entry-and-spread", "recovery/preserve-and-restore"];
+const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage", "intrusion/entry-and-spread", "recovery/preserve-and-restore", "impact/services-and-data"];
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
@@ -365,6 +365,39 @@ test("the README no longer says there is no method for hypervisors or network st
   const nas = flat(skills.get("platforms/nas-storage")!.body);
   assert.match(nas, /One member of a RAID set, imaged alone, is not a logical acquisition/);
   for (const route of ["client", "management plane", "replication"]) assert.ok(nas.includes(route), `the NAS leaf names ${route}`);
+});
+
+test("impact/services-and-data names ransomware_scope_report, every field it names is one the tool writes, and no sentence lets a tool decide materiality", async () => {
+  const skills = await load(SKILLS);
+  const leaf = skills.get("impact/services-and-data");
+  assert.ok(leaf, "the leaf exists");
+  const text = flat(leaf.body).trim();
+  assert.match(text, /^Use when .* Not for /);
+  assert.deepEqual(leaf.meta.tools, ["ransomware_scope_report"]);
+  assert.deepEqual(leaf.meta.needs, []);
+  assert.ok(TOKENS(leaf.text) <= 800, `${TOKENS(leaf.text).toFixed(0)} tokens`);
+  for (const head of ["Shows.", "Does not show.", "Record:", "Sensitive output:"]) assert.ok(text.includes(head), head);
+  assert.doesNotMatch(leaf.text, /operator/i);
+  // a skill may not name a field that does not exist: each one is written by the tool
+  const source = await readFile(join(PACK, "tools", "ransomware_scope_report", "run.py"), "utf8");
+  for (const field of ["coverage_statement", "assessed_against_unassessed", "candidate_against_validated", "estate_wide_percentage"]) {
+    assert.ok(text.includes(`\`${field}\``), `the leaf names ${field}`);
+    assert.ok(source.includes(`"${field}"`), `ransomware_scope_report writes ${field}`);
+  }
+  for (const word of ["unknown", "conflict"]) {
+    assert.ok(text.includes(`\`${word}\``));
+    assert.ok(source.includes(`"${word}"`), word);
+  }
+  // materiality is the accountable people's, never a tool's
+  assert.match(text, /\*\*Materiality\.\*\* No tool decides it\./);
+  assert.doesNotMatch(text, /(tool|report|scan|survey) (decides|determines|establishes|finds) (that )?(an effect is )?material/i);
+  // the effects are kept apart from file counts, and the three grades of a figure are named
+  for (const part of ["confidentiality", "integrity", "availability", "Estimated, tested, confirmed", "outage", "dependenc", "population"]) assert.ok(text.includes(part), part);
+  const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { method_only: Array<{ path: string }>; depends: string[] };
+  assert.ok(!pack.method_only.some((m) => m.path === "skills/impact/services-and-data.md"), "it names a tool of the pack, so it is not method only");
+  assert.deepEqual(pack.depends.map((d) => d.split(/[<>=]/)[0]), ["computer-forensics-base"]);
+  const router = skills.get(ROUTER)!;
+  assert.equal(router.body.split("`impact/services-and-data`").length - 1, 1);
 });
 
 test("scope/triage-tools gave its Names paragraph to a second-level leaf, kept the key-material sentence, and gained the survey-versus-extent rule", async () => {

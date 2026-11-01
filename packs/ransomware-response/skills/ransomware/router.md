@@ -23,6 +23,9 @@ Encryptor
 `platforms/esxi-hypervisors` hypervisor host, datastore
 `platforms/nas-storage` storage appliance, shares
 
+Impact
+`impact/services-and-data` services, datasets, outage
+
 Family and data
 `identify/family` family candidates, attribution limits
 `identify/samples-and-decryptors` sample, behaviour, decryptors

@@ -95,14 +95,14 @@ When the evidence cannot answer something a reference service can (a domain's re
 | `reverse-engineering` | 21 | 10 | 1 |
 | `encrypted-containers` | 13 | 5 | 1 |
 | `cloud-forensics` | 11 | 3 | 1 |
-| `ransomware-response` | 23 | 5 | 1 |
+| `ransomware-response` | 24 | 5 | 1 |
 | `triage-collection` | 20 | 6 | 1 |
 | `virtualization-backup-forensics` | 11 | 3 | 1 |
 
 A **pack** is a directory an operator installs once and names at kickoff: skills
 an agent fetches by name, tools seeded into the run, the host binaries the case
 needs, and goal templates with their own checks. **Thirteen ship in this
-repository** under the same licence as the harness: 269 skills, 92 tools and 15
+repository** under the same licence as the harness: 270 skills, 92 tools and 15
 goal templates across Windows, Linux, macOS, mobile, memory, network, reverse
 engineering, encrypted containers, cloud, ransomware, triage collections, and
 virtualization and backup, all on one base pack.

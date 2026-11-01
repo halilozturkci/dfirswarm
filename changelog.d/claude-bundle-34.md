@@ -102,3 +102,12 @@ two notes together hold at most 128 distinct shingles, otherwise an estimate wit
 `template_threshold` (default 0.8, 0.5 to 1.0) sets the similarity at which two notes are one template. The
 parser changes from `ransom_note_scan/3` to `/4`: `ransomware_family_match` accepts `/4` and refuses unknown
 versions by name. The tool version goes from 9 to 10.
+
+### Added: ransomware-response has a leaf for services and data, `impact/services-and-data`
+
+It keeps confidentiality, integrity and availability effects apart from file counts, covers services with their
+dependencies, safety consequences and outage intervals, datasets and populations, and marks every figure as
+estimated, tested or confirmed. It names `ransomware_scope_report` and the fields it writes (`coverage_statement`,
+`assessed_against_unassessed`, `candidate_against_validated`, `estate_wide_percentage`, the scopes `unknown` and
+`conflict`), and says that no tool decides materiality. A test holds that each field it names is one the tool
+writes. The router, the index and the README name it; it is not `method_only` because it names a tool of the pack.
