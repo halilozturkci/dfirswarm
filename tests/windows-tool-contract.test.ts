@@ -54,7 +54,7 @@ def _on_signal(signum, _frame):
     if BUG != "childleft":
         for c in CHILDREN:
             c.kill()
-    os.write(1, (json.dumps({"error": "stopped", "status": "interrupted", "status_basis": "stopped by signal %d" % signum, "signal": signum}) + "\n").encode())
+    os.write(1, (json.dumps({"error": "stopped", "status": "failed", "interrupted": True, "status_basis": "stopped by signal %d" % signum, "signal": signum}) + "\n").encode())
     os._exit(128 + signum)
 
 
@@ -422,5 +422,5 @@ test("assertJsonAnswer wants a status and a non-empty status_basis, and one JSON
   assert.throws(() => assertJsonAnswer({ ...ok, stdout: "[]" }), /not a JSON object/);
   assert.throws(() => assertJsonAnswer({ ...ok, stdout: ok.stdout + ok.stdout }), /not one JSON document/);
   assert.throws(() => assertJsonAnswer({ ...ok, stderr: "Traceback (most recent call last):" }), /traceback/);
-  assert.equal(STOP_STATUS, "interrupted");
+  assert.equal(STOP_STATUS, "failed");
 });

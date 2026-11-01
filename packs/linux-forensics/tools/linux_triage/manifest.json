@@ -34,8 +34,8 @@
   "example": "{\"source\": \"inputs/server.E01\", \"out_dir\": \"work/<your id>/linux-triage\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 10,
-  "sha256": "f564e509f9e5043cea271a1ba3edf6de4885237395a53d78c532f07521d5348b",
+  "version": 11,
+  "sha256": "aeedd45ba721b2b8201d979ff253050da6abef3f2254373c01311d0e1716788b",
   "use": {
     "extensions": [
       ".e01",

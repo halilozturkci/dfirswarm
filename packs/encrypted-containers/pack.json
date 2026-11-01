@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -58,16 +58,16 @@
       "skills/volumes/bitlocker.md": "fadc5aeb13dcff3ec61a6b997db9e411a40085a6ef26cec09e88fcc8bb466553",
       "skills/volumes/filevault-apfs.md": "7604310ad397d391651aef8d010788fb29079b25aa15f0c49b5383fd467b1764",
       "skills/volumes/luks-filevault.md": "24fe2e2197fcf087d3fb225ec01713a873f6ff827411e6c6fce3b2f218bc67ae",
-      "tools/archive_probe/manifest.json": "c4ad9d7354e5dac6966e121708a24d614e1d92719d8e686334aca164b643205f",
-      "tools/archive_probe/run.py": "35a131192d4209769934b42604c97e4b60417c91a98140be7dd11eb21f879715",
-      "tools/crypto_id/manifest.json": "a6faea1e7311772f684c8ce14b3ef84740bf96f1b0062fa4fed42405c9112c3c",
-      "tools/crypto_id/run.py": "5536912f53210b2a68716f200bf680ab9ee8584ad74dfeb5152c647cc90c7905",
-      "tools/password_recover/manifest.json": "65e47c6f35b14bd3e445f0411ebf92a2d6029d2faac063034d2a1cfbeff0e821",
-      "tools/password_recover/run.py": "cf80ffe976fc61c9043a5615ee3895f0ecaad4da2a3f2a8397f426dc7dbb4853",
-      "tools/recovery_key_scan/manifest.json": "d976e01a3c7e5e56433df50ce9acdcd4e79403adc4c57b6eadb72972f3c7e322",
-      "tools/recovery_key_scan/run.py": "dcb3c29389e0b32b096d25b90658804a4782770f62244608fc027b6a72d2e0d0",
-      "tools/tcrypt_header/manifest.json": "3aabf3fcddd84f2954c89e569528edbe4b2aced912833bbc715233b25bb0d1f3",
-      "tools/tcrypt_header/run.py": "3b4bb31eb95c7f2cb0cd98665c6c98973b9e62a1469462369dc651fd9049f234"
+      "tools/archive_probe/manifest.json": "f512e9037f09331c325f858062d6e628d5bba476b3683e2d8bd5a8d7fef8443c",
+      "tools/archive_probe/run.py": "f23ea0efd278bf9ea289402629ca0ddca01b62864ca977ed4f0cc077b1a62132",
+      "tools/crypto_id/manifest.json": "824c2b0fcf3f36f8a84467d764fb96e8ae358a55841c53658f3227a978429bba",
+      "tools/crypto_id/run.py": "8593e2b27b2af71cc72b63813d9714d6bc1ee234410f1269fd892ce5e90b5c2f",
+      "tools/password_recover/manifest.json": "14cf3ede317ed0548cc83e0b392bf9f7068b154b465c5d971581568ccdbafd18",
+      "tools/password_recover/run.py": "f11139fdb36b3612a51e01deec89d235332a9e3c7e47a007e8a7aa0e0b7e30b5",
+      "tools/recovery_key_scan/manifest.json": "b4cc22c6e1de8b093536472b5f45ca0f23693c11e1d0c476296df125b162791d",
+      "tools/recovery_key_scan/run.py": "602f72b4bd6a543105354487ed24b950e0841ce388626f21b3d2c1859abdc658",
+      "tools/tcrypt_header/manifest.json": "ff6b9584c8775fae84934eae7504d6e350144b595124e506f9ca36a96956836d",
+      "tools/tcrypt_header/run.py": "69027353cbcd09e8f6c7dbe53a6b2e7f2bfd88dce43fb0c889e60576c0d944da"
     }
   },
   "tools": [
