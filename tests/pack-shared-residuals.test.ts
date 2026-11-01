@@ -413,3 +413,197 @@ for (const tool of ["mem_carve", "mem_fs", "mem_profile"]) {
     assert.deepEqual(got.left, [], `${tool}: no hidden page file is left`);
   });
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Part 3: PROCESS (both lineages): identity before a kill, a ps that cannot list, the deadline walk
+// ---------------------------------------------------------------------------------------------------------------------
+
+const PROCESS_CARRIERS = [
+  "packs/reverse-engineering/tools/fuzzy_hash/run.py", // general lineage
+  "packs/network-forensics/tools/zeek_run/run.py", // general lineage
+  "packs/windows-forensics/tools/extract_stream/run.py", // windows lineage
+  "tool-library/yara_scan/run.py", // windows lineage, the library's copy
+];
+
+/** What the cases share: the block's own text, run in a program of its own that leads its group (the way the harness starts a tool). */
+const PROCESS_HEAD = String.raw`
+import json, os, signal, subprocess, sys, time
+src = open(sys.argv[1], encoding="utf8").read()
+case, work = sys.argv[2], sys.argv[3]
+begin, end = src.index("# BEGIN SHARED PROCESS"), src.index("# END SHARED PROCESS")
+def describe(exc):
+    return "%s: %s" % (type(exc).__name__, exc)
+exec(src[begin:end], globals())
+try:
+    os.setpgrp()
+except OSError:
+    pass
+signal.alarm(60)
+def cmdlines(marker):
+    found = []
+    for entry in os.listdir("/proc"):
+        if entry.isdigit():
+            try:
+                with open("/proc/%s/cmdline" % entry, "rb") as fh:
+                    text = fh.read().replace(b"\0", b" ").decode("utf8", "replace")
+                with open("/proc/%s/stat" % entry, "rb") as fh:
+                    state = fh.read().rsplit(b")", 1)[1].split()[0]
+            except OSError:
+                continue
+            if marker in text and state != b"Z" and int(entry) != os.getpid():
+                found.append(int(entry))
+    return found
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    with open("/proc/%d/stat" % pid, "rb") as fh:
+        return fh.read().rsplit(b")", 1)[1].split()[0] != b"Z"
+def wait_for_marker(marker, n=1):
+    end_at = time.monotonic() + 10
+    while time.monotonic() < end_at:
+        if len(cmdlines(marker)) >= n:
+            return cmdlines(marker)
+        time.sleep(0.01)
+    return cmdlines(marker)
+def clean(marker):
+    for pid in cmdlines(marker):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+out = {}
+`;
+
+const PROCESS_CASES: Record<string, string> = {
+  // a listed pid whose identity changes before the kill is left alone; the same tree with the identity as listed is ended
+  identity: String.raw`
+for label, reuse in (("same", False), ("reused", True)):
+    marker = "sleep 61.1%d" % (1 if reuse else 2)
+    proc = spawn(["sh", "-c", marker + " & wait"], stdout=subprocess.DEVNULL)
+    ACTIVE.append(proc)
+    pids = wait_for_marker(marker, 2)
+    if reuse and "_read_ident" in globals():
+        real = _read_ident
+        def fake(pid, kind, _real=real, _pids=set(pids)):
+            got = _real(pid, kind)
+            return ("proc", -1) if pid in _pids and got is not None else got   # as if the pid had been another process when it was listed
+        globals()["_read_ident"] = fake
+    kill_tree(proc)
+    ACTIVE.remove(proc)
+    time.sleep(0.3)
+    out[label] = {"sleeper_alive": any(alive(p) for p in pids), "program_gone": proc.poll() is not None}
+    clean(marker)
+print(json.dumps(out))
+`,
+  // a pid that was seen below the tool and has been taken by another process is not ended by reap_orphans
+  reap: String.raw`
+for label, wrong in (("same", False), ("reused", True)):
+    marker = "sleep 61.3%d" % (1 if wrong else 2)
+    made = subprocess.run(["sh", "-c", marker + " >/dev/null 2>&1 & echo $!"], stdout=subprocess.PIPE, text=True)
+    pid = int(made.stdout.strip())
+    time.sleep(0.2)
+    SEEN.add(pid)
+    now = process_ident(pid) if "process_ident" in globals() else None
+    SEEN_IDENT[pid] = ("proc", -5) if wrong else now
+    reap_orphans()
+    time.sleep(0.3)
+    out[label] = {"alive": alive(pid)}
+    clean(marker)
+print(json.dumps(out))
+`,
+  // the process listing is made to fail (no /proc, no libproc), and ps is a stand-in that fails or sleeps past PS_WAIT
+  unlisted: String.raw`
+real_isdir = os.path.isdir
+os.path.isdir = lambda p: False if p == "/proc/self" else real_isdir(p)
+_children_libproc = lambda pid: None
+PS_WAIT = 1
+os.environ["PATH"] = work + ":" + os.environ["PATH"]
+marker = "sleep 61.4%s" % sys.argv[4]
+proc = spawn(["sh", "-c", marker + " & wait"], stdout=subprocess.DEVNULL)
+ACTIVE.append(proc)
+pids = wait_for_marker(marker, 2)
+note = kill_tree(proc)
+ACTIVE.remove(proc)
+time.sleep(0.2)
+out["kill_tree"] = {"note": note, "program_gone": proc.poll() is not None, "sleeper_alive": any(alive(p) for p in pids)}
+clean(marker)
+marker = "sleep 61.5%s" % sys.argv[4]
+proc = spawn(["sh", "-c", marker + " & wait"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+ACTIVE.append(proc)
+pids = wait_for_marker(marker, 2)
+o, e, timed_out = communicate_bounded(proc, 1.0)
+ACTIVE.remove(proc)
+out["communicate"] = {"timed_out": timed_out, "stderr": e.decode("utf8", "replace"), "program_gone": proc.poll() is not None}
+out["descendants_flag"] = bool(getattr(descendants(os.getpid()), "not_listed", False))
+clean(marker)
+print(json.dumps(out))
+`,
+  // a program that forks fast, below the one that is killed, on the deadline path: nothing it forked is left
+  forker: String.raw`
+script = os.path.join(work, "forker.py")
+open(script, "w").write("import os, sys, time\nfor i in range(int(sys.argv[1])):\n    if os.fork() == 0:\n        os.execv('/bin/sleep', ['sleep', '61.6'])\ntime.sleep(61)\n")
+left = []
+for attempt in range(5):
+    proc = spawn(["sh", "-c", "python3 %s 200 & wait" % script], stdout=subprocess.DEVNULL)
+    ACTIVE.append(proc)
+    wait_for_marker("sleep 61.6", 4)
+    kill_tree(proc)
+    ACTIVE.remove(proc)
+    end_at = time.monotonic() + 5     # a killed process is gone a moment later, longer on a loaded host
+    while time.monotonic() < end_at and len(cmdlines("sleep 61.6")) + len(cmdlines("forker.py")):
+        time.sleep(0.05)
+    left.append(len(cmdlines("sleep 61.6")) + len(cmdlines("forker.py")))
+    clean("sleep 61.6")
+    clean("forker.py")
+print(json.dumps({"left": left}))
+`,
+};
+
+function processCase(file: string, name: string, work: string, extra: string[] = []) {
+  return py(PROCESS_HEAD + PROCESS_CASES[name], [rel(file), name, work, ...extra], 90_000);
+}
+
+for (const file of PROCESS_CARRIERS) {
+  test(`${file}: a listed pid whose start time changed before the kill is not signalled; an unchanged one is`, async () => {
+    await scratch(async (dir) => {
+      const r = processCase(file, "identity", dir);
+      assert.equal(r.status, 0, `${file}: ${r.signal ?? ""} ${r.stderr}`);
+      assert.deepEqual(JSON.parse(r.stdout), { same: { sleeper_alive: false, program_gone: true }, reused: { sleeper_alive: true, program_gone: true } }, file);
+    });
+  });
+
+  test(`${file}: a pid seen below the tool that another process has taken is not ended by reap_orphans`, async () => {
+    await scratch(async (dir) => {
+      const r = processCase(file, "reap", dir);
+      assert.equal(r.status, 0, `${file}: ${r.signal ?? ""} ${r.stderr}`);
+      assert.deepEqual(JSON.parse(r.stdout), { same: { alive: false }, reused: { alive: true } }, file);
+    });
+  });
+
+  for (const [label, body] of [["fails", "#!/bin/sh\nexit 1\n"], ["sleeps past PS_WAIT", "#!/bin/sh\nexec sleep 30\n"]] as const) {
+    test(`${file}: with no /proc and no libproc a ps that ${label} is not read as an empty tree: the answer says the tree could not be listed`, async () => {
+      await scratch(async (dir) => {
+        await writeFile(join(dir, "ps"), body, { mode: 0o755 });
+        const r = processCase(file, "unlisted", dir, [label === "fails" ? "1" : "2"]);
+        assert.equal(r.status, 0, `${file}: ${r.signal ?? ""} ${r.stderr}`);
+        const got = JSON.parse(r.stdout) as Record<string, any>;
+        assert.match(String(got.kill_tree.note), /could not be listed/, file);
+        assert.equal(got.kill_tree.program_gone, true, "the program itself is still ended");
+        assert.equal(got.communicate.timed_out, true);
+        assert.match(got.communicate.stderr, /could not be listed/, file);
+        assert.equal(got.communicate.program_gone, true);
+        assert.equal(got.descendants_flag, true, "the list descendants() gives for a caller that cannot take an exception says it is not listed");
+      });
+    });
+  }
+
+  test(`${file}: a fast forker below the program on the deadline path leaves no descendant (5 tries)`, async () => {
+    await scratch(async (dir) => {
+      const r = processCase(file, "forker", dir);
+      assert.equal(r.status, 0, `${file}: ${r.signal ?? ""} ${r.stderr}`);
+      assert.deepEqual(JSON.parse(r.stdout), { left: [0, 0, 0, 0, 0] }, file);
+    });
+  });
+}

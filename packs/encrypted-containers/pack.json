@@ -58,16 +58,16 @@
       "skills/volumes/bitlocker.md": "fadc5aeb13dcff3ec61a6b997db9e411a40085a6ef26cec09e88fcc8bb466553",
       "skills/volumes/filevault-apfs.md": "7604310ad397d391651aef8d010788fb29079b25aa15f0c49b5383fd467b1764",
       "skills/volumes/luks-filevault.md": "24fe2e2197fcf087d3fb225ec01713a873f6ff827411e6c6fce3b2f218bc67ae",
-      "tools/archive_probe/manifest.json": "5ad29e8911deb82eafdb3369193b9e1e9bb20bc1a948ec6b56e3e8f6dda05e08",
-      "tools/archive_probe/run.py": "9bf2da59ad5d2dd9b7a125af5b24edb642ae2dfd0b4773c92ca0a368830f2644",
+      "tools/archive_probe/manifest.json": "f512e9037f09331c325f858062d6e628d5bba476b3683e2d8bd5a8d7fef8443c",
+      "tools/archive_probe/run.py": "f23ea0efd278bf9ea289402629ca0ddca01b62864ca977ed4f0cc077b1a62132",
       "tools/crypto_id/manifest.json": "824c2b0fcf3f36f8a84467d764fb96e8ae358a55841c53658f3227a978429bba",
       "tools/crypto_id/run.py": "8593e2b27b2af71cc72b63813d9714d6bc1ee234410f1269fd892ce5e90b5c2f",
-      "tools/password_recover/manifest.json": "92b62aa9b9f337e4fd369801ad2e6bafb775b8bd65e479235b751863fee81166",
-      "tools/password_recover/run.py": "339c87d5b169a8875dd385bcc8fed57e6914605287f9670033729ff9f19bcdc5",
+      "tools/password_recover/manifest.json": "14cf3ede317ed0548cc83e0b392bf9f7068b154b465c5d971581568ccdbafd18",
+      "tools/password_recover/run.py": "f11139fdb36b3612a51e01deec89d235332a9e3c7e47a007e8a7aa0e0b7e30b5",
       "tools/recovery_key_scan/manifest.json": "b4cc22c6e1de8b093536472b5f45ca0f23693c11e1d0c476296df125b162791d",
       "tools/recovery_key_scan/run.py": "602f72b4bd6a543105354487ed24b950e0841ce388626f21b3d2c1859abdc658",
-      "tools/tcrypt_header/manifest.json": "247b87564ce2d68b8d193034e9368d129c889a50fd20ab1ba601385345951e1a",
-      "tools/tcrypt_header/run.py": "f89c92320241bd7a261ce9132ad73a457f535d29fdc4e8cbdb4d50ba5c2ccf03"
+      "tools/tcrypt_header/manifest.json": "ff6b9584c8775fae84934eae7504d6e350144b595124e506f9ca36a96956836d",
+      "tools/tcrypt_header/run.py": "69027353cbcd09e8f6c7dbe53a6b2e7f2bfd88dce43fb0c889e60576c0d944da"
     }
   },
   "tools": [
