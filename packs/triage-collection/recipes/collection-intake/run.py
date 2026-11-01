@@ -13,13 +13,19 @@ removed. The records are read by the same adapters collection_manifest_parse use
 collection_manifest_verify joins them to files. An archive inside the archive is named and not opened: extract it with
 archive_extract (from_index is the number in inventory.tsv) and run this recipe, or the tools, on the result; until then the run is partial, unless
 the archive is a file the collector copied from the source host (below the [root] of a UAC run, below the uploads directory of a Velociraptor
-container, or named by a record as a delivered file). A tar must end with its end-of-archive marker (a zero block) and nothing after it, a
+container, or named by a record as a delivered file). An archive is found by its suffix and by its first bytes (zip, tar, gzip, bzip2, xz, 7z, rar or
+cab magic, whatever the name); a zip-based document or package (docx, xlsx, pptx, odt, jar, apk and the like, whose first member is the one such a file starts with)
+is listed and does not by itself make the run partial. The target and every file the recipe opens must be a regular file: a pipe, a device or a link is refused. A tar must end with its end-of-archive marker (two zero blocks is the standard; one is accepted, as GNU tar does, and noted in coverage.json) and nothing after it, a
 gzip, bzip2 or xz stream must end where its trailer says (the gzip CRC-32 and length are checked) with nothing after it (xz padding of zero
 bytes excepted), and a zip must hold nothing before its first member, between members or after its end record; else the run is partial and the
 claims it cannot find are unverifiable, not missing. A compressed tar is decompressed in steps of at most 1 MiB with the clock between them,
 and a tar metadata record (pax header, GNU long name) over 1 MiB is refused before it is read. The records kept on disk for parsing are
 bounded in total (1 GiB); one that would pass the bound is named and not parsed, and the run is partial. The pass stops, partial, when the process
 holds 60% of the memory it may hold (a cgroup or address-space limit it can see) rather than being killed with nothing written. A 7z is not read.
+The tar end check reads tarfile's internals (tf.fileobj.pos, tf.offset, and BoundedTarInfo._proc_member); CI runs the suites on Python 3.12 (Linux) and 3.14
+(macOS), not on the 3.11 of the analysis image, and on a Python without those internals the end is `unknown` and the run is partial.
+A zip whose data.zip member is encrypted (the form Velociraptor 0.77.2 writes when a password is set, alone or beside metadata.json) is named as an encrypted
+Velociraptor collection: its records are inside the payload, which is not decrypted or opened, and the run is partial.
 
     inventory.tsv       n, kind, size, sha256, name (escaped); n counts members in archive order, duplicates included. The sha256 of a member whose own
                         name marks a credential store is withheld, as the index does; one that a record calls by such a name and that was delivered under
@@ -55,55 +61,6 @@ WITHHELD = {"count": 0}
 VALUES = [None]
 
 
-def memory_ceiling():
-    """The bytes this process may hold, as far as it can be known: COLLECTION_INTAKE_MEMORY_BYTES, else the smallest of the cgroup limit and
-    the address-space and data limits. None when nothing limits it that this can see."""
-    try:
-        if os.environ.get("COLLECTION_INTAKE_MEMORY_BYTES"):
-            return int(os.environ["COLLECTION_INTAKE_MEMORY_BYTES"])
-    except ValueError:
-        pass
-    found = []
-    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
-        try:
-            with open(path) as fh:
-                text = fh.read().strip()
-            if text.isdigit() and int(text) < (1 << 60):
-                found.append(int(text))
-        except OSError:
-            pass
-    try:
-        import resource
-        for which in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
-            soft = resource.getrlimit(which)[0]
-            if soft != resource.RLIM_INFINITY:
-                found.append(soft)
-    except (ImportError, ValueError, OSError):
-        pass
-    return min(found) if found else None
-
-
-MEMORY_CEILING = [None, False]         # (bytes, looked up)
-
-
-def over_memory():
-    """A sentence when the process holds more than 60% of what it may hold (the per-member state of a delivery of millions of members is the
-    one thing that grows with the input), else None: the pass stops there and says so, instead of being killed with nothing written."""
-    if not MEMORY_CEILING[1]:
-        MEMORY_CEILING[0], MEMORY_CEILING[1] = memory_ceiling(), True
-    ceiling = MEMORY_CEILING[0]
-    if not ceiling:
-        return None
-    try:
-        import resource
-        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
-    except (ImportError, OSError):
-        return None
-    if peak > ceiling * 0.6:
-        return "the memory bound (%d MB held of the %d MB this process may hold)" % (peak >> 20, ceiling >> 20)
-    return None
-
-
 def out_of_time():
     return DEADLINE[0] is not None and time.monotonic() > DEADLINE[0]
 
@@ -129,7 +86,97 @@ import json
 import os
 import re
 import stat
+import sys
+import unicodedata
 
+MEMORY_ENV = ("COLLECTION_MEMORY_BYTES", "COLLECTION_INTAKE_MEMORY_BYTES")      # the bytes this process may hold, set by hand (the second name is the recipe's own, still read)
+
+
+def memory_ceiling():
+    """The bytes this process may hold, as far as it can be known: COLLECTION_MEMORY_BYTES (or the recipe's COLLECTION_INTAKE_MEMORY_BYTES) when
+    it is a positive whole number, else the smallest of the cgroup limit and the address-space and data limits. None when nothing limits it that
+    this can see."""
+    for name in MEMORY_ENV:
+        try:
+            if os.environ.get(name) and int(os.environ[name]) > 0:
+                return int(os.environ[name])
+        except ValueError:
+            pass
+    found = []
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as fh:
+                text = fh.read().strip()
+            if text.isdigit() and int(text) < (1 << 60):
+                found.append(int(text))
+        except OSError:
+            pass
+    try:
+        import resource
+        for which in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
+            soft = resource.getrlimit(which)[0]
+            if soft != resource.RLIM_INFINITY:
+                found.append(soft)
+    except (ImportError, ValueError, OSError):
+        pass
+    return min(found) if found else None
+
+
+MEMORY_CEILING = [None, False]         # (bytes, looked up)
+
+
+def over_memory():
+    """A sentence when the process holds more than 60% of what it may hold (the census and the per-member state of a delivery of millions of
+    entries are what grow with the input), else None: the census and the pass stop there, partial, and say so, instead of being killed with
+    nothing written."""
+    if not MEMORY_CEILING[1]:
+        MEMORY_CEILING[0], MEMORY_CEILING[1] = memory_ceiling(), True
+    ceiling = MEMORY_CEILING[0]
+    if not ceiling:
+        return None
+    try:
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
+    except (ImportError, OSError):
+        return None
+    if peak * 10 > ceiling * 6:
+        return "the memory bound (%s held of the %s this process may hold)" % (size_text(peak), size_text(ceiling))
+    return None
+
+
+def size_text(n):
+    """A byte count in the largest unit that does not make it 0 (a tiny override is not '0 MB')."""
+    if n >= 1 << 20:
+        return "%d MB" % (n >> 20)
+    if n >= 1 << 10:
+        return "%d KB" % (n >> 10)
+    return "%d bytes" % n
+
+
+CLOCK_EVERY = 256                  # a loop over the census asks the clock and the memory bound this many entries apart
+
+
+def census_clock(census, position, what):
+    """True when the time limit or the memory bound says a loop over the census must end here (asked every CLOCK_EVERY entries): the census is then
+    marked stopped and not complete, so that the answer is partial and no record is called missing."""
+    if position % CLOCK_EVERY:
+        return False
+    reason = "the time limit" if out_of_time() else over_memory()
+    if not reason:
+        return False
+    if census.stopped is None:
+        census.stopped = {"reason": "%s ended %s" % (reason, what), "directories_not_listed": 0}
+    census.complete = False
+    return True
+
+
+def fold_name(text):
+    """The key a name is joined by: NFC-normalised, then case-folded, so a name written in decomposed form (as macOS writes it) is the same name
+    as its precomposed record."""
+    return unicodedata.normalize("NFC", text).casefold()
+
+
+MEMORY_CHECK_EVERY = 1024          # the census asks for the memory this many entries apart (one getrusage call each)
 MAX_CENSUS = 2000000              # entries held for the join; past it the census is partial and no record is called missing
 REC_LINE = 1 << 20                # a log line longer than this is read in part; the whole line stays in the evidence at its locator
 REC_CHUNK = 1 << 20
@@ -154,6 +201,10 @@ KAPE_COPY_MAPPED = ("copiedtimestamp", "sourcefile", "destinationfile", "filesiz
 KAPE_SKIP_KNOWN = ("sourcefile", "sourcefilesha1", "reason")
 SKIP_TARGET_COLUMNS = ("sourcefile", "source", "filename", "file", "path")
 SKIP_REASON_COLUMNS = ("reason", "message", "error", "status")
+ENCRYPTED_PAYLOAD = "data.zip"
+ENCRYPTED_METADATA = "metadata.json"
+ENCRYPTION_KEYS = ("Scheme", "EncryptedPass", "PublicKey")
+ENCRYPTION_METADATA_BYTES = 65536
 ADAPTERS = {
     "kape_copy_log": {"id": "kape_copy_log/2", "collector": "KAPE", "reads": "*_CopyLog.csv",
                       "schema": "a header with SourceFile and DestinationFile; the other columns KAPE writes are kept by name"},
@@ -167,6 +218,13 @@ ADAPTERS = {
                   "schema": "one 'hex  path' line per file (the md5sum, sha1sum and sha256sum forms) or 'ALGORITHM (path) = hex'"},
     "velociraptor_container": {"id": "velociraptor_container/2", "collector": "Velociraptor", "reads": "uploads.json, results/*.json, log.json, collection_context.json",
                                "schema": "the container 0.77.2 writes: uploads.json rows (vfs_path, file_size, uploaded_size, Type), result rows with an upload record, log.json rows"},
+    "velociraptor_encrypted": {"id": "velociraptor_encrypted/1", "collector": "Velociraptor", "reads": "metadata.json, data.zip", "supported": False,
+                               "schema": ("the encrypted collection 0.77.2 writes when a password is set (reporting/container.go, NewContainerFromWriter, tag v0.77.2; the metadata keys are set by "
+                                          "artifacts/definitions/Server/Utils/CreateCollector.yaml at the same tag): an outer zip of metadata.json (plain; written only when the collector was "
+                                          "given metadata, with the keys Scheme, EncryptedPass and PublicKey) and data.zip, a stored member that is itself encrypted with the zip password "
+                                          "(github.com/alexmullins/zip, WinZip AES) and holds the collected members. It is recognised by those two member names with nothing else beside them, "
+                                          "and by the encrypted flag of data.zip in the outer zip or the Scheme key of metadata.json, never by entropy. Nothing is decrypted and no record is read"),
+                               "unsupported_reason": "an encrypted Velociraptor collection: its records are inside the encrypted payload (data.zip), which is not decrypted and was not read"},
     "cylr": {"id": None, "collector": "CyLR", "reads": None, "supported": False,
              "schema": "none: no record of CyLR is read; a CyLR archive is a tree of copied files, and a top-level C or C$ directory is a layout clue, not a manifest"},
 }
@@ -194,14 +252,23 @@ class Census:
 
     @staticmethod
     def key(rel):
-        return rel.replace(os.sep, "/").casefold()
+        return fold_name(rel.replace(os.sep, "/"))
 
     def add(self, rel, size, kind):
         if self.total >= self.cap:
             self.capped = True
             self.complete = False
             return
+        if self.stopped is not None and self.stopped.get("memory"):
+            self.complete = False
+            return
         self.total += 1
+        if self.total % MEMORY_CHECK_EVERY == 0:
+            held = over_memory()
+            if held:
+                self.stopped = {"reason": held, "memory": True, "entries_held": self.total}
+                self.complete = False
+                return
         if kind == "f":
             self.files += 1
         elif kind == "l":
@@ -235,6 +302,8 @@ def walk_census(root, census, skip=None):
             census.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack)}
             census.complete = False
             return
+        if census.stopped is not None and census.stopped.get("memory"):
+            return
         directory = stack.pop()
         rel_dir = directory[len(prefix):] if directory.startswith(prefix) else ""
         try:
@@ -246,6 +315,8 @@ def walk_census(root, census, skip=None):
         census.dirs += 1
         for entry in entries:
             seen += 1
+            if census.stopped is not None and census.stopped.get("memory"):
+                return
             if (seen & 1023) == 0 and out_of_time():
                 census.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack)}
                 census.complete = False
@@ -342,8 +413,11 @@ def discover(census):
     lists, Velociraptor containers (a directory with uploads.json or collection_context.json, its results/*.json and its
     log.json). A record found inside collected data (below [root] or uploads) belongs to the source host and is listed apart,
     never read. Sorted by the name's bytes, so a run reads the same records in the same order every time."""
-    found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "inside_collected": []}
-    for rel, size, kind in sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0])):
+    found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "velo_encrypted": {}, "inside_collected": []}
+    payloads = {}
+    for position, (rel, size, kind) in enumerate(sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0]))):
+        if census_clock(census, position, "the search for the collectors' records"):
+            break
         name = name_of(rel)
         low = name.lower()
         directory = parent_of(rel)
@@ -361,6 +435,8 @@ def discover(census):
             marker = ("velo_result", None, None)
         elif name == "log.json":
             marker = ("velo_log", None, None)
+        if name == ENCRYPTED_PAYLOAD and not inside_collected_data(rel):
+            payloads[directory] = {"payload": rel, "metadata": None, "other": False}
         if marker is None:
             continue
         if inside_collected_data(rel):
@@ -380,6 +456,23 @@ def discover(census):
         else:
             found["velo_logs"][directory] = rel
     found["uac_dirs"] = sorted(census.marked_dirs, key=os.fsencode)
+    if payloads:
+        # an encrypted Velociraptor collection is an outer container of data.zip and, when the collector was given metadata, metadata.json: the
+        # directory that holds those and nothing else (a file or a link beside them makes it an ordinary directory with a file named data.zip)
+        for position, (rel, size, kind) in enumerate(census.entries()):
+            if census_clock(census, position, "the search for encrypted collections"):
+                break
+            entry = payloads.get(parent_of(rel))
+            if entry is None:
+                continue
+            name = name_of(rel)
+            if name == ENCRYPTED_PAYLOAD and kind == "f":
+                continue
+            if name == ENCRYPTED_METADATA and kind == "f":
+                entry["metadata"] = rel
+            else:
+                entry["other"] = True
+        found["velo_encrypted"] = {d: {"payload": e["payload"], "metadata": e["metadata"]} for d, e in payloads.items() if not e["other"]}
     return found
 
 
@@ -947,6 +1040,59 @@ def read_velociraptor(src, directory, files, found, sink):
     return source
 
 
+def read_encryption_metadata(src, rel):
+    """What metadata.json beside data.zip says: which of the documented keys it holds and how long each value is. A value is withheld whole
+    (it may be an encrypted password or a key); nothing of it is printed. The file is read to 64 KiB at most."""
+    info = {"present": True, "bytes": None, "keys": [], "other_keys": 0, "values": {}}
+    try:
+        with src.open_binary(rel) as fh:
+            data = fh.read(ENCRYPTION_METADATA_BYTES + 1)
+    except (OSError, ValueError) as exc:
+        info["problem"] = "metadata.json could not be read (%s)" % describe(exc)
+        return info
+    if len(data) > ENCRYPTION_METADATA_BYTES:
+        info["problem"] = "metadata.json is over %d bytes: not parsed" % ENCRYPTION_METADATA_BYTES
+        return info
+    info["bytes"] = len(data)
+    try:
+        doc = json.loads(data.decode("utf-8-sig"))
+    except (ValueError, RecursionError):
+        info["problem"] = "metadata.json is not JSON text: not read"
+        return info
+    if not isinstance(doc, dict):
+        info["problem"] = "metadata.json is not a JSON object: not read"
+        return info
+    for key in ENCRYPTION_KEYS:
+        if key in doc:
+            value = doc[key]
+            try:
+                text = value if isinstance(value, str) else json.dumps(value)
+            except (ValueError, TypeError, RecursionError):
+                text = ""
+            info["keys"].append(key)
+            info["values"][key] = withhold_value(text, "metadata.json, %s" % key)
+    info["other_keys"] = len(doc) - len(info["keys"])
+    return info
+
+
+def read_velociraptor_encrypted(src, directory, files, sink):
+    """One encrypted Velociraptor collection (see the velociraptor_encrypted adapter), or None when the directory only looks like one. It is
+    recognised by data.zip being an encrypted member of the zip the source reads (`src.encrypted`) or by metadata.json holding the Scheme
+    key. The records are inside the encrypted payload: nothing is decrypted, no record is read, the source is `unsupported`, and no failure
+    count is determined for the run."""
+    payload, meta = files["payload"], files.get("metadata")
+    info = read_encryption_metadata(src, meta) if meta else None
+    flagged = payload in getattr(src, "encrypted", ())
+    named = info is not None and "Scheme" in info["keys"]
+    if not (flagged or named):
+        return None
+    basis = (["data.zip is an encrypted member of the zip (general-purpose flag bit 0)"] if flagged else []) + (["metadata.json holds the Scheme key"] if named else [])
+    source = new_source(payload, "Velociraptor", "velociraptor_encrypted", "velociraptor_encrypted", run=directory or ".", directory=directory or ".", container=directory or ".",
+                        payload=payload, recognised_by=basis, decrypted=False, metadata=info if info is not None else {"present": False})
+    source.update(status="unsupported", reason=ADAPTERS["velociraptor_encrypted"]["unsupported_reason"])
+    return source
+
+
 def read_collection(src, found, sink):
     """Every recognised record of a census, in a fixed order: KAPE runs, UAC logs and hash lists, Velociraptor containers. Returns
     the source summaries (one per log, one per container), each with its adapter, its status and why."""
@@ -965,6 +1111,10 @@ def read_collection(src, found, sink):
         sources.append(read_hash_list(src, rel, sink))
     for directory, files in sorted(found["velociraptor"].items(), key=lambda kv: os.fsencode(kv[0])):
         sources.append(read_velociraptor(src, directory, files, found, sink))
+    for directory, files in sorted(found["velo_encrypted"].items(), key=lambda kv: os.fsencode(kv[0])):
+        source = read_velociraptor_encrypted(src, directory, files, sink)
+        if source is not None:
+            sources.append(source)
     return sources
 
 
@@ -1097,7 +1247,7 @@ def hash_file(src, rel, algorithms):
 
 
 def norm_text(text):
-    return text.replace("\\", "/").casefold()
+    return fold_name(text.replace("\\", "/"))
 
 
 def glob_match(pattern, text):
@@ -1312,6 +1462,16 @@ def withhold_digest(value, where):
     return "<digest of a credential store withheld, %d characters, %s>" % (len(value), fid)
 
 
+def withhold_value(value, where):
+    """A value that may hold a secret (an encrypted password, a key) never leaves in an answer or a table: it goes to the values file (a job
+    run with secret_output and write_values) and what is printed names its length and a finding id. Returns the marker."""
+    WITHHELD["count"] += 1
+    fid = "W%06d" % WITHHELD["count"]
+    if VALUES[0] is not None:
+        VALUES[0].add(fid, {"where": where}, value)
+    return "<value withheld, %d characters, %s>" % (len(value), fid)
+
+
 DIGEST_KEY = re.compile(r"md5|sha|hash|digest|checksum", re.I)
 DIGEST_HEX = re.compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{56}|[0-9A-Fa-f]{64}|[0-9A-Fa-f]{96}|[0-9A-Fa-f]{128})")
 
@@ -1381,6 +1541,14 @@ def guard_digests(rec):
 
 RECIPE_ID = "collection-intake"
 BOM_LE, BOM_BE, NUL_HEAD = b"\xff\xfe", b"\xfe\xff", b"\x00"          # the heads kept for a record refused as binary: binary_reason reads a byte-order mark, else a NUL byte
+ARCHIVE_MAGIC = ((b"PK\x03\x04", "zip"), (b"PK\x05\x06", "zip"), (b"PK\x07\x08", "zip"), (b"\x1f\x8b\x08", "gzip"), (b"\xfd7zXZ\x00", "xz"),
+                 (b"7z\xbc\xaf\x27\x1c", "7z"), (b"Rar!\x1a\x07", "rar"), (b"MSCF", "cab"))
+ZIP_DOCUMENT_FIRST = ("[Content_Types].xml", "mimetype", "META-INF/", "AndroidManifest.xml")      # the first member of an OOXML, ODF, jar or apk package
+ZIP_DOCUMENT_SUFFIXES = (".docx", ".docm", ".dotx", ".xlsx", ".xlsm", ".xltx", ".pptx", ".pptm", ".potx", ".odt", ".ods", ".odp", ".odg", ".odf", ".jar", ".war", ".ear",
+                         ".apk", ".aab", ".aar", ".xpi", ".epub", ".vsix", ".nupkg", ".whl", ".crx", ".ipa", ".appx", ".msix")     # zips by their bytes, documents or packages by their name
+MAX_NESTED_LISTED = 50000            # archives inside the archive kept for the verdict (every member is in inventory.tsv, with a note on these)
+MAX_ENCRYPTED_LISTED = 1000          # data.zip members remembered as encrypted
+MAX_METADATA_KEPT = 8 << 20          # the metadata.json members kept to name an encrypted Velociraptor collection, in all
 NESTED_SUFFIXES = (".zip", ".tar", ".tgz", ".tar.gz", ".tbz2", ".tar.bz2", ".txz", ".tar.xz", ".7z", ".rar", ".gz", ".bz2", ".xz", ".zst", ".ad1", ".e01", ".ex01")
 STATUS_ORDER = ("matched", "mismatch", "missing", "unverifiable", "ambiguous", "read_failed")
 KEPT_DIRS = []
@@ -1404,6 +1572,19 @@ def target_of(arg):
     return t, paths[0]
 
 
+def open_regular(path):
+    """The file at `path` opened for reading without following a link and without blocking on a pipe, and only if it is a regular file: a FIFO, a
+    device, a directory or a link is refused (OSError) before anything is read from it."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(22, "not a regular file (a pipe, a device, a directory or a link): it is not opened")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def tar_kind(head):
     """How the bytes of a tar are wrapped, from the first bytes: gz, bz2, xz, or tar (not compressed)."""
     if head[:2] == b"\x1f\x8b":
@@ -1419,7 +1600,7 @@ def sniff(path, expired=None):
     """(format, why): zip, or tar (plain, gzip, bzip2 or xz), judged from the bytes; 7z is named and not read. A tar that is cut before its first
     header, or whose first header is a metadata record over the bound, is not 'not a tar': the reason says it could not be told."""
     try:
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             head = fh.read(512)
     except OSError as exc:
         return None, "the file could not be read (%s)" % describe(exc)
@@ -1429,7 +1610,7 @@ def sniff(path, expired=None):
         return None, "a 7z archive: this recipe reads zip and tar; list it with archive-members and extract it with archive_extract"
     if head[257:262] == b"ustar" or tar_kind(head) != "tar":
         try:
-            with open(path, "rb") as raw:
+            with open_regular(path) as raw:
                 stream = TarStream(raw, tar_kind(head), expired or (lambda: False))
                 with tarfile.open(fileobj=stream, mode="r|", tarinfo=BoundedTarInfo) as tf:
                     tf.next()
@@ -1707,7 +1888,7 @@ def tar_end(tf, expired, stream=None):
             after += len(block)
     except (tarfile.TarError, OSError, EOFError, ValueError) as exc:
         return {"kind": "marker", "after_marker_bytes": after, "after_marker_error": describe(exc)}
-    return {"kind": "marker", "after_marker_bytes": after, "after_marker_nonzero": nonzero, "after_marker_first_nonzero": first}
+    return {"kind": "marker", "after_marker_bytes": after, "after_marker_nonzero": nonzero, "after_marker_first_nonzero": first, "tail_bytes": pending + after}
 
 
 def tar_end_problem(end):
@@ -1716,7 +1897,7 @@ def tar_end_problem(end):
         return end["compression"]
     kind = end.get("kind")
     if kind == "boundary":
-        return "the tar ends where a member header should start and has no end-of-archive marker (two zero blocks): it is cut there, or was written without one, and any member after that point is not known"
+        return "the tar ends where a member header should start and has no end-of-archive marker (two zero blocks is the standard and one is accepted, as GNU tar does): it is cut there, or was written without one, and any member after that point is not known"
     if kind == "partial":
         return "the tar ends %d byte(s) into a member header and has no end-of-archive marker: it is cut there, and the members after that point are not known" % end["bytes"]
     if kind == "damaged":
@@ -1742,8 +1923,8 @@ def zip_problem(path, infos, start_dir, expired):
     overlap, and bytes after the end record. A reader follows the central directory of the last archive in the file."""
     notes = []
     try:
-        size = os.path.getsize(path)
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
+            size = os.fstat(fh.fileno()).st_size
             tail = min(size, (1 << 16) + 22)
             fh.seek(size - tail)
             data = fh.read(tail)
@@ -1790,28 +1971,29 @@ def end_problem(fmt, end):
 
 
 def iterate(path, fmt, expired=None, end=None):
-    """(name, kind, header size, opener) for each member in archive order; kind f (regular file), l (link), s (special), d (directory).
+    """(name, kind, header size, opener, encrypted) for each member in archive order; kind f (regular file), l (link), s (special), d (directory);
+    encrypted is true for a zip member whose general-purpose flag has the encryption bit (a tar member never).
     The opener is valid only while the member is the current one. `expired()` is consulted at every read of the archive (ClockStopped);
     `end`, a dict, is given how the archive ended when the members were read to the end."""
     expired = expired or (lambda: False)
     if fmt == "zip":
-        with zipfile.ZipFile(path) as zf:
+        with open_regular(path) as zipped, zipfile.ZipFile(zipped) as zf:
             infos = zf.infolist()
             for info in infos:
                 mode = (info.external_attr >> 16) & 0o170000
                 kind = "d" if info.is_dir() else "l" if mode == 0o120000 else "s" if mode in (0o020000, 0o060000, 0o010000, 0o140000) else "f"
-                yield info.filename, kind, info.file_size, (lambda i=info: zf.open(i))
+                yield info.filename, kind, info.file_size, (lambda i=info: zf.open(i)), bool(info.flag_bits & 0x1)
             if end is not None:
                 end["zip"] = zip_problem(path, infos, getattr(zf, "start_dir", None), expired)
     else:
-        raw = open(path, "rb")
+        raw = open_regular(path)
         try:
             stream = TarStream(raw, tar_kind(raw.read(6)), expired)
             raw.seek(0)
             with tarfile.open(fileobj=stream, mode="r|", tarinfo=BoundedTarInfo) as tf:
                 for member in tf:
                     kind = "d" if member.isdir() else "f" if member.isreg() else "l" if (member.issym() or member.islnk()) else "s"
-                    yield member.name, kind, member.size, (lambda m=member: tf.extractfile(m))
+                    yield member.name, kind, member.size, (lambda m=member: tf.extractfile(m)), False
                     tf.members = []                 # the stream reader keeps every header it has read; a delivery of millions of members need not
                 if end is not None:
                     end.update(tar_end(tf, expired, stream))
@@ -1838,6 +2020,26 @@ def collected_roots(found):
     return tuple(sorted(roots))
 
 
+def archive_magic(head):
+    """The format a member's first bytes say it is (zip, gzip, bzip2, xz, 7z, rar, cab, or tar by `ustar` at offset 257), whatever its name, or None."""
+    for signature, name in ARCHIVE_MAGIC:
+        if head.startswith(signature):
+            return name
+    if head[:3] == b"BZh" and head[3:4] in (b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9"):
+        return "bzip2"
+    if len(head) >= 262 and head[257:262] == b"ustar":
+        return "tar"
+    return None
+
+
+def zip_first_name(head):
+    """The name of the first member of a zip, from its first local header, or None."""
+    if len(head) < 30 or head[:4] != b"PK\x03\x04":
+        return None
+    length = struct.unpack("<H", head[26:28])[0]
+    return head[30:30 + length].decode("utf-8", "replace") if len(head) >= 30 + length else None
+
+
 def marker_name(rel):
     name = name_of(rel)
     low = name.lower()
@@ -1861,8 +2063,9 @@ class ArchiveSource:
     """The collector's records from the archive, kept as temporary files: each opened afresh, so a record read twice is read twice."""
     kind = "archive"
 
-    def __init__(self, kept, not_kept=None, heads=None):
+    def __init__(self, kept, not_kept=None, heads=None, encrypted=()):
         self.kept = kept
+        self.encrypted = encrypted            # the data.zip members the zip itself marks as encrypted
         self.not_kept = not_kept or {}
         self.heads = heads or {}              # for a record not kept because it is binary: the byte-order mark or one NUL byte that binary_reason judges it by
 
@@ -1911,7 +2114,7 @@ def pass_one(path, fmt, out_dir, census, inventory, digests, kept, state):
     kept_bytes = 0
     n = 0
     try:
-        for name, kind, header_size, opener in iterate(path, fmt, expired=out_of_time, end=state["tar_end"]):
+        for name, kind, header_size, opener, encrypted in iterate(path, fmt, expired=out_of_time, end=state["tar_end"]):
             if n >= MAX_MEMBERS:
                 state["limit"] = "the member cap of %d" % MAX_MEMBERS
                 break
@@ -1927,8 +2130,16 @@ def pass_one(path, fmt, out_dir, census, inventory, digests, kept, state):
             if kind == "f":
                 hashers = (hashlib.sha256(), hashlib.sha1(), hashlib.md5())
                 keep = marker_name(rel)
+                if encrypted and name_of(rel) == ENCRYPTED_PAYLOAD and len(state["encrypted"]) < MAX_ENCRYPTED_LISTED:
+                    state["encrypted"].add(rel)
+                if not keep and name_of(rel) == ENCRYPTED_METADATA and not inside_collected_data(rel) and header_size <= ENCRYPTION_METADATA_BYTES \
+                        and state["metadata_kept"] + header_size <= MAX_METADATA_KEPT:
+                    keep = True                          # metadata.json beside a data.zip may name the encryption of a Velociraptor collection: small, and bounded in total
+                    state["metadata_kept"] += header_size
                 dest = None
                 total = 0
+                magic = None
+                first_head = b""
                 if keep and kept_bytes + header_size > cap_total:
                     keep = False
                     state["not_kept_total"].append({"name": rel, "bytes": header_size})
@@ -1946,6 +2157,9 @@ def pass_one(path, fmt, out_dir, census, inventory, digests, kept, state):
                             if not block:
                                 break
                             first_block = total == 0
+                            if first_block:
+                                first_head = block[:512]
+                                magic = archive_magic(first_head)
                             total += len(block)
                             for h in hashers:
                                 h.update(block)
@@ -1997,10 +2211,20 @@ def pass_one(path, fmt, out_dir, census, inventory, digests, kept, state):
                 digest_row = {"sha256": hashers[0].hexdigest(), "sha1": hashers[1].hexdigest(), "md5": hashers[2].hexdigest()}
                 digests.setdefault(rel, []).append(digest_row)
                 census.add(rel, size, "f")
-                if rel.lower().endswith(NESTED_SUFFIXES):
-                    state["nested"].append({"n": n, "name": rel, "bytes": size})
+                by_suffix = rel.lower().endswith(NESTED_SUFFIXES)
+                archive_note = ""
+                if by_suffix or magic:
+                    document = bool(magic == "zip" and not by_suffix and rel.lower().endswith(ZIP_DOCUMENT_SUFFIXES)
+                                    and (zip_first_name(first_head) or "").startswith(ZIP_DOCUMENT_FIRST))
+                    found_by = "suffix and bytes" if by_suffix and magic else "suffix" if by_suffix else "bytes"
+                    state["nested_total"] += 1
+                    if len(state["nested"]) < MAX_NESTED_LISTED:
+                        state["nested"].append({"n": n, "name": rel, "bytes": size, "found_by": found_by, **({"format": magic} if magic else {}),
+                                                **({"document_or_package": True} if document else {})})
+                    archive_note = ("a zip-based document or package (zip by its first bytes)" if document else
+                                    "an archive inside the archive, found by %s%s" % (found_by, " (%s)" % magic if magic else ""))
                 hint = path_hint(rel)
-                inventory.append((n, kind, size, "(withheld: %s)" % hint if hint else digest_row["sha256"], rel, ""))
+                inventory.append((n, kind, size, "(withheld: %s)" % hint if hint else digest_row["sha256"], rel, archive_note))
             elif kind in ("l", "s"):
                 census.add(rel, 0, kind)
                 inventory.append((n, kind, header_size, None, rel, "a link or a special file: recorded, not followed"))
@@ -2134,11 +2358,14 @@ def detect(path):
     stopped = None
     n = 0
     end = {}
+    flagged = set()                  # data.zip members that are encrypted in the zip
     try:
-        for name, kind, _size, _opener in iterate(path, fmt, expired=lambda: time.monotonic() > deadline, end=end):
+        for name, kind, _size, _opener, encrypted in iterate(path, fmt, expired=lambda: time.monotonic() > deadline, end=end):
             n += 1
             if kind == "f":
                 census.add(member_rel(name), 0, "f")
+                if encrypted and name_of(member_rel(name)) == ENCRYPTED_PAYLOAD and len(flagged) < MAX_ENCRYPTED_LISTED:
+                    flagged.add(member_rel(name))
             if n >= MAX_MEMBERS:
                 stopped = "the member cap of %d" % MAX_MEMBERS
                 break
@@ -2157,6 +2384,11 @@ def detect(path):
     markers = [rel for rel, _s, k in census.entries() if k == "f" and marker_name(rel)]
     if markers:
         return 0, {"applies": True, "format": fmt, "why": "%d member(s) are named like a collector's record (first: %s)" % (len(markers), esc(markers[0])),
+                   **({"listing_note": stopped} if stopped else {})}
+    sealed = sorted(e["payload"] for e in discover(census)["velo_encrypted"].values() if e["payload"] in flagged) if flagged else []
+    if sealed:
+        return 0, {"applies": True, "format": fmt, "why": "%d encrypted Velociraptor collection(s): data.zip is an encrypted member, alone or beside metadata.json (first: %s); "
+                                                       "its records are inside the encrypted payload and are not read" % (len(sealed), esc(sealed[0])),
                    **({"listing_note": stopped} if stopped else {})}
     if stopped:
         return 2, {"applies": False, "why": "no collector record among the %d members listed, and the listing stopped (%s): could not tell" % (n, stopped)}
@@ -2186,7 +2418,7 @@ def run(path, out_dir, probe=False):
         signal.signal(signal.SIGHUP, on_signal)
     census, inventory, digests, kept = Census(), [], {}, {}
     state = {"limit": None, "too_large": [], "not_kept_total": [], "not_kept_why": {}, "heads": {}, "unreadable": [], "nested": [], "directories": 0, "members": 0, "tmp": None,
-             "tar_end": {}, "kept_bytes": 0}
+             "tar_end": {}, "kept_bytes": 0, "encrypted": set(), "metadata_kept": 0, "nested_total": 0}
     try:
         try:
             pass_one(path, fmt, out_dir, census, inventory, digests, kept, state)
@@ -2201,11 +2433,27 @@ def run(path, out_dir, probe=False):
             if ended:
                 cov["errors"].append(ended)
                 census.complete = False
+        notes = []
+        tail = state["tar_end"].get("tail_bytes") if fmt != "zip" else None
+        if tail is not None and not state["tar_end"].get("after_marker_nonzero") and tail < 1024:
+            notes.append("the end-of-archive marker is one zero block, not two (two is the standard; GNU tar accepts one with a warning, and so does this recipe)")
         found = discover(census)
+        if census.stopped and not state["limit"]:
+            cov["errors"].append("the census stopped: %s" % census.stopped["reason"])
         with open(os.path.join(out_dir, "records.jsonl"), "w", encoding="utf-8") as records_fh, \
                 open(os.path.join(out_dir, "verification.jsonl"), "w", encoding="utf-8") as verification_fh:
             sink = IntakeSink(census, digests, records_fh, verification_fh)
-            sources = read_collection(ArchiveSource(kept, state["not_kept_why"], state["heads"]), found, sink)
+            sources = read_collection(ArchiveSource(kept, state["not_kept_why"], state["heads"], state["encrypted"]), found, sink)
+        encrypted_sources = [s for s in sources if s["kind"] == "velociraptor_encrypted"]
+        sealed = {s["payload"] for s in encrypted_sources}
+        if sealed:
+            # the payload is named for what it is: not an archive to extract, and not a member that failed to read
+            kept_nested = [x for x in state["nested"] if x["name"] not in sealed]
+            state["nested_total"] -= len(state["nested"]) - len(kept_nested)
+            state["nested"] = kept_nested
+            state["unreadable"] = [x for x in state["unreadable"] if x["name"] not in sealed]
+            inventory[:] = [(n, k, sz, sha, name, "the encrypted payload of a Velociraptor collection: not read, not decrypted" if name in sealed else nt)
+                            for n, k, sz, sha, name, nt in inventory]
         with open(os.path.join(out_dir, "inventory.tsv"), "w", encoding="utf-8") as fh:
             fh.write("n\tkind\tsize\tsha256\tname\tnote\n")
             for n, kind, size, sha, name, note_text in inventory:
@@ -2232,12 +2480,20 @@ def run(path, out_dir, probe=False):
             problems.append("%d collector record(s) were not kept or parsed because the records kept at once would have passed %d bytes: %s"
                             % (len(state["not_kept_total"]), kept_total_limit(),
                                ", ".join(esc(x["name"]) for x in state["not_kept_total"][:5]) + (" and more" if len(state["not_kept_total"]) > 5 else "")))
-        problems += ["%s is %s" % (esc(s["log"]), s["status"]) for s in sources if s["status"] != "parsed"]
+        problems += ["%s is %s" % (esc(s["log"]), s["status"]) for s in sources if s["status"] != "parsed" and s["kind"] != "velociraptor_encrypted"]
+        if encrypted_sources:
+            problems.append("%d encrypted Velociraptor collection(s): the records are inside the encrypted payload, which is not decrypted and was not read (first: %s)"
+                            % (len(encrypted_sources), esc(encrypted_sources[0]["payload"])))
         if not sources:
             problems.append("no recognised collector record was read")
         roots = collected_roots(found)
-        unaccounted = [x for x in state["nested"] if not (x["name"].startswith(roots) or x["name"] in sink.claimed)]
-        accounted = len(state["nested"]) - len(unaccounted)
+        documents = [x for x in state["nested"] if x.get("document_or_package")]
+        unaccounted = [x for x in state["nested"] if not (x["name"].startswith(roots) or x["name"] in sink.claimed or x.get("document_or_package"))]
+        accounted = len(state["nested"]) - len(unaccounted) - len(documents)
+        not_listed = state["nested_total"] - len(state["nested"])
+        if not_listed:
+            problems.append("%d more archive(s) inside the archive than the %d listed here (every member is in inventory.tsv, with a note on these): whether they may hold records is not decided"
+                            % (not_listed, MAX_NESTED_LISTED))
         if unaccounted:
             problems.append("%d archive(s) inside the archive were not opened and may hold records: %s"
                             % (len(unaccounted), ", ".join(esc(x["name"]) for x in unaccounted[:5]) + (" and more" if len(unaccounted) > 5 else "")))
@@ -2247,14 +2503,22 @@ def run(path, out_dir, probe=False):
         if accounted and not problems:
             basis += ("; %d archive(s) inside the archive are files the collector copied from the source host (below the [root] of a UAC run, below the uploads "
                       "directory of a Velociraptor container, or named by a record as a delivered file) and were not opened" % accounted)
-        cov.update(status=status, status_basis=basis, problems=problems,
+        cov.update(status=status, status_basis=basis, problems=problems[:200], problems_total=len(problems),
+                   problems_note="the first 200; every source that is not parsed is in units.json with its status and reason", notes=notes,
                    format=fmt, members=state["members"], files=census.files, directories=state["directories"],
                    records=sink.count, records_by_kind=dict(sorted(sink.by_kind.items())), verification=dict(sorted(sink.by_status.items())),
-                   records_not_checked=sink.not_checked, nested_archives=state["nested"][:1000], nested_archives_total=len(state["nested"]),
+                   records_not_checked=sink.not_checked, nested_archives=state["nested"][:1000], nested_archives_total=state["nested_total"], nested_archives_listed=len(state["nested"]),
+                   nested_archives_zip_documents_and_packages_total=len(documents),
                    nested_archives_not_opened_and_not_collected_files=unaccounted[:1000], nested_archives_not_opened_and_not_collected_files_total=len(unaccounted),
-                   nested_archives_note=("named, not opened: extract one with archive_extract (from_index is its n in inventory.tsv) and run this recipe or the "
+                   nested_archives_note=("named, not opened: found by its suffix or by its first bytes (zip, tar, gzip, bzip2, xz, 7z, rar or cab, whatever the name; found_by says which), "
+                                         "extract one with archive_extract (from_index is its n in inventory.tsv) and run this recipe or the "
                                          "collection tools on the result. One that is not below the [root] of a UAC run or the uploads directory of a Velociraptor container "
-                                         "and that no record names as a delivered file may hold records, and the status is partial until it is opened"),
+                                         "and that no record names as a delivered file may hold records, and the status is partial until it is opened. A zip by its bytes that "
+                                         "is named like a document or a package (docx, xlsx, pptx, odt, jar, apk and the like) is listed, with document_or_package, and does not "
+                                         "by itself make the run partial"),
+                   encrypted_collections=[{"payload": esc(s["payload"]), "directory": esc(s["directory"]), "recognised_by": s["recognised_by"], "metadata": s["metadata"],
+                                           "decrypted": False} for s in encrypted_sources[:1000]],
+                   encrypted_collections_total=len(encrypted_sources),
                    records_kept_bytes=state["kept_bytes"], records_not_kept_total_cap=state["not_kept_total"][:1000], records_over_member_cap=state["too_large"][:1000],
                    members_unreadable=state["unreadable"][:100], members_unreadable_total=len(state["unreadable"]),
                    outputs={"inventory": "inventory.tsv", "records": "records.jsonl", "verification": "verification.jsonl", "units": "units.json"})

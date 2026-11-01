@@ -1450,7 +1450,97 @@ import json
 import os
 import re
 import stat
+import sys
+import unicodedata
 
+MEMORY_ENV = ("COLLECTION_MEMORY_BYTES", "COLLECTION_INTAKE_MEMORY_BYTES")      # the bytes this process may hold, set by hand (the second name is the recipe's own, still read)
+
+
+def memory_ceiling():
+    """The bytes this process may hold, as far as it can be known: COLLECTION_MEMORY_BYTES (or the recipe's COLLECTION_INTAKE_MEMORY_BYTES) when
+    it is a positive whole number, else the smallest of the cgroup limit and the address-space and data limits. None when nothing limits it that
+    this can see."""
+    for name in MEMORY_ENV:
+        try:
+            if os.environ.get(name) and int(os.environ[name]) > 0:
+                return int(os.environ[name])
+        except ValueError:
+            pass
+    found = []
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as fh:
+                text = fh.read().strip()
+            if text.isdigit() and int(text) < (1 << 60):
+                found.append(int(text))
+        except OSError:
+            pass
+    try:
+        import resource
+        for which in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
+            soft = resource.getrlimit(which)[0]
+            if soft != resource.RLIM_INFINITY:
+                found.append(soft)
+    except (ImportError, ValueError, OSError):
+        pass
+    return min(found) if found else None
+
+
+MEMORY_CEILING = [None, False]         # (bytes, looked up)
+
+
+def over_memory():
+    """A sentence when the process holds more than 60% of what it may hold (the census and the per-member state of a delivery of millions of
+    entries are what grow with the input), else None: the census and the pass stop there, partial, and say so, instead of being killed with
+    nothing written."""
+    if not MEMORY_CEILING[1]:
+        MEMORY_CEILING[0], MEMORY_CEILING[1] = memory_ceiling(), True
+    ceiling = MEMORY_CEILING[0]
+    if not ceiling:
+        return None
+    try:
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
+    except (ImportError, OSError):
+        return None
+    if peak * 10 > ceiling * 6:
+        return "the memory bound (%s held of the %s this process may hold)" % (size_text(peak), size_text(ceiling))
+    return None
+
+
+def size_text(n):
+    """A byte count in the largest unit that does not make it 0 (a tiny override is not '0 MB')."""
+    if n >= 1 << 20:
+        return "%d MB" % (n >> 20)
+    if n >= 1 << 10:
+        return "%d KB" % (n >> 10)
+    return "%d bytes" % n
+
+
+CLOCK_EVERY = 256                  # a loop over the census asks the clock and the memory bound this many entries apart
+
+
+def census_clock(census, position, what):
+    """True when the time limit or the memory bound says a loop over the census must end here (asked every CLOCK_EVERY entries): the census is then
+    marked stopped and not complete, so that the answer is partial and no record is called missing."""
+    if position % CLOCK_EVERY:
+        return False
+    reason = "the time limit" if out_of_time() else over_memory()
+    if not reason:
+        return False
+    if census.stopped is None:
+        census.stopped = {"reason": "%s ended %s" % (reason, what), "directories_not_listed": 0}
+    census.complete = False
+    return True
+
+
+def fold_name(text):
+    """The key a name is joined by: NFC-normalised, then case-folded, so a name written in decomposed form (as macOS writes it) is the same name
+    as its precomposed record."""
+    return unicodedata.normalize("NFC", text).casefold()
+
+
+MEMORY_CHECK_EVERY = 1024          # the census asks for the memory this many entries apart (one getrusage call each)
 MAX_CENSUS = 2000000              # entries held for the join; past it the census is partial and no record is called missing
 REC_LINE = 1 << 20                # a log line longer than this is read in part; the whole line stays in the evidence at its locator
 REC_CHUNK = 1 << 20
@@ -1475,6 +1565,10 @@ KAPE_COPY_MAPPED = ("copiedtimestamp", "sourcefile", "destinationfile", "filesiz
 KAPE_SKIP_KNOWN = ("sourcefile", "sourcefilesha1", "reason")
 SKIP_TARGET_COLUMNS = ("sourcefile", "source", "filename", "file", "path")
 SKIP_REASON_COLUMNS = ("reason", "message", "error", "status")
+ENCRYPTED_PAYLOAD = "data.zip"
+ENCRYPTED_METADATA = "metadata.json"
+ENCRYPTION_KEYS = ("Scheme", "EncryptedPass", "PublicKey")
+ENCRYPTION_METADATA_BYTES = 65536
 ADAPTERS = {
     "kape_copy_log": {"id": "kape_copy_log/2", "collector": "KAPE", "reads": "*_CopyLog.csv",
                       "schema": "a header with SourceFile and DestinationFile; the other columns KAPE writes are kept by name"},
@@ -1488,6 +1582,13 @@ ADAPTERS = {
                   "schema": "one 'hex  path' line per file (the md5sum, sha1sum and sha256sum forms) or 'ALGORITHM (path) = hex'"},
     "velociraptor_container": {"id": "velociraptor_container/2", "collector": "Velociraptor", "reads": "uploads.json, results/*.json, log.json, collection_context.json",
                                "schema": "the container 0.77.2 writes: uploads.json rows (vfs_path, file_size, uploaded_size, Type), result rows with an upload record, log.json rows"},
+    "velociraptor_encrypted": {"id": "velociraptor_encrypted/1", "collector": "Velociraptor", "reads": "metadata.json, data.zip", "supported": False,
+                               "schema": ("the encrypted collection 0.77.2 writes when a password is set (reporting/container.go, NewContainerFromWriter, tag v0.77.2; the metadata keys are set by "
+                                          "artifacts/definitions/Server/Utils/CreateCollector.yaml at the same tag): an outer zip of metadata.json (plain; written only when the collector was "
+                                          "given metadata, with the keys Scheme, EncryptedPass and PublicKey) and data.zip, a stored member that is itself encrypted with the zip password "
+                                          "(github.com/alexmullins/zip, WinZip AES) and holds the collected members. It is recognised by those two member names with nothing else beside them, "
+                                          "and by the encrypted flag of data.zip in the outer zip or the Scheme key of metadata.json, never by entropy. Nothing is decrypted and no record is read"),
+                               "unsupported_reason": "an encrypted Velociraptor collection: its records are inside the encrypted payload (data.zip), which is not decrypted and was not read"},
     "cylr": {"id": None, "collector": "CyLR", "reads": None, "supported": False,
              "schema": "none: no record of CyLR is read; a CyLR archive is a tree of copied files, and a top-level C or C$ directory is a layout clue, not a manifest"},
 }
@@ -1515,14 +1616,23 @@ class Census:
 
     @staticmethod
     def key(rel):
-        return rel.replace(os.sep, "/").casefold()
+        return fold_name(rel.replace(os.sep, "/"))
 
     def add(self, rel, size, kind):
         if self.total >= self.cap:
             self.capped = True
             self.complete = False
             return
+        if self.stopped is not None and self.stopped.get("memory"):
+            self.complete = False
+            return
         self.total += 1
+        if self.total % MEMORY_CHECK_EVERY == 0:
+            held = over_memory()
+            if held:
+                self.stopped = {"reason": held, "memory": True, "entries_held": self.total}
+                self.complete = False
+                return
         if kind == "f":
             self.files += 1
         elif kind == "l":
@@ -1556,6 +1666,8 @@ def walk_census(root, census, skip=None):
             census.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack)}
             census.complete = False
             return
+        if census.stopped is not None and census.stopped.get("memory"):
+            return
         directory = stack.pop()
         rel_dir = directory[len(prefix):] if directory.startswith(prefix) else ""
         try:
@@ -1567,6 +1679,8 @@ def walk_census(root, census, skip=None):
         census.dirs += 1
         for entry in entries:
             seen += 1
+            if census.stopped is not None and census.stopped.get("memory"):
+                return
             if (seen & 1023) == 0 and out_of_time():
                 census.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack)}
                 census.complete = False
@@ -1663,8 +1777,11 @@ def discover(census):
     lists, Velociraptor containers (a directory with uploads.json or collection_context.json, its results/*.json and its
     log.json). A record found inside collected data (below [root] or uploads) belongs to the source host and is listed apart,
     never read. Sorted by the name's bytes, so a run reads the same records in the same order every time."""
-    found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "inside_collected": []}
-    for rel, size, kind in sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0])):
+    found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "velo_encrypted": {}, "inside_collected": []}
+    payloads = {}
+    for position, (rel, size, kind) in enumerate(sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0]))):
+        if census_clock(census, position, "the search for the collectors' records"):
+            break
         name = name_of(rel)
         low = name.lower()
         directory = parent_of(rel)
@@ -1682,6 +1799,8 @@ def discover(census):
             marker = ("velo_result", None, None)
         elif name == "log.json":
             marker = ("velo_log", None, None)
+        if name == ENCRYPTED_PAYLOAD and not inside_collected_data(rel):
+            payloads[directory] = {"payload": rel, "metadata": None, "other": False}
         if marker is None:
             continue
         if inside_collected_data(rel):
@@ -1701,6 +1820,23 @@ def discover(census):
         else:
             found["velo_logs"][directory] = rel
     found["uac_dirs"] = sorted(census.marked_dirs, key=os.fsencode)
+    if payloads:
+        # an encrypted Velociraptor collection is an outer container of data.zip and, when the collector was given metadata, metadata.json: the
+        # directory that holds those and nothing else (a file or a link beside them makes it an ordinary directory with a file named data.zip)
+        for position, (rel, size, kind) in enumerate(census.entries()):
+            if census_clock(census, position, "the search for encrypted collections"):
+                break
+            entry = payloads.get(parent_of(rel))
+            if entry is None:
+                continue
+            name = name_of(rel)
+            if name == ENCRYPTED_PAYLOAD and kind == "f":
+                continue
+            if name == ENCRYPTED_METADATA and kind == "f":
+                entry["metadata"] = rel
+            else:
+                entry["other"] = True
+        found["velo_encrypted"] = {d: {"payload": e["payload"], "metadata": e["metadata"]} for d, e in payloads.items() if not e["other"]}
     return found
 
 
@@ -2268,6 +2404,59 @@ def read_velociraptor(src, directory, files, found, sink):
     return source
 
 
+def read_encryption_metadata(src, rel):
+    """What metadata.json beside data.zip says: which of the documented keys it holds and how long each value is. A value is withheld whole
+    (it may be an encrypted password or a key); nothing of it is printed. The file is read to 64 KiB at most."""
+    info = {"present": True, "bytes": None, "keys": [], "other_keys": 0, "values": {}}
+    try:
+        with src.open_binary(rel) as fh:
+            data = fh.read(ENCRYPTION_METADATA_BYTES + 1)
+    except (OSError, ValueError) as exc:
+        info["problem"] = "metadata.json could not be read (%s)" % describe(exc)
+        return info
+    if len(data) > ENCRYPTION_METADATA_BYTES:
+        info["problem"] = "metadata.json is over %d bytes: not parsed" % ENCRYPTION_METADATA_BYTES
+        return info
+    info["bytes"] = len(data)
+    try:
+        doc = json.loads(data.decode("utf-8-sig"))
+    except (ValueError, RecursionError):
+        info["problem"] = "metadata.json is not JSON text: not read"
+        return info
+    if not isinstance(doc, dict):
+        info["problem"] = "metadata.json is not a JSON object: not read"
+        return info
+    for key in ENCRYPTION_KEYS:
+        if key in doc:
+            value = doc[key]
+            try:
+                text = value if isinstance(value, str) else json.dumps(value)
+            except (ValueError, TypeError, RecursionError):
+                text = ""
+            info["keys"].append(key)
+            info["values"][key] = withhold_value(text, "metadata.json, %s" % key)
+    info["other_keys"] = len(doc) - len(info["keys"])
+    return info
+
+
+def read_velociraptor_encrypted(src, directory, files, sink):
+    """One encrypted Velociraptor collection (see the velociraptor_encrypted adapter), or None when the directory only looks like one. It is
+    recognised by data.zip being an encrypted member of the zip the source reads (`src.encrypted`) or by metadata.json holding the Scheme
+    key. The records are inside the encrypted payload: nothing is decrypted, no record is read, the source is `unsupported`, and no failure
+    count is determined for the run."""
+    payload, meta = files["payload"], files.get("metadata")
+    info = read_encryption_metadata(src, meta) if meta else None
+    flagged = payload in getattr(src, "encrypted", ())
+    named = info is not None and "Scheme" in info["keys"]
+    if not (flagged or named):
+        return None
+    basis = (["data.zip is an encrypted member of the zip (general-purpose flag bit 0)"] if flagged else []) + (["metadata.json holds the Scheme key"] if named else [])
+    source = new_source(payload, "Velociraptor", "velociraptor_encrypted", "velociraptor_encrypted", run=directory or ".", directory=directory or ".", container=directory or ".",
+                        payload=payload, recognised_by=basis, decrypted=False, metadata=info if info is not None else {"present": False})
+    source.update(status="unsupported", reason=ADAPTERS["velociraptor_encrypted"]["unsupported_reason"])
+    return source
+
+
 def read_collection(src, found, sink):
     """Every recognised record of a census, in a fixed order: KAPE runs, UAC logs and hash lists, Velociraptor containers. Returns
     the source summaries (one per log, one per container), each with its adapter, its status and why."""
@@ -2286,6 +2475,10 @@ def read_collection(src, found, sink):
         sources.append(read_hash_list(src, rel, sink))
     for directory, files in sorted(found["velociraptor"].items(), key=lambda kv: os.fsencode(kv[0])):
         sources.append(read_velociraptor(src, directory, files, found, sink))
+    for directory, files in sorted(found["velo_encrypted"].items(), key=lambda kv: os.fsencode(kv[0])):
+        source = read_velociraptor_encrypted(src, directory, files, sink)
+        if source is not None:
+            sources.append(source)
     return sources
 
 
@@ -2418,7 +2611,7 @@ def hash_file(src, rel, algorithms):
 
 
 def norm_text(text):
-    return text.replace("\\", "/").casefold()
+    return fold_name(text.replace("\\", "/"))
 
 
 def glob_match(pattern, text):
@@ -2631,6 +2824,16 @@ def withhold_digest(value, where):
     if VALUES[0] is not None:
         VALUES[0].add(fid, {"where": where}, value)
     return "<digest of a credential store withheld, %d characters, %s>" % (len(value), fid)
+
+
+def withhold_value(value, where):
+    """A value that may hold a secret (an encrypted password, a key) never leaves in an answer or a table: it goes to the values file (a job
+    run with secret_output and write_values) and what is printed names its length and a finding id. Returns the marker."""
+    WITHHELD["count"] += 1
+    fid = "W%06d" % WITHHELD["count"]
+    if VALUES[0] is not None:
+        VALUES[0].add(fid, {"where": where}, value)
+    return "<value withheld, %d characters, %s>" % (len(value), fid)
 
 
 DIGEST_KEY = re.compile(r"md5|sha|hash|digest|checksum", re.I)
@@ -2862,6 +3065,7 @@ def main():
     checks = Table(TOOL + "-checks", limit, always=True)
     exceptions = Table(TOOL + "-exceptions", limit)
     unexpected = Table(TOOL + "-unexpected", limit)
+    not_regular = Table(TOOL + "-links-and-special-files", limit)
     census = Census()
     walk_census(root, census, skip=is_own)
     found = discover(census)
@@ -2887,19 +3091,28 @@ def main():
     record_files.update(found["uac_logs"])
     record_files.update(found["uac_hashes"])
     in_scope = 0
+    not_regular_in_scope = 0
     unexpected_total = 0
     possibly_named = 0
     undecided = 0
     whole = {}                                # per-file record -> whether its rows were read whole: a file is called unexpected only against rows that were
     for _directory, log, inner in scopes:
         whole[log] = any(s["log"] == log and (s.get("sources", {}).get("uploads.json", s)["status"] == "parsed" if inner else s["status"] == "parsed") for s in sources)
-    for rel, size, kind in sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0])):
+    for position, (rel, size, kind) in enumerate(sorted(census.entries(), key=lambda e: os.fsencode(e[0]))):
+        if census_clock(census, position, "the search for delivered files no record names"):
+            break
         if rel in record_files:
             continue
         for directory, log, inner in scopes:
             lead = join_rel(directory, inner)
             if lead and not (rel.startswith(lead + "/") or rel.startswith(lead + os.sep)):
                 continue
+            if kind != "f":
+                # a link or a special file is never followed or read: it is listed with its kind and counted apart from the files
+                not_regular_in_scope += 1
+                not_regular.add({"delivered": rel, "kind": "link" if kind == "l" else "special file", "scope": {"record": log},
+                                 "note": "below a per-file record's directory: listed with its kind, never followed or read, and not a delivered file for the counts of unexpected files"})
+                break
             in_scope += 1
             if rel not in sink.claimed and rel in sink.maybe_named:
                 possibly_named += 1
@@ -2910,7 +3123,7 @@ def main():
                 unexpected.add({"status": "unexpected", "delivered": rel, "bytes": size, "scope": {"record": log},
                                 "note": "a delivered file below a per-file record's directory that no row of any record names"})
             break
-    tables = {"checks": checks.finish(), "exceptions": exceptions.finish(), "unexpected": unexpected.finish(), "problems": problems.finish()}
+    tables = {"checks": checks.finish(), "exceptions": exceptions.finish(), "unexpected": unexpected.finish(), "links_and_special_files": not_regular.finish(), "problems": problems.finish()}
     values = VALUES[0]
     sources_table = Table(TOOL + "-sources", limit)
     for s in sources:
@@ -2950,7 +3163,8 @@ def main():
         "not_checked": dict(sorted(sink.not_checked.items())),
         "not_checked_basis": "a skip, an upload error and a logged line are the collector's outcomes, not claims that a file was delivered; they are counted here and are not checked",
         "denominators": {"records": sink.count, "delivery_claims_checked": sum(sink.by_status.values()), "delivered_files": census.files,
-                         "delivered_files_in_scope_of_a_per_file_record": in_scope, "delivered_files_named_by_a_record": len(sink.claimed),
+                         "delivered_files_in_scope_of_a_per_file_record": in_scope, "links_and_special_files_in_scope_of_a_per_file_record": not_regular_in_scope,
+                         "delivered_files_named_by_a_record": len(sink.claimed),
                          "delivered_files_an_ambiguous_record_may_name": possibly_named,
                          "delivered_files_not_decided_the_record_was_not_read_whole": undecided,
                          "delivered_files_named_by_more_than_one_record": len(dup), "bytes_hashed": sink.hashed_bytes},
@@ -2970,6 +3184,7 @@ def main():
         "sources": sources_table.page,
         "exceptions": exceptions.page,
         "unexpected": unexpected.page,
+        "links_and_special_files": not_regular.page,
         "problems": problems.page,
     }
     write_answer(out)

@@ -32,7 +32,7 @@
       "name": "velociraptor",
       "package": "Velociraptor",
       "optional": true,
-      "why": "Builds an offline collector with a chosen artefact set baked in. Declared for operator preparation and as a candidate offline reader of its own containers (unverified; no skill uses it for that, the harness never collects live, and a collection's own VQL is never run). AGPL-3.0, the same licence as this harness.",
+      "why": "Builds an offline collector with a chosen artefact set baked in. Declared for operator preparation only: the Velociraptor program is never run here and is not in the analysis image. The pack reads Velociraptor collection containers and collection zips offline with its own adapters, checked against the source of 0.77.2: the record tools (velociraptor_container/2) and collection_id read a container directory, and the collection-intake recipe reads a collection zip. No skill uses the program, the harness never collects live, and a collection's own VQL is never run. AGPL-3.0, the same licence as this harness.",
       "install": {
         "brew": "https://github.com/Velocidex/velociraptor/releases",
         "apt": "pinned download 0.77.2 (install.download)",

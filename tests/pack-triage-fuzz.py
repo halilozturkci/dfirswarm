@@ -642,7 +642,7 @@ def pm_oracle(rep, seed, case, ans, rows, results):
                 if results["pm_status"].get(cand) == "hypothesis_only":
                     rep.find("path_map", seed, "a candidate of an ambiguous record is hypothesis_only", cand)
     for rel, s in results["pm_status"].items():
-        if s not in ("observed", "ambiguous", "hypothesis_only", "collector_record", "candidate_of_ambiguous_record"):
+        if s not in ("observed", "ambiguous", "hypothesis_only", "collector_record", "candidate_of_ambiguous_record", "undecided_record_not_read_whole"):
             rep.find("path_map", seed, "unknown status", s)
 
 

@@ -58,3 +58,23 @@ test("write_values: true in a job environment is refused without SECRET_OUTPUT=1
     }
   });
 });
+
+test("the velociraptor entries name the offline route the pack adopted, not a candidate reader", async () => {
+  const pack = JSON.parse(await readFile(join(TRIAGE, "pack.json"), "utf8")) as Json;
+  const host = JSON.parse(await readFile(join(TRIAGE, "requires", "host.json"), "utf8")) as Json;
+  for (const [file, text] of [["pack.json", JSON.stringify(pack)], ["requires/host.json", JSON.stringify(host)]] as const) {
+    assert.doesNotMatch(text, /candidate offline reader/i, `${file}: the old wording is back`);
+    assert.doesNotMatch(text, /unverified;? no skill uses it/i, `${file}: the old wording is back`);
+  }
+  const why = [
+    ((pack.unreferenced_ok as Json[]).find((e) => e.name === "velociraptor") as Json).why as string,
+    ((host.binaries as Json[]).find((e) => e.name === "velociraptor") as Json).why as string,
+  ];
+  for (const text of why) {
+    assert.match(text, /program is never run/, "the program is never run");
+    assert.match(text, /not in the analysis image/, "it is not in the analysis image");
+    assert.match(text, /velociraptor_container\/2/, "the adapter that reads a container");
+    assert.match(text, /collection-intake/, "the recipe that reads a zip");
+    assert.match(text, /offline/, "the route is offline");
+  }
+});
