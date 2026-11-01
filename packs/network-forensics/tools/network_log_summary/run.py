@@ -40,7 +40,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "network_log_summary", "version": 8}
+TOOL = {"name": "network_log_summary", "version": 9}
 PARSER = "network_log_summary/5"
 
 
@@ -391,6 +391,12 @@ def cell(value):
 def describe(exc):
     code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
     return scrub("%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc)))
+
+
+def holds_files(directory):
+    """Whether `directory` holds anything: one entry is looked at, never the whole listing (a caller's directory can hold millions of names)."""
+    with os.scandir(directory) as entries:
+        return next(entries, None) is not None
 
 
 def in_job():
@@ -816,7 +822,7 @@ def main():
         fail("out_dir is required: an empty directory under work/ (in a job, under $OUT)")
     out_dir = resolve_output(out_dir, "out_dir")
     try:
-        if os.path.exists(out_dir) and os.listdir(out_dir):
+        if os.path.exists(out_dir) and holds_files(out_dir):
             fail("out_dir already holds files", out_dir=out_dir)
     except OSError as exc:
         fail("out_dir cannot be listed (%s)" % describe(exc), out_dir=out_dir)

@@ -36,8 +36,8 @@
   "example": "{\"path\": \"inputs/capture.pcap\", \"out_dir\": \"work/<your id>/exported\", \"protocols\": [\"http\", \"smb\"]}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 7,
-  "sha256": "111534014645ea3ff1efea7e2e9bab56c6813acd14e0760fddff99f41dbf8083",
+  "version": 8,
+  "sha256": "5e4d70ec4d53079481f1bad1ea680f3f8c021e61b68703f940fe345d7648e1bb",
   "use": {
     "extensions": [
       ".pcap",

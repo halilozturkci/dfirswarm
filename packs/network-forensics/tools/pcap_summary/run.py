@@ -52,7 +52,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "pcap_summary", "version": 9}
+TOOL = {"name": "pcap_summary", "version": 10}
 PARSER = "pcap_summary/6"
 
 
@@ -407,6 +407,12 @@ def cell(value):
 
 def describe(exc):
     return "%s: %s" % (type(exc).__name__, getattr(exc, "strerror", None) or str(exc))
+
+
+def holds_files(directory):
+    """Whether `directory` holds anything: one entry is looked at, never the whole listing (a caller's directory can hold millions of names)."""
+    with os.scandir(directory) as entries:
+        return next(entries, None) is not None
 
 
 CLEANUP = []   # what to undo when the run ends early: the temporary aggregate file above all
@@ -1426,7 +1432,7 @@ def main():
     if out_dir is not None:
         out_dir = resolve_output(out_dir, "out_dir")
         try:
-            if os.path.exists(out_dir) and os.listdir(out_dir):
+            if os.path.exists(out_dir) and holds_files(out_dir):
                 fail("out_dir already holds files", out_dir=out_dir)
         except OSError as exc:
             fail("out_dir cannot be listed (%s)" % describe(exc), out_dir=out_dir)

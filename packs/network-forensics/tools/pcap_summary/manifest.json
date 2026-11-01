@@ -45,8 +45,8 @@
   "example": "{\"path\": \"inputs/capture.pcap\", \"top\": 20, \"out_dir\": \"work/<your id>/pcap-summary\", \"group\": \"endpoint\", \"with_syn_times\": true}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 9,
-  "sha256": "5329bd747fd690aa19fe882db2e37ad8ba5897123bd51168f7470673b531ecaf",
+  "version": 10,
+  "sha256": "97d873a4e2c499c1221bf544eeabb1470ca9a20590a82eabfc0f464cfe7f1aa4",
   "use": {
     "extensions": [
       ".pcap",
