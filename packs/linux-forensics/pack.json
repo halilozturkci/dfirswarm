@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -50,7 +50,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "211ec73d619e02a7c95cd7b2d7c01dde2b9d1793c78480b0249609fe75c96d12",
+      "README.md": "25879fc4732d6d59df6ccc9fc6e01273973a7211c781abe8ae6d3dce38d4d4b9",
       "goals/server-compromise.md": "0118cd428d15cdd68293ca017333a2302fa3b42a67df32aea89e77c672f9a18b",
       "goals/what-was-scheduled.md": "52389a312d07d57dc4f76c6b274dcccd6d88952a494e2750c93693a2240a1820",
       "recipes/linux-target/recipe.json": "32ce9c8dd2bed920d2ee363fe3f168b27cdf40726451c217ddfa86fdc4a95475",
@@ -60,7 +60,7 @@
       "skills/INDEX.md": "4d9ff8d33343c0316236c6e5e1bf2f9ec2f7f5beef09c11170befc24f4f8e1fc",
       "skills/accounts/sessions-histories.md": "dcc62a72f4a19402a07d48b2de88324e10fe37bbd12b2263df398d628584c69c",
       "skills/accounts/users.md": "c56120ad6af68cbf704fa1a4d9d0e4c4b9960e3cd661d036b97bb47376748b59",
-      "skills/containers/docker.md": "dfe02c14f3ce2d5dd7263f848be5fe3d0ac9a22d0203aea7ed7ad77fd14550c3",
+      "skills/containers/docker.md": "6fd83ce61af0de38109389c5968f456ce130b29811b16efb26a2163a76e14067",
       "skills/containers/layers-times.md": "8da7dfbc7c3b17b092611b3209e9d5cff00d90fe6560d759f29276249ad51293",
       "skills/containers/removed-logs.md": "768cc0eb88fe9dc30b7a6785b5d531fc7db0d00e8cadcdff452f6e4e15a8f954",
       "skills/filesystem/ext-deleted.md": "7c68012a210d6f67fae4d0c3483b42fee57f0f2d45181913e45039034cc75ae4",
@@ -88,6 +88,8 @@
       "tools/audit_events/run.py": "b54b10b60f49b8670c736e13f417b22c40a6027ebff5b7833827a41a0ffd76be",
       "tools/auth_log/manifest.json": "1cc489bc7c144570a05030723c5514bc22a4f6d4fbe20ab0267ff89a5922cb24",
       "tools/auth_log/run.py": "6d0fabff50d99290575064c77461ad22e19b1c99de6011e568839022670ae0db",
+      "tools/container_inventory/manifest.json": "c175080269f7a42cf38d21ab722b6a7e46f317f538557fd1a5fe95e6e57d8d80",
+      "tools/container_inventory/run.py": "ab2d2886fcc3dfb7a6d3f0d828a74973b2f3da2a144609547e33e9db6e096208",
       "tools/cron_dump/manifest.json": "eae6452a8ae6bb0dcf5a912911f746dbff5b6a735ac1fe88f200cc2384c1c1ab",
       "tools/cron_dump/run.py": "5aa1716b3583b12d0efd401c3fcf2e2253b98533e5c119b380ca000b58c0120d",
       "tools/journal_export/manifest.json": "1792fde8eb93bb848a4ab6f2c9e5757018ed40bb7cf99bedc427cbdbf31d78b5",
@@ -105,6 +107,7 @@
   "tools": [
     "audit_events",
     "auth_log",
+    "container_inventory",
     "cron_dump",
     "journal_export",
     "linux_persistence",

@@ -25,3 +25,12 @@
   caller declares), the effective state is always unresolved with the reasons, and a copy without links says enablement cannot
   be read. Command lines and environments, and key names systemd does not define, are lengths; the text goes to a 0600 file on
   `write_text` in a secret-output job. `persistence/mechanisms` names the tool.
+
+### Added: linux-forensics `container_inventory` reads container runtime files of an extracted root
+
+- Read the Docker data root (and roots named by `storage_roots`), rootless Podman stores and a Kubernetes node's CRI log
+  directories: containers with locators into `config.v2.json` and `hostconfig.json`, lifecycle times, mounts, capabilities and
+  log files, images, and layers by chain id with the ones missing from the store named. containerd's bolt database is
+  listed as unsupported. Commands, arguments, environments, labels, binds and log text are lengths; the stored text goes to a
+  0600 file on `write_text` in a secret-output job. Large JSON logs are streamed, lists are paged, and hostile JSON gives a
+  refusal. `containers/docker` names the tool and the `target-fs` route.

@@ -21,7 +21,7 @@ second-level leaf (listed after it, opened only when its question arises) holds 
 | Packages | `packages/integrity`; then `packages/baseline` |
 | Timeline | `timeline/linux`; then `timeline/linux-normalise` |
 
-**Eight tools.** Each answers with fields and locators (file, line or record, byte offset), says what it did not
+**Nine tools.** Each answers with fields and locators (file, line or record, byte offset), says what it did not
 read, and keeps the whole result in a file when the answer is a page of it.
 
 - `auth_log` reads `auth.log` and `secure`, rotated and gzipped, record by record: ssh acceptances with the key type
@@ -37,6 +37,9 @@ read, and keeps the whole result in a file when the answer is a page of it.
 - `linux_persistence` lists the places a root starts programs from (cron, systemd units with their drop-ins, links, masks and aliases, `.path` and
   `.socket` units, `rc.local`, `init.d`, XDG autostart) with file, line and byte offset, keeps configuration apart from execution, leaves the
   effective state unresolved, and says when a copy without links cannot show enablement. Command lines and environments are lengths.
+- `container_inventory` reads a Docker or Podman tree and a Kubernetes node's CRI logs: containers with their config locators, lifecycle times, mounts, capabilities and
+  log files, images, and layers by chain id with the ones the store no longer holds. Commands, environments, labels, binds and log text are lengths (the text
+  goes to a 0600 file on `write_text` in a secret-output job). containerd's bolt database is listed and not read.
 - `shell_history` reads shell and client history files (bash, zsh, fish and plain client files) record by record,
   with how each record's boundaries were found, and does not call a directory name an account.
 - `cron_dump` inventories cron tables and systemd timers as candidates, with what it looked in and what it did not.

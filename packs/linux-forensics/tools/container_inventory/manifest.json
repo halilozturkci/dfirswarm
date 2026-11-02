@@ -1,0 +1,53 @@
+{
+  "name": "container_inventory",
+  "description": "Inventory the container runtimes of an extracted Linux root from the files they keep, with nothing started: Docker first (var/lib/docker/containers/<id>/config.v2.json, hostconfig.json and the <id>-json.log files; var/lib/docker/image/overlay2 repositories.json, imagedb and layerdb), then Podman (containers/storage's overlay-containers, overlay-images and overlay-layers JSON lists under var/lib/containers/storage and each home's .local/share/containers/storage) and Kubernetes node logs (var/log/pods/<namespace>_<pod>_<uid>/<container>/<n>.log, CRI format), each validated on its own shape and reported on its own. containerd's bolt metadata database is listed and NOT read (`unsupported`: the standard library cannot read it), and the answer says that this is not a statement that nothing ran under containerd. A Docker container directory with the older config.json only, or neither file, or a name that is not a 64-digit id, is listed under `unsupported`. Per container it gives its id, the directory and the config and hostconfig locators, the config version, name (when it has a plain shape), the created time as the file wrote it, the image id and whether the image is in imagedb, the driver, the restart count, the state (running, paused, restarting, pid, exit code, OOM-killed, dead, StartedAt and FinishedAt as written), mounts (destination, source, type and read-write; a path only when it has the shape of one), the host configuration (privileged, CapAdd and CapDrop in their own shapes, binds, network and pid mode, restart policy, the security options that lower isolation, devices and port bindings as counts, the log driver) and its logs (file, size, lines, how many lines are in the record shape, first and last record time as written, rotation number). An image gives its references, creation time, architecture, the number of layers it names and how many of those are missing, and its layers go to pages.layers one row each: diff id, chain id (the image specification's construction, sha256 of the parent chain id, a space and the diff id), whether layerdb holds it, its cache id (the overlay2 directory name) and size; a layer the layerdb does not hold is `missing` and makes the status partial, as does an image that does not parse. Two containers on one image are counted (images_used_by_containers). A JSON file larger than 8 MiB is not parsed, one nested deeper than the parser reads, one with a repeated key (the last value is used and the repeat is said), one that is not the type the runtime writes (a field of the wrong type is null, and some are named in the container's errors) and one that does not parse are each named in read_errors and make the status partial, never an empty result. A log of any size is streamed in 1 MiB blocks with the clock read at each one, its lines are checked for the record shape and its first and last records are parsed; a gzip log is listed and not read. SENSITIVE: a command, its arguments, an environment, a label and a log line can hold a secret; the answer carries counts and byte lengths of them and never their text, and write_text: true (refused outside a job, and in a job that was not run as secret output; declared secret_output: a job that sets write_text is run as secret output, and the tool refuses write_text when SECRET_OUTPUT is not 1) writes each container's command, arguments, entrypoint, environment, labels, binds, working directory and user as the runtime stored them to $OUT/container-text.jsonl, mode 0600; a log's text is not copied (it is in the evidence at the file named). It does not show that a container ran, what it did, or what its processes saw. storage_roots names directories inside the root that hold a runtime's storage (Docker's containers/ and image/, or containers/storage's overlay-*), for a data-root that is not in the usual place. Entries are listed up to limit and all of them, with every layer, log and place tried, are in the paging files named in `pages`; the clock is read before every file, container, image and log block, so max_seconds (default 60, at most 105, under the manifest's 120) is honoured and a place after it is named as not looked in (status partial). Every answer carries `status` (complete, partial or failed) and `status_basis`. A SIGTERM, SIGINT or SIGHUP ends the tool with one JSON last word (status failed, exit 128 plus the signal) naming the paging files and the text file it had written, and an unexpected exception ends it with one JSON document and exit 1. It does not read overlay2 layer contents or whiteouts (container_layers does), volumes, a runtime's socket, a registry, the control plane's records or a running host.",
+  "params": {
+    "root": {
+      "type": "string",
+      "description": "The directory of an extracted Linux root (var/, home/ ...); a link, a file or a disk image is refused"
+    },
+    "runtimes": {
+      "type": "array",
+      "description": "Which runtimes to read: any of docker, podman, kubernetes, containerd (default all)"
+    },
+    "storage_roots": {
+      "type": "array",
+      "description": "Up to 16 directories inside the root that hold a runtime's storage in an unusual place: Docker's data-root (containers/, image/) or containers/storage (overlay-containers/, overlay-layers/)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Entries shown inline (default 100); every entry is in the paging file named in pages.entries when there are more"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The time to spend (default 60, at most 105): a place not looked in is named and the answer is partial"
+    },
+    "write_text": {
+      "type": "boolean",
+      "description": "SENSITIVE: Write each container's command, arguments, entrypoint, environment, labels, binds, working directory and user to $OUT/container-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused (declared secret_output: a job that sets write_text is run as secret output, and the tool refuses write_text when SECRET_OUTPUT is not 1)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "secret_output": {
+    "when_args": [
+      "write_text"
+    ]
+  },
+  "example": "{\"root\": \"work/extracted\", \"runtimes\": [\"docker\"]}",
+  "by": "maintainer",
+  "at": "2026-11-02T12:00:00.000Z",
+  "version": 1,
+  "use": {
+    "names": [
+      "config.v2.json",
+      "hostconfig.json",
+      "containers.json",
+      "images.json",
+      "layers.json",
+      "repositories.json"
+    ]
+  },
+  "sha256": "ab2d2886fcc3dfb7a6d3f0d828a74973b2f3da2a144609547e33e9db6e096208"
+}
