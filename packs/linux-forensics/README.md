@@ -7,17 +7,20 @@ Depends on the Computer Forensics Base Pack, which carries the method that is tr
 
 ## What it carries
 
-**Ten skills, fifteen second-level leaves and the router `linux/router`** (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf), in eight families. Each skill opens with a decision-rule note; a
+**Nineteen skills, fifteen second-level leaves and the router `linux/router`** (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf), in eleven families. Each skill opens with a decision-rule note; a
 second-level leaf (listed after it, opened only when its question arises) holds the reference material the first points to.
 
 | Family | Skills |
 | --- | --- |
-| Triage | `triage/system-profile`; then `triage/identity-files`, `triage/clocks-boots` |
-| Logs | `logs/auth`, `logs/journal`; then `logs/auth-lines`, `logs/auth-time`, `logs/journal-clocks-verify` |
-| Accounts | `accounts/users`; then `accounts/sessions-histories` |
-| Persistence | `persistence/mechanisms`; then `persistence/cron-timers`, `persistence/quieter-routes` |
-| File system | `filesystem/ext`, `filesystem/storage`; then `filesystem/ext-deleted`, `filesystem/storage-lvm-luks`, `filesystem/storage-xfs-btrfs-virtual` |
-| Containers | `containers/docker`; then `containers/layers-times`, `containers/removed-logs` |
+| Triage | `triage/system-profile`, `triage/volatile-state`; then `triage/identity-files`, `triage/clocks-boots` |
+| Logs | `logs/auth`, `logs/journal`, `logs/auditd`; then `logs/auth-lines`, `logs/auth-time`, `logs/journal-clocks-verify` |
+| Accounts | `accounts/users`, `accounts/session-accounting`; then `accounts/sessions-histories` |
+| Execution | `execution/history` |
+| Persistence | `persistence/mechanisms`, `persistence/systemd`; then `persistence/cron-timers`, `persistence/quieter-routes` |
+| File system | `filesystem/ext`, `filesystem/storage`, `filesystem/timestamp-anomalies`; then `filesystem/ext-deleted`, `filesystem/storage-lvm-luks`, `filesystem/storage-xfs-btrfs-virtual` |
+| Containers | `containers/docker`, `containers/runtime-orchestration`; then `containers/layers-times`, `containers/removed-logs` |
+| Applications | `applications/server-logs` |
+| Cloud | `cloud/host-artifacts` |
 | Packages | `packages/integrity`; then `packages/baseline` |
 | Timeline | `timeline/linux`; then `timeline/linux-normalise` |
 

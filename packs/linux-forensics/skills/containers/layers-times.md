@@ -7,7 +7,7 @@ tools: [container_layers, timestamp_decode]
 requires_host: []
 ---
 
-Use only if you read a container's layers or its runtime metadata. Not for locating the evidence (`containers/docker`) or for what a removed container leaves (`containers/removed-logs`).
+Use only if you read a container's layers or its runtime metadata. Not for locating the evidence (`containers/docker`), for what a removed container leaves (`containers/removed-logs`) or for correlating runtimes and nodes (`containers/runtime-orchestration`).
 
 **Layers.** An OCI or Docker image-layer archive represents a deletion as a `.wh.<name>` entry and an opaque directory as `.wh..wh..opq`. A native OverlayFS upper directory uses filesystem objects and extended attributes instead (as the kernel documents them, a character device 0/0 and an opaque attribute on the directory), with details depending on the implementation. Preserve xattrs, device metadata and layer order, and map the container to its actual upper layer and lower chain before reconstructing a view; `container_layers` builds it from an explicit chain or overlay2's `lower` files, naming the layer that supplies each path and what each layer did to it, and says when an extraction lost the opaque attribute. A copy-up changes the host inode's metadata without showing when anything ran in the container.
 

@@ -40,7 +40,7 @@
       "name": "ausearch",
       "package": "auditd",
       "optional": true,
-      "why": "Read the kernel audit log, where the estate had auditd on: execve with arguments, and file access by rule. No skill of this pack names it yet; the skill that will (logs/auditd) is planned for a later change.",
+      "why": "Read the kernel audit log, where the estate had auditd on: execve with arguments, and file access by rule. `audit_events` runs it on a sample as a second reader (compare_ausearch), and logs/auditd names it.",
       "install": {
         "brew": "not available on macOS",
         "apt": "apt-get install -y auditd"

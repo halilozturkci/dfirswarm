@@ -65,3 +65,22 @@
   database, the table and an ordinal (the key is never selected for wtmpdb), the raw `Login` and `Logout` beside ISO time with a unit told
   from the size of the number, and text bounded to 256 bytes with its length. A damaged page keeps the rows read before it and ends partial.
   `accounts/sessions-histories` and the README say so.
+
+### Added: linux-forensics nine skills for the new tools and the leaves they overlap
+
+- `logs/auditd`, `persistence/systemd`, `filesystem/timestamp-anomalies`, `cloud/host-artifacts`, `accounts/session-accounting`,
+  `execution/history`, `containers/runtime-orchestration`, `triage/volatile-state` and `applications/server-logs`, each under 800 tokens,
+  opening "Use when ... Not for ...", with what the source shows, does not show, what to record and its sensitive output. They name the
+  tools `audit_events`, `linux_persistence`, `container_inventory`, `container_layers`, `utmp_parse` and `shell_history`, and
+  `cloud/host-artifacts` names `cloudtrail_parse` only as a mention. `applications/server-logs` says that transaction-log examination
+  (database write-ahead and binary logs) is not provided. `linux/router` names each once (at most 500 tokens); the pack's index now passes
+  1,000 tokens and the pack is shown by its router.
+- `accounts/sessions-histories`, `persistence/mechanisms`, `containers/layers-times` and `containers/removed-logs` point to the new leaves
+  and no longer say what they say. `ausearch` leaves `unreferenced_ok`: `logs/auditd` names it.
+
+### Changed: the base pack's router test uses macos-forensics beside the disk profile
+
+- `tests/pack-base-skills.test.ts` held the base, encrypted-containers, windows and linux packs to prove that the base router is what
+  fits a run in 2,500 tokens. Linux's whole index is now over 1,000 tokens and the pack is shown by its router, so the set that keeps
+  that property uses macos-forensics instead. No budget changed.
+
