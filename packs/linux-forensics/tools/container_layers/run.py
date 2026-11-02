@@ -745,10 +745,31 @@ def real_dir(path):
     return path, None
 
 
+def read_head(path, limit):
+    """Up to `limit` bytes of a regular file: opened without waiting and without following a link, and looked at with fstat first, so a FIFO,
+    a device or a directory at this name is an OSError and never holds the tool."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular file (a pipe, a socket or a device is never read)")
+        chunks, left = [], limit
+        while left > 0:
+            part = os.read(fd, min(left, 1 << 20))
+            if not part:
+                break
+            chunks.append(part)
+            left -= len(part)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
 def resolve_chain(overlay_root, start, notes):
     """The layer directories of overlay2's `start`, top to base, as [(name, diff dir)] and the short ids that could not be resolved.
     Each `lower` entry is `l/<short>`, a link in overlay_root/l to ../<id>/diff, resolved here and accepted only inside overlay_root."""
     chain, missing, seen = [], [], set()
+    if start in (".", "..") or "/" in start or "\x00" in start:
+        return None, [], "the start layer must be the name of a directory inside overlay2_root (no path, no . or ..)"
     top = os.path.join(overlay_root, start)
     ok, why = real_dir(top)
     if ok is None:
@@ -761,8 +782,7 @@ def resolve_chain(overlay_root, start, notes):
         missing.append({"layer": start, "why": "no diff directory (%s)" % why})
     lower_file = os.path.join(top, "lower")
     try:
-        with open(lower_file, "rb") as fh:
-            raw = fh.read(1 << 20).decode("utf-8", "replace").strip()
+        raw = read_head(lower_file, 1 << 20).decode("utf-8", "replace").strip()
     except FileNotFoundError:
         notes.append("%s has no lower file: it is a base layer" % start)
         return chain, missing, None
@@ -785,6 +805,9 @@ def resolve_chain(overlay_root, start, notes):
             missing.append({"layer": short, "why": "the link does not point at ../<id>/diff"})
             continue
         name = m.group(1)
+        if name in (".", ".."):
+            missing.append({"layer": short, "why": "the link names a directory outside the store (. or ..), which is never followed"})
+            continue
         if name in seen:
             return chain, missing, "the chain repeats the layer %s: a loop, not followed further" % name
         seen.add(name)
@@ -876,7 +899,7 @@ def is_opaque_dir(directory, path, stats):
     return False
 
 
-def hidden_by(path, whiteouts, opaque):
+def hidden_by(path, whiteouts, opaque, blockers):
     """The (layer index, kind) that hides `path` for a layer below the one that set them, or None. A whiteout hides the path and everything under it;
     an opaque directory hides what is below it, not itself."""
     cur = path
@@ -886,6 +909,8 @@ def hidden_by(path, whiteouts, opaque):
         cur = cur.rpartition("/")[0]
         if cur and cur in opaque:
             return opaque[cur], "opaque"
+        if cur and cur in blockers:
+            return blockers[cur], "non_directory"
     return None
 
 
@@ -901,7 +926,7 @@ class Run:
 def effective_view(layers, run, stats):
     """layers: [(label, dir or None)] from the TOP down. Returns {path: record}, built top to bottom."""
     paths = {}
-    whiteouts, opaque = {}, {}            # path -> top-down index of the layer that set it
+    whiteouts, opaque, blockers = {}, {}, {}    # path -> top-down index of the layer that set it (a blocker: a file or link where a lower layer holds a directory)
     for index, (label, directory) in enumerate(layers):
         if directory is None:
             continue
@@ -914,7 +939,7 @@ def effective_view(layers, run, stats):
             info["capped"] = True
             raise
         info["entries"] = len(entries)
-        new_whiteouts, new_opaque = {}, {}
+        new_whiteouts, new_opaque, new_blockers = {}, {}, {}
         for path, kind, st in entries:
             if kind == "oci_whiteout":
                 info["oci_whiteouts"] += 1
@@ -941,13 +966,15 @@ def effective_view(layers, run, stats):
                 info["symlinks"] += 1
             else:
                 info["other"] += 1
+            if kind != "dir":
+                new_blockers.setdefault(path, index)
             record = paths.get(path)
             if record is None:
                 if len(paths) >= MAX_TOTAL_PATHS:
                     stats["paths_not_followed"] += 1
                     continue
                 record = paths[path] = {"mentions": [], "supplier": None}
-            hid = hidden_by(path, whiteouts, opaque)
+            hid = hidden_by(path, whiteouts, opaque, blockers)
             if hid is not None:
                 record["mentions"].append((index, "hidden_by_" + hid[1], kind, hid[0]))
             elif record["supplier"] is not None:
@@ -963,6 +990,8 @@ def effective_view(layers, run, stats):
                 record["mentions"].append((index, "deletes", "whiteout", None))
         for target, i in new_whiteouts.items():
             whiteouts.setdefault(target, index)
+        for target, i in new_blockers.items():
+            blockers.setdefault(target, index)
         for target, i in new_opaque.items():
             opaque.setdefault(target, index)
             record = paths.get(target)
@@ -972,7 +1001,7 @@ def effective_view(layers, run, stats):
     return paths
 
 
-def build_rows(paths, layers_top_down, prefix):
+def build_rows(paths, layers_top_down, prefix, run=None):
     """Rows of the effective view, ordered by path. Layer numbers in the rows count from the BASE (0) up; the writable layer, when given, is the highest."""
     n = len(layers_top_down)
 
@@ -980,7 +1009,9 @@ def build_rows(paths, layers_top_down, prefix):
         return n - 1 - i
 
     rows = []
-    for path in sorted(paths):
+    for number, path in enumerate(sorted(paths)):
+        if run is not None and (number & 255) == 0:
+            run.check()
         if prefix and not (path == prefix or path.startswith(prefix + "/")):
             continue
         record = paths[path]
@@ -991,7 +1022,7 @@ def build_rows(paths, layers_top_down, prefix):
         for index, action, kind, by in mentions:
             layer = base_index(index)
             if action in ("supplies", "shadowed") or action.startswith("hidden_by"):
-                if action == "hidden_by_opaque":
+                if action in ("hidden_by_opaque", "hidden_by_non_directory"):
                     what = "hidden: its own layer's entry is hidden by a %s in layer %d" % (action[len("hidden_by_"):], base_index(by))
                     changes.append({"layer": layer, "action": "present_but_hidden", "why": what})
                 else:
@@ -1149,9 +1180,16 @@ def main():
         paths = effective_view(top_down, run, stats)
     except Overtime:
         stopped = "max_seconds (%s) passed: the layers below the one being read were not read" % seconds
-    rows = build_rows(paths, top_down, prefix) if stopped is None else []
-    for row in rows:
-        page.add(row)
+    rows = []
+    if stopped is None:
+        try:
+            rows = build_rows(paths, top_down, prefix, run)
+            for number, row in enumerate(rows):
+                if (number & 255) == 0:
+                    run.check()
+                page.add(row)
+        except Overtime:
+            stopped = "max_seconds (%s) passed while the view was being listed: the rows after the last one written are not in it" % seconds
     materialised = None
     if copy_paths and stopped is None:
         out_dir = os.path.join(output, "layers-view")

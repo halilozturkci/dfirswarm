@@ -42,7 +42,7 @@ read, and keeps the whole result in a file when the answer is a page of it.
   `.socket` units, `rc.local`, `init.d`, XDG autostart) with file, line and byte offset, keeps configuration apart from execution, leaves the
   effective state unresolved, and says when a copy without links cannot show enablement. Command lines and environments are lengths.
 - `container_inventory` reads a Docker or Podman tree and a Kubernetes node's CRI logs: containers with their config locators, lifecycle times, mounts, capabilities and
-  log files, images, and layers by chain id with the ones the store no longer holds. Commands, environments, labels, binds and log text are lengths (the text
+  log files, images, and layers by chain id with the ones the store no longer holds. Commands, arguments, environments, labels and log text are lengths, and a bind or mount path is shown when it has the shape of a path (the text
   goes to a 0600 file on `write_text` in a secret-output job). containerd's bolt database is listed and not read.
 - `container_layers` builds the effective view of an image's layers from an explicit chain (or overlay2's `lower` files): for each path the layer that supplies it
   and what each layer did to it, OCI whiteouts and opaque directories told apart from overlayfs native ones, every missing layer named. It starts and mounts

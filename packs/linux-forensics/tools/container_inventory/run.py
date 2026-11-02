@@ -651,6 +651,25 @@ def open_regular(path):
         raise
 
 
+def read_head(path, limit):
+    """Up to `limit` bytes of a regular file: opened without waiting and without following a link, and looked at with fstat first, so a FIFO,
+    a device or a directory at this name is an OSError and never holds the tool."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular file (a pipe, a socket or a device is never read)")
+        chunks, left = [], limit
+        while left > 0:
+            part = os.read(fd, min(left, 1 << 20))
+            if not part:
+                break
+            chunks.append(part)
+            left -= len(part)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
 class Duplicates(Exception):
     pass
 
@@ -1093,18 +1112,21 @@ def docker_images(run, base):
             state, cache_id, size = "missing", None, None
             if os.path.isdir(entry_dir) and not os.path.islink(entry_dir):
                 state = "present"
+                cache_file = os.path.join(entry_dir, "cache-id")
                 try:
-                    with open(os.path.join(entry_dir, "cache-id"), "rb") as fh:
-                        cache = fh.read(200).decode("utf-8", "replace").strip()
+                    cache = read_head(cache_file, 200).decode("utf-8", "replace").strip()
                     cache_id = cache if re.fullmatch(r"[0-9a-f]{64}", cache) else None
-                except OSError:
+                except OSError as exc:
                     state = "present (no cache-id)"
+                    if not isinstance(exc, FileNotFoundError):
+                        run.error(cache_file, describe(exc))
+                size_file = os.path.join(entry_dir, "size")
                 try:
-                    with open(os.path.join(entry_dir, "size"), "rb") as fh:
-                        raw = fh.read(30).decode("ascii", "replace").strip()
+                    raw = read_head(size_file, 30).decode("ascii", "replace").strip()
                     size = int(raw) if raw.isdigit() and len(raw) < 16 else None
-                except OSError:
-                    pass
+                except OSError as exc:
+                    if not isinstance(exc, FileNotFoundError):
+                        run.error(size_file, describe(exc))
             else:
                 missing += 1
             run.layer_total += 1

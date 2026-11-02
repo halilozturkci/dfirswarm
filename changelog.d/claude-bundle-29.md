@@ -31,7 +31,7 @@
 - Read the Docker data root (and roots named by `storage_roots`), rootless Podman stores and a Kubernetes node's CRI log
   directories: containers with locators into `config.v2.json` and `hostconfig.json`, lifecycle times, mounts, capabilities and
   log files, images, and layers by chain id with the ones missing from the store named. containerd's bolt database is
-  listed as unsupported. Commands, arguments, environments, labels, binds and log text are lengths; the stored text goes to a
+  listed as unsupported. Commands, arguments, environments, labels and log text are lengths (a bind or mount path is shown when it has the shape of a path); the stored text goes to a
   0600 file on `write_text` in a secret-output job. Large JSON logs are streamed, lists are paged, and hostile JSON gives a
   refusal. `containers/docker` names the tool and the `target-fs` route.
 

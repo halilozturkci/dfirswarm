@@ -1311,6 +1311,25 @@ def program_version(exe):
     return (text or None), (not timed_out and code is not None and bool(text))
 
 
+def read_head(path, limit):
+    """Up to `limit` bytes of a regular file: opened without waiting and without following a link, and looked at with fstat first, so a FIFO,
+    a device or a directory at this name is an OSError and never holds the tool."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular file (a pipe, a socket or a device is never read)")
+        chunks, left = [], limit
+        while left > 0:
+            part = os.read(fd, min(left, 1 << 20))
+            if not part:
+                break
+            chunks.append(part)
+            left -= len(part)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
 def stderr_summary(data):
     lines = [l for l in data.split(b"\n") if l.strip()]
     kinds = {}
@@ -1383,8 +1402,7 @@ def rpm_backend(root, dbpath):
     elif "Packages" in names:
         found["backend"] = "bdb"
         try:
-            with open(os.path.join(base, "Packages"), "rb") as fh:
-                head = fh.read(16)
+            head = read_head(os.path.join(base, "Packages"), 16)
             if len(head) >= 16 and head[12:16] not in (b"\x61\x15\x06\x00", b"\x00\x06\x15\x61", b"\x62\x31\x05\x00", b"\x00\x05\x31\x62"):
                 found["backend"] = "bdb (the magic number at offset 12 is not BerkeleyDB hash or btree)"
         except OSError as exc:
@@ -1605,13 +1623,20 @@ def main():
     capped = capped_why(pages, None)
     if capped:
         problems.append(capped)
+    if ran:
+        kinds = out["program"].get("stderr", {}).get("by_kind", {})
+        other = sum(n for k, n in kinds.items() if k not in ("missing file", "no md5sums"))
+        if other:
+            problems.append("the program wrote %d line(s) to standard error that are errors, warnings or not understood (see program.stderr): what it could not check is not shown" % other)
+        if out["program"].get("stderr", {}).get("cut"):
+            problems.append("the program's standard error was cut at %d bytes" % MAX_STDERR)
     if ran and out["program"].get("stderr", {}).get("by_kind", {}).get("missing file"):
         problems.append("%d file(s) the database lists are missing from the root (see program.stderr)" % out["program"]["stderr"]["by_kind"]["missing file"])
     outcome = status_of(not problems, not ran and not deadline_hit, "the program ran to its end, within its time, and every line it wrote was read",
                         "; ".join(problems) or "partial", "the program that does the check is not available: nothing was checked (%s)" % out["program"].get("why", ""))
     out.update({**outcome, "safeguards": {
         "runs": [exe] if exe else [],
-        "never_runs": "no maintainer script, no scriptlet and nothing else the evidence defines is started by this tool",
+        "never_runs": "this tool starts only the program named in `runs`, with the arguments shown in program.argv; debsums runs no maintainer script; for rpm see `rpm` below: whether %verifyscript is suppressed was not confirmed, so no more is claimed",
         "debian": "debsums runs no maintainer script",
         "rpm": ("--noscripts --nodeps --nodigest --nosignature are passed and the root and database are named; whether the installed rpm suppresses %verifyscript with them was NOT confirmed on a trial "
                 "database by this tool, so no claim that nothing runs is made for rpm. rpm is run as the calling user: a scriptlet that needs a chroot is refused by the system for an unprivileged user"),

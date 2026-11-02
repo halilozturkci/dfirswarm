@@ -686,6 +686,19 @@ def when(sec, usec=0):
         return None, "seconds %d are outside the range of a date" % sec
 
 
+def open_evidence(path):
+    """A binary file object on a regular file, opened without waiting and without following a link: a FIFO, a device or a directory at this
+    name is an OSError, not a hang."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular file (a pipe, a socket or a device is never read)")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def passwd_users(path):
     """{uid: name} from a passwd file the caller names (a regular file, not a link or a pipe), and what was read."""
     users = {}
@@ -698,7 +711,7 @@ def passwd_users(path):
             fail("passwd must be a regular file: a pipe, a socket or a device is never opened", path=path)
         if os.path.getsize(path) > MAX_PASSWD:
             fail("passwd file larger than the %d bytes this tool reads" % MAX_PASSWD, path=path)
-        with open(path, "rb") as fh:
+        with open_evidence(path) as fh:
             for raw in fh:
                 fields = decode(raw).rstrip("\n").split(":")
                 if len(fields) >= 3:
@@ -724,7 +737,7 @@ def slot_is_text(raw, width, line_at):
 # --- utmp ------------------------------------------------------------------------------------------
 
 def utmp_records(path, size, start=0):
-    with open(path, "rb") as fh:
+    with open_evidence(path) as fh:
         index = start
         offset = start * RECORD
         fh.seek(offset)
@@ -858,7 +871,7 @@ def nonempty_slots(path, size, width, begin_uid, end_uid, state, deadline=None):
 
     A chunk that is all zero is passed over whole. If `deadline` passes, the walk stops and
     state["stopped_at_uid"] is the first UID not examined."""
-    fd = os.open(path, os.O_RDONLY)
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
     last = begin_uid - 1
     try:
         lo, hi = begin_uid * width, end_uid * width
@@ -936,7 +949,7 @@ def parse_lastlog(path, size, layout, order, args, pattern, wanted, page, stats,
         if not isinstance(selected, list) or not all(isinstance(u, int) and not isinstance(u, bool) and u >= 0 for u in selected):
             fail("uids must be a list of whole numbers (UIDs)")
         stats["scope"] = "selected UIDs"
-        fd = os.open(path, os.O_RDONLY)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
         try:
             for uid in sorted(set(selected)):
                 if uid >= total:
@@ -1342,6 +1355,9 @@ def parse_session_db(fmt, entry, lowered, con, pattern, wanted, page, stats, dea
                     row[key + "_error"] = "the stored value is %s, not a number" % kind
             stats["matched"] += 1
             page.add(row)
+    except (ValueError, OverflowError, TypeError, UnicodeError, RecursionError) as exc:
+        # a row the tool could not turn into a record ends the read with the rows before it, and says so
+        stats["read_error"] = "row %d could not be read as a record: %s" % (ordinal, describe(exc))
     except sqlite3.Error as exc:
         stats["read_error"] = describe(exc)
         if "interrupt" in str(exc).lower():
@@ -1472,7 +1488,7 @@ def main():
             fail("not a regular file: a pipe, a socket or a device is never opened", path=path)
         refuse_disk_image(path, "path")
         size = os.path.getsize(path)
-        with open(path, "rb") as fh:
+        with open_evidence(path) as fh:
             head = fh.read(16)
     except OSError as exc:
         fail("the file cannot be read", path=path, reason=describe(exc))
