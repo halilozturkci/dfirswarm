@@ -80,6 +80,48 @@ test("defaults resolve to 40 / 50 / 60 percent of the ceiling with room to the w
   assert.ok(big.ok && big.thresholds.compactTokens === 180_000);
 });
 
+test("a default compact line raised to an explicit warning or notice line lands above it, so the warning still fires first", () => {
+  const seat = (env: Record<string, string>, model = "openai/gpt-5.4", window = 272_000) => {
+    const specs = specsForModel(specsFromEnv(env).specs, model);
+    return resolveThresholds(specs.specs, model, window, { fromDefaults: specs.fromDefaults, explicit: specs.explicit });
+  };
+  // A warning line above the default compact line (60% of the ceiling): both stages fire, in order.
+  const warn = seat({ SWARM_COMPACT_WARN_AT: "65%" });
+  assert.ok(warn.ok, warn.ok ? "" : warn.error);
+  const w = warn.thresholds;
+  assert.ok(w.compactTokens > w.warnTokens, `compact ${w.compactTokens} is above warning ${w.warnTokens}`);
+  assert.equal(w.compactTokens, w.warnTokens + 1);
+  assert.ok(warn.thresholds.notes.some((n) => /raised to 176,801, one token above it/.test(n)), JSON.stringify(warn.thresholds.notes));
+  assert.deepEqual([w.warnTokens - 1, w.warnTokens, w.compactTokens - 1, w.compactTokens].map((t) => levelFor(t, w)), ["notice", "warning", "warning", "forced"]);
+  // The same in absolute tokens.
+  const abs = seat({ SWARM_COMPACT_WARN_AT: "180k" });
+  assert.ok(abs.ok && abs.thresholds.compactTokens === 180_001 && levelFor(180_000, abs.thresholds) === "warning" && levelFor(180_001, abs.thresholds) === "forced", JSON.stringify(abs));
+  // A notice line alone (no warning line set): the compact line clears it as well, and the warning line sits between.
+  const notice = seat({ SWARM_COMPACT_NOTICE_AT: "70%" });
+  assert.ok(notice.ok, notice.ok ? "" : notice.error);
+  assert.ok(notice.thresholds.compactTokens > notice.thresholds.noticeTokens && notice.thresholds.compactTokens > notice.thresholds.warnTokens, JSON.stringify(notice.thresholds));
+  // Warning and notice both set: the higher of the two is the one the compact line clears.
+  const both = seat({ SWARM_COMPACT_NOTICE_AT: "62%", SWARM_COMPACT_WARN_AT: "66%" });
+  assert.ok(both.ok && both.thresholds.compactTokens === both.thresholds.warnTokens + 1 && both.thresholds.noticeTokens < both.thresholds.warnTokens, JSON.stringify(both));
+  // A line under the default compact line is left alone.
+  const low = seat({ SWARM_COMPACT_WARN_AT: "55%" });
+  assert.ok(low.ok && low.thresholds.compactTokens === Math.floor(0.6 * low.thresholds.ceiling) && !low.thresholds.notes.some((n) => /compact/.test(n)), JSON.stringify(low));
+  // A warning line at the cap leaves no room above it: refused, as one above the cap is.
+  const cap = resolveThresholds(DEFAULT_SPECS, "openai/gpt-5.4", 272_000, { fromDefaults: true }).ok
+    ? (resolveThresholds(DEFAULT_SPECS, "openai/gpt-5.4", 272_000, { fromDefaults: true }) as { ok: true; thresholds: { capTokens: number } }).thresholds.capTokens
+    : 0;
+  assert.equal(cap, 223_616);
+  const atCap = resolveThresholds({ ...DEFAULT_SPECS, warnAt: String(cap) }, "openai/gpt-5.4", 272_000, { explicit: { warnAt: true } });
+  assert.ok(!atCap.ok && /^the warning threshold 223616 \(223,616 tokens\) leaves no room for a compact threshold above it under the 223,616 this 272,000-token window can hold/.test(atCap.error), atCap.ok ? "" : atCap.error);
+  const aboveCap = resolveThresholds({ ...DEFAULT_SPECS, warnAt: String(cap + 1) }, "openai/gpt-5.4", 272_000, { explicit: { warnAt: true } });
+  assert.ok(!aboveCap.ok && /is above the 223,616 this 272,000-token window can hold/.test(aboveCap.error));
+  const justUnder = resolveThresholds({ ...DEFAULT_SPECS, warnAt: String(cap - 1) }, "openai/gpt-5.4", 272_000, { explicit: { warnAt: true } });
+  assert.ok(justUnder.ok && justUnder.thresholds.compactTokens === cap && justUnder.thresholds.warnTokens === cap - 1, JSON.stringify(justUnder));
+  // A small window: the default compact line is clamped to the cap, and a warning line there is refused the same way.
+  const small = resolveThresholds({ ...DEFAULT_SPECS, warnAt: "58%" }, "tiny/model", 60_000, { explicit: { warnAt: true } });
+  assert.ok(small.ok ? small.thresholds.compactTokens > small.thresholds.warnTokens : /holds|hold/.test(small.error), JSON.stringify(small));
+});
+
 test("explicit specs that do not fit are refused; defaults that do not fit are clamped and say so", () => {
   const refused = resolveThresholds({ noticeAt: "40%", warnAt: "50%", compactAt: "95%" }, "openai/gpt-5.4", 272_000);
   assert.ok(!refused.ok && /above the .* this .*-token window can hold/.test(refused.error), refused.ok ? "" : refused.error);
@@ -161,8 +203,8 @@ test("one explicit line out of order with a default fits the default to it inste
   assert.deepEqual(lines(seatResolve({ SWARM_COMPACT_NOTICE_AT: "55%", SWARM_COMPACT_AT: "70%" })), [149_600, 149_600, 190_400], "two operator lines in order are kept, whatever default sits between them");
   // A warning line above the default compact line: the default compact line rises to it, within what the window holds.
   const warn = seatResolve({ SWARM_COMPACT_WARN_AT: "65%" });
-  assert.deepEqual(lines(warn), [108_800, 176_800, 176_800]);
-  assert.ok(warn.ok && warn.thresholds.notes.some((n) => /default compact threshold .* below the warning threshold 65%; raised/.test(n)), JSON.stringify(warn.ok && warn.thresholds.notes));
+  assert.deepEqual(lines(warn), [108_800, 176_800, 176_801], "the default compact line rises to one token above the warning line, not onto it");
+  assert.ok(warn.ok && warn.thresholds.notes.some((n) => /default compact threshold .* not above the warning threshold 65%; raised/.test(n)), JSON.stringify(warn.ok && warn.thresholds.notes));
   const warnTooHigh = seatResolve({ SWARM_COMPACT_WARN_AT: "90%" });
   assert.ok(!warnTooHigh.ok && /^the warning threshold 90% \(244,800 tokens\) is above the 223,616 this 272,000-token window can hold/.test(warnTooHigh.error), lines(warnTooHigh).toString());
   // Two lines the operator wrote that conflict are still refused, and the message names only those two, with their own values.
