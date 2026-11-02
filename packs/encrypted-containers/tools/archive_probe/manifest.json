@@ -30,7 +30,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 13,
-  "sha256": "8301ea516a9768482013ed3ddd24bd73b623208ee52e5648d47935a19a0781fc",
+  "sha256": "c0016678c254f039c5c96ae7bdcf1565f0ee495c08358560a13e1a2bb79ba146",
   "requires": [
     "7z"
   ]
