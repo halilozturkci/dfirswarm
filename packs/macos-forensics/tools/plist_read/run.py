@@ -765,22 +765,69 @@ def main():
                     if len(problems) < FIRST_FAILURES:
                         problems.append({"path": getattr(exc, "filename", None), "why": describe(exc)})
 
-                seen = 0
-                for dirpath, dirs, names in os.walk(path, onerror=on_error):
-                    dirs.sort()
-                    notes["links_not_followed"] += sum(1 for d in dirs if os.path.islink(os.path.join(dirpath, d)))
-                    for name in sorted(names):
-                        seen += 1
-                        if seen % 256 == 0 and time.monotonic() - started > max_seconds + WALK_GRACE_SECONDS:
-                            # a tree of millions of entries none of which matches is timed too: after max_seconds files are only
-                            # counted (not attempted); WALK_GRACE_SECONDS later the walk itself stops and says so
-                            notes["walk_stopped_by_time_limit"] = True
+                # The walk is listed here, not by os.walk: the clock is looked at for a directory as well as for a name (a tree of
+                # directories with no file in them was never timed), and a name whose type neither the listing nor an lstat can give is
+                # counted as unreadable, whatever it is called (os.walk files it as a file, and a directory behind it is never entered).
+                dir_steps = [0]
+                name_steps = [0]
+
+                def directory_clock():
+                    # once in 256 directories, against max_seconds itself: nothing is left to count in a directory that holds nothing
+                    dir_steps[0] += 1
+                    if dir_steps[0] % 256 == 0 and time.monotonic() - started > max_seconds:
+                        notes["walk_stopped_by_time_limit"] = True
+                    return notes["walk_stopped_by_time_limit"]
+
+                def name_clock():
+                    # once in 256 names; after max_seconds the files are only counted (not attempted), for WALK_GRACE_SECONDS more, then the walk itself stops
+                    name_steps[0] += 1
+                    if name_steps[0] % 256 == 0 and time.monotonic() - started > max_seconds + WALK_GRACE_SECONDS:
+                        notes["walk_stopped_by_time_limit"] = True
+                    return notes["walk_stopped_by_time_limit"]
+
+                pending_dirs = [path]
+                while pending_dirs and not notes["walk_stopped_by_time_limit"]:
+                    dirpath = pending_dirs.pop()
+                    if directory_clock():
+                        break
+                    entries = []
+                    try:
+                        with os.scandir(dirpath) as listing:
+                            for entry in listing:
+                                if name_clock():
+                                    break
+                                entries.append(entry)
+                    except OSError as exc:
+                        on_error(exc)
+                        continue
+                    if notes["walk_stopped_by_time_limit"]:
+                        break
+                    entries.sort(key=lambda e: e.name)
+                    files, subdirs = [], []
+                    for entry in entries:
+                        if name_clock():
                             break
-                        full = os.path.join(dirpath, name)
-                        if os.path.islink(full):
-                            notes["links_not_followed"] += 1
+                        try:
+                            if entry.is_symlink():
+                                notes["links_not_followed"] += 1
+                                continue
+                            is_directory = entry.is_dir(follow_symlinks=False)
+                        except OSError as exc:
+                            # the listing gave no type and an lstat cannot be made (a directory that can be listed but not searched, on a file
+                            # system that reports no entry type): the name is there, what it is cannot be said. It may be a directory with plists
+                            # in it, so it is a place this run could not look at, and the status says so
+                            notes["entries_unreadable"] += 1
+                            if len(problems) < FIRST_FAILURES:
+                                problems.append({"path": entry.path, "why": describe(exc)})
                             continue
-                        if not name.lower().endswith((".plist", ".btm")):
+                        (subdirs if is_directory else files).append(entry)
+                    if notes["walk_stopped_by_time_limit"]:
+                        break
+                    for entry in files:
+                        if name_clock():
+                            break
+                        full = entry.path
+                        if not entry.name.lower().endswith((".plist", ".btm")):
                             notes["files_not_matched"] += 1
                             continue
                         try:
@@ -797,8 +844,7 @@ def main():
                             continue
                         matched += 1
                         visit(full)
-                    if notes["walk_stopped_by_time_limit"]:
-                        break
+                    pending_dirs.extend(reversed([e.path for e in subdirs]))
             else:
                 matched = 1
                 visit(path)
@@ -845,7 +891,7 @@ def main():
         if notes["directories_unreadable"]:
             parts.append("%d director%s could not be listed" % (notes["directories_unreadable"], "y" if notes["directories_unreadable"] == 1 else "ies"))
         if notes["entries_unreadable"]:
-            parts.append("%d .plist/.btm-named entr%s could not be looked at (the directory cannot be searched)"
+            parts.append("%d entr%s could not be looked at (the directory cannot be searched, or the file system gave no type for the name)"
                          % (notes["entries_unreadable"], "y" if notes["entries_unreadable"] == 1 else "ies"))
         first_places = "; ".join("%s (%s)" % (p["path"], p["why"]) for p in problems[:3])
         reasons.append("%s, so files in or under them were not seen: %s%s" % (" and ".join(parts), first_places, " ... (more under walk.problems)" if len(problems) > 3 else ""))

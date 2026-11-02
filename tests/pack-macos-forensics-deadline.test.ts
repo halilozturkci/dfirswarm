@@ -9,7 +9,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet, withCwd } from "./tool-library-harness.ts";
-import { CREATED, FS, KC, body, dbCopy, fsDir, fsPage, fsRecord, gz, kcDb, logarchive, measured, ok, tool, ul, ulStandin } from "./macos-pack-harness.ts";
+import { CREATED, FS, KC, PLIST, body, dbCopy, fsDir, fsPage, fsRecord, gz, kcDb, logarchive, measured, ok, tool, ul, ulStandin } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
 
 const lines = async (file: string): Promise<Json[]> => (await readFile(file, "utf8")).trimEnd().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Json);
@@ -230,5 +230,92 @@ with open(out, "w") as f:
     assert.equal(first.log_type, "Default");
     // A record that is an entry by one key whose value is empty is previewed by its key names, never as the whole unfiltered row.
     assert.deepEqual(Object.keys(answer.entries[1]), ["keys"]);
+  });
+});
+
+// ---- plist_read: the walk is timed over directories, and a name of unknown type is not lost ---------------------------------------------------------
+
+
+const PLIST_XML = '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>a</key><string>b</string></dict></plist>';
+
+test("plist_read times the walk over directories that hold nothing: 30,000 empty directories and max_seconds 0.01 end partial, walk_stopped_by_time_limit", async () => {
+  // The clock was looked at for file names only, so a tree of empty directories was never timed and the answer was complete however long it took.
+  await withCwd(async (cwd) => {
+    const made = await runPySnippet(`
+import os, sys
+root = sys.argv[1]
+for i in range(30000):
+    os.mkdir(os.path.join(root, "d%05d" % i))
+`, [await (async () => { await mkdir(join(cwd, "work", "tree"), { recursive: true }); return join(cwd, "work", "tree"); })()], null);
+    assert.equal(made.code, 0, made.stderr);
+    const run = await tool(PLIST, cwd, { path: "work/tree", max_seconds: 0.01, out_file: "work/o.jsonl" });
+    const answer = body(run);
+    assert.equal(answer.walk.walk_stopped_by_time_limit, true);
+    assert.equal(answer.status, "partial");
+    assert.match(answer.status_basis, /max_seconds/);
+    // The same tree with the time it needs is complete: the clock is the only reason for the stop.
+    const whole = await tool(PLIST, cwd, { path: "work/tree", max_seconds: 60, out_file: "work/o2.jsonl" });
+    const full = body(whole);
+    assert.equal(full.status, "complete");
+    assert.equal(full.walk.walk_stopped_by_time_limit, false);
+  });
+});
+
+test("plist_read counts a name whose type the listing cannot give and an lstat cannot find out under entries_unreadable, never files_not_matched, and is not complete", async () => {
+  // A file system that reports no entry type, under a directory that can be listed but not searched: os.walk filed such a name as a file, and
+  // the directory behind it (with plists in it) was never entered. The listing is patched here, so the case does not need that file system.
+  await withCwd(async (cwd) => {
+    const tree = join(cwd, "work", "tree");
+    await mkdir(tree, { recursive: true });
+    await writeFile(join(tree, "good.plist"), PLIST_XML);
+    await writeFile(join(tree, "plain.txt"), "x");
+    await writeFile(join(tree, "weird.dat"), "x");
+    const out = await runPySnippet(`
+import importlib.util, io, json, os, sys
+os.environ["AGENT_ID"] = "s1"
+os.chdir(sys.argv[2])
+args = json.load(sys.stdin)
+spec = importlib.util.spec_from_file_location("tool", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+
+class Entry:
+    def __init__(self, real):
+        self.real, self.name, self.path = real, real.name, real.path
+    def _typed(self):
+        if self.name == "weird.dat":
+            raise PermissionError(13, "Permission denied", self.path)
+    def is_symlink(self):
+        self._typed()
+        return self.real.is_symlink()
+    def is_dir(self, follow_symlinks=True):
+        self._typed()
+        return self.real.is_dir(follow_symlinks=follow_symlinks)
+
+class Listing:
+    def __init__(self, real):
+        self.real = real
+    def __enter__(self):
+        self.real.__enter__()
+        return self
+    def __exit__(self, *a):
+        return self.real.__exit__(*a)
+    def __iter__(self):
+        return (Entry(e) for e in self.real)
+
+real_scandir = os.scandir
+os.scandir = lambda p=".": Listing(real_scandir(p))
+sys.stdin = io.StringIO(json.dumps(args))
+try:
+    m.main()
+except SystemExit:
+    pass
+`, [PLIST, cwd], { path: "work/tree", out_file: "work/o.jsonl" });
+    const answer = JSON.parse(out.stdout) as Json;
+    assert.equal(answer.walk.entries_unreadable, 1, out.stdout.slice(0, 600));
+    assert.equal(answer.walk.files_not_matched, 1, "only plain.txt is a name that matches nothing");
+    assert.notEqual(answer.status, "complete");
+    assert.match(answer.status_basis, /could not be looked at/);
+    assert.equal(answer.counts.parsed, 1, "the plist beside it is still read");
   });
 });

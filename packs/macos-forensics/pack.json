@@ -1,7 +1,7 @@
 {
   "id": "macos-forensics",
   "name": "macOS Forensics Pack",
-  "version": "1.5.6",
+  "version": "1.5.7",
   "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, accounts and the limits of attribution, and what APFS retains. TCC, Keychain, Gatekeeper and XProtect, Spotlight and Biome have no skill here yet.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -59,8 +59,8 @@
       "tools/fsevents_parse/run.py": "993ca4674f08eea95d9d529be781a84b02c84a3d54e154f5a69e39f559af20c8",
       "tools/knowledgec_query/manifest.json": "ab12f72852d2a85f4ad57051cc7a132b719faacdeda5924e112ea2ff7e6848da",
       "tools/knowledgec_query/run.py": "b79631360cc15612b102864138d58cabba91c328485fc1c38d97cf96d91b9223",
-      "tools/plist_read/manifest.json": "de1a5a780a0f5e2a0880852c33cf2ced62f497c4f10e8b991366bf05e5b83e55",
-      "tools/plist_read/run.py": "f4fd31a83e7f05839045908ad82fb1a57334cc6c02d41c9a30ed4df5dfa58d4c",
+      "tools/plist_read/manifest.json": "266845e9635b3d368c773fc95390c4086b78f04c7b1feb606036f4df6ab37adb",
+      "tools/plist_read/run.py": "d4741c377656ef6459fb07e9c67253152b07d05f771af55f37645af252c4b50f",
       "tools/unified_log/manifest.json": "27383a02e2fa474f4323726f1d3d54bc9145d88cbb9be04a743842534b007519",
       "tools/unified_log/run.py": "d2ca743b1cc0a7c1013cbf03e119b79eaffda0d19637664d924380bad8cc7420"
     }
