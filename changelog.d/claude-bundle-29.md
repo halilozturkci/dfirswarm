@@ -44,3 +44,14 @@
   lower layer, a link out of the store, a loop and a layer past the entry bounds are named and make the status partial.
   Nothing is mounted or run; with `copy: true` in a secret-output job named files are copied to `$OUT/layers-view` and never
   over a file that is there. `containers/layers-times` names the tool.
+
+### Added: linux-forensics `package_verify` wraps debsums and rpm -V with their limits stated
+
+- Run the installed `debsums` (`-r <root> -a`) or `rpm -V --root --dbpath --noscripts --nodeps --nodigest --nosignature` in
+  the tool's own process group (no stdin, a fixed environment, a deadline, a 256 MiB output cap; a stop signal ends the program and
+  what it started). The answer gives the scope (packages asked for, the database found and its backend, Debian packages with no
+  md5sums file), every difference as a row with rpm's flags decoded, the first stderr lines by kind, and the lines it could not
+  parse. The expected values are the acquired database's, so it never claims distribution authenticity. It states that it has
+  NOT confirmed that the installed `rpm` suppresses `%verifyscript` with those options (no rpm was available to its tests).
+  `packages/integrity` names the tool in place of its direct commands, `packages/baseline` agrees, and the `debsums` and `rpm`
+  texts in `requires/host.json` say what is and is not confirmed.

@@ -16,7 +16,7 @@
       "name": "debsums",
       "package": "debsums",
       "optional": true,
-      "why": "Compare packaged files on a Debian-family host with the hashes the acquired package database records. That is triage against the examined machine's own database, not an independent trust anchor (packages/integrity).",
+      "why": "Compare packaged files on a Debian-family host with the hashes the acquired package database records. `package_verify` runs it with `-r` on the acquired root. That is triage against the examined machine's own database, not an independent trust anchor (packages/integrity).",
       "install": {
         "brew": "not available on macOS",
         "apt": "apt-get install -y debsums"
@@ -28,7 +28,7 @@
       "name": "rpm",
       "package": "rpm",
       "optional": true,
-      "why": "Verify packaged files against an acquired RPM database on a Red Hat-family host with -V, reporting which attribute differs. Run it with --noscripts --nodeps so that no verification script from the evidence runs; the examiner confirms on the installed version, against a trial database, that those options are honoured for -V before relying on them (packages/integrity).",
+      "why": "Verify packaged files against an acquired RPM database on a Red Hat-family host with -V, reporting which attribute differs. `package_verify` runs it with --root, --dbpath, --noscripts, --nodeps, --nodigest and --nosignature, but nothing in this repository has confirmed on a trial database that the installed version suppresses a %verifyscript with them (no rpm was available to its tests): the examiner confirms that before relying on it (packages/integrity).",
       "install": {
         "brew": "brew install rpm",
         "apt": "apt-get install -y rpm"

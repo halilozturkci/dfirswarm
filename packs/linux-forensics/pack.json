@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -27,10 +27,6 @@
       "why": "a method leaf on configured identities and privileges; it reads files the examiner opens and names no tool or program (the session and history tools are in accounts/sessions-histories)"
     },
     {
-      "path": "skills/packages/baseline.md",
-      "why": "a method leaf on what a package comparison covers and on an independent baseline; it names no tool or program"
-    },
-    {
       "path": "skills/persistence/quieter-routes.md",
       "why": "a method leaf for routes read as plain files (startup files, PAM, preload, SUID files, modules); it names no tool or program"
     },
@@ -46,12 +42,12 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "394a33cd7be8690a50e212b9f6c7f493c42283114b2f32f12c4fe170bf0771ff",
+      "README.md": "b44d3e654c6ba16152b7e2ff618ccb25a9881d358c4bc9efc526bdf853b72b2a",
       "goals/server-compromise.md": "0118cd428d15cdd68293ca017333a2302fa3b42a67df32aea89e77c672f9a18b",
       "goals/what-was-scheduled.md": "52389a312d07d57dc4f76c6b274dcccd6d88952a494e2750c93693a2240a1820",
       "recipes/linux-target/recipe.json": "32ce9c8dd2bed920d2ee363fe3f168b27cdf40726451c217ddfa86fdc4a95475",
       "recipes/linux-target/run.py": "bc975b1e9d53a95231e5a3c051a99a729ae5ce79e4fc2955de5dba1151492314",
-      "requires/host.json": "06d80978bfdd4d598008d832df114c76243767d9e5763ad39cc9a0286816b941",
+      "requires/host.json": "204bfec6c17a96d7064da971106c60ce31fff2dc55ad7f9353e037181f3e9294",
       "requires/python.txt": "2a8f433b1779c884ea3307bd9d0dbf04fa2d9f909e19d0ab32c4b81a14ddb22f",
       "skills/INDEX.md": "4d9ff8d33343c0316236c6e5e1bf2f9ec2f7f5beef09c11170befc24f4f8e1fc",
       "skills/accounts/sessions-histories.md": "dcc62a72f4a19402a07d48b2de88324e10fe37bbd12b2263df398d628584c69c",
@@ -70,8 +66,8 @@
       "skills/logs/auth.md": "13779ab155531bd64d6859c1ae4d7568492c7fcbbdad6033ef63d61f84cb1f0f",
       "skills/logs/journal-clocks-verify.md": "26f3611f7f1d6e2dbcc493aa330acdc9e039cdebb7d1b94f24396afada21f8a9",
       "skills/logs/journal.md": "6aae05c94debde2d78ea9bc30d9c0b3283972b0f986bfbd18a308507e087bb8b",
-      "skills/packages/baseline.md": "9251e2ef0b6ee968aa46654f7afa5847dce00cc236cd60e3add3ed62d6c7c61c",
-      "skills/packages/integrity.md": "d334fd193932d1c02b972f43660397f5d67baf1dce829f91e4f33eb54dcee80d",
+      "skills/packages/baseline.md": "390022519a422ca7a4b7cb7f6d5300be8e4c5b88a2d14d6f716dc8a8e52d6ad7",
+      "skills/packages/integrity.md": "baebda8242ecdf099639d11a358e4c0bc0d85d4d59fe6a0ce68808bac0f73bb1",
       "skills/persistence/cron-timers.md": "964ca4e8d6f9e7eb6d2a3587492ee1ac8ac0b5995fb46341022b5a9efec92924",
       "skills/persistence/mechanisms.md": "0505ac130d71156c3abba09253dc9a176ff6453e6dc0c60586c850fa031bbc20",
       "skills/persistence/quieter-routes.md": "212b50516460730da046661321781e0ea860e27c12df196258880a10d2c0bafd",
@@ -96,6 +92,8 @@
       "tools/linux_persistence/run.py": "3323a00575ee022d577186763e62147b167e404457be73ba86683f7b4f9db698",
       "tools/linux_triage/manifest.json": "819160709a55eab2bed9452cddc03de94a25521345fe1ee3daf0447e13041bf7",
       "tools/linux_triage/run.py": "aeedd45ba721b2b8201d979ff253050da6abef3f2254373c01311d0e1716788b",
+      "tools/package_verify/manifest.json": "50360975410214d31b36e9bef0a7e3b196429d55de83f0f0ff06b8fa3f622846",
+      "tools/package_verify/run.py": "1c08302f4563911cb01efe7aacdb5983af5a9739e90e84ab1f22ff904b18122a",
       "tools/shell_history/manifest.json": "b14514ef2f500d44cb8a9cbfe174ce880c050375e357a6a2f823121e1a82a102",
       "tools/shell_history/run.py": "0f25d87b64b5a82f02cdb0b80ada6154cfd11f154f283604115f31f121a0ddbd",
       "tools/utmp_parse/manifest.json": "291ee0bb9d37a2a779eea721cb1b944cda0247f2297faf638c9b84d26d44fd85",
@@ -111,6 +109,7 @@
     "journal_export",
     "linux_persistence",
     "linux_triage",
+    "package_verify",
     "shell_history",
     "utmp_parse"
   ],
