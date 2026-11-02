@@ -510,11 +510,13 @@ test("the router is the pack's only router, within 400 tokens, and names every o
   assert.match(await readFile(join(SKILLS, "INDEX.md"), "utf8"), /^Router: `base\/router`$/m);
 });
 
-test("a run of the base pack with encrypted-containers, windows and linux fits the run's 2,500-token index budget only because the base pack has a router", async () => {
+test("a run of the base pack with encrypted-containers, windows and macos fits the run's 2,500-token index budget only because the base pack has a router", async () => {
   // The disk profile (base, encrypted-containers, windows) used to need the router; windows-forensics' index was then cut to fit its own
   // budget and the profile fits whole. This set is over the budget whole, and the other packs' routers are left out of the count on purpose:
   // what this holds is the base pack's router, whatever the other packs have.
-  const dirs = ["computer-forensics-base", "encrypted-containers", "windows-forensics", "linux-forensics"].map((p) => join(ROOT, "packs", p));
+  // linux-forensics stood in this set while its index was small; its index now passes 1,000 (thirty-four leaves and the router) and the pack is shown by its router, so
+  // the set that keeps this property is the one with a pack whose whole index still fits the run beside the base router.
+  const dirs = ["computer-forensics-base", "encrypted-containers", "windows-forensics", "macos-forensics"].map((p) => join(ROOT, "packs", p));
   const packs = (await readPackIndexes(dirs)).map((p) => (p.id === "computer-forensics-base" ? p : { ...p, router: null }));
   const withRouter = renderSkillsSection(packs).report;
   const base = withRouter.packs.find((p) => p.id === "computer-forensics-base")!;

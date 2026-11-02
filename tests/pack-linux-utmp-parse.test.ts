@@ -7,10 +7,12 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, readFile, stat, truncate, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, lstat, mkdir, readFile, readdir, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { IS_ROOT, UTMP, asJob as plainJob, body, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import type { Json } from "./linux-pack-harness.ts";
 /** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
 const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
   plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
@@ -161,13 +163,14 @@ test("utmp_parse decides the byte order from the records' structure, and a calle
   });
 });
 
-test("utmp_parse refuses a SQLite accounting database and points at the SQLite tools", async () => {
+test("utmp_parse no longer points a SQLite file at another tool: outside a job it says to run it as one, and a file that only starts like SQLite is a database error in JSON", async () => {
   await withCwd(async (cwd) => {
-    const header = Buffer.concat([Buffer.from("SQLite format 3\0", "latin1"), Buffer.alloc(4096 - 16)]);
+    const header = Buffer.concat([Buffer.from("SQLite format 3 ", "latin1"), Buffer.alloc(4096 - 16)]);
     await writeFile(join(cwd, "work", "wtmpdb.db"), header);
     const out = refused(await tool(UTMP, cwd, { path: "work/wtmpdb.db" }));
     assert.match(out.error, /SQLite/);
-    assert.match(out.error, /sqlite_query/);
+    assert.match(out.error, /job_run tool=utmp_parse/);
+    assert.doesNotMatch(out.error, /sqlite_query/);
     assert.equal(out.format, "sqlite");
   });
 });
@@ -452,5 +455,299 @@ test("utmp_parse declares secret_output for write_text and preview_text, and ref
     assert.match(await readFile(join(cwd, "out-ok", "utmp-text.jsonl"), "utf8"), /PLANTEDVALUE/);
     const preview = body(await asJob(UTMP, cwd, { path: "work/btmp", preview_text: true }, undefined, {}, "out-pv"));
     assert.match(JSON.stringify(preview.records), /PLANTEDVALUE/);
+  });
+});
+
+// --- wtmpdb and lastlog2 (SQLite) ------------------------------------------------------------------------------------------------------------
+// The two databases from their documented schemas (wtmpdb: a table wtmp with ID, Type, User, Login (microseconds), Logout, TTY, RemoteHost,
+// Service; lastlog2: a table lastlog2 with Name as its key, Login (seconds), TTY, RemoteHost, Service). Every database is built here with
+// Python's sqlite3 and never by the tool; a write-ahead log is made by copying the files while the writing connection is still open.
+
+const BUILD = `
+import json, shutil, sqlite3, sys
+spec = json.loads(sys.stdin.read())
+con = sqlite3.connect(spec["db"])
+if spec.get("wal"):
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA wal_autocheckpoint=0")
+for sql in spec["sql"]:
+    con.execute(sql)
+con.commit()
+for sql, rows in spec.get("rows", []):
+    con.executemany(sql, rows)
+    con.commit()
+if spec.get("copy_to"):
+    shutil.copy(spec["db"], spec["copy_to"])
+    if spec.get("wal"):
+        shutil.copy(spec["db"] + "-wal", spec["copy_to"] + "-wal")
+con.close()
+`;
+
+function py(spec: Record<string, unknown>): void {
+  const r = spawnSync("python3", ["-I", "-c", BUILD], { input: JSON.stringify(spec), encoding: "utf8", maxBuffer: 1 << 28 });
+  assert.equal(r.status, 0, r.stderr);
+}
+
+const WTMP = "CREATE TABLE IF NOT EXISTS wtmp(ID INTEGER PRIMARY KEY, Type INTEGER NOT NULL, User TEXT NOT NULL, Login INTEGER NOT NULL, Logout INTEGER, TTY TEXT, RemoteHost TEXT, Service TEXT)";
+const WTMP_INSERT = "INSERT INTO wtmp(ID, Type, User, Login, Logout, TTY, RemoteHost, Service) VALUES (?,?,?,?,?,?,?,?)";
+const LASTLOG2 = "CREATE TABLE IF NOT EXISTS lastlog2(Name TEXT PRIMARY KEY, Login INTEGER, TTY TEXT, RemoteHost TEXT, Service TEXT)";
+const sha = async (p: string): Promise<string> => createHash("sha256").update(await readFile(p)).digest("hex");
+
+async function evidenceState(dir: string): Promise<Record<string, string>> {
+  const state: Record<string, string> = {};
+  for (const name of (await readdir(dir)).sort()) {
+    const full = join(dir, name);
+    const st = await lstat(full);
+    state[name] = `${st.size}:${st.mtimeMs}:${st.isFile() ? await sha(full) : "-"}`;
+  }
+  return state;
+}
+
+test("utmp_parse reads a wtmpdb database from a copy, with the rows of its write-ahead log, raw times beside ISO ones, and never selects the key", async () => {
+  await withCwd(async (cwd) => {
+    const ev = join(cwd, "work", "ev");
+    await mkdir(ev, { recursive: true });
+    py({ db: join(cwd, "work", "src.db"), wal: true, sql: [WTMP], copy_to: join(ev, "wtmp.db"),
+         rows: [[WTMP_INSERT, [[987654321, 7, "alice", 1700000000000000, 1700000100000000, "pts/0", "198.51.100.7", "sshd"],
+                               [987654322, 2, "reboot", 1700000200000000, null, "~", "6.8.0-45-generic", null]]],
+                [WTMP_INSERT, [[987654323, 7, "bob", 1700000300123456, null, "tty1", "", "login"]]]] });
+    assert.ok((await stat(join(ev, "wtmp.db-wal"))).size > 0, "the fixture has a write-ahead log");
+    const before = await evidenceState(ev);
+    const run = await asJob(UTMP, cwd, { path: "work/ev/wtmp.db" }, undefined, {}, "out");
+    const out = body(run);
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.equal(out.format, "wtmpdb");
+    assert.equal(out.records_in_table, 3);
+    assert.equal(out.records_read, 3);
+    assert.equal(out.all_records_read, true);
+    assert.equal(out.snapshot.files.wal.frames_by_size > 0, true);
+    // the evidence is byte for byte what it was, and no -shm or journal appeared beside it
+    assert.deepEqual(await evidenceState(ev), before);
+    assert.deepEqual(Object.keys(before).sort(), ["wtmp.db", "wtmp.db-wal"]);
+    // the copy: hashes as copied, a private directory, files 0600
+    assert.equal(out.snapshot.files.database.sha256, before["wtmp.db"].split(":")[2]);
+    assert.equal(out.snapshot.files.wal.sha256, before["wtmp.db-wal"].split(":")[2]);
+    assert.equal((await stat(out.snapshot.directory)).mode & 0o777, 0o700);
+    assert.equal((await stat(join(out.snapshot.directory, "db"))).mode & 0o777, 0o600);
+    const rows = await rowsOf(cwd, out, "records");
+    assert.equal(rows.length, 3);
+    assert.deepEqual(rows.map((r: Json) => [r.ordinal, r.type, r.type_raw, r.user]), [[0, "USER_PROCESS", 7, "alice"], [1, "BOOT_TIME", 2, "reboot"], [2, "USER_PROCESS", 7, "bob"]]);
+    assert.equal(rows[0].login_raw, 1700000000000000);
+    assert.equal(rows[0].login_unit, "microseconds");
+    assert.equal(rows[0].login_time, "2023-11-14T22:13:20Z");
+    assert.equal(rows[0].logout_time, "2023-11-14T22:15:00Z");
+    assert.equal(rows[0].host, "198.51.100.7");
+    assert.equal(rows[0].service, "sshd");
+    assert.equal(rows[1].logout_raw, null);
+    assert.equal(rows[2].login_time, "2023-11-14T22:18:20.123456Z");
+    assert.equal(rows[2].host, "");
+    assert.equal(out.by_type.USER_PROCESS, 2);
+    assert.equal(out.boots, 1);
+    // the key is never in the answer or in a paging file
+    const everything = run.stdout + JSON.stringify(rows);
+    assert.ok(!everything.includes("987654321") && !everything.includes("987654322"), "an INTEGER PRIMARY KEY value is never printed");
+    assert.deepEqual(out.schema.columns_not_read, ["ID"]);
+    assert.ok(!rows.some((r: Json) => "id_raw" in r || "rowid" in r || "ID" in r));
+    // the filters work over the rows
+    const only = body(await asJob(UTMP, cwd, { path: "work/ev/wtmp.db", types: ["BOOT_TIME"] }, undefined, {}, "out2"));
+    assert.equal(only.record_count, 1);
+    const named = body(await asJob(UTMP, cwd, { path: "work/ev/wtmp.db", user: "^b" }, undefined, {}, "out3"));
+    assert.deepEqual((await rowsOf(cwd, named, "records", "out3")).map((r: Json) => r.user), ["bob"]);
+  });
+});
+
+test("utmp_parse reads a lastlog2 database, takes the key Name as the account, and tells seconds from microseconds", async () => {
+  await withCwd(async (cwd) => {
+    py({ db: join(cwd, "work", "lastlog2.db"), sql: [LASTLOG2],
+         rows: [["INSERT INTO lastlog2(Name, Login, TTY, RemoteHost, Service) VALUES (?,?,?,?,?)",
+                 [["root", 1700000000, "tty1", "", "login"], ["carol", 1700001234, "pts/3", "203.0.113.9", "sshd"], ["dave", null, null, null, null]]]] });
+    const out = body(await asJob(UTMP, cwd, { path: "work/lastlog2.db" }));
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.equal(out.format, "lastlog2");
+    const rows = await rowsOf(cwd, out, "records");
+    assert.deepEqual(rows.map((r: Json) => [r.ordinal, r.user, r.type, r.login_unit ?? null, r.login_time ?? null]), [
+      [0, "root", "LASTLOG", "seconds", "2023-11-14T22:13:20Z"], [1, "carol", "LASTLOG", "seconds", "2023-11-14T22:33:54Z"], [2, "dave", "LASTLOG", null, null]]);
+    assert.equal(rows.find((r: Json) => r.user === "carol").host, "203.0.113.9");
+    assert.equal(rows.find((r: Json) => r.user === "dave").login_raw, null);
+    assert.match(out.schema.keys, /Name, the key of the table, is the account/);
+    // naming the other format is a refusal that lists what the file holds
+    const wrong = refused(await asJob(UTMP, cwd, { path: "work/lastlog2.db", format: "wtmpdb" }, undefined, {}, "out2"));
+    assert.match(wrong.error, /no table this tool knows as wtmpdb/);
+    assert.deepEqual(wrong.schema.tables.map((t: Json) => t.name), ["lastlog2"]);
+  });
+});
+
+test("utmp_parse tells the unit of a stored time from its size, keeps the raw number, and says what is not a number", async () => {
+  await withCwd(async (cwd) => {
+    py({ db: join(cwd, "work", "wtmp.db"), sql: [WTMP],
+         rows: [[WTMP_INSERT, [[1, 7, "sec", 1700000000, null, "a", "h", "s"], [2, 7, "milli", 1700000000123, 1700000001000, "a", "h", "s"], [3, 7, "micro", 1700000000123456, null, "a", "h", "s"],
+                               [4, 7, "huge", 4611686018427387904, null, "a", "h", "s"], [5, 7, "neg", -5, null, "a", "h", "s"], [6, 7, "zero", 0, null, "a", "h", "s"],
+                               [7, 99, "oddtype", 1700000000, null, "a", "h", "s"]]]] });
+    py({ db: join(cwd, "work", "wtmp.db"), sql: ["INSERT INTO wtmp(ID, Type, User, Login) VALUES (8, 7, 'texttime', 'yesterday')"] });
+    const out = body(await asJob(UTMP, cwd, { path: "work/wtmp.db" }));
+    const by = Object.fromEntries((await rowsOf(cwd, out, "records")).map((r: Json) => [r.user, r]));
+    assert.deepEqual([by.sec.login_unit, by.sec.login_time], ["seconds", "2023-11-14T22:13:20Z"]);
+    assert.deepEqual([by.milli.login_unit, by.milli.login_time, by.milli.logout_time], ["milliseconds", "2023-11-14T22:13:20.123000Z", "2023-11-14T22:13:21Z"]);
+    assert.deepEqual([by.micro.login_unit, by.micro.login_time], ["microseconds", "2023-11-14T22:13:20.123456Z"]);
+    assert.equal(by.huge.login_raw, 4611686018427387904);
+    assert.equal(by.huge.login_time, null);
+    assert.match(by.huge.login_error, /outside|range/);
+    assert.equal(by.zero.login_time, null);
+    assert.equal(by.oddtype.type, "UNKNOWN");
+    assert.equal(by.oddtype.type_raw, 99);
+    assert.equal(by.texttime.login_raw, null);
+    assert.match(by.texttime.login_error, /text, not a number/);
+    assert.equal(by.neg.login_raw, -5);
+  });
+});
+
+test("utmp_parse refuses a SQLite file with a schema it does not know and lists what it found, a view or a virtual table by the name, and two tables without a format", async () => {
+  await withCwd(async (cwd) => {
+    py({ db: join(cwd, "work", "other.db"), sql: ["CREATE TABLE wtmp(a INTEGER, b TEXT)", "CREATE TABLE \"weïrd\u0001name\"(x)", "CREATE VIEW v1 AS SELECT a FROM wtmp", "CREATE INDEX i1 ON wtmp(a)"] });
+    const unknown = refused(await asJob(UTMP, cwd, { path: "work/other.db" }));
+    assert.match(unknown.error, /no table this tool knows as wtmpdb or lastlog2/);
+    const byName = Object.fromEntries(unknown.schema.tables.map((t: Json) => [t.name, t]));
+    assert.deepEqual(byName.wtmp.columns, ["a", "b"]);
+    assert.ok(Object.keys(byName).some((n) => n.includes("\\x01")), "a control character in a table name is an escape");
+    assert.deepEqual(unknown.schema.other_objects.map((o: string[]) => o[0]).sort(), ["index", "view"]);
+    assert.doesNotMatch(JSON.stringify(unknown), /\u0001/);
+    // a view named like the table
+    py({ db: join(cwd, "work", "view.db"), sql: ["CREATE TABLE real_rows(User TEXT, Login INTEGER)", "CREATE VIEW wtmp AS SELECT User, Login FROM real_rows"] });
+    assert.match(refused(await asJob(UTMP, cwd, { path: "work/view.db" }, undefined, {}, "o2")).error, /view/);
+    // both tables
+    py({ db: join(cwd, "work", "both.db"), sql: [WTMP, LASTLOG2] });
+    assert.match(refused(await asJob(UTMP, cwd, { path: "work/both.db" }, undefined, {}, "o3")).error, /both a wtmp and a lastlog2/);
+    const chosen = body(await asJob(UTMP, cwd, { path: "work/both.db", format: "lastlog2" }, undefined, {}, "o4"));
+    assert.equal(chosen.format, "lastlog2");
+    assert.equal(chosen.records_in_table, 0);
+    // a table with the columns in other letters and extra ones is read from what is there
+    py({ db: join(cwd, "work", "cols.db"), sql: ["CREATE TABLE wtmp(\"user\" TEXT, LOGIN INTEGER, extra BLOB)"], rows: [["INSERT INTO wtmp VALUES (?,?,?)", [["zed", 1700000000, "x"]]]] });
+    const cols = body(await asJob(UTMP, cwd, { path: "work/cols.db" }, undefined, {}, "o5"));
+    assert.deepEqual(cols.schema.columns_not_read, ["extra"]);
+    assert.equal((await rowsOf(cwd, cols, "records", "o5"))[0].user, "zed");
+    // a virtual table by the name (fts5 is built into the SQLite of most Pythons; the case is skipped where it is not)
+    const probe = spawnSync("python3", ["-I", "-c", `import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("CREATE VIRTUAL TABLE wtmp USING fts5(User, Login)"); c.commit()`, join(cwd, "work", "virtual.db")], { encoding: "utf8" });
+    if (probe.status === 0) assert.match(refused(await asJob(UTMP, cwd, { path: "work/virtual.db" }, undefined, {}, "o6")).error, /virtual table/);
+  });
+});
+
+test("utmp_parse keeps long, binary and mistyped values bounded: 256 bytes and the length, a blob as a blob, bytes that are not UTF-8 as escapes, a canary past the cut not printed", async () => {
+  await withCwd(async (cwd) => {
+    const canary = "CANARY-7f3a91c2";
+    // columns with no declared type keep what is stored in them (a TEXT column turns 42 into "42"), as a database of another writer may
+    py({ db: join(cwd, "work", "wtmp.db"), sql: ["CREATE TABLE wtmp(ID INTEGER PRIMARY KEY, Type, User, Login, Logout, TTY, RemoteHost, Service)"],
+         rows: [[WTMP_INSERT, [[1, 7, "x".repeat(300) + canary, 1700000000000000, null, "p".repeat(1_000_000), "host-" + canary.slice(0, 6), "svc"],
+                               [2, 7, "plain", 1700000001000000, null, "t", "h", "s"]]],
+               ] });
+    py({ db: join(cwd, "work", "wtmp.db"), sql: ["UPDATE wtmp SET User = CAST(X'61ff62' AS BLOB) WHERE ID = 2", "INSERT INTO wtmp(ID, Type, User, Login, RemoteHost) VALUES (3, 7, 'intnum', 1700000002000000, 42)"] });
+    const run = await asJob(UTMP, cwd, { path: "work/wtmp.db" });
+    const out = body(run);
+    const rows = await rowsOf(cwd, out, "records");
+    assert.equal(rows[0].user.length, 256);
+    assert.equal(rows[0].user_bytes, 300 + canary.length);
+    assert.equal(rows[0].user_truncated, true);
+    assert.equal(rows[0].line.length, 256);
+    assert.equal(rows[0].line_bytes, 1_000_000);
+    assert.ok(!run.stdout.includes(canary) && !JSON.stringify(rows).includes(canary), "a value past the cut is not in the answer");
+    assert.equal(rows[1].user_stored_as, "blob");
+    assert.equal(rows[1].user, "a\udcffb");
+    assert.equal(rows[2].host, "42");
+    assert.equal(rows[2].host_stored_as, "integer");
+    assert.ok(run.stdout.length < 200_000, "the answer stays small whatever the rows hold");
+  });
+});
+
+test("utmp_parse stops with the rows it read when a page of the database is damaged, and says where", async () => {
+  await withCwd(async (cwd) => {
+    const rows = Array.from({ length: 4000 }, (_, i) => [i + 1, 7, `user${i}`, 1700000000000000 + i * 1000000, null, "pts/0", "198.51.100.7", "sshd"]);
+    py({ db: join(cwd, "work", "wtmp.db"), sql: [WTMP], rows: [[WTMP_INSERT, rows]] });
+    const full = await readFile(join(cwd, "work", "wtmp.db"));
+    const pageSize = full.readUInt16BE(16) || 65536;
+    const pages = full.length / pageSize;
+    assert.ok(pages > 8, "the fixture spans many pages");
+    const damaged = Buffer.from(full);
+    damaged.fill(0xff, pageSize * (pages - 3), pageSize * (pages - 2));
+    await writeFile(join(cwd, "work", "bad.db"), damaged);
+    const run = await asJob(UTMP, cwd, { path: "work/bad.db" });
+    assert.doesNotMatch(run.stderr, /Traceback/);
+    const out = JSON.parse(run.stdout);
+    // either the tool reads the rows before the damage and says so, or it refuses the file in JSON: never a complete answer
+    assert.notEqual(out.status, "complete");
+    if (out.status === "partial") {
+      assert.ok(out.records_read > 0 && out.records_read < 4000);
+      assert.match(out.status_basis, /database failed|could not be counted|malformed|corrupt/i);
+    } else {
+      assert.equal(out.status, "failed");
+      assert.match(out.error, /database/);
+    }
+    // and a file that only starts like SQLite
+    await writeFile(join(cwd, "work", "head.db"), Buffer.concat([Buffer.from("SQLite format 3\0", "latin1"), Buffer.alloc(4096 - 16)]));
+    const head = refused(await asJob(UTMP, cwd, { path: "work/head.db" }, undefined, {}, "o2"));
+    assert.match(head.error, /database/);
+  });
+});
+
+test("utmp_parse keeps SQLite apart from the binary readers: a job only, no -wal that is a link or a pipe followed, arguments that do not apply refused, a format that does not fit refused", async () => {
+  await withCwd(async (cwd) => {
+    const ev = join(cwd, "work", "ev");
+    await mkdir(ev, { recursive: true });
+    py({ db: join(cwd, "work", "wtmp.db"), sql: [WTMP], copy_to: join(ev, "wtmp.db"), rows: [[WTMP_INSERT, [[1, 7, "alice", 1700000000000000, null, "a", "h", "s"]]]] });
+    // outside a job nothing is read
+    const plain = refused(await tool(UTMP, cwd, { path: "work/ev/wtmp.db" }));
+    assert.match(plain.error, /job_run tool=utmp_parse/);
+    assert.equal(plain.format, "sqlite");
+    // a link as the database is refused as for the binary files
+    await symlink(join(ev, "wtmp.db"), join(ev, "link.db"));
+    assert.match(refused(await asJob(UTMP, cwd, { path: "work/ev/link.db" }, undefined, {}, "o1")).error, /symlink/);
+    // a -wal that is a link, and one that is a pipe: not copied, not followed, and the answer is partial
+    await writeFile(join(cwd, "work", "elsewhere-wal"), "not a log");
+    await symlink(join(cwd, "work", "elsewhere-wal"), join(ev, "wtmp.db-wal"));
+    const linked = body(await asJob(UTMP, cwd, { path: "work/ev/wtmp.db" }, undefined, {}, "o2"));
+    assert.equal(linked.status, "partial");
+    assert.match(linked.snapshot.files.wal.state, /not copied: a link/);
+    assert.equal(linked.records_read, 1);
+    await rm(join(ev, "wtmp.db-wal"));
+    spawnSync("mkfifo", [join(ev, "wtmp.db-wal")]);
+    const started = Date.now();
+    const piped = body(await asJob(UTMP, cwd, { path: "work/ev/wtmp.db" }, undefined, {}, "o3"));
+    assert.ok(Date.now() - started < 20_000, "a pipe beside the database does not hang the tool");
+    assert.equal(piped.status, "partial");
+    await rm(join(ev, "wtmp.db-wal"));
+    // arguments that belong to the binary readers, and a format that does not fit the file
+    for (const extra of [{ uids: [0] }, { start_uid: 1 }, { max_slots: 5 }, { passwd: "x" }, { start_record: 1 }, { user_is_typed: "true" }, { layout: "utmp-384" }, { byte_order: "big" }, { write_text: true }, { preview_text: true }]) {
+      const r = refused(await asJob(UTMP, cwd, { path: "work/ev/wtmp.db", ...extra }, undefined, {}, "o4"));
+      assert.match(r.error, /apply to a utmp, wtmp, btmp or lastlog file only/, JSON.stringify(extra));
+    }
+    assert.match(refused(await asJob(UTMP, cwd, { path: "work/ev/wtmp.db", format: "utmp" }, undefined, {}, "o5")).error, /SQLite database/);
+    await writeFile(join(cwd, "work", "plain.bin"), Buffer.alloc(384));
+    assert.match(refused(await asJob(UTMP, cwd, { path: "work/plain.bin", format: "wtmpdb" }, undefined, {}, "o6")).error, /does not start as a SQLite database/);
+    for (const bad of [{ format: 5 }, { format: "sqlitee" }, { path: "work/ev/wtmp.db", limit: -1 }, { path: "work/ev/wtmp.db", types: "x" }, { path: "work/ev/wtmp.db", user: "(" }, { path: "work/ev/wtmp.db", max_seconds: 10 ** 400 }]) {
+      const run = await asJob(UTMP, cwd, bad, undefined, {}, "o7");
+      assert.doesNotMatch(run.stderr, /Traceback/, JSON.stringify(bad));
+      assert.equal(JSON.parse(run.stdout).status, "failed", JSON.stringify(bad));
+    }
+  });
+});
+
+test("utmp_parse ends a SQLite read on max_seconds with the rows it has, partial, and a full disk or an unwritable $OUT gives JSON", async () => {
+  await withCwd(async (cwd) => {
+    const rows = Array.from({ length: 300000 }, (_, i) => [i + 1, 7, `user${i}`, 1700000000000000 + i * 1000000, null, "pts/0", "198.51.100.7", "sshd"]);
+    py({ db: join(cwd, "work", "big.db"), sql: [WTMP], rows: [[WTMP_INSERT, rows]] });
+    const started = Date.now();
+    const run = await asJob(UTMP, cwd, { path: "work/big.db", max_seconds: 1, limit: 5 });
+    assert.ok(Date.now() - started < 60_000, "the tool ends near max_seconds");
+    assert.doesNotMatch(run.stderr, /Traceback/);
+    const out = JSON.parse(run.stdout);
+    assert.ok(out.status === "partial" || out.status === "failed" || out.status === "complete", out.status);
+    if (out.status === "partial") assert.ok(out.records_read < 300000);
+    // an $OUT that cannot hold the copy: JSON, no traceback
+    if (!IS_ROOT) {
+      await mkdir(join(cwd, "ro-out"), { recursive: true });
+      await chmod(join(cwd, "ro-out"), 0o500);
+      const denied = spawnSync("python3", [UTMP], { cwd, input: JSON.stringify({ path: "work/big.db" }), encoding: "utf8", env: { ...process.env, JOB_ID: "j1", OUT: join(cwd, "ro-out"), SECRET_OUTPUT: "1" } });
+      assert.doesNotMatch(denied.stderr, /Traceback/);
+      assert.equal(JSON.parse(denied.stdout).status, "failed");
+      await chmod(join(cwd, "ro-out"), 0o700);
+    }
   });
 });

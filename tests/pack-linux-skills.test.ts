@@ -48,6 +48,11 @@ const OLD_IDS = [
   "accounts/users", "containers/docker", "filesystem/ext", "filesystem/storage", "logs/auth", "logs/journal",
   "packages/integrity", "persistence/mechanisms", "timeline/linux", "triage/system-profile",
 ];
+// The nine leaves added after the router (C-linux-S1): each is a first-level leaf that opens "Use when ... Not for ...", and the router names each once.
+const NEW = [
+  "logs/auditd", "persistence/systemd", "filesystem/timestamp-anomalies", "cloud/host-artifacts", "accounts/session-accounting",
+  "execution/history", "containers/runtime-orchestration", "triage/volatile-state", "applications/server-logs",
+];
 const CHILDREN: Record<string, string> = {
   "triage/identity-files": "triage/system-profile",
   "triage/clocks-boots": "triage/system-profile",
@@ -68,7 +73,8 @@ const CHILDREN: Record<string, string> = {
 
 test("every skill is a leaf within the budget, opens with Use when/only if ... Not for ..., has a short index entry, and old ids stay", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, OLD_IDS.length + Object.keys(CHILDREN).length + 1, "the pack's leaves and its router");
+  assert.equal(skills.size, OLD_IDS.length + Object.keys(CHILDREN).length + NEW.length + 1, "the pack's leaves and its router");
+  for (const id of NEW) assert.ok(skills.has(id), `new leaf ${id} exists`);
   for (const id of OLD_IDS) assert.ok(skills.has(id), `old id ${id} is alive`);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= 800, `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
@@ -132,6 +138,12 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["journal_export", "logs/journal", ["boots", "realtime_us", "monotonic_us", "native_line", "oversized_lines", "write_text", "preview_text", "journal-native.jsonl"]],
   ["journal_export", "logs/journal-clocks-verify", ["verify"]],
   ["utmp_parse", "accounts/sessions-histories", ["layout", "byte_order"]],
+  ["utmp_parse", "accounts/session-accounting", ["layout", "byte_order"]],
+  ["audit_events", "logs/auditd", ["missing_components", "serial_resets", "continued_group", "time_regression_runs", "lost_and_daemon_records", "rotation_gaps", "gaps_between_files", "compare_ausearch", "write_text", "unset"]],
+  ["linux_persistence", "persistence/systemd", ["list_resets", "account_in_passwd", "locations", "execution_rows", "write_text"]],
+  ["shell_history", "execution/history", ["write_commands"]],
+  ["container_inventory", "containers/runtime-orchestration", ["unsupported", "storage_roots"]],
+  ["linux_triage", "triage/volatile-state", ["execution_complete"]],
   ["shell_history", "accounts/sessions-histories", ["write_commands"]],
   ["linux_triage", "triage/system-profile", ["execution_complete", "coverage", "parsed"]],
   ["cron_dump", "persistence/cron-timers", ["unsupported", "write_text"]],
@@ -189,11 +201,23 @@ test("the rules the split keeps: observation against verdict, bounded negatives,
   has("persistence/cron-timers", /so an empty result there is not a negative/);
   has("timeline/linux", /a clean run is no evidence of RPM, newer accounting or full container coverage/);
   has("timeline/linux-normalise", /An empty parser result supports an absence only when/);
+  // The nine leaves added with the router: the one rule of each that a reader must not lose.
+  has("logs/auditd", /A SYSCALL's `success` is that system call's result and not the command's/);
+  has("logs/auditd", /an absent event is bounded by those rules/);
+  has("persistence/systemd", /Its effective state is never resolved/);
+  has("filesystem/timestamp-anomalies", /A nanosecond field is precision, not accuracy/);
+  has("cloud/host-artifacts", /Never contact a metadata endpoint/);
+  has("accounts/session-accounting", /an empty slot is not proof the account never logged in/);
+  has("execution/history", /treat an empty or missing file as a question, not a finding/);
+  has("containers/runtime-orchestration", /containerd's bolt metadata database is listed under `unsupported` and not read/);
+  has("triage/volatile-state", /one source never stands in for another/);
+  has("applications/server-logs", /Transaction-log examination \(database write-ahead and binary logs\) is not provided/);
 });
 
 test("a skill that can reach secrets says the job runs with secret_output and cites a locator, never a value, a fragment or a hash", async () => {
   const skills = await load(SKILLS);
-  for (const id of ["accounts/users", "accounts/sessions-histories", "logs/auth", "logs/journal", "persistence/mechanisms", "persistence/cron-timers", "timeline/linux", "triage/system-profile"]) {
+  for (const id of ["accounts/users", "accounts/sessions-histories", "logs/auth", "logs/journal", "persistence/mechanisms", "persistence/cron-timers", "timeline/linux", "triage/system-profile",
+    "logs/auditd", "persistence/systemd", "cloud/host-artifacts", "accounts/session-accounting", "execution/history", "containers/runtime-orchestration", "triage/volatile-state", "applications/server-logs"]) {
     const body = skills.get(id)!.body;
     assert.match(body, /secret_output/, `${id} names secret_output`);
     assert.match(body, /(never|no) [^.]*(hash|value)/i, `${id} forbids a value or hash`);
@@ -238,7 +262,7 @@ test("linux/router is the pack's only router, within 500 tokens, holds no rule, 
   assert.deepEqual([...named].sort(), [...skills.keys()].filter((id) => id !== ROUTER).sort());
   assert.equal(BEFORE.length, 25);
   for (const id of BEFORE) assert.ok(skills.has(id), `${id} is still a skill`);
-  assert.equal(skills.size, BEFORE.length + 1, "the router is the only skill added");
+  assert.equal(skills.size, BEFORE.length + NEW.length + 1, "the router and the nine leaves are the skills added");
   // The generated index names it as the pack's router, which is the line the harness reads.
   assert.match(await readFile(join(SKILLS, "INDEX.md"), "utf8"), /^Router: `linux\/router`$/m);
 });
@@ -251,7 +275,7 @@ test("the pack index lists the entry lines of INDEX.md as the harness counts the
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => /^- `[^`]+`/.test(l));
   const parsed = await readPackIndex(PACK);
   assert.deepEqual(parsed.entries.map((e) => e.line), lines, "the harness reads every entry line of the file, and no other");
-  assert.equal(parsed.entries.length, BEFORE.length + 1);
+  assert.equal(parsed.entries.length, BEFORE.length + NEW.length + 1);
   assert.equal(parsed.router, ROUTER);
   assert.equal(lines.reduce((n, l) => n + estimateTokens(l), 0), parsed.tokens);
   assert.ok(parsed.entries.every((e) => e.tokens <= SKILL_BUDGET.entry), "every entry is within the entry budget");
