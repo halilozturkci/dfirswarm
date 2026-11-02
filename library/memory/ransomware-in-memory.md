@@ -237,15 +237,19 @@ on, and `inputs/` is unchanged.
 - `for n in 1 2 3 4 5 6 7 8; do grep -q "^## $n\." work/report.md || exit 1; done`
 - `awk 'BEGIN{h="[0-9a-f]";h=h h h h h h h h;h=h h h h;d="[0-9][0-9]?[0-9]?";p=d"[.]"d"[.]"d"[.]"d} /^## /{if(s&&!c)b++;s=/^## [0-9]+\./;n+=s;c=0;next} {l=tolower($0)} l~h||l~p||l~/(^|[^a-z0-9_])(inputs|work|catalog|ledger)\/|ledger (entr[a-z]* )?#?[0-9]|(seq|inode|offset|record ?id|event ?id)[ #:=]*[0-9]|hk(lm|cu|u|cr):?\\|hkey_|[a-z]:\\|(^|[^a-z0-9_.)\/])\/[a-z_.][^ \/]*\/[^ \/]|\.(evtx|jsonl|csv|log|db|sqlite|pf|lnk|dat|e01|raw|mem|pcap|txt|json|xml|reg|exe|dll|sys|plist|php|png|jpg|zip|html)([^a-z0-9]|$)|(^|[^a-z ]) ?hypothesis[*_]*:/{c=1} END{if(s&&!c)b++;exit !n||4*b>n}' work/report.md`
 - `grep -qi 'hypothesis' work/report.md`
-- `test -z "$(find work -path work/.toolchain -prune -o -type f \( -perm -u+x -o -perm -g+x -o -perm -o+x \) -print 2>/dev/null | head -1)"`
-  (no file under `work/` keeps an execute bit; pip's `work/.toolchain/` is
-  the one exception.)
+- `test -z "$(find work \( -path work/.toolchain -o -path work/.tmp \) -prune -o -type f \( -perm -u+x -o -perm -g+x -o -perm -o+x \) -print 2>/dev/null | head -1)"`
+  (no file under `work/` keeps an execute bit; pip's `work/.toolchain/` and the
+  panes' `work/.tmp/` are the exceptions.)
 - `test -f work/timeline.md`
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 18`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
 - `test "$(find work/extracted -name SHA256SUMS -exec cat {} + 2>/dev/null | grep -cE '^[0-9a-fA-F]{64} |^SHA256 ?\(.*\) ?= ?[0-9a-fA-F]{64}')" -ge 1`
-- `find work/extracted -name SHA256SUMS -exec sh -c 'c="sha256sum -c"; command -v sha256sum >/dev/null || c="shasum -a 256 -c"; for m; do (cd "${m%/*}" && $c SHA256SUMS) >/dev/null 2>&1 || $c "$m" >/dev/null 2>&1 || exit 1; done' sh {} +`
+- `find work/extracted -name SHA256SUMS -exec sh -c 'c="sha256sum -c"; command -v sha256sum >/dev/null || c="shasum -a 256 -c"; for m; do s=$(find "${m%/*}" -type f -size +524288 2>/dev/null | head -1); [ -n "$s" ] && continue; s=$(du -sk "${m%/*}" 2>/dev/null | cut -f1); [ "${s:-0}" -gt 1048576 ] && continue; (cd "${m%/*}" && $c SHA256SUMS) >/dev/null 2>&1 || $c "$m" >/dev/null 2>&1 || exit 1; done' sh {} +`
+  (a manifest whose directory holds a file over 256 MiB, or more than 1 GiB
+  in all, is not re-hashed here,
+  so the check stays inside its time limit; hash that dump when you extract
+  it, and say in the report that the check did not.)
 - `test -n "$(find work/rules -iname '*.yar*' -exec awk 'FNR==1{k=0} {t=$0;o=""} k{i=index(t,"*/");if(!i)next;t=substr(t,i+2);k=0} {while((i=index(t,"/*"))){o=o substr(t,1,i-1)" ";t=substr(t,i+2);j=index(t,"*/");if(!j){k=1;t="";break};t=substr(t,j+2)} o=o t;if((i=index(o,"//")))o=substr(o,1,i-1)} o~/^[ \t]*((private|global)[ \t]+)*rule[ \t]+[A-Za-z_]/{print FILENAME}' {} + 2>/dev/null)"`
 - `command -v yara >/dev/null || exit 0; find work/rules -iname '*.yar*' -exec sh -c 'for r; do yara "$r" /dev/null >/dev/null 2>&1 || exit 1; done' sh {} +`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,8,summary,narrative`

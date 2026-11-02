@@ -43,8 +43,9 @@ same commands again.
 3. The tools and the clearing: traces that a wiping or clearing tool ran —
    SDelete, `cipher /w`, `wevtutil`, a cleaner — from Prefetch, Amcache and
    event 4688; the log clears (Security 1102, System 104 per channel
-   cleared, Security 1100 for a stopped EventLog service, gaps in
-   EventRecordID), what each log holds after the clear, and pre-clear
+   cleared, Security 1100 for a stopped EventLog service (it is also
+   logged on every normal shutdown, so read it with the System 6006 and
+   the boot that follows), gaps in EventRecordID), what each log holds after the clear, and pre-clear
    records recovered by carving `ElfChnk` chunks from unallocated space,
    slack, shadow copies and `pagefile.sys` (a signature carve with `blkls`
    and a forged chunk parser), each carved record with offset and hash.

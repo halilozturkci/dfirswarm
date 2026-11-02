@@ -52,7 +52,8 @@ same commands again.
    in `$I30` index slack (INDX buffers read with `icat` on the directory's
    `$INDEX_ALLOCATION`), data parked in `$BadClus:$Bad`, and space between
    the end of the file system (`fsstat`) and the end of the partition
-   (`mmls`).
+   (`mmls`), whose first sector is the volume's backup boot sector, not
+   hidden data.
 4. Wiping and volume shadow copies: traces that a wiping tool ran (SDelete,
    `cipher /w`, a cleaner) read from its own files, from Prefetch and
    Amcache, and from the pattern it left in `$MFT` and the journals; volume

@@ -79,8 +79,8 @@ same commands again.
   (`mmls`, `fsstat`, `fls`, `istat`, `icat`, `ifind`, `blkls`,
   `tsk_recover`; E01 files are read natively), libewf (`ewfinfo`), `regipy`
   and `python-evtx` (Python 3.12), `strings`, `sqlite3`, `exiftool`.
-  `pffexport` (libpff) for the Outlook store and `olevba`/`oledump`
-  (oletools) for Office documents are not in the default toolbox: if they
+  `pffexport` (libpff) for the Outlook store and `olevba` (oletools) and
+  `oledump.py` (a separate tool) for Office documents are not in the default toolbox: if they
   are missing, say so on the board, read `.eml` files and the webmail cache
   with Python's `email` module, read OLE streams with a forged
   `olefile`-style reader, and record that the PST/OST could not be parsed.
@@ -92,7 +92,7 @@ same commands again.
   `work/extracted/<your id>/` (nothing there is run; it is no-exec only
   under `--quarantine`; hash everything you pull out) and analyse the
   extracts — the macro streams, the LNK targets, the script text, the PE
-  headers — with `strings`, `exiftool`, `oledump` and `olevba`-style
+  headers — with `strings`, `exiftool`, `oledump.py` and `olevba`-style
   parsing. Copy into the shared `work/extracted/` only what peers must read,
   and claim it first. Your own scratch goes under `work/<your id>/`.
 - Every dated event you establish goes into the ledger with `record`
