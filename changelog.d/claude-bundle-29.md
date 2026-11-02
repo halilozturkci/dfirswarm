@@ -15,3 +15,13 @@
   file and says `agree`, `disagree` or `not_run`, with the installed version and the differences counted and never shown.
   A one-record probe must come back through `-if <file> -r` first. The program runs in the tool's own process group:
   a deadline, an output past 32 MiB or a stop signal ends it and what it started. It is declared secret output.
+
+### Added: linux-forensics `linux_persistence` lists where a root starts programs from
+
+- List cron tables, system and user systemd units (the homes of the passwd and every directory under `home/`, so a deleted
+  account's home is read), drop-ins in file-name order with the assignments that reset a list, enablement links, masks and aliases
+  (listed, never followed), `.path` and `.socket` units, `rc.local`, `init.d` and XDG autostart, each with file, line and byte
+  offset and every place tried named. Configuration and execution are separate fields (execution only from journal rows the
+  caller declares), the effective state is always unresolved with the reasons, and a copy without links says enablement cannot
+  be read. Command lines and environments, and key names systemd does not define, are lengths; the text goes to a 0600 file on
+  `write_text` in a secret-output job. `persistence/mechanisms` names the tool.

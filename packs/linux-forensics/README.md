@@ -21,7 +21,7 @@ second-level leaf (listed after it, opened only when its question arises) holds 
 | Packages | `packages/integrity`; then `packages/baseline` |
 | Timeline | `timeline/linux`; then `timeline/linux-normalise` |
 
-**Seven tools.** Each answers with fields and locators (file, line or record, byte offset), says what it did not
+**Eight tools.** Each answers with fields and locators (file, line or record, byte offset), says what it did not
 read, and keeps the whole result in a file when the answer is a page of it.
 
 - `auth_log` reads `auth.log` and `secure`, rotated and gzipped, record by record: ssh acceptances with the key type
@@ -34,6 +34,9 @@ read, and keeps the whole result in a file when the answer is a page of it.
   numeric fields and the lengths of command lines, never their text (that goes to a sealed file on `write_text`), and reports
   rotation gaps, serial restarts, `lost=` counters and time that runs backwards. With `compare_ausearch` (in a job run as secret
   output) it runs the installed `ausearch` on a sample and says `agree`, `disagree` or `not_run`.
+- `linux_persistence` lists the places a root starts programs from (cron, systemd units with their drop-ins, links, masks and aliases, `.path` and
+  `.socket` units, `rc.local`, `init.d`, XDG autostart) with file, line and byte offset, keeps configuration apart from execution, leaves the
+  effective state unresolved, and says when a copy without links cannot show enablement. Command lines and environments are lengths.
 - `shell_history` reads shell and client history files (bash, zsh, fish and plain client files) record by record,
   with how each record's boundaries were found, and does not call a directory name an account.
 - `cron_dump` inventories cron tables and systemd timers as candidates, with what it looked in and what it did not.

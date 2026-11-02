@@ -1,0 +1,49 @@
+{
+  "name": "linux_persistence",
+  "description": "List the places a Linux root starts programs from, in an extracted root: cron tables (etc/crontab, etc/cron.d, cron.hourly/daily/weekly/monthly, the per-user spools), systemd system units (etc/systemd/system, usr/lib/systemd/system, lib/systemd/system, usr/local/lib/systemd/system, run/systemd/system) and user units (etc/systemd/user, usr/lib/systemd/user, usr/local/lib/systemd/user, etc/xdg/systemd/user, and each home's .config/systemd/user and .local/share/systemd/user: the homes of etc/passwd and every directory under home/ and root, so a deleted account's home is read and its entries say account_in_passwd false), the .service, .timer, .path and .socket units, their <unit>.d/*.conf drop-ins (listed in file-name order, with list_resets where an assignment is empty), the .wants/ and .requires/ links (enablement), masks (a link to /dev/null) and aliases, WantedBy/RequiredBy/Alias/Also, Exec* lines, User, Group, Environment and EnvironmentFile, timers and their Unit, the .path and .socket triggers, rc.local, init.d scripts and XDG autostart entries. Every place it tried is named in `locations` (missing, a link not followed, an alias of a directory already read through a link in its path such as merged /usr, read with N entries), a link is listed with its kind and never followed, a file larger than 8 MiB is listed and not read, a pipe or device is never opened, a disk image is refused with the routes that read one, and depth is bounded. Each entry carries its file, line and byte offset (a continued line has its first and last line), the file's modification time (set by an install, a copy or a restore as well as by an edit) and its mode. CONFIGURATION and EXECUTION are separate fields: configuration is what a file says, and execution is `not_attempted` unless execution_rows names JSON Lines files (the records file of a journal_export call) whose rows have a `unit` or `user_unit`, in which case each unit's row count and first and last time are given and a unit those rows do not name is not claimed idle. The EFFECTIVE STATE IS NEVER RESOLVED, and the answer says why: drop-in order and an empty assignment resetting a list, the ordered unit search path, masks and aliases as links, generators and transient units that exist only at run time, and that systemctl cannot be asked about a disk. A copy made with target-fs does not keep links: where no link is found in any unit directory although unit files are, the answer says enablement, masks and aliases cannot be read from the copy. SENSITIVE: a command line and an environment can hold a secret, so an Exec line is its phase, prefix flags, word count and length, an Environment is its length and the number of assignments (the names of its variables are not printed), a key name is printed only where systemd defines it (any other is a length: a line that is no setting puts its first word where a key goes), and a value is shown only for keys with launch or scheduling meaning (Type, Restart, User, Group, Unit, WantedBy, RequiredBy, Alias, Also, the On* timers, Persistent, the Listen* and Path* triggers) and only when it has the shape of such a value, else it is a length; a link target is shown only when it is /dev/null or a plain unit path, a cron command is its length and word count, a cron variable is its length. write_text: true (refused outside a job, and in a job that was not run as secret output) writes every assignment, cron line and desktop entry whole, with file, line and byte offset, and the text of rc.local and init.d scripts, to $OUT/persistence-text.jsonl, mode 0600 (declared secret_output: a job that sets write_text is run as secret output, and the tool refuses write_text when SECRET_OUTPUT is not 1). The rule is the key and the shape of a value: a secret that has the shape of the value of a shown key (an account name for User, a unit list for WantedBy) is shown. Entries are listed up to limit and every entry, assignment beyond 40 per file and place tried is in the paging files named in `pages`; the clock is read before every file, every directory entry and every 4,096 lines, so max_seconds (default 60, at most 105, under the manifest's 120) is honoured and a place after it is named as not looked in (status partial). Every answer carries `status` (complete, partial or failed) and `status_basis`; an unreadable file or directory, a cron line that matches no table line shape and a name list cut at 200,000 names make it partial. A SIGTERM, SIGINT or SIGHUP ends the tool with one JSON last word (status failed, exit 128 plus the signal) naming the paging files and the text file it had written, and an unexpected exception ends it with one JSON document and exit 1. It does not read at jobs, anacron, generator output, runtime units, the effective unit configuration, PAM, shell startup files or SUID files (see the persistence skills for those routes).",
+  "params": {
+    "root": {
+      "type": "string",
+      "description": "The directory of an extracted Linux root (etc/, var/, usr/, home/ ...); a link, a file or a disk image is refused"
+    },
+    "execution_rows": {
+      "type": "array",
+      "description": "Optional: up to eight JSON Lines files whose rows name a unit (a journal_export records file: fields `unit`, `user_unit`, `time`); the answer counts rows per unit and does not claim a unit the rows do not name was idle"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Entries shown inline (default 100); every entry is in the paging file named in pages.entries when there are more"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The time to spend (default 60, at most 105): a place not looked in is named and the answer is partial"
+    },
+    "write_text": {
+      "type": "boolean",
+      "description": "SENSITIVE: Write every assignment, cron line and desktop entry whole, and the text of rc.local and init.d scripts, to $OUT/persistence-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused (declared secret_output: a job that sets write_text is run as secret output, and the tool refuses write_text when SECRET_OUTPUT is not 1)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "secret_output": {
+    "when_args": [
+      "write_text"
+    ]
+  },
+  "example": "{\"root\": \"work/extracted\", \"limit\": 100}",
+  "by": "maintainer",
+  "at": "2026-11-02T12:00:00.000Z",
+  "version": 1,
+  "use": {
+    "names": [
+      "*.service",
+      "*.timer",
+      "*.socket",
+      "*.path",
+      "crontab",
+      "rc.local"
+    ]
+  },
+  "sha256": "3323a00575ee022d577186763e62147b167e404457be73ba86683f7b4f9db698"
+}

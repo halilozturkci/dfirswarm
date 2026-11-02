@@ -18,7 +18,7 @@ import { ROOT, runPySnippet, withCwd } from "./tool-library-harness.ts";
 const TOOLS = join(ROOT, "packs", "linux-forensics", "tools");
 const FAMILIES = ["PARTS", "STOP", "IMAGE"] as const;
 type Family = (typeof FAMILIES)[number];
-const FLOOR: Record<Family, number> = { PARTS: 6, STOP: 4, IMAGE: 6 };
+const FLOOR: Record<Family, number> = { PARTS: 7, STOP: 5, IMAGE: 7 };
 
 async function sources(): Promise<Record<string, string>> {
   const found: Record<string, string> = {};

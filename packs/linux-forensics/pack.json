@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -50,7 +50,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "4c3aa92e947d731aab1cc6a32d2bd1a9b8b58a319e4a3262558928fc697056c8",
+      "README.md": "211ec73d619e02a7c95cd7b2d7c01dde2b9d1793c78480b0249609fe75c96d12",
       "goals/server-compromise.md": "0118cd428d15cdd68293ca017333a2302fa3b42a67df32aea89e77c672f9a18b",
       "goals/what-was-scheduled.md": "52389a312d07d57dc4f76c6b274dcccd6d88952a494e2750c93693a2240a1820",
       "recipes/linux-target/recipe.json": "32ce9c8dd2bed920d2ee363fe3f168b27cdf40726451c217ddfa86fdc4a95475",
@@ -77,7 +77,7 @@
       "skills/packages/baseline.md": "9251e2ef0b6ee968aa46654f7afa5847dce00cc236cd60e3add3ed62d6c7c61c",
       "skills/packages/integrity.md": "d334fd193932d1c02b972f43660397f5d67baf1dce829f91e4f33eb54dcee80d",
       "skills/persistence/cron-timers.md": "964ca4e8d6f9e7eb6d2a3587492ee1ac8ac0b5995fb46341022b5a9efec92924",
-      "skills/persistence/mechanisms.md": "05264ec5dffa15f9ed16eeb75fb79a8af73b3f6361f9edfb41c0ede05b637d08",
+      "skills/persistence/mechanisms.md": "0505ac130d71156c3abba09253dc9a176ff6453e6dc0c60586c850fa031bbc20",
       "skills/persistence/quieter-routes.md": "212b50516460730da046661321781e0ea860e27c12df196258880a10d2c0bafd",
       "skills/timeline/linux-normalise.md": "49bdfa300db05ae5529a3c0f22d91c3c8051fb3d9029247660a7fb9d654dfc02",
       "skills/timeline/linux.md": "2d86ff17648e1bb0bc1ef3fc5e93bac762a83b91264a3174e87cfa1fa6801c7e",
@@ -92,6 +92,8 @@
       "tools/cron_dump/run.py": "5aa1716b3583b12d0efd401c3fcf2e2253b98533e5c119b380ca000b58c0120d",
       "tools/journal_export/manifest.json": "1792fde8eb93bb848a4ab6f2c9e5757018ed40bb7cf99bedc427cbdbf31d78b5",
       "tools/journal_export/run.py": "676739e380b411cca206232956cfd82d01c68c24b22a2e5a75fbd8c27152425a",
+      "tools/linux_persistence/manifest.json": "94b0a0f7ee861230a24213531130f54675d9fa23f88eb9d5667872e184409593",
+      "tools/linux_persistence/run.py": "3323a00575ee022d577186763e62147b167e404457be73ba86683f7b4f9db698",
       "tools/linux_triage/manifest.json": "819160709a55eab2bed9452cddc03de94a25521345fe1ee3daf0447e13041bf7",
       "tools/linux_triage/run.py": "aeedd45ba721b2b8201d979ff253050da6abef3f2254373c01311d0e1716788b",
       "tools/shell_history/manifest.json": "b14514ef2f500d44cb8a9cbfe174ce880c050375e357a6a2f823121e1a82a102",
@@ -105,6 +107,7 @@
     "auth_log",
     "cron_dump",
     "journal_export",
+    "linux_persistence",
     "linux_triage",
     "shell_history",
     "utmp_parse"
