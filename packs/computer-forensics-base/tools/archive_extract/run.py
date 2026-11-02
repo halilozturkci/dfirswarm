@@ -70,7 +70,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 11}
+TOOL = {"name": "archive_extract", "version": 12}
 STARTED = time.monotonic()               # the run's clock starts with the tool: the archive hash and the 7z banner are on it too
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
@@ -1111,6 +1111,22 @@ def print_answer(answer, **dumps_kwargs):
     STATE["last_word"] = None
     _reconcile(answer)
     _guarded_write(lambda: print(json.dumps(answer, **dumps_kwargs)))
+
+
+def _unexpected_tool(kind, value, _tb):
+    """Last resort: an error nobody foresaw is an answer too. JSON with the class and, for a file-system error, its reason (a message can quote a
+    name from the evidence), and exit 1; what was written before it is not claimed."""
+    try:
+        reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
+        said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
+        print_answer({"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                      "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__})
+    except BaseException:       # noqa: BLE001 - nothing may stop the exit
+        pass
+    os._exit(1)
+
+
+sys.excepthook = _unexpected_tool
 
 
 def open_regular(path):

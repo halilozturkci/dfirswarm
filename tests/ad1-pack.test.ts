@@ -14,7 +14,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -1165,6 +1165,39 @@ test("ad1_extract on a full disk: JSON every time, no file left behind that a co
       const gone = [...stable.keys()].filter((q) => !q.endsWith(".json") && !made.has(q.replace(free.copy, copy)));
       if (cut.length || gone.length) bad.push(`${size}: complete, but ${[...cut.map(([p]) => p), ...gone].slice(0, 2).join(", ")} is cut or missing`);
     }
+  }
+  assert.deepEqual(bad, []);
+});
+
+test("ad1_extract on a hostile out_dir: JSON every time, nothing hidden left, never complete where nothing can be written", () => {
+  const rootUser = process.getuid?.() === 0;
+  const cwd = dir("ad1-hostile-out-");
+  mkdirSync(join(cwd, "inputs"));
+  writeFileSync(join(cwd, "inputs", "one.ad1"), ad1Image([{ name: "a.txt", content: B("content") }]));
+  mkdirSync(join(cwd, "locked")); chmodSync(join(cwd, "locked"), 0);
+  mkdirSync(join(cwd, "ro")); chmodSync(join(cwd, "ro"), 0o555);
+  writeFileSync(join(cwd, "afile"), "x");
+  symlinkSync("/nonexistent/x", join(cwd, "dang"));
+  symlinkSync("/nonexistent", join(cwd, "dlink"));
+  const variants: Array<[string, string, boolean]> = [
+    ["long255", "w/" + "a".repeat(255), false], ["long300", "w/" + "a".repeat(300), true], ["mode0-parent", "locked/o", true], ["ro555", "ro", true],
+    ["file-for-dir", "afile", true], ["dangling-link", "dang", true], ["dangling-parent", "dlink/o", true], ["parents-missing", "nope/deeper/o", false],
+  ];
+  const bad: string[] = [];
+  try {
+    for (const [name, out, mustFail] of variants) {
+      if (rootUser && (name === "mode0-parent" || name === "ro555")) continue;      // root is not stopped by a mode
+      const r = spawnSync("python3", [TOOL], { cwd, input: JSON.stringify({ image: "inputs/one.ad1", out_dir: out }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+      let doc: Record<string, any> | null = null;
+      try { doc = JSON.parse(r.stdout); } catch { doc = null; }
+      if (doc === null) { bad.push(`${name}: no JSON (exit ${r.status}, signal ${r.signal}) ${r.stderr.slice(-200)}`); continue; }
+      if (r.stderr.includes("Traceback")) bad.push(`${name}: traceback`);
+      if (mustFail && doc.status === "complete") bad.push(`${name}: complete although nothing can be written there`);
+    }
+    const hidden = readdirSync(cwd).filter((n) => n.startsWith(".") && n !== ".");
+    if (hidden.length) bad.push(`hidden files left: ${hidden.join(", ")}`);
+  } finally {
+    chmodSync(join(cwd, "locked"), 0o755); chmodSync(join(cwd, "ro"), 0o755);
   }
   assert.deepEqual(bad, []);
 });

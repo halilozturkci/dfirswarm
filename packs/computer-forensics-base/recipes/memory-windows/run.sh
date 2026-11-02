@@ -146,10 +146,47 @@ alive() { # alive <pid>: running, and not a zombie waiting to be reaped
   st="$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "/proc/$1/status" 2>/dev/null)"
   [[ "$st" != Z ]]
 }
+# The step runs under a small perl wrapper (one process, its own group): it sets the alarm, runs the program with its output on a pipe, and
+# copies the pipe to the file with every write checked. A full disk or a file-size limit that cuts the output makes the step exit 74 at that
+# moment, whether or not the program noticed, so no later look at the disk is needed. Exit codes are the program's, or 128 + its signal.
+STEP_PERL='use POSIX ();
+setpgrp(0, 0);
+my $secs = shift @ARGV;
+pipe(my $r, my $w) or exit 70;
+my $pid = fork();
+exit 70 unless defined $pid;
+if (!$pid) {
+  close $r;
+  open(STDOUT, ">&", $w) or POSIX::_exit(70);
+  close $w;
+  alarm $secs;
+  exec { $ARGV[0] } @ARGV;
+  print STDERR "$ARGV[0]: $!\n";
+  POSIX::_exit(127);
+}
+close $w;
+$SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub { kill "TERM", $pid; };
+my ($bad, $buf) = (0, "");
+while (1) {
+  my $n = sysread($r, $buf, 65536);
+  if (!defined $n) { next if $!{EINTR}; last; }
+  last if $n == 0;
+  next if $bad;
+  my $off = 0;
+  while ($off < $n) {
+    my $k = syswrite(STDOUT, $buf, $n - $off, $off);
+    if (!defined $k) { next if $!{EINTR}; $bad = "$!"; kill "TERM", $pid; last; }
+    $off += $k;
+  }
+}
+waitpid($pid, 0);
+my $st = $?;
+if ($bad) { print STDERR "the step output could not be written whole ($bad)\n"; exit 74; }
+exit(($st & 127) ? 128 + ($st & 127) : ($st >> 8));'
 bg() { # bg <seconds> <cmd...>: the command with a deadline; its redirections are the caller's
   local secs="$1" rc
   shift
-  perl -e 'alarm shift; exec @ARGV' "$secs" "$@" 3>&- &
+  perl -e "$STEP_PERL" "$secs" "$@" 3>&- &
   CHILD=$!
   wait "$CHILD"
   rc=$?
@@ -165,6 +202,7 @@ on_signal() { # on_signal <name> <number>
   for p in $pids; do
     i=0
     while (( i < 30 )) && alive "$p"; do sleep 0.1; i=$((i + 1)); done
+    kill -KILL -- "-$p" 2>/dev/null          # the step's own process group: the program is the wrapper's child
     if alive "$p"; then kill -KILL "$p" 2>/dev/null; fi
     wait "$p" 2>/dev/null
   done
@@ -214,6 +252,10 @@ run_step() { # run_step <limit> <outfile> <cmd...>
   local rc=0 began="$SECONDS"
   bg "$limit" "$@" > "$file" 2> "$file.stderr" || rc=$?
   [[ -s "$file.stderr" ]] || rm -f "$file.stderr"
+  if (( rc == 74 )); then
+    WRITE_FAILED=1
+    notes+=("${file#"$out/"} could not be written whole: the disk or a file-size limit refused a write while the step ran")
+  fi
   if [[ "$rc" -ne 0 ]]; then [[ -s "$file" ]] || rm -f "$file"; fi
   step_record "$file" "$rc" "$((SECONDS - began))" "$limit" "$@"
   if [[ "$rc" -eq 0 ]]; then STEP_R=ok; return 0; fi

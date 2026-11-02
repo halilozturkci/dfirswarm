@@ -268,6 +268,22 @@ def print_answer(answer, **dumps_kwargs):
     _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
 
 
+def _unexpected_tool(kind, value, _tb):
+    """Last resort: an error nobody foresaw is an answer too. JSON with the class and, for a file-system error, its reason (a message can quote a
+    name from the evidence), and exit 1; what was written before it is not claimed."""
+    try:
+        reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
+        said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
+        print_answer({"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                      "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__})
+    except BaseException:       # noqa: BLE001 - nothing may stop the exit
+        pass
+    os._exit(1)
+
+
+sys.excepthook = _unexpected_tool
+
+
 def open_regular(path):
     """open(path, "rb") for a caller's path that was checked as a regular file a moment ago: opened without waiting (O_NONBLOCK) and looked at with
     fstat on the descriptor, so a FIFO or a device put in its place is refused and never waited on (a FIFO would hold the tool for ever)."""
@@ -296,7 +312,7 @@ def connect_checked(db, uri):
 
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "sqlite_query", "version": 14}
+TOOL = {"name": "sqlite_query", "version": 15}
 DEFAULT_LIMIT = 100
 LIMIT_MAX = 10000
 INLINE_BYTES = 64 * 1024          # the inline page's JSON and its text form, each, as they are sent (ASCII-escaped, counted in bytes)

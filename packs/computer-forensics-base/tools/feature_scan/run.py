@@ -41,7 +41,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "feature_scan", "version": 11}
+TOOL = {"name": "feature_scan", "version": 12}
 STARTED = time.monotonic()
 DEFAULT_TIMEOUT = 900
 TIMEOUT_MAX = 1000                # the tool's own limit is 1200 seconds: the counting of what bulk_extractor wrote needs the rest
@@ -794,6 +794,22 @@ def print_answer(answer, **dumps_kwargs):
     _guarded_write(lambda: print(json.dumps(answer, **dumps_kwargs)))
 
 
+def _unexpected_tool(kind, value, _tb):
+    """Last resort: an error nobody foresaw is an answer too. JSON with the class and, for a file-system error, its reason (a message can quote a
+    name from the evidence), and exit 1; what was written before it is not claimed."""
+    try:
+        reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
+        said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
+        print_answer({"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                      "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__})
+    except BaseException:       # noqa: BLE001 - nothing may stop the exit
+        pass
+    os._exit(1)
+
+
+sys.excepthook = _unexpected_tool
+
+
 def _early_last_word(signum):
     """Until main() has its own: a stop before the arguments are read gives one document, `failed` and `interrupted`, and depends on nothing
     defined later."""
@@ -892,6 +908,7 @@ class SecretValues:
 
 
 def fail(message, **extra):
+    forget_temporaries()                      # the hidden files beside out_dir go on every way out
     print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra})
     raise SystemExit(1)
 
@@ -1221,6 +1238,16 @@ def main():
     tmp_out.close()
     tmp_err.close()
     TEMPS.extend([tmp_out.name, tmp_err.name])
+    # An out_dir that exists must be a directory this tool can write in; bulk_extractor would only be run to find that out after it had worked.
+    if os.path.lexists(out_dir):
+        if not os.path.isdir(out_dir):
+            fail("out_dir exists and is not a directory", out_dir=out_dir)
+        try:
+            probe_fd, probe_name = tempfile.mkstemp(dir=out_dir, prefix=".feature_scan-probe-")
+            os.close(probe_fd)
+            os.unlink(probe_name)
+        except OSError as exc:
+            fail("out_dir cannot be written (%s)" % (exc.strerror or exc), out_dir=out_dir)
 
     def last_word(signum):
         """A stop ends bulk_extractor and what it started (the block does that first); what it had written stays in out_dir, not counted, and
@@ -1258,8 +1285,12 @@ def main():
         forget_temporaries()
         fail("bulk_extractor wrote no output directory", exit_code=code, timed_out=timed_out, stderr=err.strip(), command=" ".join(argv))
     stdout_file, stderr_file = os.path.join(out_dir, "feature_scan.stdout"), os.path.join(out_dir, "feature_scan.stderr")
-    os.replace(tmp_out.name, stdout_file)
-    os.replace(tmp_err.name, stderr_file)
+    try:
+        os.replace(tmp_out.name, stdout_file)
+        os.replace(tmp_err.name, stderr_file)
+    except OSError as exc:
+        fail("what bulk_extractor said could not be moved into out_dir (%s); what it wrote there is not counted" % (exc.strerror or exc), out_dir=out_dir,
+             exit_code=code, timed_out=timed_out)
     del TEMPS[:]
     locked_failed = lock_down(out_dir, STARTED + LOCK_SECONDS)
 
@@ -1337,7 +1368,9 @@ def main():
         "path": path,
         "out_dir": out_dir,
         "status": status,
-        "status_basis": ("bulk_extractor exited 0 and what it wrote is listed (it does not say that every scanner reached every byte)" if status == "complete" else
+        "status_basis": (("bulk_extractor exited 0 and what it wrote is listed (it does not say that every scanner reached every byte). Checked about the disk: bulk_extractor's "
+                          "stderr names no full disk or quota, and a 64 KiB write beside its files worked when it ended. Not checked: that each file bulk_extractor wrote "
+                          "is whole, since it writes them itself and a disk that had room again by the end would not show a cut") if status == "complete" else
                          "bulk_extractor exited 0, but %s: its files may be cut short, and nothing here can tell which" % disk_note if exit_ok and disk_note else
                          "bulk_extractor exited 0, but the clock ran out while what it wrote was being counted: what was not counted is named (not_counted)" if exit_ok else
                          "bulk_extractor did not exit 0 or ran out of time, and what it had written is listed" if status == "partial" else

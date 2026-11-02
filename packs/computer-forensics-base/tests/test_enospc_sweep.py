@@ -66,7 +66,34 @@ def room_sizes(used, written):
     return [used + e for e in extra]
 
 
+BALLAST = 8 * 16384          # what the "freed" scenarios give back, one 16 KiB file after each step
+
+
 class EnospcSweep(tws.Scenarios):
+    FREED = {"disk_volumes_freed": BALLAST, "memory_windows_freed": BALLAST}
+
+    def with_ballast(self, d, argv, stdin, b, programs):
+        """Another job on a shared disk frees space just after a step ends: each stand-in program removes one ballast file when it finishes, so a
+        look at the disk at the end of the run finds room that was not there while the output was written."""
+        for i in range(8):
+            with open(os.path.join(d, "ballast-%d.bin" % i), "wb") as fh:
+                fh.write(b"\0" * 16384)
+        free = 'rm -f "$(ls %s/ballast-*.bin 2>/dev/null | head -1)"\n' % d
+        for name in programs:
+            path = os.path.join(b, name)
+            body = open(path).read()
+            with open(path, "w") as fh:
+                fh.write(body + free)
+        return argv, stdin, b
+
+    def scenario_disk_volumes_freed(self, d):
+        argv, stdin, b = self.scenario_disk_volumes(d)
+        return self.with_ballast(d, argv, stdin, b, ("fls", "mactime", "fsstat"))
+
+    def scenario_memory_windows_freed(self, d):
+        argv, stdin, b = self.scenario_memory_windows(d)
+        return self.with_ballast(d, argv, stdin, b, ("vol", "fsstat"))
+
     def scenario_tool_feature_scan(self, d):
         b = os.path.join(d, "bin")
         os.makedirs(b)
@@ -116,7 +143,8 @@ class EnospcSweep(tws.Scenarios):
 
     def sweep_full_disk(self, name):
         p, new1, copy1, used, written = self.run_in_full_disk(name, 64 * 1024 * 1024)
-        self.assertTrue(written, "%s wrote nothing on a roomy disk: %r %r" % (name, p.stdout[:200], p.stderr[-300:]))
+        written += self.FREED.get(name, 0)
+        self.assertTrue(written > 0, "%s wrote nothing on a roomy disk: %r %r" % (name, p.stdout[:200], p.stderr[-300:]))
         p2, new2, _c, _u, _w = self.run_in_full_disk(name, 64 * 1024 * 1024 + PAGE)
         stable = {k: v for k, v in new1.items() if new2.get(k) == v}
         known = set(new1) | set(new2)
@@ -171,7 +199,7 @@ def _add(name):
     setattr(EnospcSweep, test.__name__, test)
 
 
-for _n in ("disk_volumes", "memory_windows", "archive_members", "tool_catalog_search", "tool_ioc_scan", "tool_chunk_needles", "tool_sig_carve",
+for _n in ("disk_volumes", "memory_windows", "disk_volumes_freed", "memory_windows_freed", "archive_members", "tool_catalog_search", "tool_ioc_scan", "tool_chunk_needles", "tool_sig_carve",
            "tool_file_type", "tool_check_inputs", "tool_sqlite_query", "tool_sqlite_snapshot", "tool_archive_extract", "tool_file_carver",
            "tool_feature_scan"):
     _add(_n)

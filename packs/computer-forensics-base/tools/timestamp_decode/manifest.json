@@ -30,6 +30,6 @@
   "example": "{\"value\": \"133502964000000000\"}",
   "by": "maintainer",
   "at": "2026-09-22T14:00:00.000Z",
-  "version": 8,
-  "sha256": "f072637e38c45f120db850b12a1c7605028e1e95cc1d0ff0cbb00f21be0c9109"
+  "version": 9,
+  "sha256": "694ddf8c0d48f6548d95f243347d806ec0025be63da5537fcdf3d3d8e523fd3d"
 }

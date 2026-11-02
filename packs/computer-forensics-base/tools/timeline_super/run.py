@@ -50,7 +50,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "timeline_super", "version": 12}
+TOOL = {"name": "timeline_super", "version": 13}
 DEFAULT_TIMEOUT = 1800
 TIMEOUT_MAX = 3300                # the manifest's own limit is 3600: the rest is for the version calls and the counting
 TOOL_SECONDS = 3500               # the whole call, counting included, ends before the manifest's limit
@@ -784,6 +784,22 @@ def print_answer(answer, **dumps_kwargs):
     _guarded_write(lambda: print(json.dumps(answer, **dumps_kwargs)))
 
 
+def _unexpected_tool(kind, value, _tb):
+    """Last resort: an error nobody foresaw is an answer too. JSON with the class and, for a file-system error, its reason (a message can quote a
+    name from the evidence), and exit 1; what was written before it is not claimed."""
+    try:
+        reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
+        said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
+        print_answer({"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                      "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__})
+    except BaseException:       # noqa: BLE001 - nothing may stop the exit
+        pass
+    os._exit(1)
+
+
+sys.excepthook = _unexpected_tool
+
+
 def _early_last_word(signum):
     """Until main() has its own: a stop before the arguments are read gives one document, `failed` and `interrupted`, and depends on nothing
     defined later."""
@@ -1111,10 +1127,17 @@ def main():
     began = time.time()
     deadline = time.monotonic() + timeout            # one budget for every stage
     preexisting = []
-    if dest.exists():
-        if not dest.is_dir():
-            fail("out_dir is not a directory", out_dir=out_dir)
-        preexisting = sorted(os.listdir(dest))
+    try:
+        dest_exists = dest.exists()
+        dest_is_dir = dest.is_dir() if dest_exists else False
+        if dest_exists and dest_is_dir:
+            preexisting = sorted(os.listdir(dest))
+    except OSError as exc:       # a name too long, a parent that cannot be searched, a directory that cannot be listed
+        fail("out_dir cannot be looked at: %s" % (exc.strerror or exc), out_dir=out_dir,
+             hint="in a job only $OUT is writable; elsewhere only work/<your id>/ is")
+    if os.path.lexists(dest) and not dest_is_dir:
+        fail("out_dir is not a directory", out_dir=out_dir)
+    if dest_exists:
         if preexisting and not resume:
             fail("out_dir already holds files, and a file left by an earlier run would be taken for this one's: "
                  "give a new directory, or resume: true to write beside them (only files written after this run began count)",

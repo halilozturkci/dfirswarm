@@ -20,7 +20,7 @@ from support import PACK_DIR, Case, tool_path
 F_SETPIPE_SZ = 1031
 PRINTER_OWNERS = {"print_answer", "_guarded_write", "_unstick"}
 # last words and the hooks that end the process by themselves: written with the stop signals already ignored, and followed by _exit
-LAST_WORDS = {"_stopped", "last_word", "_early_last_word", "interrupted_answer", "_unexpected", "unexpected", "_cannot_write", "_on_signal", "_unexpected_recipe"}
+LAST_WORDS = {"_stopped", "last_word", "_early_last_word", "interrupted_answer", "_unexpected", "unexpected", "_cannot_write", "_on_signal", "_unexpected_recipe", "_unexpected_tool"}
 
 
 class StalledReader(Case):

@@ -134,7 +134,7 @@ or `tools/`.
 | `evtx_filter` | python3 | `sd1d101` | 1 | Parse a local EVTX; return EventID/TimeCreated/EventData for matching IDs or a time prefix |
 | `evtx_query` | python3 | `sbe1801` | 10 | Query an EVTX event log and return filtered events with timestamp, event id, channel, computer, provider, Eve… |
 | `extract_stream` | python3 | `sfcc303` | 8 | Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream i… |
-| `file_carver` | python3 | `s183904` | 9 | Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own struc… |
+| `file_carver` | python3 | `s183904` | 10 | Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own struc… |
 | `fls_root` | python3 | `s9d8306` | 2 | Run fls on an EXT4 volume (default offset 503808, image inputs/Webserver.E01). Reads inode/recursive/image/of… |
 | `ftk_csv` | python3 | `s9d8303` | 1 | Query the UTF-16 FTK Imager CSV for path/date/deleted filters; return matching rows as JSON. |
 | `fve_metadata` | python3 | `s864a05` | 2 | Parse a BitLocker -FVE-FS- volume (raw image or VHD partition) and return metadata: GUID, encryption method, … |
@@ -143,7 +143,7 @@ or `tools/`.
 | `hdfs_node_icat` | python3 | `s9a5f03` | 2 | Extract an inode from a cluster node's image with icat and hash what it wrote. node picks one of the HDFS cas… |
 | `icat_extract` | python3 | `s864a08` | 15 | Extract one Sleuth Kit address (an inode, or inode-type-id for an NTFS stream such as 168-128-4) from a disk … |
 | `icat_root` | python3 | `s9d8306` | 5 | Extract an inode from an EXT4 volume with icat. The Webserver case's image and its 503808-sector offset are t… |
-| `ioc_scan` | python3 | `s183900` | 14 | Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its sta… |
+| `ioc_scan` | python3 | `s183900` | 15 | Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its sta… |
 | `ledger_timeline` | python3 | `se5fdcd` | 3 | Write a run's dated ledger entries as one timeline in time order (Markdown table, CSV or JSON Lines). Leaves … |
 | `lnk_parse` | python3 | `s183902` | 7 | Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layo… |
 | `mam_pf_parse` | python3 | `s2f6600` | 1 | Decompress a MAM-wrapped Windows prefetch file and return executable name, version, run count, and non-zero l… |
@@ -156,9 +156,9 @@ or `tools/`.
 | `reg_hive_query` | python3 | `sbe1805` | 1 | Query a Windows registry hive file (regipy) and return a key's values and subkey names as JSON. |
 | `regkeys` | python3 | `sf4b205` | 4 | Dump a registry key's values and subkeys from a hive with regipy. Text values are decoded, REG_BINARY comes b… |
 | `regkv` | python3 | `s9f2005` | 11 | Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole:… |
-| `sig_carve` | python3 | `s183906` | 12 | A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, an… |
+| `sig_carve` | python3 | `s183906` | 13 | A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, an… |
 | `sigscan_e01` | python3 | `s5d1001` | 3 | Scan an E01/raw image for a byte signature via TSK img_cat (logical media, not the EWF wrapper). Returns offs… |
-| `sqlite_query` | python3 | `s881002` | 14 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
+| `sqlite_query` | python3 | `s881002` | 15 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
 | `usn_journal` | python3 | `maintainer` | 6 | Parse an NTFS change journal ($UsnJrnl:$J) into records from v2, v3 and v4 entries: name, USN, timestamp (ISO… |
 | `utf16_urls` | python3 | `s5d1003` | 5 | String candidates for URLs, file: and Visited: entries and 192.168.x.x addresses in a file; not a browser par… |
 | `volrun` | python3 | `s69d306` | 2 | Run a Volatility 3 plugin against a memory image with typed arguments. Returns stdout/stderr. |
