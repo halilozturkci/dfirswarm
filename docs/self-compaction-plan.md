@@ -280,7 +280,8 @@ fits, and never inside Pi's retained `keepRecentTokens`, where a compaction
 would have nothing to cut. An explicit value that does not fit is refused at
 kickoff; a default that does not fit a small window is clamped and noted on
 the trace (`compact_config`). A line the operator leaves unset is a default
-fitted to the lines they set: it rises to a higher operator line below it,
+fitted to the lines they set: it rises to a higher operator line below it (the compact line to one
+token above it, so the lower stage still fires first),
 drops below a lower one above it in the 40 : 50 : 60 proportion, and is
 noted the same way; only two operator lines out of order are refused.
 

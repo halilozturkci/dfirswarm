@@ -1,0 +1,53 @@
+{
+  "name": "package_verify",
+  "requires_optional": [
+    "debsums",
+    "rpm"
+  ],
+  "description": "Verify installed package files against the package database of an extracted Linux root, with the installed `debsums` (Debian family: `debsums -r <root> -a [packages]`, expected md5 sums from var/lib/dpkg/info/*.md5sums) or `rpm -V` (RPM family: `rpm -V --root <root> --dbpath <dbpath> --noscripts --nodeps --nodigest --nosignature [-a | packages]`), run in this tool's own process group with no stdin, a fixed environment, a deadline and a 256 MiB cap on its output (a deadline, an output past the cap or a SIGTERM, SIGINT or SIGHUP ends it and what it started). The answer gives the exact scope (the family, the packages asked for or all, the database: for Debian the packages in dpkg's status, the md5sums files and the packages with none, which cannot be checked; for RPM the database path and its backend named from the files and magic numbers: sqlite, ndb or bdb), the program, its path, version and exit code, every difference as one row (pages.differences: the path as an escape where it holds control characters or bytes that are not UTF-8, the status, for rpm the nine flag characters decoded into size, mode, digest, device, link, user, group, mtime and capabilities, the attribute such as config, the line of the output and where the expected value comes from), counts by status and flag, the first lines of the program's standard error with their kinds (missing file, no md5sums, warning, error), the lines it could not parse, and the database backends it names as possibly unsupported by the installed program (an open failure is reported, never turned into a clean result). The expected values are the acquired database's, so the answer never claims distribution authenticity: a file and its recorded hash can both have been changed together (an independent baseline is what authenticity needs). NOTHING THE EVIDENCE DEFINES IS RUN BY THIS TOOL, and what it cannot promise it does not: debsums runs no maintainer script; rpm -V runs a %verifyscript unless told not to, and although this tool passes --noscripts and --nodeps, it has NOT confirmed on a trial database that the installed rpm honours them for %verifyscript (no rpm was available to this repository's tests), so `safeguards.rpm` says no claim that nothing runs is made for rpm; read it before relying on it. This machine's passwd and group are not consulted by the tool. If the program is not installed, the status is failed and nothing was checked; a package with no md5sums file, a file the database lists that is missing, a line the tool cannot parse, the program ending at max_seconds (default 120, at most 240, under the manifest's 300) or the paging cap each make the status partial. A file the database does not list is not checked at all. `packages` is a list of at most 2000 plain package names (at most 100,000 bytes in all). `config_files: false` (Debian only) leaves out configuration files. Every answer carries `status` (complete, partial or failed) and `status_basis`. A SIGTERM, SIGINT or SIGHUP ends the tool with one JSON last word (status failed, exit 128 plus the signal) naming the paging file it had written, and an unexpected exception ends it with one JSON document and exit 1. Any standard error line that is not a missing-file or a no-md5sums line (an error, a warning or a line it does not understand), and a standard error cut at its cap, make the status partial. It does not verify against a distribution's own package or a trusted reference database, run a scriptlet, repair or reinstall anything, or read a file's content itself.",
+  "params": {
+    "root": {
+      "type": "string",
+      "description": "The directory of an extracted Linux root that holds the package database (var/lib/dpkg or var/lib/rpm in it); a link, a file or a disk image is refused"
+    },
+    "family": {
+      "type": "string",
+      "description": "auto (default: from the database found), debian or rpm"
+    },
+    "packages": {
+      "type": "array",
+      "description": "Check only these packages (up to 2000 plain names); default all the database lists"
+    },
+    "dbpath": {
+      "type": "string",
+      "description": "RPM only: the rpm database directory inside the root (default: var/lib/rpm, usr/lib/sysimage/rpm or var/lib/rpmdb, whichever is there)"
+    },
+    "config_files": {
+      "type": "boolean",
+      "description": "Debian only: also check configuration files (default true); rpm -V always includes them"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Differences shown inline (default 100); every difference is in the paging file named in pages.differences when there are more"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The time to spend (default 120, at most 240): the program is ended at it and the answer is partial"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"root\": \"work/extracted\", \"family\": \"debian\", \"packages\": [\"openssh-server\"]}",
+  "by": "maintainer",
+  "at": "2026-11-02T12:00:00.000Z",
+  "version": 1,
+  "use": {
+    "names": [
+      "*.md5sums",
+      "rpmdb.sqlite",
+      "Packages.db"
+    ]
+  },
+  "sha256": "ddc8f8a160a2ecb7b2ffe0b902fdf370d49d85ec4540e69dfa9f48cf161bb6da"
+}

@@ -235,7 +235,11 @@ the timeline rests on, and `inputs/` is unchanged.
 - `awk '/^## 1\./{f=1;next} /^## [0-9]/{f=0} f&&tolower($0)~/symbol/{x=1} END{exit !x}' work/report.md`
 - `awk '/^## 1\./{f=1;next} /^## [0-9]/{f=0} f&&(/Linux version/||tolower($0)~/no kernel banner/){x=1} END{exit !x}' work/report.md`
 - `test "$(find work/extracted -name SHA256SUMS -exec cat {} + 2>/dev/null | grep -cE '^[0-9a-fA-F]{64} |^SHA256 ?\(.*\) ?= ?[0-9a-fA-F]{64}')" -ge 1 || grep -qiE 'nothing (was )?dumped' work/report.md`
-- `find work/extracted -name SHA256SUMS -exec sh -c 'c="sha256sum -c"; command -v sha256sum >/dev/null || c="shasum -a 256 -c"; for m; do (cd "${m%/*}" && $c SHA256SUMS) >/dev/null 2>&1 || $c "$m" >/dev/null 2>&1 || exit 1; done' sh {} +`
+- `find work/extracted -name SHA256SUMS -exec sh -c 'c="sha256sum -c"; command -v sha256sum >/dev/null || c="shasum -a 256 -c"; for m; do s=$(find -L "${m%/*}" -type f -size +524288 2>/dev/null | head -1); [ -n "$s" ] && continue; s=$(du -skL "${m%/*}" 2>/dev/null | cut -f1); [ "${s:-0}" -gt 1048576 ] && continue; (cd "${m%/*}" && $c SHA256SUMS) >/dev/null 2>&1 || $c "$m" >/dev/null 2>&1 || exit 1; done' sh {} +`
+  (a manifest whose directory holds a file over 256 MiB, or more than 1 GiB
+  in all, links followed, is not re-hashed here, so the check stays inside
+  its time limit; hash that dump when you extract it, and say in the report
+  that the check did not.)
 - `test -f work/timeline.md`
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 10`
 - `test -f work/indicators.md`
