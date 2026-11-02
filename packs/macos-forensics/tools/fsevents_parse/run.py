@@ -1916,7 +1916,7 @@ OWN_NAMES.update((
     "inline_byte_limit", "kept_earlier_larger_result", "coverage", "problems", "problems_total", "problem_occurrences", "problems_folded", "occurrences", "folded", "first_offset", "last_offset", "listed_per_kind_and_file", "listed_in_all", "files", "problems_pages", "filters", "limits", "directory", "note",
     "error", "type", "reason", "out_file", "compressed_bytes", "expanded_bytes", "members", "pages", "bytes_skipped", "padding_bytes", "bytes_not_decoded",
     "complete", "truncated", "failed", "parsed", "unsupported", "invalid_length", "decoded", "empty_path", "incomplete", "before_filter", "kept",
-    "contains", "flags", "flags_unknown", "max_expanded_bytes", "max_page_bytes", "max_inline_bytes", "max_seconds", "max_seconds_requested", "links_not_followed", "names_not_examined", "files_not_listed",
+    "contains", "flags", "flags_unknown", "flags_known", "max_expanded_bytes", "max_page_bytes", "max_inline_bytes", "max_seconds", "max_seconds_requested", "links_not_followed", "names_not_examined", "files_not_listed",
     "not_regular_files", "file", "state", "gzip", "problems", "magic_seen", "error", "kind", "why", "offset", "bytes", "compressed_offset", "member", "cap",
     "declared", "available", "magic", "first_bytes_hex", "uuid", "raw_hex", "bytes", "contains_blind_records", "contains_timeouts", "time_limit", "matched",
     "returned", "all_results", "all_results_format", "event_id", "flags_raw", "node_id", "version", "page_offset", "record_offset", "flags_undecoded",
@@ -2047,12 +2047,7 @@ def inflate(fh, scan, cap):
         if index % MEMBER_CLOCK_EVERY == 0:
             check_time()                  # members that inflate to nothing never reach the page loop's clock
         if pending[:2] != b"\x1f\x8b":
-            rest = len(pending)
-            while True:
-                more = fh.read(CHUNK)
-                if not more:
-                    break
-                rest += len(more)
+            rest = max(scan.compressed_bytes - offset, len(pending))      # counted from the size fstat gave, not read: a tail of tens of GB took minutes
             scan.not_decoded_bytes += rest
             scan.problem("bytes after the last gzip member", "%d byte(s) at compressed offset %d are not a gzip member" % (rest, offset),
                          compressed_offset=offset, bytes=rest, first_bytes_hex=guard_hex(pending[:8].hex(), "first_bytes_hex"))
@@ -2064,6 +2059,7 @@ def inflate(fh, scan, cap):
         status, unused, why = None, b"", None
         try:
             while True:
+                check_time()                  # one look per chunk of input, also inside a member that inflates to nothing
                 out = engine.decompress(buf, CHUNK)
                 fed += len(buf) - len(engine.unconsumed_tail) - (len(engine.unused_data) if engine.eof else 0)
                 if out:
@@ -2112,12 +2108,7 @@ def inflate(fh, scan, cap):
             scan.members["failed"] += 1
             scan.problem("gzip member failed", "member %d, starting at compressed offset %d, does not decode (%s); "
                          "the rest of the file is not read" % (index, offset, why), member=index, compressed_offset=offset)
-        remaining = len(engine.unconsumed_tail)
-        while True:
-            more = fh.read(CHUNK)
-            if not more:
-                break
-            remaining += len(more)
+        remaining = len(engine.unconsumed_tail) + max(scan.compressed_bytes - fh.tell(), 0)      # the rest of the file is counted, not read
         scan.not_decoded_bytes += remaining
         return
 
@@ -2522,6 +2513,10 @@ def run_scan(args):
             fail("contains is not a valid regex", reason=type(exc).__name__)
     wanted = {str(f) for f in (args.get("flags") or [])}
     unknown_flags = sorted(wanted - FLAG_NAMES)
+    if unknown_flags:
+        # (a name that matches nothing gave a complete answer with no record: it is refused, like a bad `contains`, before anything is read)
+        fail("flags names a flag this tool does not know, so the filter would match no record: nothing is read",
+             flags_unknown=unknown_flags, flags_known=sorted(FLAG_NAMES))
 
     notes = {"links_not_followed": 0, "not_regular_files": 0}
     identity = None
@@ -2803,7 +2798,7 @@ def run_scan(args):
                                         "first and last offset (kind, folded: true); coverage and per_file hold the exact counts"}}
            if problem_book["occurrences"] > problems_page["matched"] else {}),
         "problems_pages": problems_page,
-        "filters": {"contains": bool(contains), "flags": sorted(wanted), **({"flags_unknown": unknown_flags} if unknown_flags else {}),
+        "filters": {"contains": bool(contains), "flags": sorted(wanted),
                     **({"contains_blind_records": totals["contains_blind"], "contains_timeouts": totals["contains_timeouts"]} if pattern is not None else {})},
         "limits": {"max_expanded_bytes": max_expanded, "max_page_bytes": max_page, "max_inline_bytes": inline_bytes, "max_seconds": max_seconds,
                    **({"max_seconds_requested": requested_seconds} if requested_seconds != max_seconds else {}),
