@@ -1114,9 +1114,12 @@ test("ad1_extract under a file-size limit: JSON every time, a manifest or covera
 });
 
 test("ad1_extract on a full disk: JSON every time, no file left behind that a complete run does not leave, and complete means every file whole", (t) => {
-  const probe = spawnSync("unshare", ["-rm", "bash", "-c", 'mount -t tmpfs -o size=64k tmpfs "$1" && echo ok', "x", mkdtempSync(join(tmpdir(), "ad1-enospc-probe-"))], { encoding: "utf8" });
+  const scratched: string[] = [];
+  const scratch = (p: string) => { const d = mkdtempSync(p); scratched.push(d); return d; };
+  t.after(() => { for (const d of scratched) rmSync(d, { recursive: true, force: true }); });
+  const probe = spawnSync("unshare", ["-rm", "bash", "-c", 'mount -t tmpfs -o size=64k tmpfs "$1" && echo ok', "x", scratch(join(tmpdir(), "ad1-enospc-probe-"))], { encoding: "utf8" });
   if (probe.stdout?.trim() !== "ok") { t.skip(`unshare -rm with a tmpfs mount is not allowed here: ${probe.stderr}`); return; }
-  const wrapper = join(mkdtempSync(join(tmpdir(), "ad1-enospc-")), "wrap.sh");
+  const wrapper = join(scratch(join(tmpdir(), "ad1-enospc-")), "wrap.sh");
   writeFileSync(wrapper, [
     "set -u", 'SRC=$1; SIZE=$2; REPORT=$3; COPY=$4; shift 4', "STASH=$(mktemp -d /tmp/enospc-stash.XXXXXX) || exit 96",
     'cp -a "$SRC"/. "$STASH"/ || exit 96', 'mount -t tmpfs -o size="$SIZE" tmpfs "$SRC" || exit 97', 'cp -a "$STASH"/. "$SRC"/ || exit 98', 'rm -rf "$STASH"',
@@ -1128,7 +1131,7 @@ test("ad1_extract on a full disk: JSON every time, no file left behind that a co
     const cwd = dir("ad1-enospc-");
     mkdirSync(join(cwd, "inputs"));
     writeFileSync(join(cwd, "inputs", "many.ad1"), ad1Image(Array.from({ length: 300 }, (_, i) => ({ name: `file-with-a-longer-name-${i}.txt`, content: B(`content ${i}`) }))));
-    const report = join(mkdtempSync(join(tmpdir(), "ad1-enospc-rep-")), `report-${runNo}`), copy = mkdtempSync(join(tmpdir(), "ad1-enospc-copy-"));
+    const report = join(scratch(join(tmpdir(), "ad1-enospc-rep-")), `report-${runNo}`), copy = scratch(join(tmpdir(), "ad1-enospc-copy-"));
     const r = spawnSync("unshare", ["-rm", "bash", wrapper, cwd, String(size), report, copy, "python3", TOOL], {
       input: JSON.stringify({ image: "inputs/many.ad1", out_dir: "work/out" }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" },
     });
