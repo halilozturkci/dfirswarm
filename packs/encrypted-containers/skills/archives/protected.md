@@ -23,12 +23,12 @@ damage, unsupported features, and nested containers left unopened.
 - RAR: identified; protection and names are not determined.
 - PDF and Office (OLE): a byte search for markers, reported as `heuristic` with
   offsets. This pack has no structural document reader, so protection stays
-  undetermined here; `doc_structure` in the reverse-engineering pack reads the PDF
-  trailer's encryption dictionary and the Office encryption structures, and this pack
-  does not depend on it: look in the run's tool inventory. "No marker" is not "not encrypted".
+  undetermined here; `doc_structure` (reverse-engineering pack, no dependency: look in
+  the run's tool inventory) reads the PDF trailer's encryption dictionary and the Office
+  encryption structures. Give its result file as `structure` and it is shown beside the
+  search (`structure_reading`). "No marker" is not "not encrypted".
 
-Check any consequential finding with a reader that supports the format and the
-version. An unknown and a false differ.
+Check a consequential finding with a second reader. An unknown and a false differ.
 
 Only if you read a ZIP, 7-Zip, RAR, Office or PDF structure for its protection or its times: `archives/formats`.
 

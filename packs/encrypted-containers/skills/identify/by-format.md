@@ -3,7 +3,7 @@ id: identify/by-format
 title: Encryption signs by format, and their limits
 when: You name BitLocker, LUKS, Apple, VeraCrypt, archive, Office or PDF protection from a signature.
 needs: []
-tools: [crypto_id, tcrypt_header]
+tools: [crypto_id, crypto_selftest, tcrypt_header]
 requires_host: [cryptsetup]
 ---
 
@@ -29,6 +29,9 @@ Use only if you name a particular format's protection from what the first pass s
   password and permission restrictions are different things, and a file that opens
   with an empty password may still be encrypted.
 - Encrypted phone backups belong to the mobile pack, when it is loaded.
+- A reader that fails on your object may be absent or broken. `crypto_selftest` runs
+  each installed reader on a synthetic sample and says parsed, not parsed or
+  unavailable; that is about the sample, not about your volume.
 
 **Does not show.** That an APFS signature means every volume is encrypted; that high entropy and no signature identify VeraCrypt or TrueCrypt; that a supported archive container is encrypted; that an `MSWIN4.1` OEM string alone makes a volume BitLocker To Go.
 

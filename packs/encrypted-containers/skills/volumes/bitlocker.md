@@ -3,7 +3,7 @@ id: volumes/bitlocker
 title: BitLocker protectors and authorised examination
 when: A Windows volume may use BitLocker.
 needs: []
-tools: [crypto_id]
+tools: [crypto_id, crypto_metadata]
 requires_host: [bdeinfo]
 ---
 
@@ -20,7 +20,9 @@ master key (VMK) protects the FVEK, and each protector is a route to the VMK.
 it does not read protectors. `bdeinfo` records the protectors and metadata it can
 interpret in the build you have. Its list is what that build parsed for this
 metadata version, not proof that no other protector exists: say which version read
-it.
+it. `crypto_metadata` runs it for you at the volume's byte offset and lists the
+protector types, never an identifier or a recovery value; with `bdeinfo` missing it
+answers `unavailable`, which is not an empty list.
 
 Tell the kinds apart: recovery password, external or startup key, password,
 TPM-based protectors, and a clear key where one is observed. A directory service
