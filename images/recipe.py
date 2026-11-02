@@ -316,6 +316,20 @@ def empty() -> dict:
     return {k: ({} if k in ("apt", "pip", "apt_release") else []) for k in KINDS}
 
 
+def add_data(spec: dict, packs, name: str, b: dict, install: dict) -> None:
+    """Data the program reads (symbol tables, rules, definitions): its own entry
+    in the spec, whatever installs the program, named for the program unless the
+    pack names it. One entry, a list of them, or a pack's pinned list file
+    expanded entry by entry (data_entries). Required whatever its program is:
+    the pack pinned it on purpose (build --allow-missing-data goes on without
+    it). Not for redistribution when either it or its program says so."""
+    for item in data_entries(pack_dir(packs, name), install.get("data")):
+        spec["data"].append({"program": b["name"], "pack": name,
+                             "redistributable": b.get("redistributable", True) is not False
+                             and item.get("redistributable", True) is not False,
+                             **{"name": f"{b['name']}-data", **item}, "required": True})
+
+
 def read_pack(packs, name: str) -> dict:
     spec = empty()
     host = pack_dir(packs, name) / "requires" / "host.json"
@@ -328,6 +342,10 @@ def read_pack(packs, name: str) -> dict:
             # source host): no Linux image holds it, and none lacks it.
             if b.get("not_in_image"):
                 spec["not_applicable"].append({"name": b["name"], "pack": name, "why": b["not_in_image"]})
+                # The program is in no image, but what a pack pins for a tool to
+                # read (definitions, rules) is still installed: the data belongs to
+                # the pack, not to the program's being run here.
+                add_data(spec, packs, name, b, install)
                 continue
             spec["binaries"].append({"name": b["name"], "pack": name, "required": required,
                                      "licence": b.get("licence"),
@@ -369,18 +387,7 @@ def read_pack(packs, name: str) -> dict:
                         spec["pip"][p] = spec["pip"].get(p, False) or required
             else:
                 spec["manual"].append({"name": b["name"], "pack": name, "how": line or "no install line"})
-            # Data the program reads (symbol tables, rules): its own entry in the
-            # spec, whatever installs the program, named for the program unless
-            # the pack names it. One entry, a list of them, or a pack's pinned
-            # list file expanded entry by entry (data_entries).
-            for item in data_entries(pack_dir(packs, name), install.get("data")):
-                # Required whatever its program is: the pack pinned it on
-                # purpose (build --allow-missing-data goes on without it). Not
-                # for redistribution when either it or its program says so.
-                spec["data"].append({"program": b["name"], "pack": name,
-                                     "redistributable": b.get("redistributable", True) is not False
-                                     and item.get("redistributable", True) is not False,
-                                     **{"name": f"{b['name']}-data", **item}, "required": True})
+            add_data(spec, packs, name, b, install)
     reqs = pack_dir(packs, name) / "requires" / "python.txt"
     # requires/python.lock beside python.txt: the pack's Python set installed with
     # hash checking, in place of the lines of python.txt (which stay the notes).
