@@ -3,7 +3,7 @@ id: patterns/yara
 title: YARA over an image or a dumped region
 when: You have case rules or a precise byte pattern to test against an image or a dumped process region.
 needs: []
-tools: []
+tools: [vol_readiness]
 requires_host: [yara, vol]
 ---
 
@@ -31,10 +31,11 @@ ownership. To scan the virtual regions of processes, with matching symbols:
 
 In Volatility 3 2.28.2 (as of October 2026) both plugins and `--yara-file` exist, and
 they need a YARA Python binding (`yara-python` 3.8 or newer, or `yara_x`) in the
-same Python environment as `vol`. The `yara` executable does not provide it, and no
-requirement of this pack installs one: check that the plugin is available in the job
-image you have and what its import error says. If it is not, ask the operator for an
-image correction, or use the standalone scanner and conclude from file offsets only.
+same Python environment as `vol`. The `yara` executable does not provide it, and this
+pack declares `yara-python` in `requires/python.txt`. Check that the plugin is available in
+the job image you have and what its import error says (`vol_readiness`, view `yara`, reports
+the import). If it is not, ask the operator for an image correction, or use the standalone
+scanner and conclude from file offsets only.
 Verify the options of the plugin you run (`vol windows.vadyarascan.VadYaraScan
 --help`), since they change between versions.
 

@@ -63,7 +63,7 @@ test("every carrier of the stop block holds the text of its lineage, byte for by
   assert.ok(files.length >= 14, `${files.length} carriers`);
   for (const file of files) assert.equal(sha(cut(await readFile(file, "utf8"), "STOP")), PINS[lineage(file)], `${file} (${lineage(file)})`);
   const memory = (await carriers("# BEGIN SHARED PAGE")).filter((f) => f.includes("/memory-forensics/"));
-  assert.equal(memory.length, 3);
+  assert.equal(memory.length, 8, "mem_carve, mem_profile, mem_scan and the five tools added since (vol_readiness, mem_registry, carve_handoff, vol_views, isf_intake)");
   for (const file of memory) assert.equal(sha(cut(await readFile(file, "utf8"), "PAGE")), PINS.page, file);
 });
 

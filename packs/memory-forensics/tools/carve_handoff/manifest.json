@@ -1,0 +1,61 @@
+{
+  "name": "carve_handoff",
+  "description": "Make ONE hit of mem_carve ready for the parser that reads it, without parsing the structure. Input: the image (`path`), the hit's `kind` (one of mem_carve's: registry hive, event log chunk, event log file, compressed prefetch record, prefetch record, PE header, SQLite database, MFT record, NTFS index block, zip or office document, PDF, binary property list) and its `signature_offset`. The tool checks that the signature is there, then gives: the structure's start (`object_offset`) - for a plain Prefetch record four bytes before SCCA, and only when those four bytes are a known version (17, 23, 26, 30, 31), otherwise null with validation unknown - and, if the caller gave `object_offset`, whether it agrees (never taken from the caller); the cut by mem_carve's rule (the kind's fixed size, or the declared length up to the kind's cap: declared_bytes, requested_bytes, available_bytes, cut_complete) - the constants and checks are copied from mem_carve and a test holds the two equal on the same image; `validation` (header plausible, header implausible, truncated - the file itself ends first - or unknown) with its detail; and structure checks a slice can fail: for a registry hive the base-block checksum, the two sequence numbers (unequal means the hive was written to while it was copied) and the chain of its bins; for an event log file each declared chunk must start with ElfChnk where the header puts it; for an event log chunk the header CRC-32. A break in a chain is reported as fragmentation: the structure's pages stop being adjacent in the image and the cut runs into unrelated bytes. Every other family answers 'not checkable' for fragmentation, which is not 'intact'. THE SLICE: its sha256 is reported only for a family that cannot be a credential store; a registry hive, a SQLite database and a binary property list can be one (SAM, SECURITY, a browser database, a keychain), so their slice is never hashed - the digest of a secret is itself a secret-shaped output. Slice bytes are written only with `write_values` (default false) in a job run as secret output, to $OUT/carve_handoff/<offset>-<kind>.bin (directory mode 0700, file mode 0600, created exclusively under a hidden name and placed without replacing an earlier file: an identical second call is named that file again, a different one takes the next free name); the answer names the file and never prints content. This manifest declares secret_output for write_values, so the harness seals such a job as sensitive, and the tool checks SECRET_OUTPUT=1 and refuses as JSON, before it opens the image, when write_values is set outside a job or in a job that is not secret output. The answer names the windows-forensics tools that read the family (regkv, evtx_carve, mam_scan, prefetch_mam) as names only: this tool calls none and has no dependency on that pack; a result of one of them passed as `parser` and `parser_result` (a file under the run directory, a declared job input) is referenced by path and size, and the answer says it was not read. The anomalies of the checks are paged: 20 in the answer, all of them in a file under tool-output that `structure.anomalies.all_results` names. THE CLOCK: `max_seconds` (default 120, at most 270, inside timeout_seconds 300) is looked at before every 1 MiB block of the hash and the copy, and before every 256th bin or 64th chunk of a chain walk; `examine_bytes` (default 64 MiB, at most 1 GiB) bounds a chain walk; a walk, hash or copy that the clock or examine_bytes ends is said (status partial) and gives no digest. The image is opened without waiting and looked at with fstat first: a FIFO, a device or a directory is refused. SIGTERM, SIGINT and SIGHUP end the tool with one JSON answer (status failed, interrupted true, exit 128 plus the signal); a slice file that was being written is closed and named with a name ending in .partial, never left under a hidden one; a signal that arrives while a file is placed or the answer written is held until that is done. A hit is a candidate: validation is the header's own fields, not a parse, and the tool does not read the downstream parser's result.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The memory image (or page file) the hit was found in"
+    },
+    "kind": {
+      "type": "string",
+      "description": "The hit's kind, as mem_carve names it (for example \"registry hive\", \"prefetch record\", \"event log file\", \"SQLite database\")"
+    },
+    "signature_offset": {
+      "type": "integer",
+      "description": "The offset of the signature in the file, as mem_carve gives it"
+    },
+    "object_offset": {
+      "type": "integer",
+      "description": "The structure's start as mem_carve gave it (optional): compared with the one this tool establishes, never taken"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the slice (memory content) to a file in the job. Only in a job run as secret output. Default false."
+    },
+    "parser": {
+      "type": "string",
+      "enum": [
+        "regkv",
+        "evtx_carve",
+        "mam_scan",
+        "prefetch_mam"
+      ],
+      "description": "The downstream tool whose result is passed in parser_result"
+    },
+    "parser_result": {
+      "type": "string",
+      "description": "A file under the run directory holding that tool's result (a declared job input); referenced by path and size, not read"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The clock of the whole call, 5 to 270 (default 120)"
+    },
+    "examine_bytes": {
+      "type": "integer",
+      "description": "How many bytes of the structure a chain walk may examine, 1 MiB to 1 GiB (default 64 MiB)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"path\": \"inputs/memory.raw\", \"kind\": \"prefetch record\", \"signature_offset\": 12292}",
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  },
+  "by": "maintainer",
+  "at": "2026-11-01T12:00:00.000Z",
+  "version": 1,
+  "sha256": "0d8beab7e3da46df0c2979ab06d43fde5b293ac7d12a4700936a22ad29180eaf"
+}

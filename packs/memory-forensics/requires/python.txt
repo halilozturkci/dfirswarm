@@ -1,1 +1,6 @@
-# The memory pack's tools use the standard library only.
+# The memory pack's tools use the standard library only. The one requirement below is not imported by a tool: it is the YARA binding that
+# Volatility's own YARA plugins (windows.vadyarascan, linux.vmayarascan) import, installed into the Python environment that runs `vol`.
+# It is pinned to an exact release with `==`, as volatility3 itself is (requires/host.json); there is no hash until the image build can
+# lock one. Whether it imports is what the vol_readiness tool's yara view reports. Wheels for arm64 and for the image's Python 3.11 were
+# not checked when this was written: the owner's image rebuild applies it, and a build that cannot install it fails there.
+yara-python==4.5.1     # Apache-2.0 (the project's LICENSE file; not read from the package's metadata, which was not fetched when this was written).

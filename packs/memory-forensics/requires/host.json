@@ -118,7 +118,7 @@
       "name": "yara",
       "package": "yara",
       "optional": true,
-      "why": "Scan a whole memory image or a dumped process region with examiner-supplied rules, preserving rule names, matching strings and byte offsets (match bytes can be secret: run the job with secret_output: true). This is the standalone scanner: Volatility's YARA plugins need a Python binding that no requirement of this pack installs.",
+      "why": "Scan a whole memory image or a dumped process region with examiner-supplied rules, preserving rule names, matching strings and byte offsets (match bytes can be secret: run the job with secret_output: true). This is the standalone scanner: Volatility's YARA plugins need a Python binding, which requires/python.txt declares (yara-python, pinned) for the image's Python environment.",
       "install": {
         "brew": "brew install yara",
         "apt": "apt-get install -y yara"
