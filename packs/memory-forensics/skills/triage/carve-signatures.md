@@ -3,7 +3,7 @@ id: triage/carve-signatures
 title: Carving structures from an image by signature
 when: Using mem_carve or sig_carve to find hives, event logs, Prefetch or PE headers in a raw image.
 needs: []
-tools: [mem_carve, sig_carve]
+tools: [mem_carve, sig_carve, carve_handoff]
 requires_host: []
 ---
 
@@ -29,6 +29,8 @@ declared length and its internal consistency before you choose a parser, and
 treat a successful parse as evidence about the records it validated.
 `sig_carve` reports a signature the same way: for a plain Prefetch record, where
 `SCCA` is, not where the structure begins.
+
+`carve_handoff` takes one hit (`kind`, `signature_offset`) and readies it for its parser: the start by that rule, the cut, the header checks and, for a hive or an event log file, whether its bins or chunks stay adjacent (a break means the pages are not adjacent in the image). It hashes a slice only for a family that cannot be a credential store, and writes slice bytes only with `write_values: true` in a job run with `secret_output: true`.
 
 **Sensitive output.** The hit list (offsets, kinds, validation) is not secret. A slice is memory content and can be a credential store (a SAM or SECURITY hive, a browser database), so `extract_to` needs `write_values: true` in a job run with `secret_output: true` (the manifest declares it), and is refused as JSON anywhere else. Credential hives are cut on purpose; a cracking tool downstream stays available. Cite slices by job reference and offset, never by content.
 

@@ -3,7 +3,7 @@ id: triage/volatility-plugins
 title: Volatility plugins by operating system
 when: Choosing Windows, Linux or macOS plugins, or the option that writes a region to disk.
 needs: []
-tools: []
+tools: [mem_registry, isf_intake]
 requires_host: [vol]
 ---
 
@@ -23,6 +23,8 @@ Use only if you pick plugins for a Windows, Linux or macOS image. Not for the of
     windows.modules / windows.dlllist   kernel and per-process modules
     windows.svcscan    registered and residual services
 
+`mem_registry` lists the hives and reads one key of one hive through `vol`, offline; it withholds credential-named values and refuses SAM and SECURITY outside a secret-output job.
+
 As of October 2026, in 2.28.2, the older `windows.malfind` and `linux.malfind`
 names are deprecated forwarding classes of the `.malware.malfind` plugins (a
 receipt that names the old one ran the alias); the plugin lists a candidate, not
@@ -33,16 +35,15 @@ carries): plugin output and options change between versions.
 
 **Linux.** There is no exhaustive public cache: the ISF must match the exact
 kernel build, with its architecture, and a nearby distribution version is not a
-substitute. Establish the kernel banner and a matching ISF before any
+substitute (the cache claim is UNVERIFIED here). Establish the kernel banner and a matching ISF before any
 symbol-dependent analysis; as of October 2026, in 2.28.2, the plugins include
 `linux.pslist.PsList`, `linux.pstree.PsTree`, `linux.lsof.Lsof`,
 `linux.sockstat.Sockstat`, `linux.envars.Envars`, `linux.bash.Bash` and
 `linux.malware.malfind.Malfind`, whose option for writing regions is
 `--dump-regions` (not the Windows `--dump`; it has its own `--dump-maxsize`, 1 GB
-by default). This pack supplies no Linux or macOS ISF set and no converter:
-require an ISF made from matching kernel debug material that the case or the
-operator supplies, record its provenance, and validate the captured kernel's
-identity and architecture. Where the matching table is absent, symbol-dependent
+by default). This pack supplies no Linux or macOS ISF set; `isf_intake` converts
+the operator's Linux debug material, ready only on an exact banner match. Record the provenance, and validate the kernel's identity and
+architecture. Where the matching table is absent, symbol-dependent
 Linux analysis was not performed, and the report says so. A plugin being listed
 does not show that the captured kernel is supported. For macOS this pack makes no
 support claim for any version: the same rule applies, and an unsupported target is
