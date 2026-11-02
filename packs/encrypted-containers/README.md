@@ -10,17 +10,33 @@ know it is the encrypted one.
 
 ## What it carries
 
-**Thirteen skills**: six decision leaves and six second-level leaves they point to
+**Eighteen skills**: ten decision leaves and seven second-level leaves they point to
 ("only if X"); every leaf is at most 800 tokens. `identify/headers`
 (`identify/by-format`), `volumes/bitlocker` (`volumes/bitlocker-opening`),
-`volumes/luks-filevault` (`volumes/filevault-apfs`), `archives/protected`
+`volumes/luks-filevault` (`volumes/luks`, `volumes/filevault-apfs`), `archives/protected`
 (`archives/formats`), `keys/where-they-hide` (`keys/recovery-key-scan`,
-`keys/other-sources`), and `recovery/authorised`, which has no second-level leaf
-of its own. The thirteenth is the pack's router, `encrypted/router` (at
-most 400 tokens): it names the other twelve by the question each answers, holds no
+`keys/other-sources`), `recovery/authorised`, and four that stand alone: `volumes/layered-reading`,
+`volumes/veracrypt-truecrypt`, `messages/openpgp` and `files/aescrypt`. The eighteenth is the pack's router, `encrypted/router` (at
+most 400 tokens): it names the other seventeen by the question each answers, holds no
 rule, and is the one line a run shows for the pack when its skills index is over budget.
 
-**Five tools.**
+**Nine tools.**
+`materialise_decrypted` is the one tool that writes decrypted evidence: inside a `secret_output` job, from a
+key in a sealed 0600 file (never an argument), through pybde, pyluksde or pyAesCrypt, to a raw image or file under
+`$OUT` with a provenance file; a key that does not work leaves nothing, and what is not whole stays an unverified `.partial`.
+`archive_metadata` says what protects a 7-Zip or RAR archive, from the start header or the block
+headers and then through 7z: whether the headers (the names) and the members are encrypted,
+whether the set of volumes is whole; it lists a ZIP through 7z, and never extracts.
+`crypto_selftest` builds tiny synthetic LUKS, BitLocker, Core Storage, APFS, ZIP-AES
+and VHD samples, runs the installed readers and modules on them and says which pairs
+parsed, which did not and which are unavailable, with exact versions and john's helper
+inventory: the receipt an image's acceptance step reads.
+`crypto_metadata` takes a volume image and a byte offset and runs the reader for the
+scheme the signature shows (`cryptsetup luksDump`, `bdeinfo`, `fvdeinfo`,
+`fsapfsinfo`): the key slots, segments, digests and tokens of LUKS, the key
+protectors of BitLocker, the counts the Core Storage and APFS readers print. It
+prints no key, salt, digest, UUID, label or identifier, only whether each is
+present, and a reader that is not installed is `unavailable`, never an empty list.
 `crypto_id` names the scheme from the first bytes of a volume or file and reads
 what a header holds without a key: the LUKS1 key-slot fields, the LUKS2 binary
 header (version, label, UUID). It prints no raw bytes of the file, and header text

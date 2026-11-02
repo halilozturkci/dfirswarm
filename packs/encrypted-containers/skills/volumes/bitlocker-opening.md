@@ -3,7 +3,7 @@ id: volumes/bitlocker-opening
 title: Opening a BitLocker volume with supplied material
 when: The case supplies a recovery password, key file or escrow export to open the volume.
 needs: []
-tools: [recovery_key_scan]
+tools: [materialise_decrypted, recovery_key_scan]
 requires_host: [bdemount, dislocker]
 ---
 
@@ -20,7 +20,9 @@ Open only with material the case supplies, within the recorded authority, as a j
 with `secret_output: true`. Take the secret from a sealed file, in process, through
 a user-space reader: `libbde-python` (pybde) and `dfvfs` are declared for this, and
 the build in the image decides which volumes and protectors they handle, so test on
-the object instead of assuming. `dislocker` and `bdemount` present a FUSE view; a
+the object instead of assuming. `materialise_decrypted` does this through pybde: a
+sealed key reference in, a raw image and a provenance file out, the kind of key used
+(not the protector's identifier) recorded, and a `.partial` file for what is not whole. `dislocker` and `bdemount` present a FUSE view; a
 mount lives in that VM only and is not a sealed output, and mounting may be
 unavailable in a worker. Whatever reader you use, write the decrypted volume, or
 the scoped files taken from it, under `$OUT` as files, with the reader and
