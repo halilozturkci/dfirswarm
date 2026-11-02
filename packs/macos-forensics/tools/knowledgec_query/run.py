@@ -59,6 +59,7 @@ same way, with the staged copy of the database removed.
 """
 import base64
 import datetime
+import errno
 import hashlib
 import heapq
 import json
@@ -1921,7 +1922,7 @@ OWN_NAMES.update((
     "streams", "streams_total", "streams_pages", "note", "resume", "limits", "error", "type", "reason", "sql", "tables", "columns", "table", "column", "rowid",
     "source_table", "z_pk", "stream", "value_string", "value_integer", "value_double", "value_type_code", "start_raw", "end_raw", "created_raw", "start", "end",
     "created", "duration_seconds", "utc_offset_seconds", "uuid", "zobject_other", "metadata", "source", "joins", "fingerprint", "zobject_columns", "cap",
-    "truncated", "exported", "exported_bytes", "export_requested", "database", "staged", "sidecars", "bytes", "sha256", "open_mode", "database_sha256",
+    "truncated", "exported", "exported_bytes", "export_requested", "database", "staged", "sidecars", "sidecars_not_used", "copies_without_lock_not_removed", "listed", "why", "copy_dir", "bytes", "sha256", "open_mode", "database_sha256",
     "database_bytes", "wal", "wal_checkpoint", "journal", "staged_copy", "count", "first_start_raw", "last_start_raw", "first_start", "last_start", "matched",
     "returned", "all_results", "all_results_format", "_text_head", "_text_bytes", "_truncated", "_where", "_blob_bytes", "_hex", "_whole_value_file",
     "_whole_value_bytes_written", "_export", "_float", "state", "frames_valid", "frames_committed", "frames_in_file", "page_size", "checkpoint_sequence",
@@ -1933,7 +1934,7 @@ FIELDS.update({
     "db": "path", "database": "path", "stream": "path", "value_string": "text", "start": "time", "end": "time", "created": "time",
     "first_start": "time", "last_start": "time", "resume_since": "time", "uuid": "hex", "_hex": "hex", "_text_head": "text", "_whole_value_file": "path",
     "complete_entries": "path", "all_results": "path", "database_sha256": "digest", "database_sha256_as_acquired": "digest",
-    "database_sha256_after_open": "digest", "sha256": "digest", "fingerprint": "digest", "values_file": "path",
+    "database_sha256_after_open": "digest", "sha256": "digest", "fingerprint": "digest", "values_file": "path", "copy_dir": "path",
 })
 
 
@@ -2174,11 +2175,29 @@ class StageTimeUp(Exception):
     """The tool's own clock (max_seconds) ran out while the database was being copied into the private directory."""
 
 
-def sha256_copy(src, dst, deadline=None):
+def open_regular(path, follow=True):
+    """`path` opened for reading without waiting (a FIFO has no writer: O_NONBLOCK) and only if it is a regular file (checked on the descriptor, so a name
+    swapped for a FIFO or a device after it was looked at is refused). A sidecar is opened with follow=False: a link is never followed to its target."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0)))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def sha256_copy(src, dst, deadline=None, follow=True):
     """Copy `src` to a new file `dst` (mode 0600: the copy is the evidence's bytes) and return the sha256 of what was copied; StageTimeUp past `deadline`."""
     digest = hashlib.sha256()
     fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with open(src, "rb") as read, os.fdopen(fd, "wb") as write:
+    try:
+        read = open_regular(src, follow)
+    except BaseException:
+        os.close(fd)
+        raise
+    with read, os.fdopen(fd, "wb") as write:
         for block in iter(lambda: read.read(1 << 20), b""):
             digest.update(block)
             write.write(block)
@@ -2188,6 +2207,8 @@ def sha256_copy(src, dst, deadline=None):
 
 
 STAGE_LOCK = ".lock"
+STAGE_DIR = ".knowledgec-stage"             # the directory outside a job that only this tool makes (in the agent's work directory)
+STAGE_MARK = ".made-by-knowledgec_query"   # written when the tool made it: the sweep runs only where this file is
 
 
 def lock_stage(stage):
@@ -2253,21 +2274,62 @@ def made_by_this_tool(entry):
         return False
 
 
+def parent_is_ours(parent, in_job):
+    """Whether `parent` is a directory only this tool makes: a real directory of ours, mode 0700, and (outside a job, where the parent is a hidden
+    directory of the agent's own work directory) holding the marker file the tool wrote when it made it. The sweep runs only in such a directory: the
+    agent's own directory (work/<id>) is never swept, whatever it holds."""
+    try:
+        info = os.lstat(parent)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            return False
+        if in_job:
+            return True
+        return stat.S_ISREG(os.lstat(os.path.join(parent, STAGE_MARK)).st_mode)
+    except OSError:
+        return False
+
+
+def unlocked_copy_size(entry):
+    """The size of a private copy that has files but no lock file (an older tool made it, or lock_stage failed), or None: the shape of made_by_this_tool
+    without the marker. Such a copy is not removed (nothing proves it is the tool's), and the answer names it."""
+    try:
+        info = entry.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            return None
+        total, files = 0, 0
+        with os.scandir(entry.path) as inside:
+            for item in inside:
+                detail = item.stat(follow_symlinks=False)
+                if not stat.S_ISREG(detail.st_mode) or stat.S_IMODE(detail.st_mode) != 0o600 or item.name == STAGE_LOCK:
+                    return None
+                total += detail.st_size
+                files += 1
+        return total if files else None
+    except OSError:
+        return None
+
+
 def remove_dead_stages(parent):
     """Remove the private copies an earlier run of this tool left behind when it was killed without a chance to clean up (SIGKILL): a directory of
     `parent` named for a run that is over (its lock is free) and shaped like a copy this tool makes (made_by_this_tool). A live run's directory, a link,
-    anything an agent made itself and anything else are left alone."""
+    anything an agent made itself and anything else are left alone. Returns the copies it left that have files but no lock file and whose run is over
+    ({"copy_dir", "bytes"}): the answer names them, they are not silently kept."""
+    kept = []
     try:
         entries = list(os.scandir(parent))
     except OSError:
-        return
+        return kept
     for entry in entries:
         if re.fullmatch(r"knowledgec-([0-9]+)-[A-Za-z0-9_]+", entry.name) is None or entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
             continue
         if not made_by_this_tool(entry):
+            size = unlocked_copy_size(entry)
+            if size is not None and not stage_is_live(entry):
+                kept.append({"copy_dir": os.path.join(str(parent), entry.name), "bytes": size})
             continue
         if not stage_is_live(entry):
             shutil.rmtree(entry.path, ignore_errors=True)
+    return kept
 
 
 def sha256_file(path):
@@ -2375,7 +2437,23 @@ def stage_parent():
     if job and out:
         return Path(out) / "knowledgec-stage"
     agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
-    return Path("work") / agent
+    return Path("work") / agent / STAGE_DIR
+
+
+def make_stage_parent():
+    """(parent, swept): the directory the private copies go in, made if it is not there, and whether it is one only this tool makes (then, and only
+    then, the dead copies in it are swept)."""
+    parent = stage_parent()
+    in_job = bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
+    parent.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.mkdir(parent, 0o700)
+        os.chmod(parent, 0o700)
+        if not in_job:
+            os.close(os.open(os.path.join(parent, STAGE_MARK), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600))
+    except FileExistsError:
+        pass
+    return parent, parent_is_ours(parent, in_job)
 
 
 def secret_job():
@@ -2453,10 +2531,21 @@ def run_query(args):
     # The sidecars decide how the file is opened. A WAL holds committed rows the main file lacks; a hot rollback
     # journal holds the old pages of a transaction that did not commit and is rolled back when the copy is opened.
     sidecars = {}
+    odd_sidecars = {}
     for suffix in ("-wal", "-shm", "-journal"):
         beside = db + suffix
-        if os.path.isfile(beside):
-            sidecars[suffix] = {"bytes": os.path.getsize(beside)}
+        try:
+            info = os.lstat(beside)                      # (lstat: a link is a link, whatever it points at; it is never followed)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            odd_sidecars[suffix] = "a name that could not be examined (%s)" % type(exc).__name__
+            continue
+        if stat.S_ISREG(info.st_mode):
+            sidecars[suffix] = {"bytes": info.st_size}
+        else:
+            odd_sidecars[suffix] = ("a symbolic link" if stat.S_ISLNK(info.st_mode) else "a directory" if stat.S_ISDIR(info.st_mode) else "a FIFO" if stat.S_ISFIFO(info.st_mode)
+                                    else "a socket" if stat.S_ISSOCK(info.st_mode) else "a device")
     # Everything the reading finds goes into `st`, so that a stop at any point (the clock, a signal) still has a truthful answer to give.
     st = {"stage": None, "sink": None, "paging": None, "streams": None, "shaper": None, "connection": None, "tables": [], "zobject": [], "joins": {},
           "fingerprint": None, "applied": [], "unapplied": [], "reasons": [], "problems": [], "count": 0, "unconverted": 0, "stopped": None, "read_done": False,
@@ -2465,6 +2554,11 @@ def run_query(args):
           "inventory": None, "stream_blind": None, "streams_in_file": None, "streams_listed_from": 0, "tables_total": 0, "schema_unread": False}
     problems = st["problems"]
     source = st["source"]
+    if odd_sidecars:
+        source["sidecars_not_used"] = dict(odd_sidecars)
+        for suffix, what in odd_sidecars.items():
+            problems.append("the %s file beside the database is %s, not a regular file: it was not read and nothing it points at was followed, so what it holds "
+                            "(a WAL: committed rows; a rollback journal: a transaction to roll back) is not in this answer" % (suffix, what))
 
     def progress():
         if STOP["signal"] is not None:
@@ -2482,18 +2576,23 @@ def run_query(args):
                 fail("the database and its sidecars (%d bytes) are over max_stage_bytes (%d): nothing was read; raise it, or query the "
                      "files with a tool that applies the WAL" % (total, max_stage), db=db, sidecars=sidecars)
             try:
-                parent = stage_parent()
-                parent.mkdir(parents=True, exist_ok=True)
-                remove_dead_stages(parent)
+                parent, swept = make_stage_parent()
+                if swept:
+                    left = remove_dead_stages(parent)
+                    if left:
+                        source["copies_without_lock_not_removed"] = {
+                            "count": len(left), "listed": left[:20],
+                            "why": "a private copy of an earlier run with files and no lock file (an older tool, or a run whose lock could not be made) is not removed: nothing proves "
+                                   "it is this tool's; it holds the bytes of a database and is named here"}
                 st["stage"] = stage = tempfile.mkdtemp(prefix="knowledgec-%d-" % os.getpid(), dir=str(parent))
                 st["stage_lock"] = lock_stage(stage)            # (an open file, held until the process ends)
                 staged_db = os.path.join(stage, os.path.basename(db))
                 source["database_sha256"] = sha256_copy(db, staged_db, deadline)
                 source["database_bytes"] = os.path.getsize(db)
                 for suffix in sidecars:
-                    sidecars[suffix]["sha256"] = sha256_copy(db + suffix, staged_db + suffix, deadline)
+                    sidecars[suffix]["sha256"] = sha256_copy(db + suffix, staged_db + suffix, deadline, follow=False)
                 if "-wal" in sidecars:
-                    source["wal"] = wal_inventory(db + "-wal")
+                    source["wal"] = wal_inventory(staged_db + "-wal")      # (the staged copy: the name beside the database is not opened a second time)
                 source["staged"] = True
                 source["open_mode"] = "a private copy of the database and its sidecars, read-write so SQLite works on them, removed at the end"
                 connection = sqlite3.connect(staged_db)
@@ -2536,6 +2635,9 @@ def run_query(args):
             return
         st["tables"], st["tables_total"] = tables, tables_total
         if "ZOBJECT" not in own_present:
+            if odd_sidecars:
+                fail("there is no ZOBJECT table in the main file, and a sidecar beside it was not read (%s): this does not say the file is not a knowledgeC database, "
+                     "its tables may be in the -wal" % ", ".join("%s is %s" % kv for kv in sorted(odd_sidecars.items())), db=db, tables=tables, sidecars_not_used=dict(odd_sidecars))
             fail("this is not a knowledgeC database: there is no ZOBJECT table", db=db, tables=tables, **({"tables_not_listed": tables_total - len(tables)} if tables_total > len(tables) else {}))
         if source["staged"] and "-journal" in sidecars:
             after = sha256_file(os.path.join(st["stage"], os.path.basename(db)))

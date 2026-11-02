@@ -36,3 +36,19 @@
   sorted column names, the `/var/folders` alias `tmp-id-<12 hex>` is an unsalted digest,
   and unified_log's `walk_tree` names the first offender in raw sort order. All three
   are size, time or order oracles.
+
+### Fixed: macos-forensics knowledgec_query keeps its private copies in a directory of its own and names a sidecar it cannot use
+
+- Outside a job the private copies are made in `work/<id>/.knowledgec-stage`, a
+  directory the tool makes (mode 0700, with a marker file), and the dead-copy sweep
+  runs only there. An agent's directory in `work/<id>` is never swept: one with a
+  stale `.lock`, or an empty one with a dead process number in its name, was removed
+  before. A copy with files and no lock file whose run is over is not removed and is
+  named in `source_used.copies_without_lock_not_removed` (path and size). Copies an
+  earlier version left in `work/<id>` are no longer swept.
+- A `-wal`, `-shm` or `-journal` name is found with lstat. One that is a link, a FIFO,
+  a socket, a directory or a device is not opened and not followed (a linked `-wal`
+  had its target copied into the private copy), is named in
+  `source_used.sidecars_not_used` and in `problems`, and the answer is not
+  `complete`. The sidecars that are copied are opened without waiting and without
+  following a link, and the WAL is counted from the private copy.
