@@ -32,6 +32,6 @@
   "example": "{\"path\":\"inputs/[UNALLOCATED]\",\"offset\":675840,\"sig_type\":\"PE\",\"output\":\"work/s183904/carved/pe_675840.bin\"}",
   "by": "s183904",
   "at": "2026-09-18T22:20:17.004Z",
-  "version": 10,
-  "sha256": "8cf5539e0838cb553609d6984c6b93f2742072b9ebfa0bcc80cd7c299860bd65"
+  "version": 11,
+  "sha256": "b30c7db881739cd13a041d2bd3e893207c3394ffbeaa0eade7d32a70d5f41c49"
 }

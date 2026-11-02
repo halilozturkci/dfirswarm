@@ -238,7 +238,7 @@ sys.excepthook = _unexpected_tool
 
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "sqlite_snapshot", "version": 8}
+TOOL = {"name": "sqlite_snapshot", "version": 9}
 CHUNK = 1 << 20
 MAX_BYTES_DEFAULT = 8 * 1024 ** 3
 MAX_BYTES_CEILING = 1024 ** 4

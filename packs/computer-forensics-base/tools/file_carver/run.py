@@ -244,7 +244,7 @@ class _Held:
 HELD = _Held()             # the hidden file of the carved copy being written
 PAGES.append(HELD)
 
-TOOL = {"name": "file_carver", "version": 10}
+TOOL = {"name": "file_carver", "version": 11}
 CHUNK = 1 << 20
 DEFAULT_MAX = 100_000_000
 PDF_EOF_LIMIT = 1000

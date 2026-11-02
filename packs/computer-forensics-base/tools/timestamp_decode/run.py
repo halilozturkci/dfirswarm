@@ -229,7 +229,7 @@ def _unexpected_tool(kind, value, _tb):
 
 sys.excepthook = _unexpected_tool
 
-TOOL = {"name": "timestamp_decode", "version": 9}
+TOOL = {"name": "timestamp_decode", "version": 10}
 
 UTC = datetime.timezone.utc
 CTX = decimal.Context(prec=120, traps=[decimal.InvalidOperation, decimal.Overflow, decimal.DivisionByZero])

@@ -268,10 +268,28 @@ def print_answer(answer, **dumps_kwargs):
     _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
 
 
+def _drop_temporaries():
+    """The hidden temporaries go before the tool ends, as they do when a stop signal ends it: the pages being written (_tmp) and the TEMPS list."""
+    for page in list(globals().get("PAGES", ())):
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except Exception:   # noqa: BLE001 - best effort, and every one is tried
+            pass
+    for name in list(globals().get("TEMPS", ())):
+        try:
+            os.unlink(name)
+        except Exception:   # noqa: BLE001
+            pass
+
+
 def _unexpected_tool(kind, value, _tb):
-    """Last resort: an error nobody foresaw is an answer too. JSON with the class and, for a file-system error, its reason (a message can quote a
-    name from the evidence), and exit 1; what was written before it is not claimed."""
+    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed, then one JSON document with the class and, for a
+    file-system error, its reason (a message can quote a name from the evidence), and exit 1; what was written before it is not claimed. A stop signal
+    that arrives while this runs is held with the answer's write and is answered by this document and exit 1, not by 128 + the signal."""
     try:
+        _drop_temporaries()
         reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
         said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
         print_answer({"tool": globals().get("TOOL"), "status": "failed", "error": said,
@@ -312,7 +330,7 @@ def connect_checked(db, uri):
 
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "sqlite_query", "version": 15}
+TOOL = {"name": "sqlite_query", "version": 16}
 DEFAULT_LIMIT = 100
 LIMIT_MAX = 10000
 INLINE_BYTES = 64 * 1024          # the inline page's JSON and its text form, each, as they are sent (ASCII-escaped, counted in bytes)

@@ -271,7 +271,7 @@ def end_child():
         except Exception:  # noqa: BLE001 - best effort
             pass
 
-TOOL = {"name": "file_type", "version": 11}
+TOOL = {"name": "file_type", "version": 12}
 BUDGET_SECONDS = 100          # under the manifest's 120
 LIBMAGIC_TIMEOUT = 10
 ERRORS_SHOWN = 50
