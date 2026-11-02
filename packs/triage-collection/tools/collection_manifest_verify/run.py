@@ -1095,6 +1095,8 @@ def _b_named_secret(flat):
     size = len(flat)
     for m in _B_DELIM.finditer(flat):
         i = m.start()
+        if i > 0 and flat[i - 1] in "=:":                 # a delimiter right after a delimiter has no name before it: a run of 2 MiB of them is skipped, not judged one by one
+            continue
         j = i + 1
         while j < size and j - i <= 5 and flat[j] in " \t\"'\\":
             j += 1
@@ -1558,6 +1560,7 @@ MEMORY_CHECK_EVERY = 1024          # the census asks for the memory this many en
 MAX_CENSUS = 2000000              # entries held for the join; past it the census is partial and no record is called missing
 REC_LINE = 1 << 20                # a log line longer than this is read in part; the whole line stays in the evidence at its locator
 REC_CHUNK = 1 << 20
+MAX_PATH_PARTS = 1024              # components of a claimed path the join looks at: the tail of a longer one (no real path has more); a longer exact claim names no file
 REC_FIRST = 25                    # problems of a source kept in its summary; every one goes to the caller's sink
 MAX_CONSECUTIVE_BAD_ROWS = 1000
 INSIDE_COLLECTED = ("[root]", "uploads")        # a directory below which the files are the source host's own
@@ -2518,9 +2521,11 @@ def candidate_paths(rec):
     collector, kind = rec.get("collector"), rec.get("kind")
     claim = rec.get("delivered_path_claim")
     if collector == "KAPE" and kind == "copy" and isinstance(claim, str):
-        return "suffix", path_parts(claim)
+        return "suffix", path_parts(claim)[-MAX_PATH_PARTS:]
     if collector == "Velociraptor" and isinstance(claim, str):
         raw = [p for p in claim.split("/") if p]
+        if len(raw) > MAX_PATH_PARTS:
+            return "exact", []
         forms = []
         for lead in ((), ("uploads",), ("uploads", "auto")):
             where = "/".join(lead) or "the container"
@@ -2529,6 +2534,8 @@ def candidate_paths(rec):
         return "exact", forms
     if collector == "UAC" and kind == "hash_claim" and isinstance(rec.get("source_path_claim"), str):
         parts = [p for p in rec["source_path_claim"].split("/") if p]
+        if len(parts) > MAX_PATH_PARTS:
+            return "exact", []
         return "exact", [(("[root]",) + tuple(parts), "UAC's [root] convention: a hypothesis, not a record of the collector")]
     return None, None
 

@@ -1104,6 +1104,8 @@ def _b_named_secret(flat):
     size = len(flat)
     for m in _B_DELIM.finditer(flat):
         i = m.start()
+        if i > 0 and flat[i - 1] in "=:":                 # a delimiter right after a delimiter has no name before it: a run of 2 MiB of them is skipped, not judged one by one
+            continue
         j = i + 1
         while j < size and j - i <= 5 and flat[j] in " \t\"'\\":
             j += 1
@@ -1573,6 +1575,7 @@ MEMORY_CHECK_EVERY = 1024          # the census asks for the memory this many en
 MAX_CENSUS = 2000000              # entries held for the join; past it the census is partial and no record is called missing
 REC_LINE = 1 << 20                # a log line longer than this is read in part; the whole line stays in the evidence at its locator
 REC_CHUNK = 1 << 20
+MAX_PATH_PARTS = 1024              # components of a claimed path the join looks at: the tail of a longer one (no real path has more); a longer exact claim names no file
 REC_FIRST = 25                    # problems of a source kept in its summary; every one goes to the caller's sink
 MAX_CONSECUTIVE_BAD_ROWS = 1000
 INSIDE_COLLECTED = ("[root]", "uploads")        # a directory below which the files are the source host's own
@@ -2533,9 +2536,11 @@ def candidate_paths(rec):
     collector, kind = rec.get("collector"), rec.get("kind")
     claim = rec.get("delivered_path_claim")
     if collector == "KAPE" and kind == "copy" and isinstance(claim, str):
-        return "suffix", path_parts(claim)
+        return "suffix", path_parts(claim)[-MAX_PATH_PARTS:]
     if collector == "Velociraptor" and isinstance(claim, str):
         raw = [p for p in claim.split("/") if p]
+        if len(raw) > MAX_PATH_PARTS:
+            return "exact", []
         forms = []
         for lead in ((), ("uploads",), ("uploads", "auto")):
             where = "/".join(lead) or "the container"
@@ -2544,6 +2549,8 @@ def candidate_paths(rec):
         return "exact", forms
     if collector == "UAC" and kind == "hash_claim" and isinstance(rec.get("source_path_claim"), str):
         parts = [p for p in rec["source_path_claim"].split("/") if p]
+        if len(parts) > MAX_PATH_PARTS:
+            return "exact", []
         return "exact", [(("[root]",) + tuple(parts), "UAC's [root] convention: a hypothesis, not a record of the collector")]
     return None, None
 
@@ -3338,7 +3345,49 @@ YAML_MAX_NODES = 200000
 YAML_MAX_SCALAR = 1 << 20
 YAML_FLOW_DEPTH = 8
 YAML_CLOCK_EVERY = 256
-KEY_END = re.compile(r"""^((?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s"'\[\]{}#,&*!|>%@`?-][^#]*?|[?-][^\s#][^#]*?))\s*:(?:\s+(.*)|$)""")
+YAML_MAX_KEY = 1024
+
+
+def split_key(text):
+    """(key_text, rest) when `text` starts a block-mapping entry, else None: a quoted key or a plain key (no '#'), then ':' followed by a space or the end of
+    the line. A linear scan with a bound on the key (a regular expression with a lazy run before the colon backtracks quadratically on a long run of spaces)."""
+    if not text:
+        return None
+    c = text[0]
+    if c in "\"'":
+        k = 1
+        while k < len(text) and k <= YAML_MAX_KEY + 1:
+            ch = text[k]
+            if c == '"' and ch == "\\":
+                k += 2
+                continue
+            if ch == c:
+                if c == "'" and text[k + 1:k + 2] == "'":
+                    k += 2
+                    continue
+                break
+            k += 1
+        if k >= len(text) or text[k] != c:
+            return None
+        after = text[k + 1:].lstrip(" \t")
+        if not after.startswith(":") or (len(after) > 1 and after[1] not in " \t"):
+            return None
+        return text[:k + 1], after[1:].strip()
+    if c in "[]{},#&*!|>%@`" or c.isspace():
+        return None
+    if c in "?-" and (len(text) < 2 or text[1].isspace() or text[1] == "#"):
+        return None
+    i = text.find(":")
+    while 0 <= i <= YAML_MAX_KEY:
+        if i + 1 == len(text) or text[i + 1] in " \t":
+            break
+        i = text.find(":", i + 1)
+    else:
+        return None
+    key = text[:i].rstrip()
+    if key == "" or "#" in key:
+        return None
+    return key, text[i + 1:].strip()
 
 
 class YamlRefused(Exception):
@@ -3465,7 +3514,7 @@ class YamlReader:
         return value, i2
 
     def is_key_line(self, text):
-        return KEY_END.match(text) is not None and not text.startswith(("[", "{", '"', "'")) or (text[:1] in "\"'" and KEY_END.match(text) is not None)
+        return split_key(text) is not None
 
     def sequence(self, i, ind, depth):
         out = []
@@ -3501,10 +3550,10 @@ class YamlReader:
             i, _, text = found
             if text == "-" or text.startswith("- "):
                 return out, i
-            m = KEY_END.match(text)
+            m = split_key(text)
             if m is None:
                 raise YamlRefused("not_a_mapping_entry", i + 1)
-            key_text, rest = m.group(1), (m.group(2) or "")
+            key_text, rest = m
             self.refuse_marker(key_text, i)
             if key_text == "<<":
                 raise YamlRefused("merge_key", i + 1)
@@ -3826,11 +3875,11 @@ class YamlReader:
             raise YamlRefused({"&": "anchor", "*": "alias", "!": "tag"}[s[k]], i + 1)
         if s[k] in "\"'":
             q = s[k]
-            end = self.quote_end(s[k:], q)
-            if end < 0:
+            close, _ = self.quote_scan(s, q, k + 1)
+            if close < 0:
                 raise YamlRefused("unterminated_quote", i + 1)
-            body = s[k + 1:k + end]
-            return (body.replace("''", "'") if q == "'" else self.double_quoted(body, i)), k + end + 1
+            body = s[k + 1:close]
+            return (body.replace("''", "'") if q == "'" else self.double_quoted(body, i)), close + 1
         start = k
         while k < len(s) and s[k] not in stop:
             if s[k] == ":" and ":" in stop and not (k + 1 >= len(s) or s[k + 1] in " ,]}"):
@@ -3887,6 +3936,8 @@ MAX_CORPUS_FILES = 100000
 MAX_CORPUS_TEXT = 128 << 20
 MAX_MEMBER_NAME = 1024
 COMPOUND_DEPTH = 8
+MAX_NAME_MATCH = 4096               # characters of a file name a mask is matched against
+MAX_MASK = 256                    # characters of a mask or a pattern a glob is run with
 KAPE_ENTRY_BUDGET = 200000        # entries visited in resolving one target, compound targets included
 MAX_ROWS_BYTES_PER_PATH = 4096
 MAX_CONTEXT_BYTES = 8 << 20
@@ -4093,7 +4144,8 @@ class Run:
         self.yaml_refused_first = []
         self.notes = []
         self.partial = []
-        self.used = []                    # definition files used: {corpus, version, sha256 of the archive, member, sha256 of the member}
+        self.used = {}                    # definition files used, one entry per (corpus, member): {corpus, version, sha256 of the archive, member, sha256 of the member}
+        self.member_digests = {}
 
     def row(self, section, **fields):
         self.counts[section] += 1
@@ -4104,8 +4156,12 @@ class Run:
 
     def use(self, corpus, kind, member):
         entry = corpus.by_kind[kind]
-        self.used.append({"corpus": kind, "version": entry["version"], "pinned": entry["pinned"], "archive_sha256": entry["sha256"], "member": shown(member[:300], "definition file"),
-                          "member_sha256": hashlib.sha256(entry["members"][member].encode("utf-8", "surrogatepass")).hexdigest()})
+        if (kind, member) in self.used:
+            return
+        if (kind, member) not in self.member_digests:
+            self.member_digests[(kind, member)] = hashlib.sha256(entry["members"][member].encode("utf-8", "surrogatepass")).hexdigest()
+        self.used[(kind, member)] = {"corpus": kind, "version": entry["version"], "pinned": entry["pinned"], "archive_sha256": entry["sha256"],
+                                     "member": shown(member[:300], "definition file"), "member_sha256": self.member_digests[(kind, member)]}
 
 
 def as_list(value):
@@ -4168,9 +4224,12 @@ def uac_resolve(profile_doc, artefacts, run, profile_name):
     excluded = []
     keys = {a: norm_text(a) for a in artefacts}
     for position, entry in enumerate(as_list(profile_doc.get("artifacts"))):
-        if position % CLOCK_EVERY == 0 and out_of_time():
+        if out_of_time():
             run.partial.append("the time limit ended the resolution of profile %s" % shown(profile_name, "profile"))
             break
+        if is_text(entry) and len(entry) > MAX_MASK:
+            run.row("unknown", collector="UAC", profile=shown(profile_name, "profile"), entry=entry[:MAX_MASK], why="the entry is over %d characters (%d): it is not run as a glob, and its first %d characters are shown" % (MAX_MASK, len(entry), MAX_MASK))
+            continue
         if not is_text(entry):
             run.row("unknown", collector="UAC", profile=shown(profile_name, "profile"), entry=str(entry)[:200], why="a profile entry that is not text")
             continue
@@ -4308,7 +4367,7 @@ def uac_section(args, run, census, found, src, corpus, needs, dirs):
                 words = [t for t in log_errors if (item["output_file"] and item["output_file"] in t) or art.rsplit("/", 1)[-1] in t][:3]
                 run.row("not_collected", collector="UAC", artefact=art, expected_path=where, collector_words=words,
                         basis="no delivered entry has the name the definition gives%s" % ("" if census.complete else " (the census is not complete: this is not absence)"))
-                if census.complete and (not needs or any(n.lower() in art.lower() or (item["description"] and n.lower() in item["description"].lower()) for n in needs)):
+                if census.complete and (not needs or any(n in art.lower() or (item["description"] and n in item["description"][:4096].lower()) for n in needs)):
                     run.row("proposed_additional_evidence", collector="UAC", artefact=art, gives=item["description"],
                             why="the pinned definition lists it for the profile and no delivered entry has its output name; an item for the operator to consider, not a command")
 
@@ -4388,6 +4447,7 @@ def velociraptor_section(args, run, census, found, src, corpus, needs):
         doc = parse_member(entry["members"][member], member, run)
         if isinstance(doc, dict) and is_text(doc.get("name")):
             index.setdefault(doc["name"].lower(), (member, doc))
+    yaml_files = [rel for position, (rel, _size, kind) in enumerate(census.entries()) if kind == "f" and rel.lower().endswith((".yaml", ".yml")) and not inside_collected_data(rel)]
     for directory, files in sorted(containers.items(), key=lambda kv: os.fsencode(kv[0])):
         context = files.get("context")
         if not context:
@@ -4400,12 +4460,19 @@ def velociraptor_section(args, run, census, found, src, corpus, needs):
         specs = request["specs"]
         run.row("requested", collector="Velociraptor", container=directory or ".", record=context, artefacts=[s["artifact"] for s in specs][:FIRST_PROBLEMS], artefacts_total=len(specs),
                 definitions_version=entry["version"], pinned=entry["pinned"])
-        delivered_defs = delivered_definitions(src, census, directory, run)
+        delivered_defs = delivered_definitions(src, census, directory, run, yaml_files)
+        seen_specs = set()
         for spec in specs:
             if out_of_time():
                 run.partial.append("the time limit ended the comparison of the Velociraptor request with the definitions")
                 return
             name = spec["artifact"]
+            spec_key = (name, tuple(sorted(spec["env"].items()))) if len(spec["env"]) <= 64 else None
+            if spec_key is not None:
+                if spec_key in seen_specs:
+                    continue
+                if len(seen_specs) < 100000:
+                    seen_specs.add(spec_key)
             pin = index.get(name.lower())
             if pin is None:
                 run.row("unknown", collector="Velociraptor", container=directory or ".", artefact=name, why="the artefact is not among the %s Velociraptor definitions (version %s)" % ("pinned" if entry["pinned"] else "unpinned", entry["version"]))
@@ -4478,22 +4545,33 @@ def read_request(src, rel, run):
     return {"specs": specs}
 
 
-def delivered_definitions(src, census, directory, run):
-    """{artefact name lowercased: doc} for definition YAML files the container itself carries (outside uploads and results), read as data under the bounds."""
+MAX_DELIVERED_YAML = 5000
+MAX_DELIVERED_YAML_BYTES = 256 << 20
+
+
+def delivered_definitions(src, census, directory, run, yaml_files):
+    """{artefact name lowercased: doc} for definition YAML files the container itself carries (outside uploads and results), read as data under the bounds:
+    at most MAX_DELIVERED_YAML files and MAX_DELIVERED_YAML_BYTES bytes of them in all, the clock asked before every file."""
     out = {}
     prefix = Census.key(directory) + "/" if directory else ""
-    for position, (rel, _size, kind) in enumerate(census.entries()):
-        if position % CLOCK_EVERY == 0 and out_of_time():
+    read_files = read_bytes = 0
+    for rel in yaml_files:
+        if out_of_time():
+            run.partial.append("the time limit ended the read of the definition files in the collection")
             break
-        if kind != "f" or not rel.lower().endswith((".yaml", ".yml")) or not Census.key(rel).startswith(prefix) or inside_collected_data(rel):
+        key = Census.key(rel)
+        if not key.startswith(prefix) or "/results/" in "/" + key:
             continue
-        if "/results/" in "/" + Census.key(rel):
-            continue
+        if read_files >= MAX_DELIVERED_YAML or read_bytes >= MAX_DELIVERED_YAML_BYTES:
+            run.partial.append("the collection holds more definition files than the %d files or %d bytes this tool reads: the rest were not read" % (MAX_DELIVERED_YAML, MAX_DELIVERED_YAML_BYTES))
+            break
+        read_files += 1
         try:
             with src.open_binary(rel) as fh:
                 data = fh.read(YAML_MAX_BYTES + 1)
         except OSError:
             continue
+        read_bytes += len(data)
         if len(data) > YAML_MAX_BYTES:
             run.yaml_refused["file_over_bound"] += 1
             run.partial.append("a definition file in the collection is over the bound and was refused")
@@ -4577,7 +4655,10 @@ class KapeSink(Sink):
         self.skipped = collections.Counter()
         self.skip_words = collections.defaultdict(list)
         self.rows = 0
+        self.oversize = 0
         self.by_dir_leaf = []
+        self.masks = []
+        self.depths = sorted({k.count("/") + 1 for k in by_dir})
 
     def problem(self, row):
         self.run.problems.add({"kind": "record_problem", **row})
@@ -4593,15 +4674,20 @@ class KapeSink(Sink):
         parts = path_parts(claim)
         if len(parts) < 2:
             return
+        if len(parts) > MAX_PATH_PARTS or len(parts[-1]) > MAX_NAME_MATCH:
+            self.oversize += 1                  # a path no file system holds: counted, not matched
+            return
         name = fold_name(parts[-1])
-        directory = parts[:-1]
-        for depth in range(len(directory), 0, -1):
-            key = fold_name("/".join(directory[:depth]))
+        directory = [fold_name(p) for p in parts[:-1]]
+        for depth in self.depths:               # only the depths a target's directory has: one join each, never one per component
+            if depth > len(directory):
+                break
+            key = "/".join(directory[:depth])
             for idx in self.by_dir.get(key, ()):
                 leaf = self.by_dir_leaf[idx]
                 if depth != len(directory) and not leaf["recursive"]:
                     continue
-                if glob_match(fold_name(leaf["mask"]), name):
+                if glob_match(self.masks[idx], name):
                     (self.copied if rec["kind"] == "copy" else self.skipped)[idx] += 1
                     if rec["kind"] == "skip" and len(self.skip_words[idx]) < 3:
                         self.skip_words[idx].append(str(rec.get("reason") or "")[:256])
@@ -4650,8 +4736,9 @@ def kape_section(args, run, census, found, src, corpus, needs):
     run.row("requested", collector="KAPE", targets=[shown(n, "target") for n in names[:FIRST_PROBLEMS]], targets_total=len(names), targets_basis=basis,
             definitions_version=entry["version"], pinned=entry["pinned"])
     leaves = []
+    budget = [KAPE_ENTRY_BUDGET]
     for name in names:
-        got, problems = kape_leaves(name, index, run)
+        got, problems = kape_leaves(name, index, run, budget=budget)
         if got:
             run.use(corpus, "kape", got[0]["member"])
         for p in problems:
@@ -4672,18 +4759,27 @@ def kape_section(args, run, census, found, src, corpus, needs):
             run.row("unresolved", collector="KAPE", kind="unresolved_dynamic_selection", target=leaf["target"], entry_name=leaf["name"], path=leaf["path"],
                     why="the path holds a KAPE variable (%user% and the like): it is not expanded by a guess")
             continue
+        if len(leaf["mask"]) > MAX_MASK:
+            run.row("unresolved", collector="KAPE", kind="mask_over_bound", target=leaf["target"], entry_name=leaf["name"], path=leaf["path"], why="the file mask is over %d characters: it is not run as a glob" % MAX_MASK)
+            continue
         idx = len(resolvable)
         resolvable.append(leaf)
         by_dir.setdefault(kape_norm(leaf["path"]), []).append(idx)
     sink = KapeSink(by_dir, run)
     sink.by_dir_leaf = resolvable
+    sink.masks = [fold_name(leaf["mask"]) for leaf in resolvable]
     sources = read_collection(src, {**found, "uac_logs": [], "uac_hashes": [], "velociraptor": {}, "velo_encrypted": {}}, sink)
     for s in sources:
         if s["status"] != "parsed":
             run.partial.append("%s is %s%s" % (s["log"], s["status"], " (%s)" % s["reason"] if s.get("reason") else ""))
+    if sink.oversize:
+        run.partial.append("%d copy-log or skip-log row(s) name a path of over %d components or a file name of over %d characters and were counted, not matched" % (sink.oversize, MAX_PATH_PARTS, MAX_NAME_MATCH))
     if not any(s["kind"] == "copy_log" for s in sources):
         run.partial.append("no KAPE copy log was read to compare the targets with")
     for idx, leaf in enumerate(resolvable):
+        if out_of_time():
+            run.partial.append("the time limit ended the list of KAPE entries taken and not taken")
+            break
         took, skipped = sink.copied[idx], sink.skipped[idx]
         if took:
             run.row("collected", collector="KAPE", target=leaf["target"], entry_name=leaf["name"], path=leaf["path"], mask=leaf["mask"], copy_log_rows=took, skip_log_rows=skipped)
@@ -4691,7 +4787,7 @@ def kape_section(args, run, census, found, src, corpus, needs):
             run.row("not_collected", collector="KAPE", target=leaf["target"], entry_name=leaf["name"], path=leaf["path"], mask=leaf["mask"], copy_log_rows=0, skip_log_rows=skipped,
                     collector_words=sink.skip_words.get(idx, []),
                     basis="no copy-log row has a source directory and a name the entry could take%s" % ("" if census.complete else " (the census is not complete)"))
-            if not needs or any(n.lower() in (leaf["target"] + " " + (leaf["name"] or "") + " " + (leaf["category"] or "")).lower() for n in [x for x in needs]):
+            if not needs or any(n in (leaf["target"][:512] + " " + (leaf["name"] or "")[:512] + " " + (leaf["category"] or "")[:512]).lower() for n in needs):
                 run.row("proposed_additional_evidence", collector="KAPE", target=leaf["target"], entry_name=leaf["name"], path=leaf["path"],
                         why="the pinned target could take it and no copy-log row shows it taken; an item for the operator to consider, not a command")
 
@@ -4706,6 +4802,8 @@ def main():
     seconds = want_int(args, "time_limit_seconds", 3000, 1, 3400)
     for key in ("profile", "delivered_profile"):
         want_str(args, key)
+    if args.get("needs") is not None and (not isinstance(args["needs"], list) or len(args["needs"]) > 100 or any(not isinstance(v, str) or len(v) > 128 for v in args["needs"])):
+        fail("needs must be a list of at most 100 strings of at most 128 characters")
     for key in ("kape_targets", "needs", "collectors"):
         value = args.get(key)
         if value is not None and (not isinstance(value, list) or not value or len(value) > 1000 or any(not isinstance(v, str) or not v or "\0" in v or len(v) > 512 for v in value)):
@@ -4732,7 +4830,7 @@ def main():
     corpus = Corpora()
     if definitions is not None:
         corpus.load(definitions, allow_unpinned)
-    needs = args.get("needs") or []
+    needs = [n.lower() for n in (args.get("needs") or [])]
     dirs, dirs_complete = (dir_prefixes(census) if "uac" in wanted and found["uac_logs"] else (set(), True))
     if not dirs_complete:
         run.partial.append("the directory index of the census is incomplete")
@@ -4757,6 +4855,9 @@ def main():
         lines.append("%d unresolved selection(s): what they select is not known from the definitions and the records" % run.counts["unresolved"])
     if run.counts["unknown"]:
         lines.append("%d name(s) or value(s) the definitions do not know, or that could not be read (see unknown)" % run.counts["unknown"])
+    for e in corpus.report:
+        if e.get("status") == "read" and not e.get("pinned"):
+            lines.append("the %s corpus %s was read under allow_unpinned: its sha256 is not on the list this tool carries, so everything taken from it is version unknown" % (e["corpus"], e["name"]))
     if definitions is None:
         lines.append("definitions_not_available: no definitions directory was given, so no profile, artefact or target was resolved")
     if not any(found[k] for k in ("uac_logs", "velociraptor", "kape")) and not any(args.get(k) for k in ("profile", "delivered_profile", "kape_targets")):
@@ -4768,7 +4869,7 @@ def main():
     status = "partial" if lines else "complete"
     basis = "every recognised record and every definition used was read whole" if status == "complete" else "; ".join(lines[:10]) + ("; and %d more" % (len(lines) - 10) if len(lines) > 10 else "")
     sections = {s: {"count": run.counts[s], "first": run.first[s]} for s in SECTIONS}
-    unique_used = list({json.dumps(u, sort_keys=True): u for u in run.used}.values())
+    unique_used = list(run.used.values())
     out = {
         "tool": TOOL, "parser": PARSER, "status": status, "status_basis": basis, "root": shown(root, "root"), "ignored_parameters": ignored_parameters(args, KNOWN_PARAMETERS),
         "definitions": corpus.report,

@@ -519,3 +519,44 @@ test("a YAML file that spans very many lines in one flow collection or one quote
     assert.equal(out.status, "partial");
   });
 });
+
+test("at the bounds: a 2 MiB YAML key line, a 2 MiB colon run, a copy-log path of 1 MiB of components and a 1 MiB definition entry are each read in seconds, by both YAML routes", async () => {
+  await withCwd(async (cwd) => {
+    await uacDelivery(cwd);
+    const udigest = await pack(join(cwd, "defs"), "uac-3.4.0.tar.gz", UAC_CORPUS);
+    const MIB2 = 2 * 1024 * 1024;
+    const cases: Array<[string, string]> = [
+      ["a key with 2 MiB of spaces inside", "name: ir_triage\nartifacts:\n  - a" + " ".repeat(MIB2 - 100) + "x: 1\n"],
+      ["a 2 MiB run of colons", "name: ir_triage\nartifacts:\n  - " + ":".repeat(MIB2 - 100) + "\n"],
+      ["a 2 MiB profile entry", "name: ir_triage\nartifacts:\n  - " + "a".repeat(MIB2 - 100) + "\n"],
+    ];
+    for (const [label, text] of cases) {
+      await put(cwd, "d/profiles/long.yaml", text);
+      const started = Date.now();
+      const out = body(await pinnedRun(cwd, "uac", "3.4.0", udigest, { root: "d", definitions: "defs", delivered_profile: "profiles/long.yaml", time_limit_seconds: 60 }));
+      assert.ok(Date.now() - started < 30_000, `UAC route, ${label}: ${Date.now() - started} ms`);
+      assert.ok(out.status === "partial" || out.status === "complete", label);
+    }
+    // the Velociraptor route: the same file as a definition the container carries
+    const vdigest = await pack(join(cwd, "vdefs"), "velociraptor-0.77.2.tar.gz", VELO_CORPUS);
+    await put(cwd, "v/c1/collection_context.json", velo("x"));
+    await put(cwd, "v/c1/uploads.json", "");
+    for (const [label, text] of cases) {
+      await put(cwd, "v/c1/Long.yaml", text.replace("ir_triage", "Windows.System.Pslist"));
+      const started = Date.now();
+      const out = body(await pinnedRun(cwd, "velociraptor", "0.77.2", vdigest, { root: "v", definitions: "vdefs", time_limit_seconds: 60 }));
+      assert.ok(Date.now() - started < 30_000, `Velociraptor route, ${label}: ${Date.now() - started} ms`);
+      assert.ok(out.status === "partial" || out.status === "complete", label);
+    }
+    // KAPE: one copy-log row whose SourceFile holds 1 MiB of path components, and one with 80,000
+    const kdigest = await pack(join(cwd, "kdefs"), "KapeFiles-abc.zip", KAPE_CORPUS);
+    for (const parts of [MIB2 / 4, 80000]) {
+      const path = "C:\\" + Array.from({ length: parts }, () => "d").join("\\") + "\f.evtx";
+      await put(cwd, "k/2026-02-14T09_12_00_CopyLog.csv", [KAPE_COPY_HEADER, kapeCopyRow(path, path)].join("\n") + "\n");
+      const started = Date.now();
+      const out = body(await pinnedRun(cwd, "kape", "abc", kdigest, { root: "k", definitions: "kdefs", kape_targets: ["Leaf"], time_limit_seconds: 60 }));
+      assert.ok(Date.now() - started < 30_000, `KAPE, ${parts} components: ${Date.now() - started} ms`);
+      assert.ok(out.status === "partial" || out.status === "complete");
+    }
+  });
+});
