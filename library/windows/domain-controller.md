@@ -76,7 +76,8 @@ Read `catalog/` before running the same commands again.
    `esentutl` in 4688 and Sysmon 1 command lines; backup logs for a
    snapshot in the window), ESENT 216, 325, 326 and 327 in the Application
    log naming a copy of the directory database outside `NTDS\` (the trace
-   that survives when process auditing was off), System 7036 for the
+   that survives when process auditing was off; a plain file copy of
+   `ntds.dit`, from an offline disk or a shadow copy, raises none), System 7036 for the
    Volume Shadow Copy service starting in the window, the Prefetch and
    Amcache entries for those tools, files named like the directory
    database or the hives in places they do not belong (temp paths, a

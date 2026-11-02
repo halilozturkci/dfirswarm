@@ -220,7 +220,7 @@ timeline rests on, and `inputs/` is unchanged.
 - `grep -qi 'containment' work/report.md`
 - `test -f work/timeline.md`
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 25`
-- `grep -m1 -iE '^\| *(# *\| *)?(time|utc|date)' work/timeline.md | grep -qi 'account'`
+- `grep -qiE '^\| *(# *\| *)?(time|utc|date).*account' work/timeline.md`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,summary,narrative`

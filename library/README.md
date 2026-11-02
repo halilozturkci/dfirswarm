@@ -299,7 +299,9 @@ than the rows you mean.
 
 A check on a timeline column finds the table's header row, not the file's
 first lines (a title and a paragraph come first in a real run):
-`grep -m1 -iE '^\| *(# *\| *)?(time|utc|date)' work/timeline.md | grep -qi 'host'`.
+`grep -qiE '^\| *(# *\| *)?(time|utc|date).*host' work/timeline.md`. It reads
+every table, not the first one that looks like a header: a title table or a
+side table above the timeline must not hide it.
 
 ### The standard checks
 
@@ -361,9 +363,9 @@ or a malware case (`test "$(grep -c '^| ' work/indicators.md)" -ge 3` — one
 row at least, and a row may say that nothing was found and why), a flags
 table for a question set, an extracted-artefact directory for a memory dump.
 A case that extracts samples, carvings or decoded stages adds
-`test -z "$(find work -path work/.toolchain -prune -o -type f \( -perm -u+x -o -perm -g+x -o -perm -o+x \) -print 2>/dev/null | head -1)"`:
-no file under `work/` carries an execute bit (pip's `work/.toolchain/`
-aside). A case that must not extract without the kernel's no-exec adds
+`test -z "$(find work \( -path work/.toolchain -o -path work/.tmp \) -prune -o -type f \( -perm -u+x -o -perm -g+x -o -perm -o+x \) -print 2>/dev/null | head -1)"`:
+no file under `work/` carries an execute bit (pip's `work/.toolchain/` and
+the panes' `work/.tmp/` aside). A case that must not extract without the kernel's no-exec adds
 `grep -q '"quarantine": true' inputs.json` as well: the kickoff records in
 `inputs.json`, which the harness writes and no agent can, whether the no-exec
 holds (`--quarantine` or `--catalog` with a kernel guard, or any microVM
@@ -377,7 +379,10 @@ case of hex, and the BSD `SHA256 (file) = ...` form), `test "$(find
 work/extracted -name SHA256SUMS -exec cat {} + 2>/dev/null | grep -cE
 '^[0-9a-fA-F]{64} |^SHA256 ?\(.*\) ?= ?[0-9a-fA-F]{64}')" -ge 1`, and a
 second runs `sha256sum -c` (or `shasum -a 256 -c`) on every manifest, so a
-hash of a file that is not there fails. Where it promises a YARA rule,
+hash of a file that is not there fails. A check has 30 seconds: where the
+extracts are dumps, the second check skips a manifest whose directory holds
+a file over 256 MiB or more than 1 GiB in all (links followed), and the entry says that the report must record
+that dump's hash as taken at extraction. Where it promises a YARA rule,
 check that a file declares a rule outside a comment (`test -n "$(find
 work/rules -iname '*.yar*' -exec awk ... {} + 2>/dev/null)"`, the awk
 dropping `/* */` and `//` text and printing the file name on a `rule`
