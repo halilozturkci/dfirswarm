@@ -3641,9 +3641,12 @@ class YamlReader:
         first = text
         if first[:1] in "[{":
             buf = first
-            while self.flow_open(buf) and j < self.n:
+            depth, quote = self.flow_scan(first, 0, None)
+            while (depth > 0 or quote is not None) and j < self.n:
                 self.tick(j)
-                buf += " " + self.strip_comment(self.raw[j].strip())
+                seg = " " + self.strip_comment(self.raw[j].strip())
+                buf += seg
+                depth, quote = self.flow_scan(seg, depth, quote)
                 if len(buf) > YAML_MAX_SCALAR:
                     raise YamlRefused("scalar_over_bound", j + 1)
                 j += 1
@@ -3654,15 +3657,16 @@ class YamlReader:
         if first[:1] in "\"'":
             q = first[0]
             buf = first
-            while not self.quote_closed(buf, q) and j < self.n:
+            close, pos = self.quote_scan(buf, q, 1)
+            while close < 0 and j < self.n:
                 self.tick(j)
                 buf += "\n" + self.raw[j].strip()
                 if len(buf) > YAML_MAX_SCALAR:
                     raise YamlRefused("scalar_over_bound", j + 1)
+                close, pos = self.quote_scan(buf, q, pos)
                 j += 1
-            if not self.quote_closed(buf, q):
+            if close < 0:
                 raise YamlRefused("unterminated_quote", i + 1)
-            close = self.quote_end(buf, q)
             if self.strip_comment(buf[close + 1:]).strip():
                 raise YamlRefused("unexpected_content", i + 1)
             body = buf[1:close]
@@ -3712,14 +3716,33 @@ class YamlReader:
             k += 1
         return -1
 
-    def quote_closed(self, buf, q):
-        return self.quote_end(buf, q) > 0
+    @staticmethod
+    def quote_scan(buf, q, pos):
+        """(index of the closing quote or -1, position to continue from): scanning resumes where the last call stopped, so a quoted scalar over many
+        lines is read once and not once per line."""
+        k = pos
+        while k < len(buf):
+            if buf[k] == "\\" and q == '"':
+                if k + 1 >= len(buf):
+                    return -1, k
+                k += 2
+                continue
+            if buf[k] == q:
+                if q == "'":
+                    if buf[k + 1:k + 2] == "'":
+                        k += 2
+                        continue
+                return k, k
+            k += 1
+        return -1, k
 
     @staticmethod
-    def flow_open(buf):
-        depth, quote, k = 0, None, 0
-        while k < len(buf):
-            ch = buf[k]
+    def flow_scan(seg, depth, quote):
+        """(depth, quote) after `seg`, continuing from the state the lines before it left: brackets outside quotes, so a flow collection that spans
+        lines is judged once per line and never again over the text already seen."""
+        k = 0
+        while k < len(seg):
+            ch = seg[k]
             if quote:
                 if ch == "\\" and quote == '"':
                     k += 1
@@ -3732,7 +3755,7 @@ class YamlReader:
             elif ch in "]}":
                 depth -= 1
             k += 1
-        return depth > 0 or quote is not None
+        return depth, quote
 
     def flow(self, s, k, depth, i):
         if depth > YAML_FLOW_DEPTH:
@@ -3864,6 +3887,7 @@ MAX_CORPUS_FILES = 100000
 MAX_CORPUS_TEXT = 128 << 20
 MAX_MEMBER_NAME = 1024
 COMPOUND_DEPTH = 8
+KAPE_ENTRY_BUDGET = 200000        # entries visited in resolving one target, compound targets included
 MAX_ROWS_BYTES_PER_PATH = 4096
 MAX_CONTEXT_BYTES = 8 << 20
 MAX_LOG_LINE = 8192
@@ -4501,9 +4525,10 @@ def kape_index(corpus, run):
     return out
 
 
-def kape_leaves(name, index, run, stack=(), depth=0):
+def kape_leaves(name, index, run, stack=(), depth=0, budget=None):
     """([leaf entries], [problems]) of a target by name. A `Path` that names another .tkape is a compound entry: it is followed to COMPOUND_DEPTH, a cycle is
-    refused by name, a target not in the pinned set is `unknown`."""
+    refused by name, a target not in the pinned set is `unknown`, and a fan-out past KAPE_ENTRY_BUDGET entries (or the time limit) ends the expansion."""
+    budget = budget if budget is not None else [KAPE_ENTRY_BUDGET]
     key = name.lower()
     if key.endswith(".tkape"):
         key = key[:-len(".tkape")]
@@ -4516,11 +4541,15 @@ def kape_leaves(name, index, run, stack=(), depth=0):
         return [], [{"kind": "unknown", "target": name}]
     leaves, problems = [], []
     for entry in as_list(pin[1].get("Targets")):
+        budget[0] -= 1
+        if budget[0] < 0 or (budget[0] % CLOCK_EVERY == 0 and out_of_time()):
+            problems.append({"kind": "too_many", "target": name})
+            break
         if not isinstance(entry, dict):
             continue
         path = entry.get("Path")
         if is_text(path) and path.lower().endswith(".tkape"):
-            sub_leaves, sub_problems = kape_leaves(os.path.basename(path.replace("\\", "/")), index, run, (*stack, key), depth + 1)
+            sub_leaves, sub_problems = kape_leaves(os.path.basename(path.replace("\\", "/")), index, run, (*stack, key), depth + 1, budget)
             leaves += sub_leaves
             problems += sub_problems
             continue
@@ -4629,7 +4658,8 @@ def kape_section(args, run, census, found, src, corpus, needs):
             extra = {} if p["kind"] == "unknown" else {"kind": p["kind"]}
             run.row("unknown" if p["kind"] == "unknown" else "unresolved", collector="KAPE", target=shown(p["target"], "target"), chain=p.get("chain"), **extra,
                     why={"unknown": "the target is not among the %s KapeFiles definitions" % ("pinned" if entry["pinned"] else "unpinned"),
-                         "cycle": "compound targets name each other in a cycle: refused", "too_deep": "compound targets nest deeper than %d: refused" % COMPOUND_DEPTH}[p["kind"]])
+                         "cycle": "compound targets name each other in a cycle: refused", "too_deep": "compound targets nest deeper than %d: refused" % COMPOUND_DEPTH,
+                         "too_many": "the target expands to more than %d entries (or the time limit ended): the rest is not followed" % KAPE_ENTRY_BUDGET}[p["kind"]])
         leaves += got
     by_dir, resolvable = {}, []
     for leaf in leaves:

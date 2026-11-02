@@ -57,10 +57,10 @@
       "tools/collection_manifest_verify/run.py": "75f54fa23da423b953c39a7c84a471b6d9ca22d39e2bef8cd8af0f15e091fcc7",
       "tools/collection_path_map/manifest.json": "cbc877295dfd05264af74baa84430f00056a8e312debf1f1ee39303ecb0feb2a",
       "tools/collection_path_map/run.py": "2d10838ccedab78348a85d3922712f569c32aa73ff65ff64719b45bba7d7aee9",
-      "tools/collection_profile_compare/manifest.json": "b69d63b43161d79237b45d6e23ffb6106cde4ec3dad561141309dbba5350cb24",
-      "tools/collection_profile_compare/run.py": "033d0bc7c9bc35a17f0033c1a1c93af02e7db2ab49d1fac2990c42d8944fb9ad",
-      "tools/collection_timestamps/manifest.json": "1289e3bd19a7035b2984df32608b8ff5803fd1aa72d51cab0b535d8e997edcf9",
-      "tools/collection_timestamps/run.py": "38cf32183f6da9dd47f6c3f7a76345c9d8051677a3cd355ed26b3d4c1e7f853d"
+      "tools/collection_profile_compare/manifest.json": "f1b3b099311d26e72b70d821fa7b8dc9d0db06049e33b4e637e36648de343763",
+      "tools/collection_profile_compare/run.py": "ea35880338bcf6d30a5765f2e949233c4d25551a42c559c6123af0ac49036c6c",
+      "tools/collection_timestamps/manifest.json": "dad79d221d491986113fa59501940186cd252facb6dac2400ba91effec80df1e",
+      "tools/collection_timestamps/run.py": "d43af545ce7b82b87663714148c97001cf3feaa4648cb011b42bf1497138001c"
     }
   },
   "tools": [

@@ -63,7 +63,7 @@
   "by": "maintainer",
   "at": "2026-11-02T12:00:00.000Z",
   "version": 1,
-  "sha256": "033d0bc7c9bc35a17f0033c1a1c93af02e7db2ab49d1fac2990c42d8944fb9ad",
+  "sha256": "ea35880338bcf6d30a5765f2e949233c4d25551a42c559c6123af0ac49036c6c",
   "use": {
     "names": [
       "uac.log",

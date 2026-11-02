@@ -483,3 +483,39 @@ test("the tool's own clock ends a long record read partial, with JSON", async ()
     assert.match(out.status_basis, /time limit|stopped|definitions_not_available/);
   });
 });
+
+test("a YAML file that spans very many lines in one flow collection or one quoted scalar is read once, not once per line, and a compound-target fan-out is bounded", async () => {
+  await withCwd(async (cwd) => {
+    await uacDelivery(cwd);
+    const digest = await pack(join(cwd, "defs"), "uac-3.4.0.tar.gz", UAC_CORPUS);
+    const cases: Array<[string, string]> = [
+      ["a flow list over 90,000 lines", "name: ir_triage\nartifacts: [\n" + "  a.yaml,\n".repeat(90000) + "]\n"],
+      ["a double-quoted scalar over 90,000 lines", 'name: ir_triage\ndescription: "' + "word\n".repeat(90000) + '"\nartifacts: []\n'],
+      ["a single-quoted scalar over 90,000 lines", "name: ir_triage\ndescription: '" + "word\n".repeat(90000) + "'\nartifacts: []\n"],
+    ];
+    for (const [label, text] of cases) {
+      await put(cwd, "d/profiles/long.yaml", text);
+      const started = Date.now();
+      const out = body(await pinnedRun(cwd, "uac", "3.4.0", digest, { root: "d", definitions: "defs", delivered_profile: "profiles/long.yaml" }));
+      assert.ok(Date.now() - started < 20_000, `${label}: ${Date.now() - started} ms`);
+      assert.ok(out.status === "partial" || out.status === "complete", label);
+    }
+    // 30 targets each naming 30 others, five deep: 30^4 leaves, far over the budget; it ends with a named refusal and in time
+    const corpus: Record<string, string> = {};
+    for (let level = 0; level < 5; level++) {
+      for (let i = 0; i < 30; i++) {
+        const name = `T${level}x${i}`;
+        const entries = level === 4 ? [ENTRY("Leaf", "C:\\\\Windows\\\\x\\\\", "*")] : Array.from({ length: 30 }, (_, k) => ENTRY(`n${k}`, `T${level + 1}x${k}.tkape`, "*"));
+        corpus[`KapeFiles-abc/Targets/${name}.tkape`] = TKAPE(entries);
+      }
+    }
+    const kdigest = await pack(join(cwd, "kdefs"), "KapeFiles-abc.zip", corpus);
+    await kapeDelivery(cwd);
+    const started = Date.now();
+    const out = body(await pinnedRun(cwd, "kape", "abc", kdigest, { root: "k", definitions: "kdefs", kape_targets: ["T0x0"] }));
+    assert.ok(Date.now() - started < 60_000, `fan-out took ${Date.now() - started} ms`);
+    const rows = await tableRows(cwd, out.tables.findings);
+    assert.ok(rows.some((r: Json) => r.kind === "too_many" && /more than 200000 entries/.test(r.why)), "the expansion ends with a named refusal");
+    assert.equal(out.status, "partial");
+  });
+});

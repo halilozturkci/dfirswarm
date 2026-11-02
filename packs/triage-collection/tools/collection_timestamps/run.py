@@ -4163,7 +4163,7 @@ def main():
             end = archive_pass(archive, fmt, state)
     if walk.held is not None and fmt is not None and not state["stopped"] and not state["archive_error"] and not walk.held_incomplete:
         for position, items in enumerate(walk.held.values()):      # delivered files the archive does not name, under the clock
-            if position % 256 == 0 and out_of_time():
+            if out_of_time():
                 state["stopped"] = "the time limit ended the list of delivered files the archive does not name"
                 break
             for item in items:
