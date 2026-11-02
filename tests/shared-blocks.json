@@ -28,6 +28,7 @@
     ] },
     "RECORDS BLOCK": { "variants": [ { "carriers": 5, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },
     "SCAN": { "variants": [ { "carriers": 6, "example": "packs/computer-forensics-base/tools/chunk_needles/run.py" } ] },
+    "TEMPS": { "variants": [ { "carriers": 19, "example": "packs/computer-forensics-base/recipes/ad1-items/run.py" } ] },
     "SHARED BLOCK": { "variants": [
       { "carriers": 6, "example": "packs/triage-collection/tools/collection_coverage/run.py", "why": "triage-collection's block (the error form, where an output may be written, the lossless table, the secret-safe values file, the withholding)" },
       { "carriers": 3, "example": "packs/cloud-forensics/tools/cloudtrail_parse/run.py", "why": "cloud-forensics' block: an unrelated text that happens to carry the same name" }

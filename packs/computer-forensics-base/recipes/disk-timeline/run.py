@@ -277,11 +277,14 @@ def _probe_out(directory):
     """The output directory is written to once, up front: a directory that cannot be written (not owned, mounted read-only, a full disk) is a refusal
     before anything is run, not a PermissionError in the middle of the coverage file."""
     probe = _os.path.join(directory, ".write-probe-%d" % _os.getpid())
+    temp_hold(probe)                 # registered before it is made: whatever stops this, it is removed
     try:
         fd = _os.open(probe, _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL, 0o600)
         _os.close(fd)
-        _os.unlink(probe)
+        if not temp_drop(probe):
+            raise OSError(0, "the probe file could not be removed")
     except (OSError, ValueError) as exc:
+        temp_drop(probe)
         print_answer({"ok": False, "status": "failed", "error": "--out cannot be written: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__),
                       "status_basis": "the output directory cannot be written, so nothing was run"})
         _sys.exit(2)
