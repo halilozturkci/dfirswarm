@@ -40,6 +40,9 @@ DIGEST_SECONDS = 85           # the output's sha256 is given up past this long a
 SEAL_STOP_SECONDS = 1196.5     # no string is judged past this (the rest is withheld whole): the manifest allows 1200, less the 3.5 seconds the block asks for
 MIN_READER_SECONDS = 0.5      # a reader is not started with less time than this left of the budget
 INTERRUPT_COUNT_SECONDS = 5   # after a stop signal the output is counted for this long at most
+LINE_CAP = 8 << 20            # a line of the reader's output longer than this is counted with its length and not parsed (one line of 300 MB cost 1.2 GB of memory)
+GROUP_TABLE_SECONDS = 3       # the longest reading of the process table when the processes a reader left are looked for
+STAGE_NAME = ".logarchive-input"
 DEFAULT_MAX_STAGE_FILES = 1_000_000
 DEFAULT_MAX_STAGE_BYTES = 16 << 30
 # The fields of an entry that the preview shows, under both readers' names (Apple's ndjson, Mandiant's JSONL: `time`, `message`, `raw_message`,
@@ -1798,7 +1801,8 @@ OWN_NAMES.update((
     "stderr_bytes", "timeout_seconds_used", "timeout_clamped", "timeout_requested", "note", "error", "type", "reason", "lines", "json_records",
     "entry_records", "records_without_entry_fields", "array_delimiter_lines", "first_unparsed_lines", "first_records_without_entry_fields", "line", "keys",
     "support_files", "tracev3_files", "timesync_files", "uuidtext_files", "dsc_files", "other_files", "directories_unreadable", "first_directories_unreadable",
-    "directory", "stopped_at_files", "staged", "files", "bytes", "duplicates_identical", "sources", "counting_stopped_at_line", "reader_outcome",
+    "directory", "stopped_at_files", "staged", "files", "bytes", "lines_over_cap", "line_cap_bytes", "longest_line_bytes", "first_lines_over_cap", "reader_processes_left",
+    "ended", "staged_copy", "kind", "walk_complete", "duplicates_identical", "sources", "counting_stopped_at_line", "reader_outcome",
     "budget", "seconds_used", "seconds_for_reader", "staging_seconds", "census_seconds", "boundary", "max_stage_files", "max_stage_bytes", "out_dir", "holds",
     "looked_for", "link", "found_as", "conflicts", "conflict_count", "directory", "files", "bytes", "predicate_names_message_text",
 ))
@@ -1971,6 +1975,42 @@ def stage(path, scratch, max_files, max_bytes, deadline):
             "sources": [diagnostics, uuidtext]}
 
 
+def staged_copy_size(path, seconds=5):
+    """What an earlier run's staged copy holds, counted with lstat (links are not followed) for `seconds` at most:
+    {"kind": "directory", "files", "bytes", "walk_complete"}, or what the name is when it is not a directory."""
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        return {"kind": "unreadable", "reason": type(exc).__name__}
+    if not stat.S_ISDIR(info.st_mode):
+        return {"kind": "not a directory", "bytes": info.st_size}
+    files = total = steps = 0
+    complete = True
+    limit = time.monotonic() + seconds
+    stack = [path]
+    while stack and complete:
+        top = stack.pop()
+        try:
+            with os.scandir(top) as listing:
+                for entry in listing:
+                    steps += 1
+                    if steps % 256 == 0 and time.monotonic() > limit:
+                        complete = False
+                        break
+                    try:
+                        detail = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if stat.S_ISDIR(detail.st_mode):
+                        stack.append(entry.path)
+                    else:
+                        files += 1
+                        total += detail.st_size
+        except OSError:
+            complete = False
+    return {"kind": "directory", "files": files, "bytes": total, "walk_complete": complete}
+
+
 def reader_version(argv_first):
     try:
         proc = subprocess.run([argv_first, "--version"], capture_output=True, text=True, timeout=10)
@@ -1989,14 +2029,40 @@ def count_output(path, limit, deadline, inline_bytes=DEFAULT_INLINE_BYTES):
     """Read the whole output once, in a stream. Only the preview is held, bounded by `limit` entries and by `inline_bytes`. Past `deadline` the counting stops,
     says at which line, and what was counted is a prefix."""
     cov = {"lines": 0, "json_records": 0, "entry_records": 0, "unparsed_lines": 0, "records_without_entry_fields": 0,
-           "array_delimiter_lines": 0, "preview_bounded_by_bytes": False}
-    entries, first_unparsed, first_without = [], [], []
+           "array_delimiter_lines": 0, "preview_bounded_by_bytes": False, "lines_over_cap": 0, "line_cap_bytes": LINE_CAP, "longest_line_bytes": 0}
+    entries, first_unparsed, first_without, first_over = [], [], [], []
     held_bytes = 0
     with open(path, "rb") as fh:
-        for number, raw in enumerate(fh, 1):
-            if number % 4096 == 0 and time.monotonic() > deadline:
-                cov["counting_stopped_at_line"] = number
+        number = 0
+        while True:
+            if time.monotonic() > deadline:                      # looked at for every bounded read, not once in 4,096 lines
+                cov["counting_stopped_at_line"] = number + 1
                 break
+            raw = fh.readline(LINE_CAP + 1)
+            if not raw:
+                break
+            number += 1
+            if len(raw) > LINE_CAP:
+                # a line longer than the cap is read on in pieces and only its length is kept: it is counted, listed by line number and length, and not parsed
+                # (it stays in the output file as the reader wrote it)
+                length, cut = len(raw), False
+                while not raw.endswith(b"\n"):
+                    if time.monotonic() > deadline:
+                        cut = True
+                        break
+                    raw = fh.readline(LINE_CAP)
+                    if not raw:
+                        break
+                    length += len(raw)
+                cov["lines"] += 1
+                cov["lines_over_cap"] += 1
+                cov["longest_line_bytes"] = max(cov["longest_line_bytes"], length)
+                if len(first_over) < FIRST:
+                    first_over.append({"line": number, "bytes": length})
+                if cut:
+                    cov["counting_stopped_at_line"] = number
+                    break
+                continue
             line = raw.strip()
             if not line:
                 continue
@@ -2029,6 +2095,7 @@ def count_output(path, limit, deadline, inline_bytes=DEFAULT_INLINE_BYTES):
                 kept = {k: (guard_text(row[k], k) if isinstance(row.get(k), str) else row[k]) for k in KEEP if row.get(k) is not None}
                 entries.append(kept or {"keys": print_order_until(list(row), "name", until=deadline)[0][:20]})
     cov["first_unparsed_lines"] = first_unparsed
+    cov["first_lines_over_cap"] = first_over
     cov["first_records_without_entry_fields"] = first_without
     return cov, entries
 
@@ -2062,6 +2129,99 @@ def descendants(pid):
     return found
 
 
+def _die_with_parent():  # runs in the child between fork and exec
+    try:
+        import ctypes
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)       # PR_SET_PDEATHSIG: the reader dies with this tool (Linux)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _proc_stat(pid):
+    """(start time, state, process group) of `pid` from /proc/<pid>/stat (Linux), or None."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            text = fh.read(4096).decode("ascii", "replace")
+        tail = text[text.rindex(")") + 2:].split()
+        return (tail[19], tail[0], tail[2]) if len(tail) > 19 else None
+    except (OSError, ValueError):
+        return None
+
+
+def group_members():
+    """{pid: (start time, state)} of the processes in this tool's process group, or None when the table cannot be read in GROUP_TABLE_SECONDS.
+    The start time is read from /proc on Linux; where ps is used it is None."""
+    group = str(os.getpgrp())
+    found = {}
+    limit = time.monotonic() + GROUP_TABLE_SECONDS
+    if os.path.isdir("/proc/self"):
+        try:
+            names = os.listdir("/proc")
+        except OSError:
+            return None
+        for number, name in enumerate(names):
+            if not name.isdigit():
+                continue
+            if number % 64 == 0 and time.monotonic() > limit:
+                return None
+            row = _proc_stat(int(name))
+            if row is not None and row[2] == group:
+                found[int(name)] = (row[0], row[1])
+        return found
+    for ps in (shutil.which("ps"), "/bin/ps", "/usr/bin/ps"):
+        if not ps:
+            continue
+        try:
+            table = subprocess.run([ps, "-A", "-o", "pid=,pgid=,state="], capture_output=True, text=True, timeout=GROUP_TABLE_SECONDS).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        for line in table.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[0].isdigit() and parts[1] == group:
+                found[int(parts[0])] = (None, parts[2][:1])
+        return found
+    return None
+
+
+def end_group_orphans(before):
+    """After a stop or a time-out, end the processes that are in this tool's own process group and were not there before the reader started: what the
+    reader forked and lost (a double fork leaves a process whose parent is gone, out of reach of a walk down the process tree). Only when this tool
+    leads its group (the harness starts a tool as the leader of one), so that every member that is new since the reader started was started below this
+    tool; a process that was there before is never touched, and a pid's identity (its start time) is read again just before the signal. Returns
+    {"ended": n, "note": a sentence or None}."""
+    if before is None:
+        return {"ended": 0, "note": "the process table could not be read before the reader started, so the processes it left in the tool's group were not searched for"}
+    if os.getpgrp() != os.getpid():
+        return {"ended": 0, "note": "the tool does not lead its process group (the harness starts a tool as the leader of one), so nothing outside the reader's own tree was searched for"}
+    ended = 0
+    note = None
+    for _round in range(3):
+        now = group_members()
+        if now is None:
+            note = "the process table could not be read after the reader ended, so the processes it left in the tool's group may not all have been ended"
+            break
+        victims = [(pid, start) for pid, (start, state) in now.items() if pid != os.getpid() and state != "Z" and before.get(pid, (object(), ""))[0] != start]
+        if not victims:
+            break
+        for pid, start in victims:
+            if start is not None:
+                again = _proc_stat(pid)
+                if again is None or again[0] != start or again[2] != str(os.getpgrp()):
+                    continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+                ended += 1
+            except OSError:
+                pass
+        time.sleep(0.05)
+    else:
+        note = "processes were still appearing in the tool's group after three rounds: they may not all have been ended"
+    return {"ended": ended, "note": note}
+
+
+READER_LEFT = {}       # what end_group_orphans found, once the reader was ended by a stop or a time-out
+
+
 def kill_reader(proc):
     """End the reader this tool started and what it started (its own child and that child's descendants, never a search by name): a reader that runs helpers
     leaves them behind when only its own pid is killed. The reader is stopped first so that it starts no more while its tree is read."""
@@ -2084,7 +2244,8 @@ def kill_reader(proc):
 
 def run_reader(argv, stdout, stderr, seconds):
     """(exit code, timed out): the reader runs for at most `seconds` and is killed when the time is up or a stop signal arrives."""
-    proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr)
+    before = group_members()
+    proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, preexec_fn=_die_with_parent if sys.platform.startswith("linux") else None)
     hook = lambda: kill_reader(proc)       # noqa: E731 (a stop signal ends the reader before the exception unwinds)
     STOP["hooks"].append(hook)
     try:
@@ -2093,6 +2254,7 @@ def run_reader(argv, stdout, stderr, seconds):
         except subprocess.TimeoutExpired:
             kill_reader(proc)
             proc.wait()
+            READER_LEFT.update(end_group_orphans(before))
             return None, True
     except BaseException:
         kill_reader(proc)
@@ -2100,6 +2262,11 @@ def run_reader(argv, stdout, stderr, seconds):
             proc.wait(timeout=10)
         except (subprocess.TimeoutExpired, OSError):
             pass
+        if not READER_LEFT:
+            try:
+                READER_LEFT.update(end_group_orphans(before))
+            except Exception:  # noqa: BLE001 (the stop that is being handled goes on)
+                pass
         raise
     finally:
         if hook in STOP["hooks"]:
@@ -2179,8 +2346,16 @@ def run_log(args):
         fail("out_dir could not be created", out_dir=out_dir, reason="%s: %s" % (type(exc).__name__, exc.strerror or "error"))
     held_names = [n for n in OUTPUT_NAMES if os.path.lexists(os.path.join(out_dir, n))]
     if held_names:
-        fail("out_dir already holds %s from an earlier run; the tool does not overwrite it: use a new directory" % ", ".join(held_names),
-             out_dir=out_dir, holds=held_names)
+        extra, more = {}, ""
+        if STAGE_NAME in held_names:
+            left = staged_copy_size(os.path.join(out_dir, STAGE_NAME))
+            extra["staged_copy"] = left
+            more = ("; %s is a copy of the evidence that an earlier run staged and was killed before it could remove it (%s): it is the tool's copy, the evidence itself "
+                    "was not changed, and nothing here removes it for you" % (STAGE_NAME, (
+                        "%d file(s), %s%d byte(s)" % (left["files"], "" if left["walk_complete"] else "at least ", left["bytes"])) if left.get("kind") == "directory"
+                    else "not a directory"))
+        fail("out_dir already holds %s from an earlier run; the tool does not overwrite it: use a new directory%s" % (", ".join(held_names), more),
+             out_dir=out_dir, holds=held_names, **extra)
     stderr_path = names["unifiedlog.stderr"]
     scratch = os.path.join(out_dir, ".logarchive-input")
     problems, warnings = [], []
@@ -2281,7 +2456,8 @@ def run_log(args):
     if output_exists:
         coverage, entries = count_output(output_path, limit, count_deadline, inline_bytes)
     else:
-        coverage, entries = {"lines": 0, "json_records": 0, "entry_records": 0, "unparsed_lines": 0,
+        coverage, entries = {"lines": 0, "json_records": 0, "entry_records": 0, "unparsed_lines": 0, "lines_over_cap": 0, "line_cap_bytes": LINE_CAP, "longest_line_bytes": 0,
+                             "first_lines_over_cap": [],
                              "records_without_entry_fields": 0, "array_delimiter_lines": 0, "preview_bounded_by_bytes": False,
                              "first_unparsed_lines": [], "first_records_without_entry_fields": []}, []
     coverage["support_files"] = census
@@ -2309,7 +2485,7 @@ def run_log(args):
         outcome = "empty"
         problems.append("the output holds no entries (%d line(s), %d JSON record(s) without an entry's fields): this is not a negative "
                         "about the logs" % (coverage["lines"], coverage["records_without_entry_fields"]))
-    elif coverage["unparsed_lines"]:
+    elif coverage["unparsed_lines"] or coverage["lines_over_cap"]:
         status = "partial"
     else:
         status = "complete"
@@ -2319,12 +2495,20 @@ def run_log(args):
     if coverage["unparsed_lines"]:
         problems.append("%d line(s) of the output are not JSON records (the first at line %s)"
                         % (coverage["unparsed_lines"], ", ".join(str(n) for n in coverage["first_unparsed_lines"][:3])))
+    if coverage["lines_over_cap"]:
+        problems.append("%d line(s) of the output are longer than %d bytes and were not parsed (the longest is %d bytes, the first at line %s): they are in the output file "
+                        "as the reader wrote them, and they are in neither entry_count nor the preview"
+                        % (coverage["lines_over_cap"], LINE_CAP, coverage["longest_line_bytes"], ", ".join(str(l["line"]) for l in coverage["first_lines_over_cap"][:3])))
     if coverage["records_without_entry_fields"] and got:
         warnings.append("%d JSON record(s) have none of an entry's fields (timestamp, time, message, process, subsystem) and are not "
                         "counted as entries: read them before relying on entry_count" % coverage["records_without_entry_fields"])
     if stderr_bytes and not (timed_out or interrupted is not None or returncode != 0):
         warnings.append("the reader wrote %d byte(s) to its error stream (%s) although it exited 0: read it before relying on the output" % (stderr_bytes, stderr_path))
 
+    if READER_LEFT.get("ended"):
+        warnings.append("the reader left %d process(es) running in the tool's process group after it was ended; they were ended too (reader_processes_left)" % READER_LEFT["ended"])
+    if READER_LEFT.get("note"):
+        warnings.append(READER_LEFT["note"])
     digest_text = None
     if output_exists:
         digest_text = digest(output_path, (time.monotonic() + INTERRUPT_COUNT_SECONDS) if interrupted is not None else budget_end + DIGEST_SECONDS)
@@ -2369,6 +2553,7 @@ def run_log(args):
         "warnings": warnings,
         "stderr": stderr_path,
         "stderr_bytes": stderr_bytes,
+        **({"reader_processes_left": dict(READER_LEFT)} if READER_LEFT else {}),
         "timeout_seconds_used": timeout,
         "budget": {"seconds_for_reader": round(reader_seconds) if reader_seconds is not None else None, "staging_seconds": round(marks["staged"], 1),
                    "census_seconds": round(marks["census"], 1), "seconds_used": round(time.monotonic() - started, 1)},

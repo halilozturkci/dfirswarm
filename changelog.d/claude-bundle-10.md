@@ -52,3 +52,20 @@
   `source_used.sidecars_not_used` and in `problems`, and the answer is not
   `complete`. The sidecars that are copied are opened without waiting and without
   following a link, and the WAL is counted from the private copy.
+
+### Fixed: macos-forensics unified_log reads lines with a bound, ends the reader's whole tree and names a staged copy left by a killed run
+
+- The reader's output is read with a line bound of 8 MiB and the clock is looked at
+  for every bounded read. A longer line is counted with its length
+  (`decoded_coverage.lines_over_cap`, `longest_line_bytes`, `first_lines_over_cap`),
+  is not parsed, stays in the output file as the reader wrote it, and makes the
+  status `partial`; one line of 300 MB cost 1.2 GB of memory before.
+- The reader is started with `PR_SET_PDEATHSIG` on Linux. On a stop signal or its own
+  time-out the tool also ends the processes that appeared in its process group after
+  the reader started and whose parent is gone (a descendant that forked twice was out
+  of reach of the walk down the process tree), when the tool leads its group as the
+  harness starts it. A process that was in the group before is never touched, the start
+  time is read again before each signal, and `reader_processes_left` says what was done.
+- An `out_dir` that holds `.logarchive-input` from a run that was killed is still
+  refused, and the refusal now says it is a staged copy of the evidence, with its file
+  count and bytes. Nothing is swept.
