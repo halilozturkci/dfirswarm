@@ -34,3 +34,13 @@
   listed as unsupported. Commands, arguments, environments, labels, binds and log text are lengths; the stored text goes to a
   0600 file on `write_text` in a secret-output job. Large JSON logs are streamed, lists are paged, and hostile JSON gives a
   refusal. `containers/docker` names the tool and the `target-fs` route.
+
+### Added: linux-forensics `container_layers` builds the effective view of an image's layers
+
+- Take an explicit chain of layer directories (base first, with an optional writable layer) or overlay2's own `lower`
+  files, and give for each path the layer that supplies it and what each layer did to it (added, replaced, merged, deleted,
+  made opaque, present but hidden). OCI `.wh.<name>` and `.wh..wh..opq` are told apart from overlayfs native whiteouts
+  (a character device 0/0, `trusted.overlay.opaque`), and the answer says when the attribute could not be read. A missing
+  lower layer, a link out of the store, a loop and a layer past the entry bounds are named and make the status partial.
+  Nothing is mounted or run; with `copy: true` in a secret-output job named files are copied to `$OUT/layers-view` and never
+  over a file that is there. `containers/layers-times` names the tool.
