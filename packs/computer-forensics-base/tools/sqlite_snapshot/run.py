@@ -175,6 +175,80 @@ def _reconcile(answer):
         answer["ok"] = False
 
 
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
 def _guarded_write(write):
     try:
         before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
@@ -203,32 +277,21 @@ def print_answer(answer, **dumps_kwargs):
     _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
 
 
-def _drop_temporaries():
-    """The hidden temporaries go before the tool ends, as they do when a stop signal ends it: the pages being written (_tmp) and the TEMPS list."""
-    for page in list(globals().get("PAGES", ())):
-        try:
-            tmp = getattr(page, "_tmp", None)
-            if tmp is not None:
-                os.unlink(tmp)
-        except Exception:   # noqa: BLE001 - best effort, and every one is tried
-            pass
-    for name in list(globals().get("TEMPS", ())):
-        try:
-            os.unlink(name)
-        except Exception:   # noqa: BLE001
-            pass
-
-
 def _unexpected_tool(kind, value, _tb):
-    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed, then one JSON document with the class and, for a
-    file-system error, its reason (a message can quote a name from the evidence), and exit 1; what was written before it is not claimed. A stop signal
-    that arrives while this runs is held with the answer's write and is answered by this document and exit 1, not by 128 + the signal."""
+    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed first (a name that cannot be removed is said in the
+    answer), then one JSON document with the class and, for a file-system error, its reason (a message can quote a name from the evidence), and
+    exit 1; what was written before it is not claimed. A stop signal that arrives while this runs is held with the answer's write and is answered by
+    this document and exit 1, not by 128 + the signal."""
     try:
-        _drop_temporaries()
+        left = drop_temporaries()
         reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
         said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
-        print_answer({"tool": globals().get("TOOL"), "status": "failed", "error": said,
-                      "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__})
+        answer = {"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                  "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__}
+        if left:
+            answer["temporaries_left"] = left[:10]
+            answer["status_basis"] += "; hidden temporary files that could not be removed are listed in temporaries_left"
+        print_answer(answer)
     except BaseException:       # noqa: BLE001 - nothing may stop the exit
         pass
     os._exit(1)
@@ -615,17 +678,20 @@ def private_open(path, mode="wb"):
 
 def write_json_atomic(path, obj):
     tmp = "%s.tmp.%d" % (path, os.getpid())
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    temp_hold(tmp)                   # registered before the file exists: whatever stops this, the half-written file is not left beside the receipt
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            fh = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with fh:
             json.dump(obj, fh, indent=2, ensure_ascii=True)
             fh.write("\n")
-        os.replace(tmp, path)
-    except OSError:
-        try:
-            os.unlink(tmp)           # a full disk or a file-size limit: the half-written file is not left beside the receipt
-        except OSError:
-            pass
+        temp_replace(tmp, path)
+    except BaseException:
+        temp_drop(tmp)
         raise
 
 

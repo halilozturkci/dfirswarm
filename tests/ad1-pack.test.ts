@@ -1202,37 +1202,44 @@ test("ad1_extract on a hostile out_dir: JSON every time, nothing hidden left, ne
   assert.deepEqual(bad, []);
 });
 
-test("ad1_extract under an injected fault: one JSON document and no hidden temporary file, whichever stat, fstat, lstat or monotonic call fails", () => {
+test("ad1_extract under an injected fault (RuntimeError, ENOSPC, KeyboardInterrupt at the Nth os.* write, close, replace, rename, fsync, open, unlink, fdopen, link, stat, builtins.open, monotonic): one JSON document or a stop's exit code, and no temporary file left", () => {
   const site = mkdtempSync(join(tmpdir(), "ad1-fault-site-"));
   const cwd = dir("ad1-fault-");
   try {
     writeFileSync(join(site, "sitecustomize.py"), [
-      "import atexit, json, os, sys, time",
+      "import atexit, builtins, errno, json, os, sys, time",
       'spec = os.environ.get("FAULT", "")',
-      'label, _, n = spec.partition(":")',
+      'label, _, rest = spec.partition(":")',
+      'n, _, kind = rest.partition(":")',
       "target = int(n) if n else None",
       "counts = {}",
+      "def fault():",
+      '    if kind == "enospc": return OSError(errno.ENOSPC, "No space left on device")',
+      '    if kind == "kbint": return KeyboardInterrupt()',
+      '    return RuntimeError("injected fault")',
       "def wrap(mod, name, lab):",
       "    real = getattr(mod, name)",
       "    def f(*a, **k):",
       "        if sys.excepthook is not sys.__excepthook__:",
       "            counts[lab] = counts.get(lab, 0) + 1",
       "            if lab == label and counts[lab] == target:",
-      '                raise RuntimeError("injected fault")',
+      "                raise fault()",
       "        return real(*a, **k)",
       "    setattr(mod, name, f)",
-      'wrap(time, "monotonic", "monotonic"); wrap(os, "fstat", "fstat"); wrap(os, "stat", "stat"); wrap(os, "lstat", "lstat")',
+      'wrap(time, "monotonic", "time.monotonic")',
+      'for nm in ("write", "close", "replace", "rename", "fsync", "open", "unlink", "fdopen", "link", "stat", "fstat", "lstat"): wrap(os, nm, "os." + nm)',
+      'wrap(builtins, "open", "builtins.open")',
       'if os.environ.get("FAULT_COUNTS"):',
       '    atexit.register(lambda: open(os.environ["FAULT_COUNTS"], "w").write(json.dumps(counts)))',
       "",
     ].join("\n"));
     mkdirSync(join(cwd, "inputs"));
     writeFileSync(join(cwd, "inputs", "f.ad1"), ad1Image(Array.from({ length: 20 }, (_, i) => ({ name: `file-${i}.txt`, content: B(`content ${i}`) }))));
-    const hidden = (root: string): string[] => {
-      const found: string[] = [];
+    const left = (root: string): Set<string> => {
+      const found = new Set<string>();
       const walk = (d: string): void => {
         for (const e of readdirSync(d, { withFileTypes: true })) {
-          if (e.name.startsWith(".")) found.push(join(d, e.name));
+          if (e.name.startsWith(".") || e.name.includes(".tmp")) found.add(join(d, e.name));
           if (e.isDirectory()) walk(join(d, e.name));
         }
       };
@@ -1251,21 +1258,34 @@ test("ad1_extract under an injected fault: one JSON document and no hidden tempo
     const clean = run("", countsFile);
     assert.ok(clean.stdout.trim(), clean.stderr.slice(-200));
     const counts = JSON.parse(readFileSync(countsFile, "utf8")) as Record<string, number>;
+    const full = !!process.env.FAULT_FULL;
     const bad: string[] = [];
-    for (const label of ["monotonic", "fstat", "stat", "lstat"]) {
+    for (const label of ["time.monotonic", "os.write", "os.close", "os.replace", "os.rename", "os.fsync", "os.open", "os.unlink", "os.fdopen", "os.link", "os.stat", "os.fstat", "os.lstat", "builtins.open"]) {
       const k = counts[label] ?? 0;
       const picks = new Set<number>();
-      for (let n = 1; n <= Math.min(k, 8); n++) picks.add(n);
-      if (k > 8) for (let i = 1; i <= 4; i++) picks.add(8 + Math.floor(((k - 8) * i) / 4));
+      if (full) {
+        for (let n = 1; n <= Math.min(k, 40); n++) picks.add(n);
+        if (k > 40) for (let i = 1; i <= 8; i++) picks.add(40 + Math.floor(((k - 40) * i) / 8));
+      } else {
+        for (const n of [1, 2, 3, 5, 8, 13, 21]) if (n <= k) picks.add(n);
+        if (k > 0) picks.add(k);
+      }
       for (const n of [...picks].sort((a, b) => a - b)) {
-        const r = run(`${label}:${n}`);
-        try { JSON.parse(r.stdout); } catch { bad.push(`${label}@${n}: stdout is not one JSON document (exit ${r.status}) ${r.stderr.slice(-120)}`); continue; }
-        if (r.signal) bad.push(`${label}@${n}: killed by ${r.signal}`);
+        for (const kind of ["runtime", "enospc", "kbint"]) {
+          const before = left(cwd);
+          const r = run(`${label}:${n}:${kind}`);
+          let doc = true;
+          try { JSON.parse(r.stdout); } catch { doc = false; }
+          if (!doc && !((r.status ?? 0) >= 128 && !r.stdout.trim())) bad.push(`${label}@${n} ${kind}: stdout is not one JSON document (exit ${r.status}) ${r.stderr.slice(-120)}`);
+          if (r.signal) bad.push(`${label}@${n} ${kind}: killed by ${r.signal}`);
+          if (label !== "os.unlink") {
+            const now = [...left(cwd)].filter((p) => !before.has(p));
+            if (now.length) bad.push(`${label}@${n} ${kind}: left ${now.slice(0, 2).join(", ")}`);
+          }
+        }
       }
     }
-    const left = hidden(cwd);
-    if (left.length) bad.push(`hidden files left: ${left.slice(0, 3).join(", ")}`);
-    assert.deepEqual(bad, []);
+    assert.deepEqual(bad.slice(0, 40), []);
   } finally {
     rmSync(site, { recursive: true, force: true });
   }

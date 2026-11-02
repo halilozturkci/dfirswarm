@@ -52,7 +52,6 @@ DIR_ENTRIES_MAX = 100_000         # entries of one directory of out_dir looked a
 LINE_HEAD = 1 << 20               # characters of a line read at a time; a longer line is read past on the clock
 COUNT_SECONDS = 1150              # the counting of what bulk_extractor wrote ends here, 50 seconds below the manifest's 1,200
 LOCK_SECONDS = 1180               # and restricting the modes of out_dir ends here
-TEMPS = []                        # the hidden files beside out_dir that hold the child's words until they move into it
 # Written by bulk_extractor beside the features; they describe the run, not the evidence.
 RUN_FILES = {"report.xml": "run report", "alerts.txt": "alerts the run raised"}
 # The scanners bulk_extractor 2.x ships. The ntfs* and win* ones carve records, not
@@ -766,6 +765,80 @@ def _reconcile(answer):
         answer["ok"] = False
 
 
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
 def _guarded_write(write):
     try:
         before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
@@ -794,32 +867,21 @@ def print_answer(answer, **dumps_kwargs):
     _guarded_write(lambda: print(json.dumps(answer, **dumps_kwargs)))
 
 
-def _drop_temporaries():
-    """The hidden temporaries go before the tool ends, as they do when a stop signal ends it: the pages being written (_tmp) and the TEMPS list."""
-    for page in list(globals().get("PAGES", ())):
-        try:
-            tmp = getattr(page, "_tmp", None)
-            if tmp is not None:
-                os.unlink(tmp)
-        except Exception:   # noqa: BLE001 - best effort, and every one is tried
-            pass
-    for name in list(globals().get("TEMPS", ())):
-        try:
-            os.unlink(name)
-        except Exception:   # noqa: BLE001
-            pass
-
-
 def _unexpected_tool(kind, value, _tb):
-    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed, then one JSON document with the class and, for a
-    file-system error, its reason (a message can quote a name from the evidence), and exit 1; what was written before it is not claimed. A stop signal
-    that arrives while this runs is held with the answer's write and is answered by this document and exit 1, not by 128 + the signal."""
+    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed first (a name that cannot be removed is said in the
+    answer), then one JSON document with the class and, for a file-system error, its reason (a message can quote a name from the evidence), and
+    exit 1; what was written before it is not claimed. A stop signal that arrives while this runs is held with the answer's write and is answered by
+    this document and exit 1, not by 128 + the signal."""
     try:
-        _drop_temporaries()
+        left = drop_temporaries()
         reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
         said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
-        print_answer({"tool": globals().get("TOOL"), "status": "failed", "error": said,
-                      "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__})
+        answer = {"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                  "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__}
+        if left:
+            answer["temporaries_left"] = left[:10]
+            answer["status_basis"] += "; hidden temporary files that could not be removed are listed in temporaries_left"
+        print_answer(answer)
     except BaseException:       # noqa: BLE001 - nothing may stop the exit
         pass
     os._exit(1)
@@ -996,6 +1058,8 @@ def out_dir_full(out_dir, said):
         if phrase in low:
             return "its stderr says '%s'" % phrase
     probe = os.path.join(out_dir, ".feature_scan.probe")
+    temp_hold(probe)                 # registered before the file is made: whatever stops this, it is removed
+    note = None
     try:
         fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
@@ -1005,13 +1069,10 @@ def out_dir_full(out_dir, said):
         finally:
             os.close(fd)
     except OSError as exc:
-        return "a probe write of 64 KiB beside its files failed (%s)" % (exc.strerror or exc)
-    finally:
-        try:
-            os.unlink(probe)
-        except OSError:
-            pass
-    return None
+        note = "a probe write of 64 KiB beside its files failed (%s)" % (exc.strerror or exc)
+    if not temp_drop(probe):
+        note = (note + "; " if note else "") + "the probe file %s could not be removed" % probe
+    return note
 
 
 def lock_down(root, deadline):
@@ -1156,13 +1217,19 @@ def count_lines(path, deadline):
     return n, None
 
 
+class _Named:
+    """A hidden file made by temp_create, closed, whose name is all that is kept."""
+
+    def __init__(self, made):
+        fd, self.name = made
+        os.close(fd)
+
+    def close(self):
+        pass
+
+
 def forget_temporaries():
-    for name in TEMPS:
-        try:
-            os.unlink(name)
-        except OSError:
-            pass
-    del TEMPS[:]
+    drop_temporaries()
 
 
 def main():
@@ -1249,23 +1316,21 @@ def main():
     parent = Path(out_dir).parent
     try:
         parent.mkdir(parents=True, exist_ok=True)
-        tmp_out = tempfile.NamedTemporaryFile(dir=parent, prefix=".feature_scan-", suffix=".stdout", delete=False)
-        tmp_err = tempfile.NamedTemporaryFile(dir=parent, prefix=".feature_scan-", suffix=".stderr", delete=False)
+        tmp_out = _Named(temp_create(parent, ".feature_scan-", ".stdout"))
+        tmp_err = _Named(temp_create(parent, ".feature_scan-", ".stderr"))
     except OSError as exc:
         fail("the directory out_dir would be made in cannot be written (%s)" % (exc.strerror or exc), out_dir=out_dir, parent=str(parent))
-    tmp_out.close()
-    tmp_err.close()
-    TEMPS.extend([tmp_out.name, tmp_err.name])
     # An out_dir that exists must be a directory this tool can write in; bulk_extractor would only be run to find that out after it had worked.
     if os.path.lexists(out_dir):
         if not os.path.isdir(out_dir):
             fail("out_dir exists and is not a directory", out_dir=out_dir)
         try:
-            probe_fd, probe_name = tempfile.mkstemp(dir=out_dir, prefix=".feature_scan-probe-")
+            probe_fd, probe_name = temp_create(out_dir, ".feature_scan-probe-")
             os.close(probe_fd)
-            os.unlink(probe_name)
         except OSError as exc:
             fail("out_dir cannot be written (%s)" % (exc.strerror or exc), out_dir=out_dir)
+        if not temp_drop(probe_name):
+            fail("out_dir cannot be cleaned: the probe file made in it could not be removed", out_dir=out_dir, left=probe_name)
 
     def last_word(signum):
         """A stop ends bulk_extractor and what it started (the block does that first); what it had written stays in out_dir, not counted, and
@@ -1304,12 +1369,11 @@ def main():
         fail("bulk_extractor wrote no output directory", exit_code=code, timed_out=timed_out, stderr=err.strip(), command=" ".join(argv))
     stdout_file, stderr_file = os.path.join(out_dir, "feature_scan.stdout"), os.path.join(out_dir, "feature_scan.stderr")
     try:
-        os.replace(tmp_out.name, stdout_file)
-        os.replace(tmp_err.name, stderr_file)
+        temp_replace(tmp_out.name, stdout_file)
+        temp_replace(tmp_err.name, stderr_file)
     except OSError as exc:
         fail("what bulk_extractor said could not be moved into out_dir (%s); what it wrote there is not counted" % (exc.strerror or exc), out_dir=out_dir,
              exit_code=code, timed_out=timed_out)
-    del TEMPS[:]
     locked_failed = lock_down(out_dir, STARTED + LOCK_SECONDS)
 
     files, features, histograms = [], [], []

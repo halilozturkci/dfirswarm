@@ -191,7 +191,7 @@ use Fcntl;
 use Time::HiRes ();
 setpgrp(0, 0);
 my $secs = shift @ARGV;
-my $mark = $ENV{STEP_MARK};
+my $mark = delete $ENV{STEP_MARK};     # the program does not get it
 pipe(my $r, my $w) or exit 70;
 my $pid = fork();
 exit 70 unless defined $pid;
@@ -259,7 +259,7 @@ fcntl($r, F_SETFL, $fl | O_NONBLOCK) if defined $fl;
 while (pump() == 1) { }
 hit("KILL");
 if ($bad) {
-  if (defined $mark && length $mark) { if (open(my $m, ">", $mark)) { close $m; } }
+  unlink $mark if defined $mark && length $mark;     # armed by the caller; an unlink needs no room, so a full disk cannot stop the word
   print STDERR "the step output could not be written whole ($bad)\n";
   exit 74;
 }
@@ -270,17 +270,21 @@ bg() { # bg <seconds> <cmd...>: the command with a deadline; its redirections ar
   local secs="$1" rc
   shift
   STEP_REFUSED=0
-  rm -f "$STEP_MARK"
+  local armed=1
+  : > "$STEP_MARK" 2>/dev/null || armed=0          # armed before the step: the wrapper unlinks it to say a write was refused
   STEP_MARK="$STEP_MARK" perl -e "$STEP_PERL" "$secs" "$@" 3>&- &
   CHILD=$!
   wait "$CHILD"
   rc=$?
   CHILD=""
-  if [[ -e "$STEP_MARK" ]]; then                # the wrapper's own word that a write was refused: not an exit code a program can also give
-    rm -f "$STEP_MARK"
+  if (( ! armed )); then                        # the marker could not be made (no inodes, no room): whether a write was refused is not known
+    STEP_REFUSED=1; WRITE_REFUSED_SEEN=1; WRITE_FAILED=1
+    notes+=("whether the output of ${*:1:3} was written whole is not known: the file that carries the wrapper's word could not be made")
+  elif [[ ! -e "$STEP_MARK" ]]; then            # the wrapper took it away: its word that a write was refused, not an exit code a program can also give
     STEP_REFUSED=1; WRITE_REFUSED_SEEN=1; WRITE_FAILED=1
     notes+=("the output of ${*:1:3} could not be written whole: the disk or a file-size limit refused a write while the step ran")
   fi
+  rm -f "$STEP_MARK"
   return "$rc"
 }
 # boxed <cmd...>: bg with RECIPE_STEP_SECONDS or what the recipe's clock has left, whichever is less; 125 when there is none left.
@@ -525,9 +529,10 @@ if ! have perl; then
   fi
   exit 2
 fi
+STEP_MARK_DIR=""
+trap '[[ -n "${STEP_MARK_DIR:-}" ]] && rm -rf "$STEP_MARK_DIR"; [[ -n "${out:-}" ]] && rm -f "$out/.fsstat.tmp" "$out/.disk_probe.tmp"; [[ -n "${TMPF:-}" ]] && rm -f "$TMPF" "$TMPF.stderr"; true' EXIT
 STEP_MARK_DIR="$(mktemp -d 2>/dev/null)" || { final; echo '{"ok": false, "status": "failed", "applies": "unknown", "error": "no temporary directory could be made", "status_basis": "nothing was run and nothing is said about the image"}'; exit 2; }
 STEP_MARK="$STEP_MARK_DIR/refused"
-trap 'rm -rf "$STEP_MARK_DIR"' EXIT
 
 case "$cmd" in
   detect)

@@ -195,6 +195,80 @@ def _reconcile(answer):
         answer["ok"] = False
 
 
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
 def _guarded_write(write):
     try:
         before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
@@ -239,6 +313,10 @@ def _probe_out(directory):
 
 def _unexpected_recipe(kind, value, _tb):
     """What nobody foresaw (a file that cannot be written half way, a target of an odd type) is an answer too: its class only, exit 2."""
+    try:
+        drop_temporaries()
+    except BaseException:   # noqa: BLE001
+        pass
     why = "a path, a file or the target could not be used: %s" % kind.__name__
     if len(_sys.argv) > 1 and _sys.argv[1] == "detect":
         doc = {"applies": "unknown", "why": why, "ok": False, "error": why}
@@ -259,15 +337,13 @@ def _write_json_whole(path, doc, **dumps_kwargs):
     """A JSON file whole or not at all: written beside, then renamed over the name. A write that fails (a full disk, a file-size limit) removes
     the part and raises, so the recipe answers (the excepthook) and the earlier file, if any, stands; a cut coverage.json is never left."""
     tmp = path + ".tmp"
+    temp_hold(tmp)
     try:
         with open(tmp, "w") as fh:
             json.dump(doc, fh, **dumps_kwargs)
-        _os.replace(tmp, path)
+        temp_replace(tmp, path)
     except BaseException:
-        try:
-            _os.unlink(tmp)
-        except OSError:
-            pass
+        temp_drop(tmp)
         raise
 
 HERE = os.path.dirname(os.path.abspath(__file__))

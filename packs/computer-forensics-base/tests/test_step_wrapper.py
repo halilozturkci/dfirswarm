@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 
+import test_enospc_sweep as tes
 from support import Case, recipe_path, stand_in
 
 MMLS = """GUID Partition Table (EFI)
@@ -157,6 +158,35 @@ class StepWrapper(Case):
             self.assertIn("perl", json.dumps(doc))
             self.assertNotEqual(doc.get("applies"), False)
             self.assertNotEqual(doc.get("status"), "unsupported")
+
+    # ---- the file that carries the wrapper's word cannot be made
+    def test_when_the_marker_file_cannot_be_made_detection_cannot_tell_and_says_so(self):
+        if not tes.MOUNT_OK:
+            self.skipTest("unshare -rm with a tmpfs mount is not allowed here: %s" % tes.MOUNT_WHY)
+        b = self.path("bin")
+        os.makedirs(b)
+        stand_in(b, "mmls", "echo 'Cannot determine partition type' >&2\nexit 1\n")
+        stand_in(b, "fsstat", "echo 'Cannot determine file system type' >&2\nexit 1\n")
+        img = self.path("disk.img")
+        with open(img, "wb") as fh:
+            fh.write(b"\0" * 65536)
+        room = self.path("room")
+        os.makedirs(room)
+        e = dict(os.environ)
+        e["PATH"] = b + os.pathsep + e["PATH"]
+        target = json.dumps({"paths": [img], "name": "disk.img"})
+        script = 'M="$1"; shift; mount -t tmpfs -o nr_inodes=2,size=1m tmpfs "$M" && TMPDIR="$M" exec "$@"'
+        p = subprocess.run(["unshare", "-rm", "bash", "-c", script, "x", room, shutil.which("bash"), recipe_path("disk-volumes", "run.sh"), "detect", "--target", target],
+                           capture_output=True, text=True, cwd=self.dir, env=e, timeout=60)
+        doc = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(doc.get("applies"), "unknown", p.stdout + p.stderr)
+        self.assertNotIn("no partition table", json.dumps(doc))
+
+    def test_the_program_does_not_get_the_wrappers_marker(self):
+        envfile = self.path("env.txt")
+        b, img = self.bins('env > "%s"\necho "r/r 1-128-1:\tx"\n' % envfile)
+        self.go("disk-volumes", "run", b, img, out=self.path("out"))
+        self.assertNotIn("STEP_MARK", open(envfile).read())
 
 
 if __name__ == "__main__":
