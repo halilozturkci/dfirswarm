@@ -17,6 +17,7 @@ import { ROOT } from "./tool-library-harness.ts";
 const BEGIN = "# BEGIN SHARED PROCESS";
 const END = "# END SHARED PROCESS";
 const LINUX = join(TOOLS, "..");
+const AUDIT = join(TOOLS, "audit_events", "run.py");
 
 async function pyFiles(dir: string): Promise<string[]> {
   const out: string[] = [];
@@ -36,8 +37,8 @@ async function processBlock(path: string): Promise<string> {
   return text.slice(start, end + END.length);
 }
 
-test("the three programs that run programs carry the same process block, byte for byte, and no script of the pack starts one in a session of its own", async () => {
-  const blocks = await Promise.all([JOURNAL, TRIAGE, RECIPE].map(processBlock));
+test("the four programs that run programs carry the same process block, byte for byte, and no script of the pack starts one in a session of its own", async () => {
+  const blocks = await Promise.all([JOURNAL, TRIAGE, RECIPE, AUDIT].map(processBlock));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   // ... and it is the text the network pack's engine tools carry (the reference copy, with the walk that never starts at a program
   // already waited for, the seen set, and the libproc route on macOS that needs no ps), not an older one.

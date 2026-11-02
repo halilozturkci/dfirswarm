@@ -11,7 +11,7 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { gzipSync } from "node:zlib";
-import { TOOLS, asJob as plainJob, body, filesUnder, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
+import { TOOLS, asJob as plainJob, body, filesUnder, gone, pidFile, put as putAt, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
 
 const AUDIT = join(TOOLS, "audit_events", "run.py");
@@ -262,7 +262,7 @@ test("audit_events keeps the full text out of an ordinary call and refuses write
     const again = refused(await asJob(cwd, { paths: ["work/audit.log"], write_text: true }, {}, "out2"));
     assert.match(again.error, /already exists/);
     const manifest = JSON.parse(await readFile(join(TOOLS, "audit_events", "manifest.json"), "utf8"));
-    assert.deepEqual(manifest.secret_output, { when_args: ["write_text"] });
+    assert.deepEqual(manifest.secret_output, { when_args: ["write_text", "compare_ausearch"] });
     assert.equal(manifest.params.write_text.type, "boolean");
   });
 });
@@ -524,5 +524,168 @@ test("audit_events keeps its bounded tables bounded when every record has a type
     assert.equal(Object.keys(last.type_counts).length, 256);
     assert.equal(last.records.length, 256);
     assert.equal(last.records_not_kept, 700 - 256);
+  });
+});
+
+// ---- the second reader: the installed ausearch, on a sample, in the tool's own process group (PKG-LIN-12) ---------------------
+
+/** A stand-in ausearch. `mode` decides what it does with the sample (the probe file is always answered); every call is logged beside it. */
+async function stub(bin: string, mode: "agree" | "disagree" | "hang" | "flood" | "exit7" | "noprobe" | "noversion"): Promise<void> {
+  const sampleBody: Record<string, string> = {
+    agree: 'cat "$f"',
+    disagree: 'cat "$f"; echo "type=SYSCALL msg=audit(1700000099.001:777): arch=c000003e syscall=2"',
+    hang: '( trap "" TERM HUP INT; exec sleep 600 ) & echo $! > "$d/child.pid"; echo $$ > "$d/pid"; wait',
+    flood: 'yes "type=SYSCALL msg=audit(1700000099.001:777): arch=c000003e syscall=2"',
+    exit7: 'cat "$f"; exit 7',
+    noprobe: "exit 0",
+    noversion: 'cat "$f"',
+  };
+  const probe = mode === "noprobe" ? "exit 0" : 'cat "$f"';
+  const version = mode === "noversion" ? "exit 3" : 'echo "ausearch version 9.9.9"';
+  await putAt(bin, "ausearch", `#!/bin/bash
+d="$(dirname "$0")"
+echo "$@" >> "$d/argv.log"
+case "$1" in --version) ${version}; exit 0;; esac
+f="$2"
+case "$f" in *probe.log) ${probe};; *) ${sampleBody[mode]};; esac
+`, 0o755);
+}
+
+const sampleLog = (): string => ls(
+  rec("SYSCALL", T0, 1, SYS), rec("EXECVE", T0, 1, `argc=1 a0="x"`), rec("PROCTITLE", T0, 1, `proctitle=${hex("x")}`),
+  rec("USER_LOGIN", T0 + 1, 2, `pid=1 uid=0 auid=1000 ses=1 msg='op=login acct="a" res=success'`),
+);
+
+test("audit_events compares itself with the installed ausearch on a sample: agree, disagree, and never ausearch's own interpretation", async () => {
+  await withCwd(async (cwd, bin) => {
+    await put(cwd, "audit.log", sampleLog());
+    await stub(bin, "agree");
+    const agree = body(await plainJob(AUDIT, cwd, { paths: ["work/audit.log"], compare_ausearch: true }, bin, { SECRET_OUTPUT: "1" }));
+    assert.equal(agree.second_reader.status, "agree", JSON.stringify(agree.second_reader));
+    assert.equal(agree.second_reader.version, "ausearch version 9.9.9");
+    assert.equal(agree.second_reader.contract_confirmed, true);
+    assert.deepEqual(agree.second_reader.sample, { file: 0, lines: 4, bytes: (await readFile(join(cwd, "work", "audit.log"))).length, records: 4, events: 2 });
+    assert.deepEqual(agree.second_reader.differences, { records_only_here: 0, records_only_in_ausearch: 0, events_only_here: 0, events_only_in_ausearch: 0 });
+    // the calls: a version, the probe and the sample, with -if and -r and never -i
+    const calls = (await readFile(join(bin, "argv.log"), "utf8")).trim().split("\n");
+    assert.equal(calls.length, 3);
+    assert.equal(calls[0], "--version");
+    assert.match(calls[1], /^-if \S+probe\.log -r$/);
+    assert.match(calls[2], /^-if \S+sample\.log -r$/);
+    assert.ok(calls.every((c) => !/(^| )-i( |$)/.test(c) && !c.includes("--interpret")), "ausearch is never asked to interpret");
+    // the sample copy is gone, and nothing sensitive is left beside the answer
+    assert.deepEqual((await readdir(join(cwd, "out"))).filter((n) => n.startsWith(".ausearch-")), []);
+    await stub(bin, "disagree");
+    const disagree = body(await plainJob(AUDIT, cwd, { paths: ["work/audit.log"], compare_ausearch: true }, bin, { SECRET_OUTPUT: "1" }, "out2"));
+    assert.equal(disagree.second_reader.status, "disagree");
+    assert.deepEqual(disagree.second_reader.differences, { records_only_here: 0, records_only_in_ausearch: 1, events_only_here: 0, events_only_in_ausearch: 1 });
+    assert.doesNotMatch(JSON.stringify(disagree.second_reader), /777|syscall=2/, "the text of a difference is not shown");
+    // no name comes from this machine: root is uid 0 here, and the answer has no name for it
+    const ev = (await events(cwd, agree))[0];
+    assert.deepEqual(ev.identity.uid, { raw: "0" });
+  });
+});
+
+test("audit_events says not_run when the second reader is not asked for, not installed, wrong, or has no time", async () => {
+  await withCwd(async (cwd, bin) => {
+    await put(cwd, "audit.log", sampleLog());
+    assert.match(body(await tool(AUDIT, cwd, { paths: ["work/audit.log"] })).second_reader.why, /not asked for/);
+    for (const [mode, why] of [["noprobe", /file-input contract is not confirmed/], ["exit7", /exit code 7/], ["noversion", /did not print a version/]] as const) {
+      await stub(bin, mode);
+      const out = body(await plainJob(AUDIT, cwd, { paths: ["work/audit.log"], compare_ausearch: true }, bin, { SECRET_OUTPUT: "1" }, `out-${mode}`));
+      assert.equal(out.second_reader.status, "not_run", mode);
+      assert.match(out.second_reader.why, why, mode);
+    }
+    // an empty first file has nothing to sample
+    await put(cwd, "empty.log", "");
+    await stub(bin, "agree");
+    const empty = body(await plainJob(AUDIT, cwd, { paths: ["work/empty.log"], compare_ausearch: true }, bin, { SECRET_OUTPUT: "1" }, "out-empty"));
+    assert.match(empty.second_reader.why, /no audit record/);
+  });
+});
+
+test("audit_events refuses compare_ausearch outside a job and in a job that was not run as secret output, running nothing", async () => {
+  await withCwd(async (cwd, bin) => {
+    await put(cwd, "audit.log", sampleLog());
+    await stub(bin, "agree");
+    assert.match(refused(await tool(AUDIT, cwd, { paths: ["work/audit.log"], compare_ausearch: true }, {}, bin)).error, /compare_ausearch is refused outside a job/);
+    assert.match(refused(await plainJob(AUDIT, cwd, { paths: ["work/audit.log"], compare_ausearch: true }, bin)).error, /not run as secret output/);
+    assert.equal(await stat(join(bin, "argv.log")).then(() => true, () => false), false, "ausearch was never started");
+    const manifest = JSON.parse(await readFile(join(TOOLS, "audit_events", "manifest.json"), "utf8"));
+    assert.deepEqual(manifest.secret_output, { when_args: ["write_text", "compare_ausearch"] });
+    assert.equal(manifest.params.compare_ausearch.type, "boolean");
+  });
+});
+
+test("audit_events ends a hanging ausearch and the child it forked that ignores SIGTERM, within max_seconds, and a bystander survives", async () => {
+  await withCwd(async (cwd, bin) => {
+    const { spawn } = await import("node:child_process");
+    await put(cwd, "audit.log", sampleLog());
+    await stub(bin, "hang");
+    const bystander = spawn("sleep", ["300"], { detached: true, stdio: "ignore" });
+    bystander.unref();
+    try {
+      const started = Date.now();
+      const out = body(await plainJob(AUDIT, cwd, { paths: ["work/audit.log"], compare_ausearch: true, max_seconds: 20 }, bin, { SECRET_OUTPUT: "1" }));
+      const took = (Date.now() - started) / 1000;
+      assert.ok(took < 24, `took ${took}s for max_seconds 20`);
+      assert.equal(out.second_reader.status, "not_run");
+      assert.match(out.second_reader.why, /did not finish within its time/);
+      assert.equal(await gone(Number(await readFile(join(bin, "pid"), "utf8")), 5000), true, "ausearch is gone");
+      assert.equal(await gone(Number(await readFile(join(bin, "child.pid"), "utf8")), 5000), true, "the child that ignores SIGTERM is gone");
+      process.kill(bystander.pid as number, 0);
+    } finally {
+      process.kill(bystander.pid as number, "SIGKILL");
+    }
+  });
+});
+
+test("audit_events ends an ausearch that floods its output at the cap, and says so", async () => {
+  await withCwd(async (cwd, bin) => {
+    await put(cwd, "audit.log", sampleLog());
+    await stub(bin, "flood");
+    const started = Date.now();
+    const out = body(await plainJob(AUDIT, cwd, { paths: ["work/audit.log"], compare_ausearch: true, max_seconds: 60 }, bin, { SECRET_OUTPUT: "1" }));
+    assert.ok(Date.now() - started < 40_000);
+    assert.equal(out.second_reader.status, "not_run");
+    assert.match(out.second_reader.why, /wrote more than 33554432 bytes/);
+  });
+});
+
+test("audit_events ends ausearch and what it started on SIGTERM, with one document, and leaves no process", async () => {
+  await withCwd(async (cwd, bin) => {
+    await put(cwd, "audit.log", sampleLog());
+    await stub(bin, "hang");
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const run = startDetached(AUDIT, cwd, { paths: ["work/audit.log"], compare_ausearch: true, max_seconds: 60 }, { JOB_ID: "j000009", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" }, bin);
+    const pid = await pidFile(join(bin, "pid"));
+    const child = await pidFile(join(bin, "child.pid"));
+    run.signal("SIGTERM");
+    const code = await Promise.race([run.closed, new Promise<"late">((r) => setTimeout(() => r("late"), 30_000))]);
+    if (code === "late") {
+      run.killGroup();
+      assert.fail("the tool ignored SIGTERM");
+    }
+    assert.equal(code, 143);
+    const docs = run.stdout().trim().split("\n");
+    assert.equal(docs.length, 1);
+    assert.equal(JSON.parse(docs[0]).stopped_by_signal, 15);
+    assert.equal(await gone(pid, 5000), true);
+    assert.equal(await gone(child, 5000), true);
+  });
+});
+
+test("audit_events' real ausearch, when it is installed, agrees with this reader on a fixture and the version is recorded", async (t) => {
+  const { spawnSync } = await import("node:child_process");
+  const probe = spawnSync("ausearch", ["--version"], { encoding: "utf8" });
+  if (probe.error || probe.status !== 0) {
+    t.skip("ausearch is not installed on this machine");
+    return;
+  }
+  await withCwd(async (cwd) => {
+    await put(cwd, "audit.log", sampleLog());
+    const out = body(await plainJob(AUDIT, cwd, { paths: ["work/audit.log"], compare_ausearch: true }, undefined, { SECRET_OUTPUT: "1" }));
+    assert.ok(out.second_reader.version, "the installed version is recorded");
+    assert.ok(["agree", "disagree", "not_run"].includes(out.second_reader.status));
   });
 });

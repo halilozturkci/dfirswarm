@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -50,7 +50,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "0aeac33c661e4699fa324ab6d7ae82b4abeb7bd69fc721a112db20d002082554",
+      "README.md": "4c3aa92e947d731aab1cc6a32d2bd1a9b8b58a319e4a3262558928fc697056c8",
       "goals/server-compromise.md": "0118cd428d15cdd68293ca017333a2302fa3b42a67df32aea89e77c672f9a18b",
       "goals/what-was-scheduled.md": "52389a312d07d57dc4f76c6b274dcccd6d88952a494e2750c93693a2240a1820",
       "recipes/linux-target/recipe.json": "32ce9c8dd2bed920d2ee363fe3f168b27cdf40726451c217ddfa86fdc4a95475",
@@ -84,8 +84,8 @@
       "skills/triage/clocks-boots.md": "11fca9cdd28bd835cead6cf16f25a1bad4f9ea941309184d84adf1d2d408d2b3",
       "skills/triage/identity-files.md": "0f543b9c5d39f7564db06be8a03ec459691a65d26ec3ff5b8a6436fed644a0a1",
       "skills/triage/system-profile.md": "6bed8235f9766e1a56a109108f055dce8b8b71159e9d5f5d2acfef231811a5f6",
-      "tools/audit_events/manifest.json": "302922699fe4c3ad7779c46fc54ba5acd1d51faf9e02d0c98806ee0abbb5097f",
-      "tools/audit_events/run.py": "7ce8168ec96ecf50c5120cffdde100d2b2f74637263bf295730532a1c5858937",
+      "tools/audit_events/manifest.json": "8e083a6001de329237b4889acc38db4a7f56e9ebfcbc3ee8d1c7ddd3a2f8d290",
+      "tools/audit_events/run.py": "b54b10b60f49b8670c736e13f417b22c40a6027ebff5b7833827a41a0ffd76be",
       "tools/auth_log/manifest.json": "1cc489bc7c144570a05030723c5514bc22a4f6d4fbe20ab0267ff89a5922cb24",
       "tools/auth_log/run.py": "6d0fabff50d99290575064c77461ad22e19b1c99de6011e568839022670ae0db",
       "tools/cron_dump/manifest.json": "eae6452a8ae6bb0dcf5a912911f746dbff5b6a735ac1fe88f200cc2384c1c1ab",
