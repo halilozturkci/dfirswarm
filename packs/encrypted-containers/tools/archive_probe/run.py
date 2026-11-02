@@ -2899,20 +2899,25 @@ def probe_ole(blob, fd):
 
 STRUCTURE_MAX_BYTES = 16 << 20
 STRUCTURE_FOUND = (True, False, None)
+STRUCTURE_KEYS = frozenset(("where", "sid", "scheme", "version", "fib", "handler", "revision", "key_bits", "filter", "subfilter", "v", "r", "length",
+                            "cfm", "name", "algorithm", "hash", "flags", "kind", "present", "object", "signed", "in_current_trailer"))
 
 
 def structure_item(item):
     """One item of a doc_structure result's encryption_summary, kept to scalars and passed through the withholding rule."""
-    out = {}
+    out, other = {}, 0
     if not isinstance(item, dict):
         return out
-    for key, value in list(item.items())[:12]:
-        if not isinstance(key, str) or len(key) > 40:
+    for key, value in list(item.items())[:24]:
+        if not isinstance(key, str) or key not in STRUCTURE_KEYS:
+            other += 1            # a field name that is not in the closed list is counted and never printed: a name in a caller's file can be anything
             continue
         if isinstance(value, bool) or (isinstance(value, int) and abs(value) < (1 << 53)):
             out[key] = value
         elif isinstance(value, str):
             out[key] = withhold(value[:160])
+    if other:
+        out["other_fields_not_shown"] = other
     return out
 
 
@@ -3114,3 +3119,5 @@ if __name__ == "__main__":
         raise
     except Exception as exc:  # never an empty or clean answer for a failure, and never a traceback
         fail("unexpected failure: %s: %s" % (type(exc).__name__, withhold(str(exc))))
+    finally:
+        remove_pending_pages()      # a page whose write failed (a full disk, a size limit) leaves no half file behind

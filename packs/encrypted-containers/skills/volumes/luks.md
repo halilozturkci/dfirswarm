@@ -12,7 +12,7 @@ Use only if the volume or a header file may be LUKS and you read its metadata. N
 Read in this order. `crypto_id` gives the signature and the version. `crypto_metadata`
 runs `cryptsetup luksDump` on a copy of the header and returns the keyslots, segments,
 digests (never their salts) and tokens as records, or says `unavailable`: that is not
-an empty slot list. `cryptsetup luksDump` reads the same metadata by hand. Use a
+an empty slot list (a header copy `.cm-slice-*` under the output is removed unless the tool was killed with SIGKILL). `cryptsetup luksDump` reads the same metadata by hand. Use a
 `cryptsetup` that supports the version you see. Do not use its options that disclose a
 volume key in a metadata job.
 

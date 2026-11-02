@@ -17,9 +17,9 @@ the cipher, a compression packet and an integrity packet are named too.
 Read them offline, in a home directory of its own below the job's output, so that no keyring
 of the host is touched and nothing is looked up:
 
-    gpg --homedir "$OUT/gnupg" --batch --no-tty --list-packets message.pgp
+    gpg --homedir "$OUT/gnupg" --no-autostart --batch --no-tty --list-packets message.pgp
 
-Make the directory first, mode 0700. Never add an option that fetches or locates a key
+Make the directory first, mode 0700. `--no-autostart` keeps gpg from starting an agent that would outlive the job. Never add an option that fetches or locates a key
 (`--recv-keys`, `--locate-keys`, `--auto-key-locate`, `--keyserver`): a key id is an
 identifier of a key, and a lookup sends it to a server. Do not add `--decrypt` or
 `--show-session-key`: they are for a job that holds a key the case supplied, run with

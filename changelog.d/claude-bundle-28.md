@@ -91,3 +91,22 @@ extraction; it needs the base pack's `filesystem/layers`), `volumes/veracrypt-tr
 no network, key ids and not persons) and `files/aescrypt` (the container, the HMAC, the failures
 that look alike). The `unreferenced_ok` entries for gpg, libvhdi-python, libluksde-python,
 pytsk3 and pyAesCrypt leave `pack.json`, because a skill now names each.
+
+### Changed: materialise_decrypted calls its native readers in a child, and a reader that dies is an answer
+
+`materialise_decrypted` no longer imports or calls pybde, pyluksde or pyAesCrypt in its own
+process. A child of the same file does it, with the source and the partial file as
+descriptors and the key file's path (never the key) on its standard input; the tool
+supervises it with the clock and the kill set of the shared process block. A reader that
+dies of a signal (a SIGSEGV in `unlock` or in a later `read_buffer`) gives `failed` and
+names the signal, with the `.partial` removed; one that hangs in a library call, forks or
+ignores SIGTERM is ended at the clock with everything it started (`failed` if it had written
+nothing, otherwise `partial` with an unverified `.partial` whose digest is not computed); a
+report that does not match the file is `failed`. An import that dies is a `failed` answer.
+Small corrections in the same round: `files/aescrypt` says a failed attempt removes the
+plaintext it had written; `requires/python.txt` says which tools import the modules and in a
+child; `messages/openpgp` adds `--no-autostart`; `archive_probe` prints the field names of a
+caller's `structure` items only from a closed list; `crypto_metadata` answers `partial`,
+not `complete` with no protectors, when bdeinfo prints neither a count nor a section, and
+names its header copy `.cm-slice-*` as what a SIGKILL leaves; a paging file that cannot be
+written to the end leaves no dot-file behind in the four tools that page.

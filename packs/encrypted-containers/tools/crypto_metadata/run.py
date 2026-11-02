@@ -2325,7 +2325,7 @@ def main():
                 length = min(max(LUKS1_HEADER, structural["payload_offset_sectors"] * 512), SLICE_CAP)
             copy, copied = write_slice(fd, offset, length, scratch)
             argv = [path_to, "luksDump"] + (["--dump-json-metadata"] if structural["version"] == 2 else []) + [copy]
-            reader["input"] = "the first %d bytes of the volume, copied to a file of this tool's own under the output directory and removed" % copied
+            reader["input"] = "the first %d bytes of the volume, copied to a file of this tool's own (.cm-slice-*, mode 0600) under the output directory, removed when the tool ends; a SIGKILL leaves it, and it is then the caller's to remove" % copied
         else:
             argv = [path_to] + (["-o", str(offset)] if offset else []) + [absolute]
         reader["argv"] = [shown(a) for a in argv]
@@ -2382,6 +2382,10 @@ def main():
             answer.update({"status": "partial",
                            "status_basis": "%s exited 0 but printed none of the fields this tool reads: nothing is said about the protectors" % program})
             return finish(answer, page, problems, counts, fields)
+        if family == "bitlocker" and page.total == 0 and fields.get("reader_protector_count") is None:
+            answer.update({"status": "partial",
+                           "status_basis": "bdeinfo printed neither a number of key protectors nor a protector section: the number of protectors is unknown, and no protector is not what it says"})
+            return finish(answer, page, problems, counts, fields)
         answer.update({"status": "complete",
                        "status_basis": "%s ran to completion and its output was read to the end" % program})
         return finish(answer, page, problems, counts, fields)
@@ -2435,3 +2439,5 @@ if __name__ == "__main__":
     except Exception as exc:  # never an empty or clean answer for a failure, and never a traceback
         remove_scratch()
         fail("unexpected failure: %s: %s" % (type(exc).__name__, withhold(str(exc))))
+    finally:
+        remove_pending_pages()      # a page whose write failed (a full disk, a size limit) leaves no half file behind

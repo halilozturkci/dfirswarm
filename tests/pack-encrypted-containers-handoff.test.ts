@@ -58,6 +58,29 @@ test("a matching doc_structure result is read for a PDF, with its source named, 
   });
 });
 
+test("the field names of a caller's item are not printed unless they are in the closed list: 480 random names of 16 to 40 characters, none shown", async () => {
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "doc.pdf"), PDF_ENC);
+    const names: string[] = [];
+    const alphabets = ["abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"];
+    for (let i = 0; i < 480; i++) {
+      const alphabet = alphabets[i % 2];
+      const n = 16 + (i % 25);
+      names.push(Array.from(randomBytes(n), (b) => alphabet[b % alphabet.length]).join(""));
+    }
+    for (let at = 0; at < names.length; at += 12) {
+      const item: Json = { where: "PDF trailer", handler: "Standard" };
+      for (const n of names.slice(at, at + 12)) item[n] = 1;
+      await writeFile(join(cwd, "s.json"), result("doc.pdf", PDF_ENC.length, { items: [item] }));
+      const raw = body(await asJob(SCRIPT, cwd, { path: "doc.pdf", structure: "s.json" }));
+      const text = JSON.stringify(raw);
+      for (const n of names.slice(at, at + 12)) assert.ok(!text.includes(n), "a field name of the caller's file was printed");
+      assert.equal(raw.structure_reading.item_summaries[0].handler, "Standard");
+      assert.ok(raw.structure_reading.item_summaries[0].other_fields_not_shown >= 10);
+    }
+  });
+});
+
 test("none declared: no structure_reading field, and the answer is the one it was", async () => {
   await withCwd(async (cwd) => {
     await writeFile(join(cwd, "doc.pdf"), PDF_PLAIN);

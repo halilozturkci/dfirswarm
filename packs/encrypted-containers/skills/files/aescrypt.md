@@ -24,8 +24,8 @@ for it by name.
 Tell the failures apart as far as the format lets you. A version 2 container whose length is not that
 of a whole file is a cut copy, and nothing is decrypted. A wrong password and a damaged file
 both fail the HMAC and look alike: say that the attempt failed, not which of the two it was.
-Plaintext that was written before the HMAC passed is never a result; it stays an unverified
-`.partial`.
+Plaintext that was written before the HMAC passed is never a result: a failed attempt removes
+it, and a run cut short (the output budget, the clock) leaves an unverified `.partial`.
 
 **Does not show.** That a failed attempt means the password is wrong or the file damaged;
 what the plaintext is before the HMAC passed; who encrypted the file or when.

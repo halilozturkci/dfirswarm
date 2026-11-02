@@ -38,7 +38,7 @@ const SHAPES: Array<[string, () => string]> = [
 
 /** The stand-in modules: the readers' documented calls over an XOR 'cipher'. Behaviour is chosen by STANDIN_MODE; the expected key is read from a file. */
 const PYBDE = `
-import os, time
+import os, signal, time
 def get_version(): return "20240101"
 def _expect(): return open(os.environ["STANDIN_EXPECT_FILE"]).read().strip()
 class volume:
@@ -48,11 +48,26 @@ class volume:
     set_password = set_recovery_password
     def read_startup_key(self, path): self.pw = open(path).read().strip()
     def unlock(self):
-        if os.environ.get("STANDIN_MODE") == "leak": raise ValueError("cannot unlock with " + str(self.pw))
+        m = os.environ.get("STANDIN_MODE")
+        if m == "leak": raise ValueError("cannot unlock with " + str(self.pw))
         if os.environ.get("STANDIN_PID_FILE"): open(os.environ["STANDIN_PID_FILE"], "w").write(str(os.getpid()))
+        if m == "segv_unlock": os.kill(os.getpid(), signal.SIGSEGV)
+        if m in ("ignore_term", "fork_hang"): signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        if m == "fork_hang" or m == "fork_return":
+            pid = os.fork()
+            if pid == 0:
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                time.sleep(600)
+                os._exit(0)
+            open(os.environ["STANDIN_FORK_PID_FILE"], "w").write(str(pid))
+        if m in ("hang_unlock", "ignore_term", "fork_hang"): time.sleep(600)
         return self.pw is None and os.environ.get("STANDIN_CLEAR") == "1" or self.pw == _expect()
     def get_size(self): return self.fo.get_size()
     def read_buffer(self, n):
+        m = os.environ.get("STANDIN_MODE")
+        self.calls = getattr(self, "calls", 0) + 1
+        if m == "segv_read2" and self.calls == 2: os.kill(os.getpid(), signal.SIGSEGV)
+        if m == "hang_read2" and self.calls == 2: time.sleep(600)
         if os.environ.get("STANDIN_MODE") == "slow": time.sleep(0.2)
         if os.environ.get("STANDIN_MODE") == "short":
             left = int(os.environ["STANDIN_SHORT_AT"]) - self.fo.tell()
@@ -293,7 +308,7 @@ test("a module that is not installed answers unavailable, naming it, without rea
     const r = await asJob(SCRIPT, cwd, { operation: "aescrypt_decrypt", source: "box.aes", key_ref: "does-not-exist.txt" }, undefined, { PYTHONPATH: "" });
     const a = body(r);
     assert.equal(a.status, "unavailable");
-    assert.match(a.status_basis, /pyAesCrypt \(package pyAesCrypt\) is not importable, so nothing was read, not even the key reference/);
+    assert.match(a.status_basis, /pyAesCrypt \(package pyAesCrypt\) is not importable, so nothing was read: the key file's bytes were not read/);
   });
 });
 
@@ -343,6 +358,118 @@ test("SIGTERM during the write: one document, exit 143, the .partial file left a
   });
 });
 
+// ---- the readers are native libraries: one that dies, hangs, forks or ignores a signal must not take the tool down ----
+
+async function crash(cwd: string, mode: string, extra: Json = {}, env: Env = {}, size = 3 * 1024 * 1024): Promise<{ r: { code: number | null; stdout: string; stderr: string }; secret: string }> {
+  const secret = SHAPES[0][1]();
+  await writeFile(join(cwd, "disk.img"), xor(ntfsLike(size)));
+  await key(cwd, "rp.txt", secret);
+  const r = await run(cwd, { operation: "bitlocker_image", source: "disk.img", key_ref: "rp.txt", key_kind: "recovery_password", ...extra }, secret,
+    { STANDIN_MODE: mode, STANDIN_PID_FILE: join(cwd, "reader.pid"), STANDIN_FORK_PID_FILE: join(cwd, "fork.pid"), ...env });
+  return { r, secret };
+}
+const pidOf = async (p: string): Promise<number> => Number((await readFile(p, "utf8")).trim());
+
+test("a reader that dies of SIGSEGV in unlock, or in its second read, is a JSON answer naming the signal, with no partial file left", async () => {
+  for (const mode of ["segv_unlock", "segv_read2"]) {
+    await withCwd(async (cwd) => {
+      const { r, secret } = await crash(cwd, mode);
+      assert.equal(r.code, 0, `${mode}: ${r.stderr.slice(0, 200)}`);
+      assert.equal(r.stdout.trim().split("\n").length > 0, true);
+      const a = body(r);
+      assert.equal(a.status, "failed", mode);
+      assert.match(a.status_basis, /signal 11 \(SIGSEGV\)/, mode);
+      assert.notEqual(a.status, "complete");
+      assert.equal(a.output, undefined, "no output is named");
+      assert.deepEqual(await materialised(cwd), [], `${mode}: the .partial file is removed`);
+      assert.ok(!r.stdout.includes(secret));
+      assert.ok(await gone(await pidOf(join(cwd, "reader.pid"))));
+    });
+  }
+});
+
+test("a reader that hangs in a library call is ended at the tool's clock: before any output a failed answer, after some a partial that is kept and said to be unverified", async () => {
+  await withCwd(async (cwd) => {
+    const t0 = Date.now();
+    const { r } = await crash(cwd, "hang_unlock", { max_seconds: 6 });
+    assert.ok(Date.now() - t0 < 12000, "ended near the clock");
+    const a = body(r);
+    assert.equal(a.status, "failed");
+    assert.match(a.status_basis, /did not return within the tool's time limit \(6 seconds\)/);
+    assert.deepEqual(await materialised(cwd), []);
+    assert.ok(await gone(await pidOf(join(cwd, "reader.pid"))));
+  });
+  await withCwd(async (cwd) => {
+    const { r } = await crash(cwd, "hang_read2", { max_seconds: 6 });
+    const a = body(r);
+    assert.equal(a.status, "partial");
+    assert.match(a.status_basis, /did not return within the tool's time limit/);
+    assert.equal(a.output.verified, false);
+    assert.equal(a.output.bytes, 1024 * 1024);
+    const files = (await materialised(cwd)).filter((f) => !PROV.test(f));
+    assert.equal(files.length, 1);
+    assert.ok(files[0].endsWith(".partial"));
+    assert.equal((await prov(cwd, a)).output.sha256, null);
+    assert.ok(await gone(await pidOf(join(cwd, "reader.pid"))));
+  });
+});
+
+test("a reader that forks: a sleeper it leaves behind is ended when it returns, and with it when it hangs and ignores SIGTERM", async () => {
+  await withCwd(async (cwd) => {
+    // as a job runs it: the tool heads its own process group, so what the reader left behind is the tool's to end
+    const secret = SHAPES[0][1]();
+    await writeFile(join(cwd, "disk.img"), xor(ntfsLike(3 * 1024 * 1024)));
+    await key(cwd, "rp.txt", secret);
+    await writeFile(join(cwd, "expect.txt"), secret, { mode: 0o600 });
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const proc = startDetached(SCRIPT, cwd, { operation: "bitlocker_image", source: "disk.img", key_ref: "rp.txt", key_kind: "recovery_password" },
+      { JOB_ID: "j1", OUT: join(cwd, "out"), SECRET_OUTPUT: "1", PYTHONPATH: await mods(cwd), STANDIN_EXPECT_FILE: join(cwd, "expect.txt"), STANDIN_MODE: "fork_return",
+        STANDIN_PID_FILE: join(cwd, "reader.pid"), STANDIN_FORK_PID_FILE: join(cwd, "fork.pid") });
+    assert.equal(await proc.closed, 0);
+    assert.equal(JSON.parse(proc.stdout()).status, "complete");
+    assert.ok(await gone(await pidOf(join(cwd, "fork.pid"))), "the forked sleeper outlived the tool");
+  });
+  await withCwd(async (cwd) => {
+    const { r } = await crash(cwd, "fork_hang", { max_seconds: 6 });
+    assert.equal(body(r).status, "failed");
+    assert.ok(await gone(await pidOf(join(cwd, "fork.pid"))), "the forked sleeper outlived the tool");
+    assert.ok(await gone(await pidOf(join(cwd, "reader.pid"))));
+  });
+});
+
+test("SIGTERM to the tool while the reader ignores SIGTERM and hangs: one document, exit 143, no reader left", async () => {
+  await withCwd(async (cwd) => {
+    const secret = SHAPES[0][1]();
+    await writeFile(join(cwd, "disk.img"), xor(ntfsLike(3 * 1024 * 1024)));
+    await key(cwd, "rp.txt", secret);
+    await writeFile(join(cwd, "expect.txt"), secret, { mode: 0o600 });
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const pidPath = join(cwd, "reader.pid");
+    const proc = startDetached(SCRIPT, cwd, { operation: "bitlocker_image", source: "disk.img", key_ref: "rp.txt", key_kind: "recovery_password" },
+      { JOB_ID: "j1", OUT: join(cwd, "out"), SECRET_OUTPUT: "1", PYTHONPATH: await mods(cwd), STANDIN_EXPECT_FILE: join(cwd, "expect.txt"), STANDIN_MODE: "fork_hang",
+        STANDIN_PID_FILE: pidPath, STANDIN_FORK_PID_FILE: join(cwd, "fork.pid") });
+    const pid = await pidFile(pidPath);
+    await pidFile(join(cwd, "fork.pid"));
+    proc.signal("SIGTERM");
+    proc.signal("SIGTERM");
+    assert.equal(await proc.closed, 143);
+    assert.equal(proc.stdout().trim().split("\n").filter(Boolean).length, 1, "exactly one document");
+    assert.equal(JSON.parse(proc.stdout()).interrupted, true);
+    assert.ok(await gone(pid));
+    assert.ok(await gone(await pidOf(join(cwd, "fork.pid"))));
+  });
+});
+
+test("the native modules are imported by the reader child only, never by the tool's own process", async () => {
+  const text = await readFile(SCRIPT, "utf8");
+  const code = text.replace(/^\s*#.*$/gm, "");
+  const calls = [...code.matchAll(/importlib\.import_module\(/g)].length;
+  assert.equal(calls, 2, "the probe and the work, both in reader_child");
+  const child = code.slice(code.indexOf("def reader_child"), code.indexOf("def _run_child"));
+  assert.equal([...child.matchAll(/importlib\.import_module\(/g)].length, 2);
+  assert.doesNotMatch(code.slice(code.indexOf("def main()"), code.indexOf("READER_RESULT_MAX")), /import_module|\.unlock\(|read_buffer\(|decryptStream\(/);
+});
+
 test("the real pyAesCrypt round trip, where the module is importable", async (t) => {
   if (spawnSync("python3", ["-c", "import pyAesCrypt"]).status !== 0) return t.skip("pyAesCrypt is not importable on this host");
   await withCwd(async (cwd) => {
@@ -367,5 +494,7 @@ test("the tool carries the shared blocks of its lineage byte for byte, STOP firs
   for (const n of ["PLACE", "PAGE", "WITHHOLDING", "NAMES", "PROCESS"]) assert.ok(text.indexOf("# BEGIN SHARED STOP") < text.indexOf(`# BEGIN SHARED ${n}`), n);
   assert.doesNotMatch(text.replace(/^\s*#.*$/gm, "").replace(/"""[\s\S]*?"""/g, ""), /start_new_session|setsid|process_group/);
   const own = text.slice(text.indexOf("# END SHARED PROCESS"));
-  assert.doesNotMatch(own, /spawn\(|subprocess|os\.system|os\.exec/, "this tool starts no program: the key cannot reach a command line");
+  const argvs = [...own.matchAll(/\[sys\.executable[^\]]*\]/g)].map((m) => m[0]);
+  assert.deepEqual(argvs, ['[sys.executable, os.path.abspath(__file__), "--reader-child", mode]'], "the one program this tool starts is its own reader child, and no key is in its argument list");
+  assert.doesNotMatch(own, /os\.system|os\.exec|shell=True/, "no other program is started: the key cannot reach a command line");
 });

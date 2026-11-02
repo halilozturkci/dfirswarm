@@ -1691,7 +1691,20 @@ def refuse_unless_secret_job():
         raise SystemExit(1)
 
 
+class Refusal(Exception):
+    """In the reader child: the same refusal fail() makes in the tool, sent to the tool as data."""
+
+    def __init__(self, message, extra):
+        super().__init__(message)
+        self.message, self.extra = message, extra
+
+
+CHILD = [False]                  # True in the reader child, which answers the tool and never the caller
+
+
 def fail(message, **extra):
+    if CHILD[0]:
+        raise Refusal(message, extra)
     claim_answer()
     print(json.dumps(seal({"error": message, "status": "failed",
                            "status_basis": "the tool stopped with an error (see error); nothing was decrypted or the attempt was abandoned", **extra})))
@@ -1923,41 +1936,19 @@ def main():
     except (ValueError, OSError):
         pass
 
-    # The reader is looked for before the key is read: a missing module never touches the key.
-    try:
-        module = importlib.import_module(spec["module"])
-    except ImportError:
-        claim_answer()
-        print(json.dumps({"status": "unavailable", "parser": PARSER, "operation": operation,
-                          "status_basis": "the Python module %s (package %s) is not importable, so nothing was read, not even the key reference" % (
-                              spec["module"], {"pybde": "libbde-python", "pyluksde": "libluksde-python", "pyAesCrypt": "pyAesCrypt"}[spec["module"]])}))
+    # The reader is looked for before the key is touched. The native modules are never imported in this process: a library that dies
+    # (a signal in its code) must not take the tool down with it, so every import and every call of a reader is made by a child of this file.
+    found = probe_reader(spec["module"], operation, seconds)
+    if found is None:
         return
-    version = None
-    for attr in ("get_version", "__version__"):
-        v = getattr(module, attr, None)
-        v = v() if callable(v) else v
-        if isinstance(v, str) and len(v) <= 40:
-            version = withhold(v)
-            break
-
-    key = b""
-    if kind != "clear_key" and kind != "startup_key":
-        kfd, ksize = open_regular(key_ref, "key_ref", secret=True)
-        try:
-            if ksize > KEY_MAX:
-                fail("key_ref is larger than %d bytes: not a password or a recovery password" % KEY_MAX, path=shown(key_ref))
-            key = os.pread(kfd, KEY_MAX + 1, 0)
-        except OSError as exc:
-            fail("key_ref could not be read: %s" % describe(exc), path=shown(key_ref))
-        finally:
-            os.close(kfd)
-        if key.endswith(b"\n"):
-            key = key[:-1]
-        if not key:
+    version = found
+    if kind != "clear_key":
+        kfd, ksize = open_regular(key_ref, "key_ref", secret=True)       # the key file is checked here, its bytes are read by the child only
+        os.close(kfd)
+        if kind != "startup_key" and ksize > KEY_MAX:
+            fail("key_ref is larger than %d bytes: not a password or a recovery password" % KEY_MAX, path=shown(key_ref))
+        if kind != "startup_key" and ksize == 0:
             fail("key_ref is empty")
-    elif kind == "startup_key":
-        sfd, _ = open_regular(key_ref, "key_ref", secret=True)
-        os.close(sfd)
 
     sfd, size = open_regular(source, "source")
     out_dir = Path(os.environ["OUT"]) / "materialised"
@@ -1991,65 +1982,23 @@ def main():
                 answer.update({"status": "partial", "status_basis": "the container (%d bytes) is larger than the output budget (%d): nothing was written" % (size, budget)})
                 return finish(answer)
         partial, fh = new_partial(out_dir, stem)
-        sink = Sink(fh, budget)
         status, basis, extra = None, None, {}
-        try:
-            if operation == "aescrypt_decrypt":
-                try:
-                    with os.fdopen(os.dup(sfd), "rb", closefd=True) as fin:
-                        module.decryptStream(fin, sink, key.decode("utf-8", "surrogateescape"), 64 * 1024, size)
-                except OutputBudget:
-                    status, basis = "partial", "the decrypted bytes reached the output budget (%d): the file is kept as .partial and is not verified" % budget
-                except ValueError:
-                    status, basis = "failed", ("the key did not decrypt the container, or the container is corrupt (the module cannot tell these apart): "
-                                                "this says nothing about whether the evidence can be opened by another key")
-                else:
-                    extra["integrity"] = {"hmac_verified_by_module": True}
-                    status, basis = "complete", "the module decrypted the container to its end and verified its HMAC"
-            else:
-                volume = module.volume()
-                try:
-                    volume.open_file_object(OffsetFile(sfd, offset, size))
-                    if kind == "recovery_password":
-                        volume.set_recovery_password(key.decode("utf-8", "surrogateescape"))
-                    elif kind == "password":
-                        volume.set_password(key.decode("utf-8", "surrogateescape"))
-                    elif kind == "startup_key":
-                        volume.read_startup_key(key_ref)
-                    unlocked = bool(volume.unlock())
-                    if not unlocked:
-                        status, basis = "failed", ("the volume did not unlock with this key: this says nothing about whether another protector or key opens it")
-                    else:
-                        total = volume.get_size()
-                        extra["unlocked_bytes"] = total
-                        limit = min(total, budget)
-                        first = b""
-                        while sink.count < limit:
-                            tick()
-                            chunk = volume.read_buffer(min(CHUNK, limit - sink.count))
-                            if not chunk:
-                                break
-                            if not first:
-                                first = bytes(chunk[:512])
-                            sink.write(chunk)
-                        extra["integrity"] = {"volume_header": volume_header(first)}
-                        if sink.count == total:
-                            status, basis = "complete", "the unlocked volume (%d bytes) was read to its end and written" % total
-                        elif sink.count == limit and limit < total:
-                            status, basis = "partial", "the output budget (%d) is smaller than the unlocked volume (%d): the file is kept as .partial" % (budget, total)
-                        else:
-                            status, basis = "partial", "the unlocked volume ended after %d of %d bytes (a cut or damaged container): the file is kept as .partial" % (sink.count, total)
-                finally:
-                    try:
-                        volume.close()
-                    except Exception:  # noqa: BLE001 - a close that fails changes nothing about the answer
-                        pass
-        except Late:
-            status, basis = "partial", "the tool's own time limit (%d seconds) was reached: the file is kept as .partial and is not verified" % seconds
-        except OutputBudget:
-            status, basis = "partial", "the decrypted bytes reached the output budget (%d): the file is kept as .partial" % budget
-        except Exception as exc:  # noqa: BLE001 - a module's exception text may hold anything: only its class is reported
-            status, basis = "failed", "the reader raised %s; its message is not shown, because it may quote the key or the volume" % type(exc).__name__
+        count, digest = 0, None
+        tick()
+        report = run_reader(operation, kind, key_ref, offset, size, budget, sfd, fh.fileno(), seconds)
+        if report["how"] == "result":
+            status, basis, extra, count, digest = report["status"], report["basis"], report.get("extra") or {}, report["count"], report["sha256"]
+        elif report["how"] == "refusal":
+            fh.close()
+            fail(report["message"], **(report.get("extra") or {}))
+        else:
+            fh.flush()
+            count = os.fstat(fh.fileno()).st_size
+            status, basis = report["status"], report["basis"]
+            if status == "partial" and count == 0:
+                status, basis = "failed", basis + "; nothing had been written"
+            if status == "failed" and count:
+                basis += "; the %d bytes it had written are not verified and the .partial file was removed" % count
         try:
             fh.flush()
             os.fsync(fh.fileno())
@@ -2066,13 +2015,15 @@ def main():
             final = place_without_replacing(partial, out_dir / stem)
             OUTPUT_FILES.remove(partial)
             partial = None
-            provenance["output"] = {"file": final.name, "bytes": sink.count, "sha256": sink.sha.hexdigest(), "complete": True}
+            provenance["output"] = {"file": final.name, "bytes": count, "sha256": digest, "complete": True}
             prov = write_provenance(out_dir, final.name, provenance)
-            answer["output"] = {"path": job_dir + final.name, "bytes": sink.count, "mode": "0600", "provenance": job_dir + prov.name}
+            answer["output"] = {"path": job_dir + final.name, "bytes": count, "mode": "0600", "provenance": job_dir + prov.name}
         elif status == "partial":
-            provenance["output"] = {"file": partial.name, "bytes": sink.count, "sha256": sink.sha.hexdigest(), "complete": False, "verified": False}
+            provenance["output"] = {"file": partial.name, "bytes": count, "sha256": digest, "complete": False, "verified": False}
             prov = write_provenance(out_dir, partial.name, provenance)
-            answer["output"] = {"path": job_dir + partial.name, "bytes": sink.count, "verified": False, "mode": "0600", "provenance": job_dir + prov.name}
+            if digest is None:
+                provenance["output"]["sha256_note"] = "not computed: the reader child was ended before it reported"
+            answer["output"] = {"path": job_dir + partial.name, "bytes": count, "verified": False, "mode": "0600", "provenance": job_dir + prov.name}
             partial = None                     # kept
         else:
             drop_partial(partial)
@@ -2080,12 +2031,240 @@ def main():
         answer["status"], answer["status_basis"] = status, basis
         return finish(answer)
     except Late:
-        answer.update({"status": "partial", "status_basis": "the tool's own time limit (%d seconds) was reached before the evidence was hashed" % seconds})
+        answer.update({"status": "partial", "status_basis": "the tool's own time limit (%d seconds) was reached before the volume was read: nothing was written" % seconds})
         return finish(answer)
     finally:
         os.close(sfd)
         if partial is not None:
             drop_partial(partial)
+
+
+READER_RESULT_MAX = 1 << 20     # the most a reader child may answer with (one short JSON line); more is not an answer
+PROBE_SECONDS = 20
+
+
+def _send(fd, doc):
+    data = (json.dumps(doc) + "\n").encode("utf-8")
+    at = 0
+    while at < len(data):
+        at += os.write(fd, data[at:])
+
+
+def read_volume(module, operation, kind, key, key_ref, offset, size, budget, sfd, sink, seconds):
+    """The reading itself, made in the reader child: (status, basis, extra). A reader's exception text may quote the key or the volume, so
+    only its class is reported."""
+    extra = {}
+    try:
+        if operation == "aescrypt_decrypt":
+            try:
+                with os.fdopen(os.dup(sfd), "rb", closefd=True) as fin:
+                    module.decryptStream(fin, sink, key.decode("utf-8", "surrogateescape"), 64 * 1024, size)
+            except OutputBudget:
+                return "partial", "the decrypted bytes reached the output budget (%d): the file is kept as .partial and is not verified" % budget, extra
+            except ValueError:
+                return "failed", ("the key did not decrypt the container, or the container is corrupt (the module cannot tell these apart): "
+                                  "this says nothing about whether the evidence can be opened by another key"), extra
+            extra["integrity"] = {"hmac_verified_by_module": True}
+            return "complete", "the module decrypted the container to its end and verified its HMAC", extra
+        volume = module.volume()
+        try:
+            volume.open_file_object(OffsetFile(sfd, offset, size))
+            if kind == "recovery_password":
+                volume.set_recovery_password(key.decode("utf-8", "surrogateescape"))
+            elif kind == "password":
+                volume.set_password(key.decode("utf-8", "surrogateescape"))
+            elif kind == "startup_key":
+                volume.read_startup_key(key_ref)
+            unlocked = bool(volume.unlock())
+            if not unlocked:
+                return "failed", "the volume did not unlock with this key: this says nothing about whether another protector or key opens it", extra
+            total = volume.get_size()
+            extra["unlocked_bytes"] = total
+            limit = min(total, budget)
+            first = b""
+            while sink.count < limit:
+                tick()
+                chunk = volume.read_buffer(min(CHUNK, limit - sink.count))
+                if not chunk:
+                    break
+                if not first:
+                    first = bytes(chunk[:512])
+                sink.write(chunk)
+            extra["integrity"] = {"volume_header": volume_header(first)}
+            if sink.count == total:
+                return "complete", "the unlocked volume (%d bytes) was read to its end and written" % total, extra
+            if sink.count == limit and limit < total:
+                return "partial", "the output budget (%d) is smaller than the unlocked volume (%d): the file is kept as .partial" % (budget, total), extra
+            return "partial", "the unlocked volume ended after %d of %d bytes (a cut or damaged container): the file is kept as .partial" % (sink.count, total), extra
+        finally:
+            try:
+                volume.close()
+            except Exception:  # noqa: BLE001 - a close that fails changes nothing about the answer
+                pass
+    except Late:
+        return "partial", "the tool's own time limit (%d seconds) was reached: the file is kept as .partial and is not verified" % seconds, extra
+    except OutputBudget:
+        return "partial", "the decrypted bytes reached the output budget (%d): the file is kept as .partial" % budget, extra
+    except Exception as exc:  # noqa: BLE001 - a module's exception text may hold anything: only its class is reported
+        return "failed", "the reader raised %s; its message is not shown, because it may quote the key or the volume" % type(exc).__name__, extra
+
+
+def reader_child(mode):
+    """The child of this file that imports a native reader and calls it. It answers the tool with one JSON line on a descriptor it saved
+    before its own standard streams were pointed at /dev/null (so nothing a library prints can be taken for an answer), and the key never
+    leaves it: it is read here, from the key file, after the module has been imported. A signal that kills this process is the tool's
+    to report."""
+    CHILD[0] = True
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM):
+        signal.signal(signum, signal.SIG_DFL)
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    result = os.dup(1)
+    try:
+        job = json.loads(sys.stdin.buffer.read(1 << 16) or b"{}")
+    except (ValueError, RecursionError):
+        job = {}
+    null = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(null, fd)
+    os.close(null)
+    if not isinstance(job, dict):
+        job = {}
+    try:
+        if mode == "probe":
+            name = job.get("module")
+            if name not in {spec["module"] for spec in OPERATIONS.values()}:
+                _send(result, {"child": 1, "ok": False})
+                return
+            try:
+                module = importlib.import_module(name)
+            except Exception:  # noqa: BLE001 - not importable, whatever the reason
+                _send(result, {"child": 1, "ok": False})
+                return
+            version = None
+            for attr in ("get_version", "__version__"):
+                v = getattr(module, attr, None)
+                v = v() if callable(v) else v
+                if isinstance(v, str) and len(v) <= 40:
+                    version = v
+                    break
+            _send(result, {"child": 1, "ok": True, "version": version})
+            return
+        operation = job["operation"]
+        spec = OPERATIONS[operation]
+        kind, key_ref = job["kind"], job.get("key_ref")
+        STOP["deadline"] = time.monotonic() + float(job["child_seconds"])
+        module = importlib.import_module(spec["module"])
+        key = b""
+        if kind not in ("clear_key", "startup_key"):
+            kfd, ksize = open_regular(key_ref, "key_ref", secret=True)
+            try:
+                if ksize > KEY_MAX:
+                    fail("key_ref is larger than %d bytes: not a password or a recovery password" % KEY_MAX, path=shown(key_ref))
+                key = os.pread(kfd, KEY_MAX + 1, 0)
+            except OSError as exc:
+                fail("key_ref could not be read: %s" % describe(exc), path=shown(key_ref))
+            finally:
+                os.close(kfd)
+            if key.endswith(b"\n"):
+                key = key[:-1]
+            if not key:
+                fail("key_ref is empty")
+        out = os.fdopen(job["partial_fd"], "wb")
+        sink = Sink(out, int(job["budget"]))
+        status, basis, extra = read_volume(module, operation, kind, key, key_ref, int(job["offset"]), int(job["size"]), int(job["budget"]),
+                                           job["source_fd"], sink, int(job["seconds"]))
+        out.flush()
+        os.fsync(out.fileno())
+        out.close()
+        _send(result, {"child": 1, "status": status, "basis": basis, "extra": extra, "count": sink.count, "sha256": sink.sha.hexdigest()})
+    except Refusal as exc:
+        _send(result, {"child": 1, "refusal": exc.message, "extra": {k: v for k, v in exc.extra.items() if isinstance(k, str) and isinstance(v, (str, int))}})
+    except Exception as exc:  # noqa: BLE001 - never a traceback, never a message that may quote the key
+        _send(result, {"child": 1, "status": "failed", "basis": "the reader child failed with %s" % type(exc).__name__, "extra": {}, "count": 0,
+                       "sha256": None})
+
+
+def _run_child(mode, job, seconds, pass_fds=()):
+    """Run the reader child with `job` on its standard input (a short JSON object: no key, only where the key file is), bounded: at `seconds`
+    it is ended with everything it started. (exit code or None, its answer or None, timed out)."""
+    argv = [sys.executable, os.path.abspath(__file__), "--reader-child", mode]
+    try:
+        proc = spawn(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, pass_fds=tuple(pass_fds))
+    except OSError as exc:
+        return None, None, False, describe(exc)
+    ACTIVE.append(proc)
+    try:
+        out, _err, timed_out = communicate_bounded(proc, max(1.0, seconds), input=json.dumps(job).encode("utf-8"))
+    finally:
+        ACTIVE.remove(proc)
+    doc = None
+    if len(out) <= READER_RESULT_MAX:
+        lines = [ln for ln in out.split(b"\n") if ln.strip()]
+        if lines:
+            try:
+                doc = json.loads(lines[-1])
+            except (ValueError, RecursionError):
+                doc = None
+    if not isinstance(doc, dict) or doc.get("child") != 1:
+        doc = None
+    return proc.returncode, doc, timed_out, None
+
+
+def _death(code):
+    if code is not None and code < 0:
+        try:
+            return "signal %d (%s)" % (-code, signal.Signals(-code).name)
+        except ValueError:
+            return "signal %d" % -code
+    return "exit code %s" % code
+
+
+def probe_reader(name, operation, seconds):
+    """The reader's version, or None after the 'unavailable' answer has been given. The import is made by a child: a library that cannot be
+    imported, or dies on import, never takes the tool with it."""
+    left = max(1.0, STOP["deadline"] - time.monotonic())
+    code, doc, timed_out, why = _run_child("probe", {"module": name}, min(PROBE_SECONDS, left))
+    if doc is not None and doc.get("ok") is True:
+        v = doc.get("version")
+        return withhold(v) if isinstance(v, str) and len(v) <= 40 else None
+    if doc is None and (timed_out or why or (code is not None and code != 0)):
+        fail("the reader module %s could not be probed: its import child %s; nothing was read" % (
+            name, "did not return in %d seconds and was ended" % min(PROBE_SECONDS, left) if timed_out else ("could not be started" if why else "ended with " + _death(code))))
+    claim_answer()
+    print(json.dumps({"status": "unavailable", "parser": PARSER, "operation": operation,
+                      "status_basis": "the Python module %s (package %s) is not importable, so nothing was read: the key file's bytes were not read" % (
+                          name, {"pybde": "libbde-python", "pyluksde": "libluksde-python", "pyAesCrypt": "pyAesCrypt"}[name])}))
+    return None
+
+
+def run_reader(operation, kind, key_ref, offset, size, budget, sfd, pfd, seconds):
+    """The reading, supervised: the reader child is given the source and the partial file as descriptors, the key file's path and the tool's
+    clock (it stops itself four seconds before the tool would end it). Returns {'how': 'result'|'refusal'|'killed'|'died', ...}. A signal
+    death, a clock that ran out in a library call that does not return, an exit with no answer or an answer that does not describe the file
+    are each told as what they were; none of them is a `complete`."""
+    left = STOP["deadline"] - time.monotonic()
+    job = {"operation": operation, "kind": kind, "key_ref": key_ref, "offset": offset, "size": size, "budget": budget, "source_fd": sfd,
+           "partial_fd": pfd, "seconds": seconds, "child_seconds": max(1.0, left - 4.0)}
+    code, doc, timed_out, why = _run_child("work", job, max(1.0, left), (sfd, pfd))
+    if why:
+        return {"how": "died", "status": "failed", "basis": "the reader child could not be started (%s); nothing was read" % why}
+    if doc is not None and "refusal" in doc:
+        extra = doc.get("extra")
+        return {"how": "refusal", "message": str(doc["refusal"])[:600], "extra": extra if isinstance(extra, dict) else {}}
+    if doc is not None and doc.get("status") in ("complete", "partial", "failed") and isinstance(doc.get("basis"), str) \
+            and isinstance(doc.get("count"), int) and isinstance(doc.get("extra"), dict):
+        try:
+            on_disk = os.fstat(pfd).st_size
+        except OSError:
+            on_disk = -1
+        if on_disk == doc["count"]:
+            return {"how": "result", "status": doc["status"], "basis": doc["basis"][:600], "extra": doc["extra"], "count": doc["count"],
+                    "sha256": doc.get("sha256") if isinstance(doc.get("sha256"), str) else None}
+        return {"how": "died", "status": "failed", "basis": "the reader child's report of its output (%s bytes) does not match the file (%d bytes)" % (doc["count"], on_disk)}
+    if timed_out:
+        return {"how": "killed", "status": "partial", "basis": "the reader did not return within the tool's time limit (%d seconds), in a library call: it was ended "
+                "with everything it had started; what it had written is kept as .partial and is not verified" % seconds}
+    return {"how": "died", "status": "failed", "basis": "the reader process died or ended with no answer: %s; whatever it had written is not verified" % _death(code)}
 
 
 def volume_header(first):
@@ -2116,6 +2295,9 @@ def finish(answer):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--reader-child"]:
+        reader_child(sys.argv[2] if len(sys.argv) > 2 else "")
+        raise SystemExit(0)
     try:
         main()
     except SystemExit:

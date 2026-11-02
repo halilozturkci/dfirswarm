@@ -319,6 +319,24 @@ test("a RAR with a hundred thousand block headers is read in time, paged lossles
   });
 });
 
+test("a paging file that cannot be written to the end (a size limit) is a JSON error and leaves no dot-file behind", async () => {
+  await withCwd(async (cwd) => {
+    const files: Buffer[] = [];
+    for (let i = 0; i < 100000; i++) files.push(rar4File("f" + i, 0, 0));
+    await put(cwd, "many.rar", Buffer.concat([RAR4_SIG, rar4Main(), ...files, rar4End()]));
+    // the hard file-size limit of this process is 2 MiB, as RLIMIT_FSIZE is 256 MiB in a job: the whole listing (about 10 MB) does not fit
+    const site = join(cwd, "site");
+    await mkdir(site, { recursive: true });
+    await writeFile(join(site, "sitecustomize.py"), "import resource\nresource.setrlimit(resource.RLIMIT_FSIZE, (2 << 20, 2 << 20))\n");
+    const r = await asJob(SCRIPT, cwd, { path: "many.rar", limit: 3 }, undefined, { PYTHONPATH: site });
+    const a = refused(r);
+    assert.equal(a.status, "failed");
+    assert.match(a.error, /cannot be written/);
+    const left = await readdir(join(cwd, "out", "tool-output")).catch(() => [] as string[]);
+    assert.deepEqual(left, [], "no half file (a dot-file of the size limit) is left in the output directory");
+  });
+});
+
 test("hostile parameters and special files are JSON refusals; a FIFO does not hold the tool", async () => {
   await withCwd(async (cwd) => {
     await put(cwd, "ok.rar", Buffer.concat([RAR4_SIG, rar4Main(), rar4End()]));

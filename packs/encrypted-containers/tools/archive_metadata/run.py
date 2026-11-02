@@ -2422,3 +2422,5 @@ if __name__ == "__main__":
         raise
     except Exception as exc:  # never an empty or clean answer for a failure, and never a traceback
         fail("unexpected failure: %s: %s" % (type(exc).__name__, withhold(str(exc))))
+    finally:
+        remove_pending_pages()      # a page whose write failed (a full disk, a size limit) leaves no half file behind

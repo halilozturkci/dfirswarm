@@ -293,6 +293,19 @@ test("BitLocker with a protector count the reader does not keep is partial", asy
   });
 });
 
+test("bdeinfo that prints a method but neither a protector count nor a protector section is partial and the number is unknown, never complete with none", async () => {
+  await withCwd(async (cwd, bin) => {
+    LOGPATH = join(cwd, "argv.log");
+    await stub(bin, "bdeinfo", `#!/bin/sh\nif [ "$1" = "-V" ]; then echo "bdeinfo 20221031"; exit 0; fi\nprintf 'bdeinfo 20221031\\n\\nBitLocker Drive Encryption information:\\n\\tEncryption method\\t\\t: AES-XTS 128-bit\\n'\n`);
+    const vol = await volume(cwd, "bl.img", bitlocker());
+    const a = body(await asJob(SCRIPT, cwd, { path: vol }, bin));
+    assert.equal(a.status, "partial", a.status_basis);
+    assert.match(a.status_basis, /neither a number of key protectors nor a protector section/);
+    assert.equal(a.fields.encryption_method, "AES-XTS 128-bit");
+    assert.deepEqual(a.records, []);
+  });
+});
+
 test("Core Storage and APFS: the reader's counts, and the container flag this tool reads itself", async () => {
   await withCwd(async (cwd, bin) => {
     LOGPATH = join(cwd, "argv.log");
