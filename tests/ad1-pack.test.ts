@@ -1201,3 +1201,72 @@ test("ad1_extract on a hostile out_dir: JSON every time, nothing hidden left, ne
   }
   assert.deepEqual(bad, []);
 });
+
+test("ad1_extract under an injected fault: one JSON document and no hidden temporary file, whichever stat, fstat, lstat or monotonic call fails", () => {
+  const site = mkdtempSync(join(tmpdir(), "ad1-fault-site-"));
+  const cwd = dir("ad1-fault-");
+  try {
+    writeFileSync(join(site, "sitecustomize.py"), [
+      "import atexit, json, os, sys, time",
+      'spec = os.environ.get("FAULT", "")',
+      'label, _, n = spec.partition(":")',
+      "target = int(n) if n else None",
+      "counts = {}",
+      "def wrap(mod, name, lab):",
+      "    real = getattr(mod, name)",
+      "    def f(*a, **k):",
+      "        if sys.excepthook is not sys.__excepthook__:",
+      "            counts[lab] = counts.get(lab, 0) + 1",
+      "            if lab == label and counts[lab] == target:",
+      '                raise RuntimeError("injected fault")',
+      "        return real(*a, **k)",
+      "    setattr(mod, name, f)",
+      'wrap(time, "monotonic", "monotonic"); wrap(os, "fstat", "fstat"); wrap(os, "stat", "stat"); wrap(os, "lstat", "lstat")',
+      'if os.environ.get("FAULT_COUNTS"):',
+      '    atexit.register(lambda: open(os.environ["FAULT_COUNTS"], "w").write(json.dumps(counts)))',
+      "",
+    ].join("\n"));
+    mkdirSync(join(cwd, "inputs"));
+    writeFileSync(join(cwd, "inputs", "f.ad1"), ad1Image(Array.from({ length: 20 }, (_, i) => ({ name: `file-${i}.txt`, content: B(`content ${i}`) }))));
+    const hidden = (root: string): string[] => {
+      const found: string[] = [];
+      const walk = (d: string): void => {
+        for (const e of readdirSync(d, { withFileTypes: true })) {
+          if (e.name.startsWith(".")) found.push(join(d, e.name));
+          if (e.isDirectory()) walk(join(d, e.name));
+        }
+      };
+      walk(root);
+      return found;
+    };
+    let runNo = 0;
+    const run = (fault: string, countsFile?: string) => {
+      runNo++;
+      return spawnSync("python3", [TOOL], {
+        cwd, input: JSON.stringify({ image: "inputs/f.ad1", out_dir: `work/f${runNo}` }), encoding: "utf8",
+        env: { ...process.env, AGENT_ID: "s1", PYTHONPATH: site, FAULT: fault, ...(countsFile ? { FAULT_COUNTS: countsFile } : {}) },
+      });
+    };
+    const countsFile = join(site, "counts.json");
+    const clean = run("", countsFile);
+    assert.ok(clean.stdout.trim(), clean.stderr.slice(-200));
+    const counts = JSON.parse(readFileSync(countsFile, "utf8")) as Record<string, number>;
+    const bad: string[] = [];
+    for (const label of ["monotonic", "fstat", "stat", "lstat"]) {
+      const k = counts[label] ?? 0;
+      const picks = new Set<number>();
+      for (let n = 1; n <= Math.min(k, 8); n++) picks.add(n);
+      if (k > 8) for (let i = 1; i <= 4; i++) picks.add(8 + Math.floor(((k - 8) * i) / 4));
+      for (const n of [...picks].sort((a, b) => a - b)) {
+        const r = run(`${label}:${n}`);
+        try { JSON.parse(r.stdout); } catch { bad.push(`${label}@${n}: stdout is not one JSON document (exit ${r.status}) ${r.stderr.slice(-120)}`); continue; }
+        if (r.signal) bad.push(`${label}@${n}: killed by ${r.signal}`);
+      }
+    }
+    const left = hidden(cwd);
+    if (left.length) bad.push(`hidden files left: ${left.slice(0, 3).join(", ")}`);
+    assert.deepEqual(bad, []);
+  } finally {
+    rmSync(site, { recursive: true, force: true });
+  }
+});

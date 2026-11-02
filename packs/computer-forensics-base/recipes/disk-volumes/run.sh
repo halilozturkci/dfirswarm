@@ -115,6 +115,8 @@ PY
 FSIZE_LIMIT_BYTES="$(python3 -c 'import resource; l = resource.getrlimit(resource.RLIMIT_FSIZE)[0]; print(l if l > 0 else 0)' 2>/dev/null || echo 0)"
 [[ "$FSIZE_LIMIT_BYTES" =~ ^[0-9]+$ ]] || FSIZE_LIMIT_BYTES=0
 WRITE_FAILED=0     # a file of the run could not be written whole
+WRITE_REFUSED_SEEN=0   # a step's output was refused by the disk or a size limit (the wrapper said so): nothing then says what the image holds
+STEP_REFUSED=0
 COV_REQ=""         # the status the last coverage call asked for
 COV_TEXT=""        # and what it said it covered
 COV_STATUS=""      # the status the coverage file carries (a limit that stopped a step makes a complete one partial)
@@ -185,8 +187,11 @@ alive() { # alive <pid>: running, and not a zombie waiting to be reaped
 # copies the pipe to the file with every write checked. A full disk or a file-size limit that cuts the output makes the step exit 74 at that
 # moment, whether or not the program noticed, so no later look at the disk is needed. Exit codes are the program's, or 128 + its signal.
 STEP_PERL='use POSIX ();
+use Fcntl;
+use Time::HiRes ();
 setpgrp(0, 0);
 my $secs = shift @ARGV;
+my $mark = $ENV{STEP_MARK};
 pipe(my $r, my $w) or exit 70;
 my $pid = fork();
 exit 70 unless defined $pid;
@@ -194,38 +199,88 @@ if (!$pid) {
   close $r;
   open(STDOUT, ">&", $w) or POSIX::_exit(70);
   close $w;
-  alarm $secs;
   exec { $ARGV[0] } @ARGV;
   print STDERR "$ARGV[0]: $!\n";
   POSIX::_exit(127);
 }
 close $w;
-$SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub { kill "TERM", $pid; };
-my ($bad, $buf) = (0, "");
-while (1) {
+sub members {
+  my @m;
+  if (opendir(my $d, "/proc")) {
+    for my $e (readdir $d) {
+      next unless $e =~ /^[0-9]+$/;
+      next if $e == $$;
+      open(my $f, "<", "/proc/$e/stat") or next;
+      my $s = <$f>;
+      close $f;
+      next unless defined $s;
+      $s =~ s/^.*\) //;
+      my @f = split / /, $s;
+      push @m, $e if defined $f[2] && $f[2] == $$;
+    }
+    closedir $d;
+  }
+  return @m;
+}
+sub hit { my $sig = shift; kill $sig, $_ for members(); kill $sig, $pid; }
+my ($term_at, $killed, $stopped, $bad, $buf, $status, $eof) = (0, 0, 0, 0, "", 0, 0);
+$SIG{TERM} = $SIG{INT} = $SIG{HUP} = sub { $stopped = 1; hit("TERM"); };
+my $start = Time::HiRes::time();
+sub pump {
   my $n = sysread($r, $buf, 65536);
-  if (!defined $n) { next if $!{EINTR}; last; }
-  last if $n == 0;
-  next if $bad;
+  if (!defined $n) { return 2 if $!{EINTR} || $!{EAGAIN}; return 0; }
+  return 0 if $n == 0;
+  return 1 if $bad;
   my $off = 0;
   while ($off < $n) {
     my $k = syswrite(STDOUT, $buf, $n - $off, $off);
-    if (!defined $k) { next if $!{EINTR}; $bad = "$!"; kill "TERM", $pid; last; }
+    if (!defined $k) { next if $!{EINTR}; $bad = "$!"; hit("TERM"); last; }
     $off += $k;
   }
+  return 1;
 }
-waitpid($pid, 0);
-my $st = $?;
-if ($bad) { print STDERR "the step output could not be written whole ($bad)\n"; exit 74; }
-exit(($st & 127) ? 128 + ($st & 127) : ($st >> 8));'
+while (1) {
+  my $got = waitpid($pid, POSIX::WNOHANG());
+  if ($got == $pid) { $status = $?; last; }
+  my $now = Time::HiRes::time();
+  if (!$term_at && $now - $start >= $secs) { $term_at = $now; hit("TERM"); }
+  if ($term_at && !$killed && $now - $term_at >= 2) { $killed = 1; hit("KILL"); }
+  if (!$eof) {
+    my $rin = "";
+    vec($rin, fileno($r), 1) = 1;
+    my $n = select(my $rout = $rin, undef, undef, 0.1);
+    if ($n > 0) { $eof = 1 if pump() == 0; }
+  } else {
+    Time::HiRes::sleep(0.05);
+  }
+}
+my $fl = fcntl($r, F_GETFL, 0);
+fcntl($r, F_SETFL, $fl | O_NONBLOCK) if defined $fl;
+while (pump() == 1) { }
+hit("KILL");
+if ($bad) {
+  if (defined $mark && length $mark) { if (open(my $m, ">", $mark)) { close $m; } }
+  print STDERR "the step output could not be written whole ($bad)\n";
+  exit 74;
+}
+exit 142 if $term_at;
+exit 143 if $stopped;
+exit(($status & 127) ? 128 + ($status & 127) : ($status >> 8));'
 bg() { # bg <seconds> <cmd...>: the command with a deadline; its redirections are the caller's
   local secs="$1" rc
   shift
-  perl -e "$STEP_PERL" "$secs" "$@" 3>&- &
+  STEP_REFUSED=0
+  rm -f "$STEP_MARK"
+  STEP_MARK="$STEP_MARK" perl -e "$STEP_PERL" "$secs" "$@" 3>&- &
   CHILD=$!
   wait "$CHILD"
   rc=$?
   CHILD=""
+  if [[ -e "$STEP_MARK" ]]; then                # the wrapper's own word that a write was refused: not an exit code a program can also give
+    rm -f "$STEP_MARK"
+    STEP_REFUSED=1; WRITE_REFUSED_SEEN=1; WRITE_FAILED=1
+    notes+=("the output of ${*:1:3} could not be written whole: the disk or a file-size limit refused a write while the step ran")
+  fi
   return "$rc"
 }
 # boxed <cmd...>: bg with RECIPE_STEP_SECONDS or what the recipe's clock has left, whichever is less; 125 when there is none left.
@@ -286,10 +341,6 @@ run_step() { # run_step <outfile> <cmd...>
   local rc=0
   boxed "$@" > "$file" 2> "$file.stderr" || rc=$?
   [[ -s "$file.stderr" ]] || rm -f "$file.stderr"
-  if (( rc == 74 )); then
-    WRITE_FAILED=1
-    notes+=("${file#"$out/"} could not be written whole: the disk or a file-size limit refused a write while the step ran")
-  fi
   if [[ "$rc" -eq 0 ]]; then
     STEP_R=ok
     return 0
@@ -305,6 +356,7 @@ run_step() { # run_step <outfile> <cmd...>
     err="$err; all of stderr: ${file#"$out/"}.stderr"
   fi
   STEP_R="failed (exit $rc${err:+: $err})"
+  if (( STEP_REFUSED )); then STEP_R="its output could not be written whole (the disk or a file-size limit refused a write)"; fi
 }
 
 index_row() { # index_row <file relative to out> <what>
@@ -462,6 +514,21 @@ img="$(target_field "$target" paths0)"
 shown="$(target_field "$target" name)"
 [[ -n "$img" && -f "$img" ]] || { final; echo '{"applies": "unknown", "why": "the target is not a regular file, so it cannot be told what it is", "ok": false, "error": "the target is not a readable file"}'; exit 2; }
 
+# perl runs every step (its clock, its process group, its checked writer), so it must be here; the marker file is the wrapper's word that a
+# write was refused, in a directory of its own that goes with the script.
+if ! have perl; then
+  final
+  if [[ "$cmd" == detect ]]; then
+    echo '{"applies": "unknown", "why": "perl is not installed: every step of this recipe runs under a perl wrapper that bounds its time and checks its output, so nothing was asked of the image"}'
+  else
+    echo '{"ok": false, "status": "failed", "error": "perl is not installed", "status_basis": "every step of this recipe runs under a perl wrapper that bounds its time and checks its output, so nothing was run and nothing is said about the image"}'
+  fi
+  exit 2
+fi
+STEP_MARK_DIR="$(mktemp -d 2>/dev/null)" || { final; echo '{"ok": false, "status": "failed", "applies": "unknown", "error": "no temporary directory could be made", "status_basis": "nothing was run and nothing is said about the image"}'; exit 2; }
+STEP_MARK="$STEP_MARK_DIR/refused"
+trap 'rm -rf "$STEP_MARK_DIR"' EXIT
+
 case "$cmd" in
   detect)
     if have mmls && probe mmls "$img" >/dev/null 2>&1; then
@@ -480,6 +547,9 @@ case "$cmd" in
     done
     if ! have mmls && ! have fsstat; then
       final; echo '{"applies": "unknown", "why": "mmls and fsstat are not in this image"}'; exit 2
+    fi
+    if (( WRITE_REFUSED_SEEN )); then
+      final; echo '{"applies": "unknown", "why": "a write was refused (a file-size limit or a full disk) while the probes ran, so it cannot be told what the image holds"}'; exit 2
     fi
     final; echo '{"applies": false, "why": "no partition table and no filesystem at sector 0, 63 or 2048"}'; exit 1
     ;;
@@ -593,6 +663,12 @@ case "$cmd" in
             notes+=("no partition table was read and no file system was found, but the recipe's time limit left no time for every step (limits_hit names them): the image is not shown to have none")
             coverage partial "nothing was read before the recipe's time limit"
             final; echo '{"ok": false, "status": "partial"}'
+            exit 2
+          fi
+          if (( WRITE_REFUSED_SEEN )); then
+            coverage partial "nothing could be read: a write was refused (a file-size limit or a full disk), so the image is not shown to have no partition table or file system"
+            finish_checks
+            final; echo '{"ok": false, "status": "partial", "status_basis": "a write was refused while the image was probed; nothing here is a statement about what the image holds"}'
             exit 2
           fi
           notes+=("no partition table (mmls), and no filesystem at sector 0, 63 or 2048 (fsstat)")
