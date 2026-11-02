@@ -235,7 +235,7 @@ export function resolveThresholds(
     // line up, so a compact line equal to the warning line skips the warning.
     if (below && below.tokens >= compactTokens) {
       if (below.tokens > capTokens) return { ok: false, error: `${line(below.name, below.spec, below.tokens)} is above ${holds}.` };
-      if (below.tokens + 1 > capTokens) return { ok: false, error: `${line(below.name, below.spec, below.tokens)} leaves no room for a compact threshold above it under ${holds}.` };
+      if (below.tokens + 1 > capTokens) return { ok: false, error: `${line(below.name, below.spec, below.tokens)} leaves no room for a compact threshold above it: this ${fmt(declared)}-token window holds at most ${fmt(capTokens)} once ${fmt(reserve)} reserve and ${fmt(HEADROOM_TOKENS)} headroom are kept.` };
       notes.push(`the default compact threshold (${parsed.compact.raw} = ${fmt(compactTokens)}) is not above the ${below.name} threshold ${below.spec.raw}; raised to ${fmt(below.tokens + 1)}, one token above it`);
       compactTokens = below.tokens + 1;
       clamped = true;

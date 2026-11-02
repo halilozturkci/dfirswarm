@@ -112,7 +112,7 @@ test("a default compact line raised to an explicit warning or notice line lands 
     : 0;
   assert.equal(cap, 223_616);
   const atCap = resolveThresholds({ ...DEFAULT_SPECS, warnAt: String(cap) }, "openai/gpt-5.4", 272_000, { explicit: { warnAt: true } });
-  assert.ok(!atCap.ok && /^the warning threshold 223616 \(223,616 tokens\) leaves no room for a compact threshold above it under the 223,616 this 272,000-token window can hold/.test(atCap.error), atCap.ok ? "" : atCap.error);
+  assert.ok(!atCap.ok && /^the warning threshold 223616 \(223,616 tokens\) leaves no room for a compact threshold above it: this 272,000-token window holds at most 223,616 once /.test(atCap.error), atCap.ok ? "" : atCap.error);
   const aboveCap = resolveThresholds({ ...DEFAULT_SPECS, warnAt: String(cap + 1) }, "openai/gpt-5.4", 272_000, { explicit: { warnAt: true } });
   assert.ok(!aboveCap.ok && /is above the 223,616 this 272,000-token window can hold/.test(aboveCap.error));
   const justUnder = resolveThresholds({ ...DEFAULT_SPECS, warnAt: String(cap - 1) }, "openai/gpt-5.4", 272_000, { explicit: { warnAt: true } });

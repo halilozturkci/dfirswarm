@@ -381,7 +381,7 @@ work/extracted -name SHA256SUMS -exec cat {} + 2>/dev/null | grep -cE
 second runs `sha256sum -c` (or `shasum -a 256 -c`) on every manifest, so a
 hash of a file that is not there fails. A check has 30 seconds: where the
 extracts are dumps, the second check skips a manifest whose directory holds
-a file over 256 MiB or more than 1 GiB in all, and the entry says that the report must record
+a file over 256 MiB or more than 1 GiB in all (links followed), and the entry says that the report must record
 that dump's hash as taken at extraction. Where it promises a YARA rule,
 check that a file declares a rule outside a comment (`test -n "$(find
 work/rules -iname '*.yar*' -exec awk ... {} + 2>/dev/null)"`, the awk

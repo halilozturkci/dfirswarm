@@ -98,6 +98,8 @@ test("the inventory check fails closed when jq or inputs.json is missing", () =>
   scratch((dir) => {
     put(dir, "work/inventory.md", rows(3));
     assert.notEqual(runCheck(dir, cmd), 0, "no inputs.json fails");
+    put(dir, "inputs.json", "");
+    assert.notEqual(runCheck(dir, cmd), 0, "an empty inputs.json fails (jq prints nothing and exits 0)");
   });
   scratch((dir) => {
     // The real jq, if the machine has one: the filter itself is the one that ships.
@@ -190,6 +192,15 @@ for (const goal of ["library/memory/disk-and-memory-correlation.md", "library/me
       const t = Date.now();
       assert.equal(runCheck(dir, cmd), 0, "the big dump is skipped, not hashed");
       assert.ok(Date.now() - t < 5000, "and quickly");
+      // A link to a huge file kept elsewhere counts as that file.
+      scratch((d2) => {
+        const huge = put(d2, "huge.raw", "");
+        truncateSync(huge, 300 * 1024 * 1024);
+        mkdirSync(join(d2, "work/extracted/d"), { recursive: true });
+        symlinkSync(huge, join(d2, "work/extracted/d/link.raw"));
+        put(d2, "work/extracted/d/SHA256SUMS", `${"0".repeat(64)}  link.raw\n`);
+        assert.equal(runCheck(d2, cmd), 0, "a link to a big file is skipped too");
+      });
       // A small manifest beside it is still checked.
       put(dir, "work/extracted/c/small.bin", "x");
       put(dir, "work/extracted/c/SHA256SUMS", `${"0".repeat(64)}  small.bin\n`);

@@ -113,8 +113,9 @@ ran the first pass; read `catalog/` before running the same commands again.
 
 - Lambda's `eventName` carries an API version: `CreateFunction20150331`,
   `AddPermission20150331v2`, `UpdateFunctionCode20150331v2`. Match a Lambda
-  event by its name's prefix (`LIKE 'CreateFunction%'`), never by equality
-  with the bare name, or the trail seems to hold none.
+  event by its name and the date that follows (`LIKE 'CreateFunction2015%'`),
+  never by equality with the bare name, or the trail seems to hold none; the
+  bare prefix `CreateFunction%` would also take `CreateFunctionUrlConfig`.
 - `inputs/` is read-only and stays byte-for-byte what it was. Read the
   trail with `zcat`, `jq`, `grep`, `awk`, `sort`, `uniq`, `sqlite3` and
   `python3`; do not decompress or copy the files wholesale. Load the

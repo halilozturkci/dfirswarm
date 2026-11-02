@@ -72,8 +72,8 @@ ran the first pass; read `catalog/` before running the same commands again.
    detected and what was done about it), audit policy changes 4719 and
    4907, the log clears from question 1, the event log service stopping
    (System 6005/6006 out of place), Security 1100 (the event log service shut down: also
-   written on every normal shutdown, so it marks tampering only with no
-   System 6006 beside it) and 1104 (log full), System 7036 and 7040 for the security services,
+   written on every normal shutdown, so read it with the System 6006 and
+   the boot that follows) and 1104 (log full), System 7036 and 7040 for the security services,
    Sysmon 16 (configuration change) and Defender 5013, and the services
    or tasks that stopped security tooling; each with the account and the
    moment.

@@ -245,11 +245,11 @@ on, and `inputs/` is unchanged.
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
 - `test "$(find work/extracted -name SHA256SUMS -exec cat {} + 2>/dev/null | grep -cE '^[0-9a-fA-F]{64} |^SHA256 ?\(.*\) ?= ?[0-9a-fA-F]{64}')" -ge 1`
-- `find work/extracted -name SHA256SUMS -exec sh -c 'c="sha256sum -c"; command -v sha256sum >/dev/null || c="shasum -a 256 -c"; for m; do s=$(find "${m%/*}" -type f -size +524288 2>/dev/null | head -1); [ -n "$s" ] && continue; s=$(du -sk "${m%/*}" 2>/dev/null | cut -f1); [ "${s:-0}" -gt 1048576 ] && continue; (cd "${m%/*}" && $c SHA256SUMS) >/dev/null 2>&1 || $c "$m" >/dev/null 2>&1 || exit 1; done' sh {} +`
+- `find work/extracted -name SHA256SUMS -exec sh -c 'c="sha256sum -c"; command -v sha256sum >/dev/null || c="shasum -a 256 -c"; for m; do s=$(find -L "${m%/*}" -type f -size +524288 2>/dev/null | head -1); [ -n "$s" ] && continue; s=$(du -skL "${m%/*}" 2>/dev/null | cut -f1); [ "${s:-0}" -gt 1048576 ] && continue; (cd "${m%/*}" && $c SHA256SUMS) >/dev/null 2>&1 || $c "$m" >/dev/null 2>&1 || exit 1; done' sh {} +`
   (a manifest whose directory holds a file over 256 MiB, or more than 1 GiB
-  in all, is not re-hashed here,
-  so the check stays inside its time limit; hash that dump when you extract
-  it, and say in the report that the check did not.)
+  in all, links followed, is not re-hashed here, so the check stays inside
+  its time limit; hash that dump when you extract it, and say in the report
+  that the check did not.)
 - `test -n "$(find work/rules -iname '*.yar*' -exec awk 'FNR==1{k=0} {t=$0;o=""} k{i=index(t,"*/");if(!i)next;t=substr(t,i+2);k=0} {while((i=index(t,"/*"))){o=o substr(t,1,i-1)" ";t=substr(t,i+2);j=index(t,"*/");if(!j){k=1;t="";break};t=substr(t,j+2)} o=o t;if((i=index(o,"//")))o=substr(o,1,i-1)} o~/^[ \t]*((private|global)[ \t]+)*rule[ \t]+[A-Za-z_]/{print FILENAME}' {} + 2>/dev/null)"`
 - `command -v yara >/dev/null || exit 0; find work/rules -iname '*.yar*' -exec sh -c 'for r; do yara "$r" /dev/null >/dev/null 2>&1 || exit 1; done' sh {} +`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,8,summary,narrative`
