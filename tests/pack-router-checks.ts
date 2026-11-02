@@ -276,9 +276,10 @@ export function routerChecks(spec: RouterSpec): void {
         assert.equal(mine.shown, "full", `${label}: ${withRouter.index_tokens} tokens of entries fit, so the pack is shown whole`);
         assert.ok(withRouter.shown_tokens <= SKILL_BUDGET.run, `${label}: the run shows ${withRouter.shown_tokens} tokens`);
         // A run that fits today (the network and mobile profiles) is not a test of the router by itself: force the run budget one token
-        // under what the index costs and the pack must be shown by its router, which is what it will be when the run carries more.
-        const forced = await renderOf(ids, undefined, { ...SKILL_BUDGET, run: withRouter.index_tokens - 1 });
-        assert.equal(forced.packs.find((p) => p.id === spec.pack)!.shown, "router", `${label}: with the run budget forced to ${withRouter.index_tokens - 1} the pack is shown by its router`);
+        // under what the run shows and the pack must be shown by its router, which is what it will be when the run carries more. (What the run shows,
+        // not what the whole index costs: a pack over the pack budget is already shown by its router, and a budget between the two shortens nothing more.)
+        const forced = await renderOf(ids, undefined, { ...SKILL_BUDGET, run: withRouter.shown_tokens - 1 });
+        assert.equal(forced.packs.find((p) => p.id === spec.pack)!.shown, "router", `${label}: with the run budget forced to ${withRouter.shown_tokens - 1} the pack is shown by its router`);
         assert.ok(forced.shown_tokens < withRouter.shown_tokens);
       }
     }

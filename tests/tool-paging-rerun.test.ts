@@ -155,6 +155,59 @@ const CASES: Case[] = [
     small: { limit: 1 },
   },
   {
+    tool: "linux-forensics/audit_events",
+    build: async (dir) => {
+      await put(dir, "audit.log", lines(40, (i) => `type=SYSCALL msg=audit(1700000000.${String(i).padStart(3, "0")}:${100 + i}): arch=c000003e syscall=59 success=yes exit=0 a0=1 a1=2 a2=3 a3=4 items=0 ppid=1 pid=${200 + i} auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="x" exe="/bin/x" key=(null)`));
+      return { paths: ["audit.log"] };
+    },
+    large: { limit: 20 },
+    small: { limit: 1 },
+  },
+  {
+    tool: "linux-forensics/linux_persistence",
+    build: async (dir) => {
+      for (let i = 0; i < 40; i++) await put(dir, `root/etc/systemd/system/job${i}.service`, `[Unit]\nDescription=job ${i}\n[Service]\nType=simple\nExecStart=/usr/bin/job${i}\n[Install]\nWantedBy=multi-user.target\n`);
+      return { root: "root" };
+    },
+    large: { limit: 20 },
+    small: { limit: 1 },
+  },
+  {
+    tool: "linux-forensics/container_inventory",
+    build: async (dir) => {
+      for (let i = 0; i < 40; i++) {
+        const id = i.toString(16).padStart(64, "a");
+        await put(dir, `root/var/lib/docker/containers/${id}/config.v2.json`, JSON.stringify({ ID: id, Name: `/c${i}`, Created: "2026-01-01T00:00:00Z", Path: "/bin/sh", Args: [], Image: `sha256:${"b".repeat(64)}`, State: { Running: false }, Config: { Image: "x" } }));
+        await put(dir, `root/var/lib/docker/containers/${id}/hostconfig.json`, JSON.stringify({ Privileged: false }));
+      }
+      return { root: "root" };
+    },
+    large: { limit: 20 },
+    small: { limit: 1 },
+  },
+  {
+    tool: "linux-forensics/container_layers",
+    build: async (dir) => {
+      for (let i = 0; i < 40; i++) await put(dir, `layer/etc/file${i}`, `row ${i}\n`);
+      return { layers: ["layer"] };
+    },
+    large: { limit: 20 },
+    small: { limit: 1 },
+  },
+  {
+    tool: "linux-forensics/package_verify",
+    build: async (dir) => {
+      await put(dir, "root/var/lib/dpkg/status", "Package: a\nStatus: install ok installed\n");
+      await put(dir, "root/var/lib/dpkg/info/a.md5sums", "d41d8cd98f00b204e9800998ecf8427e  usr/bin/a\n");
+      await put(dir, "bin/debsums", `#!/bin/bash\ncase "$1" in --version) echo "debsums version 9.9.9"; exit 0;; esac\nfor i in $(seq 1 40); do echo "/usr/bin/f$i      FAILED"; done\nexit 2\n`);
+      await chmod(join(dir, "bin", "debsums"), 0o755);
+      return { root: "root", family: "debian" };
+    },
+    env: async (dir) => ({ PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` }),
+    large: { limit: 20 },
+    small: { limit: 1 },
+  },
+  {
     tool: "ransomware-response/ransom_note_scan",
     build: async (dir) => {
       for (let i = 0; i < 12; i++) await put(dir, `share/d${i}/README_DECRYPT.txt`, "Your files are encrypted. Contact us at recover@example.org to get the decryptor.\n");
