@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.5.26",
+  "version": "1.6.0",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -50,7 +50,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "7187d319ebb0cc2fca19a44c8009468e8ab267ce35ec2f12eb7239693849c3d6",
+      "README.md": "0aeac33c661e4699fa324ab6d7ae82b4abeb7bd69fc721a112db20d002082554",
       "goals/server-compromise.md": "0118cd428d15cdd68293ca017333a2302fa3b42a67df32aea89e77c672f9a18b",
       "goals/what-was-scheduled.md": "52389a312d07d57dc4f76c6b274dcccd6d88952a494e2750c93693a2240a1820",
       "recipes/linux-target/recipe.json": "32ce9c8dd2bed920d2ee363fe3f168b27cdf40726451c217ddfa86fdc4a95475",
@@ -69,7 +69,7 @@
       "skills/filesystem/storage-xfs-btrfs-virtual.md": "16a41d0e53282305b2468043b91d12d8acc5a4686703253b2ca27d1c4b108b74",
       "skills/filesystem/storage.md": "f83bdfc85857c9e444120cd04a5bc12954c40968feebfd56e51f9c35022fbe0f",
       "skills/linux/router.md": "40bda0f1019934ee3eb7a89ea798cd93280a28d3f1bfb4e6672fcb236543c9f9",
-      "skills/logs/auth-lines.md": "ff4cdf94de154f9940d86324e8e6851b1afb20302263892f672e43098cf78485",
+      "skills/logs/auth-lines.md": "490be2bf1cea3e34e80d1d09aa1998a14c2181b8dedc77b4f5fa91b3d40a43b7",
       "skills/logs/auth-time.md": "7e4f5cc993a7cdfdfdd13a0329415cae848ed5c9ebe9cefd538e407fd200a109",
       "skills/logs/auth.md": "13779ab155531bd64d6859c1ae4d7568492c7fcbbdad6033ef63d61f84cb1f0f",
       "skills/logs/journal-clocks-verify.md": "26f3611f7f1d6e2dbcc493aa330acdc9e039cdebb7d1b94f24396afada21f8a9",
@@ -84,6 +84,8 @@
       "skills/triage/clocks-boots.md": "11fca9cdd28bd835cead6cf16f25a1bad4f9ea941309184d84adf1d2d408d2b3",
       "skills/triage/identity-files.md": "0f543b9c5d39f7564db06be8a03ec459691a65d26ec3ff5b8a6436fed644a0a1",
       "skills/triage/system-profile.md": "6bed8235f9766e1a56a109108f055dce8b8b71159e9d5f5d2acfef231811a5f6",
+      "tools/audit_events/manifest.json": "302922699fe4c3ad7779c46fc54ba5acd1d51faf9e02d0c98806ee0abbb5097f",
+      "tools/audit_events/run.py": "7ce8168ec96ecf50c5120cffdde100d2b2f74637263bf295730532a1c5858937",
       "tools/auth_log/manifest.json": "1cc489bc7c144570a05030723c5514bc22a4f6d4fbe20ab0267ff89a5922cb24",
       "tools/auth_log/run.py": "6d0fabff50d99290575064c77461ad22e19b1c99de6011e568839022670ae0db",
       "tools/cron_dump/manifest.json": "eae6452a8ae6bb0dcf5a912911f746dbff5b6a735ac1fe88f200cc2384c1c1ab",
@@ -99,6 +101,7 @@
     }
   },
   "tools": [
+    "audit_events",
     "auth_log",
     "cron_dump",
     "journal_export",

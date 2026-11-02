@@ -21,7 +21,7 @@ second-level leaf (listed after it, opened only when its question arises) holds 
 | Packages | `packages/integrity`; then `packages/baseline` |
 | Timeline | `timeline/linux`; then `timeline/linux-normalise` |
 
-**Six tools.** Each answers with fields and locators (file, line or record, byte offset), says what it did not
+**Seven tools.** Each answers with fields and locators (file, line or record, byte offset), says what it did not
 read, and keeps the whole result in a file when the answer is a page of it.
 
 - `auth_log` reads `auth.log` and `secure`, rotated and gzipped, record by record: ssh acceptances with the key type
@@ -29,6 +29,10 @@ read, and keeps the whole result in a file when the answer is a page of it.
   year it applied to a stamp that has none, and on what basis.
 - `utmp_parse` reads classic `wtmp`, `btmp`, `utmp` and `lastlog` in the layouts it names, says how it chose the layout
   and byte order, and refuses what it cannot tell apart. It does not read `wtmpdb` or `lastlog2` (SQLite).
+- `audit_events` reads the audit log (`audit.log` and its rotations, in the order the caller names them, gzip allowed) with the standard
+  library and groups its records into events by their stamp, across rotation boundaries. It shows record types, locators, the grammar's
+  numeric fields and the lengths of command lines, never their text (that goes to a sealed file on `write_text`), and reports
+  rotation gaps, serial restarts, `lost=` counters and time that runs backwards.
 - `shell_history` reads shell and client history files (bash, zsh, fish and plain client files) record by record,
   with how each record's boundaries were found, and does not call a directory name an account.
 - `cron_dump` inventories cron tables and systemd timers as candidates, with what it looked in and what it did not.
