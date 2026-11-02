@@ -84,3 +84,14 @@
   fits a run in 2,500 tokens. Linux's whole index is now over 1,000 tokens and the pack is shown by its router, so the set that keeps
   that property uses macos-forensics instead. No budget changed.
 
+### Fixed: linux-forensics tools of this bundle wait on no path of the evidence
+
+- `container_inventory` (layerdb `cache-id` and `size`), `container_layers` (overlay2 `lower`), `package_verify` (the rpm `Packages` file) and
+  `utmp_parse` (the file, its passwd and the lastlog walks) opened a path from the evidence with a plain `open()`, so a FIFO there held the
+  tool past its timeout. They open without waiting and look at the file first. An unreadable layerdb file is a read error, so the status is not
+  `complete`. `container_layers` no longer shows what a lower layer holds under a path a higher layer makes a file or a link, and will not copy it;
+  `start` and lower names may not be `.` or `..`; the view is built and listed under the clock. `package_verify` counts standard error that is an
+  error, a warning or not understood as an incomplete check, and its `never_runs` no longer claims more than it confirmed. A first wtmpdb row
+  the tool cannot turn into a record ends the read partial, with the rows before it. `logs/auditd` says what `continued_group` marks.
+  The README and this file say path-shaped binds and mounts are shown.
+
