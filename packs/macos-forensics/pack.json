@@ -1,7 +1,7 @@
 {
   "id": "macos-forensics",
   "name": "macOS Forensics Pack",
-  "version": "1.5.7",
+  "version": "1.5.8",
   "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, accounts and the limits of attribution, and what APFS retains. TCC, Keychain, Gatekeeper and XProtect, Spotlight and Biome have no skill here yet.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -32,7 +32,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "3306d1e40bba64dd5571296fe3f58779127cf59110351f2921e940109f9e8194",
+      "README.md": "d54203fb1c34bafe23e1c7dc97702b5de095d7a0223555ae33cae76ac04b00aa",
       "goals/mac-compromise.md": "0b36e3e2f088856b11f6b14f18c012b38dbfe1b3f3244b29fb7646cf76aaf469",
       "requires/host.json": "4f9dfec469045efdd9f69b1556d25d02f58471aebd843137a401df0dbaf8883b",
       "requires/python.txt": "b9fd9b97af3d66de786eb48c116a119308a6b2087411ef45b2cc1aa369dc6eba",
@@ -55,14 +55,14 @@
       "skills/persistence/mechanisms.md": "bb9b414728736035d90bbe875ff87d17a1b2211e816f3cde0eb1630c89883756",
       "skills/triage/clocks-hardware.md": "eb682191ae96e05cbfddcb047da966fa3192c0d475ea7ad0abc1889a15d921ac",
       "skills/triage/system-profile.md": "6771e67fea5bc88e0dcb72e1a1c61c3ff77606fec1d7128a010251acbf4bbf16",
-      "tools/fsevents_parse/manifest.json": "92bc9a95cafb5acfe88be511cf6fae606b57515cbccfdb9280b6e087409b8207",
-      "tools/fsevents_parse/run.py": "993ca4674f08eea95d9d529be781a84b02c84a3d54e154f5a69e39f559af20c8",
-      "tools/knowledgec_query/manifest.json": "ab12f72852d2a85f4ad57051cc7a132b719faacdeda5924e112ea2ff7e6848da",
-      "tools/knowledgec_query/run.py": "b79631360cc15612b102864138d58cabba91c328485fc1c38d97cf96d91b9223",
-      "tools/plist_read/manifest.json": "266845e9635b3d368c773fc95390c4086b78f04c7b1feb606036f4df6ab37adb",
-      "tools/plist_read/run.py": "d4741c377656ef6459fb07e9c67253152b07d05f771af55f37645af252c4b50f",
-      "tools/unified_log/manifest.json": "27383a02e2fa474f4323726f1d3d54bc9145d88cbb9be04a743842534b007519",
-      "tools/unified_log/run.py": "d2ca743b1cc0a7c1013cbf03e119b79eaffda0d19637664d924380bad8cc7420"
+      "tools/fsevents_parse/manifest.json": "2a6748345c345b8e7617fcc89c9eec9c662e536e5c0594553d57cc5cd1322739",
+      "tools/fsevents_parse/run.py": "381711942e5e0f3087448300e9bb84ba95090adca149091d14f8e11b7318f5c1",
+      "tools/knowledgec_query/manifest.json": "03eb0a0cce44c5041cd0ac7a818c0520a85d6ed022e4e276d6fd67da35f27e6e",
+      "tools/knowledgec_query/run.py": "68ae2bc6dca14d7f6c8d0e8b325057cfc8542edf4ce0ee7dc14154a02c950d92",
+      "tools/plist_read/manifest.json": "4b8f1f5927f879c74c6403afc7fe42c52a9415d019683e13b1a592aac4b709c6",
+      "tools/plist_read/run.py": "171b02c041637aaa958f34d874b55d6b7b04653a28f70cfd135041b62180c9de",
+      "tools/unified_log/manifest.json": "500cf19a76a649cb9eaa46d00ffa5fd941c18856bfe3f3f231a75600d3e3f3d7",
+      "tools/unified_log/run.py": "741397612ce832117bf25c9c7dcb2c96d11cda1cb343987b5dcc72722fb98e1b"
     }
   },
   "tools": [

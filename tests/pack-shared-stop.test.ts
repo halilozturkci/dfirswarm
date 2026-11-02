@@ -23,7 +23,7 @@ import { ROOT } from "./tool-library-harness.ts";
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 const PINS: Record<string, string> = {
   windows: "74c974d75fdd178bc86ebd2f724b41c9292864c5d4b310dcde05ae7fa58e2fd6",
-  macos: "c2e19b97dbdc3943294c42a9573427e487199059969d25cee3171a7d908a1675",
+  macos: "f3e800e7d94bf70b19f7c6a192bfb604282684a3c5a9e5c392a96240c96ffed1",
   encrypted: "cb1cd7b46f1e0068532f6039cebc91fc124bb9bc6190e99626c5f8a76b818e62",
   page: "d62d778d19bb357ad67a63bf2dcb007ed4582eec5992eb37690554048ced5713",
 };

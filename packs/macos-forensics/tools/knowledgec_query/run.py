@@ -106,6 +106,10 @@ STANDARD = {"Z_PK", "ZSTREAMNAME", "ZVALUESTRING", "ZVALUEINTEGER", "ZVALUEDOUBL
 # answer is printed, and the answer says so. The first signal counts: later ones do nothing while the tool cleans up. STOP["hooks"] run first (a database connection's
 # interrupt, the kill of the reader process this tool started and of its descendants: its own, never a search by name). Until install_stop_handlers
 # runs (at the end of the module) _early_stop answers a signal with one document that says nothing was read.
+# Two limits are stated, not closed. (1) A signal that arrives before this block has run (the start of the interpreter, the compiling of the file, the
+# imports above the block: tens of milliseconds) is not caught, and ends the tool with no JSON at all. (2) hold_signals() trades one whole document for a
+# print that cannot be stopped: if whatever reads this tool's stdout stops reading a full pipe, only SIGKILL ends the tool (the harness ends a tool with a
+# SIGKILL of its group, so its own path is not affected).
 import signal
 
 STOP = {"signal": None, "hooks": []}
@@ -206,6 +210,8 @@ def _early_stop(signum, _frame):
 for _early in STOP_SIGNALS:
     signal.signal(_early, _early_stop)
 # END SHARED STOP
+
+SWEEP = {"began": False}      # set when the tool starts on the evidence; the last-resort text of a stop in main() says what was begun, not "nothing was read"
 
 
 def fail(message, **extra):
@@ -2453,7 +2459,7 @@ def run_query(args):
             sidecars[suffix] = {"bytes": os.path.getsize(beside)}
     # Everything the reading finds goes into `st`, so that a stop at any point (the clock, a signal) still has a truthful answer to give.
     st = {"stage": None, "sink": None, "paging": None, "streams": None, "shaper": None, "connection": None, "tables": [], "zobject": [], "joins": {},
-          "fingerprint": None, "applied": [], "unapplied": [], "reasons": [], "problems": [], "count": 0, "unconverted": 0, "stopped": None,
+          "fingerprint": None, "applied": [], "unapplied": [], "reasons": [], "problems": [], "count": 0, "unconverted": 0, "stopped": None, "read_done": False,
           "interrupted": None, "last": {"z_pk": None, "start_raw": None}, "inline": [], "inline_state": {"bytes": 0, "full": False, "bounded_by_bytes": False},
           "source": {"database": db, "staged": False, "sidecars": sidecars}, "abort": None, "until": deadline, "schema_read": False, "opener": None,
           "inventory": None, "stream_blind": None, "streams_in_file": None, "streams_listed_from": 0, "tables_total": 0, "schema_unread": False}
@@ -2834,10 +2840,15 @@ def run_query(args):
 
     try:
         try:
+            SWEEP["began"] = True
             read()
+            st["read_done"] = True
+            hold_signals()      # the last statement of the sweep's try: a stop signal in the few bytecodes after the sweep lands in the except below
         except Interrupted as stop:
             st["interrupted"] = stop.signum
-            st["stopped"] = "signal"
+            if not st["read_done"]:
+                st["stopped"] = "signal"          # (after the read has finished the result is whole: the stop is named, no prefix is claimed)
+            hold_signals()
     finally:
         # From here the stop signals wait: the clean-up runs whole (an Interrupted raised from inside it used to escape the answer, which then said the
         # tool was stopped before it had read anything while the private copy stayed half removed). A signal that arrives meanwhile is found
@@ -3001,8 +3012,12 @@ if __name__ == "__main__":
         raise
     except Interrupted as stop:
         close_values()
-        emit({"error": "the tool was stopped by %s before it had read anything" % signal_name(stop.signum), "status": "failed",
-              "status_basis": "stopped by %s during start-up: nothing was read" % signal_name(stop.signum), "interrupted": signal_name(stop.signum)})
+        began = SWEEP["began"]
+        emit({"error": "the tool was stopped by %s %s" % (signal_name(stop.signum), "after its read of the database had begun and before its answer was made" if began else "before its read of the database began"),
+              "status": "failed",
+              "status_basis": ("stopped by %s after the read had begun: some rows may have been read, and none of that is in this answer" if began else
+                               "stopped by %s before the read began: no row had been read and no result was made") % signal_name(stop.signum),
+              "interrupted": signal_name(stop.signum)})
         sys.exit(128 + stop.signum)
     except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the evidence)
         close_values()

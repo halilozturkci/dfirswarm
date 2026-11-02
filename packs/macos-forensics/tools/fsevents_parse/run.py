@@ -107,6 +107,10 @@ UUID_TEXT = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f
 # answer is printed, and the answer says so. The first signal counts: later ones do nothing while the tool cleans up. STOP["hooks"] run first (a database connection's
 # interrupt, the kill of the reader process this tool started and of its descendants: its own, never a search by name). Until install_stop_handlers
 # runs (at the end of the module) _early_stop answers a signal with one document that says nothing was read.
+# Two limits are stated, not closed. (1) A signal that arrives before this block has run (the start of the interpreter, the compiling of the file, the
+# imports above the block: tens of milliseconds) is not caught, and ends the tool with no JSON at all. (2) hold_signals() trades one whole document for a
+# print that cannot be stopped: if whatever reads this tool's stdout stops reading a full pipe, only SIGKILL ends the tool (the harness ends a tool with a
+# SIGKILL of its group, so its own path is not affected).
 import signal
 
 STOP = {"signal": None, "hooks": []}
@@ -207,6 +211,8 @@ def _early_stop(signum, _frame):
 for _early in STOP_SIGNALS:
     signal.signal(_early, _early_stop)
 # END SHARED STOP
+
+SWEEP = {"began": False}      # set when the tool starts on the evidence; the last-resort text of a stop in main() says what was begun, not "nothing was read"
 
 
 def fail(message, **extra):
@@ -2676,6 +2682,7 @@ def run_scan(args):
                     gone["occurrences"] += p.get("occurrences", 1)
                     gone["files"] += 1
 
+        SWEEP["began"] = True
         try:
             for index, target in enumerate(targets):
                 scan = FileScan(target)
@@ -2703,8 +2710,10 @@ def run_scan(args):
                         stopped_in = scan.shown
                     not_attempted = targets[index + 1:]
                     break
+            hold_signals()      # the last statement of the sweep's try: a stop signal in the few bytecodes after the sweep lands in the except below
         except Interrupted as stop:
             interrupted = stop.signum
+            hold_signals()      # (a second signal does nothing: the first one counts)
     except Interrupted:
         # a signal before the sweep began: what was opened is closed and the caller's wrapper answers
         if sink is not None:
@@ -2843,8 +2852,12 @@ if __name__ == "__main__":
         raise
     except Interrupted as stop:
         close_values()
-        emit({"error": "the tool was stopped by %s before it had read anything" % signal_name(stop.signum), "status": "failed",
-              "status_basis": "stopped by %s during start-up: nothing was read" % signal_name(stop.signum), "interrupted": signal_name(stop.signum)})
+        began = SWEEP["began"]
+        emit({"error": "the tool was stopped by %s %s" % (signal_name(stop.signum), "after its sweep had begun and before its answer was made" if began else "before its sweep of the record files began"),
+              "status": "failed",
+              "status_basis": ("stopped by %s after the sweep had begun: some record files may have been read, and none of that is in this answer" if began else
+                               "stopped by %s before the sweep began: no record file had been read and no result was made") % signal_name(stop.signum),
+              "interrupted": signal_name(stop.signum)})
         sys.exit(128 + stop.signum)
     except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the evidence)
         close_values()

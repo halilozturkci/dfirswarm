@@ -23,9 +23,15 @@ second-level leaves a leaf points to ("only if") for the reference material, and
 
 **Four tools.** Each says what it read and what it did not, and none turns a failure
 into an empty result. Every answer carries `status` (`complete`, `partial` or `failed`)
-and `status_basis`; each tool has a clock of its own below its time limit and ends on
-SIGTERM, SIGINT or SIGHUP with one JSON answer (`interrupted`, exit 128 plus the signal),
-what it staged removed and the reader it started ended.
+and `status_basis`; each tool has a clock of its own below its time limit and, once its
+sweep has started, ends on SIGTERM, SIGINT or SIGHUP with one JSON answer
+(`interrupted`, exit 128 plus the signal), what it staged removed and the reader it
+started ended. A stop signal in the first tens of milliseconds, before the tool's file
+has run (the start of the interpreter, the compiling of the file, the imports above its
+stop handlers), ends it with no answer at all; that window is stated, not closed. The
+final print is made with the stop signals held, so that the document is whole: if
+whatever reads a tool's stdout stops reading a full pipe, only SIGKILL ends the tool
+(the harness ends a tool with a SIGKILL of its group).
 
 - `plist_read` reads binary and XML property lists with Apple dates converted to UTC.
   It prints no binary value, digest or preview, and withholds a value under a key

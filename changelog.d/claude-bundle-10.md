@@ -17,3 +17,22 @@
   counted under `entries_unreadable` whatever it is called (it was counted as a
   name that matches nothing, though it may be a directory with plists in it), and
   the answer is not `complete`.
+
+### Fixed: macos-forensics stop signals: a stop after the sweep is a stop of the run, and the start-up window and the held print are stated
+
+- A stop signal that landed in the few bytecodes after a sweep (plist_read,
+  fsevents_parse, knowledgec_query, unified_log) went to the last-resort handler and
+  the answer said the tool was stopped "before it had read anything" although the
+  sweep had finished. The hold now starts inside the sweep's own `try`, so such a
+  signal gives the normal answer with `interrupted` set. The last-resort text says
+  whether the sweep had begun, and no longer says nothing was read when something was.
+- The README and the four manifests say that a stop in the first tens of
+  milliseconds, before the file has run, ends a tool with no answer (measured on
+  plist_read in a container with one CPU: 19 of 80 SIGTERMs at 0-250 ms, all within the
+  first 42 ms), and that the final print is made with the stop signals held, so a reader
+  of stdout that stops reading a full pipe can be answered only by SIGKILL. The header
+  comment of the STOP block says the same (the code of the block is unchanged).
+- Listed, not fixed: knowledgec_query's `schema.fingerprint` is a sha256 over the
+  sorted column names, the `/var/folders` alias `tmp-id-<12 hex>` is an unsalted digest,
+  and unified_log's `walk_tree` names the first offender in raw sort order. All three
+  are size, time or order oracles.
