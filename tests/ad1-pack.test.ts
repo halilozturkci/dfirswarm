@@ -1068,3 +1068,47 @@ test("an AD1 image a job makes is catalogued by the derived catalogue, and what 
     await svc.stop("over");
   }
 });
+
+function filesUnder(root: string): Map<string, number> {
+  const found = new Map<string, number>();
+  const walk = (d: string): void => {
+    for (const name of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, name.name);
+      if (name.isDirectory()) walk(p);
+      else found.set(p, statSync(p).size);
+    }
+  };
+  walk(root);
+  return found;
+}
+
+test("ad1_extract under a file-size limit: JSON every time, a manifest or coverage file cut short is never called complete", () => {
+  const cwd = dir("ad1-sweep-");
+  mkdirSync(join(cwd, "inputs"));
+  writeFileSync(join(cwd, "inputs", "many.ad1"), ad1Image(Array.from({ length: 300 }, (_, i) => ({ name: `file-with-a-longer-name-${i}.txt`, content: B(`content ${i}`) }))));
+  const runWith = (kb: number | null, out: string) => spawnSync("bash", ["-c", `${kb === null ? "" : `ulimit -f ${kb}; `}exec python3 "$0"`, TOOL], {
+    cwd, input: JSON.stringify({ image: "inputs/many.ad1", out_dir: out }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" },
+  });
+  const free = runWith(null, "work/free");
+  assert.equal(JSON.parse(free.stdout).status, "complete", free.stdout.slice(0, 300));
+  const largest = Math.max(...filesUnder(join(cwd, "work", "free")).values());
+  const bad: string[] = [];
+  for (let k = 0; k < 15; k++) {
+    const kb = Math.max(1, Math.round(1 + ((Math.ceil(largest / 1024) + 1) * k) / 14));
+    const out = `work/lim-${kb}-${k}`;
+    const r = runWith(kb, out);
+    let doc: Record<string, any> | null = null;
+    try { doc = JSON.parse(r.stdout); } catch { doc = null; }
+    if (doc === null) { bad.push(`${kb} KB: no JSON (exit ${r.status}, signal ${r.signal}) ${r.stderr.slice(-160)}`); continue; }
+    if (r.stderr.includes("Traceback")) { bad.push(`${kb} KB: traceback`); continue; }
+    const made = filesUnder(join(cwd, out));
+    for (const [p, size] of made) {
+      if (p.endsWith(".json")) { try { JSON.parse(readFileSync(p, "utf8")); } catch { bad.push(`${kb} KB: ${p} is cut JSON`); } }
+    }
+    if (doc.status === "complete") {
+      const cut = [...made].filter(([p, size]) => size >= kb * 1024 && !p.endsWith(".partial")).map(([p]) => p);
+      if (cut.length) bad.push(`${kb} KB: complete, but ${cut.slice(0, 2).join(", ")} reached the limit`);
+    }
+  }
+  assert.deepEqual(bad, []);
+});

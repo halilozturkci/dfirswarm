@@ -107,6 +107,43 @@ for no, line in enumerate(raw.split("\n"), 1):
 PY
 }
 
+# --- a write that can fail is checked, and the answer claims no more than was written --------------------------------------------
+# A file-size limit (ulimit -f) or a full disk makes a step's output stop short while the program that wrote it may still exit 0, so the
+# exit code alone cannot say that an output is whole. Every file of the run is looked at at the end: one that reached the limit is cut,
+# and a run with a cut file is not complete. coverage.json is written whole or not at all, and the answer is built from what this script
+# knows, never by reading coverage.json back.
+FSIZE_LIMIT_BYTES="$(python3 -c 'import resource; l = resource.getrlimit(resource.RLIMIT_FSIZE)[0]; print(l if l > 0 else 0)' 2>/dev/null || echo 0)"
+[[ "$FSIZE_LIMIT_BYTES" =~ ^[0-9]+$ ]] || FSIZE_LIMIT_BYTES=0
+WRITE_FAILED=0     # a file of the run could not be written whole
+COV_REQ=""         # the status the last coverage call asked for
+COV_TEXT=""        # and what it said it covered
+COV_STATUS=""      # the status the coverage file carries (a limit that stopped a step makes a complete one partial)
+COV_OK=1           # 0 when coverage.json could not be written whole
+cut_by_limit() { # cut_by_limit <file>: the file reached the size limit, so it stopped short
+  (( FSIZE_LIMIT_BYTES > 0 )) && [[ -f "$1" ]] && (( $(wc -c < "$1") >= FSIZE_LIMIT_BYTES ))
+}
+sweep_outputs() { # every file of the run (but coverage.json, which is whole or absent) that reached the size limit is named
+  local f rel
+  while IFS= read -r f; do
+    rel="${f#"$out/"}"
+    [[ "$rel" == coverage.json || "$rel" == coverage.json.tmp ]] && continue
+    if cut_by_limit "$f"; then
+      notes+=("$rel reached the file-size limit (ulimit -f) and stopped short: it is not whole")
+      WRITE_FAILED=1
+    fi
+  done < <(find "$out" -type f 2>/dev/null)
+}
+finish_checks() { # before the answer: look at every file, and say it in the coverage file when one is not whole
+  sweep_outputs
+  if (( WRITE_FAILED )); then
+    local st="$COV_REQ"
+    [[ "$st" == complete ]] && st=partial
+    coverage "$st" "$COV_TEXT; a file of the run could not be written whole (see errors)"
+  fi
+  ANSWER_STATUS="$COV_STATUS"
+  if (( ! COV_OK )) && [[ "$ANSWER_STATUS" == complete ]]; then ANSWER_STATUS=partial; fi
+}
+
 STEP_TIMEOUT="${RECIPE_STEP_SECONDS:-900}"
 PROBE_TIMEOUT="${RECIPE_PROBE_SECONDS:-120}"
 [[ "$STEP_TIMEOUT" =~ ^[0-9]+$ && "$PROBE_TIMEOUT" =~ ^[0-9]+$ ]] || { final; echo '{"ok": false, "error": "RECIPE_STEP_SECONDS and RECIPE_PROBE_SECONDS are whole numbers"}'; exit 2; }
@@ -221,7 +258,10 @@ run_step() { # run_step <outfile> <cmd...>
 
 index_row() { # index_row <file relative to out> <what>
   [[ -f "$out/$1" ]] || return 0
-  printf '%s\t%s\n' "$1" "$2" >> "$out/index.tsv"
+  if ! printf '%s\t%s\n' "$1" "$2" >> "$out/index.tsv" 2>/dev/null; then
+    WRITE_FAILED=1
+    notes+=("index.tsv could not be written whole")
+  fi
 }
 
 fsstat_boxed() { boxed fsstat "$@"; }
@@ -235,6 +275,12 @@ reads_a_file_system() {
   grep -q '^File System Type:' "$f" 2>/dev/null && rc=0 || rc=1
   rm -f "$f"; TMPF=""
   return "$rc"
+}
+
+coverage() { # coverage <status> <covered>: the coverage file, whole or not at all; the status and the outcome are kept for the answer
+  COV_REQ="$1"; COV_TEXT="$2"; COV_STATUS="$1"
+  if [[ "$1" == complete ]] && (( ${#unstarted[@]} + ${#cut_short[@]} > 0 )); then COV_STATUS=partial; fi
+  if _coverage_write "$1" "$2"; then COV_OK=1; else COV_OK=0; fi
 }
 
 volume() { # volume <img> <shown name> <start> <description>
@@ -300,7 +346,7 @@ probe_fs() {
   return "$rc"
 }
 
-coverage() { # coverage <status> <covered> — notes become errors
+_coverage_write() { # _coverage_write <status> <covered> — notes become errors
   STOPPED_BY="$stopped_by" python3 - "$out/coverage.json" "$1" "$2" "${#notes[@]}" "${#unstarted[@]}" "${#cut_short[@]}" "${notes[@]+"${notes[@]}"}" "${unstarted[@]+"${unstarted[@]}"}" "${cut_short[@]+"${cut_short[@]}"}" "${inventory[@]+"${inventory[@]}"}" <<'PY'
 import json, os, sys
 path, status, covered, n_notes, n_unstarted, n_cut, *rest = sys.argv[1:]
@@ -320,7 +366,18 @@ doc = {"recipe": "disk-volumes", "status": status, "status_basis": covered, "cov
 if os.environ.get("STOPPED_BY"):
     doc["interrupted"] = True
     doc["signal"] = os.environ["STOPPED_BY"]
-json.dump(doc, open(path, "w"), indent=2)
+tmp = path + ".tmp"
+try:
+    with open(tmp, "w") as fh:
+        json.dump(doc, fh, indent=2)
+    os.replace(tmp, path)               # whole or not at all: an earlier coverage file stands when this one cannot be written
+except OSError as exc:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    sys.stderr.write("coverage.json could not be written: %s\n" % (exc.strerror or exc.__class__.__name__))
+    sys.exit(1)
 PY
 }
 
@@ -442,7 +499,7 @@ case "$cmd" in
       if have fsstat && fsstat_boxed "$img" > "$out/.fsstat.tmp" 2>/dev/null && grep -q '^File System Type:' "$out/.fsstat.tmp"; then
         fstype="$(sed -n 's/^File System Type: *//p' "$out/.fsstat.tmp" | head -1)"
         rm -f "$out/.fsstat.tmp"
-        printf 'No partition table: %s is one %s volume starting at sector 0 (use the tools without -o).\n' "$shown" "$fstype" > "$out/partitions.txt"
+        printf 'No partition table: %s is one %s volume starting at sector 0 (use the tools without -o).\n' "$shown" "$fstype" > "$out/partitions.txt" || WRITE_FAILED=1
         index_row "partitions.txt" "no partition table: $shown is a single $fstype volume"
         volume "$img" "$shown" 0 "$fstype (logical volume, no partition table)"
         if [[ ${#notes[@]} -gt 0 ]]; then
@@ -459,7 +516,7 @@ case "$cmd" in
         if [[ -n "$at" ]]; then
           fstype="$(sed -n 's/^File System Type: *//p' "$out/.fsstat.tmp" | head -1)"
           rm -f "$out/.fsstat.tmp"
-          printf 'No partition table: %s holds one %s volume starting at sector %s (use the tools with -o %s).\n' "$shown" "$fstype" "$at" "$at" > "$out/partitions.txt"
+          printf 'No partition table: %s holds one %s volume starting at sector %s (use the tools with -o %s).\n' "$shown" "$fstype" "$at" "$at" > "$out/partitions.txt" || WRITE_FAILED=1
           index_row "partitions.txt" "no partition table: $shown holds one $fstype volume at sector $at"
           volume "$img" "$shown" "$at" "$fstype (no partition table, at sector $at)"
           if [[ ${#notes[@]} -gt 0 ]]; then
@@ -487,7 +544,11 @@ case "$cmd" in
       rel="${f#"$out/"}"
       index_row "$rel" "what the step writing ${rel%.stderr} said on stderr"
     done < <(find "$out" -type f -name '*.stderr' | sort)
-    final; python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"], "volumes": int(sys.argv[2]), "candidate_volumes": int(sys.argv[3])}))' "$out/coverage.json" "$volumes" "$candidate_volumes"
+    finish_checks
+    final; python3 -c 'import json,sys; d = {"ok": True, "status": sys.argv[1], "volumes": int(sys.argv[2]), "candidate_volumes": int(sys.argv[3])}
+if sys.argv[4] != "1":
+    d["coverage_error"] = "coverage.json could not be written whole: the earlier one, if any, stands"
+print(json.dumps(d))' "$ANSWER_STATUS" "$volumes" "$candidate_volumes" "$COV_OK"
     ;;
   *)
     final; echo '{"applies": "unknown", "why": "a usage error, so nothing was asked", "ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'

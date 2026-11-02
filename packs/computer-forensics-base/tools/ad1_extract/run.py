@@ -62,6 +62,7 @@ ad1_extract.coverage.json
 is written as incomplete before the first item and again at the end.
 """
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -992,12 +993,19 @@ def main():
     def coverage(status, extra=None):
         doc = {"tool": "ad1_extract", "image": image, "processing_status": status, "budgets": budgets, **counts, **tally,
                "elapsed_seconds": round(time.monotonic() - started, 1), **(extra or {})}
-        try:
-            with open(out / COVERAGE, "w", encoding="utf-8") as cf:
+        tmp = out / (COVERAGE + ".tmp")
+        try:                                     # whole or not at all: beside, then renamed over the name
+            with open(tmp, "w", encoding="utf-8") as cf:
                 json.dump(doc, cf, indent=2)
                 cf.write("\n")
+            os.replace(tmp, out / COVERAGE)
+            return True
         except OSError:
-            pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return False
     try:
         out.mkdir(parents=True, exist_ok=True)
         man = open(out / MANIFEST, "x", encoding="utf-8", newline="\n")
@@ -1035,9 +1043,22 @@ def main():
                                           "the manifest lists the items before the stop, and nothing is claimed about the rest" % signum}), flush=True)
     install_signal_handlers(_stopped)
     coverage("incomplete")                # said before the first item, so a run cut short leaves this file
-    with man:
-        man.write("n\ttype\tpath\tpath_b64\tlocator\twritten\tsize\tsha256\tcheck\tnote\n")
+    close_error = []
+
+    @contextlib.contextmanager
+    def closing_manifest(fh):
+        """The manifest is closed whatever happens, and a close that fails (the last bytes could not be written) is said, not raised."""
         try:
+            yield fh
+        finally:
+            try:
+                fh.close()
+            except OSError as exc:
+                close_error.append("stopped: %s; the manifest does not hold everything that was written" % (exc.strerror or exc))
+
+    with closing_manifest(man):
+        try:
+            man.write("n\ttype\tpath\tpath_b64\tlocator\twritten\tsize\tsha256\tcheck\tnote\n")
             for item in img.walk():
                 n = item["n"]
                 if time.monotonic() > deadline and not reached[0]:
@@ -1150,6 +1171,8 @@ def main():
             stopped = "stopped: %s; the manifest lists what was written before" % (e.strerror or e)
         finally:
             img.close()
+    if close_error:
+        stopped = stopped or close_error[0]
     errors += img.walk_errors
     absent = sorted(want_n - seen_n) if want_n is not None else []
     gone = sorted(want_addr - seen_addr) if want_addr is not None else []
@@ -1205,7 +1228,10 @@ def main():
                 AD1_GAPS_LISTED, "; cut at %d rows" % GAPS_FILE_MAX if gaps.cut else "")
             if gaps.error:
                 unreferenced["file_error"] = gaps.error
-    coverage(processing, {"integrity_status": integrity, **({"unreferenced_data": unreferenced} if unreferenced else {})})
+    if not coverage(processing, {"integrity_status": integrity, **({"unreferenced_data": unreferenced} if unreferenced else {})}):
+        errors.append("%s could not be written whole (the earlier one, which says incomplete, stands)" % COVERAGE)
+        if processing == "complete":
+            processing = "partial"
     result = {"ok": processing == "complete" and integrity != "mismatch", "processing_status": processing, "integrity_status": integrity,
               "status": processing,
               "status_basis": {"complete": "the tree was walked to its end, every item selected was written, and the data the tree leads to accounts for the image's",

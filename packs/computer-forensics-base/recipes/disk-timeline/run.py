@@ -385,10 +385,20 @@ def program(*names):
 
 
 def write_coverage(out, status, covered, errors, extra=None, name="coverage.json"):
-    with open(os.path.join(out, name), "w", encoding="utf-8") as handle:
-        json.dump({"recipe": "disk-timeline", "status": status, "status_basis": covered, "covered": covered, "not_covered": NOT_COVERED,
-                   "limits_hit": [], "errors": list(errors), "coverage_note": PIPELINE_NOTE, **(extra or {})}, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    path = os.path.join(out, name)
+    tmp = path + ".tmp"
+    try:                        # whole or not at all: written beside, then renamed over the name
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump({"recipe": "disk-timeline", "status": status, "status_basis": covered, "covered": covered, "not_covered": NOT_COVERED,
+                       "limits_hit": [], "errors": list(errors), "coverage_note": PIPELINE_NOTE, **(extra or {})}, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def step(out, name, argv):

@@ -280,9 +280,23 @@ def open_regular(path):
         raise
     return open(fd, "rb")
 
+
+HELD_DB = []                                # the database's descriptor stays open as long as the connection
+
+
+def connect_checked(db, uri):
+    """Connect to the database that was checked, not to whatever is at its name now: the file is opened once (a FIFO put in its place is refused,
+    not waited for) and SQLite is pointed at that open descriptor through /proc, so a swap between the check and SQLite's own open cannot reach it."""
+    fh = open_regular(db)
+    HELD_DB.append(fh)
+    through = "/proc/self/fd/%d" % fh.fileno()
+    if os.path.isdir("/proc/self/fd"):
+        uri = "file:%s?mode=ro&immutable=1" % urllib.parse.quote(through)
+    return sqlite3.connect(uri, uri=True)
+
 PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
 
-TOOL = {"name": "sqlite_query", "version": 13}
+TOOL = {"name": "sqlite_query", "version": 14}
 DEFAULT_LIMIT = 100
 LIMIT_MAX = 10000
 INLINE_BYTES = 64 * 1024          # the inline page's JSON and its text form, each, as they are sent (ASCII-escaped, counted in bytes)
@@ -1835,8 +1849,7 @@ def values_mode(obj, given, db, size, side, status, snap, limit, budget, csv_mod
     uri = "file:%s?mode=ro&immutable=1" % urllib.parse.quote(db)
     started = time.monotonic()
     try:
-        open_regular(db).close()            # a FIFO put in the database's place after it was checked is refused, not opened by waiting
-        conn = sqlite3.connect(uri, uri=True)
+        conn = connect_checked(db, uri)
     except READ_ERRORS as exc:
         values_fail("cannot open the database (%s)" % sqlite_class(exc), db_path=db)
     conn.text_factory = text_factory
@@ -2343,8 +2356,7 @@ def main():
         say({"ok": False, "error": "sql holds no statement"}, 1)
     results, started = [], time.monotonic()
     try:
-        open_regular(db).close()            # a FIFO put in the database's place after it was checked is refused, not opened by waiting
-        conn = sqlite3.connect(uri, uri=True)
+        conn = connect_checked(db, uri)
     except sqlite3.Error as exc:
         say({"ok": False, "error": "cannot open the database: %s" % exc, "db_path": db}, 1)
     conn.text_factory = text_factory

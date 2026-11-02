@@ -81,6 +81,43 @@ looks_like_memory() {
   return 1
 }
 
+# --- a write that can fail is checked, and the answer claims no more than was written --------------------------------------------
+# A file-size limit (ulimit -f) or a full disk makes a step's output stop short while the program that wrote it may still exit 0, so the
+# exit code alone cannot say that an output is whole. Every file of the run is looked at at the end: one that reached the limit is cut,
+# and a run with a cut file is not complete. coverage.json is written whole or not at all, and the answer is built from what this script
+# knows, never by reading coverage.json back.
+FSIZE_LIMIT_BYTES="$(python3 -c 'import resource; l = resource.getrlimit(resource.RLIMIT_FSIZE)[0]; print(l if l > 0 else 0)' 2>/dev/null || echo 0)"
+[[ "$FSIZE_LIMIT_BYTES" =~ ^[0-9]+$ ]] || FSIZE_LIMIT_BYTES=0
+WRITE_FAILED=0     # a file of the run could not be written whole
+COV_REQ=""         # the status the last coverage call asked for
+COV_TEXT=""        # and what it said it covered
+COV_STATUS=""      # the status the coverage file carries (a limit that stopped a step makes a complete one partial)
+COV_OK=1           # 0 when coverage.json could not be written whole
+cut_by_limit() { # cut_by_limit <file>: the file reached the size limit, so it stopped short
+  (( FSIZE_LIMIT_BYTES > 0 )) && [[ -f "$1" ]] && (( $(wc -c < "$1") >= FSIZE_LIMIT_BYTES ))
+}
+sweep_outputs() { # every file of the run (but coverage.json, which is whole or absent) that reached the size limit is named
+  local f rel
+  while IFS= read -r f; do
+    rel="${f#"$out/"}"
+    [[ "$rel" == coverage.json || "$rel" == coverage.json.tmp ]] && continue
+    if cut_by_limit "$f"; then
+      notes+=("$rel reached the file-size limit (ulimit -f) and stopped short: it is not whole")
+      WRITE_FAILED=1
+    fi
+  done < <(find "$out" -type f 2>/dev/null)
+}
+finish_checks() { # before the answer: look at every file, and say it in the coverage file when one is not whole
+  sweep_outputs
+  if (( WRITE_FAILED )); then
+    local st="$COV_REQ"
+    [[ "$st" == complete ]] && st=partial
+    coverage "$st" "$COV_TEXT; a file of the run could not be written whole (see errors)"
+  fi
+  ANSWER_STATUS="$COV_STATUS"
+  if (( ! COV_OK )) && [[ "$ANSWER_STATUS" == complete ]]; then ANSWER_STATUS=partial; fi
+}
+
 STEP_TIMEOUT="${RECIPE_STEP_SECONDS:-900}"
 PROBE_TIMEOUT="${RECIPE_PROBE_SECONDS:-30}"
 [[ "$STEP_TIMEOUT" =~ ^[0-9]+$ && "$PROBE_TIMEOUT" =~ ^[0-9]+$ ]] || { final; echo '{"ok": false, "error": "RECIPE_STEP_SECONDS and RECIPE_PROBE_SECONDS are whole numbers"}'; exit 2; }
@@ -179,7 +216,14 @@ run_step() { # run_step <limit> <outfile> <cmd...>
   STEP_R="failed (exit $rc${err:+: $err})"
 }
 
-index_row() { [[ -f "$out/$1" ]] && printf '%s\t%s\n' "$1" "$2" >> "$out/index.tsv"; return 0; }
+index_row() {
+  [[ -f "$out/$1" ]] || return 0
+  if ! printf '%s\t%s\n' "$1" "$2" >> "$out/index.tsv" 2>/dev/null; then
+    WRITE_FAILED=1
+    notes+=("index.tsv could not be written whole")
+  fi
+  return 0
+}
 
 # kernel_missing <stdout> <stderr> <shown> [timeout seconds]: the `missing`
 # list (JSON) for an image whose kernel table this image lacks, the kernel
@@ -225,7 +269,7 @@ else:
 PY
 }
 
-coverage() {
+_coverage_write() {
   STOPPED_BY="$stopped_by" python3 - "$out/coverage.json" "$1" "$2" "${missing_json:-[]}" "${notes[@]+"${notes[@]}"}" <<'PY'
 import json, os, sys
 path, status, covered, missing, *notes = sys.argv[1:]
@@ -249,12 +293,24 @@ doc = {"recipe": "memory-windows", "status": status, "status_basis": covered, "c
 if os.environ.get("STOPPED_BY"):
     doc["interrupted"] = True
     doc["signal"] = os.environ["STOPPED_BY"]
+tmp = path + ".tmp"
 try:
-    with open(path, "w") as out:
-        json.dump(doc, out, indent=2)
-except OSError as exc:         # the coverage file cannot be written: said on stderr, in a word, and the recipe goes on to its answer
+    with open(tmp, "w") as fh:
+        json.dump(doc, fh, indent=2)
+    os.replace(tmp, path)               # whole or not at all: an earlier coverage file stands when this one cannot be written
+except OSError as exc:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
     sys.stderr.write("coverage.json could not be written: %s\n" % (exc.strerror or exc.__class__.__name__))
+    sys.exit(1)
 PY
+}
+
+coverage() { # coverage <status> <covered>: the coverage file, whole or not at all; the status and the outcome are kept for the answer
+  COV_REQ="$1"; COV_TEXT="$2"; COV_STATUS="$1"
+  if _coverage_write "$1" "$2"; then COV_OK=1; else COV_OK=0; fi
 }
 
 cmd="${1:-}"; shift || true
@@ -334,7 +390,11 @@ case "$cmd" in
         missing_json="$(kernel_missing "$out/windows.info.txt" "$out/windows.info.txt.stderr" "$shown")"
         notes+=("vol --offline windows.info on $shown: no symbol table for this kernel in the image; it was not fetched, and the plugins that need it were not run")
         coverage partial "windows.info was attempted offline; no symbol table for this kernel in the image, so no Windows plugin was run"
-        final; python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"], "missing": c["missing"]}))' "$out/coverage.json"
+        finish_checks
+        final; python3 -c 'import json,sys; d = {"ok": True, "status": sys.argv[1], "missing": json.loads(sys.argv[2])}
+if sys.argv[3] != "1":
+    d["coverage_error"] = "coverage.json could not be written whole: the earlier one, if any, stands"
+print(json.dumps(d))' "$ANSWER_STATUS" "${missing_json:-[]}" "$COV_OK"
         exit 0
       fi
       if [[ "$r" == ok ]]; then why="ran but named no Windows image"; else why="$r"; fi
@@ -356,7 +416,11 @@ case "$cmd" in
       rel="${f#"$out/"}"; [[ "$rel" == windows.info.txt.stderr ]] || index_row "$rel" "what the step writing ${rel%.stderr} said on stderr"
     done < <(find "$out" -type f -name '*.stderr' | sort)
     if [[ ${#notes[@]} -gt 0 ]]; then coverage partial "windows.info and the plugins that finished; symbols $symbols"; else coverage complete "windows.info and eleven plugins; symbols $symbols"; fi
-    final; python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"]}))' "$out/coverage.json"
+    finish_checks
+    final; python3 -c 'import json,sys; d = {"ok": True, "status": sys.argv[1]}
+if sys.argv[2] != "1":
+    d["coverage_error"] = "coverage.json could not be written whole: the earlier one, if any, stands"
+print(json.dumps(d))' "$ANSWER_STATUS" "$COV_OK"
     ;;
   *) final; echo '{"applies": "unknown", "why": "a usage error, so nothing was asked", "ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'; exit 2 ;;
 esac

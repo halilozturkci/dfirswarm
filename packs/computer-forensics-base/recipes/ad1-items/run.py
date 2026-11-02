@@ -254,6 +254,22 @@ def _unexpected_recipe(kind, value, _tb):
 
 _sys.excepthook = _unexpected_recipe
 
+
+def _write_json_whole(path, doc, **dumps_kwargs):
+    """A JSON file whole or not at all: written beside, then renamed over the name. A write that fails (a full disk, a file-size limit) removes
+    the part and raises, so the recipe answers (the excepthook) and the earlier file, if any, stands; a cut coverage.json is never left."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(doc, fh, **dumps_kwargs)
+        _os.replace(tmp, path)
+    except BaseException:
+        try:
+            _os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_ITEMS = 5_000_000
 COLUMNS = ["n", "type", "path", "path_b64", "size", "packed", "mtime", "tz", "mode", "uid", "gid", "link", "locator", "flags",
@@ -1010,8 +1026,7 @@ def run(target, paths, out_dir):
            "limits_hit": [], "errors": []}
 
     def write_cov():
-        with open(os.path.join(out_dir, "coverage.json"), "w") as cf:
-            json.dump(cov, cf, indent=2)
+        _write_json_whole(os.path.join(out_dir, "coverage.json"), cov, indent=2)
 
     def finish(status, code):
         cov["status"] = status
@@ -1133,11 +1148,10 @@ def run(target, paths, out_dir):
         segs = []
         for k, p in enumerate(img.paths, 1):
             segs.append({"segment": k, "name": img.names[k - 1], "present": p is not None, **({"bytes": os.path.getsize(p)} if p else {})})
-        json.dump({"format": "AD1", "segment_header": img.segment, "segments": segs,
+        _write_json_whole(os.path.join(out_dir, "image.json"), {"format": "AD1", "segment_header": img.segment, "segments": segs,
                    "logical_image": {"version": img.version, "chunk_size": img.chunk_size, "first_item": img.first_item, "metadata": img.meta_addr},
                    "data_source_name": esc(img.source_name), "metadata": own,
-                   "items": cov["items"], "files": cov["files"], "folders": cov["folders"]},
-                  open(os.path.join(out_dir, "image.json"), "w"), indent=2, ensure_ascii=False)
+                   "items": cov["items"], "files": cov["files"], "folders": cov["folders"]}, indent=2, ensure_ascii=False)
     finally:
         img_source = img.source_name
         img.close()

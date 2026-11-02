@@ -234,6 +234,22 @@ def _unexpected_recipe(kind, value, _tb):
 _sys.excepthook = _unexpected_recipe
 
 
+def _write_json_whole(path, doc, **dumps_kwargs):
+    """A JSON file whole or not at all: written beside, then renamed over the name. A write that fails (a full disk, a file-size limit) removes
+    the part and raises, so the recipe answers (the excepthook) and the earlier file, if any, stands; a cut coverage.json is never left."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(doc, fh, **dumps_kwargs)
+        _os.replace(tmp, path)
+    except BaseException:
+        try:
+            _os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def open_regular(path):
     """open(path, "rb") for a caller's path that was checked as a regular file a moment ago: opened without waiting (O_NONBLOCK) and looked at with
     fstat on the descriptor, so a FIFO or a device put in its place is refused and never waited on (a FIFO would hold the tool for ever)."""
@@ -1033,12 +1049,11 @@ def run(path, out_dir):
            "limits_hit": [], "errors": []}
     if fmt is None or fmt == "unknown":
         cov.update(status="unsupported", why=why, status_basis="no tar, zip or 7z structure was found in the file: " + why)
-        json.dump(cov, open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
+        _write_json_whole(os.path.join(out_dir, "coverage.json"), cov, indent=2)
         print_answer({"ok": False, "status": "unsupported", "why": why})
         return 2
     # Said before the first member is read, so a run cut short at any point leaves a coverage file that says it did not finish.
-    json.dump(dict(cov, status="partial", status_basis="the run had started and had listed nothing yet", why="started; the member list was not finished (the run stopped before its end)"),
-              open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
+    _write_json_whole(os.path.join(out_dir, "coverage.json"), dict(cov, status="partial", status_basis="the run had started and had listed nothing yet", why="started; the member list was not finished (the run stopped before its end)"), indent=2)
     if fmt == "tar" and zip_end_agrees(path):
         note = ("read as a tar, because a tar header reads at offset 0; the file also ends in a zip end-of-central-directory record that "
                 "agrees with it, so a zip inside a member (or a second reading of the whole file) is not listed")
@@ -1063,9 +1078,8 @@ def run(path, out_dir):
             w.close()
         except Exception:  # noqa: BLE001
             pass
-        json.dump(dict(cov, status="partial", interrupted=True, signal=signum, members=w.rows,
-                       status_basis="the recipe was stopped by signal %d: the members listed before the stop are in members.tsv, and nothing is claimed about the rest" % signum),
-                  open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
+        _write_json_whole(os.path.join(out_dir, "coverage.json"), dict(cov, status="partial", interrupted=True, signal=signum, members=w.rows,
+                       status_basis="the recipe was stopped by signal %d: the members listed before the stop are in members.tsv, and nothing is claimed about the rest" % signum), indent=2)
         print(json.dumps({"ok": False, "status": "partial", "interrupted": True, "signal": signum, "format": fmt, "members": w.rows}), flush=True)
     install_signal_handlers(_stopped)
     try:
@@ -1087,7 +1101,7 @@ def run(path, out_dir):
                            "partial": "part of the member list was read: a limit was hit or the archive broke part way (see limits_hit and errors)",
                            "failed": "no member could be listed (see errors)",
                            "unsupported": "7z, which this format needs, is not in this image"}.get(status, status)
-    json.dump(cov, open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
+    _write_json_whole(os.path.join(out_dir, "coverage.json"), cov, indent=2)
     with open(os.path.join(out_dir, "index.tsv"), "w", encoding="utf-8") as fh:
         fh.write("members.tsv\t%s member list (%d): n, type, path, path_b64, size, packed, mtime, tz, mode, uid, gid, link, locator, flags; n is the member's number in archive order\n"
                  % (cov.get("format") or "archive", n))
