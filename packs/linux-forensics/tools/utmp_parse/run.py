@@ -29,11 +29,14 @@ A microsecond field outside 0 to 999999 is not a time: the record keeps its raw 
 no `time` and says why. Nothing is reduced modulo anything to look plausible. An address whose first word is
 the only non-zero one is shown as IPv4 and is also kept as raw hex, because an IPv6 address can look like one.
 
-A file of SQLite (wtmpdb, lastlog2) is refused with a pointer to the SQLite tools. A lastlog file is read slot
+A file of SQLite (wtmpdb's wtmp table, lastlog2's lastlog2 table) is read from a copy of it, and of its -wal and -journal, kept in
+the job's $OUT: the schema is read from sqlite_master and an unknown one is refused and listed, the copy is opened under an authorizer
+that allows SELECT on that table only, the primary key is never selected, and a row is located by its ordinal. A lastlog file is read slot
 by slot by UID, skipping holes of a sparse file, within `max_slots` and `max_seconds`; what is left unread is
 named (`next_uid`), and `uids` reads only the slots named.
 """
 import datetime
+import hashlib
 import json
 import math
 import os
@@ -41,15 +44,17 @@ import re
 import secrets
 import signal
 import socket
+import sqlite3
 import stat
 import struct
 import sys
 import tempfile
 import time
+import urllib.parse
 from pathlib import Path
 
 TOOL = "utmp_parse"
-PARSER = "utmp_parse/14"
+PARSER = "utmp_parse/15"
 
 
 # BEGIN LINUX STOP
@@ -1043,6 +1048,418 @@ def refuse_disk_image(path, key):
 # END LINUX IMAGE
 
 
+# --- wtmpdb and lastlog2 (SQLite) --------------------------------------------------------------------
+
+SQLITE_FORMATS = ("wtmpdb", "lastlog2", "sqlite")
+SNAPSHOT_MAX = 1 << 30            # the most of a database, and of its write-ahead log or journal, this tool copies
+SQL_TEXT = 256                    # bytes of a text column kept in a record (its length is kept beside it)
+SQL_LISTED = 50                   # tables, and columns of a table, named when a schema is refused
+SQL_SCHEMA_ROWS = 2000            # rows of sqlite_master read
+SQL_FUNCTIONS = {"typeof", "substr", "length", "count"}
+SESSION_COLUMNS = {"wtmpdb": {"table": "wtmp", "required": ("user", "login"), "optional": ("type", "logout", "tty", "remotehost", "service")},
+                   "lastlog2": {"table": "lastlog2", "required": ("name", "login"), "optional": ("tty", "remotehost", "service")}}
+
+
+class SessionDbRefused(Exception):
+    pass
+
+
+def sql_ident(name):
+    return '"' + name.replace('"', '""') + '"'
+
+
+def shown_name(value, limit=100):
+    """A name out of a database as text an answer can carry: control characters as escapes, cut at `limit` characters."""
+    text_ = value if isinstance(value, str) else str(value)
+    text_ = "".join(c if c.isprintable() else "\\x%02x" % ord(c) if ord(c) < 256 else "\\u%04x" % ord(c) for c in text_[:limit * 2])
+    return text_[:limit]
+
+
+def session_time(value):
+    """(unit, ISO 8601 UTC, error) for a stored time. The unit is told from the size of the number (microseconds from 1e14, milliseconds from
+    1e11, seconds below) because the schema does not say it; the raw number is always kept beside the result."""
+    if value is None:
+        return None, None, None
+    try:
+        magnitude = abs(value)
+        if magnitude != magnitude or magnitude == float("inf"):
+            return None, None, "the stored number is not finite"
+        if magnitude >= 10 ** 14:
+            unit = "microseconds"
+            sec, usec = divmod(int(value), 10 ** 6)
+        elif magnitude >= 10 ** 11:
+            unit = "milliseconds"
+            sec, milli = divmod(int(value), 1000)
+            usec = milli * 1000
+        else:
+            unit, sec, usec = "seconds", int(value), 0
+    except (OverflowError, ValueError):
+        return None, None, "the stored number is outside any range this tool converts"
+    shown, error = when(sec, usec)
+    return unit, shown, error
+
+
+def copy_member(source, dest_dir, name, deadline):
+    """Copy one regular file (never a link or a pipe) into the snapshot directory: mode 0600, a name that is not there yet, hashed as it is copied."""
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(source, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise SessionDbRefused("not a regular file")
+        if st.st_size > SNAPSHOT_MAX:
+            raise SessionDbRefused("larger than the %d bytes this tool copies" % SNAPSHOT_MAX)
+        target = os.path.join(dest_dir, name)
+        ofd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+        digest, total = hashlib.sha256(), 0
+        try:
+            while True:
+                if time.monotonic() > deadline:
+                    raise SessionDbRefused("max_seconds passed while the file was being copied")
+                chunk = os.read(fd, 1 << 20)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > SNAPSHOT_MAX:
+                    raise SessionDbRefused("grew past the %d bytes this tool copies while it was read" % SNAPSHOT_MAX)
+                digest.update(chunk)
+                view = memoryview(chunk)
+                while view:
+                    view = view[os.write(ofd, view):]
+        finally:
+            os.close(ofd)
+        return {"bytes": total, "sha256": digest.hexdigest(), "copy": target}
+    finally:
+        os.close(fd)
+
+
+def wal_facts(path):
+    """What the header of the copied write-ahead log says: the page size and the frames its size holds, or that it is not one."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(32)
+        size = os.path.getsize(path)
+    except OSError as exc:
+        return {"state": "could not be read: %s" % describe(exc)}
+    if len(head) < 32 or struct.unpack(">I", head[:4])[0] not in (0x377F0682, 0x377F0683):
+        return {"state": "the header is not a write-ahead log's: SQLite will not apply it", "bytes": size}
+    page = struct.unpack(">I", head[8:12])[0]
+    frames = (size - 32) // (page + 24) if page else 0
+    return {"state": "a write-ahead log header; SQLite applies the committed frames to the copy", "page_size": page, "frames_by_size": frames, "bytes": size}
+
+
+def snapshot_session_db(path, out_dir, deadline):
+    """Copy the database, and its -wal and -journal when they are regular files, into a new directory of $OUT. The evidence is only read;
+    SQLite works on the copy (it may checkpoint into it), never beside the evidence."""
+    snap = tempfile.mkdtemp(prefix="session-db-", dir=out_dir)
+    os.chmod(snap, 0o700)
+    files = {}
+    problems = []
+    try:
+        files["database"] = copy_member(path, snap, "db", deadline)
+    except (OSError, SessionDbRefused) as exc:
+        raise SessionDbRefused("the database could not be copied: %s" % (describe(exc) if isinstance(exc, OSError) else exc))
+    for suffix, label in (("-wal", "wal"), ("-journal", "journal")):
+        side = path + suffix
+        try:
+            mode = os.lstat(side).st_mode
+        except FileNotFoundError:
+            files[label] = {"state": "not there"}
+            continue
+        except OSError as exc:
+            files[label] = {"state": "could not be examined: %s" % describe(exc)}
+            problems.append("the %s could not be examined" % label)
+            continue
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+            files[label] = {"state": "not copied: a link or a file that is not a regular file is never followed or opened"}
+            problems.append("the %s is a link or not a regular file: its rows were not applied" % label)
+            continue
+        try:
+            files[label] = copy_member(side, snap, "db" + suffix, deadline)
+        except (OSError, SessionDbRefused) as exc:
+            files[label] = {"state": "not copied: %s" % (describe(exc) if isinstance(exc, OSError) else exc)}
+            problems.append("the %s was not copied: its rows were not applied" % label)
+    if "copy" in files.get("wal", {}):
+        files["wal"].update(wal_facts(files["wal"]["copy"]))
+    files["shm"] = {"state": "never copied: SQLite rebuilds the index of a write-ahead log from the log itself"}
+    return snap, files, problems
+
+
+def open_session_db(db_copy, deadline, allowed):
+    con = sqlite3.connect("file:%s?mode=rw" % urllib.parse.quote(db_copy), uri=True, timeout=0, check_same_thread=False)
+    con.text_factory = lambda raw: raw.decode("utf-8", "surrogateescape")
+    if hasattr(con, "setlimit") and hasattr(sqlite3, "SQLITE_LIMIT_LENGTH"):
+        con.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1 << 24)
+    con.execute("PRAGMA query_only=ON").fetchall()
+
+    def authorizer(action, arg1, arg2, _dbname, _source):
+        if action == sqlite3.SQLITE_SELECT:
+            return sqlite3.SQLITE_OK
+        if action == sqlite3.SQLITE_READ:
+            return sqlite3.SQLITE_OK if (arg1 or "").lower() in allowed else sqlite3.SQLITE_DENY
+        if action == sqlite3.SQLITE_FUNCTION:
+            return sqlite3.SQLITE_OK if (arg2 or "").lower() in SQL_FUNCTIONS else sqlite3.SQLITE_DENY
+        if action == sqlite3.SQLITE_PRAGMA:
+            return sqlite3.SQLITE_OK if (arg1 or "").lower() == "table_info" else sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_DENY
+
+    con.set_authorizer(authorizer)
+    con.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 2000)
+    return con
+
+
+def read_schema(con):
+    """{lower-cased table name: {name, virtual, columns}} for the tables of the file, and the other objects it holds."""
+    rows = con.execute("SELECT type, name, sql FROM sqlite_master").fetchmany(SQL_SCHEMA_ROWS + 1)
+    schema = {"tables": {}, "others": [], "truncated": len(rows) > SQL_SCHEMA_ROWS}
+    for kind, name, sql in rows[:SQL_SCHEMA_ROWS]:
+        if kind == "table" and not name.lower().startswith("sqlite_"):
+            virtual = (sql or "").lstrip()[:20].upper().startswith("CREATE VIRTUAL")
+            entry = {"name": name, "virtual": virtual, "columns": []}
+            if not virtual:
+                entry["columns"] = [r[1] for r in con.execute("PRAGMA table_info(%s)" % sql_ident(name)).fetchmany(1000)]
+            schema["tables"][name.lower()] = entry
+        elif kind in ("view", "trigger", "table", "index"):
+            schema["others"].append((kind, name))
+    return schema
+
+
+def schema_listing(schema):
+    tables = list(schema["tables"].values())
+    return {"tables": [{"name": shown_name(t["name"]), "virtual": t["virtual"], "columns": [shown_name(c) for c in t["columns"][:SQL_LISTED]],
+                        "columns_total": len(t["columns"])} for t in tables[:SQL_LISTED]],
+            "tables_total": len(tables), "other_objects": [[k, shown_name(n)] for k, n in schema["others"][:SQL_LISTED]], "other_objects_total": len(schema["others"]),
+            "sqlite_master_truncated": schema["truncated"]}
+
+
+def choose_session_format(schema, requested):
+    """(format, table entry, columns by lower-cased name): from the tables the file holds, never from a list of releases; a schema it does not know is refused and listed."""
+    found = []
+    for fmt, spec in SESSION_COLUMNS.items():
+        entry = schema["tables"].get(spec["table"])
+        if entry is None:
+            continue
+        if entry["virtual"]:
+            raise SessionDbRefused("the table %s is a virtual table: its rows come from a module and are not read" % spec["table"])
+        lowered = {c.lower(): c for c in entry["columns"]}
+        if all(c in lowered for c in spec["required"]):
+            found.append((fmt, entry, lowered))
+    if any(n.lower() == spec["table"] and k == "view" for spec in SESSION_COLUMNS.values() for k, n in schema["others"]):
+        raise SessionDbRefused("a view is named like a session table: a view is not a table and is not read")
+    if requested in ("wtmpdb", "lastlog2"):
+        found = [f for f in found if f[0] == requested]
+    if not found:
+        raise SessionDbRefused("this SQLite file has no table this tool knows as %s (a table wtmp with the columns User and Login, or lastlog2 with Name and Login): its schema is listed" %
+                               (requested if requested in ("wtmpdb", "lastlog2") else "wtmpdb or lastlog2"))
+    if len(found) > 1:
+        raise SessionDbRefused("this file holds both a wtmp and a lastlog2 table: name the one to read with format: wtmpdb or lastlog2")
+    return found[0]
+
+
+def parse_session_db(fmt, entry, lowered, con, pattern, wanted, page, stats, deadline, database_name):
+    spec = SESSION_COLUMNS[fmt]
+    picked = [(c, lowered[c]) for c in spec["required"] + spec["optional"] if c in lowered]
+    taken = {c for c, _name in picked}
+    unread = [shown_name(name) for lc, name in lowered.items() if lc not in taken]
+    table = entry["name"]
+    select = []
+    for _key, column in picked:
+        q = sql_ident(column)
+        select.append("typeof(%s), CASE WHEN typeof(%s)='integer' THEN %s END, CASE WHEN typeof(%s)='real' THEN %s END, substr(CAST(%s AS BLOB),1,%d), length(CAST(%s AS BLOB))" %
+                      (q, q, q, q, q, q, SQL_TEXT, q))
+    try:
+        stats["table_rows"] = con.execute("SELECT count(*) FROM %s" % sql_ident(table)).fetchone()[0]
+    except sqlite3.Error as exc:
+        stats["table_rows"] = None
+        stats["count_error"] = describe(exc)
+    sql = "SELECT %s FROM %s ORDER BY rowid" % (", ".join(select), sql_ident(table))
+    try:
+        cur = con.execute(sql)
+        ordered = True
+    except sqlite3.OperationalError:
+        cur = con.execute(sql.replace(" ORDER BY rowid", ""))
+        ordered = False
+    keys = [k for k, _c in picked]
+    units = {}
+    ordinal = 0
+    result = (picked, unread, units, ordered)
+    try:
+        for values in cur:
+            if (ordinal & 255) == 255 and time.monotonic() > deadline:
+                stats["stopped_at_record"] = ordinal
+                stats["stopped_because"] = "max_seconds passed: the rows after ordinal %d were not read" % ordinal
+                break
+            cells = {}
+            for i, key in enumerate(keys):
+                kind, integer, real, head, length = values[5 * i:5 * i + 5]
+                cells[key] = (kind, integer if integer is not None else real, head, length)
+            ordinal += 1
+            stats["records"] += 1
+            user, user_extra = session_text(cells, "user" if fmt == "wtmpdb" else "name")
+            kind_name = "LASTLOG"
+            type_raw = None
+            if fmt == "wtmpdb":
+                tkind, tnum, _h, _l = cells.get("type", ("null", None, None, None))
+                type_raw = int(tnum) if tkind == "integer" else None
+                kind_name = (TYPES.get(type_raw) or "UNKNOWN") if type_raw is not None else "UNKNOWN"
+            stats["by_type"][kind_name] = stats["by_type"].get(kind_name, 0) + 1
+            if kind_name == "BOOT_TIME":
+                stats["boots"] += 1
+            if wanted and kind_name not in wanted:
+                continue
+            if pattern:
+                try:
+                    if not search_within(pattern, user or "", deadline):
+                        continue
+                except RegexTooSlow as exc:
+                    stats["stopped_at_record"] = ordinal - 1
+                    stats["stopped_because"] = slow_because(exc, "row %d" % (ordinal - 1), ", and no later row was tested")
+                    return result
+            row = {"id": "U%06d" % (stats["matched"] + 1), "parser": PARSER, "source": fmt, "database": shown_name(database_name, 200), "table": spec["table"],
+                   "ordinal": ordinal - 1, "type": kind_name}
+            if type_raw is not None:
+                row["type_raw"] = type_raw
+            row["user"] = user
+            row.update(user_extra)
+            for key, label in (("tty", "line"), ("remotehost", "host"), ("service", "service")):
+                if key in cells:
+                    value, extra = session_text(cells, key)
+                    row[label] = value
+                    row.update({k.replace(key, label, 1): v for k, v in extra.items()})
+            for key in ("login", "logout"):
+                if key not in cells:
+                    continue
+                kind, number, _head, _length = cells[key]
+                row[key + "_raw"] = number
+                if kind in ("integer", "real"):
+                    unit, shown, error = session_time(number)
+                    row[key + "_unit"], row[key + "_time"] = unit, shown
+                    if unit:
+                        units[unit] = units.get(unit, 0) + 1
+                    if error:
+                        row[key + "_error"] = error
+                elif kind != "null":
+                    row[key + "_error"] = "the stored value is %s, not a number" % kind
+            stats["matched"] += 1
+            page.add(row)
+    except sqlite3.Error as exc:
+        stats["read_error"] = describe(exc)
+        if "interrupt" in str(exc).lower():
+            stats["stopped_at_record"] = ordinal
+            stats["stopped_because"] = "max_seconds passed inside a read of the database: the rows after ordinal %d were not read" % ordinal
+            stats.pop("read_error")
+    return result
+
+
+def session_text(cells, key):
+    """(text, extra fields) of a text column: the first SQL_TEXT bytes, the length beside it when it was cut, and the type when it was not text."""
+    if key not in cells:
+        return None, {}
+    kind, number, head, length = cells[key]
+    if kind == "null":
+        return None, {}
+    if kind in ("integer", "real"):
+        return str(number), {key + "_stored_as": kind}
+    raw = head if isinstance(head, bytes) else (b"" if head is None else str(head).encode("utf-8", "surrogateescape"))
+    extra = {}
+    if kind == "blob":
+        extra[key + "_stored_as"] = "blob"
+    if length is not None and length > SQL_TEXT:
+        extra[key + "_bytes"], extra[key + "_truncated"] = length, True
+    return decode(raw), extra
+
+
+def main_session_db(args, path, size, requested_format):
+    """A SQLite file: wtmpdb or lastlog2, read from a copy of it that lives in $OUT."""
+    if not in_job():
+        fail("a SQLite file is read from a copy of it, and the copy is kept in the job's $OUT: run this as job_run tool=utmp_parse. Nothing was read.",
+             path=path, format="sqlite", bytes=size)
+    bad = [k for k in ("uids", "start_uid", "max_slots", "passwd", "start_record", "user_is_typed", "layout", "byte_order", "write_text", "preview_text") if k in args]
+    if bad:
+        fail("%s apply to a utmp, wtmp, btmp or lastlog file only: this file is a SQLite database" % ", ".join(bad), path=path)
+    limit = want_limit(args)
+    wanted = {t.upper() for t in want_str_list(args, "types")}
+    pattern = None
+    if want_str(args, "user"):
+        try:
+            pattern = re.compile(args["user"], re.I)
+        except (re.error, RecursionError, OverflowError, ValueError) as exc:
+            fail("user is not a valid regex", reason=str(exc))
+        arm_regex_clock()
+    seconds = want_seconds(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS)
+    deadline = time.monotonic() + seconds
+    page = LosslessPage(TOOL, "records", limit)
+    stats = {"records": 0, "matched": 0, "boots": 0, "by_type": {}}
+    out = {"parser": PARSER, "path": path, "bytes": size}
+    snap = con = None
+    files = {}
+    problems = []
+    try:
+        snap, files, snap_problems = snapshot_session_db(path, os.environ["OUT"], deadline)
+        problems.extend(snap_problems)
+        allowed = {"sqlite_master", "sqlite_schema"}
+        con = open_session_db(files["database"]["copy"], deadline, allowed)
+        schema = read_schema(con)
+        try:
+            fmt, entry, lowered = choose_session_format(schema, requested_format)
+        except SessionDbRefused as exc:
+            fail(str(exc), path=path, format="sqlite", schema=schema_listing(schema), snapshot=snap)
+        allowed.add(entry["name"].lower())
+        picked, unread, units, ordered = parse_session_db(fmt, entry, lowered, con, pattern, wanted, page, stats, deadline, os.path.basename(path))
+    except SessionDbRefused as exc:
+        fail(str(exc), path=path, format="sqlite", bytes=size)
+    except sqlite3.Error as exc:
+        fail("the file could not be read as a database: %s" % describe(exc), path=path, format="sqlite", bytes=size, snapshot=snap)
+    except OSError as exc:
+        fail("the file could not be copied or read: %s" % describe(exc), path=path)
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except sqlite3.Error:
+                pass
+    pages = {"records": page.finish()}
+    stopped = stats.get("stopped_at_record")
+    read_error = stats.get("read_error")
+    whole = (stopped is None and read_error is None and not problems and stats.get("table_rows") is not None and stats["records"] == stats["table_rows"])
+    complete = whole
+    if stopped is not None:
+        problems.append(stats.get("stopped_because") or "the read stopped")
+    if read_error:
+        problems.append("the database failed after %d row(s): %s" % (stats["records"], read_error))
+    if stats.get("count_error"):
+        problems.append("the rows of the table could not be counted (%s), so a complete read cannot be shown" % stats["count_error"])
+    capped = capped_why(pages, None)
+    if capped:
+        complete = False
+        problems.append(capped)
+    out.update({
+        "format": fmt,
+        "format_basis": "told from the tables the file holds (sqlite_master), not from a release: " +
+                        ("named by the caller and found" if requested_format in ("wtmpdb", "lastlog2") else "the only one of the two known tables that is there, with its required columns"),
+        "snapshot": {"directory": snap, "files": {k: {kk: vv for kk, vv in v.items() if kk != "copy"} for k, v in files.items()},
+                     "note": "the evidence was only read; SQLite opened the copy (it may have checkpointed the log into it), and the hashes are of the bytes as copied"},
+        "schema": {"table": shown_name(entry["name"]), "columns": [shown_name(c) for c in entry["columns"][:SQL_LISTED]], "columns_total": len(entry["columns"]),
+                   "columns_read": [shown_name(name) for _c, name in picked], "columns_not_read": unread[:SQL_LISTED],
+                   "keys": ("the ID column is never selected" if fmt == "wtmpdb" else "Name, the key of the table, is the account and is shown as user") + ("; a row is located by its ordinal in rowid order" if ordered else "; the table has no rowid, so the ordinal is the order SQLite gave")},
+        "records_in_table": stats.get("table_rows"), "records_read": stats["records"], "by_type": stats["by_type"], "boots": stats["boots"],
+        "time_units": units, "stopped_at_record": stopped, "stopped_because": stats.get("stopped_because"), "read_error": read_error,
+        "all_records_read": whole,
+        "note": ("Each row of wtmpdb is a session record its writer stored; Login and Logout are kept raw beside the time, whose unit is told from the size of the number "
+                 "(the schema does not say it). A missing row is not a login that did not happen. Type is read with utmp.h's numbering, which is an assumption: type_raw is kept. "
+                 if fmt == "wtmpdb" else
+                 "Each row of lastlog2 is the most recent login stored for one name. A name with no row is not shown never to have logged in. Login is kept raw beside the time, whose unit is told from the size of the number. ")
+                + "A write-ahead log was applied to the copy only where the snapshot says it was copied and has a log header.",
+    })
+    out.update({**status_of(complete, False, "every row of the table was read from the copy, with its write-ahead log applied when there was one",
+                            "; ".join(problems) or "a filter or a type list left rows out", ""),
+                "text": {"written": False, "note": "no text file: a SQLite session record has no typed name to withhold"},
+                "record_count": pages["records"]["matched"], "records": page.page, "pages": pages, "truncated": pages["records"]["truncated"]})
+    STATE["answering"] = True
+    print(json.dumps(out, indent=2))
+    sys.exit(0)
+
+
 def main():
     args = read_args()
     path = want_str(args, "path", "path is required: a wtmp, btmp, utmp or lastlog file")
@@ -1059,10 +1476,15 @@ def main():
             head = fh.read(16)
     except OSError as exc:
         fail("the file cannot be read", path=path, reason=describe(exc))
+    requested_format = args.get("format")
+    if requested_format not in (None, "utmp", "lastlog") + SQLITE_FORMATS:
+        fail("format must be utmp, lastlog, wtmpdb, lastlog2 or sqlite")
     if head.startswith(SQLITE_MAGIC):
-        fail("this is a SQLite database (wtmpdb and lastlog2 write one), not a utmp or lastlog file, and this tool does not read "
-             "it. Copy it with its -wal and -shm files and open the copy read-only with sqlite_query from the "
-             "computer-forensics-base pack.", path=path, format="sqlite", bytes=size)
+        if requested_format in ("utmp", "lastlog"):
+            fail("format %s was asked for, but this file is a SQLite database: name wtmpdb, lastlog2 or sqlite" % requested_format, path=path, format="sqlite", bytes=size)
+        main_session_db(args, path, size, requested_format)
+    if requested_format in SQLITE_FORMATS:
+        fail("format %s was asked for, but this file does not start as a SQLite database" % requested_format, path=path, bytes=size)
     limit = want_limit(args)
     write_text, preview_text = want_flag(args, "write_text"), want_flag(args, "preview_text")
     if preview_text:
@@ -1076,9 +1498,6 @@ def main():
             fail("user is not a valid regex", reason=str(exc))
         arm_regex_clock()
     want_str(args, "passwd")
-    requested_format = args.get("format")
-    if requested_format not in (None, "utmp", "lastlog"):
-        fail("format must be utmp or lastlog")
     layout_arg = args.get("layout", "auto")
     if layout_arg not in ("auto", "utmp-384", "lastlog-292", "lastlog-296"):
         fail("layout must be auto, utmp-384, lastlog-292 or lastlog-296")

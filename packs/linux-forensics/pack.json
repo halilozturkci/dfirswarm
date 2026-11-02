@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -42,7 +42,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "b44d3e654c6ba16152b7e2ff618ccb25a9881d358c4bc9efc526bdf853b72b2a",
+      "README.md": "d936af1b62f895087abfa9edc2a6f8302a86e90a96669ac09a12f182369be49d",
       "goals/server-compromise.md": "0118cd428d15cdd68293ca017333a2302fa3b42a67df32aea89e77c672f9a18b",
       "goals/what-was-scheduled.md": "52389a312d07d57dc4f76c6b274dcccd6d88952a494e2750c93693a2240a1820",
       "recipes/linux-target/recipe.json": "32ce9c8dd2bed920d2ee363fe3f168b27cdf40726451c217ddfa86fdc4a95475",
@@ -50,7 +50,7 @@
       "requires/host.json": "204bfec6c17a96d7064da971106c60ce31fff2dc55ad7f9353e037181f3e9294",
       "requires/python.txt": "2a8f433b1779c884ea3307bd9d0dbf04fa2d9f909e19d0ab32c4b81a14ddb22f",
       "skills/INDEX.md": "4d9ff8d33343c0316236c6e5e1bf2f9ec2f7f5beef09c11170befc24f4f8e1fc",
-      "skills/accounts/sessions-histories.md": "dcc62a72f4a19402a07d48b2de88324e10fe37bbd12b2263df398d628584c69c",
+      "skills/accounts/sessions-histories.md": "ac3493c3ff0bd40d04c6cb090346be40be65599bc60b958c27a3ae8b259b5d4c",
       "skills/accounts/users.md": "c56120ad6af68cbf704fa1a4d9d0e4c4b9960e3cd661d036b97bb47376748b59",
       "skills/containers/docker.md": "6fd83ce61af0de38109389c5968f456ce130b29811b16efb26a2163a76e14067",
       "skills/containers/layers-times.md": "e3e5de26ae5ece3936c8229bdf44ccf8582588e55b242f658d2dbaaa2a2eab44",
@@ -96,8 +96,8 @@
       "tools/package_verify/run.py": "1c08302f4563911cb01efe7aacdb5983af5a9739e90e84ab1f22ff904b18122a",
       "tools/shell_history/manifest.json": "b14514ef2f500d44cb8a9cbfe174ce880c050375e357a6a2f823121e1a82a102",
       "tools/shell_history/run.py": "0f25d87b64b5a82f02cdb0b80ada6154cfd11f154f283604115f31f121a0ddbd",
-      "tools/utmp_parse/manifest.json": "291ee0bb9d37a2a779eea721cb1b944cda0247f2297faf638c9b84d26d44fd85",
-      "tools/utmp_parse/run.py": "3be4325c5384e536c6772dd87c93aaedd37852a57db7ba1fef324219a772f880"
+      "tools/utmp_parse/manifest.json": "9f45d73aacd8d8d79b245b11415c4968e81719db8e73dba83780fbbeec6db319",
+      "tools/utmp_parse/run.py": "c5fb136382af404350456720c3f18b593bd8c4eafbe4cf50ac999a75765bfa18"
     }
   },
   "tools": [

@@ -55,3 +55,13 @@
   NOT confirmed that the installed `rpm` suppresses `%verifyscript` with those options (no rpm was available to its tests).
   `packages/integrity` names the tool in place of its direct commands, `packages/baseline` agrees, and the `debsums` and `rpm`
   texts in `requires/host.json` say what is and is not confirmed.
+
+### Added: linux-forensics `utmp_parse` reads wtmpdb and lastlog2
+
+- A SQLite file is no longer refused with a pointer to `sqlite_query`. In a job, `utmp_parse` copies the database and its `-wal` and
+  `-journal` (regular files only, at most 1 GiB each) into a new directory of `$OUT`, opens the copy under an authorizer that allows
+  `SELECT` on one table, and reads `wtmp` (wtmpdb) or `lastlog2` told from `sqlite_master` and the columns it holds. A schema it does not
+  know, a view or a virtual table by that name, or both tables without a `format` are refused with the schema listed. Records carry the
+  database, the table and an ordinal (the key is never selected for wtmpdb), the raw `Login` and `Logout` beside ISO time with a unit told
+  from the size of the number, and text bounded to 256 bytes with its length. A damaged page keeps the rows read before it and ends partial.
+  `accounts/sessions-histories` and the README say so.
