@@ -12,6 +12,7 @@ import { chmod, lstat, mkdir, readFile, readdir, rm, stat, symlink, truncate, wr
 import { join } from "node:path";
 import { test } from "node:test";
 import { IS_ROOT, UTMP, asJob as plainJob, body, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import type { Json } from "./linux-pack-harness.ts";
 /** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
 const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
   plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
