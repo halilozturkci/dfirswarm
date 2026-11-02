@@ -1922,7 +1922,7 @@ OWN_NAMES.update((
     "inline_byte_limit", "kept_earlier_larger_result", "coverage", "problems", "problems_total", "problem_occurrences", "problems_folded", "occurrences", "folded", "first_offset", "last_offset", "listed_per_kind_and_file", "listed_in_all", "files", "problems_pages", "filters", "limits", "directory", "note",
     "error", "type", "reason", "out_file", "compressed_bytes", "expanded_bytes", "members", "pages", "bytes_skipped", "padding_bytes", "bytes_not_decoded",
     "complete", "truncated", "failed", "parsed", "unsupported", "invalid_length", "decoded", "empty_path", "incomplete", "before_filter", "kept",
-    "contains", "flags", "flags_unknown", "flags_known", "max_expanded_bytes", "max_page_bytes", "max_inline_bytes", "max_seconds", "max_seconds_requested", "links_not_followed", "names_not_examined", "files_not_listed",
+    "contains", "flags", "flags_unknown", "flags_unknown_count", "flags_known", "max_expanded_bytes", "max_page_bytes", "max_inline_bytes", "max_seconds", "max_seconds_requested", "links_not_followed", "names_not_examined", "files_not_listed",
     "not_regular_files", "file", "state", "gzip", "problems", "magic_seen", "error", "kind", "why", "offset", "bytes", "compressed_offset", "member", "cap",
     "declared", "available", "magic", "first_bytes_hex", "uuid", "raw_hex", "bytes", "contains_blind_records", "contains_timeouts", "time_limit", "matched",
     "returned", "all_results", "all_results_format", "event_id", "flags_raw", "node_id", "version", "page_offset", "record_offset", "flags_undecoded",
@@ -2517,12 +2517,16 @@ def run_scan(args):
             pattern = re.compile(contains, re.I)
         except (re.error, RecursionError, OverflowError) as exc:
             fail("contains is not a valid regex", reason=type(exc).__name__)
-    wanted = {str(f) for f in (args.get("flags") or [])}
+    flags_arg = args.get("flags")
+    if flags_arg is not None and (not isinstance(flags_arg, list) or any(not isinstance(f, str) for f in flags_arg)):
+        fail("flags must be a list of flag names (strings)")
+    wanted = set(flags_arg or [])
     unknown_flags = sorted(wanted - FLAG_NAMES)
     if unknown_flags:
-        # (a name that matches nothing gave a complete answer with no record: it is refused, like a bad `contains`, before anything is read)
+        # (a name that matches nothing gave a complete answer with no record: it is refused, like a bad `contains`, before anything is read; a hostile list
+        # is cut in the answer: the first names, each cut, and the count)
         fail("flags names a flag this tool does not know, so the filter would match no record: nothing is read",
-             flags_unknown=unknown_flags, flags_known=sorted(FLAG_NAMES))
+             flags_unknown=[n[:80] for n in unknown_flags[:20]], flags_unknown_count=len(unknown_flags), flags_known=sorted(FLAG_NAMES))
 
     notes = {"links_not_followed": 0, "not_regular_files": 0}
     identity = None

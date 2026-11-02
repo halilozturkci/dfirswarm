@@ -2,7 +2,9 @@
 
 - `flags` with a name the tool does not know is refused as JSON before anything is
   read (it used to give a complete answer with no record). `flags_unknown` and
-  `flags_known` are in the refusal.
+  `flags_known` are in the refusal; a hostile list is cut there (the first 20 names,
+  each cut at 80 characters, and the count), and a `flags` that is not a list of
+  strings is refused too.
 - The bytes after the last gzip member, and the rest of a file after a member that
   failed to decode, are counted from the file's size and are not read. The clock
   is looked at once per 1 MiB of input inside a member, so one member whose

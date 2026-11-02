@@ -250,6 +250,16 @@ test("fsevents_parse refuses a flags name it does not know, as JSON and before i
     await assert.rejects(stat(join(cwd, "work", "unknown.jsonl")), "nothing was made");
     const mixed = await tool(FS, cwd, { path: dir, flags: ["Removed", "NotAFlag"] });
     assert.equal(mixed.code, 1);
+    // A hostile list is refused at once and answered in a bounded text: 3,000 names, one of a million characters.
+    const many = await tool(FS, cwd, { path: dir, flags: [...Array.from({ length: 3000 }, (_, i) => `Nope${i}`), "x".repeat(1_000_000)] });
+    assert.equal(many.code, 1);
+    const cut = body(many);
+    assert.equal(cut.flags_unknown_count, 3001);
+    assert.equal(cut.flags_unknown.length, 20);
+    assert.ok(many.stdout.length < 100_000, `${many.stdout.length} bytes`);
+    const notAList = body(await tool(FS, cwd, { path: dir, flags: "Removed" }));
+    assert.equal(notAList.status, "failed");
+    assert.match(notAList.error, /list of flag names/);
     const known = ok(await tool(FS, cwd, { path: dir, flags: ["Removed"] }));
     assert.equal(known.status, "complete");
     assert.equal(known.record_count, 1);
