@@ -1,5 +1,8 @@
-# The encrypted containers pack's tools use the standard library only. What
-# follows is for the agents' own scripts: the libraries that open a volume in
+# The encrypted containers pack's tools use the standard library only, except
+# materialise_decrypted and crypto_selftest, which import pybde, pyluksde and
+# pyAesCrypt (and, in crypto_selftest, the others below) in a child process of
+# their own, so that a library that dies does not take the tool down. What
+# follows is also for the agents' own scripts: the libraries that open a volume in
 # place, as a file, with no root and no mount (a mount made in a VM is that
 # VM's alone, and nothing under it is recorded). The run's contract recommends
 # them and the crypto toolbox set checks for them. An image with this pack

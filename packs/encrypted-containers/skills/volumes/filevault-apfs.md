@@ -3,20 +3,25 @@ id: volumes/filevault-apfs
 title: FileVault and APFS volumes
 when: An Apple volume is encrypted: legacy Core Storage FileVault 2 or APFS.
 needs: []
-tools: []
+tools: [crypto_metadata]
 requires_host: [fvdeinfo, fsapfsinfo]
 ---
 
-Use only if the volume is an Apple one (Core Storage or APFS). Not for LUKS (`volumes/luks-filevault`).
+Use only if the volume is an Apple one (Core Storage or APFS). Not for LUKS (`volumes/luks`).
 
-**FileVault and APFS.** Say which layout you have. Use `fvdeinfo` (libfvde) for the
+**FileVault and APFS.** Say which layout you have. `crypto_metadata` picks `fvdeinfo` or
+`fsapfsinfo` by the signature at a byte offset and shows the counts they print; for an
+APFS container it also reads the container's software-crypto flag, which does not say
+that a volume is encrypted. Use `fvdeinfo` (libfvde) for the
 Core Storage layout that legacy FileVault 2 used; this pack does not establish that
 the build in the image reads an APFS volume, so test it on the object, and where it
 fails on one, call that a tool limit, not a finding about the volume. For an APFS container `fsapfsinfo` (libfsapfs) lists the volumes under the
 limits its build documents (the macOS pack's `filesystem/apfs` states them, if that
 pack is loaded). Which volume is encrypted, and how, is read by a reader validated
 for that layout, or on an authorised macOS examination host: record the Mac model,
-the processor and security hardware, the OS build and how the data was acquired.
+the processor and security hardware, the OS build and how the data was acquired. If the
+macOS pack is loaded, its `filesystem/apfs` owns APFS structure and this note owns the
+encryption-route decision: check the run's skills index.
 
 Do not assume a user password or a recovery key makes a raw image readable away from
 the original hardware. A personal recovery key, an institutional recovery mechanism,

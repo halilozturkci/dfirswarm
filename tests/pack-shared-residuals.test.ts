@@ -200,7 +200,7 @@ test("every copy of the comparison in the tree is the one fixed text (the macOS 
   const groups = [...seen.entries()].sort((a, b) => b[1].length - a[1].length);
   assert.equal(groups.length, 2, JSON.stringify(groups.map(([k, v]) => [k.slice(0, 10), v.length])));
   assert.equal(groups[0][0], SAME_BYTES_SHA);
-  assert.equal(groups[0][1].length, 66, "56 carriers before the four tools of ransomware-response added since (encryption_extent, recovery_validate, ransomware_scope_report, backup_destruction_correlate), and the five memory-forensics tools that carry the byte comparison (vol_readiness, mem_registry, carve_handoff, vol_views, isf_intake), and linux-forensics container_layers (its place-without-replacing copy)");
+  assert.equal(groups[0][1].length, 70, "56 carriers before the four tools of ransomware-response added since (encryption_extent, recovery_validate, ransomware_scope_report, backup_destruction_correlate), the five memory-forensics tools that carry the byte comparison (vol_readiness, mem_registry, carve_handoff, vol_views, isf_intake), and the four encrypted-containers tools (crypto_metadata, crypto_selftest, archive_metadata, materialise_decrypted), and linux-forensics container_layers (its place-without-replacing copy)");
   assert.deepEqual(groups[1][1], ["packs/macos-forensics/tools/unified_log/run.py"]);
 });
 
@@ -336,6 +336,10 @@ const STOP_CARRIERS = {
     "packs/encrypted-containers/tools/recovery_key_scan/run.py",
     "packs/encrypted-containers/tools/password_recover/run.py",
     "packs/encrypted-containers/tools/tcrypt_header/run.py",
+    "packs/encrypted-containers/tools/crypto_metadata/run.py",
+    "packs/encrypted-containers/tools/crypto_selftest/run.py",
+    "packs/encrypted-containers/tools/archive_metadata/run.py",
+    "packs/encrypted-containers/tools/materialise_decrypted/run.py",
   ],
 };
 
