@@ -41,7 +41,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "feature_scan", "version": 10}
+TOOL = {"name": "feature_scan", "version": 11}
 STARTED = time.monotonic()
 DEFAULT_TIMEOUT = 900
 TIMEOUT_MAX = 1000                # the tool's own limit is 1200 seconds: the counting of what bulk_extractor wrote needs the rest
@@ -952,6 +952,33 @@ def walk_entries(root, deadline, seen):
         stack.extend(os.path.join(here, d) for d in reversed(dirs))
 
 
+def out_dir_full(out_dir, said):
+    """A sentence when the disk or quota under out_dir refused a write (bulk_extractor says so on stderr and still exits 0, or a probe write of
+    64 KiB beside its files fails), else None. A file system that is full when the run ends is not a proof that a file was cut, and it is not
+    proof that none was."""
+    low = said.lower()
+    for phrase in ("no space left on device", "disk quota exceeded", "file too large"):
+        if phrase in low:
+            return "its stderr says '%s'" % phrase
+    probe = os.path.join(out_dir, ".feature_scan.probe")
+    try:
+        fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            if os.write(fd, b"\x00" * 65536) != 65536:
+                raise OSError(28, "No space left on device")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        return "a probe write of 64 KiB beside its files failed (%s)" % (exc.strerror or exc)
+    finally:
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+    return None
+
+
 def lock_down(root, deadline):
     """bulk_extractor writes what it found, unfiltered, with the umask's modes: a feature file, a histogram and
     alerts.txt hold the values themselves (addresses, card numbers, a whole recovery key). Once the child has ended the
@@ -1298,18 +1325,20 @@ def main():
         not_counted.append("%d entries beyond the first %d of a directory of out_dir were not looked at" % (seen["cut"], DIR_ENTRIES_MAX))
     not_counted.extend("a directory of out_dir could not be listed (%s)" % u for u in seen.get("unlisted", []))
     secret.close()
+    disk_note = out_dir_full(out_dir, said)
     holding = sorted(kinds)
     features.sort(key=lambda f: -(f.get("lines") or 0))
     feature_total = len(features)
     del features[FEATURES_SHOWN:]
     exit_ok = code == 0 and not timed_out
-    status = "complete" if exit_ok and not not_counted and secret.write_error is None else ("partial" if n_written or exit_ok else "failed")
+    status = "complete" if exit_ok and not not_counted and secret.write_error is None and not disk_note else ("partial" if n_written or exit_ok else "failed")
     result = {
         "tool": TOOL,
         "path": path,
         "out_dir": out_dir,
         "status": status,
         "status_basis": ("bulk_extractor exited 0 and what it wrote is listed (it does not say that every scanner reached every byte)" if status == "complete" else
+                         "bulk_extractor exited 0, but %s: its files may be cut short, and nothing here can tell which" % disk_note if exit_ok and disk_note else
                          "bulk_extractor exited 0, but the clock ran out while what it wrote was being counted: what was not counted is named (not_counted)" if exit_ok else
                          "bulk_extractor did not exit 0 or ran out of time, and what it had written is listed" if status == "partial" else
                          "bulk_extractor did not exit 0 and wrote nothing"),

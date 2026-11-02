@@ -210,7 +210,7 @@ class _Held:
 HELD = _Held()             # the hidden file of the carved copy being written
 PAGES.append(HELD)
 
-TOOL = {"name": "file_carver", "version": 8}
+TOOL = {"name": "file_carver", "version": 9}
 CHUNK = 1 << 20
 DEFAULT_MAX = 100_000_000
 PDF_EOF_LIMIT = 1000
@@ -723,10 +723,12 @@ def copy_range(src, off, size, dest):
                 os.rename(tmp, dest)
                 tmp = None
     finally:
-        if out and not out.closed:
-            out.close()
-        if tmp and os.path.exists(tmp):
-            os.unlink(tmp)
+        try:
+            if out and not out.closed:
+                out.close()                 # on a full disk this flushes and raises; the temporary file must go anyway
+        finally:
+            if tmp and os.path.exists(tmp):
+                os.unlink(tmp)
     return h.hexdigest(), first
 
 

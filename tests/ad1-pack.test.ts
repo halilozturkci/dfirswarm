@@ -1112,3 +1112,56 @@ test("ad1_extract under a file-size limit: JSON every time, a manifest or covera
   }
   assert.deepEqual(bad, []);
 });
+
+test("ad1_extract on a full disk: JSON every time, no file left behind that a complete run does not leave, and complete means every file whole", (t) => {
+  const probe = spawnSync("unshare", ["-rm", "bash", "-c", 'mount -t tmpfs -o size=64k tmpfs "$1" && echo ok', "x", mkdtempSync(join(tmpdir(), "ad1-enospc-probe-"))], { encoding: "utf8" });
+  if (probe.stdout?.trim() !== "ok") { t.skip(`unshare -rm with a tmpfs mount is not allowed here: ${probe.stderr}`); return; }
+  const wrapper = join(mkdtempSync(join(tmpdir(), "ad1-enospc-")), "wrap.sh");
+  writeFileSync(wrapper, [
+    "set -u", 'SRC=$1; SIZE=$2; REPORT=$3; COPY=$4; shift 4', "STASH=$(mktemp -d /tmp/enospc-stash.XXXXXX) || exit 96",
+    'cp -a "$SRC"/. "$STASH"/ || exit 96', 'mount -t tmpfs -o size="$SIZE" tmpfs "$SRC" || exit 97', 'cp -a "$STASH"/. "$SRC"/ || exit 98', 'rm -rf "$STASH"',
+    'U0=$(df --output=used -B1 "$SRC" | tail -1 | tr -d " ")', 'cd "$SRC"', '"$@"', "rc=$?", 'U1=$(df --output=used -B1 "$SRC" | tail -1 | tr -d " ")',
+    'echo "$U0 $U1 $rc" > "$REPORT"', 'cp -a "$SRC"/. "$COPY"/', "exit $rc", ""].join("\n"));
+  let runNo = 0;
+  const run = (size: number) => {
+    runNo++;
+    const cwd = dir("ad1-enospc-");
+    mkdirSync(join(cwd, "inputs"));
+    writeFileSync(join(cwd, "inputs", "many.ad1"), ad1Image(Array.from({ length: 300 }, (_, i) => ({ name: `file-with-a-longer-name-${i}.txt`, content: B(`content ${i}`) }))));
+    const report = join(mkdtempSync(join(tmpdir(), "ad1-enospc-rep-")), `report-${runNo}`), copy = mkdtempSync(join(tmpdir(), "ad1-enospc-copy-"));
+    const r = spawnSync("unshare", ["-rm", "bash", wrapper, cwd, String(size), report, copy, "python3", TOOL], {
+      input: JSON.stringify({ image: "inputs/many.ad1", out_dir: "work/out" }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" },
+    });
+    const [u0, u1] = readFileSync(report, "utf8").trim().split(/\s+/).map(Number);
+    return { r, copy, used: u0, written: u1 - u0 };
+  };
+  const free = run(64 * 1024 * 1024);
+  assert.equal(JSON.parse(free.r.stdout).status, "complete", free.r.stdout.slice(0, 300));
+  const stable = filesUnder(join(free.copy, "work", "out"));
+  const page = 4096;
+  const bad: string[] = [];
+  const extras = new Set<number>([2 * page]);
+  const top = Math.floor(free.written * 1.6) + page;
+  for (let k = 1; k <= 14; k++) extras.add(Math.floor((top * k) / 14 / page) * page);
+  for (const d of [-page, 0, page]) extras.add(Math.floor((free.written + d) / page) * page);
+  for (const extra of [...extras].filter((e) => e > 0 && e <= top).sort((a, b) => a - b)) {
+    const size = free.used + extra;
+    const { r, copy } = run(size);
+    let doc: Record<string, any> | null = null;
+    try { doc = JSON.parse(r.stdout); } catch { doc = null; }
+    if (doc === null) { bad.push(`${size}: no JSON (exit ${r.status}, signal ${r.signal}) ${r.stderr.slice(-160)}`); continue; }
+    if (r.stderr.includes("Traceback")) { bad.push(`${size}: traceback`); continue; }
+    const made = filesUnder(join(copy, "work", "out"));
+    for (const [p] of made) {
+      if (p.endsWith(".json")) { try { JSON.parse(readFileSync(p, "utf8")); } catch { bad.push(`${size}: ${p} is cut JSON`); } }
+      const base = p.split("/").pop() ?? "";
+      if ((base.startsWith(".") || base.endsWith(".tmp")) && ![...stable.keys()].some((q) => q.endsWith("/" + base))) bad.push(`${size}: left behind ${base}`);
+    }
+    if (doc.status === "complete") {
+      const cut = [...made].filter(([p, n]) => !p.endsWith(".json") && stable.get(p.replace(copy, free.copy)) !== n && stable.has(p.replace(copy, free.copy)));
+      const gone = [...stable.keys()].filter((q) => !q.endsWith(".json") && !made.has(q.replace(free.copy, copy)));
+      if (cut.length || gone.length) bad.push(`${size}: complete, but ${[...cut.map(([p]) => p), ...gone].slice(0, 2).join(", ")} is cut or missing`);
+    }
+  }
+  assert.deepEqual(bad, []);
+});

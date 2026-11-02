@@ -70,7 +70,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 10}
+TOOL = {"name": "archive_extract", "version": 11}
 STARTED = time.monotonic()               # the run's clock starts with the tool: the archive hash and the 7z banner are on it too
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
@@ -2787,10 +2787,13 @@ def main():
     except (OSError, ValueError, RuntimeError) as exc:
         fail("out_dir cannot be used: %s" % describe(exc), out_dir=scrub(str(args.get("out_dir") or dest)))
     try:
+        made_dest, made_extracted = not dest.exists(), not (dest / "extracted").exists()
         dest.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(dest, 0o700)
+        if made_dest:
+            os.chmod(dest, 0o700)               # a directory the caller made keeps the caller's mode; one made here is private
         (dest / "extracted").mkdir(mode=0o700, exist_ok=True)
-        os.chmod(dest / "extracted", 0o700)
+        if made_extracted:
+            os.chmod(dest / "extracted", 0o700)
     except OSError as exc:
         fail("the output directory cannot be made: %s" % describe(exc), out_dir=scrub(str(dest)))
     run_no = 1

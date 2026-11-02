@@ -45,7 +45,9 @@ def files_under(root):
     return found
 
 
-class WriteSweep(Case):
+class Scenarios(Case):
+    """The fixtures: each scenario builds its inputs under `d` and returns (argv, stdin, env_extra). No test is here."""
+
     # ---- the scenarios: each builds its fixtures under `d` and returns (argv, stdin, env_extra)
     def stand_ins(self, d):
         b = os.path.join(d, "bin")
@@ -157,9 +159,11 @@ class WriteSweep(Case):
     def scenario_tool_file_carver(self, d):
         os.makedirs(os.path.join(d, "work"))
         with zipfile.ZipFile(os.path.join(d, "work", "z.zip"), "w") as zf:
-            zf.writestr("big.bin", os.urandom(3000))
+            zf.writestr("big.bin", os.urandom(600000))
         return self.tool("file_carver", {"path": "work/z.zip", "offset": 0, "sig_type": "ZIP", "output": "work/carved.zip"})
 
+
+class WriteSweep(Scenarios):
     # ---- the sweep
     def execute(self, name, limit):
         d = self.path("run-%s-%s" % (name, limit if limit else "free"))
@@ -190,7 +194,9 @@ class WriteSweep(Case):
         self.assertTrue(new, "%s wrote nothing without a limit: %r %r" % (name, p.stdout[:200], p.stderr[-200:]))
         largest = max(new.values())
         bad = []
-        for limit in sizes_for(largest):
+        # disk_volumes: between 512 and 700 bytes its first complete coverage.json fits and its later ones do not; the earlier one must not stand
+        extra = set(range(512, 705, 24)) if name == "disk_volumes" else set()
+        for limit in sorted(set(sizes_for(largest)) | extra):
             p, new, d = self.execute(name, limit)
             why = None
             doc = None
@@ -216,6 +222,13 @@ class WriteSweep(Case):
                         except ValueError:
                             why = "%s is cut JSON" % os.path.relpath(path, d)
                             break
+            if why is None and isinstance(doc, dict) and doc.get("status") != "complete":
+                for path in new:
+                    if os.path.basename(path) == "coverage.json" and os.path.exists(path):
+                        with open(path, encoding="utf-8") as fh:
+                            said = json.load(fh).get("status")
+                        if said == "complete":
+                            why = "the answer is %s, but the coverage.json left behind says complete" % doc.get("status")
             if why is None and isinstance(doc, dict) and doc.get("status") == "complete":
                 cut = sorted(os.path.relpath(k, d) for k, v in new.items() if v >= limit and not k.endswith(".json"))
                 if cut:

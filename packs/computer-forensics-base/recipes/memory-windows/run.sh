@@ -107,7 +107,16 @@ sweep_outputs() { # every file of the run (but coverage.json, which is whole or 
     fi
   done < <(find "$out" -type f 2>/dev/null)
 }
+disk_probe() { # a full disk cuts a step's output while the program still exits 0: a small write beside the outputs says whether it is still full
+  local p="$out/.disk_probe.tmp"
+  if ! head -c 4096 /dev/zero > "$p" 2>/dev/null || [[ "$(wc -c < "$p" 2>/dev/null)" != 4096 ]]; then
+    notes+=("the disk under the output directory refused a probe write of 4 KiB: files of the run may be cut short, and nothing here can tell which")
+    WRITE_FAILED=1
+  fi
+  rm -f "$p"
+}
 finish_checks() { # before the answer: look at every file, and say it in the coverage file when one is not whole
+  disk_probe
   sweep_outputs
   if (( WRITE_FAILED )); then
     local st="$COV_REQ"
@@ -303,6 +312,18 @@ except OSError as exc:
         os.unlink(tmp)
     except OSError:
         pass
+    # An earlier coverage file must not stand and say more than this run did: a short one that says so takes its place, or none stays.
+    short = {"recipe": doc["recipe"], "status": "partial", "status_basis": "the full coverage file could not be written (%s)" % (exc.strerror or exc.__class__.__name__)}
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(short, fh)
+        os.replace(tmp, path)
+    except OSError:
+        for leftover in (tmp, path):
+            try:
+                os.unlink(leftover)
+            except OSError:
+                pass
     sys.stderr.write("coverage.json could not be written: %s\n" % (exc.strerror or exc.__class__.__name__))
     sys.exit(1)
 PY
