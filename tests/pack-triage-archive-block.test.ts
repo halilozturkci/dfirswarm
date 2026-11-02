@@ -13,6 +13,7 @@ const BEGIN = "# ---- BEGIN ARCHIVE BLOCK";
 const END = "# ---- END ARCHIVE BLOCK";
 const RECIPE = join(TRIAGE, "recipes", "collection-intake", "run.py");
 const TIMESTAMPS = join(TOOLS, "collection_timestamps", "run.py");
+const COMPARE = join(TOOLS, "collection_profile_compare", "run.py");
 
 async function block(path: string): Promise<string> {
   const text = await readFile(path, "utf8");
@@ -23,9 +24,10 @@ async function block(path: string): Promise<string> {
   return text.slice(start, text.indexOf("\n", end) + 1);
 }
 
-test("the recipe and collection_timestamps carry one archive block, byte for byte", async () => {
-  const [a, b] = await Promise.all([RECIPE, TIMESTAMPS].map(block));
+test("the recipe, collection_timestamps and collection_profile_compare carry one archive block, byte for byte", async () => {
+  const [a, b, c] = await Promise.all([RECIPE, TIMESTAMPS, COMPARE].map(block));
   assert.equal(a, b);
+  assert.equal(a, c);
   assert.ok(a.length > 15000);
   for (const name of ["class TarStream", "class BoundedTarInfo", "def tar_end(", "def tar_end_problem(", "def zip_problem(", "def gz_header_length(", "def sniff(", "MAX_META = 1 << 20"]) {
     assert.ok(a.includes(name), `the block holds ${name}`);

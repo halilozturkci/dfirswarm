@@ -1,7 +1,7 @@
 {
   "id": "triage-collection",
   "name": "Triage and Collection Pack",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "What to do when the evidence is a collector's output rather than an image: surveying what was delivered and which collectors left records, reading those records without turning them into findings, keeping the source, delivered and analysis paths apart, saying what the delivery can and cannot establish, requesting more evidence through the operator, and handing files to the platform packs.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,7 +18,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "c271b022edf4f543b6fc7c4e6fc0b138c57648f0dffe25a4e34c7e9f1c178d8a",
-      "README.md": "cb94e5028bc1c5252943e0d5a6bab7583cadaa77d8cbab310c5077b85d52f74f",
+      "README.md": "5a47ead4991faf42c87e01b5ea10d1db099f77bd622f307ac7739cf0430e9313",
       "goals/collection-intake.md": "ed89303440885a201a191d42de56977b609170e07f15c0268114bb68511651c2",
       "recipes/collection-intake/recipe.json": "05d1c6770e91c46e2472c5b422203ab8e4f47d72a42b02916ec0442e79e8fb1a",
       "recipes/collection-intake/run.py": "7f735634bbee21b2aa68020378e930e4d6beb567921b7a7ffc8f07cf5946d179",
@@ -43,7 +43,7 @@
       "skills/verify/collector-effects.md": "0e3bf905e1c4a03d71b80d93e8d997e1d2dc0c7b7233b34e8e5880b5aa18750c",
       "skills/verify/manifests.md": "8764ea365e2c655917f333c9343d387702de22a19602d8a31d3f0a21b88e432f",
       "skills/verify/raw-and-derived.md": "b9018d3a208c3500fd2ab5029f7eb2decfbdb4cc392d1e6cae65d5ff3ca7f1fd",
-      "skills/verify/target-outcomes.md": "420b464d85ca59e391bd3dfb36b5ef5161917a0055b27cae8c349ebbe98eb185",
+      "skills/verify/target-outcomes.md": "6b5ba4f0674353fcce72f5fa2040147fe5e48c5e0eaa61b7308cb75e81f78b3d",
       "skills/verify/time-layers.md": "3695a9909e38474757c5a4cca83beba51482fc480d3553d3918f56a909c76504",
       "tools/collection_coverage/manifest.json": "beb547e63d4dfd384d453655e9049de0c23671730e1cf3939b4c2e1663c29e2c",
       "tools/collection_coverage/run.py": "054042dc268c3b7b2053fae9e2b618569a90488bd26c355c948d342f22e18a9b",
@@ -57,6 +57,8 @@
       "tools/collection_manifest_verify/run.py": "75f54fa23da423b953c39a7c84a471b6d9ca22d39e2bef8cd8af0f15e091fcc7",
       "tools/collection_path_map/manifest.json": "cbc877295dfd05264af74baa84430f00056a8e312debf1f1ee39303ecb0feb2a",
       "tools/collection_path_map/run.py": "2d10838ccedab78348a85d3922712f569c32aa73ff65ff64719b45bba7d7aee9",
+      "tools/collection_profile_compare/manifest.json": "b69d63b43161d79237b45d6e23ffb6106cde4ec3dad561141309dbba5350cb24",
+      "tools/collection_profile_compare/run.py": "033d0bc7c9bc35a17f0033c1a1c93af02e7db2ab49d1fac2990c42d8944fb9ad",
       "tools/collection_timestamps/manifest.json": "1289e3bd19a7035b2984df32608b8ff5803fd1aa72d51cab0b535d8e997edcf9",
       "tools/collection_timestamps/run.py": "38cf32183f6da9dd47f6c3f7a76345c9d8051677a3cd355ed26b3d4c1e7f853d"
     }
@@ -68,6 +70,7 @@
     "collection_manifest_parse",
     "collection_manifest_verify",
     "collection_path_map",
+    "collection_profile_compare",
     "collection_timestamps"
   ],
   "skills": 20,
