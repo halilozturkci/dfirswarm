@@ -17,7 +17,7 @@ import type { Json } from "./pack-triage-harness.ts";
 const BEGIN = "# ---- BEGIN RECORDS BLOCK";
 const END = "# ---- END RECORDS BLOCK";
 const RECIPE = join(TRIAGE, "recipes", "collection-intake", "run.py");
-const TOOL_NAMES = ["collection_manifest_parse", "collection_manifest_verify", "collection_path_map", "collection_coverage"];
+const TOOL_NAMES = ["collection_manifest_parse", "collection_manifest_verify", "collection_path_map", "collection_coverage", "collection_timestamps"];
 const digest = (algorithm: string, data: string | Buffer) => createHash(algorithm).update(data).digest("hex");
 
 async function recordsBlock(path: string): Promise<string> {
@@ -29,7 +29,7 @@ async function recordsBlock(path: string): Promise<string> {
   return text.slice(start, text.indexOf("\n", end) + 1);
 }
 
-test("the four tools and the recipe carry one records block, byte for byte", async () => {
+test("the five tools and the recipe carry one records block, byte for byte", async () => {
   const blocks = await Promise.all([...TOOL_NAMES.map((n) => join(TOOLS, n, "run.py")), RECIPE].map(recordsBlock));
   for (const b of blocks.slice(1)) assert.equal(b, blocks[0]);
   assert.ok(blocks[0].length > 30000);

@@ -213,7 +213,7 @@ test("mixed clocks: an archive that varies against a tree flattened to one date 
     assert.equal(out.comparison.outcomes.differs, 30);
     assert.ok(out.conflicts.some((c: Json) => c.kind === "flattened_in_one_clock_only"));
     assert.deepEqual(out.apparent_flattening.map((f: Json) => f.clock), ["delivered_mtime"]);
-    assert.deepEqual(out.clocks_not_read.length, 2, "clocks 1 and 4 are named as not read");
+    assert.equal(out.acquisition.interval, "unknown", "no collector record, so the interval is unknown and not taken from file times");
   });
 });
 
@@ -401,5 +401,130 @@ print(json.dumps([[n, *make(n, r)] for n in picked]))
     assert.ok(written.includes("collection-timestamps-values.jsonl"));
     assert.equal(((await (await import("node:fs/promises")).stat(join(cwd, "out", "collection-timestamps-values.jsonl"))).mode & 0o777).toString(8), "600");
     assert.equal(job.stdout.includes(plants[0][2][0].slice(0, 12)), false);
+  });
+});
+
+// ---- clocks 1 and 4: the collector's own records (PKG-TRI-10) ---------------------------------------------------------------------------
+import { KAPE_COPY_HEADER, kapeCopyRow, put, uac3, veloUploadsRow, veloLogRow } from "./pack-triage-harness.ts";
+
+async function setNs(path: string, value: bigint): Promise<void> {
+  const run = await runPySnippet("import os,sys; os.utime(sys.argv[1], ns=(int(sys.argv[2]), int(sys.argv[2])))", [path, String(value)], null);
+  assert.equal(run.code, 0, run.stderr);
+}
+
+const MOD_SECONDS = BigInt(Date.parse("2026-01-02T03:04:05Z")) / 1000n;      // kapeCopyRow's ModifiedOnUtc is 2026-01-02 03:04:05.678
+
+async function kapeFixture(cwd: string): Promise<void> {
+  await put(cwd, "k/run_CopyLog.csv", [KAPE_COPY_HEADER, kapeCopyRow("C:\\Users\\a\\NTUSER.DAT", "C\\Users\\a\\NTUSER.DAT"), kapeCopyRow("C:\\Users\\a\\other.txt", "C\\Users\\a\\other.txt"),
+    kapeCopyRow("C:\\gone\\x.txt", "C\\gone\\x.txt")].join("\n") + "\n");
+  await put(cwd, "k/run_ConsoleLog.txt", "[2026-02-14 09:12:00.123 | INF] KAPE starting\n[2026-02-14 09:14:30.500 | INF] Done\n");
+  await put(cwd, "k/C/Users/a/NTUSER.DAT", "x");
+  await put(cwd, "k/C/Users/a/other.txt", "x");
+  await setNs(join(cwd, "k/C/Users/a/NTUSER.DAT"), MOD_SECONDS * S + 678_000_000n);
+}
+
+test("the collector's record times are kept as the collector's own text with the zone it states, and a time with none is never read as UTC", async () => {
+  await withCwd(async (cwd) => {
+    await kapeFixture(cwd);
+    await put(cwd, "u/uac.log", [uac3("INF", "UAC starting", 1), "2026-02-14 09:12:05 DBG a line with no offset", uac3("ERR", "ps failed", 9)].join("\n") + "\n");
+    await put(cwd, "v/c1/uploads.json", veloUploadsRow("C:/x/a.txt") + "\n");
+    await put(cwd, "v/c1/log.json", veloLogRow("INFO", "start") + "\n");
+    const kape = body(await ts(cwd, { root: "k" }));
+    const clocks = kape.record_clocks;
+    const mod = clocks["KAPE.ModifiedOnUtc"];
+    assert.match(mod.zone, /^UTC: the column is named ModifiedOnUtc/);
+    assert.equal(mod.earliest.raw, "2026-01-02 03:04:05.678");
+    assert.equal(mod.earliest.time, "2026-01-02T03:04:05.678Z");
+    assert.match(mod.precision, /up to 3 fractional digit/);
+    const copied = clocks["KAPE.CopiedTimestamp (no zone)"];
+    assert.match(copied.zone, /^none stated: the writer states no zone: a wall-clock reading, not assumed to be UTC/);
+    assert.equal(copied.earliest.time, "2026-02-14T09:12:00.123", "no Z");
+    assert.equal(kape.status, "complete", kape.status_basis);
+    assert.equal(kape.acquisition.logs[0].start.time, "2026-02-14T09:12:00.123");
+    assert.match(kape.acquisition.logs[0].start.zone, /none stated/);
+    assert.equal(kape.acquisition.logs[0].end.raw, "2026-02-14 09:14:30.500");
+    assert.match(kape.acquisition.logs[0].basis, /not a statement of when it began/);
+    const uac = body(await ts(cwd, { root: "u" }));
+    const log = uac.record_clocks["UAC.log line"];
+    assert.equal(log.files, 2, "the line with a +0000 offset and the ERR line are zoned");
+    assert.match(log.zone, /the text states its offset \(UTC\)/);
+    assert.equal(uac.record_clocks["UAC.log line (no zone)"].files, 1, "the line with no offset is a wall-clock reading");
+    assert.equal(uac.acquisition.logs[0].end.time, "2026-02-14T09:12:09Z");
+    const velo = body(await ts(cwd, { root: "v" }));
+    assert.equal(velo.record_clocks["Velociraptor.Timestamp"].earliest.time, "2020-10-07T20:43:08Z");
+    assert.match(velo.record_clocks["Velociraptor.started"].zone, /the text states its offset \(UTC\)/);
+    assert.equal(velo.acquisition.logs[0].start.time, "2020-10-07T20:43:08Z");
+  });
+});
+
+test("a copy-log row's ModifiedOnUtc is compared with the delivered mtime only where the join names one file; a record with no file or a differing time says so", async () => {
+  await withCwd(async (cwd) => {
+    await kapeFixture(cwd);
+    const out = body(await ts(cwd, { root: "k" }));
+    assert.deepEqual(out.records.comparison.outcomes, { equal: 1, differs: 1, not_compared: 1 });
+    const rows = await tableRows(cwd, out.tables.record_comparison);
+    assert.equal(rows.find((r: Json) => r.path === "C/Users/a/NTUSER.DAT").outcome, "equal");
+    assert.equal(rows.find((r: Json) => r.path === "C/Users/a/other.txt").outcome, "differs");
+    assert.equal(rows.find((r: Json) => r.outcome === "not_compared").join.status, "missing");
+    assert.ok(out.conflicts.some((c: Json) => c.kind === "record_time_differs_from_delivered_mtime" && c.records === 1));
+    assert.equal(rows.find((r: Json) => r.path === "C/Users/a/NTUSER.DAT").delivered.modified_epoch_ns, String(MOD_SECONDS * S + 678_000_000n));
+  });
+});
+
+test("an ambiguous join stays ambiguous: two delivered files that differ only by case are both candidates and neither is compared", async () => {
+  await withCwd(async (cwd) => {
+    await put(cwd, "k/run_CopyLog.csv", [KAPE_COPY_HEADER, kapeCopyRow("C:\\Users\\a\\Note.TXT", "C\\Users\\a\\Note.TXT")].join("\n") + "\n");
+    await put(cwd, "k/C/Users/a/note.txt", "x");
+    await put(cwd, "k/C/Users/a/NOTE.TXT", "x");
+    const out = body(await ts(cwd, { root: "k" }));
+    const rows = await tableRows(cwd, out.tables.record_comparison);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].outcome, "ambiguous_join");
+    assert.equal(rows[0].candidates_total, 2);
+    assert.equal(rows[0].delivered, undefined, "no delivered time is taken from either candidate");
+    assert.ok(out.conflicts.some((c: Json) => c.kind === "record_join_ambiguous"));
+  });
+});
+
+test("records that are cut, malformed or in another encoding make it partial, and a record read cut by the clock is never complete", async () => {
+  await withCwd(async (cwd) => {
+    await put(cwd, "m/run_CopyLog.csv", [KAPE_COPY_HEADER, kapeCopyRow("C:\\a\\b.txt", "C\\a\\b.txt"), "only,three,fields", kapeCopyRow("C:\\a\\c.txt", "C\\a\\c.txt").replace("2026-01-02 03:04:05.678", "not a time")].join("\n") + "\n");
+    await put(cwd, "m/C/a/b.txt", "x");
+    const mal = body(await ts(cwd, { root: "m" }));
+    assert.equal(mal.status, "partial");
+    assert.equal(mal.record_clocks["KAPE.ModifiedOnUtc (no zone)"].times_not_readable, 1);
+    await put(cwd, "u16/uac.log", Buffer.from("\ufeff" + uac3("INF", "x") + "\n", "utf16le"));
+    const wide = body(await ts(cwd, { root: "u16" }));
+    assert.equal(wide.status, "partial");
+    assert.match(wide.status_basis, /unsupported|uac\.log/);
+    assert.equal(wide.acquisition.interval, "unknown");
+    const rows = Array.from({ length: 300000 }, (_, i) => kapeCopyRow(`C:\\w\\f${i}.txt`, `C\\w\\f${i}.txt`));
+    await put(cwd, "big/run_CopyLog.csv", [KAPE_COPY_HEADER, ...rows].join("\n") + "\n");
+    const started = Date.now();
+    const cut = body(await ts(cwd, { root: "big", time_limit_seconds: 1 }));
+    assert.ok(Date.now() - started < 60_000, "it stops on its own clock");
+    assert.equal(cut.status, "partial");
+    assert.match(cut.status_basis, /time limit/);
+  });
+});
+
+test("canaries in copy-log rows, paths and log lines are withheld from the answer and every table file", async () => {
+  await withCwd(async (cwd) => {
+    const gen = await runPySnippet(CANARY_PY + String.raw`
+import json, random
+r = random.Random(39)
+picked = [n for n in names(("listed",), safe_only=True)][:6]
+print(json.dumps([[n, *make(n, r)] for n in picked]))
+`, [], null);
+    assert.equal(gen.code, 0, gen.stderr);
+    const plants = JSON.parse(gen.stdout) as Array<[string, string, string[]]>;
+    const rows = plants.map(([, text], i) => kapeCopyRow(`C:\\Users\\${text}\\f${i}.txt`, `C\\Users\\${text}\\f${i}.txt`));
+    await put(cwd, "k/run_CopyLog.csv", [KAPE_COPY_HEADER, ...rows].join("\n") + "\n");
+    await put(cwd, "k/uac.log", plants.map(([, text], i) => uac3("ERR", `failed for ${text}`, i)).join("\n") + "\n");
+    for (const [i, [, text]] of plants.entries()) await put(cwd, `k/C/Users/${text}/f${i}.txt`, "x");
+    const call = await ts(cwd, { root: "k" });
+    const out = body(call);
+    const all = call.stdout + JSON.stringify(await tableRows(cwd, out.tables.record_comparison)) + call.stderr;
+    for (const [shape, , cores] of plants) for (const core of cores) for (let i = 0; i + 12 <= core.length; i += 6) assert.ok(!all.includes(core.slice(i, i + 12)), `${shape} shows ${core.slice(i, i + 12)}`);
   });
 });

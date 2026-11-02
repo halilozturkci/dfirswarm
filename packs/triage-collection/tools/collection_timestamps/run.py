@@ -14,7 +14,14 @@ its own precision and its own zone (or the lack of one), and never merges them:
     reader). The tree is walked here, with collection_index's rules (links recorded and never followed, nothing opened, special files
     counted), and not read from a census file: a census is another job's output with a producer version this tool would have to
     trust, while the lstat call is the same field read first-hand;
-  - the collector's own record times (clock 1) and the acquisition interval (clock 4) are not read by this version of the tool.
+  - the collector's own record times (clock 1): a KAPE copy log's CopiedTimestamp, CreatedOnUtc, ModifiedOnUtc and LastAccessedOnUtc, the
+    timestamps of UAC's log and of KAPE's console log, a Velociraptor upload row's Timestamp and started and its log's _ts, read by the
+    adapters and the join of the records block (the same text as collection_manifest_parse; nothing in the tree is executed). Each is kept as
+    the collector's raw text with the zone the writer states (an offset in the text, a column named ...OnUtc, a number of Unix seconds) and
+    the basis for it; a time with none is a wall-clock reading and is never taken to be UTC;
+  - the acquisition interval (clock 4): the first and the last timestamped line of each collector log, as the span of what the collector
+    wrote. Where no log states a time it is `unknown`, and it is never inferred from file times. A copy-log row's ModifiedOnUtc is compared
+    with the delivered mtime of the file the records block's join names, only where the join names exactly one regular file.
 
 It gives the interval of each clock (earliest and latest, with the raw value), the precision and the zone of each, a date
 distribution reported as `apparent_flattening` when more than 90% of more than 20 files fall on one date (a count and no cause:
@@ -1464,6 +1471,1476 @@ import tarfile
 import zipfile
 
 
+# ---- BEGIN RECORDS BLOCK ---------------------------------------------------------------------------------------------
+# Identical in collection_manifest_parse, collection_manifest_verify, collection_path_map, collection_coverage and the
+# collection_intake recipe (the recipe defines out_of_time, describe, WITHHELD and VALUES before it). A tool is standalone, so what they share is
+# copied, and tests/pack-triage-records.test.ts holds the copies equal. Edit it in all of them, never in one. It holds: the
+# census of a delivered tree (or of an archive's members), the adapters that read a collector's own records into canonical
+# records (KAPE copy, skip and console logs, UAC's log and hash lists, a Velociraptor container), the join of a record to the
+# delivered file it names, the hash of a file in one pass, the glob the callers' patterns use, and the name hint for a
+# credential store. It prints nothing, and the strings it returns are the caller's to withhold (the tables do); only the digest of a
+# credential store is withheld here. It needs `out_of_time()`, `describe(exc)`, `WITHHELD` and `VALUES`.
+import collections
+import csv
+import hashlib
+import io
+import json
+import os
+import re
+import stat
+import sys
+import unicodedata
+
+MEMORY_ENV = ("COLLECTION_MEMORY_BYTES", "COLLECTION_INTAKE_MEMORY_BYTES")      # the bytes this process may hold, set by hand (the second name is the recipe's own, still read)
+
+
+def memory_ceiling():
+    """The bytes this process may hold, as far as it can be known: COLLECTION_MEMORY_BYTES (or the recipe's COLLECTION_INTAKE_MEMORY_BYTES) when
+    it is a positive whole number, else the smallest of the cgroup limit and the address-space and data limits. None when nothing limits it that
+    this can see."""
+    for name in MEMORY_ENV:
+        try:
+            if os.environ.get(name) and int(os.environ[name]) > 0:
+                return int(os.environ[name])
+        except ValueError:
+            pass
+    found = []
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as fh:
+                text = fh.read().strip()
+            if text.isdigit() and int(text) < (1 << 60):
+                found.append(int(text))
+        except OSError:
+            pass
+    try:
+        import resource
+        for which in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
+            soft = resource.getrlimit(which)[0]
+            if soft != resource.RLIM_INFINITY:
+                found.append(soft)
+    except (ImportError, ValueError, OSError):
+        pass
+    return min(found) if found else None
+
+
+MEMORY_CEILING = [None, False]         # (bytes, looked up)
+
+
+def over_memory():
+    """A sentence when the process holds more than 60% of what it may hold (the census and the per-member state of a delivery of millions of
+    entries are what grow with the input), else None: the census and the pass stop there, partial, and say so, instead of being killed with
+    nothing written."""
+    if not MEMORY_CEILING[1]:
+        MEMORY_CEILING[0], MEMORY_CEILING[1] = memory_ceiling(), True
+    ceiling = MEMORY_CEILING[0]
+    if not ceiling:
+        return None
+    try:
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
+    except (ImportError, OSError):
+        return None
+    if peak * 10 > ceiling * 6:
+        return "the memory bound (%s held of the %s this process may hold)" % (size_text(peak), size_text(ceiling))
+    return None
+
+
+def size_text(n):
+    """A byte count in the largest unit that does not make it 0 (a tiny override is not '0 MB')."""
+    if n >= 1 << 20:
+        return "%d MB" % (n >> 20)
+    if n >= 1 << 10:
+        return "%d KB" % (n >> 10)
+    return "%d bytes" % n
+
+
+CLOCK_EVERY = 256                  # a loop over the census asks the clock and the memory bound this many entries apart
+
+
+def census_clock(census, position, what):
+    """True when the time limit or the memory bound says a loop over the census must end here (asked every CLOCK_EVERY entries): the census is then
+    marked stopped and not complete, so that the answer is partial and no record is called missing."""
+    if position % CLOCK_EVERY:
+        return False
+    reason = "the time limit" if out_of_time() else over_memory()
+    if not reason:
+        return False
+    if census.stopped is None:
+        census.stopped = {"reason": "%s ended %s" % (reason, what), "directories_not_listed": 0}
+    census.complete = False
+    return True
+
+
+def fold_name(text):
+    """The key a name is joined by: NFC-normalised, then case-folded, so a name written in decomposed form (as macOS writes it) is the same name
+    as its precomposed record."""
+    return unicodedata.normalize("NFC", text).casefold()
+
+
+MEMORY_CHECK_EVERY = 1024          # the census asks for the memory this many entries apart (one getrusage call each)
+MAX_CENSUS = 2000000              # entries held for the join; past it the census is partial and no record is called missing
+REC_LINE = 1 << 20                # a log line longer than this is read in part; the whole line stays in the evidence at its locator
+REC_CHUNK = 1 << 20
+REC_FIRST = 25                    # problems of a source kept in its summary; every one goes to the caller's sink
+MAX_CONSECUTIVE_BAD_ROWS = 1000
+INSIDE_COLLECTED = ("[root]", "uploads")        # a directory below which the files are the source host's own
+UAC_EVENT = re.compile(r"^\s*\[?(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:\s?(?:Z|[+-]\d{2}:?\d{2}))?)\]?\s*"
+                       r"(?:[-:|]\s*)?\[?(?P<level>INFO|INF|WARNING|WARN|ERROR|ERR|COMMAND|CMD|DEBUG|DBG)\]?(?:\s|:|$)")
+UAC_ERROR_LEVELS = ("ERROR", "ERR")
+UAC_COMMAND_LEVELS = ("COMMAND", "CMD")
+CONSOLE_LINE = re.compile(r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?) \| (?P<level>[A-Z]{3})\] ")
+UPLOAD_MARKERS = ("StoredName", "UploadId", "StoredSize", "Components")
+UPLOAD_PATH_KEYS = ("Path", "OSPath", "SourceFile", "FullPath", "vfs_path")
+LOG_LEVEL_WORDS = ("TRACE", "DEBUG", "DEFAULT", "INFO", "WARN", "WARNING", "ERROR", "FATAL", "CRITICAL")
+HASH_LENGTHS = {32: "md5", 40: "sha1", 64: "sha256"}
+HASH_LIST_NAMES = {"hash_executables.md5": "md5", "hash_executables.sha1": "sha1", "hash_executables.sha256": "sha256"}
+HASH_LINE = re.compile(r"^(?P<hex>[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})[ \t]+\*?(?P<path>.+)$")
+HASH_LINE_BSD = re.compile(r"^(?P<tag>MD5|SHA1|SHA256) \((?P<path>.+)\) = (?P<hex>[0-9A-Fa-f]{32,64})$")
+KAPE_COPY_KNOWN = ("copiedtimestamp", "sourcefile", "destinationfile", "filesize", "sourcefilesha1", "deferredcopy", "createdonutc",
+                   "modifiedonutc", "lastaccessedonutc", "copyduration")
+KAPE_COPY_MAPPED = ("copiedtimestamp", "sourcefile", "destinationfile", "filesize", "sourcefilesha1", "createdonutc", "modifiedonutc", "lastaccessedonutc")
+KAPE_SKIP_KNOWN = ("sourcefile", "sourcefilesha1", "reason")
+SKIP_TARGET_COLUMNS = ("sourcefile", "source", "filename", "file", "path")
+SKIP_REASON_COLUMNS = ("reason", "message", "error", "status")
+ENCRYPTED_PAYLOAD = "data.zip"
+ENCRYPTED_METADATA = "metadata.json"
+ENCRYPTION_KEYS = ("Scheme", "EncryptedPass", "PublicKey")
+ENCRYPTION_METADATA_BYTES = 65536
+ADAPTERS = {
+    "kape_copy_log": {"id": "kape_copy_log/2", "collector": "KAPE", "reads": "*_CopyLog.csv",
+                      "schema": "a header with SourceFile and DestinationFile; the other columns KAPE writes are kept by name"},
+    "kape_skip_log": {"id": "kape_skip_log/2", "collector": "KAPE", "reads": "*_SkipLog.csv",
+                      "schema": "a header with a target column (SourceFile) or a reason column (Reason)"},
+    "kape_console_log": {"id": "kape_console_log/1", "collector": "KAPE", "reads": "*_ConsoleLog.txt",
+                         "schema": "lines of the form [date time | LVL] text; warnings and errors are rows, none is a failure"},
+    "uac_log": {"id": "uac_log/2", "collector": "UAC", "reads": "uac.log",
+                "schema": "lines that start with a date, a time and a level word (UAC 3.4.0: DBG INF ERR CMD; 2.9.1: DEBUG INFO WARNING ERROR COMMAND)"},
+    "hash_list": {"id": "hash_list/1", "collector": "UAC", "reads": "hash_executables.md5, .sha1, .sha256",
+                  "schema": "one 'hex  path' line per file (the md5sum, sha1sum and sha256sum forms) or 'ALGORITHM (path) = hex'"},
+    "velociraptor_container": {"id": "velociraptor_container/2", "collector": "Velociraptor", "reads": "uploads.json, results/*.json, log.json, collection_context.json",
+                               "schema": "the container 0.77.2 writes: uploads.json rows (vfs_path, file_size, uploaded_size, Type), result rows with an upload record, log.json rows"},
+    "velociraptor_encrypted": {"id": "velociraptor_encrypted/1", "collector": "Velociraptor", "reads": "metadata.json, data.zip", "supported": False,
+                               "schema": ("the encrypted collection 0.77.2 writes when a password is set (reporting/container.go, NewContainerFromWriter, tag v0.77.2; the metadata keys are set by "
+                                          "artifacts/definitions/Server/Utils/CreateCollector.yaml at the same tag): an outer zip of metadata.json (plain; written only when the collector was "
+                                          "given metadata, with the keys Scheme, EncryptedPass and PublicKey) and data.zip, a stored member that is itself encrypted with the zip password "
+                                          "(github.com/alexmullins/zip, WinZip AES) and holds the collected members. It is recognised by those two member names with nothing else beside them, "
+                                          "and by the encrypted flag of data.zip in the outer zip or the Scheme key of metadata.json, never by entropy. Nothing is decrypted and no record is read"),
+                               "unsupported_reason": "an encrypted Velociraptor collection: its records are inside the encrypted payload (data.zip), which is not decrypted and was not read"},
+    "cylr": {"id": None, "collector": "CyLR", "reads": None, "supported": False,
+             "schema": "none: no record of CyLR is read; a CyLR archive is a tree of copied files, and a top-level C or C$ directory is a layout clue, not a manifest"},
+}
+
+
+# ---- the census: what a delivery holds, by name -------------------------------------------------------------------------
+
+
+class Census:
+    """The relative path, size and kind (f regular file, l link, s special) of every entry of a delivered tree or of an archive's
+    members, keyed by the case-folded path so that a record's claim is joined to the file it names whatever the case. Links and
+    special files are recorded and never followed. `complete` is false when a directory could not be listed, an entry could not be
+    examined, the walk stopped or the cap was reached: a record that names no file is then unverifiable, never missing."""
+
+    def __init__(self, cap=MAX_CENSUS):
+        self.cap = cap
+        self.by_key = {}
+        self.total = self.files = self.dirs = self.links = self.special = 0
+        self.capped = False
+        self.complete = True
+        self.errors = []
+        self.errors_total = 0
+        self.stopped = None
+        self.marked_dirs = []             # directories (and links) named [root]: UAC's directory of collected files
+
+    @staticmethod
+    def key(rel):
+        return fold_name(rel.replace(os.sep, "/"))
+
+    def add(self, rel, size, kind):
+        if self.total >= self.cap:
+            self.capped = True
+            self.complete = False
+            return
+        if self.stopped is not None and self.stopped.get("memory"):
+            self.complete = False
+            return
+        self.total += 1
+        if self.total % MEMORY_CHECK_EVERY == 0:
+            held = over_memory()
+            if held:
+                self.stopped = {"reason": held, "memory": True, "entries_held": self.total}
+                self.complete = False
+                return
+        if kind == "f":
+            self.files += 1
+        elif kind == "l":
+            self.links += 1
+        else:
+            self.special += 1
+        self.by_key.setdefault(self.key(rel), []).append((rel, size, kind))
+
+    def error(self, rel, what, exc=None):
+        self.complete = False
+        self.errors_total += 1
+        if len(self.errors) < REC_FIRST:
+            self.errors.append({"path": rel, "what": what, **({"error": describe(exc)} if exc is not None else {})})
+
+    def entries(self):
+        for group in self.by_key.values():
+            for item in group:
+                yield item
+
+    def lookup(self, rel):
+        return self.by_key.get(self.key(rel), [])
+
+
+def walk_census(root, census, skip=None):
+    """Everything below `root`, one pass, without following a link. `skip(entry)` leaves out the files this run itself writes."""
+    prefix = root.rstrip(os.sep) + os.sep
+    stack = [root]
+    seen = 0
+    while stack:
+        if out_of_time():
+            census.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack)}
+            census.complete = False
+            return
+        if census.stopped is not None and census.stopped.get("memory"):
+            return
+        directory = stack.pop()
+        rel_dir = directory[len(prefix):] if directory.startswith(prefix) else ""
+        try:
+            with os.scandir(directory) as it:
+                entries = list(it)
+        except OSError as exc:
+            census.error(rel_dir or ".", "the directory could not be listed", exc)
+            continue
+        census.dirs += 1
+        for entry in entries:
+            seen += 1
+            if census.stopped is not None and census.stopped.get("memory"):
+                return
+            if (seen & 1023) == 0 and out_of_time():
+                census.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack)}
+                census.complete = False
+                return
+            if skip is not None and skip(entry):
+                continue
+            rel = entry.path[len(prefix):] if entry.path.startswith(prefix) else os.path.relpath(entry.path, root)
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError as exc:
+                census.error(rel, "the entry could not be examined", exc)
+                continue
+            mode = st.st_mode
+            if stat.S_ISLNK(mode):
+                census.add(rel, 0, "l")
+                if entry.name == "[root]":
+                    census.marked_dirs.append(rel)
+            elif stat.S_ISDIR(mode):
+                stack.append(entry.path)
+                if entry.name == "[root]":
+                    census.marked_dirs.append(rel)
+            elif stat.S_ISREG(mode):
+                census.add(rel, st.st_size, "f")
+            else:
+                census.add(rel, 0, "s")
+
+
+class DirSource:
+    """A delivered directory as a source of bytes: a regular file is opened without following a link at its name and without
+    blocking on a pipe; anything else is refused."""
+    kind = "directory"
+
+    def __init__(self, root):
+        self.root = root
+
+    def path(self, rel):
+        return os.path.join(self.root, rel)
+
+    def open_binary(self, rel):
+        fd = os.open(self.path(rel), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(22, "not a regular file")
+            return os.fdopen(fd, "rb")
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def head(self, rel, count=4096):
+        with self.open_binary(rel) as fh:
+            return fh.read(count)
+
+
+def open_text(src, rel):
+    return io.TextIOWrapper(src.open_binary(rel), encoding="utf-8-sig", errors="surrogateescape", newline="")
+
+
+def undecodable(text):
+    return any("\udc80" <= c <= "\udcff" for c in text)
+
+
+def binary_reason(src, rel):
+    """Why a log cannot be read as UTF-8 text at all (a UTF-16 byte-order mark, or NUL bytes in its first 4 KiB), or None."""
+    try:
+        head = src.head(rel)
+    except OSError:
+        return None
+    if head[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return "the file is UTF-16 (byte-order mark): it is not read as UTF-8 text"
+    if b"\x00" in head:
+        return "the file holds NUL bytes in its first 4 KiB: it is binary or UTF-16 without a mark, and is not read as text"
+    return None
+
+
+def inside_collected_data(rel):
+    return any(part in INSIDE_COLLECTED for part in rel.split("/")[:-1]) or any(part in INSIDE_COLLECTED for part in rel.split(os.sep)[:-1])
+
+
+def parent_of(rel):
+    cut = max(rel.rfind("/"), rel.rfind(os.sep))
+    return rel[:cut] if cut >= 0 else ""
+
+
+def name_of(rel):
+    return rel[max(rel.rfind("/"), rel.rfind(os.sep)) + 1:]
+
+
+def join_rel(*parts):
+    return "/".join(p for p in parts if p)
+
+
+def discover(census):
+    """The collectors' records among the files of a census, by name: KAPE runs (a directory and a run id), UAC logs and hash
+    lists, Velociraptor containers (a directory with uploads.json or collection_context.json, its results/*.json and its
+    log.json). A record found inside collected data (below [root] or uploads) belongs to the source host and is listed apart,
+    never read. Sorted by the name's bytes, so a run reads the same records in the same order every time."""
+    found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "velo_encrypted": {}, "inside_collected": []}
+    payloads = {}
+    for position, (rel, size, kind) in enumerate(sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0]))):
+        if census_clock(census, position, "the search for the collectors' records"):
+            break
+        name = name_of(rel)
+        low = name.lower()
+        directory = parent_of(rel)
+        marker = None
+        for suffix, key in (("_copylog.csv", "copy"), ("_skiplog.csv", "skip"), ("_consolelog.txt", "console")):
+            if low.endswith(suffix):
+                marker = ("kape", key, name[:-len(suffix)])
+        if name == "uac.log":
+            marker = ("uac", None, None)
+        elif low in HASH_LIST_NAMES:
+            marker = ("uac_hash", None, None)
+        elif name in ("uploads.json", "collection_context.json"):
+            marker = ("velociraptor", "uploads" if name == "uploads.json" else "context", None)
+        elif name.endswith(".json") and name_of(directory) == "results":
+            marker = ("velo_result", None, None)
+        elif name == "log.json":
+            marker = ("velo_log", None, None)
+        if name == ENCRYPTED_PAYLOAD and not inside_collected_data(rel):
+            payloads[directory] = {"payload": rel, "metadata": None, "other": False}
+        if marker is None:
+            continue
+        if inside_collected_data(rel):
+            if marker[0] in ("kape", "uac", "uac_hash", "velociraptor"):
+                found["inside_collected"].append(rel)
+            continue
+        if marker[0] == "kape":
+            found["kape"].setdefault((directory, marker[2]), {})[marker[1]] = rel
+        elif marker[0] == "uac":
+            found["uac_logs"].append(rel)
+        elif marker[0] == "uac_hash":
+            found["uac_hashes"].append(rel)
+        elif marker[0] == "velociraptor":
+            found["velociraptor"].setdefault(directory, {})[marker[1]] = rel
+        elif marker[0] == "velo_result":
+            found["velo_results"].setdefault(parent_of(directory), []).append(rel)
+        else:
+            found["velo_logs"][directory] = rel
+    found["uac_dirs"] = sorted(census.marked_dirs, key=os.fsencode)
+    if payloads:
+        # an encrypted Velociraptor collection is an outer container of data.zip and, when the collector was given metadata, metadata.json: the
+        # directory that holds those and nothing else (a file or a link beside them makes it an ordinary directory with a file named data.zip)
+        for position, (rel, size, kind) in enumerate(census.entries()):
+            if census_clock(census, position, "the search for encrypted collections"):
+                break
+            entry = payloads.get(parent_of(rel))
+            if entry is None:
+                continue
+            name = name_of(rel)
+            if name == ENCRYPTED_PAYLOAD and kind == "f":
+                continue
+            if name == ENCRYPTED_METADATA and kind == "f":
+                entry["metadata"] = rel
+            else:
+                entry["other"] = True
+        found["velo_encrypted"] = {d: {"payload": e["payload"], "metadata": e["metadata"]} for d, e in payloads.items() if not e["other"]}
+    return found
+
+
+# ---- the adapters: a collector's own record, one canonical record per row ------------------------------------------------
+
+
+class Sink:
+    """Where an adapter puts what it reads. A tool subclasses it to write tables; the default keeps the lists."""
+
+    def __init__(self):
+        self.records = []
+        self.problems = []
+        self.count = 0
+
+    def record(self, rec):
+        self.count += 1
+        rec["n"] = self.count
+        self.records.append(rec)
+
+    def problem(self, row):
+        self.problems.append(row)
+
+
+def new_source(rel, collector, adapter, kind, **extra):
+    return {"log": rel, "collector": collector, "kind": kind, "adapter": ADAPTERS[adapter]["id"], "status": "parsed", "rows": 0, "records": 0,
+            "malformed_rows": 0, "problems_total": 0, "problems": [], **extra}
+
+
+def note(sink, source, locator, error, **extra):
+    source["problems_total"] += 1
+    row = {"log": source["log"], "locator": locator, "error": error, **extra}
+    if len(source["problems"]) < REC_FIRST:
+        source["problems"].append({"locator": locator, "error": error})
+    sink.problem(row)
+
+
+def emit(sink, source, run, base, **fields):
+    source["records"] += 1
+    rec = {"collector": source["collector"], "run": run, "directory": base or ".", "adapter": source["adapter"], "log": source["log"]}
+    rec.update(fields)
+    sink.record(rec)
+
+
+def whole_int(text):
+    if isinstance(text, bool):
+        return None
+    if isinstance(text, int):
+        return text if text >= 0 else None
+    if isinstance(text, str) and re.fullmatch(r"[0-9]{1,20}", text.strip()):
+        return int(text.strip())
+    return None
+
+
+def hash_claim(algorithm, value):
+    """The lower-case hex of a digest of the length its algorithm has, else None (the raw text stays in the row's fields). A row's
+    claims are a dictionary of algorithm to digest: the key says which algorithm the collector used, and no digest is read as another."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or not re.fullmatch(r"[0-9A-Fa-f]+", value):
+        return None
+    want = {"md5": 32, "sha1": 40, "sha256": 64}.get(algorithm)
+    if want is None or len(value) != want:
+        return None
+    return value.lower()
+
+
+def read_kape_csv(src, rel, kind, run, base, sink):
+    """A KAPE copy or skip log, streamed. A copy-log row becomes a `copy` record (the source path, the destination path, the size,
+    the SHA-1 of the source and the times, each as the collector wrote it, and the whole row by column name); a skip-log row a
+    `skip` record with the collector's own words. A header without the columns an adapter needs is `partial` (copy log: rows are
+    counted, nothing else is read) and a log that is binary, UTF-16 or unreadable `unsupported` or `unreadable`."""
+    adapter = "kape_copy_log" if kind == "copy" else "kape_skip_log"
+    source = new_source(rel, "KAPE", adapter, kind + "_log", run=run, directory=base or ".", columns=[], unrecognised_columns=[], rows_with_undecodable_bytes=0)
+    reason = binary_reason(src, rel)
+    if reason:
+        source.update(status="unsupported", reason=reason)
+        return source
+    try:
+        fh = open_text(src, rel)
+    except OSError as exc:
+        source.update(status="unreadable", reason=describe(exc))
+        return source
+    csv.field_size_limit(REC_LINE)
+    with fh:
+        reader = csv.reader(fh, strict=True)
+        try:
+            header = next(reader)
+        except StopIteration:
+            source.update(status="unsupported", reason="the file is empty: no header row")
+            return source
+        except (csv.Error, OSError) as exc:
+            source.update(status="unsupported", reason="the header row could not be read (%s)" % describe(exc))
+            return source
+        names = [h.strip() for h in header]
+        lowered = [n.lower() for n in names]
+        source["columns"] = names
+        known = KAPE_COPY_KNOWN if kind == "copy" else KAPE_SKIP_KNOWN
+        source["unrecognised_columns"] = [n for n, low in zip(names, lowered) if low not in known]
+        column = {low: i for i, low in reversed(list(enumerate(lowered)))}
+        recognised = True
+        if kind == "copy":
+            if "sourcefile" not in column:
+                recognised = False
+                source.update(status="partial", reason="no SourceFile column: rows are counted, nothing else is read")
+        elif not any(c in column for c in SKIP_TARGET_COLUMNS + SKIP_REASON_COLUMNS):
+            recognised = False
+            source.update(status="partial", reason="neither a target column nor a reason column is recognised: every row is kept whole in "
+                          "unrecognised_row records, and none is a failure")
+        target_col = next((column[c] for c in SKIP_TARGET_COLUMNS if c in column), None)
+        reason_col = next((column[c] for c in SKIP_REASON_COLUMNS if c in column), None)
+
+        def cell(row, name):
+            i = column.get(name)
+            return row[i] if i is not None and i < len(row) else None
+
+        ordinal, consecutive = 0, 0
+        while True:
+            if out_of_time():
+                source.update(status="partial", reason="the time limit stopped the read after row %d" % ordinal)
+                break
+            start_line = reader.line_num + 1                  # a record can span lines (a quoted newline): its locator is the line it starts on
+            try:
+                row = next(reader)
+            except StopIteration:
+                break
+            except csv.Error as exc:
+                source["malformed_rows"] += 1
+                consecutive += 1
+                note(sink, source, {"line": start_line}, describe(exc))
+                if consecutive >= MAX_CONSECUTIVE_BAD_ROWS:
+                    source.update(status="partial", reason="the read stopped after %d consecutive unreadable rows" % consecutive)
+                    break
+                continue
+            consecutive = 0
+            if not row:
+                continue
+            ordinal += 1
+            source["rows"] = ordinal
+            bad = len(row) != len(names)
+            if bad:
+                source["malformed_rows"] += 1
+                note(sink, source, {"line": start_line, "row": ordinal}, "%d fields where the header has %d" % (len(row), len(names)))
+            if any(undecodable(v) for v in row):
+                source["rows_with_undecodable_bytes"] += 1
+            fields = {n: v for n, v in zip(names, row)}
+            locator = {"log": rel, "row": ordinal, "line": start_line}
+            flags = ["malformed_row"] if bad else []
+            if not recognised:
+                emit(sink, source, run, base, kind="unrecognised_row", outcome="recorded", locator=locator, fields=fields, flags=flags)
+            elif kind == "copy":
+                size_raw = cell(row, "filesize")
+                claim = hash_claim("sha1", cell(row, "sourcefilesha1"))
+                emit(sink, source, run, base, kind="copy", outcome="copied", locator=locator,
+                     source_path_claim=cell(row, "sourcefile"), delivered_path_claim=cell(row, "destinationfile"),
+                     size_claim=whole_int(size_raw), hash_claims={"sha1": claim} if claim else {},
+                     times={n: v for n, v in zip(names, row) if n.lower() in ("copiedtimestamp", "createdonutc", "modifiedonutc", "lastaccessedonutc")},
+                     fields={n: v for n, v in fields.items() if n.lower() not in KAPE_COPY_MAPPED}, flags=flags + (["size_not_a_whole_number"] if size_raw not in (None, "") and whole_int(size_raw) is None else []) +
+                     (["hash_claim_not_a_digest"] if cell(row, "sourcefilesha1") not in (None, "") and not claim else []))
+            else:
+                target = row[target_col] if target_col is not None and target_col < len(row) else None
+                why = row[reason_col] if reason_col is not None and reason_col < len(row) else None
+                claim = hash_claim("sha1", cell(row, "sourcefilesha1"))
+                emit(sink, source, run, base, kind="skip", outcome="skipped", locator=locator, source_path_claim=target, delivered_path_claim=None,
+                     reason=why, hash_claims={"sha1": claim} if claim else {},
+                     fields={n: v for n, v in fields.items() if n.lower() not in KAPE_SKIP_KNOWN}, flags=flags)
+        if source["malformed_rows"] and source["status"] == "parsed":
+            source["status"] = "partial"
+            source["reason"] = "some rows are malformed (see problems): each is a record with the flag malformed_row"
+    return source
+
+
+def read_console(src, rel, run, base, sink):
+    """A KAPE console log: its levelled lines are counted by level, and a warning or an error is a record (a recorded line of the
+    collector's own, never a failure count: it says what the collector wrote, not that a target was lost)."""
+    source = new_source(rel, "KAPE", "kape_console_log", "console_log", run=run, directory=base or ".", lines=0, levels={}, unmatched_lines=0)
+    reason = binary_reason(src, rel)
+    if reason:
+        source.update(status="unsupported", reason=reason)
+        return source
+    try:
+        fh = open_text(src, rel)
+    except OSError as exc:
+        source.update(status="unreadable", reason=describe(exc))
+        return source
+    with fh:
+        number = 0
+        while True:
+            if out_of_time():
+                source.update(status="partial", reason="the time limit stopped the read after line %d" % number)
+                break
+            try:
+                line = fh.readline(REC_LINE)
+            except OSError as exc:
+                source.update(status="partial", reason="the read stopped at line %d (%s)" % (number + 1, describe(exc)))
+                break
+            if not line:
+                break
+            number += 1
+            source["lines"] = number
+            if len(line) == REC_LINE and not line.endswith("\n"):
+                while True:
+                    rest = fh.readline(REC_LINE)
+                    if not rest or rest.endswith("\n"):
+                        break
+            text = line.rstrip("\r\n")
+            found = CONSOLE_LINE.match(text)
+            if found:
+                level = found.group("level")
+                source["levels"][level] = source["levels"].get(level, 0) + 1
+                if level in ("WRN", "ERR"):
+                    emit(sink, source, run, base, kind="log_event", outcome="warning" if level == "WRN" else "error", counts_as_failure=False,
+                         locator={"log": rel, "line": number}, text=text)
+            elif text.strip():
+                source["unmatched_lines"] += 1
+    if source["unmatched_lines"] and source["status"] == "parsed":
+        source["status"] = "partial"
+        source["reason"] = ("%d line(s) match no levelled shape this adapter knows (a wrapped message, a banner, another version's form): "
+                            "counted, never read as levelled" % source["unmatched_lines"])
+    return source
+
+
+def read_uac_log(src, rel, sink):
+    """UAC's log, streamed. A line with an ERR or ERROR level is a record and a failure; a command's stderr line is counted apart;
+    a line that matches no event shape is counted and kept unlabelled (never a failure); a summary that says 0 errors is not one."""
+    base = parent_of(rel)
+    source = new_source(rel, "UAC", "uac_log", "uac_log", run=base or ".", directory=base or ".", lines=0, events=0, levels={}, unmatched_lines=0, command_stderr_lines=0,
+                        long_lines=0, unlabelled_lines_with_failure_words=0)
+    reason = binary_reason(src, rel)
+    if reason:
+        source.update(status="unsupported", reason=reason)
+        return source
+    try:
+        fh = io.TextIOWrapper(src.open_binary(rel), encoding="utf-8", errors="surrogateescape", newline="")
+    except OSError as exc:
+        source.update(status="unreadable", reason=describe(exc))
+        return source
+    with fh:
+        number = 0
+        while True:
+            if out_of_time():
+                source.update(status="partial", reason="the time limit stopped the read after line %d" % number)
+                break
+            try:
+                line = fh.readline(REC_LINE)
+            except OSError as exc:
+                source.update(status="partial", reason="the read stopped at line %d (%s)" % (number + 1, describe(exc)))
+                break
+            if not line:
+                break
+            number += 1
+            long_line = len(line) == REC_LINE and not line.endswith("\n")
+            if long_line:
+                source["long_lines"] += 1
+                while True:
+                    rest = fh.readline(REC_LINE)
+                    if not rest or rest.endswith("\n"):
+                        break
+            source["lines"] = number
+            text = line.rstrip("\r\n")
+            low = text.lower()
+            found = UAC_EVENT.match(text)
+            if found:
+                source["events"] += 1
+                level = found.group("level")
+                source["levels"][level] = source["levels"].get(level, 0) + 1
+                if level in UAC_ERROR_LEVELS:
+                    emit(sink, source, run=base or ".", base=base, kind="log_event", outcome="error", counts_as_failure=True,
+                         locator={"log": rel, "line": number}, text=text, flags=["long_line"] if long_line else [])
+                elif level in UAC_COMMAND_LEVELS and " 2> " in text:
+                    source["command_stderr_lines"] += 1
+            elif text.strip():
+                source["unmatched_lines"] += 1
+                if any(w in low for w in ("error", "cannot", "permission denied", "failed", "no such file")):
+                    source["unlabelled_lines_with_failure_words"] += 1
+                    note(sink, source, {"line": number}, "a line with a failure word that matches no event shape: counted, never a failure", text=text)
+    if source["status"] == "parsed" and source["events"] == 0:
+        source["status"] = "unsupported"
+        source["reason"] = "no line starts with a date, a time and a level word this adapter knows: failures are not counted from this log"
+    elif source["status"] == "parsed" and source["unmatched_lines"]:
+        source["status"] = "partial"
+        source["reason"] = "%d line(s) match no recognised event shape: counted, kept unlabelled, never counted as failures" % source["unmatched_lines"]
+    return source
+
+
+def read_hash_list(src, rel, sink):
+    """One 'digest  path' line per file (the md5sum, sha1sum and sha256sum forms, or 'ALGORITHM (path) = digest'). Each line is a
+    `hash_claim` record: a claim about a file of the source host, named by its path there; whether the delivery holds that file
+    is the join's to say. The algorithm is read from the digest's length and checked against the list's name."""
+    base = parent_of(rel)
+    if name_of(base) == "hash_executables":                  # UAC writes the list in its own directory beside [root]
+        base = parent_of(base)
+    expected = HASH_LIST_NAMES.get(name_of(rel).lower())
+    source = new_source(rel, "UAC", "hash_list", "hash_list", run=base or ".", directory=base or ".", lines=0, algorithm=expected, unmatched_lines=0)
+    reason = binary_reason(src, rel)
+    if reason:
+        source.update(status="unsupported", reason=reason)
+        return source
+    try:
+        fh = io.TextIOWrapper(src.open_binary(rel), encoding="utf-8", errors="surrogateescape", newline="")
+    except OSError as exc:
+        source.update(status="unreadable", reason=describe(exc))
+        return source
+    with fh:
+        number = 0
+        while True:
+            if out_of_time():
+                source.update(status="partial", reason="the time limit stopped the read after line %d" % number)
+                break
+            try:
+                line = fh.readline(REC_LINE)
+            except OSError as exc:
+                source.update(status="partial", reason="the read stopped at line %d (%s)" % (number + 1, describe(exc)))
+                break
+            if not line:
+                break
+            number += 1
+            source["lines"] = number
+            if len(line) == REC_LINE and not line.endswith("\n"):
+                while True:
+                    rest = fh.readline(REC_LINE)
+                    if not rest or rest.endswith("\n"):
+                        break
+            text = line.rstrip("\r\n")
+            if not text.strip():
+                continue
+            found = HASH_LINE.match(text)
+            digest = path = None
+            if found:
+                digest, path = found.group("hex"), found.group("path")
+            else:
+                bsd = HASH_LINE_BSD.match(text)
+                if bsd:
+                    digest, path = bsd.group("hex"), bsd.group("path")
+            if digest is None:
+                source["unmatched_lines"] += 1
+                continue
+            algorithm = HASH_LENGTHS.get(len(digest))
+            flags = []
+            if expected and algorithm != expected:
+                flags.append("digest_length_disagrees_with_the_list_name")
+                note(sink, source, {"line": number}, "a %d-character digest in a list named for %s" % (len(digest), expected))
+            claim = hash_claim(algorithm, digest) if algorithm else None
+            emit(sink, source, run=base or ".", base=base, kind="hash_claim", outcome="recorded", locator={"log": rel, "line": number},
+                 source_path_claim=path, delivered_path_claim=None, hash_claims={algorithm: claim} if claim else {}, flags=flags)
+    if source["unmatched_lines"] and source["status"] == "parsed":
+        source["status"] = "partial"
+        source["reason"] = "%d line(s) are not a digest and a path: counted, read as nothing" % source["unmatched_lines"]
+    return source
+
+
+def jsonl_rows(fh, source, sink, label):
+    """(line number, row) for each JSON object of a JSON Lines stream; a line that is not valid JSON, not an object, or too long
+    is counted and located and the stream goes on. A JSON array is not JSON Lines: it ends the stream with `unsupported`."""
+    number = 0
+    first = True
+    while True:
+        if out_of_time():
+            source.update(status="partial", reason="the time limit stopped the read of %s after line %d" % (label, number))
+            return
+        try:
+            line = fh.readline(REC_LINE)
+        except OSError as exc:
+            source.update(status="partial", reason="the read of %s stopped at line %d (%s)" % (label, number + 1, describe(exc)))
+            return
+        if not line:
+            return
+        number += 1
+        if len(line) == REC_LINE and not line.endswith("\n"):
+            source["malformed_rows"] += 1
+            note(sink, source, {"file": label, "line": number}, "a line longer than %d bytes: read no further" % REC_LINE)
+            while True:
+                rest = fh.readline(REC_LINE)
+                if not rest or rest.endswith("\n"):
+                    break
+            continue
+        if not line.strip():
+            continue
+        if first and line.lstrip().startswith("["):
+            source.update(status="unsupported", reason="%s is a JSON array, not JSON Lines: nothing was read from it" % label)
+            return
+        first = False
+        try:
+            row = json.loads(line)
+        except (ValueError, RecursionError):
+            source["malformed_rows"] += 1
+            note(sink, source, {"file": label, "line": number}, "not valid JSON")
+            continue
+        if not isinstance(row, dict):
+            source["non_object_rows"] += 1
+            note(sink, source, {"file": label, "line": number}, "a JSON line that is not an object")
+            continue
+        yield number, row
+
+
+def upload_records(value, depth=0):
+    """Every upload record under `value`: a dictionary with a key only an upload record has (StoredName, UploadId, StoredSize,
+    Components). Velociraptor puts an upload in a result row as a nested record."""
+    if depth > 4:
+        return
+    if isinstance(value, dict):
+        if any(k in value for k in UPLOAD_MARKERS):
+            yield value
+            return
+        for child in value.values():
+            yield from upload_records(child, depth + 1)
+    elif isinstance(value, list):
+        for child in value[:1000]:
+            yield from upload_records(child, depth + 1)
+
+
+def has_error(value):
+    err = value.get("Error")
+    return err not in (None, "", [], {})
+
+
+def text_of(value):
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+
+
+def claims_of(upload):
+    """The digests a Velociraptor upload record carries, under the key spellings its versions use."""
+    out = {}
+    for algorithm, keys in (("sha256", ("sha256", "Sha256", "SHA256")), ("md5", ("md5", "Md5", "MD5")), ("sha1", ("sha1", "Sha1", "SHA1"))):
+        for key in keys:
+            if isinstance(upload.get(key), str) and upload[key].strip():
+                claim = hash_claim(algorithm, upload[key])
+                if claim:
+                    out[algorithm] = claim
+                break
+    return out
+
+
+def read_velociraptor(src, directory, files, found, sink):
+    """One Velociraptor collection container: a directory holding uploads.json and/or collection_context.json. The version this
+    pack pins writes a failed upload to no row of uploads.json: it is a result row's upload record with an Error, and an ERROR line
+    of log.json. So the container is read whole only when results/*.json and log.json were read as well, and a source that is not
+    there makes the container `partial`: the outcomes it would have recorded are unknown, which is not zero."""
+    anchor = files.get("uploads") or files.get("context")
+    source = new_source(anchor, "Velociraptor", "velociraptor_container", "velociraptor_container", run=directory or ".", directory=directory or ".", container=directory or ".",
+                        sources={}, non_object_rows=0, uploads_rows=0, rows_stored_smaller_than_file=0, result_rows=0, upload_records=0,
+                        rows_with_upload_error=0, log_levels={}, error_lines=0, warning_lines=0, artefacts={})
+    partial = []
+
+    def part(name, status, **extra):
+        source["sources"][name] = {"status": status, **extra}
+        if status != "parsed":
+            partial.append("%s is %s" % (name, status))
+
+    def sub_status(sub):
+        if sub["status"] != "parsed":
+            return sub["status"]
+        return "partial" if sub["malformed_rows"] or sub["non_object_rows"] else "parsed"
+
+    def sub_of():
+        return {"log": source["log"], "status": "parsed", "malformed_rows": 0, "non_object_rows": 0, "problems": source["problems"], "problems_total": 0}
+
+    def fold(sub):
+        source["malformed_rows"] += sub["malformed_rows"]
+        source["non_object_rows"] += sub["non_object_rows"]
+        source["problems_total"] += sub["problems_total"]
+
+    if files.get("uploads"):
+        rel = files["uploads"]
+        reason = binary_reason(src, rel)
+        if reason:
+            part("uploads.json", "unsupported", reason=reason)
+        else:
+            sub = sub_of()
+            try:
+                fh = open_text(src, rel)
+            except OSError as exc:
+                part("uploads.json", "unreadable", reason=describe(exc))
+            else:
+                with fh:
+                    for number, row in jsonl_rows(fh, sub, sink, "uploads.json"):
+                        source["uploads_rows"] += 1
+                        size, stored = row.get("file_size"), row.get("uploaded_size")
+                        flags = []
+                        if isinstance(size, int) and isinstance(stored, int) and stored < size and row.get("Type") != "idx":
+                            source["rows_stored_smaller_than_file"] += 1
+                            flags.append("stored_smaller_than_file")
+                        if row.get("Type") == "idx":
+                            flags.append("sparse_index")
+                        vfs = row.get("vfs_path")
+                        emit(sink, source, directory or ".", directory, kind="upload", outcome="uploaded", locator={"log": rel, "line": number},
+                             source_path_claim=None, delivered_path_claim=vfs if isinstance(vfs, str) else None,
+                             size_claim=stored if isinstance(stored, int) and not isinstance(stored, bool) and stored >= 0 else None,
+                             logical_size_claim=size if isinstance(size, int) and not isinstance(size, bool) and size >= 0 else None,
+                             hash_claims={}, times={k: row[k] for k in ("Timestamp", "started") if k in row}, fields=row, flags=flags)
+                fold(sub)
+                part("uploads.json", sub_status(sub), **({"reason": sub["reason"]} if "reason" in sub else {}))
+    else:
+        part("uploads.json", "not_found", reason="no uploads.json beside collection_context.json: the container's index of stored files is absent")
+
+    names = sorted(found["velo_results"].get(directory, []), key=os.fsencode)
+    if not names:
+        part("results/*.json", "not_found", reason="no results/*.json beside the container's index: a failed upload is recorded there in this version")
+    else:
+        sub = sub_of()
+        for rel in names:
+            artefact = name_of(rel)[:-len(".json")]
+            if len(source["artefacts"]) < 100000:
+                source["artefacts"].setdefault(artefact, 0)
+            try:
+                fh = open_text(src, rel)
+            except OSError as exc:
+                note(sink, source, {"file": rel}, "a results file could not be opened: %s" % describe(exc))
+                sub["status"] = "partial"
+                continue
+            with fh:
+                for number, row in jsonl_rows(fh, sub, sink, name_of(rel)):
+                    source["result_rows"] += 1
+                    if artefact in source["artefacts"]:
+                        source["artefacts"][artefact] += 1
+                    for upload in upload_records(row):
+                        source["upload_records"] += 1
+                        failed = has_error(upload)
+                        if failed:
+                            source["rows_with_upload_error"] += 1
+                        stored_name = upload.get("StoredName")
+                        components = upload.get("Components")
+                        delivered = stored_name if isinstance(stored_name, str) and stored_name else (
+                            "/".join(str(c) for c in components) if isinstance(components, list) and components and all(isinstance(c, (str, int)) for c in components) else None)
+                        path = next((upload[k] for k in UPLOAD_PATH_KEYS if isinstance(upload.get(k), str) and upload.get(k)), None)
+                        size, stored = upload.get("Size"), upload.get("StoredSize")
+                        flags = []
+                        if isinstance(size, int) and isinstance(stored, int) and stored < size:
+                            flags.append("stored_smaller_than_file")
+                        emit(sink, source, directory or ".", directory, kind="upload_result", outcome="upload_error" if failed else "uploaded",
+                             counts_as_failure=failed, locator={"log": rel, "line": number}, artefact=artefact, source_path_claim=path,
+                             delivered_path_claim=delivered, accessor=upload.get("Accessor") if isinstance(upload.get("Accessor"), str) else None,
+                             size_claim=stored if isinstance(stored, int) and not isinstance(stored, bool) and stored >= 0 else None,
+                             logical_size_claim=size if isinstance(size, int) and not isinstance(size, bool) and size >= 0 else None,
+                             hash_claims=claims_of(upload), reason=text_of(upload.get("Error")) if failed else None, fields=upload, flags=flags)
+        fold(sub)
+        part("results/*.json", sub_status(sub), files=len(names), **({"reason": sub["reason"]} if "reason" in sub else {}))
+
+    log_rel = found["velo_logs"].get(directory)
+    if not log_rel:
+        part("log.json", "not_found", reason="no log.json beside the container's index: the collection's own errors are recorded there")
+    else:
+        sub = sub_of()
+        try:
+            fh = open_text(src, log_rel)
+        except OSError as exc:
+            part("log.json", "unreadable", reason=describe(exc))
+        else:
+            with fh:
+                for number, row in jsonl_rows(fh, sub, sink, "log.json"):
+                    level = row.get("level")
+                    level = level if isinstance(level, str) else "?"
+                    word = level.upper() if level.upper() in LOG_LEVEL_WORDS else "other"
+                    source["log_levels"][word] = source["log_levels"].get(word, 0) + 1
+                    if level.upper() in ("ERROR", "WARN", "WARNING"):
+                        is_error = level.upper() == "ERROR"
+                        source["error_lines" if is_error else "warning_lines"] += 1
+                        emit(sink, source, directory or ".", directory, kind="log_event", outcome="error" if is_error else "warning",
+                             counts_as_failure=is_error, locator={"log": log_rel, "line": number}, text=text_of(row.get("message")))
+            fold(sub)
+            part("log.json", sub_status(sub), **({"reason": sub["reason"]} if "reason" in sub else {}))
+    if partial:
+        source["status"] = "partial" if any(v["status"] == "parsed" for v in source["sources"].values()) else "unsupported"
+        source["reason"] = "; ".join(partial) + ": the failure count is not determined from this container"
+    return source
+
+
+def read_encryption_metadata(src, rel):
+    """What metadata.json beside data.zip says: which of the documented keys it holds and how long each value is. A value is withheld whole
+    (it may be an encrypted password or a key); nothing of it is printed. The file is read to 64 KiB at most."""
+    info = {"present": True, "bytes": None, "keys": [], "other_keys": 0, "values": {}}
+    try:
+        with src.open_binary(rel) as fh:
+            data = fh.read(ENCRYPTION_METADATA_BYTES + 1)
+    except (OSError, ValueError) as exc:
+        info["problem"] = "metadata.json could not be read (%s)" % describe(exc)
+        return info
+    if len(data) > ENCRYPTION_METADATA_BYTES:
+        info["problem"] = "metadata.json is over %d bytes: not parsed" % ENCRYPTION_METADATA_BYTES
+        return info
+    info["bytes"] = len(data)
+    try:
+        doc = json.loads(data.decode("utf-8-sig"))
+    except (ValueError, RecursionError):
+        info["problem"] = "metadata.json is not JSON text: not read"
+        return info
+    if not isinstance(doc, dict):
+        info["problem"] = "metadata.json is not a JSON object: not read"
+        return info
+    for key in ENCRYPTION_KEYS:
+        if key in doc:
+            value = doc[key]
+            try:
+                text = value if isinstance(value, str) else json.dumps(value)
+            except (ValueError, TypeError, RecursionError):
+                text = ""
+            info["keys"].append(key)
+            info["values"][key] = withhold_value(text, "metadata.json, %s" % key)
+    info["other_keys"] = len(doc) - len(info["keys"])
+    return info
+
+
+def read_velociraptor_encrypted(src, directory, files, sink):
+    """One encrypted Velociraptor collection (see the velociraptor_encrypted adapter), or None when the directory only looks like one. It is
+    recognised by data.zip being an encrypted member of the zip the source reads (`src.encrypted`) or by metadata.json holding the Scheme
+    key. The records are inside the encrypted payload: nothing is decrypted, no record is read, the source is `unsupported`, and no failure
+    count is determined for the run."""
+    payload, meta = files["payload"], files.get("metadata")
+    info = read_encryption_metadata(src, meta) if meta else None
+    flagged = payload in getattr(src, "encrypted", ())
+    named = info is not None and "Scheme" in info["keys"]
+    if not (flagged or named):
+        return None
+    basis = (["data.zip is an encrypted member of the zip (general-purpose flag bit 0)"] if flagged else []) + (["metadata.json holds the Scheme key"] if named else [])
+    source = new_source(payload, "Velociraptor", "velociraptor_encrypted", "velociraptor_encrypted", run=directory or ".", directory=directory or ".", container=directory or ".",
+                        payload=payload, recognised_by=basis, decrypted=False, metadata=info if info is not None else {"present": False})
+    source.update(status="unsupported", reason=ADAPTERS["velociraptor_encrypted"]["unsupported_reason"])
+    return source
+
+
+def read_collection(src, found, sink):
+    """Every recognised record of a census, in a fixed order: KAPE runs, UAC logs and hash lists, Velociraptor containers. Returns
+    the source summaries (one per log, one per container), each with its adapter, its status and why."""
+    sources = []
+    for (directory, run_id), logs in sorted(found["kape"].items(), key=lambda kv: (os.fsencode(kv[0][0]), os.fsencode(kv[0][1]))):
+        run = run_id
+        if "copy" in logs:
+            sources.append(read_kape_csv(src, logs["copy"], "copy", run, directory, sink))
+        if "skip" in logs:
+            sources.append(read_kape_csv(src, logs["skip"], "skip", run, directory, sink))
+        if "console" in logs:
+            sources.append(read_console(src, logs["console"], run, directory, sink))
+    for rel in found["uac_logs"]:
+        sources.append(read_uac_log(src, rel, sink))
+    for rel in found["uac_hashes"]:
+        sources.append(read_hash_list(src, rel, sink))
+    for directory, files in sorted(found["velociraptor"].items(), key=lambda kv: os.fsencode(kv[0])):
+        sources.append(read_velociraptor(src, directory, files, found, sink))
+    for directory, files in sorted(found["velo_encrypted"].items(), key=lambda kv: os.fsencode(kv[0])):
+        source = read_velociraptor_encrypted(src, directory, files, sink)
+        if source is not None:
+            sources.append(source)
+    return sources
+
+
+# ---- the join: a record to the delivered file it names --------------------------------------------------------------------
+
+
+def path_parts(text):
+    """The components of a path as a collector wrote it, whichever separator, without a drive prefix (C: or C$)."""
+    parts = [p for p in re.split(r"[\\/]+", text) if p]
+    if parts and re.fullmatch(r"[A-Za-z][:$]", parts[0]):
+        parts = parts[1:]
+    return parts
+
+
+def percent_quote(part):
+    return part.replace("%", "%25").replace(":", "%3A")
+
+
+def candidate_paths(rec):
+    """The delivered paths (relative to the record's own directory) a record may name, with how each was derived. A KAPE copy row
+    names a destination whose tail is the path in the delivered tree; a Velociraptor row a stored name under uploads/; a UAC hash
+    list a file of the source host that the collector's [root] directory would hold."""
+    collector, kind = rec.get("collector"), rec.get("kind")
+    claim = rec.get("delivered_path_claim")
+    if collector == "KAPE" and kind == "copy" and isinstance(claim, str):
+        return "suffix", path_parts(claim)
+    if collector == "Velociraptor" and isinstance(claim, str):
+        raw = [p for p in claim.split("/") if p]
+        forms = []
+        for lead in ((), ("uploads",), ("uploads", "auto")):
+            where = "/".join(lead) or "the container"
+            forms.append((lead + tuple(raw), "stored name under " + where))
+            forms.append((lead + tuple(percent_quote(p) for p in raw), "stored name with the colon and the percent sign escaped, under " + where))
+        return "exact", forms
+    if collector == "UAC" and kind == "hash_claim" and isinstance(rec.get("source_path_claim"), str):
+        parts = [p for p in rec["source_path_claim"].split("/") if p]
+        return "exact", [(("[root]",) + tuple(parts), "UAC's [root] convention: a hypothesis, not a record of the collector")]
+    return None, None
+
+
+def resolve(census, rec):
+    """{status, rel, matched_by, depth, candidates}: `found` (one file), `ambiguous` (several files differing by case, or only the
+    file name matches), `missing` (nothing, and the census is complete), `unknown` (nothing, and the census is not complete), or
+    `no_claim`. A link or a special file at the name is `not_regular`. The longest tail of a KAPE destination wins; a tail of one
+    component is a weak match and is never `found`."""
+    how, spec = candidate_paths(rec)
+    base = rec.get("directory") or ""
+    base = "" if base == "." else base
+    if how is None:
+        return {"status": "no_claim", "rel": None, "matched_by": None, "depth": 0, "candidates": []}
+    hits = []
+    if how == "suffix":
+        parts = spec
+        if not parts:
+            return {"status": "no_claim", "rel": None, "matched_by": None, "depth": 0, "candidates": []}
+        for i in range(len(parts)):
+            depth = len(parts) - i
+            hits = census.lookup(join_rel(base, "/".join(parts[i:])))
+            if hits:
+                weak = depth == 1 and len(parts) > 1
+                return finish(hits, "the destination's last %d component(s) under the log's directory%s" % (depth, " (only the file name matches)" if weak else ""),
+                              depth, weak)
+    else:
+        for parts, why in spec:
+            hits = census.lookup(join_rel(base, "/".join(parts)))
+            if hits:
+                return finish(hits, why, len(parts), False)
+    return {"status": "missing" if census.complete else "unknown", "rel": None, "matched_by": None, "depth": 0, "candidates": []}
+
+
+def finish(hits, why, depth, weak):
+    rels = sorted({h[0] for h in hits}, key=os.fsencode)
+    regular = [h for h in hits if h[2] == "f"]
+    if weak:
+        return {"status": "ambiguous", "rel": rels[0] if len(rels) == 1 else None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
+                "all_candidates": rels, "reason": "only the file name matches"}
+    if len(rels) > 1:
+        return {"status": "ambiguous", "rel": None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
+                "all_candidates": rels, "reason": "%d delivered files differ from each other only by case" % len(rels)}
+    if len(hits) > len(rels):
+        return {"status": "ambiguous", "rel": None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
+                "all_candidates": rels, "reason": "the name appears %d times (an archive can hold one name twice)" % len(hits)}
+    if not regular:
+        return {"status": "not_regular", "rel": rels[0], "matched_by": why, "depth": depth, "candidates": rels,
+                "reason": "the delivered entry is a link or a special file: it is not followed"}
+    return {"status": "found", "rel": rels[0], "size": regular[0][1], "matched_by": why, "depth": depth, "candidates": rels}
+
+
+# ---- hashing a delivered file in one pass ------------------------------------------------------------------------------------
+
+
+class HashStopped(Exception):
+    def __init__(self, read):
+        super().__init__("the time limit ended the read")
+        self.read = read
+
+
+def digest_object(name):
+    try:
+        return hashlib.new(name, usedforsecurity=False)
+    except (TypeError, ValueError):
+        try:
+            return hashlib.new(name)
+        except ValueError:
+            return None
+
+
+def hash_file(src, rel, algorithms):
+    """{algorithm: hex} for the algorithms asked, always with sha256 (an independent digest beside the collector's own), and the
+    bytes read, in one pass over the file. An algorithm this Python does not have is left out. Raises OSError, or HashStopped
+    when the time limit ends the read."""
+    wanted = ["sha256"] + [a for a in algorithms if a != "sha256"]
+    objects = {a: digest_object(a) for a in wanted}
+    objects = {a: o for a, o in objects.items() if o is not None}
+    total = 0
+    with src.open_binary(rel) as fh:
+        while True:
+            block = fh.read(REC_CHUNK)
+            if not block:
+                break
+            total += len(block)
+            for o in objects.values():
+                o.update(block)
+            if out_of_time():
+                raise HashStopped(total)
+    return {a: o.hexdigest() for a, o in objects.items()}, total
+
+
+# ---- patterns the callers' questions use ---------------------------------------------------------------------------------------
+
+
+def norm_text(text):
+    return fold_name(text.replace("\\", "/"))
+
+
+def glob_match(pattern, text):
+    """`*` (any run, `/` included) and `?` (one character) over case-folded text with `/` for either separator: no regular
+    expression, so a pattern cannot be made to take exponential time; the cost is at most the product of the two lengths."""
+    p = t = 0
+    star = -1
+    mark = 0
+    while t < len(text):
+        if p < len(pattern) and (pattern[p] == "?" or pattern[p] == text[t]):
+            p += 1
+            t += 1
+        elif p < len(pattern) and pattern[p] == "*":
+            star = p
+            mark = t
+            p += 1
+        elif star != -1:
+            p = star + 1
+            mark += 1
+            t = mark
+        else:
+            return False
+    while p < len(pattern) and pattern[p] == "*":
+        p += 1
+    return p == len(pattern)
+
+
+
+
+# the path conventions and the name hints of collection_index, copied from it unchanged (tests/pack-triage-records.test.ts holds them equal)
+DRIVE_BARE = re.compile(r"^[A-Za-z]$")
+DRIVE_MARKED = re.compile(r"^([A-Za-z])(?:\$|:|%3[Aa])$")
+# Greedy, so the split is at the LAST underscore: report.txt_Zone.Identifier has to give "report.txt" and
+# "Zone.Identifier", not "report" and the rest.
+STREAM_HINT = re.compile(r"^(.+)_(\$?[A-Za-z][\w.$-]{1,40})$")
+KNOWN_STREAMS = {"zone.identifier", "summaryinformation", "documentsummaryinformation", "favicon", "encryptable",
+                 "afp_afpinfo", "afp_resource", "com.dropbox.attributes", "com.apple.quarantine", "ads", "$data"}
+PLAIN_SUFFIXES = {"plist", "json", "db", "txt", "log", "xml", "png", "jpg", "jpeg", "gif", "html", "htm", "css", "js", "sqlite", "dat", "bin", "md"}   # a "stream" that ends like a file
+RESERVED = {"CON", "PRN", "AUX", "NUL"} | {"COM%d" % i for i in range(1, 10)} | {"LPT%d" % i for i in range(1, 10)}
+# First directory names of a Unix-like root: a path that starts with one is read as rooted at /.
+UNIX_TOP = {"etc", "var", "home", "usr", "opt", "tmp", "bin", "sbin", "lib", "lib64", "root", "srv", "mnt", "run", "boot", "dev",
+            "proc", "sys", "media", "private", "Library", "Users", "Applications", "System", "Volumes"}
+# What a name says about a file that holds, or is, a credential store. A name hint and nothing more.
+CREDENTIAL_NAMES = {
+    "shadow": "a password verifier file", "gshadow": "a password verifier file", "shadow-": "a password verifier file",
+    "gshadow-": "a password verifier file", "master.passwd": "a password verifier file", "spwd.db": "a password verifier file",
+    "pwd.db": "a password verifier file", ".htpasswd": "a password verifier file", "sam": "a Windows account database hive",
+    "security": "a Windows security hive", "ntds.dit": "a directory database with password verifiers", "wallet.dat": "a wallet file",
+    "keychain-2.db": "a keychain", "keychain-2.db-wal": "a keychain", "keychain-2.db-shm": "a keychain",
+    "krb5.keytab": "a Kerberos key table", ".env": "an environment file that often holds secrets",
+    "login data": "a browser saved-credential database", "login data for account": "a browser saved-credential database",
+    "logins.json": "a browser saved-credential file", "key3.db": "a browser key database", "key4.db": "a browser key database",
+    "cert9.db": "a browser certificate and key database", "signons.sqlite": "a browser saved-credential database",
+    "cookies": "a browser cookie store", "cookies.sqlite": "a browser cookie store", "local state": "a browser key-wrapping file",
+    "web data": "a browser form and card store", ".pgpass": "a saved-credential file", ".netrc": "a saved-credential file",
+    ".git-credentials": "a saved-credential file", ".npmrc": "a saved-credential file", ".pypirc": "a saved-credential file",
+    ".dockercfg": "a saved-credential file", "id_rsa.bak": "a private key file",
+    "terraform.tfstate": "infrastructure state that holds secrets", "terraform.tfstate.backup": "infrastructure state that holds secrets",
+    "credentials.xml": "a saved-credential file", "credentials": "a saved-credential file", "credentials.db": "a saved-credential database",
+    "access_tokens.db": "a cloud access-token database", "accesstokens.json": "a cloud access-token file", "msal_token_cache.json": "a token cache",
+    "token_cache.json": "a token cache", "wp-config.php": "a web application configuration that holds database credentials",
+    "secrets.yaml": "a secrets file", "secrets.yml": "a secrets file", "secrets.json": "a secrets file", "tokens.json": "a token file", "vault.json": "a vault file",
+    ".my.cnf": "a database client file that can hold a password", ".s3cfg": "a saved-credential file", ".boto": "a saved-credential file", "htpasswd": "a password verifier file",
+    "lsass.dmp": "a process dump of the credential-holding LSASS process", "kubeconfig": "a saved-credential file", ".vault-token": "a token file",
+}
+CREDENTIAL_SUFFIXES = {".p8": "a private key file", ".jceks": "a Java key store", ".pkcs12": "a key and certificate store", ".asc": "an armoured key or message file",
+                       ".ovpn": "a VPN profile that can hold keys", ".rdp": "a remote-desktop file that can hold a saved credential", ".tfvars": "variables that can hold secrets",
+                       ".ppk": "a private key file", ".p12": "a key and certificate store", ".pfx": "a key and certificate store",
+                       ".pem": "a key or certificate file", ".key": "a key file", ".keytab": "a Kerberos key table", ".kdb": "a password database",
+                       ".kdbx": "a password database", ".jks": "a Java key store", ".keystore": "a Java key store", ".gpg": "an encrypted file",
+                       ".keychain": "a keychain", ".keychain-db": "a keychain", ".bek": "a BitLocker key file", ".kirbi": "a Kerberos ticket",
+                       ".ccache": "a Kerberos credential cache"}
+CREDENTIAL_DIRECTORIES = {".gnupg": "a GnuPG directory", ".aws": "an AWS credentials directory", ".azure": "an Azure credentials directory",
+                          "gcloud": "a Google Cloud credentials directory", ".kube": "a Kubernetes configuration directory", ".docker": "a Docker configuration directory",
+                          ".vnc": "a VNC configuration directory",  "protect": "a DPAPI master-key store",
+                          "credentials": "a Windows credential store", "vault": "a Windows vault", "private-keys-v1.d": "a GnuPG private key store"}
+
+
+def credential_hint(name, parents):
+    """What a file's name (and its directories) say it is, or None. `parents` are the directory names above it, lower case."""
+    low = name.lower()
+    found = CREDENTIAL_NAMES.get(low)
+    if found is None and low.startswith(("sam.log", "security.log", "software.log", "system.log")):
+        found = "a hive transaction log (it can hold credential material)"
+    if found is None and low.startswith("id_") and not low.endswith(".pub"):
+        found = "a private key file"
+    if found is None and low.startswith("ssh_host_") and low.endswith("_key"):
+        found = "a host private key file"
+    if found is None and low == "config.json" and ".docker" in parents:
+        found = "a saved-credential file"
+    if found is None and low == "config" and ".kube" in parents:
+        found = "a saved-credential file"
+    if found is None and low.startswith("shadow"):
+        found = "a password verifier file"
+    if found is None and "recovery" in low and ("bitlocker" in low or "key" in low) and low.endswith((".txt", ".bek", ".csv")):
+        found = "a BitLocker recovery key file"
+    if found is None:
+        found = CREDENTIAL_SUFFIXES.get(os.path.splitext(low)[1])
+    if found is None and low != "known_hosts" and low != "config" and not low.endswith(".pub") and ".ssh" in parents:
+        found = "an SSH directory file"
+    if found is None:
+        for directory in parents:
+            if directory in CREDENTIAL_DIRECTORIES:
+                found = CREDENTIAL_DIRECTORIES[directory]
+                break
+    return found
+
+
+def source_path_hypothesis(rel):
+    """What a convention would make of a path in the collection: a hypothesis with its method, its confidence, what it could
+    not explain and the other readings. It is never an observation; only a collector's own mapping observes a source path."""
+    parts = [p for p in rel.split(os.sep) if p not in ("", ".")]
+    first = parts[0] if parts else ""
+    rest = parts[1:]
+    alternatives, unresolved = [], []
+    marked = DRIVE_MARKED.match(first)
+    uac_at = parts.index("[root]") if "[root]" in parts[:-1] else -1
+    if len(parts) < 2:
+        path = "/".join(parts)
+        method, confidence = "none: a file at the top of the collection has no directory to read a convention from", "none"
+    elif uac_at >= 0:
+        path = "/" + "/".join(parts[uac_at + 1:])
+        unresolved = parts[:uac_at]
+        method = "UAC's [root] directory holds the collected files below /" + (" (the directories above it are unresolved)" if uac_at else "")
+        confidence = "medium" if uac_at == 0 else "low"
+    elif marked or DRIVE_BARE.match(first):
+        letter = (marked.group(1) if marked else first).upper()
+        path = letter + ":\\" + "\\".join(rest)
+        if marked:
+            method, confidence = "the first directory is spelled like a drive (%s)" % first, "medium"
+        else:
+            method, confidence = "the first directory is a single letter, read as a drive letter", "low"
+        alternatives.append({"path": "/" + "/".join(parts), "if": "the first directory is an ordinary directory that happens to be named %s" % first})
+    elif first == "uploads":
+        path = "/".join(parts)
+        method, confidence = "none: the delivered path, unchanged (uploads/<accessor>/<path> needs the collector's own index to read)", "none"
+        unresolved = parts[:3] if len(parts) > 2 else parts[:1]
+        if len(parts) > 3 and DRIVE_MARKED.match(parts[2]):
+            alternatives.append({"path": DRIVE_MARKED.match(parts[2]).group(1).upper() + ":\\" + "\\".join(parts[3:]),
+                                 "if": "uploads/<accessor>/<drive> is Velociraptor's layout (check the collection's own records)"})
+    elif first in UNIX_TOP:
+        path = "/" + "/".join(parts)
+        method, confidence = "the first directory is a top-level directory of a Unix-like file system, read as rooted at /", "low"
+        if first == "root":
+            unresolved = ["root"]
+            alternatives.append({"path": "/" + "/".join(rest), "if": "root is a collector's wrapper directory and not the /root home directory"})
+    else:
+        path = "/".join(parts)
+        method, confidence = "none: the delivered path, unchanged; no convention recognised", "none"
+    return {"path": path, "method": method, "confidence": confidence, "unresolved_components": unresolved, "alternatives": alternatives}
+
+
+
+
+def split_stream(path):
+    """(base, stream) for a source path with NTFS stream syntax (C:\\dir\\file:name), else (path, None). A drive's own colon is not one."""
+    if not isinstance(path, str):
+        return path, None
+    start = 2 if re.match(r"^[A-Za-z]:[\\/]", path) else 0
+    last = max(path.rfind("\\"), path.rfind("/"))
+    colon = path.find(":", max(start, last + 1))
+    if colon <= 0 or colon == len(path) - 1:
+        return path, None
+    return path[:colon], path[colon + 1:]
+
+
+def component_notes(rel):
+    """What in a delivered path a reader could misread: components that are not UTF-8 (escaped here as surrogates), and components
+    that carry percent-escapes (a collector's way of writing ':' and the like)."""
+    not_utf8, escaped = [], []
+    for part in rel.replace(os.sep, "/").split("/"):
+        if undecodable(part):
+            not_utf8.append(part)
+        elif re.search(r"%[0-9A-Fa-f]{2}", part):
+            escaped.append(part)
+    return not_utf8, escaped
+
+
+def percent_decode(part):
+    return re.sub(r"%([0-9A-Fa-f]{2})", lambda m: chr(int(m.group(1), 16)) if int(m.group(1), 16) < 0x80 else m.group(0), part)
+
+
+def source_path_shown(rec):
+    """The source path a record claims, normalised only so that two claims of one file compare equal: '/' for either separator, no
+    trailing stream, the case kept (the caller folds it when it compares)."""
+    claim = rec.get("source_path_claim")
+    if not isinstance(claim, str):
+        return None
+    base, _stream = split_stream(claim)
+    return base.replace("\\", "/")
+
+
+def path_hint(*paths):
+    """The first credential-store hint any of the given paths carries (by the name and the directories above it), or None."""
+    for path in paths:
+        if isinstance(path, str) and path:
+            parts = [p for p in re.split(r"[\\/]+", path) if p]
+            if parts:
+                found = credential_hint(parts[-1], [p.lower() for p in parts[:-1]])
+                if found:
+                    return found
+    return None
+
+
+def withhold_digest(value, where):
+    """A digest of a file that is a credential store never leaves in an answer or a table: it goes to the values file (a job run with
+    secret_output and write_values) and what is printed names its length and a finding id. Returns the marker."""
+    WITHHELD["count"] += 1
+    fid = "W%06d" % WITHHELD["count"]
+    if VALUES[0] is not None:
+        VALUES[0].add(fid, {"where": where}, value)
+    return "<digest of a credential store withheld, %d characters, %s>" % (len(value), fid)
+
+
+def withhold_value(value, where):
+    """A value that may hold a secret (an encrypted password, a key) never leaves in an answer or a table: it goes to the values file (a job
+    run with secret_output and write_values) and what is printed names its length and a finding id. Returns the marker."""
+    WITHHELD["count"] += 1
+    fid = "W%06d" % WITHHELD["count"]
+    if VALUES[0] is not None:
+        VALUES[0].add(fid, {"where": where}, value)
+    return "<value withheld, %d characters, %s>" % (len(value), fid)
+
+
+DIGEST_KEY = re.compile(r"md5|sha|hash|digest|checksum", re.I)
+DIGEST_HEX = re.compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{56}|[0-9A-Fa-f]{64}|[0-9A-Fa-f]{96}|[0-9A-Fa-f]{128})")
+
+
+def withhold_field_digests(value, where, digest_key=False, any_key=False):
+    """(copy of `value` with every digest-shaped string under a digest-named key withheld, how many). The row's own `fields` keep the
+    collector's keys and structure: a key named md5, Sha256, hash or digest (at any depth, a list under it too) whose string is the hex of a
+    digest of a known length is the digest of the file the row is about. With `any_key`, a digest-shaped string is withheld whatever its key
+    (a record that names a credential store, whose columns may be shifted). The walk is iterative: it has no depth at which it stops."""
+    holder = [None]
+    count = 0
+    stack = [(value, (None, where), digest_key, holder, 0)]
+    while stack:
+        item, path, dk, parent, slot = stack.pop()
+        if isinstance(item, dict):
+            new = {}
+            parent[slot] = new
+            for key in item:
+                new[key] = None
+            for key, sub in reversed(list(item.items())):
+                stack.append((sub, (path, key), dk or bool(DIGEST_KEY.search(str(key))), new, key))
+        elif isinstance(item, list):
+            new = [None] * len(item)
+            parent[slot] = new
+            for i in range(len(item) - 1, -1, -1):
+                stack.append((item[i], path, dk, new, i))
+        elif (dk or any_key) and isinstance(item, str) and DIGEST_HEX.fullmatch(item.strip()):
+            names = []
+            node = path
+            while node[0] is not None:
+                names.append(str(node[1]))
+                node = node[0]
+            parent[slot] = withhold_digest(item.strip(), "%s%s" % (node[1], "".join(", field %s" % n for n in reversed(names))))
+            count += 1
+        else:
+            parent[slot] = item
+    return holder[0], count
+
+
+def guard_digests(rec):
+    """For a record that names a credential store, every digest the record carries is withheld from the record: the claims, the digests
+    in the collector's own `fields` (a Velociraptor upload record keeps its sha256, md5 and sha1 there) under whatever key or column
+    they stand in, and a path claim that is itself a digest (a row with a column missing shifts the others). The comparison still runs
+    on the real ones, in the caller, from the claims it took before this."""
+    hint = path_hint(rec.get("source_path_claim"), rec.get("delivered_path_claim"))
+    if not hint:
+        return rec
+    where = "record %s of %s" % ((rec.get("locator") or {}).get("row") or (rec.get("locator") or {}).get("line"), rec.get("log"))
+    withheld = 0
+    if rec.get("hash_claims"):
+        rec["hash_claims"] = {algorithm: withhold_digest(value, where) for algorithm, value in rec["hash_claims"].items()}
+        withheld += len(rec["hash_claims"])
+    if isinstance(rec.get("fields"), dict):
+        rec["fields"], count = withhold_field_digests(rec["fields"], where, any_key=True)
+        withheld += count
+    for claim in ("source_path_claim", "delivered_path_claim"):
+        if isinstance(rec.get(claim), str) and DIGEST_HEX.fullmatch(rec[claim].strip()):
+            rec[claim] = withhold_digest(rec[claim].strip(), "%s, %s" % (where, claim))
+            withheld += 1
+    if withheld:
+        rec["flags"] = list(rec.get("flags") or []) + ["digest_withheld_credential_store"]
+        rec["credential_store_hint"] = hint
+    return rec
+
+# ---- END RECORDS BLOCK -----------------------------------------------------------------------------------------------
+
+
 # ---- BEGIN ARCHIVE BLOCK ---------------------------------------------------------------------------------------------
 # Identical in the collection-intake recipe and collection_timestamps (tests/pack-triage-archive-block.test.ts holds the copies equal): the bounded
 # readers of a zip and of a tar (plain, gzip, bzip2, xz) and the checks of how an archive ended. It needs open_regular (binary), describe, struct,
@@ -1888,76 +3365,16 @@ MAX_DATES = 100000                # distinct dates counted per clock; beyond it 
 FLATTEN_FILES, FLATTEN_SHARE = 20, 90      # more than 90% of more than 20 files on one date, as collection_index reports it
 MAX_HELD = 2000000                # delivered files held for the join; past it the comparison is partial and no file is called absent
 MAX_ZIP_MEMBERS = 2000000         # a zip with more members is not opened (zipfile holds every header)
-MEMORY_CHECK_EVERY = 1024
-MEMORY_ENV = ("COLLECTION_MEMORY_BYTES", "COLLECTION_INTAKE_MEMORY_BYTES")
 NESTED_SUFFIXES = (".zip", ".tar", ".tgz", ".tar.gz", ".tbz2", ".tar.bz2", ".txz", ".tar.xz", ".7z", ".rar", ".gz", ".bz2", ".xz", ".zst", ".ad1", ".e01", ".ex01")
 OUTCOMES = ("equal", "within_precision", "consistent_with_zone_offset", "differs", "ambiguous_join", "member_time_unreadable",
             "only_in_archive", "only_in_delivery")
 
 
-def memory_ceiling():
-    """The bytes this process may hold, as far as it can be known: COLLECTION_MEMORY_BYTES when it is a positive whole number, else the smallest
-    of the cgroup limit and the address-space and data limits. None when nothing limits it that this can see."""
-    for name in MEMORY_ENV:
-        try:
-            if os.environ.get(name) and int(os.environ[name]) > 0:
-                return int(os.environ[name])
-        except ValueError:
-            pass
-    found = []
-    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
-        try:
-            with open(path) as fh:
-                text = fh.read().strip()
-            if text.isdigit() and int(text) < (1 << 60):
-                found.append(int(text))
-        except OSError:
-            pass
-    try:
-        import resource
-        for which in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
-            soft = resource.getrlimit(which)[0]
-            if soft != resource.RLIM_INFINITY:
-                found.append(soft)
-    except (ImportError, ValueError, OSError):
-        pass
-    return min(found) if found else None
-
-
-MEMORY_CEILING = [None, False]         # (bytes, looked up)
-
-
-def size_text(n):
-    if n >= 1 << 20:
-        return "%d MB" % (n >> 20)
-    if n >= 1 << 10:
-        return "%d KB" % (n >> 10)
-    return "%d bytes" % n
-
-
-def over_memory():
-    """A sentence when the process holds more than 60% of what it may hold, else None: the pass stops there, partial, and says so, instead of
-    being killed with nothing written."""
-    if not MEMORY_CEILING[1]:
-        MEMORY_CEILING[0], MEMORY_CEILING[1] = memory_ceiling(), True
-    ceiling = MEMORY_CEILING[0]
-    if not ceiling:
-        return None
-    try:
-        import resource
-        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
-    except (ImportError, OSError):
-        return None
-    if peak * 10 > ceiling * 6:
-        return "the memory bound (%s held of the %s this process may hold)" % (size_text(peak), size_text(ceiling))
-    return None
-
-
 def join_key(text):
     """The key a member name and a delivered path are joined by: '/' for either separator, no leading './' or '/', then NFC-normalised and
-    case-folded (a name written in decomposed form, as macOS writes it, is the same name as its precomposed twin)."""
+    case-folded (a name written in decomposed form, as macOS writes it, is the same name as its precomposed twin). The key is the RECORDS block's: fold_name."""
     parts = [p for p in text.replace("\\", "/").split("/") if p not in ("", ".")]
-    return unicodedata.normalize("NFC", "/".join(parts)).casefold()
+    return fold_name("/".join(parts))
 
 
 def iso_from_ns(ns, zone):
@@ -1994,6 +3411,8 @@ class Clock:
         self.unreadable_first = []
         self.sub_second = self.finer_than_100ns = self.odd_seconds = 0
         self.local_status = collections.Counter()
+        self.zone_basis = None
+        self.digits_max = None
 
     def add(self, ns, raw):
         self.files += 1
@@ -2053,7 +3472,7 @@ class Clock:
                  "the earliest and the latest of the %d regular files this clock gave, as wall-clock readings: they are not ordered against a UTC clock" % self.files)
         return {"clock": self.key, "label": self.label, "files": self.files,
                 "earliest": self.end(self.lo), "latest": self.end(self.hi), "interval_basis": basis,
-                "epoch": self.epoch, "zone": self.zone_text(), "precision": self.precision, "observed_resolution": self.observed_resolution(),
+                "epoch": self.epoch, "zone": self.zone_text(), "precision": self.precision if self.digits_max is None else "up to %d fractional digit(s), as the writer wrote them" % self.digits_max, "observed_resolution": self.observed_resolution(),
                 "distinct_dates": len(self.dates), "dates_not_counted": self.dates_not_counted,
                 "most_common_date": ({"date": day_text(top[0][0]), "files": top[0][1]} if top else None),
                 "apparent_flattening": self.flattening(),
@@ -2061,6 +3480,8 @@ class Clock:
                 **({"local_zone_reading": dict(self.local_status)} if self.local_status else {})}
 
     def zone_text(self):
+        if self.zone_basis:
+            return ("UTC: " if self.zone == "utc" else "none stated: ") + self.zone_basis
         return "none stated: the local time of the machine that wrote it; never assumed to be UTC" if self.zone == "none" else "UTC"
 
 
@@ -2406,6 +3827,265 @@ def archive_pass(path, fmt, state):
     return end
 
 
+# ---- clock 1 and clock 4: the collector's own record times -----------------------------------------------------------------------------
+
+WALL_TIME = re.compile(r"^\s*(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:[.,](\d{1,9}))?\s*(Z|[+-]\d{2}:?\d{2})?(?:\s+[A-Z]{3,5})?\s*$")
+MAX_RAW = 80                       # characters of a raw time kept in an answer
+MAX_SCAN_LINES_UNREADABLE = 25
+KAPE_UTC_COLUMNS = ("createdonutc", "modifiedonutc", "lastaccessedonutc")
+
+
+def decode_text_time(text):
+    """(wall ns, fraction digits, offset seconds or None, why) of a time written as 'YYYY-MM-DD HH:MM:SS[.fraction] [offset]' (a space or a T between the
+    date and the time, a comma or a dot before the fraction, Z or +hh[:]mm as the offset, and a trailing zone abbreviation as Go writes one). The wall
+    time is read through a real date; the offset is the writer's own statement, and None when there is none."""
+    found = WALL_TIME.match(text) if len(text) <= 64 else None
+    if found is None:
+        return None, 0, None, "the text is not a date and time of the forms this tool reads"
+    y, mo, d, h, mi, s = (int(found.group(i)) for i in range(1, 7))
+    try:
+        moment = datetime.datetime(y, mo, d, h, mi, s)
+    except ValueError as exc:
+        return None, 0, None, "not a calendar date and time (%s)" % exc
+    fraction = found.group(7) or ""
+    delta = moment - EPOCH
+    wall = (delta.days * 86400 + delta.seconds) * NS + (int(fraction.ljust(9, "0")) if fraction else 0)
+    offset = None
+    if found.group(8):
+        z = found.group(8)
+        if z == "Z":
+            offset = 0
+        else:
+            digits = z[1:].replace(":", "")
+            if int(digits[:2]) > 23 or int(digits[2:]) > 59:
+                return None, 0, None, "the offset %s is not a zone offset" % z
+            offset = (1 if z[0] == "+" else -1) * (int(digits[:2]) * 3600 + int(digits[2:]) * 60)
+    return wall, len(fraction), offset, None
+
+
+def decode_record_time(collector, field, raw):
+    """{ns, zone, basis, digits} for one time a collector wrote, or {why}. The zone is what the writer states: an offset in the text, or the name of the
+    column (KAPE's ...OnUtc columns), or the unit of a number (Velociraptor's Unix seconds); a time with none of these has zone `none`, is a wall-clock
+    reading, and is never taken to be UTC."""
+    if isinstance(raw, bool) or raw is None:
+        return {"why": "no time"}
+    if isinstance(raw, (int, float)):
+        if collector == "Velociraptor" and field.lower() in ("timestamp", "_ts", "client_time"):
+            try:
+                seconds = DECIMALS.create_decimal(repr(raw)) if isinstance(raw, float) else decimal.Decimal(raw)
+                ns = int((seconds * NS).to_integral_value(rounding=decimal.ROUND_FLOOR))
+                iso_from_ns(ns, "utc") or (_ for _ in ()).throw(ValueError("range"))
+            except (decimal.DecimalException, ValueError, OverflowError):
+                return {"why": "a number outside the years 1 to 9999 as Unix seconds"}
+            return {"ns": ns, "zone": "utc", "basis": "a number of Unix seconds, which are UTC by definition (the field's unit in Velociraptor's container)", "digits": 0 if isinstance(raw, int) else 3}
+        return {"why": "a number whose unit this field does not declare"}
+    if not isinstance(raw, str):
+        return {"why": "not a text or a number"}
+    wall, digits, offset, why = decode_text_time(raw)
+    if wall is None:
+        return {"why": why}
+    if offset is not None:
+        return {"ns": wall - offset * NS, "zone": "utc", "basis": "the text states its offset (%s)" % ("UTC" if offset == 0 else "%+d minutes" % (offset // 60)), "digits": digits}
+    if collector == "KAPE" and field.lower() in KAPE_UTC_COLUMNS:
+        return {"ns": wall, "zone": "utc", "basis": "the column is named %s (UTC by its name; the log does not state it otherwise)" % field, "digits": digits}
+    return {"ns": wall, "zone": "none", "basis": "the writer states no zone: a wall-clock reading, not assumed to be UTC", "digits": digits}
+
+
+class RecordClocks:
+    """The clocks of the collector's own record times, one per collector, field and zone state, and the acquisition spans of the collectors' logs."""
+
+    def __init__(self):
+        self.clocks = {}
+        self.spans = {}
+
+    def clock(self, collector, field, zone, basis):
+        key = (collector, field, zone)
+        if key not in self.clocks and len(self.clocks) < 200:
+            label = "%s %s" % (collector, field)
+            self.clocks[key] = Clock("%s.%s.%s" % (collector, field, zone), label, zone, "as the collector writes it", "as many fractional digits as the writer wrote")
+            self.clocks[key].zone_basis = basis
+            self.clocks[key].digits_max = 0
+        return self.clocks.get(key)
+
+    def add(self, collector, field, raw, where, decoded):
+        if "ns" not in decoded:
+            c = self.clock(collector, field, "none", "no time could be read")
+            if c is not None:
+                c.refuse(where, decoded["why"])
+            return None
+        c = self.clock(collector, field, decoded["zone"], decoded["basis"])
+        if c is None:
+            return decoded
+        c.add(decoded["ns"], raw if isinstance(raw, str) else str(raw))
+        c.digits_max = max(c.digits_max, decoded["digits"])
+        return decoded
+
+
+def scan_log_times(src, rel, kind, collector, rc, census, problems):
+    """Read a collector's log whole, line by line under the clock, and keep the span of its timestamped lines (the acquisition interval as far as the
+    log states one) and its line times as a clock. Returns the span row; `status` is parsed only when every line was read."""
+    span = {"collector": collector, "log": rel, "kind": kind, "status": "parsed", "lines": 0, "timestamped_lines": 0, "times_not_readable": 0}
+    reason = binary_reason(src, rel)
+    if reason:
+        span.update(status="unsupported", reason=reason)
+        return span
+    try:
+        fh = open_text(src, rel)
+    except OSError as exc:
+        span.update(status="unreadable", reason=describe(exc))
+        return span
+    lo = hi = None
+    with fh:
+        number = 0
+        while True:
+            if out_of_time():
+                span.update(status="partial", reason="the time limit stopped the read after line %d" % number)
+                break
+            try:
+                line = fh.readline(REC_LINE)
+            except OSError as exc:
+                span.update(status="partial", reason="the read stopped at line %d (%s)" % (number + 1, describe(exc)))
+                break
+            if not line:
+                break
+            number += 1
+            if len(line) == REC_LINE and not line.endswith("\n"):
+                while True:
+                    rest = fh.readline(REC_LINE)
+                    if not rest or rest.endswith("\n"):
+                        break
+            text = line.rstrip("\r\n")
+            raw = field = None
+            if kind == "uac":
+                found = UAC_EVENT.match(text)
+                raw, field = (found.group("ts"), "log line") if found else (None, None)
+            elif kind == "kape_console":
+                found = CONSOLE_LINE.match(text)
+                raw, field = (found.group("ts"), "log line") if found else (None, None)
+            else:
+                try:
+                    row = json.loads(text) if text.strip().startswith("{") else None
+                except (ValueError, RecursionError):
+                    row = None
+                if isinstance(row, dict) and "_ts" in row:
+                    raw, field = row["_ts"], "_ts"
+            if raw is None:
+                continue
+            span["lines"] = number
+            decoded = decode_record_time(collector, field if kind == "velociraptor_log" else "log line", raw if isinstance(raw, (int, float, str)) else None)
+            decoded = rc.add(collector, field, raw, "%s line %d" % (rel, number), decoded)
+            if decoded is None:
+                span["times_not_readable"] += 1
+                continue
+            span["timestamped_lines"] += 1
+            point = (decoded["ns"], str(raw), decoded["zone"], decoded["basis"])
+            if lo is None or point[0] < lo[0]:
+                lo = point
+            if hi is None or point[0] > hi[0]:
+                hi = point
+    span["lines"] = max(span["lines"], 0)
+    span["first_timestamped"] = lo
+    span["last_timestamped"] = hi
+    return span
+
+
+def span_view(span):
+    out = {k: span[k] for k in ("collector", "kind", "status", "timestamped_lines", "times_not_readable") if k in span}
+    out["log"] = span["log"]
+    if "reason" in span:
+        out["reason"] = span["reason"]
+    for name, key in (("start", "first_timestamped"), ("end", "last_timestamped")):
+        point = span.get(key)
+        if point is None:
+            out[name] = "unknown"
+            continue
+        shown_time = iso_from_ns(point[0], point[2])
+        out[name] = {"time": shown_time if shown_time is not None else "outside the years 1 to 9999", "raw": point[1][:MAX_RAW], "zone": "UTC" if point[2] == "utc" else "none stated: a wall-clock reading", "zone_basis": point[3]}
+    out["basis"] = "the first and the last timestamped line of the collector's own log: the span of what the collector wrote, which is not a statement of when it began or finished"
+    return out
+
+
+class TimeSink(Sink):
+    """Takes each record as the adapters emit it (nothing is held): its times go to the record clocks, and a copy-log row's source-file modification time
+    is compared with the delivered file the RECORDS block's join names, only where the join names exactly one."""
+
+    def __init__(self, state):
+        super().__init__()
+        self.state = state
+
+    def problem(self, row):
+        self.state["problems"].add({"kind": "record_problem", **row})
+
+    def record(self, rec):
+        self.count += 1
+        state = self.state
+        times = rec.get("times")
+        if not isinstance(times, dict) or not times or rec.get("collector") not in ("KAPE", "Velociraptor"):
+            return
+        state["records_with_times"] += 1
+        locator = rec.get("locator") or {}
+        where = "%s row %s" % (rec.get("log"), locator.get("row") or locator.get("line"))
+        decoded_by = {}
+        for field, raw in times.items():
+            if not isinstance(field, str):
+                continue
+            decoded_by[field.lower()] = (field, raw, state["clocks"].add(rec["collector"], field, raw, where, decode_record_time(rec["collector"], field, raw)))
+        if rec.get("collector") == "KAPE" and rec.get("kind") == "copy" and "modifiedonutc" in decoded_by and state["root"] is not None:
+            field, raw, decoded = decoded_by["modifiedonutc"]
+            if decoded is not None:
+                compare_record(state, rec, field, raw, decoded, where)
+
+
+def compare_record(state, rec, field, raw, decoded, where):
+    """A copy-log row's ModifiedOnUtc (the source file's modification time, as KAPE recorded it) against the mtime of the delivered file the join names.
+    One lstat of that file; a join that is ambiguous, empty, undecided or a link is a row that says so and is not compared."""
+    if state["compare_stopped"]:
+        return
+    if out_of_time():
+        state["compare_stopped"] = "the time limit ended the comparison of the records with the delivered files"
+        return
+    state["compared_seen"] += 1
+    if state["compared_seen"] % MEMORY_CHECK_EVERY == 0:
+        held = over_memory()
+        if held:
+            state["compare_stopped"] = "%s ended the comparison of the records with the delivered files" % held
+            return
+    res = resolve(state["census"], rec)
+    row = {"record": {"collector": "KAPE", "log": rec.get("log"), "where": where, "field": field, "raw": raw[:MAX_RAW] if isinstance(raw, str) else str(raw),
+                      "time": iso_from_ns(decoded["ns"], decoded["zone"]), "zone": "UTC" if decoded["zone"] == "utc" else "none stated", "zone_basis": decoded["basis"]},
+           "join": {"status": res["status"], "matched_by": res.get("matched_by")}}
+    outcome = None
+    if res["status"] == "found":
+        try:
+            st = os.lstat(os.path.join(state["root"], res["rel"]))
+        except OSError as exc:
+            outcome, row["why"] = "not_compared", "the delivered file could not be examined (%s)" % describe(exc)
+        else:
+            if not stat.S_ISREG(st.st_mode):
+                outcome, row["why"] = "not_compared", "the delivered entry is not a regular file"
+            elif decoded["zone"] != "utc":
+                outcome, row["why"] = "not_compared", "the record's time has no zone: it is not compared with a UTC time"
+            else:
+                delta = st.st_mtime_ns - decoded["ns"]
+                precision = 10 ** (9 - min(9, decoded["digits"]))
+                outcome = "equal" if delta == 0 else "within_precision" if 0 < delta < precision else "differs"
+                row["path"] = res["rel"]
+                row["delivered"] = {"time": iso_from_ns(st.st_mtime_ns, "utc"), "modified_epoch_ns": str(st.st_mtime_ns)}
+                row["delta_ns"] = str(delta)
+    elif res["status"] == "ambiguous":
+        outcome = "ambiguous_join"
+        row["candidates"] = res.get("candidates")
+        row["candidates_total"] = len(res.get("all_candidates") or res.get("candidates") or [])
+        row["why"] = res.get("reason")
+    else:
+        outcome = "not_compared"
+        row["why"] = {"missing": "no delivered file has the name the record gives", "unknown": "no delivered file has the name, and the walk was not complete",
+                      "no_claim": "the row names no delivered file", "not_regular": res.get("reason")}.get(res["status"], res["status"])
+    row["outcome"] = outcome
+    state["record_outcomes"][outcome] += 1
+    state["record_table"].add(row)
+
+
 def main():
     install_signal_handlers()
     args = read_args()
@@ -2437,6 +4117,8 @@ def main():
     table = Table(TOOL + "-comparison", limit, always=True)
     table.open_now()                         # before the walk: a root that holds the table's own file must not list it
 
+    record_table = Table(TOOL + "-record-comparison", limit, always=True)
+    record_table.open_now()
     walk = Walk()
     if archive is not None and root is not None:
         walk.held = {}
@@ -2444,6 +4126,24 @@ def main():
                       "the file system's own, to the nanosecond; whoever wrote the tree (an extractor, a copy) may have set any part of it")
     if root is not None:
         walk_delivered(root, walk, delivered, problems)
+    rc = RecordClocks()
+    census, sources, spans = None, [], []
+    rstate = {"root": root, "problems": problems, "clocks": rc, "records_with_times": 0, "record_table": record_table, "census": None, "compare_stopped": None,
+              "compared_seen": 0, "record_outcomes": collections.Counter()}
+    if root is not None:
+        census = Census()
+        rstate["census"] = census
+        walk_census(root, census, skip=is_own)
+        found = discover(census)
+        src = DirSource(root)
+        sources = read_collection(src, found, TimeSink(rstate))
+        for (directory, run_id), logs in sorted(found["kape"].items(), key=lambda kv: (os.fsencode(kv[0][0]), os.fsencode(kv[0][1]))):
+            if "console" in logs:
+                spans.append(scan_log_times(src, logs["console"], "kape_console", "KAPE", rc, census, problems))
+        for rel in found["uac_logs"]:
+            spans.append(scan_log_times(src, rel, "uac", "UAC", rc, census, problems))
+        for directory, rel in sorted(found["velo_logs"].items(), key=lambda kv: os.fsencode(kv[0])):
+            spans.append(scan_log_times(src, rel, "velociraptor_log", "Velociraptor", rc, census, problems))
 
     state = {"clock_main": Clock("archive_member", "the archive members' header times", "none", "", ""),
              "clock_extra": Clock("archive_member_utc_extra", "a zip's extended-timestamp and NTFS fields", "utc", "Unix epoch (0x5455) or FILETIME (0x000a)", "1 s or 100 ns, as the field says"),
@@ -2471,7 +4171,10 @@ def main():
                     state["outcomes"]["only_in_delivery"] += 1
                     table.add({"outcome": "only_in_delivery", "path": shown(item[0], "path"), "delivered": {"time": iso_from_ns(item[1], "utc"), "modified_epoch_ns": str(item[1])}})
 
-    tables = {"comparison": table.finish(), "problems": problems.finish()}
+    sources_table = Table(TOOL + "-sources", limit)
+    for s in sources:
+        sources_table.add(s)
+    tables = {"comparison": table.finish(), "record_comparison": record_table.finish(), "sources": sources_table.finish(), "problems": problems.finish()}
     main_clock, extra_clock = state["clock_main"], state["clock_extra"]
     lines = []
     if root is not None and (walk.stopped or walk.errors):
@@ -2490,12 +4193,26 @@ def main():
         lines.append("%d member(s) are archives themselves and were not opened: their members' times are not read" % state["counts"]["nested_archives"])
     if main_clock.unreadable:
         lines.append("%d member time(s) could not be read" % main_clock.unreadable)
+    if root is not None:
+        if census.stopped:
+            lines.append("the census of the delivered tree stopped: %s" % census.stopped["reason"])
+        if census.errors_total:
+            lines.append("%d error(s) in the census of the delivered tree" % census.errors_total)
+        if census.capped:
+            lines.append("the census reached its cap of %d entries" % census.cap)
+        lines += ["%s is %s%s" % (s["log"], s["status"], " (%s)" % s["reason"] if s.get("reason") else "") for s in sources if s["status"] != "parsed"]
+        lines += ["%s is %s%s" % (sp["log"], sp["status"], " (%s)" % sp["reason"] if sp.get("reason") else "") for sp in spans if sp["status"] != "parsed"]
+        if rstate["compare_stopped"]:
+            lines.append(rstate["compare_stopped"])
+        record_unreadable = sum(c.unreadable for c in rc.clocks.values()) + sum(sp["times_not_readable"] for sp in spans)
+        if record_unreadable:
+            lines.append("%d record time(s) could not be read" % record_unreadable)
     status = "partial" if lines else "complete"
     if root is None and fmt is None:
         status = "failed"
     if status == "complete":
-        basis = "every entry of the delivered tree was examined and the archive was read to its end" if root and archive else \
-            "every entry of the delivered tree was examined" if root else "the archive was read to its end and the end was examined"
+        basis = "every entry of the delivered tree was examined, every recognised record was read whole and the archive was read to its end" if root and archive else \
+            "every entry of the delivered tree was examined and every recognised record was read whole" if root else "the archive was read to its end and the end was examined"
     else:
         basis = "; ".join(lines[:10]) + ("; and %d more" % (len(lines) - 10) if len(lines) > 10 else "")
 
@@ -2515,6 +4232,11 @@ def main():
         conflicts.append({"kind": "a_name_is_in_the_archive_more_than_once", "members": state["counts"]["duplicate_member_names"]})
     if state["counts"]["ambiguous"]:
         conflicts.append({"kind": "ambiguous_join", "members": state["counts"]["ambiguous"], "note": "several delivered files share the name under NFC and case folding; each stays a candidate"})
+    if rstate["record_outcomes"]["differs"]:
+        conflicts.append({"kind": "record_time_differs_from_delivered_mtime", "records": rstate["record_outcomes"]["differs"],
+                          "note": "the copy log's time for the source file is not the delivered file's mtime; the tool does not say whether the copy, an extractor or the source changed it"})
+    if rstate["record_outcomes"]["ambiguous_join"]:
+        conflicts.append({"kind": "record_join_ambiguous", "records": rstate["record_outcomes"]["ambiguous_join"], "note": "several delivered files share the name the record gives; each stays a candidate"})
     flat = {c["clock"] for c in flattening}
     if "delivered_mtime" in clocks and "archive_member" in clocks and (("delivered_mtime" in flat) != ("archive_member" in flat)):
         conflicts.append({"kind": "flattened_in_one_clock_only", "flattened": sorted(flat), "note": "one clock puts most files on a single date and the other does not; a count, with no cause"})
@@ -2523,7 +4245,6 @@ def main():
         "tool": TOOL, "parser": PARSER, "status": status, "status_basis": basis,
         "root": shown(root, "root") if root is not None else None, "archive": shown(archive, "archive") if archive is not None else None,
         "archive_format": fmt, "ignored_parameters": ignored_parameters(args, KNOWN_PARAMETERS),
-        "clocks_not_read": ["the collector's own record times (clock 1)", "the acquisition interval (clock 4)"],
         "clocks": clocks,
         "apparent_flattening": flattening,
         "comparison": {"ran": compared,
@@ -2531,6 +4252,16 @@ def main():
                        "outcomes": {k: state["outcomes"][k] for k in OUTCOMES if state["outcomes"][k]},
                        "basis": "a member and a delivered file are compared only where the join names the same file; files on one side only are rows of the comparison table"
                        if compared else "no comparison: it needs both a root and a readable archive"},
+        "record_clocks": ({"%s.%s" % (k[0], k[1]) + ("" if k[2] == "utc" else " (no zone)"): c.summary() for k, c in rc.clocks.items()} if root is not None else None),
+        "records": ({"sources": len(sources), "records_with_times": rstate["records_with_times"],
+                     "comparison": {"outcomes": dict(rstate["record_outcomes"]),
+                                    "basis": "a KAPE copy row's ModifiedOnUtc (the source file's modification time as KAPE recorded it) against the delivered file the RECORDS join names; "
+                                             "only a join to exactly one regular file is compared, a record time with no zone is not, and an ambiguous join stays ambiguous"}}
+                    if root is not None else None),
+        "acquisition": ({"interval": ("unknown" if not any(sp.get("first_timestamped") for sp in spans) else "the span of the collector's own log lines, per log"),
+                         "logs": [span_view(sp) for sp in spans[:FIRST_PROBLEMS]], "logs_total": len(spans),
+                         "basis": "from the collector's own logs only; where none states a time the interval is unknown and is never inferred from file times"}
+                        if root is not None else {"interval": "unknown", "basis": "no root: the collector's records are read from the delivered tree"}),
         "conflicts": conflicts,
         "archive_members": dict(state["counts"]) if archive is not None else None,
         "archive_end": dict(end) if end else None,

@@ -105,7 +105,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "triage-collection/tools/collection_manifest_parse": COLLECTORS,
   "triage-collection/tools/collection_manifest_verify": COLLECTORS,
   "triage-collection/tools/collection_path_map": COLLECTORS,
-  "triage-collection/tools/collection_timestamps": w("7z"),
+  "triage-collection/tools/collection_timestamps": COLLECTORS,
   "windows-forensics/tools/amcache_apps": w("strings"),
   "windows-forensics/tools/esedb_query": w("strings"),
   "windows-forensics/tools/evtx_carve": w("strings"),
