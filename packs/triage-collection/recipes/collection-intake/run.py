@@ -1585,6 +1585,10 @@ def open_regular(path):
         raise
 
 
+# ---- BEGIN ARCHIVE BLOCK ---------------------------------------------------------------------------------------------
+# Identical in the collection-intake recipe and collection_timestamps (tests/pack-triage-archive-block.test.ts holds the copies equal): the bounded
+# readers of a zip and of a tar (plain, gzip, bzip2, xz) and the checks of how an archive ended. It needs open_regular (binary), describe, struct,
+# tarfile and zipfile. Edit it in both, never in one.
 def tar_kind(head):
     """How the bytes of a tar are wrapped, from the first bytes: gz, bz2, xz, or tar (not compressed)."""
     if head[:2] == b"\x1f\x8b":
@@ -1968,6 +1972,9 @@ def zip_problem(path, infos, start_dir, expired):
 
 def end_problem(fmt, end):
     return end.get("zip") if fmt == "zip" else tar_end_problem(end)
+
+
+# ---- END ARCHIVE BLOCK -----------------------------------------------------------------------------------------------
 
 
 def iterate(path, fmt, expired=None, end=None):
