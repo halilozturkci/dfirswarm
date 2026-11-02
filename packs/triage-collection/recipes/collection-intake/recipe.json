@@ -55,5 +55,5 @@
   ],
   "purpose": "inventory",
   "covers": "The archive's own member list, a digest of every member, the records a collector wrote (as the collector wrote them, one per row or line) and whether the members agree with them: path, size and digest apart. It extracts nothing to disk, opens no archive inside the archive (extract it with archive_extract and run this on the result), decrypts nothing, reads no 7z, and says nothing about whether the archive is authentic or complete as acquired, whether a record is true, what the collector was asked to take, where a member came from (collection_path_map) or what a question is covered by (collection_coverage).",
-  "sha256": "7f735634bbee21b2aa68020378e930e4d6beb567921b7a7ffc8f07cf5946d179"
+  "sha256": "df3f1f19103a05b4cf74fbc6f23030c86b171358ee5dc0e8359805a661bb929e"
 }
