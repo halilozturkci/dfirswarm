@@ -3447,6 +3447,9 @@ def run_query(args):
     if wal and wal.get("frames_valid") and cp and (cp.get("error") or cp.get("log", 0) < 1 or cp.get("busy")):
         problems_all.append("the WAL has frames of its current generation but SQLite did not apply them (checkpoint %s): rows committed only "
                             "in the WAL are not in this result" % json.dumps(cp))
+    if wal and wal.get("frames_valid") and cp and not cp.get("error") and not cp.get("busy") and cp.get("log", 0) >= 1 and cp.get("log", 0) < wal.get("frames_committed", 0):
+        problems_all.append("the WAL holds %d committed frame(s) of its current generation but SQLite applied only %d (checkpoint log): a frame after the %dth failed its checksum or its salt, "
+                            "so what was committed after it is NOT in this result (a torn or damaged WAL)" % (wal.get("frames_committed", 0), cp.get("log", 0), cp.get("log", 0)))
     if st["unconverted"]:
         problems_all.append("%d time value(s) could not be converted from the Apple epoch; their raw values are in the entries" % st["unconverted"])
     if shaper is not None and shaper.head_unavailable:
