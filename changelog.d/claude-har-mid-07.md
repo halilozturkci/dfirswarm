@@ -119,3 +119,10 @@ difference, those written during the forensic cases. The three sentences that
 carry the counts (`tool-library/README.md`, `docs/forged-tools.md`,
 `docs/roadmap.md`) are found by pattern, and the test fails naming each number
 that is behind, or a sentence it can no longer find.
+
+A binary entry of a pack's `requires/host.json` may carry `isa` and `formats`
+(lists of short strings: the instruction sets the program decodes and the file
+formats it reads). They reach the image's spec, and `/etc/dfirswarm/tools.md`
+prints them on the program's line; a program two packs declare shows the union
+of their lists, and a value that is not a list of short strings is refused by
+name at build. An entry without them is listed exactly as before.

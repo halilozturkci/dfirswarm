@@ -1414,6 +1414,9 @@ def tools_md(record: dict, spec: dict | None) -> str:
     for b in (spec or {}).get("binaries", []):
         if b["name"] in seen:
             seen[b["name"]]["packs"].append(b["pack"])
+            # A program two packs declare shows what either says it decodes and reads, never one pack's list alone.
+            for key in ("isa", "formats"):
+                seen[b["name"]][key] = list(dict.fromkeys([*seen[b["name"]].get(key, []), *b.get(key, [])]))
             continue
         entry = {**b, "packs": [b["pack"]]}
         seen[b["name"]] = entry
@@ -1438,7 +1441,8 @@ def tools_md(record: dict, spec: dict | None) -> str:
         lines += ["## Programs", ""]
         for b in sorted(rows, key=lambda x: x["name"].lower()):
             v = version(b)
-            lines.append(f"- `{b['name']}` — {b.get('why') or 'no description'} ({', '.join(b['packs'])}{'; ' + v if v else ''})")
+            reads = "; ".join(x for x in (f"decodes: {', '.join(b['isa'])}" if b.get("isa") else "", f"reads: {', '.join(b['formats'])}" if b.get("formats") else "") if x)
+            lines.append(f"- `{b['name']}` — {b.get('why') or 'no description'} ({', '.join(b['packs'])}{'; ' + v if v else ''}){' — ' + reads if reads else ''}")
             # What the build recorded about the program: a file each, the
             # command that made it and whether it worked.
             for fname, fact in sorted(facts.items()):

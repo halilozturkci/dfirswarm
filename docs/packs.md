@@ -961,6 +961,14 @@ allow-listed in that test with its reason.
    `failed` with why) under `facts` in `image.json`; `tools.md` names the files
    beside the program. A failing command does not fail the build of an optional
    program; it does for a required one.
+   An entry can also say what its program decodes and reads: `"isa": ["x86-64", "aarch64"]`
+   (instruction sets) and `"formats": ["ELF", "PE"]` (file formats), each a list of
+   short strings (letters, digits, space and `. _ + / -`, up to 40 characters). The
+   build carries them into the image's spec and `tools.md` prints them on the
+   program's line (`— decodes: x86-64, aarch64; reads: ELF, PE`); a program that two
+   packs declare shows the union of their lists. A value that is not a list of
+   short strings is refused by name when the image is built; an entry without the
+   fields is listed as before.
 2. **A program a skill tells the agent to run is in the pack's `requires`, or
    in a dependency's.** A program or Python package in `requires` that no skill
    names needs either a skill that names it, or a reason in `pack.json`:

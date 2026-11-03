@@ -1041,6 +1041,57 @@ grep -q '^- `other-tables` (p3) — data not installed: download failed: 404$' "
 grep -q '`other-tables` — More tables' "$tm" && fail "a data file that is not in the image is listed as held"
 pass "every image writes tools.md: its programs and libraries one a line, with use, pack and recorded version, and what it does not hold"
 
+# A binary entry may say which instruction sets it decodes (isa) and which file formats it reads (formats): the lists reach the built
+# spec and tools.md prints them on the program's line. An entry without them prints exactly as before; a program two packs declare
+# shows the union; a value that is not a list of short strings is refused by name.
+IS="$TMP/isa"
+mkdir -p "$IS/fx1/requires" "$IS/fx2/requires" "$IS/fx3/requires" "$IS/fx4/requires"
+for p in fx1 fx2 fx3 fx4; do printf '{"name":"%s","version":"1.0.0"}\n' "$p" > "$IS/$p/pack.json"; done
+cat > "$IS/fx1/requires/host.json" <<'EOF'
+{"binaries": [
+  {"name": "disasm", "why": "Disassembles code.", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "isa": ["x86-64", "aarch64"], "formats": ["ELF", "PE"]},
+  {"name": "plain", "why": "Has no lists.", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}},
+  {"name": "shared", "why": "Declared twice.", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "isa": ["x86-64"], "formats": ["ELF"]},
+  {"name": "empty", "why": "Empty lists.", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "isa": [], "formats": []}]}
+EOF
+cat > "$IS/fx2/requires/host.json" <<'EOF'
+{"binaries": [
+  {"name": "shared", "why": "Declared twice.", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "isa": ["x86-64", "arm"], "formats": ["Mach-O"]}]}
+EOF
+echo '{"binaries": [{"name": "bad", "why": "x", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "isa": "x86-64"}]}' > "$IS/fx3/requires/host.json"
+echo '{"binaries": [{"name": "bad", "why": "x", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "formats": ["ELF", 7, "a\nb"]}]}' > "$IS/fx4/requires/host.json"
+isa_out="$(python3 - "$ROOT/images" "$IS" <<'EOF'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import recipe, install
+packs = Path(sys.argv[2])
+spec = recipe.merge([recipe.read_pack(packs, "fx1"), recipe.read_pack(packs, "fx2")])
+by = {}
+for b in spec["binaries"]:
+    by.setdefault(b["name"], []).append({k: b.get(k) for k in ("isa", "formats")})
+print("SPEC " + json.dumps(by, sort_keys=True))
+record = {"profile": "disk", "packs": ["fx1", "fx2"], "binaries": {n: "/usr/bin/" + n for n in ("disasm", "plain", "shared", "empty")}, "apt": {}}
+print(install.tools_md(record, spec))
+for bad in ("fx3", "fx4"):
+    try:
+        recipe.read_pack(packs, bad)
+        print("ACCEPTED " + bad)
+    except SystemExit as e:
+        print("REFUSED " + str(e))
+EOF
+)" || fail "the isa/formats case could not run: $isa_out"
+grep -q '^SPEC .*"disasm": \[{"formats": \["ELF", "PE"\], "isa": \["x86-64", "aarch64"\]}\]' <<<"$isa_out" || fail "isa and formats did not reach the built spec: $isa_out"
+grep -q '^SPEC .*"plain": \[{"formats": null, "isa": null}\]' <<<"$isa_out" || fail "an entry without the fields gained them: $isa_out"
+grep -q '^SPEC .*"empty": \[{"formats": null, "isa": null}\]' <<<"$isa_out" || fail "empty lists were carried: $isa_out"
+grep -q '^- `disasm` — Disassembles code\. (fx1) — decodes: x86-64, aarch64; reads: ELF, PE$' <<<"$isa_out" || fail "tools.md does not print isa and formats on the program's line: $isa_out"
+grep -q '^- `plain` — Has no lists\. (fx1)$' <<<"$isa_out" || fail "an entry without them is not printed exactly as before: $isa_out"
+grep -q '^- `empty` — Empty lists\. (fx1)$' <<<"$isa_out" || fail "an entry with empty lists is not printed as before: $isa_out"
+grep -q '^- `shared` — Declared twice\. (fx1, fx2) — decodes: x86-64, arm; reads: ELF, Mach-O$' <<<"$isa_out" || fail "a program two packs declare does not show the union of their lists: $isa_out"
+grep -q '^REFUSED recipe: fx3: requires/host.json: bad.s isa must be a list of short strings' <<<"$isa_out" || fail "isa that is not a list was not refused by name: $isa_out"
+grep -q '^REFUSED recipe: fx4: requires/host.json: bad.s formats must be a list of short strings' <<<"$isa_out" || fail "formats with a non-string or a newline was not refused by name: $isa_out"
+pass "isa and formats on a binary entry reach the spec and tools.md prints them, the union for a program two packs declare; without them the line is as before; other values are refused by name"
+
 # --- what a pack may declare ---------------------------------------------------
 mk() { # <dir> <download json>
   mkdir -p "$1/requires" "$1/skills/a"
