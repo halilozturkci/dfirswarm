@@ -30,12 +30,11 @@ test("the three tools carry the network pack's withholding block, byte for byte,
   for (const [name, path] of Object.entries(ALL_TOOLS)) assert.equal(await block(path, "WITHHOLDING"), network, `${name} carries the network pack's withholding block`);
 });
 
-test("the three tools carry one common block (arguments, status, paging, the values file) and one way out (the seal and its check), and the two that walk a directory carry one walker", async () => {
+test("the three tools carry one common block (arguments, status, paging, the values file), and the two that walk a directory carry one walker", async () => {
   const common = await block(INVENTORY, "COMMON");
   assert.ok(common.length > 5000);
   for (const [name, path] of Object.entries(ALL_TOOLS)) assert.equal(await block(path, "COMMON"), common, `${name} carries the common block`);
-  const boundary = await block(INVENTORY, "BOUNDARY");
-  for (const [name, path] of Object.entries(ALL_TOOLS)) assert.equal(await block(path, "BOUNDARY"), boundary, `${name} carries the one way out`);
+  // the one way out (BOUNDARY) is the repo-wide text: tests/pack-boundary-shared.test.ts holds all 16 copies equal
   const files = await block(INVENTORY, "FILES");
   assert.equal(await block(CHAIN, "FILES"), files);
   assert.doesNotMatch(await readFile(AUDIT, "utf8"), /BEGIN SHARED FILES/, "backup_audit_normalise reads named files and walks nothing");

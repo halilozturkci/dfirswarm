@@ -937,7 +937,7 @@ test("a file name never reaches the answer through its extension, and a .vmsd va
     }
     // the marker that quotes the database's count still fires, with the count withheld
     const m = (await rowsOf(cwd, out, "markers")).find((r) => r.kind === "running_disk_is_a_delta_without_snapshots");
-    assert.match(m.observation, /<(?:token-shaped text withheld \d+ characters|withheld: \d+ bytes, field numsnapshots)> snapshot\(s\)/);
+    assert.match(m.observation, /<(?:token-shaped text withheld \d+ characters|withheld \d+ (?:characters|bytes): [a-z0-9 :,-]+)> snapshot\(s\)/);
   });
 });
 

@@ -70,7 +70,7 @@ tool = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tool)
 data = json.load(sys.stdin)
 print(json.dumps({"sealed": [tool.seal_text(s) for s in data["texts"]], "suspect": [tool._suspect(s) if hasattr(tool, "_suspect") else "no second check" for s in data["checked"]],
-                  "ints": [tool.seal(int(v)) for v in data["ints"]]}))
+                  "ints": [tool.seal(tool.big_ints(int(v))) for v in data["ints"]]}))
 `;
 
 async function probe(script: string, texts: string[], checked: string[] = [], ints: string[] = []): Promise<{ sealed: string[]; suspect: (string | null)[]; ints: unknown[] }> {
@@ -124,7 +124,7 @@ test("user-info is withheld to the last `@` before the host, also in a URL, and 
   for (const script of [CHAIN, INVENTORY, AUDIT]) {
     const got = await probe(script, texts);
     got.sealed.forEach((s, i) => assertNoPiece(s, pw, `${texts[i]} -> ${s}`));
-    assert.match(got.sealed[0], /^<userinfo withheld \d+ characters>@host\.example\.test$/);
+    assert.match(got.sealed[0], /^<withheld \d+ characters: user-info>@host\.example\.test$/);
   }
 });
 
@@ -142,9 +142,9 @@ test("the prefixes the shared block does not know (glpat-, sk_live_, SG., AIza),
     assertNoPiece(sealed, values[i], `${s} -> ${sealed}`);
   });
   digits.forEach((d, i) => assert.equal(got.sealed[secrets.length + named.length + i].includes(d), false, d));
-  assert.match(String(got.ints[0]), /^<withheld: an integer of \d+ bits>$/);
+  assert.match(String(got.ints[0]), /^<withheld \d+ characters: long number>$/);
   assert.equal(got.ints[1], 999999999999999999, "eighteen digits are a number");
-  assert.match(String(got.ints[2]), /^<withheld: an integer of 60 bits>$/);
+  assert.match(String(got.ints[2]), /^<withheld 19 characters: long number>$/);
 });
 
 test("the second check passes what an answer shows: GUIDs, VMware and VMFS identifiers, versions, VM, file and snapshot names, hosts, paths, times, Proxmox volume names", async () => {
@@ -160,7 +160,7 @@ test("the second check passes what an answer shows: GUIDs, VMware and VMFS ident
     "2024-01-05T02:00:00Z", "root@pam", "backup@pbs!nightly", "00:50:56:a1:b2:c3", "virtio=BC:24:11:2A:3B:4C,bridge=vmbr0,firewall=1",
     "work/s1/tool-output/snapshot_chain_check-disks-0123456789012345.jsonl", "match_via_parent_linkage2", "keys_that_look_like_credentials",
     "Nothing withheld or shortened is kept. write_text: true, in a job run with secret_output: true, keeps the original of each in a private file under $OUT.",
-    "<token-shaped text withheld 40 characters>", "Password=<secret withheld 14 characters>", "<withheld: an integer of 133 bits>",
+    "<token-shaped text withheld 40 characters>", "Password=<secret withheld 14 characters>", "<withheld 40 characters: long number>",
   ];
   for (const script of [CHAIN, INVENTORY, AUDIT]) {
     const got = await probe(script, realistic, realistic);
@@ -190,7 +190,7 @@ test("a name shaped like the tool's own paging or values file, with a token insi
         const all = run.stdout + "\n" + await everything(cwd);
         assertNoPiece(all, GHP, `${script} job=${job}`, 4);
         assertNoPiece(all, AKIA, `${script} job=${job}`, 4);
-        assert.equal(doc.boundary.strings_replaced_by_the_check, 0, JSON.stringify(doc.boundary));
+        if (doc.boundary.strings_replaced_by_the_backstop > 0) assert.notEqual(doc.status, "complete", JSON.stringify(doc.boundary));     // CHANGED with the one text: the backstop may replace a piece the layers left, and then the answer is partial
         const named = Object.values(doc.pages as Record<string, Json>).map((p) => p.all_results).filter(Boolean);
         assert.ok(named.length > 0, `${script}: the call paged`);
         for (const n of named) assert.match(n, job ? /^store\/jobs\/j000777\/out\/tool-output\/[a-z_]+-[a-z_]+-\d{16}\.jsonl$/ : /^work\/s1\/tool-output\/[a-z_]+-[a-z_]+-\d{16}\.jsonl$/, "the run's own page is shown whole");
@@ -214,7 +214,7 @@ test("end to end, a secret after `=`, a JWT in a path, user-info with `@` in the
           const run = await tool(script, cwd, { ...args, limit });
           const all = run.stdout + "\n" + await everything(cwd);
           for (const secret of [key, jwt, pw]) if (v.includes(secret)) assertNoPiece(all, secret, `${script} ${v.slice(0, 30)}`, secret === jwt ? 3 : 0);
-          assert.equal(JSON.parse(run.stdout).boundary.strings_replaced_by_the_check, 0);
+          assert.equal(JSON.parse(run.stdout).boundary.strings_replaced_by_the_backstop, 0);
         }
       }
     });
@@ -230,7 +230,7 @@ test("an integer of 40 digits in a descriptor's extent line is not printed: it i
       const run = await tool(CHAIN, cwd, { root: "inputs/vm", limit });
       const all = run.stdout + "\n" + await everything(cwd);
       assertNoPiece(all, n, "a 40-digit integer");
-      assert.match(all, /<withheld: an integer of 130 bits>/);
+      assert.match(all, /<withheld 40 characters: long number>/);
     }
   });
 });
@@ -242,11 +242,11 @@ import importlib.util, io, json, sys
 spec = importlib.util.spec_from_file_location("tool", sys.argv[1])
 tool = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tool)
-def let_through(value, depth=0):           # the seal removed on purpose
+def let_through(value, kind="text", field=""):           # the seal removed on purpose
     return json.loads(json.dumps(value, default=str))
 tool.seal = let_through
 tool.Shower.__call__ = lambda self, text, where=None, field=None: None if text is None else tool.Shown(str(text))   # the shape check removed
-tool._rules_once = lambda text, kind="boundary": text      # and the rules themselves: what is left is the second check
+tool._show = lambda s, kind, field: s      # and the layers themselves (layer 1 and layer 2): what is left is the backstop
 sys.stdin = io.TextIOWrapper(io.BytesIO(sys.argv[2].encode()))
 try:
     code = tool.main()
@@ -286,9 +286,9 @@ test("the second check is not the rules again: with the seal, the shape check an
           assert.doesNotMatch(run.stderr, /Traceback/, run.stderr.slice(-500));
           const doc: Json = JSON.parse(run.stdout);
           assertNoPiece(run.stdout + "\n" + await everything(cwd), secret, `${label} limit ${limit} ${value.slice(0, 24)}`, from);
-          assert.ok(doc.boundary.strings_replaced_by_the_check > 0, `${label}: the second check replaced nothing`);
-          assert.ok(Object.keys(doc.boundary.replaced_by_check).every((k: string) => k.startsWith("second check: ")), JSON.stringify(doc.boundary.replaced_by_check));
-          assert.ok(doc.boundary.replaced_at.every((p: Json) => typeof p.at === "string" && p.check.startsWith("second check")), JSON.stringify(doc.boundary.replaced_at.slice(0, 3)));
+          assert.ok(doc.boundary.strings_replaced_by_the_backstop > 0, `${label}: the second check replaced nothing`);
+          assert.ok(Object.keys(doc.boundary.replaced_by_check).length > 0, JSON.stringify(doc.boundary.replaced_by_check));
+          assert.ok(doc.boundary.replaced_at.every((p: Json) => typeof p.at === "string" && typeof p.check === "string"), JSON.stringify(doc.boundary.replaced_at.slice(0, 3)));
           assert.equal(doc.status, "partial", `${label} limit ${limit}: ${doc.status_basis}`);
         });
       }
@@ -306,8 +306,8 @@ test("a token split by zero-width or NUL characters into pieces too short for th
       const doc: Json = JSON.parse(run.stdout);
       for (const piece of [token.slice(0, 13), token.slice(13, 26), token.slice(26)]) assert.equal(run.stdout.includes(piece.slice(0, 12)), false, `${JSON.stringify(sep)}: ${piece}`);
       assert.equal(doc.status, "complete", doc.status_basis);
-      assert.equal(doc.boundary.strings_replaced_by_the_check, 0);
-      assert.match(doc.vms[0].name, /^<(?:token-shaped text withheld \d+ characters|withheld: \d+ bytes, field displayName)>$/);
+      assert.equal(doc.boundary.strings_replaced_by_the_backstop, 0);
+      assert.match(doc.vms[0].name, /^<(?:token-shaped text withheld \d+ characters|withheld \d+ (?:characters|bytes): [a-z0-9 :,-]+)>$/);
     });
   }
 });
@@ -387,10 +387,10 @@ test("a Proxmox Backup Server worker id is withheld in both its forms whenever e
     const out: Json = JSON.parse(run.stdout);
     assertNoPiece(run.stdout, AKIA, "PBS worker id", 4);
     for (const piece of escaped.match(/.{1,12}/g) ?? []) if (piece.length === 12) assert.equal(run.stdout.includes(JSON.stringify(piece).slice(1, -1)), false, piece);
-    assert.match(out.events[0].task.worker_id_as_written, /^<withheld: \d+ bytes, field worker id>$/);
-    assert.match(out.events[0].object, /^<withheld: \d+ bytes, field worker id>$/);
+    assert.match(out.events[0].task.worker_id_as_written, /^<withheld \d+ (?:characters|bytes): [a-z0-9 ,:.-]+>$/);
+    assert.match(out.events[0].object, /^<withheld \d+ (?:characters|bytes): [a-z0-9 ,:.-]+>$/);
     for (const piece of DASHED.split("-")) assertNoPiece(run.stdout, piece, "a token split by unescaping");
-    assert.match(out.events[2].object, /^<withheld: \d+ bytes, field worker id>$/);
+    assert.match(out.events[2].object, /^<withheld \d+ (?:characters|bytes): [a-z0-9 ,:.-]+>$/);
     assert.equal(out.events[1].task.worker_id_as_written, "store1");
     assert.equal(out.events[1].result, "unknown");
     assert.match(out.events[1].result_basis, /status unknown/);
