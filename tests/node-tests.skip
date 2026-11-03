@@ -4,4 +4,3 @@
 tests/vm-integration.test.ts      # boots microVMs where the host can: npm run test:vm
 tests/vm-jobs.test.ts             # boots microVMs where the host can: npm run test:vm
 tests/vm-secret-rotation.test.ts  # boots microVMs where the host can: npm run test:vm
-tests/job-observe-vm.test.ts      # by hand on a host that boots microVMs, with SWARM_JOB_OBSERVE_VM=1

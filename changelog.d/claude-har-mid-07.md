@@ -21,3 +21,12 @@ each file goes back, and the files that changed while they were copied).
 refused together with `--redact`: a disclosure copy never carries sessions.
 Masking removes the recorded sensitive values, not the evidence text the
 models read.
+
+### Removed: harness
+
+The fanotify read-observation prototype (`scripts/job-observe.py`,
+`scripts/job-observe.ts`, its two test files, the observe path of the job
+service and the `SWARM_JOB_OBSERVE` switch) is deleted: it never ran in a
+worker VM, and reads within a declared scope are not observed. Custody's "not
+observed" is the final word, and `job_started` keeps `observed: "unknown"`, so
+old and new runs read the same. The prototype stays in git history.
