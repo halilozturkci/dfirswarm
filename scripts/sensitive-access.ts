@@ -38,6 +38,7 @@
  *   node --experimental-strip-types scripts/sensitive-access.ts <run-dir> [--json] [--derive]
  *        [--runs-dir DIR] [--run-id ID] [--job jN] [--seat NAME] [--verify]
  */
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
@@ -48,6 +49,9 @@ import { sensitiveIndex, sensitiveRefs, type BecauseHow, type SensitiveIndex } f
 /** The sentence the report's section, custody and the command line end with, exactly (ADR 0018 decision 10). */
 export const LOWER_BOUND_SENTENCE =
   "Reads through a computed path, through a copy that was not a recorded page, or by a program that opened it by a name the command does not hold are not seen. This list is a lower bound.";
+
+/** What counting cannot catch, said beside the sentence above where a verdict holds the record to the trace (custody). */
+export const SEAT_ROWS_SENTENCE = "A seat whose rows never reach the hub trace leaves the record missing, and counting does not catch it.";
 
 /** What the record does not hold, said once beside the sentence above. */
 export const HARNESS_READS_SENTENCE = "The harness's own reads (store sweeps, location checks, custody, the report) are not agent access and are not listed.";
@@ -516,7 +520,14 @@ export type AccessRecord = {
 
 const PROBLEMS_KEPT = 200;
 
-type Sink = { add: (file: string, line: number | null, why: string) => void };
+type Sink = {
+  add: (file: string, line: number | null, why: string) => void;
+  /** Set by a reader that stopped because the caller's clock ran out: what it read is not all there was. */
+  stopped?: boolean;
+};
+
+/** Asked between lines; true ends the read (the caller's deadline). */
+type Stop = () => boolean;
 
 /**
  * Each line of a JSON-lines file that is an object, one at a time (a trace
@@ -524,7 +535,7 @@ type Sink = { add: (file: string, line: number | null, why: string) => void };
  * one that is a link, not a regular file or unreadable is a problem, a line
  * that is not a JSON object is a problem and the next is read.
  */
-async function eachJsonLine(file: string, label: string, sink: Sink, each: (rec: Record<string, unknown>, line: number) => void): Promise<boolean> {
+async function eachJsonLine(file: string, label: string, sink: Sink, each: (rec: Record<string, unknown>, line: number) => void, stop?: Stop): Promise<boolean> {
   const st = await lstat(file).catch((err: NodeJS.ErrnoException) => (err.code === "ENOENT" || err.code === "ENOTDIR" ? null : err));
   if (st === null) return false;
   if (st instanceof Error) {
@@ -544,6 +555,10 @@ async function eachJsonLine(file: string, label: string, sink: Sink, each: (rec:
     let n = 0;
     for await (const raw of lines) {
       n += 1;
+      if (stop && n % 256 === 0 && stop()) {
+        sink.stopped = true;
+        break;
+      }
       if (!raw.trim()) continue;
       let v: unknown;
       try {
@@ -587,7 +602,7 @@ function keptPath(result: unknown): string | null {
  * classified now, in order, with the kept copies the lines (and the rows
  * before) leave: a read of a copy is the same access.
  */
-async function scanTrace(S: string, index: SensitiveIndex, sink: Sink): Promise<Scan> {
+async function scanTrace(S: string, index: SensitiveIndex, sink: Sink, stop?: Stop): Promise<Scan> {
   const recorded: AccessEvent[] = [];
   const rows: SeatRow[] = [];
   const copies = new Map<string, string>();
@@ -634,7 +649,7 @@ async function scanTrace(S: string, index: SensitiveIndex, sink: Sink): Promise<
     const seq = num(rec.seq) ?? undefined;
     // A row is kept for the check against a line when it could be named by one (it mentions a store, a catalogue, a kept output or a job).
     if (hits.length || PROBE.test(JSON.stringify(rec.args))) rows.push({ key: rowKey(agent, sid, seq), line, at, seat: agent, tool, ...(sid ? { sid } : {}), ...(seq !== undefined ? { seq } : {}), args: rec.args, hits });
-  });
+  }, stop);
   return { recorded, rows, found };
 }
 
@@ -840,8 +855,29 @@ export async function accessRecord(sandboxArg: string, opts: { runsDir?: string;
 
 // --- verification: record against the trace ----------------------------------------
 
+/** One recorded `because` or `auto_declared` that the job's own scope manifest does not bear out. */
+export type ScopeDisagreement = {
+  job: string;
+  /** The sensitive job the record says it was made from. */
+  from: string;
+  /** The way the record gives: a `because` way, or `auto_declared` (on `job_started`). */
+  how: BecauseHow | "auto_declared";
+  /**
+   * `no_manifest`: a way that needs a declared scope (the manifest names the object) and `job_started` names none;
+   * `scope_declared`: a way that is only for a job with no scope (the text named it) and `job_started` names a manifest;
+   * `object_not_in_manifest`: the manifest does not hold the object the record says matched;
+   * `manifest_unverified`: the manifest is not there, is not a regular file, is too large, does not hash to `scope.manifest_sha256` or is not JSON.
+   */
+  kind: "no_manifest" | "scope_declared" | "object_not_in_manifest" | "manifest_unverified";
+  manifest: string | null;
+  object?: string;
+  why?: string;
+};
+
 export type AccessVerification = {
   rules: number;
+  /** How many jobs of the run are sensitive: none means there is nothing for the record to hold. */
+  sensitive_jobs: number;
   /** Rule versions the recorded lines were written under that are not this reader's. */
   rules_changed: number[];
   /** A recorded line whose tool row is not on the trace, or whose row the rules do not read as naming that job (FAIL in custody). */
@@ -850,8 +886,128 @@ export type AccessVerification = {
   unrecorded: Array<{ line: number; seat: string; tool: string; job: string | null; via: AccessVia; certainty: AccessCertainty }>;
   /** The same tool row recorded twice for the same job and way. */
   duplicate: AccessEvent[];
+  /** A recorded `because` or `auto_declared` that disagrees with the scope manifest of its `job_started` (the first ones; the count is `scope_disagreement_total`). */
+  scope_disagreement: ScopeDisagreement[];
+  scope_disagreement_total: number;
+  /** Why the check did not read everything (the caller's clock ran out, or a bound was reached); null when it read it all. */
+  incomplete: string | null;
   ok: boolean;
 };
+
+const DISAGREEMENTS_KEPT = 200;
+/** A scope manifest larger than this is not read; it is told as unverified. */
+const MANIFEST_MAX = 64 * 1024 * 1024;
+/** More `because` entries than this are not queued for a manifest check; the check says so. */
+const NEEDS_MAX = 200_000;
+const MANIFEST_PATH = /^store\/jobs\/[a-z0-9-]{1,64}\/scope\.[A-Za-z0-9._-]+\.json$/;
+
+/**
+ * The recorded `because` and `auto_declared` held to the scope manifest of
+ * the `job_started` of their job (`scope.manifest_sha256`): the one place
+ * this is checked. A way that names an object of the scope (`declared`,
+ * `digest`, `generation`, `alias`) needs a manifest that holds the object;
+ * `named_in_text` and `auto_declared` are for a job with no scope and are
+ * not true of one that has a manifest. `same_bytes` names a file the job
+ * sealed and is not a statement about its scope. Reads the journal once and
+ * each manifest once; a manifest is read only as a regular file under the
+ * size bound.
+ */
+async function checkScopes(S: string, stop?: Stop): Promise<{ list: ScopeDisagreement[]; total: number; incomplete: string | null }> {
+  const list: ScopeDisagreement[] = [];
+  let total = 0;
+  let incomplete: string | null = null;
+  const add = (d: ScopeDisagreement) => {
+    total += 1;
+    if (list.length < DISAGREEMENTS_KEPT) list.push(d);
+  };
+  type Need = { job: string; from: string; how: BecauseHow; object: string };
+  const started = new Map<string, { manifest: string | null; sha: string | null }>();
+  const needs = new Map<string, { sha: string | null; list: Need[] }>();
+  let queued = 0;
+  const sink: Sink = { add: () => undefined };
+  await eachJsonLine(
+    join(S, "store", "journal.jsonl"),
+    "store/journal.jsonl",
+    sink,
+    (rec) => {
+      const type = str(rec.type);
+      const job = str(rec.job);
+      if (!type || !job || !ID.test(job)) return;
+      if (type === "job_started") {
+        const scope = isRec(rec.scope) ? rec.scope : {};
+        const manifest = str(scope.manifest);
+        started.set(job, { manifest, sha: str(scope.manifest_sha256) });
+        if (manifest && Array.isArray(scope.auto_declared)) {
+          for (const a of scope.auto_declared) {
+            const from = isRec(a) ? str(a.from) : null;
+            if (from && ID.test(from)) add({ job, from, how: "auto_declared", kind: "scope_declared", manifest });
+          }
+        }
+      } else if (type === "job_committed") {
+        const sens = isRec(rec.sensitive) ? rec.sensitive : null;
+        const st = started.get(job);
+        for (const b of (sens ? becauseOf(sens.because) : undefined) ?? []) {
+          if (b.how === "same_bytes") continue;
+          if (b.how === "named_in_text") {
+            if (st?.manifest) add({ job, from: b.from, how: b.how, kind: "scope_declared", manifest: st.manifest });
+            continue;
+          }
+          if (!st?.manifest) {
+            add({ job, from: b.from, how: b.how, kind: "no_manifest", manifest: null, ...(st ? {} : { why: "no job_started line for the job" }) });
+            continue;
+          }
+          if (queued >= NEEDS_MAX) {
+            incomplete ??= `more than ${NEEDS_MAX} recorded ways were not held to their manifests`;
+            continue;
+          }
+          queued += 1;
+          const slot = needs.get(st.manifest) ?? needs.set(st.manifest, { sha: st.sha, list: [] }).get(st.manifest)!;
+          slot.list.push({ job, from: b.from, how: b.how, object: b.object });
+        }
+      }
+    },
+    stop,
+  );
+  if (sink.stopped) return { list, total, incomplete: "the deadline passed while the journal was read" };
+  for (const [manifest, slot] of needs) {
+    if (stop?.()) return { list, total, incomplete: "the deadline passed while the scope manifests were read" };
+    const unverified = (why: string) => {
+      for (const n of slot.list) add({ job: n.job, from: n.from, how: n.how, kind: "manifest_unverified", manifest, why });
+    };
+    if (!MANIFEST_PATH.test(manifest)) {
+      unverified("the path is not a scope manifest of a job");
+      continue;
+    }
+    const file = join(S, manifest);
+    const st = await lstat(file).catch(() => null);
+    if (!st) unverified("the manifest is not there");
+    else if (st.isSymbolicLink() || !st.isFile()) unverified("the manifest is not a regular file");
+    else if (st.size > MANIFEST_MAX) unverified("the manifest is larger than the check reads");
+    else {
+      const bytes = await readFile(file).catch(() => null);
+      if (!bytes) unverified("the manifest could not be read");
+      else if (!slot.sha || createHash("sha256").update(bytes).digest("hex") !== slot.sha) unverified("the manifest does not hash to scope.manifest_sha256");
+      else {
+        let paths: Set<string> | null = null;
+        try {
+          const m = JSON.parse(bytes.toString("utf8")) as unknown;
+          if (isRec(m)) {
+            paths = new Set<string>();
+            for (const k of ["accessible", "expanded"]) {
+              const arr = m[k];
+              if (Array.isArray(arr)) for (const x of arr) if (isRec(x) && typeof x.path === "string") paths.add(x.path);
+            }
+          }
+        } catch {
+          paths = null;
+        }
+        if (!paths) unverified("the manifest is not a JSON object");
+        else for (const n of slot.list) if (!paths.has(n.object)) add({ job: n.job, from: n.from, how: n.how, kind: "object_not_in_manifest", manifest, object: n.object });
+      }
+    }
+  }
+  return { list, total, incomplete };
+}
 
 /**
  * The recorded lines held to the trace they came from, and the trace held
@@ -861,9 +1017,12 @@ export type AccessVerification = {
  * reached the burst limit, where the line says the rest are on the trace).
  * When the lines were written under other rules the difference is told as
  * `rules_changed`, not as orphan or missing. Possible reaches (`maybe`) and
- * API pages are not held to a row.
+ * API pages are not held to a row. The journal's `because` and
+ * `auto_declared` are held to the scope manifest of their job
+ * (`scope_disagreement`). `opts.stop` is the caller's clock: asked between
+ * lines and manifests, and when it says stop the answer is `incomplete`.
  */
-export async function verifyAccess(sandboxArg: string): Promise<AccessVerification> {
+export async function verifyAccess(sandboxArg: string, opts: { stop?: Stop } = {}): Promise<AccessVerification> {
   const S = resolve(sandboxArg);
   const sink: Sink = { add: () => undefined };
   let index = emptyIndex();
@@ -872,7 +1031,8 @@ export async function verifyAccess(sandboxArg: string): Promise<AccessVerificati
   } catch {
     // the record names it
   }
-  const scan = await scanTrace(S, index, sink);
+  const scan = await scanTrace(S, index, sink, opts.stop);
+  let incomplete: string | null = sink.stopped ? "the deadline passed while the trace was read" : null;
   const byKey = new Map(scan.rows.map((r) => [r.key, r]));
   const changed = [...new Set(scan.recorded.map((e) => e.rules ?? 0).filter((v) => v !== ACCESS_RULES))].sort((a, b) => a - b);
   const orphan: AccessEvent[] = [];
@@ -902,8 +1062,21 @@ export async function verifyAccess(sandboxArg: string): Promise<AccessVerificati
       unrecorded.push({ line: r.line, seat: r.seat, tool: r.tool, job: h.job, via: h.via, certainty: h.certainty });
     }
   }
+  const scopes = incomplete ? { list: [], total: 0, incomplete: null } : await checkScopes(S, opts.stop);
+  incomplete ??= scopes.incomplete;
   const moved = changed.length > 0;
-  return { rules: ACCESS_RULES, rules_changed: changed, orphan: moved ? [] : orphan, unrecorded: moved ? [] : unrecorded, duplicate, ok: !moved && !orphan.length && !unrecorded.length && !duplicate.length };
+  return {
+    rules: ACCESS_RULES,
+    sensitive_jobs: index.jobs.size,
+    rules_changed: changed,
+    orphan: moved ? [] : orphan,
+    unrecorded: moved || incomplete ? [] : unrecorded,
+    duplicate,
+    scope_disagreement: scopes.list,
+    scope_disagreement_total: scopes.total,
+    incomplete,
+    ok: !moved && !incomplete && !orphan.length && !unrecorded.length && !duplicate.length && !scopes.total,
+  };
 }
 
 // --- provenance ------------------------------------------------------------------
@@ -1123,7 +1296,9 @@ async function main(argv: string[]): Promise<number> {
         `${ver.rules_changed.length ? `; the lines were written under rules ${ver.rules_changed.join(", ")} and this is ${ver.rules}` : ""}` +
         `${ver.orphan.length ? `; ${ver.orphan.length} line(s) point at a row that is not on the trace or that the rules do not read as naming their job` : ""}` +
         `${ver.unrecorded.length ? `; ${ver.unrecorded.length} row(s) the rules read have no line` : ""}` +
-        `${ver.duplicate.length ? `; ${ver.duplicate.length} line(s) repeat a row` : ""}\n`,
+        `${ver.duplicate.length ? `; ${ver.duplicate.length} line(s) repeat a row` : ""}` +
+        `${ver.scope_disagreement_total ? `; ${ver.scope_disagreement_total} recorded way(s) a job was made from a sensitive output do not agree with the scope manifest of its job_started` : ""}` +
+        `${ver.incomplete ? `; NOT ALL READ: ${ver.incomplete}` : ""}\n`,
     );
   }
   return 0;

@@ -43,22 +43,29 @@ export function fixtureFiles(extra: Extra = {}): Record<string, string> {
   manifest("j000034", [{ path: "decrypted/key.bin", sha256: KEY, bytes: 32 }]);
   manifest("j000037", []);
   manifest("j000040", []);
+  // The scope manifests of the jobs that declared a scope: what the job could read, and the sha256 `job_started` holds.
+  const scope = (id: string, objects: string[]) => {
+    const text = `${JSON.stringify({ v: 1, job: id, attempt: 1, kind: "declared", expanded: objects.map((path) => ({ path })), accessible: objects.map((path) => ({ path })) })}\n`;
+    files[`run1/store/jobs/${id}/scope.1.json`] = text;
+    return { kind: "declared", manifest: `store/jobs/${id}/scope.1.json`, manifest_sha256: sha(text) };
+  };
   const sens = (why: string, from: string[], because?: unknown[]) => ({ why, from, note: "n", ...(because ? { because } : {}) });
   if (!extra.skip?.includes("journal")) {
     files["run1/store/journal.jsonl"] = jl(
       { v: 1, seq: 0, at: T(0), type: "job_accepted", job: "j000001", spec: { kind: "tool", secret_output: true }, requester: { agent: "agent-2", name: "n", doing: "d" } },
       { v: 1, seq: 1, at: T(1), type: "job_committed", job: "j000001", status: "ok", sensitive: sens("secret_output", []) },
       { v: 1, seq: 2, at: T(2), type: "job_accepted", job: "j000034", spec: { kind: "command" }, requester: { agent: "agent-3" } },
-      { v: 1, seq: 3, at: T(3), type: "job_started", job: "j000034", scope: { kind: "declared" } },
+      { v: 1, seq: 3, at: T(3), type: "job_started", job: "j000034", scope: scope("j000034", ["store/jobs/j000001/out/values.jsonl"]) },
       { v: 1, seq: 4, at: T(4), type: "job_committed", job: "j000034", status: "ok", sensitive: sens("derived", ["j000001"], [{ from: "j000001", how: "declared", object: "store/jobs/j000001/out/values.jsonl" }]) },
       { v: 1, seq: 5, at: T(5), type: "job_accepted", job: "j000037", spec: { kind: "command" }, requester: { agent: "agent-4" } },
       { v: 1, seq: 6, at: T(6), type: "job_started", job: "j000037", scope: { kind: "all", auto_declared: [{ from: "j000001", how: "named_in_text", matched: "store/jobs/j000001/out/values.jsonl" }], could_read_sensitive: ["j000001", "j000034"] } },
       { v: 1, seq: 7, at: T(7), type: "job_committed", job: "j000037", status: "ok", sensitive: sens("derived", ["j000001"], [{ from: "j000001", how: "named_in_text", object: "store/jobs/j000001/out/values.jsonl" }]) },
       { v: 1, seq: 8, at: T(8), type: "job_accepted", job: "j000040", spec: { kind: "command" }, requester: { agent: "agent-3" } },
-      { v: 1, seq: 9, at: T(9), type: "job_committed", job: "j000040", status: "ok", sensitive: sens("derived", ["j000034"], [{ from: "j000034", how: "digest", object: "work/agent-3/key.bin" }]) },
-      { v: 1, seq: 10, at: T(20), type: "job_accepted", job: "j000060", spec: { kind: "command" }, requester: { agent: "agent-2" } },
-      { v: 1, seq: 11, at: T(21), type: "job_started", job: "j000060", scope: { kind: "all", could_read_sensitive: ["j000001", "j000034", "j000037", "j000040"] } },
-      { v: 1, seq: 12, at: T(22), type: "job_committed", job: "j000060", status: "ok" },
+      { v: 1, seq: 9, at: T(9), type: "job_started", job: "j000040", scope: scope("j000040", ["work/agent-3/key.bin"]) },
+      { v: 1, seq: 10, at: T(9), type: "job_committed", job: "j000040", status: "ok", sensitive: sens("derived", ["j000034"], [{ from: "j000034", how: "digest", object: "work/agent-3/key.bin" }]) },
+      { v: 1, seq: 11, at: T(20), type: "job_accepted", job: "j000060", spec: { kind: "command" }, requester: { agent: "agent-2" } },
+      { v: 1, seq: 12, at: T(21), type: "job_started", job: "j000060", scope: { kind: "all", could_read_sensitive: ["j000001", "j000034", "j000037", "j000040"] } },
+      { v: 1, seq: 13, at: T(22), type: "job_committed", job: "j000060", status: "ok" },
     );
   }
   const row = traceRow;

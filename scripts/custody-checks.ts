@@ -25,6 +25,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
+import type { AccessVerification } from "./sensitive-access.ts";
 
 export type CheckStatus = "passed" | "failed" | "incomplete" | "not_applicable" | "unavailable";
 export type Check = { name: string; status: CheckStatus; reason?: string; expected?: number; checked?: number };
@@ -47,6 +48,81 @@ export type OperatorAudit = {
 } | null;
 
 export type TraceAction = { at: string; command: string; argv: string[] };
+
+// --- the access record -----------------------------------------------------------------
+
+/** How many examples of each finding a verdict keeps; the counts are whole. */
+const ACCESS_EXAMPLES = 5;
+
+/**
+ * What custody keeps of `verifyAccess` (scripts/sensitive-access.ts): the
+ * counts of each finding, whole, and the first few by where they are. A
+ * line or a path, never a value.
+ */
+export type AccessCheck = {
+  /** Jobs of the run that are sensitive: none means the record has nothing to hold. */
+  sensitive_jobs: number;
+  /** A recorded access line whose tool row is not on the trace, or that the rules do not read as naming its job. */
+  orphan: number;
+  /** A seat row the rules read as a path or text access that no line records (none at the burst limit, where the line says the rest are on the trace). */
+  unrecorded: number;
+  /** The same tool row recorded twice for the same job and way. */
+  duplicate: number;
+  /** Rule versions the lines were written under that are not the reader's: the lines and the rows are then not compared. */
+  rules_changed: number[];
+  /** A recorded `because` or `auto_declared` that disagrees with the scope manifest of its job's `job_started`. */
+  scope_disagreement: number;
+  /** Why the check did not read everything; null when it did. */
+  incomplete: string | null;
+  examples: { orphan: string[]; unrecorded: string[]; duplicate: string[]; scope_disagreement: string[] };
+};
+
+/** The custody form of a verification: whole counts, a few examples. */
+export function accessCheckOf(v: AccessVerification): AccessCheck {
+  const first = <T>(list: T[], show: (x: T) => string) => list.slice(0, ACCESS_EXAMPLES).map(show);
+  return {
+    sensitive_jobs: v.sensitive_jobs,
+    orphan: v.orphan.length,
+    unrecorded: v.unrecorded.length,
+    duplicate: v.duplicate.length,
+    rules_changed: v.rules_changed,
+    scope_disagreement: v.scope_disagreement_total,
+    incomplete: v.incomplete,
+    examples: {
+      orphan: first(v.orphan, (e) => e.ref),
+      unrecorded: first(v.unrecorded, (u) => `trace:L${u.line}`),
+      duplicate: first(v.duplicate, (e) => e.ref),
+      scope_disagreement: first(v.scope_disagreement, (d) => `${d.job}: ${d.how} from ${d.from} (${d.kind})`),
+    },
+  };
+}
+
+/**
+ * The access record as a check. A recorded line with no trace row behind
+ * it, or a recorded way that the job's scope manifest does not bear out, is
+ * a FAIL: the record contradicts what custody seals. A seat row with no
+ * line, or a row recorded twice, is a WARN (the status stays passed and the
+ * reason begins with WARN: the record is incomplete or doubled, nothing in
+ * it is false). Lines written under other rules are a note, never a FAIL.
+ * A run with no sensitive output has nothing to hold.
+ */
+export function accessStatus(a: AccessCheck): { status: CheckStatus; reason?: string } {
+  const some = (n: number, ex: string[]) => (ex.length < n ? `${ex.join(", ")} and ${n - ex.length} more` : ex.join(", "));
+  if (!a.sensitive_jobs) return { status: "not_applicable", reason: "the run has no sensitive output" };
+  const bad = [
+    ...(a.orphan ? [`${a.orphan} recorded access line(s) point at a trace row that is not there or that the rules do not read as naming their job (${some(a.orphan, a.examples.orphan)})`] : []),
+    ...(a.scope_disagreement ? [`${a.scope_disagreement} recorded way(s) a job was made from a sensitive output disagree with the scope manifest of its job_started (${some(a.scope_disagreement, a.examples.scope_disagreement)})`] : []),
+  ];
+  if (bad.length) return { status: "failed", reason: bad.join("; ") };
+  if (a.incomplete) return { status: "incomplete", reason: a.incomplete };
+  const warn = [
+    ...(a.unrecorded ? [`${a.unrecorded} seat row(s) the rules read as an access have no line (${some(a.unrecorded, a.examples.unrecorded)})`] : []),
+    ...(a.duplicate ? [`${a.duplicate} line(s) repeat a row (${some(a.duplicate, a.examples.duplicate)})`] : []),
+  ];
+  const note = a.rules_changed.length ? [`note: the lines were written under rules ${a.rules_changed.join(", ")}; the lines and the rows are not compared`] : [];
+  const words = [...warn.map((w) => `WARN: ${w}`), ...note];
+  return words.length ? { status: "passed", reason: words.join("; ") } : { status: "passed" };
+}
 
 /**
  * The operator's audit beside the registry: its chain (each line's `prev` the
@@ -205,6 +281,8 @@ type CustodyLike = {
   artifacts: { files: number; skipped: number } | null;
   store: { journal: { intact: boolean; detail: string; anchor: string }; outputs: { files: number; verified: number; mismatched: string[]; missing: string[] }; manifests_missing: string[]; logs?: { checked: number; mismatched: string[] }; catalogue?: { revisions_mismatched: string[]; generations_mismatched: string[] } | null; ledger_unreadable?: string | null; images?: { undeclared: string[]; digests: Record<string, string[]> }; imports?: { sealed: number; verified: number; mismatched: string[] } } | null;
   operator?: OperatorAudit;
+  /** The access record held to the trace and to the scope manifests (null: the run has no store, or it was not taken). */
+  access_record?: AccessCheck | null;
   acquisition?: Acquisition;
   not_reached: string[];
   incomplete: string | null;
@@ -334,6 +412,14 @@ export function checksOf(c: CustodyLike, errors: Record<string, string> = {}): C
   else if (!c.operator.intact) add("operator audit", "failed", c.operator.detail);
   else if (c.operator.unmatched.length) add("operator audit", "failed", `${c.operator.unmatched.length} operator line(s) on the trace are not on the audit`, { expected: c.operator.trace_actions, checked: c.operator.matched });
   else add("operator audit", "passed", undefined, { expected: c.operator.trace_actions, checked: c.operator.matched });
+  // The access record (docs/adr/0018).
+  if (!reached("the access record")) add("sensitive access", "incomplete", "not reached");
+  else if (errors.access_record) add("sensitive access", "unavailable", errors.access_record);
+  else if (!c.access_record) add("sensitive access", "not_applicable", "the run has no store or it was not checked");
+  else {
+    const s = accessStatus(c.access_record);
+    add("sensitive access", s.status, s.reason);
+  }
   if (c.incomplete) add("custody", "incomplete", c.incomplete);
   return out;
 }
