@@ -109,3 +109,13 @@ definition in the tracked Markdown (fixtures excepted; fenced blocks and code
 spans are not read) and fails on any that is not a tracked file or directory,
 naming it as file:line -> target. A Markdown change now selects it in
 `scripts/test-select.ts`.
+
+A new node test, `tests/tool-library-doc-counts.test.ts`, holds the counts the
+docs state about the tool library to the tree, as `tests/pack-doc-counts.test.ts`
+does for the packs: the tools (the directories of `tool-library/`), those written
+for gaps (manifests with `by: "maintainer"`), those folded in from later runs
+(the ones the README's "Folded from later runs" section names) and, by
+difference, those written during the forensic cases. The three sentences that
+carry the counts (`tool-library/README.md`, `docs/forged-tools.md`,
+`docs/roadmap.md`) are found by pattern, and the test fails naming each number
+that is behind, or a sentence it can no longer find.
