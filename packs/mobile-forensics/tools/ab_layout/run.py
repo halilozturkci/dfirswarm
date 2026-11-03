@@ -52,7 +52,7 @@ import plistlib
 import warnings
 from pathlib import Path
 
-PARSER = "ab_layout/1"
+PARSER = "ab_layout/2"
 TOOL = "ab_layout"
 VALUES_NAME = "ab-layout-values.jsonl"       # the first free name of this and -2, -3 ... is used (see choose_values_name)
 VALUES_FORMAT = "JSON Lines: the member name and the id of each member whose name is withheld"
@@ -828,6 +828,18 @@ class ResultFile:
         return result
 
 
+def refuse_linked_dir(path, what):
+    """A directory this tool writes into is never reached through a link planted in the output directory: lstat, not stat."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        fail("%s could not be examined: %s" % (what, describe(exc)))
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        fail("%s in the output directory is a symbolic link or not a directory: the tool does not write through it" % what, written=False)
+
+
 def make_dirs_nofollow(path):
     os.makedirs(path, mode=0o700, exist_ok=True)
     walk = Path(path)
@@ -1223,6 +1235,7 @@ def main():
     payload_at = len(MAGIC) + len(version_text) + len(compressed_text) + len(scheme) + 3
 
     base, shown_base = output_base()
+    refuse_linked_dir(str(base / "tool-output"), "tool-output")
     result = ResultFile(base, shown_base, [shown(os.path.realpath(path), False), size, copy_content, sorted(wanted) if wanted else None], limit, INLINE_BYTES)
     values = None
     if copy_content:
@@ -1299,6 +1312,25 @@ def main():
                 break
             kind = TYPES.get(h["type"], "other")
             size_m = h["size"]
+            if h["type"] == b"S" and block[482]:
+                # An old GNU sparse header: extension blocks of the map sit between the header and the data. They are passed over, so the data
+                # is skipped from where it is (the member itself is listed and never extracted).
+                extension_blocks = 0
+                while True:
+                    ext = src.read(512)
+                    extension_blocks += 1
+                    if len(ext) < 512:
+                        note("the payload ends inside the sparse map of a member at offset %d" % offset)
+                        tar_end = "truncated"
+                        break
+                    if not ext[504]:
+                        break
+                    if extension_blocks >= 65536:
+                        note("the sparse map of the member at offset %d has more than 65536 extension blocks: the walk stops" % offset)
+                        tar_end = "damaged"
+                        break
+                if tar_end in ("truncated", "damaged"):
+                    break
             if kind in ("pax", "pax_global", "gnu_longname", "gnu_longlink"):
                 if size_m > EXTENDED_LIMIT:
                     note("an extended header of %d bytes at payload offset %d is over the %d this tool reads: the walk stops" % (size_m, offset, EXTENDED_LIMIT))
@@ -1322,6 +1354,8 @@ def main():
                             extended["linkname"] = records[b"linkpath"]
                         if b"size" in records and records[b"size"].isdigit():
                             extended["size"] = int(records[b"size"])
+                        if any(key.startswith(b"GNU.sparse.") for key in records):
+                            extended["sparse"] = True      # a pax sparse member: its typeflag is a plain file, its data is a packed map
                 elif kind == "gnu_longname":
                     extended["name"] = cstr(data)
                 elif kind == "gnu_longlink":
@@ -1332,6 +1366,8 @@ def main():
             if "size" in extended:
                 size_m = extended["size"]
             had_bad_pax = extended.pop("bad", False)
+            if extended.get("sparse") and kind in ("file", "other"):
+                kind = "sparse"
             extended = {}
             counts["members_read"] += 1
             name = text_of(h["name"])

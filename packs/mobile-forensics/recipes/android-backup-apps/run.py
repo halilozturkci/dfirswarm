@@ -87,6 +87,7 @@ try:
 except ImportError:  # pragma: no cover
     ctypes = None
 
+TEMPS = []                 # hidden temporaries of the layout phase, removed by a stop signal
 STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
 ACTIVE = []                    # the programs running now
 SEEN = set()                   # the pids seen below a program this tool started: the only ones reap_orphans may end once their parent is gone
@@ -1165,10 +1166,15 @@ def ensure_dir(root_fd, parts):
         raise
 
 
+DEST = [None]
+
+
 def write_member(src, size, root_fd, parts, left_bytes, deadline, progress, nonce):
     """Stream `size` bytes into derivative/<parts> through a hidden temporary beside the name and a rename that never replaces; returns the sha256."""
     dir_fd = ensure_dir(root_fd, parts[:-1])
     tmp_name = ".ab-%s.tmp" % nonce
+    tmp_path = os.path.join(DEST[0], *parts[:-1], tmp_name)
+    TEMPS.append(tmp_path)
     out_fd = None
     try:
         if size > left_bytes:
@@ -1198,6 +1204,8 @@ def write_member(src, size, root_fd, parts, left_bytes, deadline, progress, nonc
             os.unlink(tmp_name, dir_fd=dir_fd)
         except OSError:
             pass
+        if tmp_path in TEMPS:
+            TEMPS.remove(tmp_path)
         os.close(dir_fd)
 
 
@@ -1205,6 +1213,7 @@ def materialise(path, header, dest, rows_path, deadline, max_members=DEFAULT_MAX
     """Lay the backup out under `dest` (which must not exist yet). Returns the account: counts, the state of the stream, and `problems`, the sentences
     that make the run partial. One line per member goes to rows_path (TSV, flushed per line)."""
     os.makedirs(dest, mode=0o700)
+    DEST[0] = dest
     with open(os.path.join(dest, "DERIVATIVE.json"), "x", encoding="utf-8") as banner:
         json.dump(BANNER, banner, indent=2, sort_keys=True)
         banner.write("\n")
@@ -1247,6 +1256,24 @@ def materialise(path, header, dest, rows_path, deadline, max_members=DEFAULT_MAX
                     tar_end = "damaged"
                     break
                 kind, size = TAR_TYPES.get(h["type"], "other"), h["size"]
+                if h["type"] == b"S" and block[482]:
+                    # An old GNU sparse header: its map's extension blocks sit between the header and the data, and are passed over.
+                    extension_blocks = 0
+                    while True:
+                        ext = src.read(512)
+                        extension_blocks += 1
+                        if len(ext) < 512:
+                            problems.append("the payload ends inside the sparse map of a member at offset %d" % offset)
+                            tar_end = "truncated"
+                            break
+                        if not ext[504]:
+                            break
+                        if extension_blocks >= 65536:
+                            problems.append("the sparse map of the member at offset %d has more than 65536 extension blocks: the walk stops" % offset)
+                            tar_end = "damaged"
+                            break
+                    if tar_end in ("truncated", "damaged"):
+                        break
                 if kind in ("pax", "pax_global", "gnu_longname", "gnu_longlink"):
                     if size > EXTENDED_LIMIT:
                         problems.append("an extended header of %d bytes at payload offset %d is over the %d this recipe reads: the walk stops" % (size, offset, EXTENDED_LIMIT))
@@ -1268,6 +1295,8 @@ def materialise(path, header, dest, rows_path, deadline, max_members=DEFAULT_MAX
                                     extended[field] = records[key]
                             if b"size" in records and records[b"size"].isdigit():
                                 extended["size"] = int(records[b"size"])
+                            if any(key.startswith(b"GNU.sparse.") for key in records):
+                                extended["sparse"] = True
                     elif kind == "gnu_longname":
                         extended["name"] = cstr(data)
                     elif kind == "gnu_longlink":
@@ -1277,6 +1306,8 @@ def materialise(path, header, dest, rows_path, deadline, max_members=DEFAULT_MAX
                     h["name"] = extended["name"]
                 if "size" in extended:
                     size = extended["size"]
+                if extended.get("sparse") and kind in ("file", "other"):
+                    kind = "sparse"
                 extended = {}
                 counts["members_read"] += 1
                 name = h["name"].decode("utf-8", "surrogateescape")
@@ -1456,6 +1487,11 @@ def child_files(directory):
 LEAPP_SECONDS = 14100      # recipe.json limits.seconds (14400) less the time to write the account of the run
 def last_word(signum):
     """The one line a stopped recipe prints (exit 128 plus the signal): the account written before the program started already says partial."""
+    for temp in list(TEMPS):
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
     sys.stdout.write(json.dumps({"ok": False, "status": "partial", "status_basis": "the recipe was stopped by %s before ALEAPP finished: coverage.json, written before it started, says partial"
                                  % signal.Signals(signum).name}) + "\n")
     sys.stdout.flush()
@@ -1490,6 +1526,8 @@ def run(path, header, out, seconds=LEAPP_SECONDS):
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "the output directory already holds the files of an earlier run, and this recipe never writes over one: nothing was run", "why": "the output directory already holds aleapp/ or coverage.json: the recipe does not write over an earlier run"}))
         return 2
     os.makedirs(out, exist_ok=True)
+    STATE["last_word"] = last_word       # a stop in the layout phase gives one answer and leaves no hidden temporary
+    install_signal_handlers()
     # Said before ALEAPP starts: a run stopped at its limit leaves this, and is read as partial.
     write_coverage(out, "partial", "started; ALEAPP did not finish (stopped before its end)", ["the run ended before ALEAPP did"],
                    "the run started and ALEAPP had not finished when this was written: a run that is stopped before its end leaves this account")
@@ -1511,7 +1549,7 @@ def run(path, header, out, seconds=LEAPP_SECONDS):
         write_coverage(out, "failed", "nothing: the layout holds no file", ab_problems or ["the backup holds no member that is laid out"],
                        "the layout holds no file, so nothing was parsed", adb_backup=ab_account)
         return 1
-    seconds = max(60.0, seconds - (time.monotonic() - began))
+    seconds = max(1.0, seconds - (time.monotonic() - began))
     kind = "layout of the adb backup (a derivative, ALEAPP -t fs)"
     scratch = os.path.join(out, "aleapp-run")
     # The run directory is read-only in a job: the program's working directory and its temporary files

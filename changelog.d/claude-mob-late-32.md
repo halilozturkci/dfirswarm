@@ -22,3 +22,12 @@
 - `extractions/backups` (what a local or cloud backup covers, the derivative tools, no decryption provided), `extractions/protection-state` (a gap is not an absence; no bypass is prescribed), `apps/messaging`, `apps/identity-containers` (app, user and device identity, restore and migration), `ios/knowledgec-activity`, `media/provenance` (originals, derivatives and capture clocks, the HEIC route) and `validation/parser-coverage` (the matrix and the receipt outcomes of the LEAPP recipes).
 - The router and the index name them; `extractions/backup-detail` stays as the second-level leaf for reading a backup answer, and the restore sentence of `ios/containers-and-time` moved to `apps/identity-containers`. `heif-convert` and `pillow-heif` are no longer held only for a future skill.
 - The pack now has 18 skills; the pack version is 1.9.0.
+
+### Fixed: mobile-forensics, heic_inspect, ab_layout, backup_materialise, android-backup-apps
+
+- `heic_inspect`: the output cap holds when the backend makes more than 1,000 entries in its work directory. The count used to stop at the bound and the bytes past it were never summed; the program is now ended at that count and the answer says so. The wait loop also samples the process tree, so a descendant left behind by a backend that exits 0 is swept.
+- `ab_layout` and the `android-backup-apps` recipe: a pax sparse member (any `GNU.sparse.*` record) is listed as `sparse_not_extracted` and never extracted, and the answer is partial. The extension blocks of an old GNU sparse header are passed over, so the member after it is read from the right place.
+- `android-backup-apps`: the stop handler is installed before the layout phase, so a TERM, INT or HUP there gives one JSON and removes the hidden temporary; ALEAPP gets the time that is left of `--max-seconds` (at least one second) instead of at least a minute.
+- `backup_materialise`: a `Manifest.db-wal` or `-journal` that is not a regular file (a FIFO, a directory) is said in the answer and makes it partial.
+- `backup_materialise`, `ab_layout`, `heic_inspect`: a `tool-output` (and, for `heic_inspect`, `heic_inspect`) directory that is a link planted in the output directory is refused as JSON instead of being written through.
+- The manifests of `backup_materialise` and `ab_layout` now say that a refused write to the result file ends the run as failed (a refused write of a member is `write_failed` on its row); the `heif-convert` entry in `requires/host.json` no longer says no skill names it. Tool versions are 2 and the recipe is 1.1.1; the pack is 1.9.1.

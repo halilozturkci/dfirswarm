@@ -1767,3 +1767,136 @@ test("android-backup-apps leaves no process of ALEAPP running after a stop, and 
     }
   });
 });
+
+// --- fix round 1: android-backup-apps, a pax sparse member; a stop in the layout phase; the clock ---------------------------------------------
+
+const SPARSE_AB = String.raw`
+import sys, zlib
+path = sys.argv[1]
+def block(name, size, flag=b"0"):
+    b = bytearray(512)
+    b[0:len(name)] = name
+    b[100:108] = b"0000644\0"; b[108:116] = b"0000000\0"; b[116:124] = b"0000000\0"
+    b[124:136] = b"%011o\0" % size; b[136:148] = b"14000000000\0"; b[148:156] = b"        "; b[156:157] = flag; b[257:265] = b"ustar  \0"
+    b[148:156] = b"%06o\0 " % (sum(b) & 0o777777)
+    return bytes(b)
+def pad(d): return d + b"\0" * (-len(d) % 512)
+def record(k, v):
+    body = b" %s=%s\n" % (k, v); n = len(body) + 1
+    while len(str(n)) + len(body) != n: n = len(str(n)) + len(body)
+    return b"%d%s" % (n, body)
+out = b""
+out += block(b"apps/com.example/_manifest", 4) + pad(b"man!")
+rec = record(b"path", b"apps/com.example/f/sp.bin") + record(b"GNU.sparse.major", b"1") + record(b"GNU.sparse.minor", b"0") + record(b"GNU.sparse.realsize", b"52428800")
+out += block(b"PaxHeaders/s", len(rec), b"x") + pad(rec) + block(b"apps/com.example/f/GNUSparseFile.1/sp.bin", 6) + pad(b"1\n0\n0\n")
+out += block(b"apps/com.example/f/after.txt", 5) + pad(b"after")
+out += b"\0" * 1024
+open(path, "wb").write(b"ANDROID BACKUP\n5\n1\nnone\n" + zlib.compress(out))
+`;
+
+const BIG_AB = String.raw`
+import sys, zlib
+path, size = sys.argv[1], int(sys.argv[2])
+def block(name, size):
+    b = bytearray(512)
+    b[0:len(name)] = name
+    b[100:108] = b"0000644\0"; b[108:116] = b"0000000\0"; b[116:124] = b"0000000\0"
+    b[124:136] = b"%011o\0" % size; b[136:148] = b"14000000000\0"; b[148:156] = b"        "; b[156:157] = b"0"; b[257:265] = b"ustar  \0"
+    b[148:156] = b"%06o\0 " % (sum(b) & 0o777777)
+    return bytes(b)
+z = zlib.compressobj(1)
+with open(path, "wb") as fh:
+    fh.write(b"ANDROID BACKUP\n5\n1\nnone\n")
+    fh.write(z.compress(block(b"apps/com.example/f/big.bin", size)))
+    left = size
+    chunk = bytes(1 << 20)
+    while left > 0:
+        n = min(left, len(chunk)); fh.write(z.compress(chunk[:n])); left -= n
+    fh.write(z.compress(bytes(-size % 512) + bytes(1024)))
+    fh.write(z.flush())
+`;
+
+test("android-backup-apps lists a pax sparse member as sparse_not_extracted, never extracts it, and says partial", async () => {
+  await withCwd(async (cwd, bin) => {
+    await appsStandin(bin, cwd);
+    const ab = join(cwd, "work", "sparse.ab");
+    await mkdir(join(cwd, "work"), { recursive: true });
+    const made = await runPySnippet(SPARSE_AB, [ab], null);
+    assert.equal(made.code, 0, made.stderr);
+    const out = join(cwd, "out-sparse");
+    const result = await recipe("android-backup-apps", ["run", "--target", target(ab), "--out", out], cwd, {}, bin);
+    assert.doesNotMatch(result.stderr, /Traceback/);
+    const members = await readFile(join(out, "ab-members.tsv"), "utf8");
+    const line = members.split("\n").find((l) => l.includes("f/sp.bin")) ?? "";
+    assert.match(line, /sparse_not_extracted/, members);
+    assert.match(members.split("\n").find((l) => l.includes("after.txt")) ?? "", /\textracted\t/);
+    const found = (await readFile(join(cwd, "aleapp-saw.txt"), "utf8")).split("\n").filter((p) => /sp\.bin|GNUSparse/.test(p));
+    assert.deepEqual(found, []);
+    assert.equal((await coverage(out)).status, "partial");
+  });
+});
+
+test("android-backup-apps stopped in the layout phase gives one JSON, exit 143, and leaves no hidden temporary in the derivative", async () => {
+  await withCwd(async (cwd, bin) => {
+    await appsStandin(bin, cwd);
+    const ab = join(cwd, "work", "big.ab");
+    await mkdir(join(cwd, "work"), { recursive: true });
+    const made = await runPySnippet(BIG_AB, [ab, String(3 * 2 ** 30)], null);
+    assert.equal(made.code, 0, made.stderr);
+    const out = join(cwd, "stop-layout");
+    await mkdir(out, { recursive: true });
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+    const child = spawn("python3", [join(RECIPES, "android-backup-apps", "run.py"), "run", "--target", target(ab), "--out", out], { cwd, env });
+    const stdout: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => stdout.push(c));
+    const exit = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
+    const guard = setTimeout(() => child.kill("SIGKILL"), 120000);
+    const files = join(out, "derivative", "data", "data", "com.example", "files");
+    try {
+      let seen = false;
+      for (let i = 0; i < 3000 && !seen; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        seen = (await readdir(files).catch(() => [] as string[])).some((n) => n.startsWith(".ab-"));
+      }
+      assert.ok(seen, "the member was being written");
+      child.kill("SIGTERM");
+      assert.equal(await exit, 143);
+      const last = JSON.parse(Buffer.concat(stdout).toString("utf8").trim().split("\n").pop() ?? "{}") as { status?: string };
+      assert.equal(last.status, "partial");
+      assert.deepEqual((await readdir(files).catch(() => [] as string[])).filter((n) => n.startsWith(".ab-")), []);
+    } finally {
+      clearTimeout(guard);
+      child.kill("SIGKILL");
+    }
+  });
+});
+
+test("android-backup-apps gives ALEAPP the time that is left of --max-seconds, not at least a minute", async () => {
+  await withCwd(async (cwd, bin) => {
+    const ab = join(cwd, "work", "clock.ab");
+    await build(AB, ab, JSON.stringify({ members: APPS_MEMBERS }));
+    await standin(bin, "aleapp", `${REPORT}\n${LOG.header(1)}\nsleep 600`);
+    const began = Date.now();
+    const result = await recipe("android-backup-apps", ["run", "--target", target(ab), "--out", join(cwd, "clock"), "--max-seconds", "4"], cwd, {}, bin);
+    assert.doesNotMatch(result.stderr, /Traceback/);
+    assert.ok(Date.now() - began < 40000, `${Date.now() - began} ms: the program was given more than the limit`);
+    assert.equal((await coverage(join(cwd, "clock"))).status, "partial");
+  });
+});
+
+test("android-backup-apps passes over the map extension block of an old GNU sparse header and reads the member after it from the right place", async () => {
+  await withCwd(async (cwd, bin) => {
+    await appsStandin(bin, cwd);
+    const ab = join(cwd, "work", "gnu-sparse.ab");
+    await build(RAWTAR, ab, JSON.stringify({ compress: true, members: [{ kind: "plain", name: "apps/com.example/_manifest", size: 10 }, { kind: "sparse", name: "apps/com.example/f/sp.bin", size: 3000 }, { kind: "plain", name: "apps/com.example/f/after.txt", size: 10 }] }));
+    const out = join(cwd, "out-gnu-sparse");
+    const result = await recipe("android-backup-apps", ["run", "--target", target(ab), "--out", out], cwd, {}, bin);
+    assert.doesNotMatch(result.stderr, /Traceback/);
+    const rows = (await readFile(join(out, "ab-members.tsv"), "utf8")).split("\n");
+    assert.match(rows.find((l) => l.includes("f/sp.bin")) ?? "", /sparse_not_extracted/);
+    assert.match(rows.find((l) => l.includes("after.txt")) ?? "", /\textracted\t/);
+    const cov = await coverage(out);
+    assert.equal(cov.status, "partial");
+    assert.equal((cov.modules as unknown as { adb_backup: { tar_end: string } }).adb_backup.tar_end, "reached");
+  });
+});

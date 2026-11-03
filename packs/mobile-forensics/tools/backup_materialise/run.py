@@ -52,7 +52,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-PARSER = "backup_materialise/1"
+PARSER = "backup_materialise/2"
 TOOL = "backup_materialise"
 VALUES_NAME = "backup-materialise-values.jsonl"       # the first free name of this and -2, -3 ... is used (see choose_values_name)
 VALUES_FORMAT = "JSON Lines: the file id, the real domain and the real relative path of each row whose name is withheld"
@@ -941,6 +941,18 @@ class ResultFile:
         return result
 
 
+def refuse_linked_dir(path, what):
+    """A directory this tool writes into is never reached through a link planted in the output directory: lstat, not stat."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        fail("%s could not be examined: %s" % (what, describe(exc)))
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        fail("%s in the output directory is a symbolic link or not a directory: the tool does not write through it" % what, written=False)
+
+
 def make_dirs_nofollow(path):
     """mkdir -p, then refuse a link at any component of what was made (the tool's own output directory)."""
     os.makedirs(path, mode=0o700, exist_ok=True)
@@ -1384,10 +1396,14 @@ def main():
         if stat.S_ISLNK(info.st_mode):
             observations.append("Manifest.db%s is a symbolic link: not followed, not copied, and not applied" % suffix)
             skipped_companions += 1
-        elif stat.S_ISREG(info.st_mode) and info.st_size > 0:
+        elif not stat.S_ISREG(info.st_mode):
+            observations.append("Manifest.db%s is not a regular file: not opened, not copied, and not applied" % suffix)
+            skipped_companions += 1
+        elif info.st_size > 0:
             manifest_companions.append(suffix)
 
     base, shown_base = output_base()
+    refuse_linked_dir(str(base / "tool-output"), "tool-output")
     result = ResultFile(base, shown_base, [shown(os.path.realpath(db), False), sorted(domains), sorted(paths), select_all, copy_content], limit, INLINE_BYTES)
     values = None
     if copy_content:

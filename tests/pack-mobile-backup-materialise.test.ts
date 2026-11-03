@@ -10,7 +10,7 @@
  * new in this change, so on the base every test fails because the script does not exist).
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -722,5 +722,34 @@ test("a fuzz of 400 hostile Manifest rows never writes outside $OUT and never gi
     const files = await walk(join(cwd, "out", "derivative", "files"));
     assert.equal(files.length, answer.counts.copied_files);
     for (const f of files) assert.ok(f.startsWith(join(cwd, "out", "derivative", "files") + "/"));
+  });
+});
+
+// --- fix round 1: a Manifest companion that is not a file, and a link planted in the output directory ---------------------------------------
+
+test("a Manifest.db-wal or -journal that is a FIFO or a directory is said in the answer and makes it partial, as a link does", async () => {
+  await withCwd(async (cwd) => {
+    const entries = [{ id: fid(1), path: "Library/SMS/sms.db", data: "main" }];
+    const control = await backup(cwd, "plain", { entries });
+    assert.equal(body(await run(cwd, { path: control, all: true })).status, "complete");
+    for (const [name, make] of [["fifo", (p: string) => execFileSync("mkfifo", [p])], ["dir", (p: string) => execFileSync("mkdir", [p])]] as const) {
+      const dir = await backup(cwd, name, { entries });
+      make(join(dir, "Manifest.db-wal"));
+      const answer = body(await run(cwd, { path: dir, all: true }));
+      assert.equal(answer.status, "partial", `${name}: ${answer.status_basis}`);
+      assert.ok(answer.observations.some((o) => /Manifest\.db-wal is not a regular file/.test(o)), JSON.stringify(answer.observations));
+    }
+  });
+});
+
+test("a tool-output directory that is a link planted in the output directory is refused as JSON, and nothing is written through it", async () => {
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "planted", { entries: [{ id: fid(1), path: "Library/SMS/sms.db", data: "main" }] });
+    await mkdir(join(cwd, "out"), { recursive: true });
+    await mkdir(join(cwd, "elsewhere"), { recursive: true });
+    await symlink(join(cwd, "elsewhere"), join(cwd, "out", "tool-output"));
+    const answer = failed(await run(cwd, { path: dir, all: true }, { JOB_ID: "j-1", OUT: join(cwd, "out") }));
+    assert.match(answer.error ?? "", /tool-output/);
+    assert.deepEqual(await readdir(join(cwd, "elsewhere")), []);
   });
 });

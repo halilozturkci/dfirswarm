@@ -592,3 +592,54 @@ test("a fuzz of 400 mutated backups always ends with JSON, no traceback and noth
     assert.deepEqual(await readdir(join(cwd, "target")), []);
   });
 });
+
+// --- fix round 1: a pax sparse member is listed and never extracted; a planted link is refused ---------------------------------------------
+
+test("a pax sparse member (GNU.sparse.* records on a plain-file typeflag) is listed as sparse_not_extracted, nothing of it is written, and the answer is partial", async () => {
+  await withCwd(async (cwd) => {
+    const sparse = { "GNU.sparse.major": "1", "GNU.sparse.minor": "0", "GNU.sparse.name": `apps/${PKG}/f/sp.bin`, "GNU.sparse.realsize": String(50 << 20) };
+    const file = await put(cwd, "sparse.ab", ab(tar([
+      { name: `apps/${PKG}/_manifest`, data: f("manifest record") },
+      { name: `apps/${PKG}/f/GNUSparseFile.1/sp.bin`, data: f("1\n0\n0\n"), pax: { ...sparse, path: `apps/${PKG}/f/sp.bin` } },
+      { name: `apps/${PKG}/f/after.txt`, data: f("after") },
+    ])));
+    const answer = body(await asJob(cwd, { path: file, copy_content: true }));
+    const by = Object.fromEntries(answer.entries.map((e) => [e.member, e]));
+    assert.equal(by[`apps/${PKG}/f/sp.bin`].state, "sparse_not_extracted", JSON.stringify(by));
+    assert.equal(by[`apps/${PKG}/f/after.txt`].state, "extracted", "the member after it is not taken for sparse");
+    assert.equal(answer.status, "partial", answer.status_basis);
+    assert.deepEqual((await walkDir(DERIV(cwd))).filter((p) => /sp\.bin|GNUSparse/.test(p)), []);
+  });
+});
+
+test("a tool-output directory that is a link planted in the output directory is refused as JSON, and nothing is written through it", async () => {
+  await withCwd(async (cwd) => {
+    const file = await put(cwd, "app.ab", ab(tar(APP)));
+    await mkdir(join(cwd, "out"), { recursive: true });
+    await mkdir(join(cwd, "elsewhere"), { recursive: true });
+    await symlink(join(cwd, "elsewhere"), join(cwd, "out", "tool-output"));
+    const answer = failed(await run(cwd, { path: file }, { JOB_ID: "j-1", OUT: join(cwd, "out") }));
+    assert.match(answer.error ?? "", /tool-output/);
+    assert.deepEqual(await readdir(join(cwd, "elsewhere")), []);
+  });
+});
+
+test("an old GNU sparse header with a map extension block is passed over: the member is listed as sparse_not_extracted and the member after it is read from the right place", async () => {
+  await withCwd(async (cwd) => {
+    const data = f("0123456789");
+    const head = Buffer.from(header(f(`apps/${PKG}/f/sp.bin`), data.length, "S", "", 0o644));
+    head[482] = 1;                                   // isextended
+    head.fill(0x20, 148, 156);
+    head.write(head.reduce((s, x) => s + x, 0).toString(8).padStart(6, "0") + "\0 ", 148, "latin1");
+    const map = Buffer.alloc(512);                   // one extension block; its own isextended byte (504) is 0
+    // Data that reads as two zero blocks if it is taken for the next headers: a skip that lands on the map's blocks would end the tar early.
+    const payload = Buffer.concat([tarMember({ name: `apps/${PKG}/_manifest`, data: f("m") }), head, map, pad(data), tarMember({ name: `apps/${PKG}/f/after.txt`, data: f("after") }), Buffer.alloc(1024)]);
+    const file = await put(cwd, "gnu-sparse.ab", ab(payload));
+    const answer = body(await asJob(cwd, { path: file, copy_content: true }));
+    const by = Object.fromEntries(answer.entries.map((e) => [e.member, e]));
+    assert.equal(by[`apps/${PKG}/f/sp.bin`].state, "sparse_not_extracted", JSON.stringify(by));
+    assert.equal(by[`apps/${PKG}/f/after.txt`].state, "extracted", JSON.stringify(by));
+    assert.equal(answer.payload.tar_end, "reached");
+    assert.equal(answer.status, "partial");
+  });
+});
