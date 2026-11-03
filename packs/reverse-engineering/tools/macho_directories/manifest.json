@@ -1,0 +1,69 @@
+{
+  "name": "macho_directories",
+  "description": "Read what pe_info does not say about a Mach-O file, one slice at a time, through checked ranges, never running it. A universal binary is read slice by slice (each slice's offsets are relative to its own start; a slice outside the file, one that is not a Mach-O and a universal binary inside a universal binary are problems of that slice, never a read of the wrong bytes) and a Java class file, which begins with the same magic, is unsupported. Per slice: the header (CPU, file type, flags) and every load command by kind, offset and size (a cmdsize below 8, one not a multiple of 4 or one that runs past sizeofcmds stops the walk with a problem, and a count larger than the commands that fit is a problem, not a loop); LC_SYMTAB and LC_DYSYMTAB ranges, with every nlist row of the symbol table (name, type, section, description, value; a range or a name offset outside the file is a problem and the rows that are there are read); LC_DYLD_INFO and LC_DYLD_INFO_ONLY presence, offsets and sizes of the rebase, bind, weak-bind, lazy-bind and export ranges, with the bind, weak-bind and lazy-bind opcode streams decoded to one row per bind (symbol, library ordinal, type, addend, segment and offset; a repeat count is a field, never expanded; an opcode that is not a bind opcode ends the decoding of that stream with a problem) and the export trie walked to the names it exports (each node once; a loop or a shared node is a problem; a name longer than 4,096 bytes is not walked); LC_DYLD_EXPORTS_TRIE and LC_DYLD_CHAINED_FIXUPS offsets and sizes, with the chained-fixups header and its import table decoded (the three import formats, the names in an uncompressed symbol area); LC_BUILD_VERSION (platform, minimum OS, SDK, tools) and LC_VERSION_MIN_*; the dylib, rpath and dynamic-linker commands (install name, versions); the offsets and sizes of the other linkedit data commands; and the code signature as a structure only: the SuperBlob's blobs (slot, magic, offset, length), each CodeDirectory's version, flags, hash type, identifier and team identifier, and whether entitlement blobs are present, by their length. Not read: segments and sections and segment contents (pe_info reads them), rebase opcodes, chained-fixup chains and starts, LC_ENCRYPTION_INFO fields, thread state, the contents of entitlements, requirements, the CMS signature and the page hashes. Nothing is verified: no signature, hash, certificate, team identity or notarisation ticket is checked, and nothing is said about what the code does. A bind stream or export trie is decoded to at most 64 MiB, 4,000,000 opcodes, 500,000 trie nodes and 1,000,000 names; a table past its bound is a limit in the answer, never a silent cut. Every table is the first `limit` rows of the answer, and a longer table is written whole to a file named in `all_results`. Every key and every value of the answer and of each file it names passes the sanitiser and then a backstop (the same shared blocks as elf_directories and pe_directories): a string out of the file is withheld by shape only (a secret of another shape is printed: read a file whose secrets matter in a job with secret_output; the whole only with write_values there), a string whose address points into the middle of a token run is sanitised whole and its head withheld, one longer than 2,048 characters is given by length only, a name longer than 512 characters is given by length, and no list in the answer is longer than the larger of limit and 100 items. The LC_UUID is shown whole: it identifies a build, it is not a secret. A symbolic link, a pipe or a device is refused, and a tool-output directory reached through a symbolic link is refused. The file of withheld names stops growing at 64 MiB (a limit, with the number of names withheld). The clock is looked at every 1,024 load commands, 16 symbol rows, 4,096 opcodes, 1,024 trie nodes and 256 chained-fixups imports or signature blobs. Every answer carries status, problems, limits_hit and coverage (per slice: complete or partial, and slices_read_in_full against slices_declared); a budget that is reached is a limit. SENSITIVE: write_values writes each string it withheld (an install name, a symbol, a bind or export name, an identifier) whole to a file under $OUT, so the manifest declares secret_output for it and the tool checks SECRET_OUTPUT: in any run that is not a job run as secret output it is refused as JSON before anything is created. A stop signal (SIGTERM, SIGINT or SIGHUP) ends it with one JSON answer and the exit code 128 plus the signal from the moment the module has run as far as its stop handlers, which are installed at module level and not when main() starts; a second signal does nothing while the first is answered, and no hidden temporary file is left. Tested against hand-built fixtures from <mach-o/loader.h>, <mach-o/fat.h>, <mach-o/nlist.h>, <mach-o/fixup-chains.h> and the code-signing blob layout; agreement with otool -l on a real macOS binary is tested only where otool exists (not verified on any other machine).",
+  "use": {
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "cffaedfe"
+      },
+      {
+        "offset": 0,
+        "hex": "cefaedfe"
+      },
+      {
+        "offset": 0,
+        "hex": "feedfacf"
+      },
+      {
+        "offset": 0,
+        "hex": "feedface"
+      },
+      {
+        "offset": 0,
+        "hex": "cafebabe"
+      },
+      {
+        "offset": 0,
+        "hex": "cafebabf"
+      }
+    ],
+    "extensions": [
+      ".dylib",
+      ".macho",
+      ".bundle",
+      ".kext"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  },
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A Mach-O file or a universal binary (executable, dylib, bundle, kext)"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write each string out of the file whole (an install name, a symbol, a bind or export name, an identifier) and the real name behind every withheld name to macho-directories-values.jsonl under $OUT (default false; refused outside a job; run the job with secret_output: true)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of one table kept in the answer (default 1000, at most 20000: a larger number is refused, as the rows are withheld while the file is read); the whole of a longer table is written to a file and named"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit for reading, in seconds, from 1 to 90 (default 70); a read that reaches it stops, reports what it read and says so. The rows of each table are withheld as they are read, under this limit; the rest of the answer is built after it and has until about 90 s after the call began, at least 5 s after the reading: a string it has no time to check is given by its length and the answer says so (partial). A call that has not answered within 105 s ends with a partial answer of the problems, the limits and the first rows of each table it holds, before the manifest's 120 s limit"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/sample.macho\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T12:00:00.000Z",
+  "version": 1,
+  "sha256": "e08583528ca92dad9d7c3f15e6b139294c6ed36a1b63e0a2032ca67032be42a8"
+}

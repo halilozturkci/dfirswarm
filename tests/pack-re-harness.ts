@@ -28,6 +28,7 @@ export const DOC_PROBE = join(TOOLS, "doc_probe", "run.py");
 export const DOC_STRUCTURE = join(TOOLS, "doc_structure", "run.py");
 export const PE_DIRECTORIES = join(TOOLS, "pe_directories", "run.py");
 export const ELF_DIRECTORIES = join(TOOLS, "elf_directories", "run.py");
+export const MACHO_DIRECTORIES = join(TOOLS, "macho_directories", "run.py");
 export const ENTROPY = join(TOOLS, "entropy_map", "run.py");
 export const FUZZY = join(TOOLS, "fuzzy_hash", "run.py");
 export const RECIPE = join(RE, "recipes", "static-binary", "run.py");

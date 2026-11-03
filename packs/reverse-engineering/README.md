@@ -33,7 +33,7 @@ decompiler, a packer-signature detector, parse-only script tooling,
 a decompiler for native code, and a trust-aware Authenticode verifier. The new skills
 name only programs the pack declares.
 
-**Ten tools of its own, and `file_type` from the base pack.** `file_type` reads
+**Eleven tools of its own, and `file_type` from the base pack.** `file_type` reads
 what a file is from its bytes and says when the extension disagrees.
 `entropy_map` measures how evenly byte values are spread, window by window, and
 writes the whole profile to a file; it reports a measurement and does not
@@ -44,7 +44,7 @@ program headers, every slice of a universal binary) and says for each answer wha
 it read and what it did not; it verifies no signature. `fuzzy_hash` computes
 SHA-256, ssdeep and TLSH together, and can give the TLSH distance between two
 samples without executing either one. `elf_directories` reads an ELF file's program headers, every dynamic tag, `.dynsym` and `.symtab`, and the notes (the GNU build ID among
-them), through the program headers when the section headers are stripped. `unpack_safe` unpacks a UPX-packed file
+them), through the program headers when the section headers are stripped. `macho_directories` reads, per slice of a Mach-O or a universal binary, the symbol table, the dyld bind and export names, the chained-fixups imports, the build version and the code-signature blob structure (no signature is verified). `unpack_safe` unpacks a UPX-packed file
 into a derivative under the output budget (UPX only; both SHA-256 values and the
 UPX version recorded; the original never changed). `doc_probe` opens a document as a container:
 the member list, the External targets of its relationships, the members whose
