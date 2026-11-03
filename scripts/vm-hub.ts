@@ -295,10 +295,6 @@ export const SETTLE_MS_DEFAULT = 6_000;
  * the rest are on the trace as the rows they come from, and writes no more.
  */
 const ACCESS_BURST_MAX = 200;
-/** The tools of a seat whose rows may name a sensitive output (scripts/sensitive-access.ts). */
-const ACCESS_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "powershell"]);
-/** Where a row can name the store, the catalogue, a kept output or a job: the rest need no look at the journal. */
-const ACCESS_PROBE = /store|catalog|tool-output|j\d{6}/;
 
 /** Bytes of a job's output that an API answer carried to a seat. */
 export type ApiPage = { fn: string; job: string; part: "stdout" | "stderr"; path: string; offset: number; bytes: number; total: number };
@@ -567,6 +563,8 @@ export function boardTable(hub: {
   jobs?: () => JobService | undefined;
   /** An API answer carried bytes of a job's output to a seat: the hub records it when the job is sensitive. */
   accessed?: (who: string, page: ApiPage) => Promise<void>;
+  /** A seat asks whether its tool call read a sensitive output: the sensitive jobs the classifier names for it. Absent, none. */
+  sensitiveRead?: (row: unknown) => Promise<string[]>;
   /** The hub's own directory (the fetch service's config and secret are there, in no VM). */
   dir?: string;
 }) {
@@ -698,6 +696,7 @@ export function boardTable(hub: {
       return P.forgeTool(as(who), a[1]);
     },
     forgedToolSeal: (_who, a) => P.forgedToolSeal(S, String(a[1] ?? "")),
+    sensitiveRead: async (_who, a) => (hub.sensitiveRead ? hub.sensitiveRead(a[1]) : []),
     guardWrite: (who, a) => P.guardWrite(as(who), String(a[1] ?? "")),
     heldBy: (who, a) => P.heldBy(as(who), String(a[1] ?? "")),
     listClaims: () => P.listClaims(S),
@@ -1097,6 +1096,7 @@ export class Hub {
         refused: (who) => this.historyRefused(who),
       },
       gatewaySeat: (who) => this.gatewaySeats.has(who),
+      sensitiveRead: (row) => this.sensitiveRead(row),
       jobs: () => this.jobService,
       accessed: (who, page) => this.noteApiPage(who, page),
       dir: this.cfg.dir,
@@ -2272,20 +2272,40 @@ export class Hub {
    */
   private noteSensitiveAccess(seat: string, record: Record<string, unknown>): Promise<void> {
     const tool = typeof record.tool === "string" ? record.tool : "";
-    if (!ACCESS_TOOLS.has(tool) || !isObject(record.args)) return Promise.resolve();
-    const probe = tool === "bash" || tool === "powershell" ? record.args.command : ["path", "filePath", "file_path", "file"].map((k) => (record.args as Record<string, unknown>)[k]).find((v) => typeof v === "string" && v.trim()) ?? "";
-    if (typeof probe !== "string" || (probe && !ACCESS_PROBE.test(probe))) return Promise.resolve();
+    if (!P.couldNameOutput(tool, record.args) || !isObject(record.args)) return Promise.resolve();
     const next = this.accessChain.then(async () => {
-      const ix = await sensitiveIndex(this.cfg.sandbox);
-      await this.loadAccessHistory();
-      if (!ix.jobs.size && !this.accessCopies.size) return;
-      const hits = classifyTraceRow({ tool, args: record.args }, ix, { sandbox: this.cfg.sandbox, copies: this.accessCopies });
+      const hits = await this.classifyRow(tool, record.args as Record<string, unknown>);
+      if (!hits.length) return;
       const row = { sid: typeof record.sid === "string" ? record.sid : undefined, seq: typeof record.seq === "number" ? record.seq : undefined, ts: typeof record.ts === "string" ? record.ts : undefined, tool };
       const kept = isObject(record.result) && isObject(record.result.full_output) && typeof record.result.full_output.path === "string" ? record.result.full_output.path : undefined;
       for (const hit of hits) await this.writeAccess(seat, hit, { row, ...(kept ? { kept } : {}) });
     });
     this.accessChain = next.catch(() => undefined);
     return next.catch((err: Error) => this.log(`sensitive access: ${err.message}`));
+  }
+
+  /**
+   * The hits of one seat row (the one classifier, scripts/sensitive-access.ts),
+   * for the line the hub writes and for the seat that asks whether its call
+   * read a sensitive output: none when the run has no sensitive job.
+   */
+  private async classifyRow(tool: string, args: Record<string, unknown>): Promise<AccessHit[]> {
+    const ix = await sensitiveIndex(this.cfg.sandbox);
+    await this.loadAccessHistory();
+    if (!ix.jobs.size && !this.accessCopies.size) return [];
+    return classifyTraceRow({ tool, args }, ix, { sandbox: this.cfg.sandbox, copies: this.accessCopies });
+  }
+
+  /**
+   * A seat asks whether its call read a sensitive output (its tool result is
+   * then told once). Answers the sensitive jobs the classifier names for the
+   * row, certain or named; a possible reach is not a read. Reads, records
+   * nothing, and never fails the call: the seat treats a failure as no note.
+   */
+  async sensitiveRead(row: unknown): Promise<string[]> {
+    if (!isObject(row) || typeof row.tool !== "string" || !isObject(row.args) || !P.couldNameOutput(row.tool, row.args)) return [];
+    const hits = await this.classifyRow(row.tool, row.args);
+    return [...new Set(hits.filter((h) => h.job !== null && h.certainty !== "maybe").map((h) => h.job as string))].sort();
   }
 
   /** An API answer carried bytes of a job's output to a seat: noted when the job is sensitive. */
