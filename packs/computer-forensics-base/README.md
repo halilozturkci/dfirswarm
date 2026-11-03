@@ -45,11 +45,11 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 | `reporting/citations` | every claim resolves to an inspectable observation, and a negative is bounded |
 | `reporting/disagreement` | disputing, correcting and republishing, through the ledger's own acts |
 
-**Seventeen tools**: `image_layout`, `check_inputs`, `catalog_search`,
+**Eighteen tools**: `image_layout`, `check_inputs`, `catalog_search`,
 `icat_extract`, `sig_carve`, `file_carver`, `ioc_scan`, `chunk_needles`,
 `file_type`, `sqlite_query`, `feature_scan`, `timeline_super`,
 `timestamp_decode`, `ad1_extract`, `archive_extract`, `sqlite_snapshot`,
-`image_verify`. `file_type` to `timestamp_decode` arrived
+`image_verify`, `layer_describe`. `file_type` to `timestamp_decode` arrived
 with the packs that depend on this one: a tool every pack would have carried
 belongs here once, not in each of them. `ad1_extract` writes an AccessData
 AD1 logical image's files out, checked against the digests the image
@@ -60,6 +60,11 @@ recreates a link or a device. `image_verify` gives a receipt for an EWF set: eac
 segment's sha256, missing and misordered segments, the section chain of each
 segment read without libewf, and `ewfverify`'s stored and recomputed digests,
 with its output kept in files; it never says an image is authentic.
+`layer_describe` turns the sources you declare (an E01 set, the segments of a split
+raw image, a virtual disk and the files it depends on) and a sector size into one
+immutable descriptor named by its own sha256: order, sizes, media size, partition
+table and volumes, and `missing_dependencies`; it looks at nothing you did not
+declare and mounts nothing.
 Every one takes JSON on stdin and returns JSON, and every call lands on the
 run's trace under the calling agent's name. What they return is bounded and
 says so: a carve is a candidate with `boundary: validated` or `heuristic`, a
