@@ -764,6 +764,10 @@ def main():
                         sink.write(line + "\n")
                         sink.flush()
                     except OSError as exc:
+                        try:
+                            sink.close()          # (quietly: what it still holds cannot be written, and the interpreter must not complain of it at exit)
+                        except OSError:
+                            pass
                         fail("the rows could not be written to out_file (%s: %s): the run stopped there; the rows written before are in it" % (
                              type(exc).__name__, exc.strerror or "error"), rows_written=rows_total[0] - 1)
                     if not inline_state["full"] and len(inline) < limit:

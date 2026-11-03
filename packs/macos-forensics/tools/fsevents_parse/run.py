@@ -1939,6 +1939,7 @@ class SinkError(Exception):
     """A record could not be written to out_file or to the result file: a fact about the output, not about the record file being read."""
 
 
+SINK_DEAD = [False]             # a write to out_file or the result file failed: nothing more is written (the half of a row it may hold is not completed by a later one)
 PAGES = []                      # every pager this run made: the last-resort handler removes their temporary files
 PARTIAL = {"out_file": None}    # the out_file once it is made: an unexpected error names it as possibly partial
 
@@ -2384,7 +2385,7 @@ def scan_file(scan, emit, max_expanded, max_page):
             parse_pages(Source(chunks, rest if not scan.compressed else None), scan, emit, max_page)
         except SinkError as exc:
             scan.error = "the records could not be written: %s" % exc
-            scan.problem("could not write", "the records could not be written to %s (%s): this says nothing about the record file; the records written before it are kept"
+            scan.problem("could not write", "the records could not be written to %s (%s): this says nothing about the record file; every record counted is in the file, and the one that failed may be cut off at the end of it"
                          % ("out_file" if PARTIAL["out_file"] else "the result file", exc))
         except OSError as exc:
             scan.error = "%s: %s" % (type(exc).__name__, exc.strerror or "error")
@@ -2664,12 +2665,16 @@ def run_scan(args):
                 return
             line = json.dumps(row_object(record), sort_keys=True) if sink else None       # (judged before the signals are held: a signal waits for a write, not for a judging)
             with held():
+                if SINK_DEAD[0]:
+                    raise SinkError("an earlier write failed, so no further record is written")
                 try:
                     if sink:
                         sink.write(line + "\n")
+                        sink.flush()                  # every row: the write the filesystem refuses is found at this row, before the row is counted
                     else:
                         paging.add(record)
                 except OSError as exc:
+                    SINK_DEAD[0] = True
                     raise SinkError("%s: %s" % (type(exc).__name__, exc.strerror or "error"))   # (not counted: it is not in the file)
                 totals["kept"] += 1
                 if record["event_id"]:
@@ -2776,9 +2781,15 @@ def run_scan(args):
             if number < NOT_ATTEMPTED_LISTED:                              # (a directory of a million files is counted, not listed a million times)
                 per_file.add({"file": guard_text(target, "file"), "state": "not_attempted", "gzip": None, "compressed_bytes": None, "expanded_bytes": 0})
         if sink:
-            sink.flush()
-            os.fsync(sink.fileno())
-            sink.close()
+            if SINK_DEAD[0]:
+                try:
+                    sink.close()                                       # (what it still holds cannot be written: the file ends where the last row counted ends, or in a cut row)
+                except OSError:
+                    pass
+            else:
+                sink.flush()
+                os.fsync(sink.fileno())
+                sink.close()
             shown, complete = inline, out_name
             limited = totals["kept"] > len(inline)
             page = {"inline_bounded_by_bytes": inline_state["bounded_by_bytes"]}

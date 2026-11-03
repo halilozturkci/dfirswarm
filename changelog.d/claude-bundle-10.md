@@ -95,3 +95,17 @@
   message when a row cannot be written. fsevents_parse's `run.py` is executable again.
 - Left (P3): the hash of the staged database after a rollback journal is bounded by the
   time the copy took, not by a clock of its own.
+
+### Fixed: macos-forensics fix round 2: the count of rows written is the lines in the file
+
+- knowledgec_query and fsevents_parse flush every row they write to `out_file` (plist_read
+  already did), so a write the filesystem refuses is found at its row and the count
+  (`rows_written`, `entry_count`, `record_count`) equals the lines in the file; before, the
+  failure surfaced at a later buffer flush and the count was larger than the file by up to
+  hundreds of rows. After the first failed write fsevents_parse writes nothing more, and
+  both tools close the file quietly. Tests in `tests/pack-macos-written-counts.test.ts`
+  sweep a tmpfs of 4 KiB to 16 MiB and `ulimit -f` of 2 to 2,048 blocks for all four
+  tools (unified_log counts the lines of the reader's own file).
+- knowledgec_query: a storage error is also named when the `stream` pattern is run; a cut look
+  at the directory of private copies or at `work/<id>` makes the answer partial and is named
+  in `problems`; a dead copy with more than 10,000 files is named, not removed.

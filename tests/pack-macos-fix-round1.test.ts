@@ -103,8 +103,8 @@ test("fsevents_parse says the records could not be written when out_file is refu
     const text = JSON.stringify(answer);
     assert.doesNotMatch(text, /read failed/);
     assert.match(text, /could not write|could not be written/);
-    const kept = (await readFile(join(cwd, "work", "o.jsonl"), "utf8")).split("\n").filter(Boolean).length;
-    assert.ok(kept <= answer.record_count + 0, `${kept} rows in the file, ${answer.record_count} counted: the count claims no more than was written`);
+    const kept = (await readFile(join(cwd, "work", "o.jsonl"), "utf8")).split("\n").length - 1;       // whole lines: the row that failed may be cut off at the end
+    assert.ok(kept === answer.record_count, `${kept} rows in the file, ${answer.record_count} counted: the count claims no more than was written`);
   });
 });
 
@@ -158,6 +158,8 @@ for i in range(12000):
     const answer = JSON.parse(run.stdout) as Json;
     assert.ok(run.wall < 30, `${run.wall} s`);
     assert.match(answer.source_used.sweep_cut, /more than 10000 entries/);
+    assert.equal(answer.status, "partial", "a cut look is in the status");
+    assert.match(JSON.stringify(answer.problems), /looked at in part/);
   });
 });
 
@@ -165,6 +167,28 @@ function ok1(run: { code: number | null; stdout: string; stderr: string }): Json
   assert.equal(run.code, 0, run.stderr + run.stdout.slice(0, 300));
   return JSON.parse(run.stdout) as Json;
 }
+
+test("knowledgec_query names a dead copy with more than 10,000 files that it neither removes nor can count", async () => {
+  await withCwd(async (cwd) => {
+    const db = await kcDb(cwd, "wal.db", 10, 0, {}, "wal");
+    ok1(await tool(KC, cwd, { db }));
+    const parent = join(cwd, "work", "s1", ".knowledgec-stage");
+    const made = await runPySnippet(`
+import os, sys
+d = os.path.join(sys.argv[1], "knowledgec-" + sys.argv[2] + "-bigcopy01")
+os.mkdir(d, 0o700); os.chmod(d, 0o700)
+for i in range(10050):
+    os.close(os.open(os.path.join(d, "f%05d" % i), os.O_WRONLY | os.O_CREAT, 0o600))
+`, [parent, String(spawnSync("python3", ["-c", "import os; print(os.getpid())"], { encoding: "utf8" }).stdout.trim())], null);
+    assert.equal(made.code, 0, made.stderr);
+    const answer = ok1(await tool(KC, cwd, { db }));
+    const named = answer.source_used.copies_without_lock_not_removed;
+    assert.equal(named.count, 1);
+    assert.match(named.listed[0].copy_dir, /bigcopy01$/);
+    assert.match(named.listed[0].files, /more than 10000/);
+    assert.equal(await exists(join(parent, named.listed[0].copy_dir.split("/").pop())), true);
+  });
+});
 
 test("knowledgec_query names the copies an earlier version left in work/<id>, and does not remove them", async () => {
   await withCwd(async (cwd) => {

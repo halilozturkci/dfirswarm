@@ -1922,7 +1922,7 @@ OWN_NAMES.update((
     "streams", "streams_total", "streams_pages", "note", "resume", "limits", "error", "type", "reason", "sql", "tables", "columns", "table", "column", "rowid",
     "source_table", "z_pk", "stream", "value_string", "value_integer", "value_double", "value_type_code", "start_raw", "end_raw", "created_raw", "start", "end",
     "created", "duration_seconds", "utc_offset_seconds", "uuid", "zobject_other", "metadata", "source", "joins", "fingerprint", "zobject_columns", "cap",
-    "truncated", "exported", "exported_bytes", "export_requested", "database", "staged", "sidecars", "sidecars_not_used", "rows_written", "partial_out_file", "partial_out_file_note", "copies_in_work_dir_not_swept", "sweep_cut", "copies_without_lock_not_removed", "listed", "why", "copy_dir", "bytes", "sha256", "open_mode", "database_sha256",
+    "truncated", "exported", "exported_bytes", "export_requested", "database", "staged", "sidecars", "sidecars_not_used", "rows_written", "partial_out_file", "partial_out_file_note", "copies_in_work_dir_not_swept", "sweep_cut", "looked_at_in_part", "copies_without_lock_not_removed", "listed", "why", "copy_dir", "bytes", "sha256", "open_mode", "database_sha256",
     "database_bytes", "wal", "wal_checkpoint", "journal", "staged_copy", "count", "first_start_raw", "last_start_raw", "first_start", "last_start", "matched",
     "returned", "all_results", "all_results_format", "_text_head", "_text_bytes", "_truncated", "_where", "_blob_bytes", "_hex", "_whole_value_file",
     "_whole_value_bytes_written", "_export", "_float", "state", "frames_valid", "frames_committed", "frames_in_file", "page_size", "checkpoint_sequence",
@@ -2311,7 +2311,8 @@ def made_by_this_tool(entry):
         with os.scandir(entry.path) as inside:
             for item in inside:
                 if len(names) >= MAX_STAGE_ENTRIES:
-                    return False                      # (a directory of that many files is no copy this tool made)
+                    CAPPED.add(entry.name)
+                    return False                      # (a directory of that many files is no copy this tool made: the sweep names it)
                 detail = item.stat(follow_symlinks=False)
                 if not stat.S_ISREG(detail.st_mode) or stat.S_IMODE(detail.st_mode) != 0o600:
                     return False
@@ -2323,6 +2324,7 @@ def made_by_this_tool(entry):
 
 
 SWEEP_CUT = [False]
+CAPPED = set()                # names of directories with more than MAX_STAGE_ENTRIES files: not removed, and named
 
 
 def old_location_copies(directory):
@@ -2376,6 +2378,7 @@ def unlocked_copy_size(entry):
         with os.scandir(entry.path) as inside:
             for item in inside:
                 if files >= MAX_STAGE_ENTRIES:
+                    CAPPED.add(entry.name)
                     return None
                 detail = item.stat(follow_symlinks=False)
                 if not stat.S_ISREG(detail.st_mode) or stat.S_IMODE(detail.st_mode) != 0o600 or item.name == STAGE_LOCK:
@@ -2413,7 +2416,9 @@ def remove_dead_stages(parent):
             continue
         if not made_by_this_tool(entry):
             size = unlocked_copy_size(entry)
-            if size is not None and not stage_is_live(entry):
+            if entry.name in CAPPED and size is None and not stage_is_live(entry):
+                kept.append({"copy_dir": os.path.join(str(parent), entry.name), "bytes": None, "files": "more than %d, not counted" % MAX_STAGE_ENTRIES})
+            elif size is not None and not stage_is_live(entry):
                 kept.append({"copy_dir": os.path.join(str(parent), entry.name), "bytes": size})
             continue
         if not stage_is_live(entry):
@@ -2671,14 +2676,17 @@ def run_query(args):
                 parent, swept = make_stage_parent()
                 if not (os.environ.get("JOB_ID") and os.environ.get("OUT")):
                     old, cut = old_location_copies(parent.parent)
+                    if cut:
+                        problems.append("work/<your id> holds more than %d entries or took more than %d s to look at: copies an earlier version may have left there were looked for in part" % (MAX_STAGE_ENTRIES, SWEEP_SECONDS))
                     if old:
                         source["copies_in_work_dir_not_swept"] = {
-                            "count": len(old), "listed": old[:20], "why": "private copies that an earlier version of this tool left directly in work/<your id> are not removed (that "
+                            "count": len(old), "listed": old[:20], "looked_at_in_part": cut, "why": "private copies that an earlier version of this tool left directly in work/<your id> are not removed (that "
                                    "directory is yours, and nothing proves they are this tool's); each holds the bytes of a database"}
                 if swept:
                     left = remove_dead_stages(parent)
                     if SWEEP_CUT[0]:
                         source["sweep_cut"] = "the directory of private copies holds more than %d entries or took more than %d s to look at: it was looked at in part" % (MAX_STAGE_ENTRIES, SWEEP_SECONDS)
+                        problems.append(source["sweep_cut"])
                     if left:
                         source["copies_without_lock_not_removed"] = {
                             "count": len(left), "listed": left[:20],
@@ -2842,6 +2850,8 @@ def run_query(args):
                         check_stop()
                         if st["abort"] is not None:
                             raise                                  # (the clock ran out inside the statement: the caller says so)
+                        if storage_error(exc):
+                            refuse_storage(exc, db, "while it matched the stream pattern")
                         fail("stream is not a LIKE pattern SQLite will run", reason=type(exc).__name__)
                     if matched:
                         keep.add(stream_key(name))
@@ -2993,10 +3003,16 @@ def run_query(args):
                 try:
                     if sink:
                         sink.write(line + "\n")
+                        sink.flush()                  # every row: the write the filesystem refuses is found at this row, before the row is counted
                     else:
                         paging.add(entry)
                 except OSError as exc:
-                    fail("the rows could not be written to %s (%s: %s): the run stopped there; the rows written before are in it" % (
+                    if sink:
+                        try:
+                            sink.close()          # (quietly: what it still holds cannot be written, and the interpreter must not complain of it at exit)
+                        except OSError:
+                            pass
+                    fail("the rows could not be written to %s (%s: %s): the run stopped there; every row counted (rows_written) is in it, and the one that failed may be cut off at the end of it" % (
                          "out_file" if sink else "the result file", type(exc).__name__, exc.strerror or "error"), rows_written=st["count"])
                 st["count"] += 1
                 last["z_pk"], last["start_raw"] = o.get("Z_PK"), start_raw
