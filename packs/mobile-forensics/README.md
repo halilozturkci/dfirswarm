@@ -17,7 +17,7 @@ here) and `extractions/backup-detail`; `apps/databases` and `apps/fragments`;
 most 400 tokens), which names the ten by the question each answers, holds no rule, and
 is the one line a run shows for the pack when its skills index is over budget.
 
-**Five tools.** Each says in its manifest what it measures and what it does
+**Six tools.** Each says in its manifest what it measures and what it does
 not, and each returns its whole result: an inline page and, when there is more,
 a file the answer names. None of them decrypts anything or reads a password.
 `sqlite_freespace` and `protobuf_peek` read no `-wal` or `-journal`; `manifest_db`
@@ -77,6 +77,17 @@ opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
   offsets. Metadata comes from the original with `exiftool`, never from the preview:
   the answer holds presence and counts, and the values go only to the 0600 file of a
   `write_values` job run as secret output.
+- `ab_layout` maps an unencrypted Android `.ab` backup (header versions 1 to 5)
+  onto the layout ALEAPP reads and calls the result what it is: a derivative of an
+  adb backup, in a banner file and in the answer, never an acquisition. The tar is
+  streamed once under a decompression budget, and the end of the zlib stream, the
+  tar's two end blocks and anything after them are checked. `apps/<package>/<domain>/...`
+  members go to `data/data/<package>/...` by a mapping table in the manifest (its basis
+  is the author's recollection of AOSP's FullBackup tokens, not checked against the
+  source); `_manifest`, the SQLite companions and per-member provenance are kept.
+  Unknown domains, links, devices, directories and `shared/` are listed and not
+  extracted; hostile names are rejected and listed. `copy_content` (false by default,
+  a plan) is a secret-output mode, and an encrypted payload is refused after its header.
 - `sqlite_freespace` reads the free space of a SQLite database's main file
   (freelist pages, the unallocated gap of a page, the freeblock chain) and returns
   where each text fragment is: page, kind of region, byte offset (read back from

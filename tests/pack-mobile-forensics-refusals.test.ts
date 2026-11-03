@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, withCwd } from "./tool-library-harness.ts";
 
-const TOOLS = ["manifest_db", "protobuf_peek", "sqlite_freespace", "backup_materialise", "heic_inspect"];
+const TOOLS = ["manifest_db", "protobuf_peek", "sqlite_freespace", "backup_materialise", "heic_inspect", "ab_layout"];
 
 for (const tool of TOOLS) {
   test(`${tool}: a refusal is one JSON answer with status failed and a status_basis, exit 1`, async () => {
