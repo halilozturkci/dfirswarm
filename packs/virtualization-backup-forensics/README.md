@@ -42,20 +42,22 @@ not read:
 ## What a tool shows of a name
 
 Evidence names are attacker-controlled text, so the three tools judge every string
-by the field it fills. A VM, datastore, snapshot or key name, a path or file
-name, an identifier of a known kind (GUID, VMFS volume id, `naa.`/`t10.`/`wwn-`
-device id, VMware uuid, MAC, CID) and a simple value (a version, an enum word, a
-time) is shown only when it fits a plain grammar for its kind; anything else is
-`<withheld: N bytes, field F>`, and the original goes to a 0600 file only with
-`write_text` in a job. Free text (a description, an annotation, an audit action or
-actor, a message) has token-shaped runs, user-info and the value after a name that
-says it is a secret withheld, and a second check, written apart from the first
-two, reads the serialised answer back. This is a heuristic, not a guarantee: a
-short password used alone as a name is not recognised, nor, after a secret's name,
-a value of 4 characters or fewer, a tag, a counter, a date or a time stamp (a flag
-with its value, such as `-password x`, `--secret-key x` or `--master-keyX`, and a
-secret's name followed by something that is not a word, in any word after it or in groups
-of 4 characters or more in a row, are withheld in a name), so the skills say to run the tools as jobs with
+by the field it fills, with the one boundary text that the Windows and macOS tools
+carry too (the same text in all 16 carriers, held equal by a repo-wide test). A VM,
+datastore, snapshot or key name, a path or file name, an identifier of a known kind
+(GUID, VMFS volume id, `naa.`/`t10.`/`wwn-` device id, VMware uuid, MAC, CID) and a
+simple value (a version, an enum word, a time) is shown only when it fits a plain
+grammar for its kind; anything else is `<withheld N characters: reason>`, and the
+original goes to a 0600 file (`<tool>-values.jsonl`, next to the tool's text file)
+only with `write_text` in a job run as secret output. Free text (a description, an
+annotation, an audit action or actor, a message) has token-shaped runs, user-info and
+the value after a name that says it is a secret withheld, and a second check, written
+apart from the first two, reads the serialised answer back; a string it replaces
+makes the answer partial. This is a heuristic, not a guarantee: a short password used
+alone as a name is not recognised, nor, after a secret's name, a value of 6
+characters or fewer or one built like words, nor a name the grammar of a plain name
+refuses (a machine name with several one-letter pieces, such as `ProxyK8sMgmtNode10`,
+is withheld although it is no secret), so the skills say to run the tools as jobs with
 `secret_output: true`.
 
 ## Two things the skills keep repeating
