@@ -1,0 +1,51 @@
+{
+  "name": "segb_read",
+  "description": "Decode the framing of SEGB files, the container of Apple's Biome streams (under ~/Library/Biome/streams/): frames, offsets, record state and the two container times, with the payload shown only as a protobuf structure. Two framings, told apart by the magic `SEGB` and nothing else: SEGB1 (the magic at offset 52 of a 56-byte header whose first four bytes are the end-of-data offset; frames of a 32-byte header, length int32, state int32, two Apple absolute times as doubles and 8 bytes that are neither decoded nor shown, then the payload, the next frame at the next multiple of 8) and SEGB2 (the magic at offset 0 of a 32-byte header holding the frame count and a creation time; a table of 16-byte entries, end offset int32, state int32, time double; then the payloads, each ending at its entry's end offset). THE SOURCE OF THESE LAYOUTS: public reverse-engineering notes of the two formats (the ccl-segb project of CCL Solutions Group; the iLEAPP community's Biome notes), recalled and not checked against Apple's sources or against a sample file in this repository; the tests build their files from this description, so they show that the tool reads what the description says and not that the description is Apple's; every answer repeats this (layout_basis). A file with neither magic is unsupported (the version is never guessed); a file that has a magic but fails its bounds (an end offset past the file, a frame count the file cannot hold, an end offset that goes backwards, a length that does not fit) is reported as failing the layout, never decoded by luck, and the answer is partial. Per frame: offset, payload_offset, payload_length, state_raw (1 and 3 are also given a name, written and deleted, as the notes do; any other number is raw only), time1_raw and time2_raw with their UTC reading when they lie between 2001 and 2100 (SEGB2 has one time per frame). Which container time is the write time or the harvest time is NOT established here, and neither is the payload's own time, which lives inside the payload and is not decoded: a container time is not the time of the event, and a deleted state is a record lifecycle in storage, not proof that a person deleted anything. No checksum field is shown and none is computed (a checksum of a payload is a digest of it). The payload is shown as a protobuf view only: the first 16 KiB walked as tags (field number, wire type, offset, and for a length-delimited field its length), at most 64 tags listed, no value, string or byte of the payload; `confidence` says how little a clean walk proves (bytes of any kind parse as protobuf by chance), and a payload that starts bplist00 is named as a property list and not walked. stream_from_path is the last directories of the path the file was found at (the examiner's copy), not a field of the file. iOS meaning does not carry over to a macOS stream. path is a file or a directory (walked in sorted order, links not followed and counted, every other file counted as not SEGB, the walk bounded by entries and max_seconds). Each file is opened without waiting (a FIFO has no writer) and without following a link and used only if it is a regular file, and read in pieces (a frame header and the head of its payload), never whole into memory. Rows are written as they are found (out_file, or the paging file the answer names), flushed per row, so entry_count equals the lines in it. The tool has a clock of its own (max_seconds, default 80, at most 90): at it the read stops with status partial and resume.skip_frames to go on with next_file; SIGTERM, SIGINT and SIGHUP end it the same way (one JSON answer, exit 128 plus the signal); a signal in the first tens of milliseconds, before the module has run, ends it with no JSON (stated, not closed). Every string passes the shared boundary; the tool has no values mode. Every answer carries status and status_basis; status is complete only when every frame the layout declares was walked in every file read and nothing is listed under problems (bytes after the last frame are counted and named in the basis, not decoded).",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A SEGB file, or a directory to search for them (links inside it are not followed; other files are counted)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Frames shown inline (default 500, and at most max_inline_bytes of them). All are counted; the whole result is in out_file, or, when that is omitted, in a file under work/<your id>/tool-output/ (in a job, $OUT/tool-output/) that the answer names"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "JSONL path for every frame (each row judged by the boundary), written as each is found, mode 0600. The tool does not overwrite: an existing file or link at that name is refused"
+    },
+    "skip_frames": {
+      "type": "integer",
+      "description": "With one file: do not emit the first N frames (their headers are still walked); resume.skip_frames of a stopped run (default 0)"
+    },
+    "max_inline_bytes": {
+      "type": "integer",
+      "description": "The inline rows are cut at this many bytes as well as at `limit` rows (default 1048576); the whole is in out_file or the file the answer names"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The tool's own clock (default 80, at most 90): when it passes, the read stops, status is partial and resume says where to go on"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/Users/alice/Library/Biome/streams\", \"out_file\": \"work/<your id>/segb.jsonl\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T12:00:00.000Z",
+  "version": 1,
+  "sha256": "7f666e735bc366aa4944129326ccfb7d438286759631aa7ac811fb5b55bea16f",
+  "use": {
+    "extensions": [],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "53454742"
+      },
+      {
+        "offset": 52,
+        "hex": "53454742"
+      }
+    ]
+  }
+}
