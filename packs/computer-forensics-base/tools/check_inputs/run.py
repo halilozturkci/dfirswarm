@@ -272,7 +272,7 @@ def print_answer(answer, **dumps_kwargs):
     _reconcile(answer)
     _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
 
-TOOL = {"name": "check_inputs", "version": 12}
+TOOL = {"name": "check_inputs", "version": 13}
 MANIFEST = "inputs.json"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SPECIALS = {"fifo": stat.S_ISFIFO, "socket": stat.S_ISSOCK, "char": stat.S_ISCHR, "block": stat.S_ISBLK}

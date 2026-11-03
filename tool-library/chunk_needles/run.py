@@ -150,6 +150,80 @@ def _reconcile(answer):
         answer["ok"] = False
 
 
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
 def _guarded_write(write):
     try:
         before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
@@ -181,7 +255,7 @@ PAGES = []                 # objects with a hidden temporary file (_tmp) that a 
 CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
 PROGRESS = {"scanned": 0}
 
-TOOL = {"name": "chunk_needles", "version": 17}
+TOOL = {"name": "chunk_needles", "version": 18}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -528,6 +602,12 @@ def same_bytes(a, b, deadline=None):
 
 
 def publish(tmp, path, shown):
+    result = _publish(tmp, path, shown)
+    temp_done(tmp)                                        # it is in place (a link, a rename) or gone: no longer a temporary
+    return result
+
+
+def _publish(tmp, path, shown):
     """Move a finished file to `path` without replacing what is there: a file at the name is an earlier answer (a complete
     one, perhaps, where this run was cut short) and stays; this one is kept beside it as name.2.ext, unless it is the
     same bytes, when the file already there is it. Returns the path it has
@@ -610,8 +690,13 @@ class LocatorFile:
         refused = own_dir(self.path.parent)
         if refused:
             raise OSError(0, refused)
-        fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.tool)
-        self.tmp, self.fh = Path(name), os.fdopen(fd, "w", encoding="utf-8")
+        fd, name = temp_create(self.path.parent, ".%s-" % self.tool)
+        self.tmp = Path(name)
+        try:
+            self.fh = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
 
     def _lose(self, why):
         self.error = "the whole result could not be written (%s); none of it was kept: the counts and the inline pages are of the whole scan" % why

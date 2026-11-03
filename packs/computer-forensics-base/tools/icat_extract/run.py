@@ -266,7 +266,7 @@ def open_regular(path):
     return open(fd, "rb")
 RUN = {"proc": None, "size": 0}      # the icat running and the bytes written, for a stop
 
-TOOL = {"name": "icat_extract", "version": 15}
+TOOL = {"name": "icat_extract", "version": 16}
 OFFSET_MAX = 1 << 40              # sectors: an explicit offset above this is not a volume offset (512 TiB at 512 bytes a sector)
 BLOCK = 1 << 20
 MAX_BYTES_DEFAULT = 32 * 1024 ** 3
