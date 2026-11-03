@@ -87,7 +87,6 @@ try:
 except ImportError:  # pragma: no cover
     ctypes = None
 
-TEMPS = []                 # hidden temporaries of the layout phase, removed by a stop signal
 STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
 ACTIVE = []                    # the programs running now
 SEEN = set()                   # the pids seen below a program this tool started: the only ones reap_orphans may end once their parent is gone
@@ -675,6 +674,8 @@ def install_signal_handlers():
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
+
+TEMPS = []                 # hidden temporaries of the layout phase, removed by a stop signal
 
 NOT_COVERED = ("what ab_layout's mapping does not lay out (the APK, obb, external storage, shared/, links, devices, directories, unknown domains and rejected names, "
                "each listed in ab-members.tsv); artefacts no module of the pinned ALEAPP release parses; deleted records beyond what a module reads itself (no carving); "

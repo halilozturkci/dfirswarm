@@ -40,7 +40,7 @@
     "coverage.json"
   ],
   "covers": "What the mapping lays out of the backup's apps (see ab-members.tsv for every member and its state) and what ALEAPP's modules parse from that layout: one TSV per artefact that has records, its timeline and every file it wrote, kept under aleapp/, and modules.tsv with the outcome of each module its log names. It is a derivative of an adb backup, not the phone's file system, and the mapping table behind it has not been checked against the AOSP source. A module that finds nothing writes no report (no_record), which does not show the artefact never existed; a module that errored or whose end the log does not show is not covered. The program is run in this recipe's process group with the time that is left of its limit (--max-seconds, default 14100 seconds, less the time the layout took; at least one second): one that does not finish is ended with everything it started, what it wrote is kept, and the run says partial or failed, never complete; a stop signal ends it and its children before the recipe ends. The layout and the report contain the phone's own content and are a sensitive output.",
-  "sha256": "592d2a33f49b3451849c02d194c23cf337c2c3dee41cc212bb2005e2d7fd2a22",
+  "sha256": "0a220150bdb22a9f00fb981a212499a234ea0d4021cec17a685cf4d7bf1e3310",
   "requires": [
     "aleapp"
   ]
