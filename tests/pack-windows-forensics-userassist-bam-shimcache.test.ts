@@ -539,7 +539,7 @@ test("the tool is registered: manifest names, input magic and the secret_output 
   const manifest = JSON.parse(await readFile(join(WIN, TOOL, "manifest.json"), "utf8"));
   assert.deepEqual(manifest.use.names, ["NTUSER.DAT", "SYSTEM"]);
   assert.deepEqual(manifest.secret_output, { when_args: ["write_values"] });
-  assert.equal(manifest.version, 1);
+  assert.equal(manifest.version, 2);
   assert.deepEqual(manifest.requires, [], "no second reader is started, so nothing is required");
   assert.ok(manifest.timeout_seconds > 84);
   assert.match(manifest.description, /cross_check|second reader/);
@@ -614,4 +614,97 @@ dual("a time limit that falls inside one key's values stops the value loop and c
     assert.ok(out.record_count < 30_000, "the loop stopped");
     assert.match(out.status_basis, /time limit \(1 seconds\)/);
   });
+});
+
+// --- fix round 1 -------------------------------------------------------------------------------------
+
+async function runCopy(cwd: string, edit: (s: string) => string, args: Record<string, unknown>, env: Record<string, string>): Promise<Answer> {
+  const src = edit(await readFile(join(WIN, TOOL, "run.py"), "utf8"));
+  await mkdir(join(cwd, "copy", TOOL), { recursive: true });
+  await writeFile(join(cwd, "copy", TOOL, "run.py"), src);
+  const r = await runPy(join(cwd, "copy", TOOL, "run.py"), cwd, args, undefined, { AGENT_ID: "s1", ...env });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  return JSON.parse(r.stdout) as Answer;
+}
+const patch = (s: string, from: string, to: string): string => {
+  const t = s.replace(from, to);
+  assert.notEqual(t, s, `the patch did not apply: ${from}`);
+  return t;
+};
+/** The tool's clock runs out at its k-th look at it. */
+const clockAfter = (k: number) => (s: string): string =>
+  patch(patch(s, "\nimport random\n", `\nimport random\n_TICKS = [0]\n\n\ndef _ticks():\n    _TICKS[0] += 1\n    return _TICKS[0] > ${k}\n`), "if stopped[0] is None and out_of_time():", "if stopped[0] is None and _ticks():");
+const valuesNotRead = (out: Answer): number => Number(/at least (\d+) value\(s\) and (\d+) ShimCache entr\(ies\) were not read/.exec(out.status_basis)?.[1]);
+
+dual("at its time limit in a UserAssist key the count of values not read is the values left in that key, and the values read are the records", async (v) => {
+  await withCwd(async (cwd) => {
+    const env = await v.write(cwd, "work/NTUSER.DAT", ntuser(Array.from({ length: 5000 }, (_, i) => ({ name: rot13(`C:\\Apps\\App${i}\\run.exe`), type: "binary" as const, value: ua72(i, i, i, i, FT) }))));
+    const out = await runCopy(cwd, clockAfter(1500), { hive: "work/NTUSER.DAT", limit: 6000 }, env);
+    assert.equal(out.status, "partial");
+    assert.equal(out.walk_stopped_by_time_limit, true);
+    assert.ok(out.record_count > 100 && out.record_count < 5000, `${out.record_count} records`);
+    assert.equal(out.record_count + valuesNotRead(out), 5000, out.status_basis);
+  });
+});
+
+dual("at its time limit in a BAM key the count is the values left in that key, and the SID keys not started are named apart", async (v) => {
+  await withCwd(async (cwd) => {
+    const many = (tag: string, count: number): Val[] => Array.from({ length: count }, (_, i) => ({ name: `\\Device\\HarddiskVolume3\\${tag}\\a${i}.exe`, type: "binary" as const, value: bam24(FT) }));
+    const env = await v.write(cwd, "work/SYSTEM", system({ bam: [{ sid: SIDA, values: many("a", 3000) }, { sid: SIDB, values: many("b", 100) }] }));
+    const out = await runCopy(cwd, clockAfter(1000), { hive: "work/SYSTEM", source: "bam", limit: 6000 }, env);
+    assert.equal(out.status, "partial");
+    const read = out.record_count;
+    assert.ok(read > 100 && read < 3000, `${read} records`);
+    // the order of the two SID keys is the print order, so the key in hand holds 3,000 or 100 values: the count is true for either
+    const left = valuesNotRead(out);
+    assert.ok(read + left === 3000 || read + left === 100, `${read} read, ${left} not read`);
+    assert.match(out.status_basis, /1 key\(s\) were not started and what they hold is not counted/);
+  });
+});
+
+dual("a list of values too long to put in print order in the time left is read in a random order and the answer says so", async (v) => {
+  await withCwd(async (cwd) => {
+    const env = await v.write(cwd, "work/NTUSER.DAT", ntuser(Array.from({ length: 50 }, (_, i) => ({ name: rot13(`C:\\a${i}.exe`), type: "binary" as const, value: ua72(i, i, i, i, FT) }))));
+    const out = await runCopy(cwd, (s) => patch(s, "ORDER_CAP = 100000 ", "ORDER_CAP = 10 "), { hive: "work/NTUSER.DAT", limit: 100 }, env);
+    assert.equal(out.record_count, 50);
+    assert.match(out.status_basis, /list\(s\) \(\d+ item\(s\) in all\) were too long to put in print order/);
+    const normal = await runCopy(cwd, (s) => s, { hive: "work/NTUSER.DAT", limit: 100 }, env);
+    assert.equal(normal.status, "complete", normal.status_basis);
+  });
+});
+
+dual("a key of 1,000,000-scale values is not put in order past the clock: the tool answers JSON with its own scaled clock (ORDER_COST makes the list unordered)", async (v) => {
+  await withCwd(async (cwd) => {
+    const env = await v.write(cwd, "work/NTUSER.DAT", ntuser(Array.from({ length: 4000 }, (_, i) => ({ name: rot13(`C:\\a${i}.exe`), type: "binary" as const, value: ua72(i, i, i, i, FT) }))));
+    // a 5-second clock and an item cost of 0.01 s: the 4,000-item list does not fit half the time left, so it is not ordered
+    const out = await runCopy(cwd, (s) => patch(patch(s, "ORDER_COST = 0.0003 ", "ORDER_COST = 0.01 "), /DEADLINE_SECONDS = \d+ /.exec(s)![0], "DEADLINE_SECONDS = 5 "), { hive: "work/NTUSER.DAT", limit: 10 }, env);
+    assert.match(out.status_basis, /too long to put in print order/);
+    assert.ok(out.record_count > 0);
+  });
+});
+
+dual("the length guards: UserAssist is read at 72 and 16 bytes only, BAM at 24 only; one byte more or less is unsupported with its bytes", async (v) => {
+  const { out } = await run(v, ntuser([
+    { name: rot13("C:\\ok72.exe"), type: "binary", value: ua72(1, 1, 1, 1, FT) }, { name: rot13("C:\\ok16.exe"), type: "binary", value: ua16(1, 1, FT) },
+    { name: rot13("C:\\l73.exe"), type: "binary", value: Buffer.concat([ua72(1, 1, 1, 1, FT), Buffer.from([0])]) }, { name: rot13("C:\\l71.exe"), type: "binary", value: ua72(1, 1, 1, 1, FT).subarray(0, 71) },
+    { name: rot13("C:\\l17.exe"), type: "binary", value: Buffer.concat([ua16(1, 1, FT), Buffer.from([0])]) }, { name: rot13("C:\\l15.exe"), type: "binary", value: ua16(1, 1, FT).subarray(0, 15) },
+  ]));
+  assert.equal(out.unsupported_count, 4);
+  const layouts = Object.fromEntries(out.records.map((r) => [r.name_decoded, r.layout]));
+  assert.deepEqual(layouts, { "C:\\ok72.exe": "userassist-72", "C:\\ok16.exe": "userassist-16", "C:\\l73.exe": "unknown", "C:\\l71.exe": "unknown", "C:\\l17.exe": "unknown", "C:\\l15.exe": "unknown" });
+  const bam = (await run(v, system({ bam: [{ sid: SIDA, values: [
+    { name: "\\Device\\HarddiskVolume3\\ok.exe", type: "binary", value: bam24(FT) }, { name: "\\Device\\HarddiskVolume3\\l25.exe", type: "binary", value: Buffer.concat([bam24(FT), Buffer.from([0])]) },
+    { name: "\\Device\\HarddiskVolume3\\l23.exe", type: "binary", value: bam24(FT).subarray(0, 23) },
+  ] }] }))).out;
+  assert.equal(bam.unsupported_count, 2);
+  assert.equal(bam.records.filter((r) => r.layout === "bam-24").length, 1);
+});
+
+dual("a sid filter that does not match a record whose SID key name is withheld counts it as blind, and the withheld name is not printed", async (v) => {
+  const [canary] = plant(FILE_SHAPES[0], 1, 13);
+  const root = system({ bam: [{ sid: SIDA, values: [{ name: "\\Device\\HarddiskVolume3\\a.exe", type: "binary", value: bam24(FT) }] }, { sid: canary.text, values: [{ name: "\\Device\\HarddiskVolume3\\b.exe", type: "binary", value: bam24(FT) }] }] });
+  const { out, raw } = await run(v, root, { sid: SIDA });
+  assert.equal(out.record_count, 1);
+  assert.equal(out.contains_blind_records, 1);
+  assert.equal(leaked([canary], [raw]), 0);
 });

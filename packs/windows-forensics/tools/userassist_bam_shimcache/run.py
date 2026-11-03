@@ -2220,9 +2220,13 @@ MAX_RAW_HEX_BYTES = 1 << 19        # a value longer than this is counted, not wr
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 ROT13 = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", "NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm")
 
+import random
+
 DEADLINE_SECONDS = 84             # the manifest allows 90; the seal stop (86.5) is 2.5 seconds later
-PARSER = "userassist_bam_shimcache/1"
+PARSER = "userassist_bam_shimcache/2"
 INLINE_PROBLEMS = 40
+ORDER_CAP = 100000                # most items of one list put in print order (above it: a random order)
+ORDER_COST = 0.0003               # seconds one item may take to put in print order (about three times what it takes); a list is ordered only if it fits half of the time left
 
 
 def fail(message, **extra):
@@ -2472,7 +2476,8 @@ def main():
     counts = {s: 0 for s in SOURCES}
     counts["dam"] = 0
     present = {}
-    n = {"unsupported": 0, "filtered_out": 0, "blind": 0, "unread_for_time": 0, "meta": 0, "failed": 0, "raw_not_shown": 0, "entries_unread": 0}
+    n = {"unsupported": 0, "filtered_out": 0, "blind": 0, "unread_for_time": 0, "meta": 0, "failed": 0, "raw_not_shown": 0, "entries_unread": 0, "keys_unstarted": 0,
+         "unordered_lists": 0, "unordered_items": 0}
     stopped = [None]
 
     class Problems:
@@ -2493,6 +2498,18 @@ def main():
             problem_page.add(stopped[0])
         return stopped[0] is not None
 
+    def in_print_order(values, kind="name", text=str):
+        """print_order, when the list can be put in order in the time left (ORDER_COST an item, within half of it) and is no longer than ORDER_CAP; else the same items in a random order
+        (the rank of a name in the hive must not show in the listing, and a list this long is not judged item by item before the clock runs out)."""
+        values = list(values)
+        left = (STOP["deadline"] - time.monotonic()) if STOP["deadline"] is not None else 1e9
+        if len(values) > ORDER_CAP or len(values) * ORDER_COST > left / 2:
+            random.SystemRandom().shuffle(values)
+            n["unordered_lists"] += 1
+            n["unordered_items"] += len(values)
+            return values
+        return print_order(values, kind, text)
+
     listings = {}                       # id(node) -> (node, the subkeys read, the same in print order): a list is read once (the bounds count every element read over the whole walk)
 
     def listing(node, label):
@@ -2509,7 +2526,7 @@ def main():
     def kids(node, label):
         node_, raw, ordered = listing(node, label)
         if ordered is None:
-            ordered = print_order(raw, "name", lambda s: str(getattr(s, "name", "")))
+            ordered = in_print_order(raw, "name", lambda s: str(getattr(s, "name", "")))
             listings[id(node)] = (node_, raw, ordered)
         return ordered
 
@@ -2529,7 +2546,7 @@ def main():
 
     def values_of(node, label):
         try:
-            return print_order(bounds.values(node, label, bound_problems, trim_values=False), "name", lambda v: str(getattr(v, "name", "")))
+            return in_print_order(bounds.values(node, label, bound_problems, trim_values=False), "name", lambda v: str(getattr(v, "name", "")))
         except Exception as exc:
             note(label, exc)
             return []
@@ -2580,17 +2597,21 @@ def main():
         if node is None:
             return
         base = "\\".join(UA_PATH)
-        for guid in kids(node, base):
+        guids = kids(node, base)
+        for gi, guid in enumerate(guids):
             if time_is_up("UserAssist"):
+                n["keys_unstarted"] += len(guids) - gi
                 return
             gname = str(getattr(guid, "name", ""))
             count = child(guid, "Count", base + "\\" + gname)
             if count is None:
                 continue
             where = base + "\\" + gname + "\\Count"
-            for v in values_of(count, where):
+            listed = values_of(count, where)
+            for idx, v in enumerate(listed):
                 if time_is_up("UserAssist"):
-                    n["unread_for_time"] += 1
+                    n["unread_for_time"] += len(listed) - idx            # the values of this key still to come
+                    n["keys_unstarted"] += len(guids) - gi - 1           # the GUID keys after it: what they hold is not counted
                     return
                 try:
                     name = str(v.name)
@@ -2631,14 +2652,18 @@ def main():
                     continue
                 present["bam"] = True
                 base = csn + "\\" + "\\".join(parts)
-                for sidkey in kids(node, base):
+                sids = kids(node, base)
+                for si, sidkey in enumerate(sids):
                     if time_is_up(label.upper()):
+                        n["keys_unstarted"] += len(sids) - si
                         return
                     sname = str(getattr(sidkey, "name", ""))
                     where = base + "\\" + sname
-                    for v in values_of(sidkey, where):
+                    listed = values_of(sidkey, where)
+                    for idx, v in enumerate(listed):
                         if time_is_up(label.upper()):
-                            n["unread_for_time"] += 1
+                            n["unread_for_time"] += len(listed) - idx    # the values of this key still to come
+                            n["keys_unstarted"] += len(sids) - si - 1    # the SID keys after it: what they hold is not counted
                             return
                         try:
                             name = str(v.name)
@@ -2738,8 +2763,11 @@ def main():
         reasons.append("%d record(s) of the hive have no known layout and are returned undecoded (unsupported; a record a filter removed is counted too)" % n["unsupported"])
     if n["raw_not_shown"]:
         reasons.append("%d record(s) are over %d bytes: their length is given and their bytes are not written out (raw_not_shown)" % (n["raw_not_shown"], MAX_RAW_HEX_BYTES))
+    if n["unordered_lists"]:
+        reasons.append("%d list(s) (%d item(s) in all) were too long to put in print order in the time left and are listed in a random order" % (n["unordered_lists"], n["unordered_items"]))
     if stopped[0]:
-        reasons.append("%s (%d value(s) and %d ShimCache entr(ies) were not read)" % (stopped[0], n["unread_for_time"], n["entries_unread"]))
+        reasons.append("%s (at least %d value(s) and %d ShimCache entr(ies) were not read; %d key(s) were not started and what they hold is not counted; every source after this point "
+                       "was not started and is not counted)" % (stopped[0], n["unread_for_time"], n["entries_unread"], n["keys_unstarted"]))
     if n["blind"]:
         reasons.append("the filters look only in the text the answer prints: %d record(s) were not matched and have text withheld, so the needle may be in what is withheld (contains_blind_records)" % n["blind"])
     if n["failed"]:

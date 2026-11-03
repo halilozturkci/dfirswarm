@@ -2166,6 +2166,8 @@ class SealedPage(NoReplacePage):
         return result
 
 
+import random
+
 try:
     from regipy.registry import RegistryHive
 except ImportError:
@@ -2189,6 +2191,9 @@ OWN_NAMES.update((
     "wmi_repository", "working_directory", "xml", "xml_file", "xml_rejected", "created", "created_filetime", "uri", "record_id", "event_id", "channel", "time", "time_utc",
     "actions_hex", "triggers_hex", "dynamic_info_hex", "autorun", "autorun_kind", "control_set", "cross_check", "current_control_set", "display_name", "failure_actions_hex",
     "failure_actions_length", "hives", "image_path", "items_by_mechanism", "mechanism", "ntuser", "not_run", "object_name", "scheduled_task", "service", "service_dll",
+    "image_path_value", "image_path_value_type", "display_name_value", "display_name_value_type", "object_name_value", "object_name_value_type", "service_dll_value",
+    "service_dll_value_type", "failure_actions_value", "failure_actions_value_type", "actions_value", "actions_value_type", "triggers_value", "triggers_value_type",
+    "tree_id_value", "tree_id_value_type", "path_value", "path_value_type", "unsupported_fields",
     "sources", "service_name", "value_bytes_hex", "start", "start_label", "system", "type", "type_label", "value_name", "value_type", "taskcache_found", "hive", "date", "description", "xml_refused", "task_state", "last_success", "last_success_filetime", "trigger_kinds", "trigger_count", "id",
 ))
 
@@ -2202,7 +2207,9 @@ FIELDS.update({
     "actions_length": "number", "triggers_length": "number", "trigger_count": "number", "user_id": "name", "group_id": "name", "run_level": "name", "logon_type": "name",
     "author": "name", "bom": "name", "trigger_kinds": "name", "system": "path", "ntuser": "path", "value_name": "path", "control_set": "name", "mechanism": "name",
     "autorun_kind": "name", "service_name": "name", "start": "number", "type": "number", "start_label": "name", "type_label": "name", "failure_actions_length": "number", "value_type": "name", "hive": "name",
-    "service_dll": "path", "image_path": "text",
+    "service_dll": "path", "image_path": "text", "image_path_value_type": "name", "display_name_value_type": "name", "object_name_value_type": "name",
+    "service_dll_value_type": "name", "failure_actions_value_type": "name", "actions_value_type": "name", "triggers_value_type": "name", "tree_id_value_type": "name",
+    "path_value_type": "name",
 })
 
 LIMITS = (
@@ -2289,10 +2296,27 @@ MAX_EVENTS_PER_TASK = 200
 EVENTS = {"security": (4698, 4699, 4700, 4701, 4702), "microsoft-windows-taskscheduler/operational": (106, 140, 141, 200, 201)}
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 DEADLINE_SECONDS = 294            # the manifest allows 300; the seal stop (296.5) is 2.5 seconds later
-PARSER = "persistence_normalise/2"
+PARSER = "persistence_normalise/3"
+READ_SECONDS = DEADLINE_SECONDS - min(30.0, DEADLINE_SECONDS / 10)     # the reading stops here; the rest of DEADLINE_SECONDS is for writing what was read
+ORDER_CAP = 100000                # most items of one list put in print order (above it: a random order)
+ORDER_COST = 0.0003               # seconds one item may take to put in print order (about three times what it takes); a list is ordered only if it fits half of the time left
+EVTX_LINE_CAP = 8388608           # longest line of the evtx result file that is read; a longer one is counted and dropped
 INLINE_PROBLEMS = 40
 DOCTYPE = re.compile(r"<!\s*(?:DOCTYPE|ENTITY)", re.I)
+DOCTYPE_BYTES = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)", re.I)
 XML_DECL = re.compile(r"^\s*<\?xml[^>]*\?>")
+
+
+def other_value(v, what, expected):
+    """(the value as typed text or hex, its registry type, the sentence that says it is not what was expected): a value that is not of the type the tool reads is never dropped."""
+    data, vtype = v.value, str(v.value_type)
+    if isinstance(data, (bytes, bytearray)):
+        shown, size = T("hex", bytes(data).hex()), "%d bytes" % len(data)
+    elif isinstance(data, list):
+        shown, size = T("text", "\n".join(str(x) for x in data)), "%d strings" % len(data)
+    else:
+        shown, size = T("text", str(data)), "one value"
+    return shown, vtype, own("%s is a %s value (%s), not %s: kept as given (unsupported)" % (what, vtype, size, expected))
 
 
 def fail(message, **extra):
@@ -2374,21 +2398,43 @@ def read_task_file(path, size_hint=None):
     finally:
         os.close(fd)
     data = b"".join(chunks)
+    return decode_task(data)
+
+
+NUL_UTF16_SHARE = 0.4        # of the places a NUL can sit in UTF-16 text of the ASCII range, the share that must hold one
+
+
+def decode_task(data):
+    """(text, byte order mark) of the bytes of a task file. The text is decoded here and never left to the XML parser to detect: a UTF-16 file with no byte
+    order mark (or one that follows a UTF-8 one) is decoded as UTF-16, one with NUL bytes that is not UTF-16 is refused, and the DOCTYPE and ENTITY check
+    sees the text AND the bytes with their NULs taken out, so that no layout of the bytes is a way past it."""
+    if DOCTYPE_BYTES.search(data.replace(b"\x00", b"")):
+        raise Refused(own("it holds a DOCTYPE or ENTITY declaration: refused, nothing was parsed"))
     if data.startswith(b"\xff\xfe"):
-        bom, enc = "UTF-16LE", "utf-16-le"
-        data = data[2:]
+        bom, enc, data = "UTF-16LE", "utf-16-le", data[2:]
     elif data.startswith(b"\xfe\xff"):
-        bom, enc = "UTF-16BE", "utf-16-be"
-        data = data[2:]
+        bom, enc, data = "UTF-16BE", "utf-16-be", data[2:]
     elif data.startswith(b"\xef\xbb\xbf"):
-        bom, enc = "UTF-8", "utf-8"
-        data = data[3:]
+        bom, enc, data = "UTF-8", "utf-8", data[3:]
     else:
         bom, enc = "none", "utf-8"
+    if enc == "utf-8" and b"\x00" in data:
+        half = len(data) // 2
+        odd_nuls, even_nuls = data[1::2].count(0), data[0::2].count(0)
+        if len(data) % 2 == 0 and odd_nuls >= half * NUL_UTF16_SHARE and odd_nuls > even_nuls:
+            enc = "utf-16-le"
+        elif len(data) % 2 == 0 and even_nuls >= half * NUL_UTF16_SHARE and even_nuls > odd_nuls:
+            enc = "utf-16-be"
+        else:
+            raise Refused(own("NUL bytes that are not UTF-16 text: refused, nothing was parsed"))
+        bom = bom + "+" + ("UTF-16LE" if enc.endswith("le") else "UTF-16BE")
     try:
-        return data.decode(enc), bom
+        text = data.decode(enc)
     except UnicodeDecodeError:
         raise Refused(own("the bytes are not valid %s (byte order mark: %s)" % (enc, bom)))
+    if "\x00" in text:
+        raise Refused(own("the text holds a NUL character: refused, nothing was parsed"))
+    return text, own(bom)
 
 
 def parse_task(text):
@@ -2450,7 +2496,8 @@ def decode_dynamic_info(raw):
 
 def main():
     withhold_library_output()
-    set_deadline(DEADLINE_SECONDS)
+    started_at = time.monotonic()
+    set_deadline(READ_SECONDS)            # the reading has its own clock: what it read is then written within the rest of DEADLINE_SECONDS
     seal_stop_after(296.5)                # the manifest allows 300, less 3.5: no seal runs on past that (the rest is withheld whole)
     install_signal_handlers(lambda signum: interrupted_answer(signum))
     try:
@@ -2501,7 +2548,8 @@ def main():
     records = SealedPage("persistence_normalise", [paths["software"], paths["system"], paths["ntuser"], paths["tasks_dir"], paths["evtx_results"], bool(contains)], limit)
     problem_page = SealedPage("persistence_normalise-problems", [paths["software"], paths["system"], paths["ntuser"], paths["tasks_dir"], paths["evtx_results"]], INLINE_PROBLEMS)
     n = {"unsupported": 0, "filtered_out": 0, "blind": 0, "failed": 0, "refused": 0, "not_read_for_time": 0, "events_not_listed": 0, "evtx_bad_lines": 0, "evtx_rows": 0,
-         "evtx_ignored": 0, "skipped_special": 0, "skipped_links": 0, "actions_cut": 0, "bad_number": 0}
+         "evtx_ignored": 0, "skipped_special": 0, "skipped_links": 0, "actions_cut": 0, "bad_number": 0, "unsupported_values": 0, "unsupported_autorun": 0, "keys_unstarted": 0,
+         "not_written_for_time": 0, "unordered_lists": 0, "unordered_items": 0, "evtx_long_lines": 0}
     obs = collections.Counter()
     by_registration = collections.Counter()
     stopped = [None]
@@ -2522,9 +2570,20 @@ def main():
 
     def time_is_up(label):
         if stopped[0] is None and out_of_time():
-            stopped[0] = own("the tool's own time limit (%d seconds) was reached in %s; what follows was not read" % (DEADLINE_SECONDS, label))
+            stopped[0] = own("the tool's own time limit (%d seconds, %d of them for reading) was reached in %s; what follows was not read" % (DEADLINE_SECONDS, READ_SECONDS, label))
             problem_page.add(stopped[0])
         return stopped[0] is not None
+
+    def in_print_order(values, kind="name", text=str):
+        """print_order, when the list can be put in order in the time left (ORDER_COST a item, within half of it) and is no longer than ORDER_CAP; else the same items in a random order."""
+        values = list(values)
+        left = (STOP["deadline"] - time.monotonic()) if STOP["deadline"] is not None else 1e9
+        if len(values) > ORDER_CAP or len(values) * ORDER_COST > left / 2:
+            random.SystemRandom().shuffle(values)
+            n["unordered_lists"] += 1
+            n["unordered_items"] += len(values)
+            return values
+        return print_order(values, kind, text)
 
     def item_for(path):
         key = path.lower()
@@ -2549,7 +2608,10 @@ def main():
             with scan:
                 for entry in scan:
                     if time_is_up("the task files"):
-                        n["not_read_for_time"] += 1
+                        try:
+                            n["not_read_for_time"] += 1 + sum(1 for _ in scan)      # this entry and the names still to come in this directory
+                        except OSError:
+                            n["not_read_for_time"] += 1
                         break
                     try:
                         if entry.is_symlink():
@@ -2580,6 +2642,8 @@ def main():
                         note("a task file", exc)
                         it["xml_refused"] = own("the file could not be read")
                         n["refused"] += 1
+        if stopped[0] is not None:
+            n["keys_unstarted"] += len(stack)                      # directories of the tasks tree that were not listed
 
     def number_of(v):
         value = getattr(v, "value", None)
@@ -2594,16 +2658,22 @@ def main():
             for v in rd.values(sel, "Select"):
                 if str(getattr(v, "name", "")).lower() == "current" and number_of(v) is not None:
                     current = number_of(v)
-        for cs in [c for c in rd.kids(root, "") if CONTROL_SET.match(str(getattr(c, "name", "")))]:
+        sets = [c for c in rd.kids(root, "") if CONTROL_SET.match(str(getattr(c, "name", "")))]
+        for ci, cs in enumerate(sets):
             csn = str(cs.name)
             svc = rd.child(cs, "Services", csn)
             if svc is None:
                 continue
             sources["services"]["present"] = True
             is_current = None if current is None else csn.lower() == "controlset%03d" % current
-            for s_ in rd.kids(svc, csn + "\\Services"):
+            listed = rd.kids(svc, csn + "\\Services")
+            for idx, s_ in enumerate(listed):
                 if time_is_up("the services"):
-                    n["not_read_for_time"] += 1
+                    n["not_read_for_time"] += len(listed) - idx
+                    for later in sets[ci + 1:]:                    # the services of the control sets still to come
+                        more = rd.child(later, "Services", str(later.name))
+                        if more is not None:
+                            n["not_read_for_time"] += len(rd.kids(more, str(later.name) + "\\Services"))
                     return
                 name = str(getattr(s_, "name", ""))
                 where = csn + "\\Services\\" + name
@@ -2612,11 +2682,22 @@ def main():
                     row = {"mechanism": "service", "path": csn + "\\" + name, "service_name": name, "control_set": csn, "current_control_set": is_current, "key": T("key", where), "hive": "system"}
                     obs_ = []
                     texts = [("path", name)]
-                    for field, key in (("image_path", "imagepath"), ("display_name", "displayname"), ("object_name", "objectname")):
-                        v = vals.get(key)
-                        if v is not None and isinstance(v.value, str):
+                    unsupported = []
+
+                    def put(field, v, what):
+                        if isinstance(v.value, str):
                             row[field] = T("text", v.value)
                             texts.append(("text", v.value))
+                        else:
+                            shown, vtype, sentence = other_value(v, what, "text")
+                            row[field + "_value"], row[field + "_value_type"] = shown, vtype
+                            unsupported.append(sentence)
+                            texts.append(("text", shown))
+
+                    for field, key, what in (("image_path", "imagepath", "ImagePath"), ("display_name", "displayname", "DisplayName"), ("object_name", "objectname", "ObjectName")):
+                        v = vals.get(key)
+                        if v is not None:
+                            put(field, v, what)
                     for field, key, labels in (("start", "start", START_LABELS), ("type", "type", TYPE_LABELS)):
                         v = vals.get(key)
                         if v is None:
@@ -2628,17 +2709,26 @@ def main():
                         else:
                             row[field], row[field + "_label"] = str(num), own(labels.get(num, "unknown"))
                     params = rd.child(s_, "Parameters", where)
+                    servicedll_seen = False
                     if params is not None:
                         for v in rd.values(params, where + "\\Parameters"):
-                            if str(getattr(v, "name", "")).lower() == "servicedll" and isinstance(v.value, str):
-                                row["service_dll"] = T("text", v.value)
-                                texts.append(("text", v.value))
+                            if str(getattr(v, "name", "")).lower() == "servicedll":
+                                servicedll_seen = True
+                                put("service_dll", v, "ServiceDll")
                     fa = vals.get("failureactions")
-                    if fa is not None and isinstance(fa.value, (bytes, bytearray)):
-                        row["failure_actions_length"] = str(len(fa.value))
-                        row["failure_actions_hex"] = T("hex", bytes(fa.value).hex())
-                    if "image_path" not in row and "service_dll" not in row:
+                    if fa is not None:
+                        if isinstance(fa.value, (bytes, bytearray)):
+                            row["failure_actions_length"] = str(len(fa.value))
+                            row["failure_actions_hex"] = T("hex", bytes(fa.value).hex())
+                        else:
+                            shown, vtype, sentence = other_value(fa, "FailureActions", "bytes")
+                            row["failure_actions_value"], row["failure_actions_value_type"] = shown, vtype
+                            unsupported.append(sentence)
+                    if vals.get("imagepath") is None and not servicedll_seen:
                         obs_.append("no_imagepath_and_no_servicedll_value")
+                    if unsupported:
+                        row["unsupported_fields"] = unsupported
+                        n["unsupported_values"] += len(unsupported)
                     row["observations"] = obs_
                     for c in obs_:
                         obs[c] += 1
@@ -2659,17 +2749,20 @@ def main():
             base = "\\".join(parts)
             targets = []
             if mode == "subkeys":
-                for sub in rd.kids(node, base):
+                subs = rd.kids(node, base)
+                for idx, sub in enumerate(subs):
                     if time_is_up("the autorun keys"):
-                        n["not_read_for_time"] += 1
+                        n["keys_unstarted"] += len(subs) - idx
                         return
                     targets.append((str(getattr(sub, "name", "")), sub, base + "\\" + str(getattr(sub, "name", ""))))
             else:
                 targets.append((None, node, base))
-            for sub_name, tnode, where in targets:
-                for v in rd.values(tnode, where):
+            for ti, (sub_name, tnode, where) in enumerate(targets):
+                listed = rd.values(tnode, where)
+                for idx, v in enumerate(listed):
                     if time_is_up("the autorun keys"):
-                        n["not_read_for_time"] += 1
+                        n["not_read_for_time"] += len(listed) - idx
+                        n["keys_unstarted"] += len(targets) - ti - 1
                         return
                     vname = str(getattr(v, "name", ""))
                     if mode != "values" and vname.lower() not in wanted:
@@ -2685,7 +2778,7 @@ def main():
                         elif isinstance(data, (bytes, bytearray)):
                             row["value_bytes_hex"] = T("hex", bytes(data).hex())
                             row["unsupported"] = own("a %s value of %d bytes, not text" % (kind, len(data)))
-                            n["unsupported"] += 1
+                            n["unsupported_autorun"] += 1
                         else:
                             row["command"] = T("text", str(data))
                         row["observations"] = []
@@ -2734,9 +2827,9 @@ def main():
                 except Exception as exc:
                     note("TaskCache\\Tree", exc)
                     continue
-                for sub in subs:
+                for idx, sub in enumerate(subs):
                     if time_is_up("the TaskCache Tree"):
-                        n["not_read_for_time"] += 1
+                        n["not_read_for_time"] += len(subs) - idx
                         break
                     path = rel + "\\" + str(sub.name)
                     vals = {str(v.name).lower(): v for v in values(sub, "TaskCache\\Tree" + path)}
@@ -2746,15 +2839,23 @@ def main():
                         it["tree"] = "present"
                         it["tree_sd"] = "present" if "sd" in vals else "absent"
                         gid = str(ident.value).strip() if isinstance(ident.value, str) else None
+                        if not isinstance(ident.value, str):
+                            shown, vtype, sentence = other_value(ident, "the Id value", "text")
+                            it["tree_id_value"], it["tree_id_value_type"] = shown, vtype
+                            it.setdefault("unsupported_fields", []).append(sentence)
+                            n["unsupported_values"] += 1
                         if gid:
                             it["guid"] = gid
                             guid_path[gid.lower()] = path
                     if getattr(sub, "subkey_count", 0):
                         walk.append((sub, path))
+            if stopped[0] is not None:
+                n["keys_unstarted"] += len(walk)                    # subtrees of the Tree that were not listed
         if tasks is not None and stopped[0] is None:
-            for sub in bounds.subkeys(tasks, "TaskCache\\Tasks", bound_problems):
+            task_keys = bounds.subkeys(tasks, "TaskCache\\Tasks", bound_problems)
+            for idx, sub in enumerate(task_keys):
                 if time_is_up("the TaskCache Tasks"):
-                    n["not_read_for_time"] += 1
+                    n["not_read_for_time"] += len(task_keys) - idx
                     break
                 gid = str(sub.name)
                 path = guid_path.get(gid.lower())
@@ -2763,6 +2864,12 @@ def main():
                     uri = vals.get("path")
                     path = (str(uri.value) if uri is not None and isinstance(uri.value, str) and uri.value else "\\" + gid)
                 it = item_for(path)
+                pv = vals.get("path")
+                if pv is not None and not isinstance(pv.value, str):
+                    shown, vtype, sentence = other_value(pv, "the Path value", "text")
+                    it["path_value"], it["path_value_type"] = shown, vtype
+                    it.setdefault("unsupported_fields", []).append(sentence)
+                    n["unsupported_values"] += 1
                 it["tasks_key"] = "present"
                 it["taskcache"] = "present"
                 it.setdefault("guid", gid)
@@ -2772,7 +2879,16 @@ def main():
                     if v is not None and isinstance(v.value, (bytes, bytearray)):
                         it[field + "_length"] = str(len(v.value))
                         it[field + "_hex"] = T("hex", bytes(v.value).hex())
+                    elif v is not None:
+                        shown, vtype, sentence = other_value(v, field.capitalize(), "bytes")
+                        it[field + "_value"], it[field + "_value_type"] = shown, vtype
+                        it.setdefault("unsupported_fields", []).append(sentence)
+                        n["unsupported_values"] += 1
                 v = vals.get("dynamicinfo")
+                if v is not None and not isinstance(v.value, (bytes, bytearray)):
+                    shown, vtype, sentence = other_value(v, "DynamicInfo", "bytes")
+                    it["dynamic_info"] = {"layout": "unknown", "layout_basis": own("the value is of type %s, not binary data" % vtype), "unsupported": sentence, "dynamic_info_value": shown}
+                    n["unsupported"] += 1
                 if v is not None and isinstance(v.value, (bytes, bytearray)):
                     fields, layout, basis, unsupported = decode_dynamic_info(bytes(v.value))
                     di = dict(fields, layout=layout, layout_basis=own(basis), raw_length=str(len(v.value)), dynamic_info_hex=T("hex", bytes(v.value).hex()))
@@ -2807,9 +2923,17 @@ def main():
         except OSError as exc:
             fail("evtx_results could not be opened", evtx_results=paths["evtx_results"], reason=type(exc).__name__)
         with fh:
-            for line in fh:
+            while True:
                 if time_is_up("the evtx result file"):
                     break
+                line = fh.readline(EVTX_LINE_CAP + 1)
+                if not line:
+                    break
+                if len(line) > EVTX_LINE_CAP and not line.endswith("\n"):
+                    n["evtx_long_lines"] += 1                      # a line over the cap: the rest of it is read in pieces and dropped
+                    while line and not line.endswith("\n") and not time_is_up("the evtx result file"):
+                        line = fh.readline(1 << 20)
+                    continue
                 line = line.strip()
                 if not line:
                     continue
@@ -2826,9 +2950,9 @@ def main():
                     n["evtx_rows"] += 1
                     channel = str(r.get("channel") or "").lower()
                     eid = r.get("event_id")
-                    if isinstance(eid, str) and eid.isdigit():
+                    if isinstance(eid, str) and eid.isdigit() and len(eid) < 10:
                         eid = int(eid)
-                    if channel not in wanted or eid not in wanted[channel]:
+                    if not isinstance(eid, int) or isinstance(eid, bool) or channel not in wanted or eid not in wanted[channel]:
                         n["evtx_ignored"] += 1
                         continue
                     data = r.get("data") if isinstance(r.get("data"), dict) else {}
@@ -2845,9 +2969,21 @@ def main():
                     if len(it["events"]) >= MAX_EVENTS_PER_TASK:
                         n["events_not_listed"] += 1
                         continue
-                    it["events"].append({"event_id": str(eid), "channel": str(r.get("channel")), "time_utc": r.get("record_time_utc") or r.get("timestamp"), "record_id": str(r.get("record_id"))})
+                    when = r.get("record_time_utc") or r.get("timestamp")
+                    rid = r.get("record_id")
+                    it["events"].append({"event_id": str(eid), "channel": str(r.get("channel")), "time_utc": when if isinstance(when, str) else None,
+                                         "record_id": str(rid) if isinstance(rid, (int, str)) and not isinstance(rid, bool) else None})
 
     # ---- observations and rows
+    set_deadline(DEADLINE_SECONDS - (time.monotonic() - started_at))      # what was read is written in the time that is left of the whole limit
+    write_stop = [False]
+
+    def write_up():
+        if not write_stop[0] and out_of_time():
+            write_stop[0] = True
+            problem_page.add(own("the tool's own time limit (%d seconds) was reached while writing the items; the items read that follow were not written" % DEADLINE_SECONDS))
+        return write_stop[0]
+
     for it in items.values():
         o = []
         both = paths["tasks_dir"] and paths["software"]
@@ -2866,7 +3002,7 @@ def main():
         it["observations"] = o
         for c in o:
             obs[c] += 1
-        by_registration["%s/%s/%s" % (it["xml"], it["tree"], it["tasks_key"])] += 1
+        by_registration[own("xml %s, tree %s, tasks key %s" % (it["xml"], it["tree"], it["tasks_key"]))] += 1
 
     def passes(it):
         if not contains:
@@ -2887,10 +3023,11 @@ def main():
         return hit
 
     written = 0
-    for path in print_order([it["path"] for it in items.values()], "path"):
-        if time_is_up("writing the items"):
-            n["not_read_for_time"] += 1
-            continue
+    ordered_paths = in_print_order([it["path"] for it in items.values()], "path")
+    for k, path in enumerate(ordered_paths):
+        if write_up():
+            n["not_written_for_time"] += len(ordered_paths) - k
+            break
         it = items[path.lower()]
         row = {"mechanism": "scheduled_task", "path": it["path"], "guid": it.get("guid"), "source": "persistence_normalise",
                "registration": {"xml": it["xml"], "taskcache": it["taskcache"], "tree": it["tree"], "tree_sd": it["tree_sd"], "tasks_key": it["tasks_key"], "groups": it.get("groups")},
@@ -2906,7 +3043,8 @@ def main():
             if it["xml_fields"]["actions_total"] > len(it["xml_fields"]["actions"]):
                 row["actions_not_listed"] = str(it["xml_fields"]["actions_total"] - len(it["xml_fields"]["actions"]))
                 n["actions_cut"] += 1
-        for k in ("actions_length", "actions_hex", "triggers_length", "triggers_hex", "dynamic_info"):
+        for k in ("actions_length", "actions_hex", "triggers_length", "triggers_hex", "dynamic_info", "actions_value", "actions_value_type", "triggers_value", "triggers_value_type",
+                  "tree_id_value", "tree_id_value_type", "path_value", "path_value_type", "unsupported_fields"):
             if k in it:
                 row[k] = it[k]
         if passes(it):
@@ -2926,10 +3064,11 @@ def main():
             n["blind"] += 1 if blind else 0
         return hit
 
-    for i in print_order(list(range(len(others))), "path", lambda i: others[i]["path"]):
-        if time_is_up("writing the items"):
-            n["not_read_for_time"] += 1
-            continue
+    ordered_others = in_print_order(list(range(len(others))), "path", lambda i: others[i]["path"])
+    for k, i in enumerate(ordered_others):
+        if write_up():
+            n["not_written_for_time"] += len(ordered_others) - k
+            break
         if passes_texts(others[i]["texts"]):
             written += 1
             records.add(others[i]["row"])
@@ -2948,7 +3087,16 @@ def main():
     if problem_result["matched"]:
         reasons.append("%d problem(s) are named under problems" % problem_result["matched"])
     if n["unsupported"]:
-        reasons.append("%d DynamicInfo value(s) have no known layout and are kept as bytes (unsupported)" % n["unsupported"])
+        reasons.append("%d DynamicInfo value(s) have no known layout (or are not binary data) and are kept as given (unsupported)" % n["unsupported"])
+    if n["unsupported_values"]:
+        reasons.append("%d value(s) of a service key or of the TaskCache are not of the type the tool reads (text where text is expected, bytes where bytes) and are kept as given (unsupported_fields)"
+                       % n["unsupported_values"])
+    if n["unsupported_autorun"]:
+        reasons.append("%d autorun value(s) are binary data, not text, and are kept as bytes (unsupported)" % n["unsupported_autorun"])
+    if n["evtx_long_lines"]:
+        reasons.append("%d line(s) of the evtx result file are over %d bytes and were counted and dropped, not read" % (n["evtx_long_lines"], EVTX_LINE_CAP))
+    if n["unordered_lists"]:
+        reasons.append("%d list(s) (%d item(s) in all) were too long to put in print order in the time left and are listed in a random order" % (n["unordered_lists"], n["unordered_items"]))
     if n["refused"]:
         reasons.append("%d task file(s) were not parsed (xml_refused names why)" % n["refused"])
     if n["evtx_bad_lines"]:
@@ -2956,7 +3104,10 @@ def main():
     if n["events_not_listed"]:
         reasons.append("%d event(s) past the %d listed for a task are counted, not listed (events_not_listed)" % (n["events_not_listed"], MAX_EVENTS_PER_TASK))
     if stopped[0]:
-        reasons.append("%s (%d entr(ies) were not read or written)" % (stopped[0], n["not_read_for_time"]))
+        reasons.append("%s (at least %d entr(ies) were not read; %d key(s) or director(ies) were not started and what they hold is not counted; every source after this point was not started "
+                       "and is not counted)" % (stopped[0], n["not_read_for_time"], n["keys_unstarted"]))
+    if n["not_written_for_time"]:
+        reasons.append("the time limit ran out while writing: %d item(s) that were read were not written" % n["not_written_for_time"])
     if n["skipped_links"] or n["skipped_special"]:
         reasons.append("%d link(s) and %d other non-regular entr(ies) in the tasks directory were not read" % (n["skipped_links"], n["skipped_special"]))
     if n["bad_number"]:

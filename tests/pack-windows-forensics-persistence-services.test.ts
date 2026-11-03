@@ -15,7 +15,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { withCwd } from "./tool-library-harness.ts";
+import { runPy, withCwd } from "./tool-library-harness.ts";
 import { WIN, body, failed, tool } from "./windows-pack-harness.ts";
 import { SHAPES, fragmentLeaked, leaked, plant } from "./windows-canary.ts";
 import { jobEnv } from "./windows-tool-contract.ts";
@@ -307,9 +307,9 @@ for (const variant of VARIANTS) {
   });
 }
 
-test("the manifest says what the tool reads, that no second reader is started, and is version 2", async () => {
+test("the manifest says what the tool reads, that no second reader is started, and is version 3", async () => {
   const manifest = JSON.parse(await readFile(join(WIN, TOOL, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, 2);
+  assert.equal(manifest.version, 3);
   assert.deepEqual(manifest.requires, [], "no second reader is started, so nothing is required");
   assert.match(manifest.description, /every ControlSetNNN Services key/);
   assert.match(manifest.description, /Second reader: NOT DONE/);
@@ -340,7 +340,97 @@ dual("a time limit that falls inside the services stops the walk and counts what
     const out = JSON.parse(r.stdout) as Answer;
     assert.equal(out.status, "partial");
     assert.equal(out.walk_stopped_by_time_limit, true);
-    assert.match(out.status_basis, /time limit \(0 seconds\)/);
+    assert.match(out.status_basis, /time limit \(0 seconds, /);
     assert.ok((out.items_by_mechanism.service ?? 0) < 4000, "the walk stopped: the services after the limit are no items");
   });
+});
+
+// --- fix round 1 -------------------------------------------------------------------------------------
+
+dual("a service value of a type that is not text (REG_BINARY, REG_MULTI_SZ, REG_DWORD) is kept, never dropped: no false 'no ImagePath' observation, unsupported, partial", async (v) => {
+  const evil = Buffer.from("C:\\evil.exe\0", "utf16le");
+  const node = (name: string, values: Val[], params?: Val[]): Node => ({ name, values, children: params ? [{ name: "Parameters", values: params }] : undefined });
+  const root: Node = {
+    name: "ROOT",
+    children: [{ name: "Select", values: [dw("Current", 1)] }, { name: "ControlSet001", children: [{ name: "Services", children: [
+      node("BinImage", [{ name: "ImagePath", type: "binary", value: evil }, dw("Start", 2)]),
+      node("MultiImage", [{ name: "ImagePath", type: "multi_sz", value: ["C:\\a.exe", "C:\\b.exe"] }]),
+      node("DwImage", [dw("ImagePath", 7)]),
+      node("BinDll", [dw("Start", 3)], [{ name: "ServiceDll", type: "binary", value: evil }]),
+      node("OddNames", [sz("ImagePath", "C:\\ok.exe"), { name: "DisplayName", type: "binary", value: Buffer.from([1, 2, 3]) }, dw("ObjectName", 5), sz("FailureActions", "text")]),
+      node("Plain", [esz("ImagePath", "C:\\plain.exe")]),
+      node("Nothing", [dw("Start", 4)]),
+    ] }] }],
+  };
+  const { out } = await run(v, { system: root });
+  const svc = (n: string): Row => byPath(out, `ControlSet001\\${n}`);
+  assert.equal(svc("BinImage").image_path_value, evil.toString("hex"));
+  assert.equal(svc("BinImage").image_path_value_type, "REG_BINARY");
+  assert.equal(svc("MultiImage").image_path_value_type, "REG_MULTI_SZ");
+  assert.equal(svc("MultiImage").image_path_value, "C:\\a.exe\nC:\\b.exe");
+  assert.equal(svc("DwImage").image_path_value_type, "REG_DWORD");
+  assert.equal(svc("BinDll").service_dll_value, evil.toString("hex"));
+  assert.equal(svc("OddNames").display_name_value_type, "REG_BINARY");
+  assert.equal(svc("OddNames").object_name_value_type, "REG_DWORD");
+  assert.equal(svc("OddNames").failure_actions_value_type, "REG_SZ");
+  for (const n of ["BinImage", "MultiImage", "DwImage", "BinDll", "OddNames"]) {
+    assert.deepEqual(svc(n).observations, [], `${n}: a value exists, so no 'no ImagePath' observation`);
+    assert.ok(svc(n).unsupported_fields.length >= 1, n);
+  }
+  assert.deepEqual(svc("Nothing").observations, ["no_imagepath_and_no_servicedll_value"]);
+  assert.deepEqual(svc("Plain").observations, []);
+  assert.equal(svc("Plain").unsupported_fields, undefined);
+  assert.equal(out.status, "partial");
+  assert.match(out.status_basis, /7 value\(s\) of a service key or of the TaskCache are not of the type the tool reads/);
+  assert.equal(out.observation_counts.no_imagepath_and_no_servicedll_value, 1);
+});
+
+async function runCopy(cwd: string, edit: (s: string) => string, args: Record<string, unknown>, env: Record<string, string>): Promise<Answer> {
+  const src = edit(await readFile(join(WIN, TOOL, "run.py"), "utf8"));
+  await mkdir(join(cwd, "copy", TOOL), { recursive: true });
+  await writeFile(join(cwd, "copy", TOOL, "run.py"), src);
+  const r = await runPy(join(cwd, "copy", TOOL, "run.py"), cwd, args, undefined, { AGENT_ID: "s1", ...env });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  return JSON.parse(r.stdout) as Answer;
+}
+const patch = (s: string, from: string, to: string): string => {
+  const t = s.replace(from, to);
+  assert.notEqual(t, s, `the patch did not apply: ${from}`);
+  return t;
+};
+/** The tool's reading clock runs out at its k-th look at it (the clock of the writing is left alone). */
+const readClockAfter = (k: number) => (s: string): string =>
+  patch(patch(s, "\nimport random\n", `\nimport random\n_TICKS = [0]\n\n\ndef _ticks():\n    _TICKS[0] += 1\n    return _TICKS[0] > ${k}\n`), "if stopped[0] is None and out_of_time():", "if stopped[0] is None and _ticks():");
+const notRead = (out: Answer): number => Number(/at least (\d+) entr\(ies\) were not read/.exec(out.status_basis)?.[1]);
+
+dual("at its time limit in the services the count of what was not read is the services left in this control set and in the control sets to come, and the services read are written", async (v) => {
+  await withCwd(async (cwd) => {
+    const svcs = (tag: string): Svc[] => Array.from({ length: 2000 }, (_, i) => ({ name: `${tag}${i}`, values: [esz("ImagePath", `C:\\${tag}${i}.exe`)] }));
+    const root: Node = system(svcs("A"), { sets: ["ControlSet001", "ControlSet002"] });
+    root.children!.find((c) => c.name === "ControlSet002")!.children![0].children = svcs("B").map((s): Node => ({ name: s.name, values: s.values }));
+    const env = await v.write(cwd, "work/SYSTEM", root);
+    const out = await runCopy(cwd, readClockAfter(300), { system: "work/SYSTEM", limit: 5000 }, env);
+    assert.equal(out.status, "partial");
+    assert.ok(out.item_count > 100 && out.item_count < 2000, `${out.item_count} items`);
+    assert.equal(out.item_count + notRead(out), 4000, out.status_basis);
+    assert.equal(out.items.length, out.item_count, "the items read were written");
+  });
+});
+
+dual("at its time limit in an autorun key the count is the values left in the key; the keys not started are named apart", async (v) => {
+  await withCwd(async (cwd) => {
+    const root = software({ run: Array.from({ length: 3000 }, (_, i) => sz(`R${i}`, `C:\\r${i}.exe`)) });
+    const env = await v.write(cwd, "work/SOFTWARE", root);
+    const out = await runCopy(cwd, readClockAfter(250), { software: "work/SOFTWARE", limit: 5000 }, env);
+    assert.equal(out.status, "partial");
+    assert.ok(out.item_count > 100 && out.item_count < 3000, `${out.item_count} items`);
+    assert.equal(out.item_count + notRead(out), 3000, out.status_basis);
+  });
+});
+
+dual("an autorun value of binary data names its own noun in the status, not DynamicInfo", async (v) => {
+  const { out } = await run(v, { software: software({ run: [{ name: "Bin", type: "binary", value: Buffer.from([1, 2, 3]) }, sz("Ok", "C:\\ok.exe")] }) });
+  assert.equal(out.status, "partial");
+  assert.match(out.status_basis, /1 autorun value\(s\) are binary data, not text/);
+  assert.ok(!/DynamicInfo/.test(out.status_basis));
 });

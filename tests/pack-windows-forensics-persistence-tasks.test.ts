@@ -375,8 +375,8 @@ dual("at its own time limit the tool answers partial and says how many it did no
     const out = JSON.parse(r.stdout) as Answer;
     assert.equal(out.status, "partial");
     assert.equal(out.walk_stopped_by_time_limit, true);
-    assert.match(out.status_basis, /time limit \(0 seconds\)/);
-    assert.match(out.status_basis, /were not read or written/);
+    assert.match(out.status_basis, /time limit \(0 seconds, /);
+    assert.match(out.status_basis, /were not read/);
   });
 });
 
@@ -447,7 +447,162 @@ dual("a time limit that falls inside one directory of task files stops the scan 
     assert.equal(out.status, "partial");
     assert.equal(out.walk_stopped_by_time_limit, true);
     assert.ok(Object.values(out.items_by_registration).reduce((x, y) => x + y, 0) < 3000, "the scan stopped: the files after the limit are no items");
-    assert.match(out.status_basis, /time limit \(0 seconds\)/);
-    assert.match(out.status_basis, /were not read or written/);
+    assert.match(out.status_basis, /time limit \(0 seconds, /);
+    assert.match(out.status_basis, /were not read/);
+  });
+});
+
+// --- fix round 1 -------------------------------------------------------------------------------------
+
+const ENTITY_FILE = '<!DOCTYPE Task [<!ENTITY e "EXPANDED-ENTITY-TEXT">]><Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><RegistrationInfo><URI>&e;</URI></RegistrationInfo></Task>';
+const be16 = (s: string): Buffer => Buffer.from(s, "utf16le").swap16();
+
+dual("a DOCTYPE in UTF-16 text with no byte order mark, or after a UTF-8 one, is refused too: no layout of the bytes is a way past the check", async (v) => {
+  let laughs = '<!DOCTYPE lolz [<!ENTITY a0 "lol">';
+  for (let i = 1; i <= 9; i++) laughs += `<!ENTITY a${i} "${`&a${i - 1};`.repeat(10)}">`;
+  laughs += "]><Task><RegistrationInfo><Author>&a9;</Author></RegistrationInfo></Task>";
+  const decl = '<?xml version="1.0" encoding="UTF-16"?>';
+  const started = Date.now();
+  const { out, raw } = await run(v, null, {
+    le: Buffer.from(ENTITY_FILE, "utf16le"), be: be16(ENTITY_FILE), declLe: Buffer.from(decl + ENTITY_FILE, "utf16le"), declBe: be16(decl + ENTITY_FILE),
+    u8bomLe: Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(ENTITY_FILE, "utf16le")]), laughsLe: Buffer.from(laughs, "utf16le"), laughsBe: be16(laughs),
+    shifted: Buffer.concat([Buffer.from([0x20]), Buffer.from(ENTITY_FILE, "utf16le")]), withBom: utf16bom(ENTITY_FILE), plain8: Buffer.from(ENTITY_FILE),
+  });
+  assert.ok(Date.now() - started < 20_000);
+  assert.equal(out.items.length, 10);
+  for (const i of out.items) assert.match(i.xml_refused, /DOCTYPE or ENTITY declaration: refused|NUL/, i.path);
+  assert.ok(!raw.includes("EXPANDED-ENTITY-TEXT"), "no entity was expanded");
+  assert.ok(!raw.includes("lollol"));
+});
+
+dual("UTF-16 text with no byte order mark is decoded as UTF-16 and read; NUL bytes that are not UTF-16 text are refused", async (v) => {
+  const xml = taskXml({});
+  const { out } = await run(v, null, {
+    le: Buffer.from(xml.replace(' encoding="UTF-16"', ""), "utf16le"), be: be16(xml.replace(' encoding="UTF-16"', "")), declLe: Buffer.from(xml, "utf16le"),
+    junk: Buffer.concat([Buffer.from("<Task>"), Buffer.alloc(40), Buffer.from("</Task>")]), odd: Buffer.concat([Buffer.from(xml, "utf16le"), Buffer.from([0])]),
+  });
+  const row = (p: string): Row => out.items.find((i) => i.path === p) as Row;
+  assert.deepEqual([row("\\le").bom, row("\\be").bom, row("\\declLe").bom], ["none+UTF-16LE", "none+UTF-16BE", "none+UTF-16LE"]);
+  for (const p of ["\\le", "\\be", "\\declLe"]) assert.equal(row(p).xml.actions[0].kind, "Exec", p);
+  for (const p of ["\\junk", "\\odd"]) assert.match(row(p).xml_refused, /NUL/, p);
+});
+
+async function runCopy(cwd: string, edit: (s: string) => string, args: Record<string, unknown>, env: Record<string, string>): Promise<Answer> {
+  const src = edit(await readFile(join(WIN, TOOL, "run.py"), "utf8"));
+  await mkdir(join(cwd, "copy", TOOL), { recursive: true });
+  await writeFile(join(cwd, "copy", TOOL, "run.py"), src);
+  const r = await runPy(join(cwd, "copy", TOOL, "run.py"), cwd, args, undefined, { AGENT_ID: "s1", ...env });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  return JSON.parse(r.stdout) as Answer;
+}
+const patch = (s: string, from: string | RegExp, to: string): string => {
+  const t = s.replace(from, to);
+  assert.notEqual(t, s, `the patch did not apply: ${from}`);
+  return t;
+};
+/** The tool's reading clock runs out at its k-th look at it (the clock of the writing is left alone). */
+const readClockAfter = (k: number) => (s: string): string =>
+  patch(patch(s, "\nimport random\n", `\nimport random\n_TICKS = [0]\n\n\ndef _ticks():\n    _TICKS[0] += 1\n    return _TICKS[0] > ${k}\n`), "if stopped[0] is None and out_of_time():", "if stopped[0] is None and _ticks():");
+/** The tool's writing clock runs out at its k-th look at it (the clock of the reading is left alone). */
+const writeClockAfter = (k: number) => (s: string): string =>
+  patch(patch(s, "\nimport random\n", `\nimport random\n_WTICKS = [0]\n\n\ndef _wticks():\n    _WTICKS[0] += 1\n    return _WTICKS[0] > ${k}\n`), "if not write_stop[0] and out_of_time():", "if not write_stop[0] and _wticks():");
+const notRead = (out: Answer): number => Number(/at least (\d+) entr\(ies\) were not read/.exec(out.status_basis)?.[1]);
+
+dual("at its time limit in the task files the count of what was not read is the files left, and the files read are written", async (v) => {
+  await withCwd(async (cwd) => {
+    const env = await v.write(cwd, "work/SOFTWARE", software([{ path: "\\A" }]));
+    const xml = utf16bom(taskXml({}));
+    await mkdir(join(cwd, "work", "Tasks"), { recursive: true });
+    for (let i = 0; i < 3000; i++) await writeFile(join(cwd, "work", "Tasks", `T${i}`), xml);
+    const out = await runCopy(cwd, readClockAfter(120), { tasks_dir: "work/Tasks", limit: 5000 }, env);
+    assert.equal(out.status, "partial");
+    assert.equal(out.walk_stopped_by_time_limit, true);
+    assert.ok(out.item_count > 50 && out.item_count < 3000, `${out.item_count} items`);
+    assert.equal(out.item_count + notRead(out), 3000, out.status_basis);
+    assert.equal(out.items.length, out.item_count, "the items read were written");
+  });
+});
+
+dual("at its time limit in the TaskCache Tree the count is the tree entries left; the writing has a clock of its own", async (v) => {
+  await withCwd(async (cwd) => {
+    const env = await v.write(cwd, "work/SOFTWARE", software(Array.from({ length: 3000 }, (_, i) => ({ path: `\\T${i}` }))));
+    const out = await runCopy(cwd, readClockAfter(200), { software: "work/SOFTWARE", limit: 5000 }, env);
+    assert.equal(out.status, "partial");
+    assert.ok(out.item_count > 50 && out.item_count < 3000, `${out.item_count} items`);
+    assert.equal(out.item_count + notRead(out), 3000, out.status_basis);
+    // the writing runs out of time after 40 items: the rest of what was read is counted as not written
+    const cut = await runCopy(cwd, writeClockAfter(40), { software: "work/SOFTWARE", limit: 5000 }, env);
+    assert.equal(cut.status, "partial");
+    assert.equal(cut.item_count, 40);
+    assert.match(cut.status_basis, /the time limit ran out while writing: 2960 item\(s\) that were read were not written/);
+  });
+});
+
+dual("a list too long to put in print order in the time left is listed in a random order and the answer says so", async (v) => {
+  await withCwd(async (cwd) => {
+    const env = await v.write(cwd, "work/SOFTWARE", software(Array.from({ length: 50 }, (_, i) => ({ path: `\\T${i}` }))));
+    const out = await runCopy(cwd, (s) => patch(s, "ORDER_CAP = 100000 ", "ORDER_CAP = 10 "), { software: "work/SOFTWARE", limit: 100 }, env);
+    assert.equal(out.item_count, 50);
+    assert.match(out.status_basis, /1 list\(s\) \(50 item\(s\) in all\) were too long to put in print order/);
+    const sorted = await runCopy(cwd, (s) => s, { software: "work/SOFTWARE", limit: 100 }, env);
+    assert.equal(sorted.status, "complete", sorted.status_basis);
+  });
+});
+
+dual("items_by_registration keys are readable words, not withheld names", async (v) => {
+  const { out } = await run(v, [{ path: "\\A" }], { A: utf16bom(taskXml({})) });
+  assert.deepEqual(Object.keys(out.items_by_registration), ["xml present, tree present, tasks key present"]);
+});
+
+dual("an evtx result row with a list or an object as event_id does not abort the read; a line over the cap is counted and dropped", async (v) => {
+  await withCwd(async (cwd) => {
+    const env = await v.write(cwd, "work/SOFTWARE", software([{ path: "\\Job" }]));
+    const good = (id: number): string => JSON.stringify({ event_id: id, channel: "Security", record_id: id, record_time_utc: FT_ISO, data: { TaskName: "\\Job" } });
+    const lines = [good(4698), JSON.stringify({ event_id: [4698], channel: "Security", data: { TaskName: "\\Job" } }), JSON.stringify({ event_id: { a: 1 }, channel: "Security", data: { TaskName: "\\Job" } }),
+      JSON.stringify({ event_id: 4699, channel: ["Security"], data: { TaskName: "\\Job" } }), "x".repeat(5000), good(4699)];
+    await writeFile(join(cwd, "work", "events.jsonl"), lines.join("\n") + "\n");
+    const out = await runCopy(cwd, (s) => patch(s, "EVTX_LINE_CAP = 8388608 ", "EVTX_LINE_CAP = 2000 "), { software: "work/SOFTWARE", evtx_results: "work/events.jsonl" }, env);
+    assert.notEqual(out.status, "failed", JSON.stringify(out));
+    const job = out.items.find((i) => i.path === "\\Job") as Row;
+    assert.deepEqual(job.execution_evidence.events.map((e: Row) => e.event_id), ["4698", "4699"]);
+    assert.match(out.status_basis, /1 line\(s\) of the evtx result file are over 2000 bytes and were counted and dropped/);
+  });
+});
+
+dual("DynamicInfo is read only at the lengths 28 and 36 with a first number of 2 or 3; every other length or number is unsupported with its bytes", async (v) => {
+  const withFirst = (b: Buffer, first: number): Buffer => { const c = Buffer.from(b); c.writeUInt32LE(first, 0); return c; };
+  const entries: Entry[] = [
+    { path: "\\ok28", info: dyn28() }, { path: "\\ok36", info: dyn36() }, { path: "\\v2of36", info: withFirst(dyn36(), 2) },
+    { path: "\\len27", info: dyn28().subarray(0, 27) }, { path: "\\len29", info: Buffer.concat([dyn28(), Buffer.from([0])]) }, { path: "\\len35", info: dyn36().subarray(0, 35) },
+    { path: "\\len37", info: Buffer.concat([dyn36(), Buffer.from([0])]) }, { path: "\\first1", info: withFirst(dyn28(), 1) }, { path: "\\first4", info: withFirst(dyn36(), 4) },
+  ];
+  const { out } = await run(v, entries, null, { limit: 100 });
+  const layout = (p: string): string => (out.items.find((i) => i.path === p) as Row).dynamic_info.layout;
+  assert.deepEqual(["\\ok28", "\\ok36", "\\v2of36"].map(layout), ["dynamicinfo-28", "dynamicinfo-36", "dynamicinfo-36"]);
+  for (const p of ["\\len27", "\\len29", "\\len35", "\\len37", "\\first1", "\\first4"]) {
+    assert.equal(layout(p), "unknown", p);
+    assert.ok((out.items.find((i) => i.path === p) as Row).dynamic_info.unsupported, p);
+  }
+  assert.match(out.status_basis, /6 DynamicInfo value\(s\) have no known layout/);
+});
+
+dual("TaskCache values of the wrong type (Actions as text, DynamicInfo as a number, a binary Id) are kept as given, unsupported, and the answer is partial", async (v) => {
+  await withCwd(async (cwd) => {
+    const tree: Node = { name: "Tree", children: [{ name: "Odd", values: [{ name: "Id", type: "binary", value: Buffer.from("{ABC}", "utf16le") }, { name: "SD", type: "binary", value: Buffer.alloc(8, 1) }] }] };
+    const tasks: Node = { name: "Tasks", children: [{ name: "{G-1}", values: [{ name: "Path", type: "sz", value: "\\Odd" }, { name: "Actions", type: "sz", value: "plain text" },
+      { name: "Triggers", type: "multi_sz", value: ["a", "b"] }, { name: "DynamicInfo", type: "dword", value: 7 }] }] };
+    let node: Node = { name: "TaskCache", children: [tree, tasks] };
+    for (const part of ["Schedule", "CurrentVersion", "Windows NT", "Microsoft"]) node = { name: part, children: [node] };
+    const env = await v.write(cwd, "work/SOFTWARE", { name: "ROOT", children: [node] });
+    const out = body<Answer>(await tool(TOOL, cwd, { software: "work/SOFTWARE" }, env));
+    assert.equal(out.status, "partial");
+    const item = out.items.find((i) => i.path === "\\Odd") as Row;
+    assert.equal(item.actions_value_type, "REG_SZ");
+    assert.equal(item.triggers_value_type, "REG_MULTI_SZ");
+    assert.equal(item.tree_id_value_type, "REG_BINARY");
+    assert.equal(item.dynamic_info.layout, "unknown");
+    assert.ok(item.unsupported_fields.length >= 3);
+    assert.match(out.status_basis, /3 value\(s\) of a service key or of the TaskCache are not of the type the tool reads/);
+    assert.match(out.status_basis, /1 DynamicInfo value\(s\)/);
   });
 });
