@@ -394,9 +394,9 @@ test("evtx_query's tool-library twin is byte-equal to the pack's tool", async ()
 
 test("the windows-forensics tools that carry a shared block (place, page, evtx read) carry it identically", async () => {
   for (const [begin, end, expect] of [
-    ["# BEGIN SHARED PLACE", "# END SHARED PLACE", ["evtx_query", "evtx_carve"]],
-    ["# BEGIN SHARED PAGE", "# END SHARED PAGE", ["evtx_carve"]],
-    ["# BEGIN SHARED EVTX READ", "# END SHARED EVTX READ", ["evtx_query", "evtx_carve"]],
+    ["# BEGIN SHARED PLACE", "# END SHARED PLACE", ["evtx_query", "evtx_carve", "powershell_blocks"]],
+    ["# BEGIN SHARED PAGE", "# END SHARED PAGE", ["evtx_carve", "powershell_blocks"]],
+    ["# BEGIN SHARED EVTX READ", "# END SHARED EVTX READ", ["evtx_query", "evtx_carve", "powershell_blocks"]],
   ] as Array<[string, string, string[]]>) {
     const found: Record<string, string> = {};
     for (const name of await readdir(WIN)) {

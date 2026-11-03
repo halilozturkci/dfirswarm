@@ -1963,7 +1963,7 @@ test("every windows-forensics tool manifest declares the programs its script run
   // registry_recover and lnk_jumplist call regfexport and lnkinfo as second readers and declare them.
   const programs = ["fls", "icat", "istat", "img_stat", "mmls", "esedbexport", "yara", "vshadowinfo", "vshadowmount", "ewfexport", "sqlite3", "vol", "regfexport", "lnkinfo"];
   const dirs = await readdir(WIN);
-  assert.equal(dirs.length, 22);
+  assert.equal(dirs.length, 24);
   for (const name of dirs.sort()) {
     const manifest = JSON.parse(await readFile(join(WIN, name, "manifest.json"), "utf8")) as { entry: string; requires?: string[]; description: string; use?: unknown };
     const script = await readFile(join(WIN, name, manifest.entry), "utf8");

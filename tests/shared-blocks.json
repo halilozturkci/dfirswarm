@@ -4,9 +4,9 @@
   "families": {
     "ARCHIVE BLOCK": { "variants": [ { "carriers": 3, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },
     "BACKSTOP": { "variants": [ { "carriers": 6, "example": "packs/ransomware-response/tools/encrypted_survey/run.py" } ] },
-    "BOUNDARY": { "variants": [ { "carriers": 21, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
+    "BOUNDARY": { "variants": [ { "carriers": 22, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "COMMON": { "variants": [ { "carriers": 3, "example": "packs/virtualization-backup-forensics/tools/backup_audit_normalise/run.py" } ] },
-    "EVTX READ": { "variants": [ { "carriers": 3, "example": "packs/windows-forensics/tools/evtx_carve/run.py" } ] },
+    "EVTX READ": { "variants": [ { "carriers": 4, "example": "packs/windows-forensics/tools/evtx_carve/run.py" } ] },
     "FILES": { "variants": [ { "carriers": 2, "example": "packs/virtualization-backup-forensics/tools/snapshot_chain_check/run.py" } ] },
     "GUARD": { "variants": [ { "carriers": 8, "example": "packs/macos-forensics/tools/fsevents_parse/run.py" } ] },
     "HIVE BOUNDS": { "variants": [ { "carriers": 6, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
@@ -16,13 +16,13 @@
     ] },
     "ONE WAY OUT": { "variants": [ { "carriers": 8, "example": "packs/reverse-engineering/recipes/capa-floss/run.py" } ] },
     "PAGE": { "variants": [
-      { "carriers": 38, "example": "packs/windows-forensics/tools/regkv/run.py" },
+      { "carriers": 40, "example": "packs/windows-forensics/tools/regkv/run.py" },
       { "carriers": 8, "example": "packs/memory-forensics/tools/mem_carve/run.py", "why": "the memory pack's own pager text" }
     ] },
-    "PLACE": { "variants": [ { "carriers": 46, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
+    "PLACE": { "variants": [ { "carriers": 48, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "PROCESS": { "variants": [
       { "carriers": 35, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
-      { "carriers": 12, "example": "packs/windows-forensics/recipes/windows-artefacts/run.py", "why": "the windows lineage: its stop and process handling differs from the general text" }
+      { "carriers": 13, "example": "packs/windows-forensics/recipes/windows-artefacts/run.py", "why": "the windows lineage: its stop and process handling differs from the general text" }
     ] },
     "RECORDS BLOCK": { "variants": [ { "carriers": 7, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },
     "SCAN": { "variants": [ { "carriers": 6, "example": "packs/computer-forensics-base/tools/chunk_needles/run.py" } ] },

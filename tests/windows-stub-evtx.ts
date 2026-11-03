@@ -248,3 +248,11 @@ export function evtxFileHeader(chunkCount: number, nextRecordNumber = 1, flags =
   h.writeUInt32LE(crc32(h.subarray(0, 0x78)), 0x7c);
   return h;
 }
+
+/** The XML of a script block logging event (4104), the layout Microsoft-Windows-PowerShell/Operational writes: Computer, Channel and Level in System, and EventData with MessageNumber, MessageTotal, ScriptBlockText, ScriptBlockId and Path. The text is escaped as an XML renderer does. */
+export function ps4104Xml(o: { rec: number; number: number; total: number; id?: string; text?: string; computer?: string; channel?: string; level?: number; path?: string; eid?: number }): string {
+  const esc = (t: string): string => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const data: Array<[string, string]> = [["MessageNumber", String(o.number)], ["MessageTotal", String(o.total)], ["ScriptBlockText", esc(o.text ?? "Get-Date")], ["ScriptBlockId", o.id ?? "11111111-2222-3333-4444-555555555555"], ["Path", esc(o.path ?? "")]];
+  const fields = data.map(([k, v]) => `<Data Name="${k}">${v}</Data>`).join("");
+  return `<?xml version="1.0" encoding="utf-8" standalone="yes"?><Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><Provider Name="Microsoft-Windows-PowerShell"></Provider><EventID>${o.eid ?? 4104}</EventID><Level>${o.level ?? 5}</Level><TimeCreated SystemTime="2026-09-01 10:00:00.000000"></TimeCreated><EventRecordID>${o.rec}</EventRecordID><Channel>${o.channel ?? "Microsoft-Windows-PowerShell/Operational"}</Channel><Computer>${o.computer ?? "WS01"}</Computer></System><EventData>${fields}</EventData></Event>`;
+}

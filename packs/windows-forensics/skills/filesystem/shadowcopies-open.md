@@ -3,15 +3,15 @@ id: filesystem/shadowcopies-open
 title: Reading a shadow copy
 when: An earlier hive, log or file.
 needs: [filesystem/shadowcopies]
-tools: [vss_stores, extract_stream, mft_records, regkv, evtx_query]
-requires_host: [vshadowmount, fls]
+tools: [vss_stores, vss_materialise, extract_stream, mft_records, regkv, evtx_query]
+requires_host: [vshadowmount, fls, icat]
 ---
 
 Use when a store listed by `vss_stores` has to be read. Not for deciding whether stores exist (`filesystem/shadowcopies`).
 
-- Mount in your own VM, not in a job. A job is one tool call with a read-only run, and a FUSE mount lives in the agent's VM and is that VM's alone: run the `mount_argv` commands exactly as returned, from your seat (the mount directory defaults to `work/<your id>/vss`; stores appear as `vss1`, `vss2`, ...). `vshadowmount` needs FUSE, which a worker may not provide; if it is missing, say the mount route was unavailable and which routes remain.
-- Use the ordinary toolkit on each `vssN` as if it were a volume: `fls -r`, and `extract_stream` with the `vssN` file as the image, offset 0 and an `output` under `work/<your id>/...`.
-- A job cannot see your mount. Copy the derived hive or log under `work/<your id>/`, seal it with `job_run import=`, then read it with `regkv` or `evtx_query` in a job.
+- `vss_materialise` does the reading: give it the image, the offset in bytes, the store numbers `vss_stores` listed and the paths wanted (`/Windows/System32/config/SYSTEM`). It mounts the selected stores with `vshadowmount` under its own directory (FUSE), copies each path out of each store with `fls` and `icat`, unmounts, and answers which store has which path, the copies with sha256 and the store's identifier and creation time, and whether each copy is the same as the live file. A path absent from a store is a fact about that snapshot. Without FUSE it answers `blocked: no FUSE` and writes nothing: say the route was unavailable.
+- SAM, SECURITY and NTDS.dit are copied only with `copy_credentials` in a `secret_output` job, and no digest of them is printed or written. Read a copied hive or log with `regkv` or `evtx_query` in a job.
+- By hand, only where the tool is unavailable: run the `mount_argv` commands `vss_stores` returned from your seat (a mount lives in the agent's VM and is that VM's alone), then `fls -r` and `extract_stream` on each `vssN` with offset 0.
 - For every artefact taken from a snapshot record the source volume, store identifier, snapshot creation time, extraction path and the artefact's own times, and cite both the snapshot time and the artefact's.
 - A hive or event log in a snapshot is the state at snapshot time. A difference from the live copy shows two observed states: it excludes neither intermediate changes nor a restoration to an earlier value, and dates a change no more closely than the two observations. A log can be caught mid-write, and events after the snapshot are not in it. For a cleared log try the snapshot before carving (`logs/recovery`).
 - A file taken before a deletion, wipe or encryption shows what the volume held then; whether application state was consistent at that moment is usually unknown.

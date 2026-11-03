@@ -3,7 +3,7 @@ id: logs/powershell
 title: PowerShell logs
 when: Event records and script blocks.
 needs: []
-tools: [evtx_query, regkv]
+tools: [evtx_query, powershell_blocks, regkv]
 requires_host: []
 mentions: [pwsh]
 ---
@@ -23,9 +23,9 @@ Several kinds of record exist, enabled separately, none guaranteed: inventory wh
 
 Script block logging, module logging and transcription are policy: read it with `regkv` from the SOFTWARE hive and each NTUSER.DAT (for example `Policies\Microsoft\Windows\PowerShell`, keys `ScriptBlockLogging`, `ModuleLogging`, `Transcription`). Without it an absent 4104 is a coverage question (`logs/coverage`). Read the Operational channel for 4104 even when logging was not established: the engine may log content it considers suspicious regardless of policy, which is not to be assumed for every build or after tampering.
 
-- **Reassembling.** A long script arrives as several 4104 records. The pack has no assembler: group the rows of `result_file` by computer, ScriptBlockId, then MessageNumber, and compare with MessageTotal. Keep the record id and `record_offset` of every part, with duplicates and missing parts visible. A reconstruction with a part missing is partial and names the missing numbers. Do this per source log: ids from two machines or two log generations are not one sequence.
+- **Reassembling.** `powershell_blocks` takes the `.evtx` file or the `result_file` of `evtx_query` and groups the 4104 records by source, computer and ScriptBlockId, in MessageNumber order: expected against observed fragments, missing numbers, duplicates, disagreeing totals, Path, Level, each part's record id and `record_offset`. No script text unless `write_text` in a `secret_output` job.
 - **A 4104 shows** that the engine compiled this text, in this host, under this account (the Security `UserID` is in the XML). It does not show that every statement ran or succeeded: a function definition, a commented block and a script that failed at line one each produce one. Its Level is the engine's classing, not a verdict. Establish an action from the launch (4688 with a command line where audited, 400's HostApplication, `execution/prefetch`), the process's other records and the effect on the system.
 - **Qualifiers of a negative:** script block logging shown on, off or not established; which profiles, transcripts and logs the case supplied.
 
 Shows: engine-logged text and its host and account. Does not show: who typed it, intent, completion or effect. Record: file, channel, record id, `record_offset`, the policy evidence, the parts you hold.
-Sensitive output: command lines and script text can hold a credential; run `evtx_query` here as a job with `secret_output: true`. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
+Sensitive output: command lines and script text can hold a credential; run `evtx_query` here, and `powershell_blocks` with `write_text`, as a job with `secret_output: true`. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
