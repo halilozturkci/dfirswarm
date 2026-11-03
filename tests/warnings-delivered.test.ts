@@ -21,7 +21,7 @@ import * as L from "../extensions/leads.ts";
 import * as P from "../extensions/protocol.ts";
 import { checkLedgerAnswers } from "../scripts/check-answers.ts";
 import { finishGate } from "../scripts/finish-gate.ts";
-import { A, coverage, ESTABLISHED, F, ok, okq, planned, rec, REVIEW, run } from "./negative-bar-fixture.ts";
+import { A, coverage, covers, ESTABLISHED, F, ok, okq, planned, rec, REVIEW, run } from "./negative-bar-fixture.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -101,6 +101,8 @@ test("lead_findings_uncited reaches past the question's leads: a finding under a
   assert.deepEqual(check.warnings, [want], "the answers check says the same, for question 1 alone");
   assert.ok(![apart, oneLinked, alone, disputed, old, reached].some((e) => want.includes(`E-${e.seq} (`)), "tied by nothing, one seat's by rel alone, one seat's no answer relies on, disputed, superseded, reached: none is named");
   // The reply to the attest on it; the review of question 2's answer carries nothing.
+  await covers(r.a0, "1");
+  await covers(r.a0, "2");
   const at = await attest(r.a2, { seq, how: "re-derived the cited finding", ...ESTABLISHED });
   assert.deepEqual(at.warnings, [want]);
   assert.equal((await attest(r.a3, { seq: a2.entry.seq, how: "re-derived the cited findings", ...ESTABLISHED })).warnings, undefined);
@@ -166,6 +168,7 @@ test("each point delivers the warnings of its moment in the words finish status 
   const a3 = ok(await answer(r.a1, "question:3", [cited.seq]));
   assert.deepEqual(a3.warned, ["lead_findings_uncited"]);
   assert.match(a3.warnings![0]!, new RegExp(`E-${left.seq} \\(a finding under ${L3}\\): cite it`));
+  await covers(r.a0, "3");
   assert.deepEqual((await attest(r.a2, { seq: a3.entry.seq, how: "re-derived the cited finding", ...ESTABLISHED })).warnings, a3.warnings);
   // A later finding for question 3, attested: the attest's reply names the warning it now joins.
   const late = ok(await rec(r.a0, finding("a third folder was deleted", ["3"])));
@@ -194,6 +197,7 @@ test("a lead's close or confirmation that changes a question's warnings says the
   assert.equal(first.warnings, undefined);
   const a = ok(await answer(r.a1, "question:1", [c.seq]));
   assert.equal(a.warnings, undefined);
+  await covers(r.a0, "1");
   await attest(r.a2, { seq: a.entry.seq, how: "re-derived the cited finding", ...ESTABLISHED });
   // A second lead of question 1 closed on a finding two seats hold that names no question: the close ties it to question 1.
   const L2 = await planned(r.a2, "1", [{ source: "input:logs/a.log", method: "read the log" }]);

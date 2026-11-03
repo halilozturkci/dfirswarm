@@ -1462,8 +1462,8 @@ export const REVIEW_UNLOCATED_FIX =
  * register when the caller does not give it), a premise test that counts
  * (premise_untested). Each missing or failing one is a cap: the attest is
  * recorded best_candidate with the reason in `capped`, and the reply says
- * how to fix it. A review with neither a locator nor a derivation is warned
- * (`unlocated`, no_locator_or_derivation), not capped. Nothing else is
+ * how to fix it. The rival-area check (rival_area_uncovered) runs for every review, with or without locators. A review with neither a locator nor a derivation is also warned
+ * (`unlocated`, no_locator_or_derivation). Nothing else is
  * judged: byte presence proves presence, not attribution. `locators` is
  * every locator's verdict, for the reply of any review that gave them (a
  * partial answer's too, which none of this caps).
@@ -1488,20 +1488,39 @@ export async function reviewEvidenceCaps(sandboxRoot: string, answer: LedgerEntr
   if (presumption && !premiseTestCounts(review.premise_tested)) {
     caps.push({ code: "premise_untested", why: review.premise_tested ? `the review's premise test says nothing a reader can weigh (a placeholder outcome): ${answer.section} presumes ${PM.presumptionWords(presumption)}` : `${answer.section} presumes ${PM.presumptionWords(presumption)}, and the review does not test that premise (answer_review.premise_tested {outcome, refs})` });
   }
-  // A locator is not coverage (docs/adr/0013): each input a located value
-  // was read from is covered, for the question, where a rival value could
-  // live: a standing coverage record naming it, every area searched or not
-  // applicable, and a job over it among its results. A located object that
-  // traces to no input is not held.
-  if (review.reproduced_at?.length) {
+  // The rival-area check runs for every review (docs/adr/0013, "A locator is
+  // not coverage"): each input the review's evidence was read from is covered,
+  // for the question, where a rival value could live: a standing coverage
+  // record naming it, every area searched or not applicable, and a job over it
+  // among its results. The inputs are the located objects' when the review
+  // gives locators; otherwise those the answer's support reaches (the answer's
+  // refs and its cited entries' refs) and the derivation's inputs when it gives
+  // one. Whatever metadata a review gives or leaves out, the same answer gets
+  // the same verdict. An object that traces to no input is not held.
+  {
     const entries = [...(o.entries ?? (await readLedger(sandboxRoot).catch(() => [] as LedgerEntry[])))];
     const disputes = [...(o.disputes ?? (await readDisputes(sandboxRoot).catch(() => [] as LedgerDispute[])))];
-    const uncovered = await rivalAreasUncovered(sandboxRoot, answer, review.reproduced_at.map((l) => l.ref), entries, disputes);
+    const refs = review.reproduced_at?.length ? review.reproduced_at.map((l) => l.ref) : supportRefs(answer, entries, review);
+    const uncovered = await rivalAreasUncovered(sandboxRoot, answer, refs, entries, disputes);
     if (uncovered.length) caps.push({ code: "rival_area_uncovered", why: `a locator is not coverage: ${uncovered.map((u) => `the value was read from ${u.source}, and ${u.why}`).join("; ")}` });
   }
-  // Neither given: warned, never capped. One given and failing is capped by its own code above.
+  // Neither a locator nor a derivation given: warned as well. One given and failing is capped by its own code above.
   const unlocated: ReviewEvidenceWarning | null = !review.reproduced_at?.length && !review.derivation ? { code: "no_locator_or_derivation", why: UNLOCATED_WHY } : null;
   return { caps, unlocated, locators, derivation };
+}
+
+/**
+ * The refs an answer's support reaches, for a review that locates no value:
+ * the answer's own refs, the refs of every entry it reaches (answerReach: its
+ * support, contrary and limitations, and what those cite in turn), and the
+ * inputs of the review's derivation when it gives one.
+ */
+export function supportRefs(answer: LedgerEntry, entries: readonly LedgerEntry[], review: AnswerReview | null): string[] {
+  const bySeq = new Map(entries.map((e) => [e.seq, e]));
+  const out = new Set<string>(answer.refs ?? []);
+  for (const n of answerReach(answer, bySeq, supersededBy(entries as LedgerEntry[]))) for (const r of bySeq.get(n)?.refs ?? []) out.add(r);
+  for (const r of review?.derivation?.inputs ?? []) out.add(r);
+  return [...out];
 }
 
 /**

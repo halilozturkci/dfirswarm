@@ -164,3 +164,22 @@ export async function planned(c: { sandboxRoot: string; agentId: string }, q: st
   return (r as { lead: { id: string } }).lead.id;
 }
 
+/** Every area of a disk searched, one not applicable: what a coverage record over a source says when nothing was left unsearched. */
+export const ALL_AREAS = { allocated: "searched", deleted: "searched", unallocated: "searched", slack: "searched", secondary: "not_applicable" } as const;
+
+/**
+ * The coverage record that covers the disk (input:disk.E01) for question `q`:
+ * every area searched, and a job over the disk among its results. The
+ * rival-area check (docs/adr/0013) runs for every established attest of an
+ * answer to a material question, so an answer whose findings rest on a job
+ * over a source needs a record that covers it to be held established.
+ */
+export async function covers(c: { sandboxRoot: string; agentId: string }, q: string, source = "input:disk.E01", job = "j000001"): Promise<Ok> {
+  return ok(await rec(c, coverage(q, [source], [`job:${job}/hits.txt`], { areas: ALL_AREAS })));
+}
+
+/** The disk and the first log, both covered for question `q`: a review that derives from the disk (SOURCE_FIRST) over a finding read from the log. */
+export async function coversDiskAndLog(c: { sandboxRoot: string; agentId: string }, q: string): Promise<void> {
+  await covers(c, q);
+  await covers(c, q, "input:logs/a.log", "j000002");
+}

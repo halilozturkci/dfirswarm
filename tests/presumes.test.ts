@@ -23,7 +23,7 @@ import * as Q from "../extensions/questions.ts";
 import { checkLedgerAnswers } from "../scripts/check-answers.ts";
 import { renderReportBodyMarkdown } from "../scripts/report-body.ts";
 import { questionArgv } from "../scripts/ui/questions.ts";
-import { A, ESTABLISHED, F, GOAL, ok, planned, rec, refused, run } from "./negative-bar-fixture.ts";
+import { A, covers, coversDiskAndLog, ESTABLISHED, F, GOAL, ok, planned, rec, refused, run } from "./negative-bar-fixture.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const HIGH = { ...A, confidence: "high" } as const;
@@ -129,6 +129,7 @@ test("the review tests the premise: on a question that presumes an event, an est
   assert.equal(placeholder.ok && placeholder.line?.strength, "best_candidate");
   assert.ok(placeholder.ok && placeholder.line?.capped?.some((x) => /premise test says nothing a reader can weigh/.test(x)));
   // With the test: established; the seat's later review is its review, and the question is established.
+  await covers(c.a0, "5");
   const tested = await P.attestEntry(c.a2, { seq: a.seq, how: "re-read the key and the service log", ...review({ premise_tested: TESTED }) });
   assert.ok(tested.ok && tested.line?.strength === "established" && !tested.line.capped, JSON.stringify(tested));
   assert.match(P.answerReviewWords(tested.line!.answer_review!), /the premise tested against "the question's premise is not supported": the service log shows the tool's service started twice under one account \(job:j000001\/hits\.txt\)/);
@@ -139,6 +140,7 @@ test("the review tests the premise: on a question that presumes an event, an est
   const f1 = ok(await rec(c.a0, { kind: "finding", ...F, value: "alice logged on", source: "a log", evidence: "line 1", refs: ["job:j000002/hits.txt"], answers: ["1"] })).entry.seq;
   const a1 = ok(await rec(c.a1, { kind: "answer", section: "question:1", value: "alice", reasoning: `E-${f1}`, ...HIGH, result: "established" })).entry;
   assert.ok((await L.closeLead(c.a0, lead1, { disposition: "resolved", ref: `E-${f1}` })).ok);
+  await coversDiskAndLog(c.a0, "1");
   const plain = await P.attestEntry(c.a2, { seq: a1.seq, how: "re-read line 1", ...review() });
   assert.ok(plain.ok && plain.line?.strength === "established" && !plain.line.capped, JSON.stringify(plain));
 });

@@ -1,6 +1,6 @@
 # Ledger
 
-5 entries: 0 events, 0 indicators, 2 findings, 0 searches that found nothing, 1 limitations, 2 answers. Written by the harness from `record`, `attest` and `dispute`; cite it as `ledger/ledger.md`.
+6 entries: 0 events, 0 indicators, 2 findings, 0 searches that found nothing, 1 limitations, 1 coverage records, 2 answers. Written by the harness from `record`, `attest` and `dispute`; cite it as `ledger/ledger.md`.
 
 ## Timeline
 
@@ -32,3 +32,7 @@
 | # | Not established | Reason | Scope | What was tried | By |
 | --- | --- | --- | --- | --- | --- |
 | 4 | The log keeps no account name for question 1 [answers 1] | unavailable | the log | its field list | a0 |
+
+## Coverage records
+
+- **#6** for question:2: proposition: The event question 2 asks about happened [answers 2] — objects: `input:disk.E01` — time range: the whole of each object, no time bound — method: a keyword search (settings: case-insensitive, every encoding the tool offers) — covered: every byte of the objects named — skipped: none: the search ran to its end — failures: none — results: job:j000001/hits.txt — alternatives: the event may have left its trace only in memory, which the case does not hold — detection opportunity: trace expected yes, the event writes to the objects searched, and they keep it — inventory 6b7f01894e8e2a6c059e2d4d6130c309436116548ea9697440118f05b264e3db — **coverage complete** — no literal form to look for: the fixture event has no literal form a byte search could find — **unreviewed** — by a0
