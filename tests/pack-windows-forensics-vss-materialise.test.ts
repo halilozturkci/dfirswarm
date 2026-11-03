@@ -18,18 +18,14 @@ import { assertStopped, runTool, scriptOf, stopAt, withDeadline } from "./window
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 const PY = "#!/usr/bin/env python3\n";
-const INFO = `${PY}print("""vshadowinfo 20240101
-
-Volume Shadow Snapshot information:
-\\tNumber of stores:\\t2
-
-Store: 1
-\\tIdentifier\\t\\t: 11111111-aaaa-bbbb-cccc-000000000001
-\\tCreation time\\t\\t: Oct 17, 2023 12:00:00.000000000 UTC
-Store: 2
-\\tIdentifier\\t\\t: 22222222-aaaa-bbbb-cccc-000000000002
-\\tCreation time\\t\\t: Nov 02, 2023 08:30:00.000000000 UTC
-""")
+const INFO = `${PY}import os
+print("vshadowinfo 20240101\\n\\nVolume Shadow Snapshot information:")
+n = int(os.environ.get("FAKE_NSTORES", "2"))
+print("\\tNumber of stores:\\t%d\\n" % n)
+for i in range(1, n + 1):
+    print("Store: %d" % i)
+    print("\\tIdentifier\\t\\t: %08d-aaaa-bbbb-cccc-%012d" % (i * 11111111 % 100000000, i))
+    print("\\tCreation time\\t\\t: Oct 17, 2023 12:00:00.000000000 UTC")
 `;
 const MOUNT = `${PY}import os, shutil, sys
 d = os.environ["FAKE_DIR"]
@@ -49,7 +45,7 @@ for f in glob.glob(os.path.join(mount, "vss*")):
     os.unlink(f)
 open(os.path.join(d, "mount.log"), "a").write("unmount %s\\n" % mount)
 `;
-const FLS = `${PY}import json, sys
+const FLS = `${PY}import json, os, sys
 a = sys.argv[1:]
 if a[:1] == ["-o"]:
     a = a[2:]
@@ -58,6 +54,9 @@ fs = json.load(open(vol))["fs"]
 def enc(p): return str(int.from_bytes(p.encode(), "big")) + "-128-1"
 def dec(i): n = int(i.split("-")[0]); return n.to_bytes((n.bit_length() + 7) // 8, "big").decode()
 path = dec(rest[0]) if rest else ""
+if os.environ.get("FAKE_BIGLIST"):
+    print("r/r 1-128-1:\\t" + "n" * 5000)
+    sys.exit(0)
 node = fs
 for part in [p for p in path.split("/") if p]:
     node = node[part]
@@ -136,7 +135,7 @@ test("two stores: each path is looked up in each, copied with the store's identi
     const env = await setup(cwd, bin, { 1: config("old system", { SAM: "secret-bytes" }), 2: { Windows: { System32: { config: { SYSTEM: "new system" } } } } }, config("new system"));
     const out = body<Answer>(await tool("vss_materialise", cwd, { ...ARGS, paths: [SYSTEM, "/windows/system32/CONFIG/sam", "/Windows/missing.txt"] }, env, bin));
     assert.equal(out.stores_listed["1"].identifier, "11111111-aaaa-bbbb-cccc-000000000001");
-    assert.equal(out.stores_listed["2"].created, "Nov 02, 2023 08:30:00.000000000 UTC");
+    assert.equal(out.stores_listed["2"].created, "Oct 17, 2023 12:00:00.000000000 UTC");
     const rowOf = (store: number, path: string): Answer => out.rows.find((r: Answer) => r.store === store && r.path === path);
     const s1 = rowOf(1, SYSTEM);
     assert.equal(s1.copy_status, "copied");
@@ -146,6 +145,8 @@ test("two stores: each path is looked up in each, copied with the store's identi
     assert.equal(readFileSync(join(cwd, s1.copied_to), "utf8"), "old system", "the copy is the store's file");
     assert.equal(rowOf(2, SYSTEM).relation_to_live, "same");
     assert.equal(rowOf(2, "/Windows/missing.txt").copy_status, "not_in_store");
+    assert.equal(out.copies, 2, "copies counts copies, not rows");
+    assert.equal(out.row_count, 6);
     assert.deepEqual(out.paths_in_stores[SYSTEM], { "1": true, "2": true });
     assert.deepEqual(out.paths_in_stores["/Windows/missing.txt"], { "1": false, "2": false });
     assert.equal(rowOf(1, "/windows/system32/CONFIG/sam").copy_status, "credential_file_not_copied");
@@ -205,7 +206,7 @@ test("hostile paths and names: refused before anything is mounted, and a name wi
   await withCwd(async (cwd, bin) => {
     const odd = "we ird;$(x)\u00e9 `n`.txt";
     const env = await setup(cwd, bin, { 1: { Dir: { [odd]: "t", normal: "n" } } }, { Dir: { [odd]: "t" } });
-    for (const p of ["Windows/x", "/a/../b", "/a/./b", "", "/a\u0000b", "/" + "d/".repeat(40) + "f"]) {
+    for (const p of ["Windows/x", "/a/../b", "/a/./b", "", "/a\u0000b", "/a\nb", "/" + "d/".repeat(40) + "f"]) {
       const out = failed(await tool("vss_materialise", cwd, { ...ARGS, stores: [1], paths: [p] }, env, bin));
       assert.match(out.error, /every path must start/);
     }
@@ -254,9 +255,52 @@ test("a write that is refused (a file size limit) removes the partial copy, name
     const out = JSON.parse(done.stdout) as Answer;
     assert.equal(out.rows[0].copy_status, "write_failed", done.stdout.slice(0, 600));
     assert.equal(out.rows[0].copied_to, null);
+    assert.equal(out.copies, 0, "a copy that was not written is not a copy");
+    assert.equal(out.row_count, 1);
     assert.equal(out.status, "partial");
     assert.match(log(env), /unmount/);
     assert.deepEqual(hidden(join(cwd, "work")), [], "the partial file is gone");
+  });
+});
+
+test("a refused write stops the copying: the paths after it are not attempted, not tried and failed", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await setup(cwd, bin, { 1: { a: "x".repeat(100), b: "y" } }, { a: "x" });
+    const done = spawnSync("bash", ["-c", `ulimit -f 8; exec python3 ${scriptOf("vss_materialise")}`], {
+      cwd, input: JSON.stringify({ ...ARGS, stores: [1], paths: ["/a", "/b"] }), encoding: "utf8", env: { ...process.env, ...env, FAKE_REPEAT: "300", AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}` },
+    });
+    const out = JSON.parse(done.stdout) as Answer;
+    assert.deepEqual(out.rows.map((r: Answer) => r.copy_status), ["write_failed", "not_attempted"]);
+    assert.equal(out.copies, 0);
+  });
+});
+
+test("64 stores of which the mount exposes none are answered inside the clock, not waited for one by one", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await setup(cwd, bin, {}, config("x"));
+    const started = Date.now();
+    const out = body<Answer>(await tool("vss_materialise", cwd, { ...ARGS, stores: Array.from({ length: 64 }, (_, i) => i + 1) }, { ...env, FAKE_NSTORES: "64", FAKE_STORES: "" }, bin));
+    assert.ok(Date.now() - started < 30_000, "the mount is waited for once");
+    assert.equal(out.row_count, 64);
+    assert.ok(out.rows.every((r: Answer) => r.copy_status === "store_not_exposed"));
+    assert.equal(out.copies, 0);
+    assert.equal(out.status, "partial");
+    assert.match(log(env), /unmount/);
+  });
+});
+
+test("a directory listing over the cap stops fls and is named, not held in memory", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await setup(cwd, bin, { 1: config("x") }, config("x"));
+    const text = readFileSync(scriptOf("vss_materialise"), "utf8");
+    const dir = join(cwd, "capped");
+    mkdirSync(dir);
+    writeFileSync(join(dir, "run.py"), text.replace(/^MAX_LISTING = [^#\n]*/m, "MAX_LISTING = 1000  "));
+    const done = await runTool(join(dir, "run.py"), cwd, { ...ARGS, stores: [1] }, { ...env, FAKE_BIGLIST: "1", PATH: `${bin}:${process.env.PATH}` });
+    const out = JSON.parse(done.stdout) as Answer;
+    assert.equal(out.rows[0].copy_status, "listing_too_large", done.stdout.slice(0, 500));
+    assert.equal(out.status, "partial");
+    assert.match(out.problems[0].why, /directory listing over 1000 bytes/);
   });
 });
 

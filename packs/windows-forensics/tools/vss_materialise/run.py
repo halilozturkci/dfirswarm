@@ -11,7 +11,7 @@ fusermount) the answer is `blocked: no FUSE`, as JSON, and nothing is written.
 Each selected path is looked up in each selected store; the answer says which store has it, which copy was made, its size and sha256, and
 how it stands to the same path in the live volume (same, differs, absent in the live volume). A path that is absent from a store is a fact
 about that snapshot, not a failure. SAM, SECURITY and NTDS.dit are credential files: they are copied only on copy_credentials in a job run
-as secret output, and no digest of one is made or printed. A copy that could not be written whole is removed and is never named as a copy.
+as secret output, and no digest of one is printed or written. A copy that could not be written whole is removed and is never named as a copy.
 
 Listing a snapshot is not examining it: a file that is in a store is evidence of that store as vshadowmount presented it, and a copy is
 the file as icat read it. This was written against the documented behaviour of libvshadow and the Sleuth Kit and run against stand-ins
@@ -908,7 +908,7 @@ CLOCK = {"deadline": None}
 MAX_STORES = 64
 MAX_PATHS = 200
 MAX_DEPTH = 32
-MAX_LISTING = 64 << 20            # bytes of one fls listing that are taken
+MAX_LISTING = 16 << 20            # bytes of one fls listing that are taken (a larger one stops the program: listing_too_large)
 DEFAULT_MAX_COPY = 2 << 30
 CREDENTIAL_NAMES = frozenset(("sam", "security", "ntds.dit"))
 FLS_LINE = re.compile(r"^(\S+)\s+(\*\s+)?([0-9]+(?:-[0-9]+)*)(?:\([^)]*\))?:\t(.*)$")
@@ -982,7 +982,7 @@ def mounted_at(directory):
         with open("/proc/self/mountinfo", encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 parts = line.split(" ")
-                if len(parts) > 4 and parts[4].replace("\\040", " ") == want:
+                if len(parts) > 4 and re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), parts[4]) == want:
                     return True
         return False
     except OSError:
@@ -1005,7 +1005,25 @@ def run_program(argv, seconds):
 def unmount():
     """Unmount what this run mounted, and remove its directory. Idempotent; used by the finally, the deadline and the last word."""
     if RUN["unmounted"] is not None:
-        return RUN["unmounted"]
+        result = RUN["unmounted"]
+        if result.get("mount_made") and not result.get("unmounted") and not result.get("retried"):
+            result["retried"] = True                      # a signal cut the unmount short, or it failed: once more, lazily
+            program = shutil.which("fusermount3") or shutil.which("fusermount")
+            if program:
+                try:
+                    run_program([program, "-u", "-z", "--", str(RUN["mount"])], UNMOUNT_STEP)
+                except Exception:  # noqa: BLE001
+                    pass
+            if mounted_at(RUN["mount"]) is not True:
+                result["unmounted"] = True
+                result.pop("note", None)
+            try:
+                os.rmdir(RUN["mount"])
+                result["mount_dir_removed"] = True
+            except OSError:
+                pass
+            result["retried_note"] = "the unmount was cut short or had failed; a lazy unmount (-u -z) was tried once more"
+        return result
     directory = RUN["mount"]
     if directory is None:
         return {"mount_made": False}
@@ -1061,7 +1079,7 @@ def whole(args, name, default, low, high=None):
 
 
 def split_path(text):
-    if not isinstance(text, str) or not text or "\x00" in text or text[0] not in "/\\":
+    if not isinstance(text, str) or not text or "\x00" in text or "\n" in text or "\r" in text or text[0] not in "/\\":
         return None
     parts = [p for p in re.split(r"[\\/]+", text) if p]
     if not parts or len(parts) > MAX_DEPTH or any(p in (".", "..") or len(p) > 255 for p in parts):
@@ -1101,6 +1119,16 @@ def parse_stores(text):
     return stores
 
 
+class Sink:
+    """A bounded in-memory sink for one fls listing."""
+
+    def __init__(self):
+        self.parts = []
+
+    def write(self, chunk):
+        self.parts.append(chunk)
+
+
 def find_file(volume, sector_offset, parts, seconds):
     """(state, inode): state is found, not_found, not_regular, read_failed or timeout. A path is walked one component at a time with `fls`
     (case-insensitively, as NTFS compares); a deleted entry (`*`) is never taken, and nothing is followed: a reparse point is a name like another."""
@@ -1108,11 +1136,15 @@ def find_file(volume, sector_offset, parts, seconds):
     kind = None
     for i, component in enumerate(parts):
         argv = ["fls"] + (["-o", str(sector_offset)] if sector_offset else []) + [volume] + ([inode] if inode else [])
-        code, out, _err, timed = run_program(argv, seconds)
-        if timed:
+        sink = Sink()
+        state, _size, _digest = stream_file(argv, sink, MAX_LISTING, seconds)
+        if state == "too_large":
+            return "listing_too_large", None
+        if state == "timeout":
             return "timeout", None
-        if code != 0 or len(out) > MAX_LISTING:
+        if state != "ok":
             return "read_failed", None
+        out = b"".join(sink.parts)
         found = None
         want = component.casefold()
         last = i == len(parts) - 1
@@ -1130,10 +1162,13 @@ def find_file(volume, sector_offset, parts, seconds):
     return ("found", inode) if kind and kind.startswith("r") else ("not_regular", inode)
 
 
-def stream_file(volume, sector_offset, inode, sink, limit, seconds):
-    """Copy the file `inode` of `volume` with icat into `sink` (a file object, or None to hash only); returns (state, bytes, sha256 or None).
-    state is ok, too_large, read_failed, timeout or write_failed:<errno>."""
-    argv = ["icat"] + (["-o", str(sector_offset)] if sector_offset else []) + [volume, inode]
+def icat_argv(volume, sector_offset, inode):
+    return ["icat"] + (["-o", str(sector_offset)] if sector_offset else []) + [volume, inode]
+
+
+def stream_file(argv, sink, limit, seconds):
+    """Run `argv` (icat, or fls) and copy its output into `sink` (a file object, or None to hash only), reading at most `limit` bytes: the program is
+    killed with what it started at the limit. Returns (state, bytes, sha256 or None). state is ok, too_large, read_failed, timeout or write_failed:<errno>."""
     proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     ACTIVE.append(proc)
     digest = hashlib.sha256()
@@ -1261,6 +1296,7 @@ def main():
     exists = {}
     stopped = {"time": False}
     mount_info = {"mount_made": False}
+    mount_waited = {"done": False}
     if selected:
         try:
             base.mkdir(parents=True, exist_ok=True)
@@ -1278,15 +1314,16 @@ def main():
             volume = mount_dir / ("vss%d" % number)
             tag = {"store": number, "store_guid": info["identifier"], "store_created": info["created"]}
             ready = False
-            for _ in range(50):
-                try:
-                    st = os.lstat(volume)
-                    ready = stat.S_ISREG(st.st_mode) and os.path.dirname(os.path.realpath(volume)) == os.path.realpath(mount_dir)
-                    break
-                except FileNotFoundError:
+            if mount_waited["done"] is False:
+                until = time.monotonic() + 5            # the mount is waited for once, 5 seconds in all, and never past the copy clock
+                while time.monotonic() < until and copy_time_left() > 0 and not all(os.path.lexists(mount_dir / ("vss%d" % n)) for n in selected):
                     time.sleep(0.1)
-                except OSError:
-                    break
+                mount_waited["done"] = True
+            try:
+                st = os.lstat(volume)
+                ready = stat.S_ISREG(st.st_mode) and os.path.dirname(os.path.realpath(volume)) == os.path.realpath(mount_dir)
+            except OSError:
+                ready = False
             for raw, parts in zip(paths_asked, parsed):
                 row = {**tag, "path": raw, "found": None, "copy_status": "not_attempted", "copied_to": None, "bytes": None, "sha256": None, "inode": None,
                        "relation_to_live": "not_compared"}
@@ -1305,10 +1342,10 @@ def main():
                         row["found"] = False
                         row["copy_status"] = "not_in_store"
                         counts["not_found"] += 1
-                    elif state in ("timeout", "read_failed", "not_regular"):
+                    elif state in ("timeout", "read_failed", "not_regular", "listing_too_large"):
                         row["copy_status"] = state
                         counts["failed"] += 1
-                        problem("the path could not be resolved in this store: %s" % state, store=number)
+                        problem("the path could not be resolved in this store: %s%s" % (state, " (a directory listing over %d bytes was not taken)" % MAX_LISTING if state == "listing_too_large" else ""), store=number)
                     else:
                         row["found"] = True
                         exists[raw][str(number)] = True
@@ -1336,7 +1373,7 @@ def main():
                                 sink = None
                             if sink is not None:
                                 try:
-                                    cstate, size, digest = stream_file(str(volume), None, inode, sink, max_copy, min(600, copy_time_left()))
+                                    cstate, size, digest = stream_file(icat_argv(str(volume), None, inode), sink, max_copy, min(600, copy_time_left()))
                                     if cstate == "ok":
                                         sink.flush()
                                         os.fsync(sink.fileno())
@@ -1375,7 +1412,7 @@ def main():
                                     if lstate == "not_found":
                                         row["relation_to_live"] = "absent_in_live"
                                     elif lstate == "found":
-                                        ls, lsize, ldigest = stream_file(image, sector_offset, linode, None, max_copy, min(600, copy_time_left()))
+                                        ls, lsize, ldigest = stream_file(icat_argv(image, sector_offset, linode), None, max_copy, min(600, copy_time_left()))
                                         if ls == "ok":
                                             row["relation_to_live"] = "same" if ldigest == row["sha256"] else "differs"
                 rows.add(row)
@@ -1408,7 +1445,8 @@ def main():
         "stores_not_listed": not_listed,
         "paths_in_stores": exists_out,
         "counts": counts,
-        "copies": page["matched"],
+        "copies": counts["copied"],
+        "row_count": page["matched"],
         "returned": page["returned"],
         "rows": rows.page,
         "mount": mount_info,
