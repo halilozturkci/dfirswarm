@@ -14,4 +14,4 @@ allocated slot is read with `fsstat` at its offset. The descriptor is canonical 
 holds the declared paths as given, because a consumer must open them; the answer prints them through the shared withholding.
 `complete` only when every source was read and hashed, nothing declared is missing and every allocated slot was read. A
 VHDX parent locator and an AFF image are not examined, an EWF2 set is never `complete`, and Dissect's `target-query` is
-not used. `filesystem/layers` names it.
+not used. `filesystem/layers` names it. The `qemu-img` JSON keys it reads (`format`, `virtual-size`, `backing-filename`) are the ones qemu documents, and `qemu-img` was not installed where it was tested; the VMDK, VHD and QCOW header readers were tested on headers built from the formats' layouts, not on files a hypervisor wrote.
