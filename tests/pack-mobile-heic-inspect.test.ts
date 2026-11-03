@@ -591,3 +591,43 @@ test("one real run, gated on heif-convert being on PATH (its version is recorded
     assert.notEqual(answer.status, "complete", `heif-convert ${(version.stdout + version.stderr).trim()} decoded a file without codec data`);
   });
 });
+
+// --- fix round 1: the output cap holds when the backend's work directory holds more than 1000 entries; a planted link is refused -----------
+
+test("a backend that makes 1200 empty files and then floods is ended at the entry bound and the answer says so", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stubExiftool(bin, CANARIES);
+    const original = await file(cwd, "photo.heic", simpleHeic());
+    await writeFile(join(bin, "heif-convert"), `#!/bin/sh
+echo "$$" > "${bin}/convert-pid.txt"
+for a in "$@"; do out="$a"; done
+d="$(dirname "$out")"
+i=0; while [ $i -lt 1200 ]; do : > "$d/e$i"; i=$((i+1)); done
+mkdir "$d/sub"; dd if=/dev/zero of="$d/sub/flood.bin" bs=1M count=400 2>/dev/null
+`);
+    await chmod(join(bin, "heif-convert"), 0o755);
+    const flood = body(await asJob(cwd, { path: original, max_output_bytes: 5 << 20, max_seconds: 60 }, "out", "j-1", false, bin));
+    assert.match(flood.conversion!.ended ?? "", /more than 1000 entries/);
+    const pid = Number((await readFile(join(bin, "convert-pid.txt"), "utf8")).trim());
+    assert.throws(() => process.kill(pid, 0), (e: NodeJS.ErrnoException) => e.code === "ESRCH");
+    assert.deepEqual((await walkDir(join(cwd, "out"))).filter((p) => p.includes("flood.bin") || p.includes("/e1")), []);
+  });
+});
+
+test("a tool-output or heic_inspect directory that is a link planted in the output directory is refused as JSON, and nothing is written through it", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stubExiftool(bin, CANARIES);
+    await stubConvert(bin, 10, 10);
+    const original = await file(cwd, "photo.heic", simpleHeic());
+    for (const name of ["tool-output", "heic_inspect"]) {
+      const out = join(cwd, `out-${name}`);
+      const elsewhere = join(cwd, `elsewhere-${name}`);
+      await mkdir(out, { recursive: true });
+      await mkdir(elsewhere, { recursive: true });
+      await symlink(elsewhere, join(out, name));
+      const answer = failed(await run(cwd, { path: original }, { JOB_ID: "j-1", OUT: out }, bin));
+      assert.match(String((answer as unknown as { error?: string }).error), new RegExp(name));
+      assert.deepEqual(await readdir(elsewhere), [], `${name}: nothing was written through the link`);
+    }
+  });
+});

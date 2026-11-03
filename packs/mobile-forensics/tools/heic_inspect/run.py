@@ -47,7 +47,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-PARSER = "heic_inspect/1"
+PARSER = "heic_inspect/2"
 TOOL = "heic_inspect"
 VALUES_NAME = "heic-inspect-values.jsonl"       # the first free name of this and -2, -3 ... is used (see choose_values_name)
 VALUES_FORMAT = "JSON Lines: one metadata tag of the original per line (group, tag, value)"
@@ -1439,6 +1439,18 @@ class ResultFile:
         return result
 
 
+def refuse_linked_dir(path, what):
+    """A directory this tool writes into is never reached through a link planted in the output directory: lstat, not stat."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        fail("%s could not be examined: %s" % (what, describe(exc)))
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        fail("%s in the output directory is a symbolic link or not a directory: the tool does not write through it" % what, written=False)
+
+
 def choose_values_name(out):
     global VALUES_NAME
     stem = "heic-inspect-values"
@@ -1947,10 +1959,16 @@ def run_bounded(argv, work, stdout_path, stderr_path, seconds, cap_bytes, env):
                     break
                 except subprocess.TimeoutExpired:
                     pass
+                _sample(proc.pid)
                 if time.monotonic() - began > seconds:
                     ended = "the time given to it ran out"
-                elif tree_bytes(work)[0] > cap_bytes:
-                    ended = "what it wrote passed %d bytes" % cap_bytes
+                else:
+                    written, entries = tree_bytes(work)
+                    if written > cap_bytes:
+                        ended = "what it wrote passed %d bytes" % cap_bytes
+                    elif entries > MAX_WORK_FILES:
+                        # The walk stops counting at the bound, so bytes past it are not summed: the program is ended instead, and the answer says so.
+                        ended = "it made more than %d entries in its work directory, past which its bytes are not counted" % MAX_WORK_FILES
                 if ended:
                     kill_tree(proc)
                     proc.wait()
@@ -2048,6 +2066,8 @@ def main():
             fail("the path is a symbolic link: it is not followed", path=shown(path, False))
         fail("the file could not be opened: %s" % describe(exc), path=shown(path, False))
     base, shown_base = output_base()
+    refuse_linked_dir(str(base / "tool-output"), "tool-output")
+    refuse_linked_dir(str(base / "heic_inspect"), "heic_inspect")
     if write_values:
         choose_values_name(str(base))      # only looks for a free name; nothing is made
     values = open_values(args)             # refused as JSON here, before anything is made, when write_values is not allowed
