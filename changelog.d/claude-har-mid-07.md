@@ -30,3 +30,12 @@ service and the `SWARM_JOB_OBSERVE` switch) is deleted: it never ran in a
 worker VM, and reads within a declared scope are not observed. Custody's "not
 observed" is the final word, and `job_started` keeps `observed: "unknown"`, so
 old and new runs read the same. The prototype stays in git history.
+
+### Fixed: harness
+
+An answer whose limitation cites an entry that rests on the kept output of a
+failed job is no longer reported as having a defect: one role-aware rule
+(`failedJobIsDefect`) decides it at the append and at the finish. A failed job
+is the subject of a limitation, not a defect of the answer; an entry cited as
+support that rests on a failed job is still refused at the append and flagged
+by the answers check until the answer qualifies it.

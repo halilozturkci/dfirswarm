@@ -2981,6 +2981,23 @@ export function symbolicQuestions(text: string): string[] {
   return out;
 }
 
+/** The roles an entry is cited in by an answer. */
+export type CitedRole = "support" | "limitation";
+
+/**
+ * The one role-aware rule for an entry that rests on the kept output of a job
+ * that did not succeed (docs/adr/0013): an answer that cites it as support
+ * stands on those bytes, so the entry must say why they still hold (the
+ * answer's qualifies), at the append and at the finish alike; an answer that
+ * cites it as a limitation names what could not be done, and the failed job is
+ * the limitation's subject, not a defect of the answer. The append check,
+ * answerProblems (the answers check, the finish gate, the report and the
+ * adoption count through it) and the failed-job note all ask here.
+ */
+export function failedJobIsDefect(role: CitedRole): boolean {
+  return role === "support";
+}
+
 /**
  * Why each standing answer no longer stands on its own support, transitively:
  * an entry it cites was superseded and its correction is not cited with it,
@@ -3020,7 +3037,7 @@ export function answerProblems(entries: LedgerEntry[], disputes: LedgerDispute[]
       const sub = problemsOf(now);
       if (sub.length) out.push(`it cites ${r.q} (${r.section}), whose answer E-${now.seq} no longer stands on its own support`);
     }
-    for (const [edges, role] of [[a.support ?? [], "rests on"], [a.limitations ?? [], "is bounded by"]] as const) {
+    for (const [edges, role, citedAs] of [[a.support ?? [], "rests on", "support"], [a.limitations ?? [], "is bounded by", "limitation"]] as const) {
       for (const edge of edges) {
         const t = bySeq.get(edge.seq);
         if (!t) {
@@ -3039,7 +3056,7 @@ export function answerProblems(entries: LedgerEntry[], disputes: LedgerDispute[]
         const against = disputed.get(edge.hash);
         if (against?.length && !qualified(t.seq)) out.push(`it ${role} E-${t.seq}, disputed by ${against.map(disputeWords).join("; ")}`);
         const bad = failed.get(t.seq);
-        if (bad?.length && !qualified(t.seq)) out.push(`it ${role} E-${t.seq}, which rests on the kept output of a job that did not succeed (${bad.join(", ")}) and says nothing of it`);
+        if (bad?.length && !qualified(t.seq) && failedJobIsDefect(citedAs)) out.push(`it ${role} E-${t.seq}, which rests on the kept output of a job that did not succeed (${bad.join(", ")}) and says nothing of it`);
         if (t.kind === "answer") {
           const sub = problemsOf(t);
           if (sub.length) out.push(`it ${role} E-${t.seq}, an answer that no longer stands on its own support`);
@@ -3823,7 +3840,7 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
         }
         if (e.kind === "answer" && problems.has(n)) return { ok: false, reason: `E-${n} is an answer that no longer stands on its own support (${(problems.get(n) as string[]).join("; ")}): it is to be recorded again first` };
         const against = disputedBy.get(hashOf(e));
-        const failed = await unqualifiedFailedRefs(ctx.sandboxRoot, e);
+        const failed = failedJobIsDefect("support") ? await unqualifiedFailedRefs(ctx.sandboxRoot, e) : [];
         if (against?.length || failed.length) {
           if (!quals.some((q) => q.seq === n)) {
             return {
