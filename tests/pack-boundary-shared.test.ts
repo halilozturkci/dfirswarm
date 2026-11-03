@@ -171,6 +171,20 @@ split = "".join((BSL + "u2066" if (j > 1 and j % 4 == 0) else "") + c for j, c i
 out["escaped"] = {"backstop": blk._suspect(split) is not None, "layers": tok[4:16] not in blk.seal(split)}
 key = rs(10) + "/" + rs(11) + "=="
 out["padded_in_path"] = [key[:12] not in blk.seal(blk.T("path", "/srv/exports/" + key)), blk._suspect("inputs/" + key) is not None]
+# what the virtualization tools' suites asked of the text on top of that: a value in angle brackets, groups written in parts, the pieces around a key, the second check's names
+ang = ["password=<hJaXeuQz>", "token: <hJaXeuQzWpLmNb>", "--password <hJaXeuQz>", "set password <hJaXeuQz>"]
+ang_ok = ["password=<redacted>", "secret=<your-password>", "--password <password>", "token=<>"]
+out["angle"] = {"hidden": [("hJaXeuQ" not in blk.seal("run " + x + " now")) and blk._suspect("run " + x + " now") is not None for x in ang],
+                "kept": [blk.seal("run " + x + " now") == "run " + x + " now" and blk._suspect("run " + x + " now") is None for x in ang_ok]}
+out["groups"] = {"hidden": [blk.seal(blk.T("name", n)) != n for n in ("secret.yIgK-paUn", "password KHIL-MS4S", "Token_7F3v-lfFr", "password-Zk3q-mRzP-b1X9")],
+                 "shown": [blk.seal(blk.T("name", n)) == n for n in ("Password-Manager-Pool-Node", "pwd-prod-lab-01", "Token-A1B2-snapshot1", "password-ESXI-prod", "Token-v2-r1")]
+                          + [blk.seal(blk.T("path", "/vmfs/volumes/ds1/pwd/pwd-000001-delta.vmdk")) == "/vmfs/volumes/ds1/pwd/pwd-000001-delta.vmdk"]}
+cut = "W/+tXC37i7ggthGcuo/4hw=="
+around = blk.seal(blk.T("path", "/vmfs/volumes/ds1/" + cut + "/disk.vmdk"))
+out["key_around"] = [around.startswith("/vmfs/volumes/ds1/"), around.endswith("/disk.vmdk"), "tXC37i7ggth" not in around]
+v17 = "hJaXeuQzWpLmNbVc3"
+out["second_check"] = {"found": [blk._suspect(f + v17) is not None for f in ("psk=", "otp=", "password1=", "ssh_key=", "bearer=", "PSK: ")] + [blk._suspect("run --sshKeyb1185bce74632a now") is not None, blk._suspect("target iqn.2004-12.bazsjdocavbxirjstyziomdz.com:t1 failed") is not None],
+                       "quiet": [blk._suspect(x) is None for x in ("authorization: failed", "pin=1234", "dsn=main", "otp: required", "/vmfs/volumes/95f26c46-d7e3b46c-b2e1-6fbd012c0188/web01/web01-Snapshot3.vmsn", "target iqn.2004-12.com.example:nas01 failed")]}
 out["big_name_collision"] = [hasattr(blk, "_b_withheld"), not hasattr(blk, "_withheld"), not hasattr(blk, "_USERINFO"), hasattr(blk, "_B_USERINFO")]
 print(json.dumps(out))
 `;
@@ -237,6 +251,13 @@ test("the rules the virtualization tools needed: a secret's name with a value af
   assert.deepEqual(r.escaped, { backstop: true, layers: true }, "a token split by escapes of invisible characters, with hexadecimal digits behind an escape");
   assert.deepEqual(r.padded_in_path, [true, true]);
   assert.deepEqual(r.big_name_collision, [true, true, true, true], "the one text keeps its own names clear of the WITHHOLDING block");
+  assert.deepEqual(r.angle.hidden, [true, true, true, true], "a value in angle brackets after a secret's name is withheld, by the seal and found by the second check");
+  assert.deepEqual(r.angle.kept, [true, true, true, true], "a placeholder word in angle brackets stays");
+  assert.ok(r.groups.hidden.every(Boolean), `groups written in parts after a secret's name, whatever their case: ${JSON.stringify(r.groups.hidden)}`);
+  assert.ok(r.groups.shown.every(Boolean), `words, tags, dates and the end of a file name after a secret's name stay: ${JSON.stringify(r.groups.shown)}`);
+  assert.deepEqual(r.key_around, [true, true, true], "a key with a `/` in a path is withheld and the directory and the file name around it stay readable");
+  assert.ok(r.second_check.found.every(Boolean), `the second check names psk, otp, a digit after password, ssh_key, bearer, a camel-case flag with its value glued on and an iqn. authority of random letters: ${JSON.stringify(r.second_check.found)}`);
+  assert.ok(r.second_check.quiet.every(Boolean), `and leaves a log line, a pin, a dsn, a VMFS volume id and a plain iqn. name alone: ${JSON.stringify(r.second_check.quiet)}`);
 });
 
 test("the table of field kinds is passed in, a digit run in a field name stands for any number, and an unknown kind is refused", async () => {

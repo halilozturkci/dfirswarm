@@ -57,7 +57,8 @@ makes the answer partial. This is a heuristic, not a guarantee: a short password
 alone as a name is not recognised, nor, after a secret's name, a value of 6
 characters or fewer or one built like words, nor a name the grammar of a plain name
 refuses (a machine name with several one-letter pieces, such as `ProxyK8sMgmtNode10`,
-is withheld although it is no secret), so the skills say to run the tools as jobs with
+is withheld although it is no secret, and so is, in about one path in eight, the part of a path that holds a
+Windows default name such as `WIN-0N02YXG158X`), so the skills say to run the tools as jobs with
 `secret_output: true`.
 
 ## Two things the skills keep repeating
