@@ -1,7 +1,7 @@
 {
   "id": "virtualization-backup-forensics",
   "name": "Virtualization and Backup Forensics Pack",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "description": "Method and tooling for the control plane of virtualization and backup: what hypervisor management records and VM configuration files say, whether a snapshot or disk chain is complete and which markers a consolidation or an unclean close may leave, what a backup catalogue, job record and retention setting show, and which recovery points survive. It reads exports and configuration files offline; it never runs hypervisor or backup software, reads no guest content, and supports only the products its tools list.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -25,7 +25,7 @@
       "skills/INDEX.md": "c51230c1bb48ce4f9b554a4c32269bf684cbed0e848d7a3b536da20855a3da61",
       "skills/backup/catalogues-and-retention.md": "304bf72c8ff3ced600bc27d2ff5f8cdbe9ac44b841408298941a99917f10160c",
       "skills/backup/deletion-vs-loss.md": "f6e432ffcc4047589608fb045db94d6dba556e92e966c202b03a51b9d1379fdb",
-      "skills/control-plane/chronology.md": "fcc028602b886c74ce62ef19f2b00df3df165f1c37cf5174d1b7a05a56625c6a",
+      "skills/control-plane/chronology.md": "c92603d97ff959fd7f529f6bb4a538f04237d27e7e2875e67664ef4308a97bca",
       "skills/evidence/boundaries.md": "6a4b17b3a719a5edcf99bfd48d737536772aecf3e7a650f8e4e617607c65f4ee",
       "skills/hypervisor/activity.md": "f8f84d820c5acf7ddbfa29b578836f87f8d77ac43258a952375e2de82420c8d0",
       "skills/hypervisor/inventory.md": "7a322608ae12a1f51494e64028335fe5f3f8cdb1b78a3ec3f6e0e39859ed025a",
