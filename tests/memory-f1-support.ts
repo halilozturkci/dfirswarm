@@ -108,6 +108,8 @@ export type StubOptions = {
   hold?: { seconds: number; pidFile: string; ownSession?: boolean };
   /** the stub ignores SIGTERM (it ends only when it is killed) */
   ignoreTerm?: boolean;
+  /** sparse files the stub creates in the mount after the tree: path -> size in bytes (nothing is stored on disk for them) */
+  sparse?: Record<string, number>;
 };
 
 /** A stub `memprocfs` on PATH that makes the directory a mount would have made (see tests/pack-memory-forensics.test.ts), and the env it needs. */
@@ -163,6 +165,11 @@ if os.environ.get("STUB_MODE") != "never":
                 os.symlink(target.replace("{mount}", mount), os.path.join(mount, link))
         src, dst = os.path.join(tree, name), os.path.join(mount, name)
         shutil.copytree(src, dst, symlinks=True) if os.path.isdir(src) else shutil.copy(src, dst)
+for name, size in json.loads(os.environ.get("STUB_SPARSE", "{}")).items():
+    target = os.path.join(mount, name)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "wb") as f:
+        f.truncate(size)
 while True:
     time.sleep(0.05)
 `,
@@ -174,7 +181,7 @@ while True:
   return {
     PYTHONPATH: shim, STUB_TREE: tree, STUB_LOG: log, STUB_MODE: o.mode ?? "", STUB_LINKS: JSON.stringify(o.links ?? []),
     STUB_STDERR: o.stderrText ?? "", ...(o.pidFile ? { STUB_PID: o.pidFile } : {}), ...(o.flood ? { STUB_FLOOD: String(o.flood) } : {}),
-    ...(o.hold ? { STUB_HOLD: String(o.hold.seconds), STUB_HOLD_PID: o.hold.pidFile, ...(o.hold.ownSession ? { STUB_HOLD_SESSION: "1" } : {}) } : {}), ...(o.ignoreTerm ? { STUB_IGNORE_TERM: "1" } : {}),
+    ...(o.hold ? { STUB_HOLD: String(o.hold.seconds), STUB_HOLD_PID: o.hold.pidFile, ...(o.hold.ownSession ? { STUB_HOLD_SESSION: "1" } : {}) } : {}), ...(o.ignoreTerm ? { STUB_IGNORE_TERM: "1" } : {}), ...(o.sparse ? { STUB_SPARSE: JSON.stringify(o.sparse) } : {}),
   };
 }
 

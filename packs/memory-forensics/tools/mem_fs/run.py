@@ -125,7 +125,8 @@ MAX_PAGE = 5000
 CLEANUP_WAIT = 20
 OUT_DIR = "mem_fs"
 MANIFEST = "export-manifest.jsonl"
-RANGES_DIR = "%ranges"     # output_name never writes a bare % before a non-hex pair, so no export can be named inside this directory
+RANGES_DIR = "%ranges"     # output_name writes a % only before two hex digits, so no export can be named inside this directory, and no component of an
+#                            output name contains "%." : a ranges file is named <output name>%.json, which is never a directory of another ranges file
 ZERO_PAGE = 4096
 ZERO_MEANING = ("zero_filled lists whole aligned 4096-byte pages in which every copied byte is 0. MemProcFS fills a page it cannot read with zeros, "
                 "and a page of real zeros reads the same, so a zero-filled range is not proof that data is missing and not proof that it is present.")
@@ -1031,9 +1032,12 @@ def fail(message, **extra):
 def interrupted_answer(signum, **extra):
     released = ("the engine was stopped and the mount released" if not extra.get("cleanup_problems")
                 else "the clean-up did not finish (cleanup_problems), so the mount may remain")
+    unfinished = extra.get("unfinished")
+    kept = ("and what an export had written before that is kept and named" if not unfinished else
+            "and what an export had written before that is kept, but the export worker did not end within its grace period: the file it was "
+            "copying (unfinished) is named, and its bytes, ranges file and manifest row may be incomplete")
     emit({"error": "stopped by signal %d before the call was complete" % signum, "status": "interrupted",
-          "status_basis": "the tool was stopped by signal %d; %s, and what an export had written "
-                          "before that is kept and named" % (signum, released), "signal": signum, "parser": PARSER, **extra})
+          "status_basis": "the tool was stopped by signal %d; %s, %s" % (signum, released, kept), "signal": signum, "parser": PARSER, **extra})
 
 
 class SecretValuesRefused(Exception):
@@ -1132,7 +1136,7 @@ class RangesFile:
     file system's trouble: it is named as a problem of the sidecar, never as a fact about the memory."""
 
     def __init__(self, secret, rel, virtual, reported):
-        self.rel = "%s/%s.json" % (RANGES_DIR, rel)
+        self.rel = "%s/%s%%.json" % (RANGES_DIR, rel)
         self.fd, self.problem = None, None
         self.digest, self.size, self.buf, self.pending = hashlib.sha256(), 0, [], 0
         self.counts = {"read": 0, "unavailable": 0, "not_copied": 0, "zero_filled": 0}
@@ -1927,6 +1931,7 @@ def main():
     counts = {"requested": len(targets), "exported": 0, "failed": 0, "refused": 0, "not_exported": 0, "partial": 0,
               "not_attempted": 0}
     names_info = {"withheld": 0, "file": None, "errors": 0}
+    unfinished = {}   # set when the worker did not end within the grace period after a stop: the file it was copying, named
     ranges_total = {"files": 0, "problems": 0, "bytes": 0, "read_ranges": 0, "unavailable_ranges": 0, "not_copied_ranges": 0,
                     "zero_filled_ranges": 0, "zero_filled_bytes": 0}
 
@@ -1988,8 +1993,10 @@ def main():
         # the size the mount reported), what was not copied (a stop, a bound, a full disk) and the zero-filled pages.
         reported = st.st_size
         ranges = RangesFile(secret, rel, virtual, reported)
+        state["inflight"] = {"virtual_path": label, "output": shown(secret.shown_path(rel), "path"), "ranges_file": shown(secret.shown_path(ranges.rel), "path"),
+                             "note": "the worker was still copying this file when the answer was made: its bytes on disk, its ranges file and its manifest row may be unfinished"}
         zeros = ZeroPages(lambda start, length: ranges.add("zero_filled", start, length))
-        digest, size, partial, error, error_side, short = hashlib.sha256(), 0, None, None, None, None
+        digest, size, partial, error, error_side, short, grew = hashlib.sha256(), 0, None, None, None, None, None
         try:
             with os.fdopen(fd, "wb", buffering=0) as out, os.fdopen(source_fd, "rb", buffering=0) as src:
                 while True:
@@ -2027,9 +2034,15 @@ def main():
         tail = zeros.finish()
         if error is None and partial is None and size < reported:
             short = "the file ended at %d bytes and the mount reports %d" % (size, reported)
+        if error is None and partial is None and size > reported:
+            grew = "the file gave %d bytes, %d more than the %d the mount reports" % (size, size - reported, reported)
         gap = max(reported - size, 0)
         if error is not None and error_side == "read":
-            ranges.add("unavailable", size, gap, judged("the read failed at offset %d: %s" % (size, describe(error))))
+            # The failing read asked for up to CHUNK bytes at `size`; which page of them failed is not known, so the whole read is listed.
+            bad = min(gap, CHUNK)
+            ranges.add("unavailable", size, bad, judged("the read of up to %d bytes at offset %d failed (the failing page within it is not known): %s" % (CHUNK, size, describe(error))))
+            if gap > bad:
+                ranges.add("not_copied", size + bad, gap - bad, "the copy stopped at the first read error and did not try the rest")
         elif error is not None:
             ranges.add("not_copied", size, gap, judged("the output could not be written: %s" % describe(error)))
         elif partial:
@@ -2056,8 +2069,8 @@ def main():
         elif partial:
             item["status"] = "partial: %s; %s" % (partial, kept)
             category = "partial"
-        elif short:
-            item["status"] = "partial: %s; %s" % (short, kept)
+        elif short or grew:
+            item["status"] = "partial: %s; %s" % (short or grew, kept)
             category = "partial"
         else:
             item["status"] = "exported"
@@ -2069,6 +2082,7 @@ def main():
         for key in ("bytes", "read_ranges", "unavailable_ranges", "not_copied_ranges", "zero_filled_ranges", "zero_filled_bytes"):
             ranges_total[key] += range_info[key] or 0
         item["ranges"] = range_info
+        state["inflight"] = None
         try:
             row = {"item_id": item["item_id"], "virtual_path": virtual, "output": rel, "bytes": size,
                    "sha256": digest.hexdigest(), "status": str(item["status"]), "ranges_file": ranges.rel,
@@ -2208,11 +2222,17 @@ def main():
     def describe_for_result(exc):
         return exc if isinstance(exc, (FileNotFoundError, OutsideMount)) else describe_text(exc)
 
+    # The worker's end is an Event it sets as its last act, not Thread.join(): on CPython 3.12 a join() cut by the exception a signal
+    # handler raises marks the thread as stopped, and is_alive()/join() then say it is finished while it is still writing.
+    work_done = threading.Event()
+
     def work():
         try:
             {"list": work_list, "text": work_text, "export": work_export}[mode]()
         except BaseException as exc:  # reported by phase, never swallowed
             result["error"] = exc
+        finally:
+            work_done.set()
 
     worker = None
     try:
@@ -2239,8 +2259,8 @@ def main():
             work_started = time.monotonic()
             worker = threading.Thread(target=work, daemon=True)
             worker.start()
-            worker.join(max(0.0, deadline - time.monotonic()))
-            if worker.is_alive():
+            work_done.wait(max(0.0, deadline - time.monotonic()))
+            if not work_done.is_set():
                 state["abandon"] = True
                 problem = (state["phase"], "the %s phase did not finish within the %ds deadline" % (state["phase"], timeout))
             timings["work_seconds"] = round(time.monotonic() - work_started, 2)
@@ -2347,7 +2367,9 @@ def main():
                     except (OSError, ValueError):
                         pass
             if state["abandon"] and worker is not None:
-                worker.join(5)
+                # The worker ends its file (a stop is seen at the next chunk), closes its ranges file with a summary row and sets the event.
+                if not work_done.wait(5):
+                    unfinished.update(state.get("inflight") or {"note": "the export worker did not finish"})
             secret.close()
             timings["cleanup_seconds"] = round(time.monotonic() - cleanup_started, 2)
         finally:
@@ -2378,7 +2400,7 @@ def main():
     kept = {"partial_results": paged["all_results"], "partial_results_format": paged["all_results_format"]} if paged.get("all_results") else {}
     if interrupted is not None:
         interrupted_answer(interrupted, mode=mode, mount=str(mount), logs=logs, phases=timings,
-                           counts=counts if mode == "export" else None, ranges=ranges_total if mode == "export" else None, secret_values=secret.summary(), **kept, **items,
+                           counts=counts if mode == "export" else None, ranges=ranges_total if mode == "export" else None, unfinished=unfinished or None, secret_values=secret.summary(), **kept, **items,
                            **({"cleanup_problems": cleanup_notes} if cleanup_notes else {}), **({"clean_up": clean_up_record} if clean_up_record else {}))
         raise SystemExit(128 + interrupted)
 
@@ -2391,6 +2413,7 @@ def main():
              prerequisites=prerequisites(), phases=timings,
              counts=counts if mode == "export" else None,
              ranges=ranges_total if mode == "export" else None,
+             unfinished=unfinished or None,
              secret_values=secret.summary(),
              **kept,
              **({"cleanup_problems": cleanup_notes} if cleanup_notes else {}), **({"clean_up": clean_up_record} if clean_up_record else {}),
@@ -2436,10 +2459,13 @@ def main():
                                 "rows of kind read, unavailable (the mount gave no bytes there), not_copied (stopped or bounded before) and zero_filled, then a summary row; "
                                 "a file with no summary row was cut" % RANGES_DIR, zero_filled_means=ZERO_MEANING)
         complete = counts["exported"] == counts["requested"] and ranges_total["problems"] == 0
-        basis = ("%d of %d requested files were exported whole%s" % (counts["exported"], counts["requested"], "" if complete else
-                 "; the others are refused, failed, partial, not exported or not attempted (each item's status says which)"))
+        if counts["exported"] == counts["requested"] and ranges_total["problems"]:
+            basis = "all %d requested files were copied whole" % counts["requested"]
+        else:
+            basis = ("%d of %d requested files were exported whole%s" % (counts["exported"], counts["requested"], "" if counts["exported"] == counts["requested"] else
+                     "; the others are refused, failed, partial, not exported or not attempted (each item's status says which)"))
         if ranges_total["problems"]:
-            basis += "; %d ranges file(s) were not written whole (each item's ranges.problem says why), so the ranges of those files are not all on disk" % ranges_total["problems"]
+            basis += (", but " if counts["exported"] == counts["requested"] else "; ") + "%d ranges file(s) were not written whole (each item's ranges.problem says why), so the ranges of those files are not all on disk" % ranges_total["problems"]
         if ranges_total["unavailable_ranges"] or ranges_total["not_copied_ranges"]:
             basis += "; %d unavailable and %d not copied range(s) are named in the ranges files" % (ranges_total["unavailable_ranges"], ranges_total["not_copied_ranges"])
     if paged.get("all_results"):

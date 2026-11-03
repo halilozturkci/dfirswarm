@@ -35,7 +35,7 @@ const image = async (cwd: string) => writeFile(join(cwd, "inputs", "memory.raw")
 const args = (out: string, paths: string[], extra: Record<string, unknown> = {}) =>
   ({ path: "inputs/memory.raw", mount: join(out, "m"), mode: "export", write_values: true, paths, timeout_seconds: 60, ...extra });
 const sidecar = async (out: string, rel: string) => {
-  const bytes = await readFile(join(out, "mem_fs", "%ranges", `${rel}.json`));
+  const bytes = await readFile(join(out, "mem_fs", "%ranges", `${rel}%.json`));
   return { bytes, rows: bytes.toString("utf8").trimEnd().split("\n").map((l) => JSON.parse(l) as Range) };
 };
 const kinds = (rows: Range[], kind: string) => rows.filter((r) => r.kind === kind).map((r) => [r.offset, r.length]);
@@ -83,7 +83,7 @@ test("a file with zero holes gets a ranges file naming the zero-filled pages and
     assert.equal(info.sha256, createHash("sha256").update(bytes).digest("hex"));
     assert.deepEqual([info.read_ranges, info.unavailable_ranges, info.not_copied_ranges, info.zero_filled_ranges, info.zero_filled_bytes], [1, 0, 0, 2, 3 * PAGE]);
     assert.equal(info.file_complete, true);
-    assert.match(info.file, /\/mem_fs\/%ranges\/d\/hole\.bin\.json$/);
+    assert.match(info.file, /\/mem_fs\/%ranges\/d\/hole\.bin%\.json$/);
     assert.equal(run.ranges?.files, 1);
     assert.match(run.ranges!.zero_filled_means, /not proof that data is missing/);
     assert.match(run.note!, /not proof that data is missing/);
@@ -91,7 +91,7 @@ test("a file with zero holes gets a ranges file naming the zero-filled pages and
     assert.ok((await readFile(join(out, "mem_fs", "d", "hole.bin"))).equals(data));
     const manifest = (await readFile(join(out, "mem_fs", "export-manifest.jsonl"), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
     assert.equal(manifest[0].ranges_file_sha256, info.sha256);
-    assert.equal(((await stat(join(out, "mem_fs", "%ranges", "d", "hole.bin.json"))).mode & 0o777), 0o600);
+    assert.equal(((await stat(join(out, "mem_fs", "%ranges", "d", "hole.bin%.json"))).mode & 0o777), 0o600);
     assert.equal(run.secret_values?.written, 1, "the ranges file holds no value and is not counted as one");
   });
 });
@@ -175,8 +175,10 @@ test("a read that fails with EIO at an injected offset gives an unavailable rang
     assert.equal(good.status, "exported");
     const rows = (await sidecar(out, "d/eio.bin")).rows;
     assert.deepEqual(kinds(rows, "read"), [[0, 6000]]);
+    // the failing read asked for up to 1 MiB: the whole of it is listed, and the file is shorter than that
     assert.deepEqual(kinds(rows, "unavailable"), [[6000, data.length - 6000]]);
-    assert.match(String(rows.find((x) => x.kind === "unavailable")!.why), /read failed at offset 6000.*EIO/);
+    assert.deepEqual(kinds(rows, "not_copied"), []);
+    assert.match(String(rows.find((x) => x.kind === "unavailable")!.why), /read of up to 1048576 bytes at offset 6000 failed.*Input\/output error/);
     assert.equal(bad.ranges!.unavailable_ranges, 1);
     assert.equal(good.ranges!.unavailable_ranges, 0);
     assert.equal((await readFile(join(out, "mem_fs", "d", "eio.bin"))).length, 6000, "what was read is kept");
@@ -241,7 +243,7 @@ test("the ranges directory cannot be confused with an export, and a second expor
     const run = json<Fs>(await runTool(FS, cwd, args(out, ["%ranges/x.json", "a.bin", "a.bin"]), { ...env, ...job }, bin));
     assert.deepEqual(run.items!.map((i) => i.status.split(":")[0]), ["exported", "exported", "refused"]);
     assert.equal(await readFile(join(out, "mem_fs", "%25ranges", "x.json"), "utf8"), "mine\n");
-    assert.deepEqual((await readdir(join(out, "mem_fs", "%ranges"))).sort(), ["%25ranges", "a.bin.json"]);
+    assert.deepEqual((await readdir(join(out, "mem_fs", "%ranges"))).sort(), ["%25ranges", "a.bin%.json"]);
     assert.equal(run.items![2].ranges, undefined, "a refused export has no ranges file");
   });
 });
@@ -268,6 +270,89 @@ test("a stop in the middle of an export answers with one JSON, and the ranges fi
     assert.deepEqual(kinds(rows, "read"), [[0, copied]]);
     assert.deepEqual(kinds(rows, "not_copied"), [[copied, data.length - copied]]);
     assert.equal(item.ranges!.not_copied_ranges, 1);
-    assert.equal(item.ranges!.sha256, createHash("sha256").update(await readFile(join(out, "mem_fs", "%ranges", "slow.bin.json"))).digest("hex"));
+    assert.equal(item.ranges!.sha256, createHash("sha256").update(await readFile(join(out, "mem_fs", "%ranges", "slow.bin%.json"))).digest("hex"));
+  });
+});
+
+for (const [signal, number] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]] as const) {
+  test(`${signal} in the middle of a copy of a large sparse file: the file is listed with a manifest row, and its ranges file is named and ends in its summary`, async () => {
+    for (let round = 0; round < 4; round++) {
+      await withCwd(async (cwd, bin) => {
+        const env = await fsStub(cwd, bin, { tree: { "small.bin": filled(1, 50), "sys/x": "" }, sparse: { "d/huge.bin": 3 * 2 ** 30 } });
+        await image(cwd);
+        const { out, job } = await jobDir(cwd);
+        const run = await runTool(FS, cwd, args(out, ["d/huge.bin", "small.bin"]), { ...env, ...job }, bin, signal, 2500);
+        assert.equal(run.code, number, run.stderr);
+        const answer = JSON.parse(run.stdout) as Fs & { unfinished?: unknown };
+        assert.equal(answer.status, "interrupted");
+        assert.equal(answer.unfinished, null, "the worker ended inside its grace period");
+        assert.match(answer.status_basis, /kept and named/);
+        const [huge, small] = answer.items!;
+        assert.equal(huge.virtual_path, "d/huge.bin", JSON.stringify(answer.items));
+        assert.match(huge.status, /^partial: the call was stopped/);
+        assert.match(small.status, /^not attempted/);
+        const disk = (await readFile(join(out, "mem_fs", "d", "huge.bin"))).length;
+        assert.equal(huge.bytes, disk);
+        const manifest = (await readFile(join(out, "mem_fs", "export-manifest.jsonl"), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+        assert.equal(manifest.length, 1);
+        assert.equal(manifest[0].bytes, disk);
+        const raw = await readFile(join(out, "mem_fs", "%ranges", "d", "huge.bin%.json"));
+        assert.ok(raw.length > 0);
+        const rows = raw.toString("utf8").trimEnd().split("\n").map((l) => JSON.parse(l) as Range);
+        assert.equal(rows[rows.length - 1].kind, "summary");
+        assert.deepEqual(kinds(rows, "not_copied"), [[disk, 3 * 2 ** 30 - disk]]);
+        assert.equal(huge.ranges!.bytes, raw.length);
+        assert.equal(huge.ranges!.sha256, createHash("sha256").update(raw).digest("hex"));
+      });
+    }
+  });
+}
+
+test("ranges file names are prefix-free: exports a and a.json/b both get one", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await fsStub(cwd, bin, { tree: { "a": "one\n", "a.json/b": "two\n", "sys/x": "" } });
+    await image(cwd);
+    const { out, job } = await jobDir(cwd);
+    const run = json<Fs>(await runTool(FS, cwd, args(out, ["a", "a.json/b"]), { ...env, ...job }, bin));
+    assert.equal(run.status, "complete", run.status_basis);
+    assert.deepEqual((await sidecar(out, "a")).rows.at(-1)!.kind, "summary");
+    assert.deepEqual((await sidecar(out, "a.json/b")).rows.at(-1)!.kind, "summary");
+  });
+});
+
+test("a file longer than the mount reports is partial, naming both sizes", async () => {
+  await withCwd(async (cwd, bin) => {
+    const data = filled(3, 60);
+    const env = await fsStub(cwd, bin, { tree: { "g.bin": data, "sys/x": "" } });
+    await image(cwd);
+    const shim = await shimDir(cwd);
+    const { out, job } = await jobDir(cwd);
+    const run = json<Fs>(await runTool(FS, cwd, args(out, ["g.bin"]),
+      { ...env, ...job, PYTHONPATH: shim, FAKE_ISMOUNT: "1", FAKE_LSTAT_MATCH: "/m/g.bin", FAKE_LSTAT_EXTRA: "-4096" }, bin));
+    assert.equal(run.status, "partial");
+    assert.match(run.items![0].status, new RegExp(`^partial: the file gave ${data.length} bytes, 4096 more than the ${data.length - 4096} the mount reports`));
+  });
+});
+
+test("when every ranges file is cut, the basis says the files were copied whole and the ranges files were not", async () => {
+  await withCwd(async (cwd, bin) => {
+    const data = Buffer.concat(Array.from({ length: 200 }, (_, i) => (i % 2 ? Buffer.alloc(PAGE) : filled(1, 100 + i))));
+    const env = await fsStub(cwd, bin, { tree: { "full.bin": data, "sys/x": "" } });
+    await image(cwd);
+    const { out, job } = await jobDir(cwd);
+    await mkdir(join(out, "mem_fs", "%ranges"), { recursive: true, mode: 0o700 });
+    const e: NodeJS.ProcessEnv = { ...process.env, AGENT_ID: "s1", ...env, ...job };
+    e.PATH = `${bin}:${e.PATH ?? ""}`;
+    const stdout = await new Promise<string>((resolve, reject) => {
+      const child = spawn("unshare", ["-rm", "sh", "-c", `mount -t tmpfs -o size=4k tmpfs "$OUT/mem_fs/%ranges" && exec python3 "${FS}"`], { cwd, env: e });
+      let s = "";
+      child.stdout.on("data", (c: Buffer) => { s += c.toString(); });
+      child.on("error", reject);
+      child.on("close", () => resolve(s));
+      child.stdin.end(JSON.stringify(args(out, ["full.bin"])));
+    });
+    const run = JSON.parse(stdout) as Fs;
+    assert.match(run.status_basis, /^all 1 requested files were copied whole, but 1 ranges file\(s\) were not written whole/);
+    assert.doesNotMatch(run.status_basis, /exported whole/);
   });
 });
