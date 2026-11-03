@@ -10626,8 +10626,8 @@ pkg_copy() { # <src> <dst> [non-empty]
 }
 
 cmd_package() {
-  local id="${1:-}" sign=0 key="" redact=0 with_outputs=0 leaks=fail
-  [[ -n "$id" && "$id" != -* ]] || { echo "package requires <id> [--sign [--key FILE]] [--redact [--redact-leaks list]] [--with-outputs]" >&2; exit 2; }
+  local id="${1:-}" sign=0 key="" redact=0 with_outputs=0 with_sessions=0 leaks=fail
+  [[ -n "$id" && "$id" != -* ]] || { echo "package requires <id> [--sign [--key FILE]] [--redact [--redact-leaks list]] [--with-outputs] [--with-sessions]" >&2; exit 2; }
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -10636,9 +10636,15 @@ cmd_package() {
       --redact) redact=1; shift ;;
       --redact-leaks) leaks="$2"; shift 2 ;;
       --with-outputs) with_outputs=1; shift ;;
+      --with-sessions) with_sessions=1; shift ;;
       *) echo "package: unknown option $1" >&2; exit 2 ;;
     esac
   done
+  # Sessions hold everything the models saw: they travel in an internal handover, never in the copy that leaves the organisation.
+  if [[ "$with_sessions" -eq 1 && "$redact" -eq 1 ]]; then
+    echo "package: --with-sessions cannot be combined with --redact: a redacted package is the copy that leaves the organisation, and sessions hold everything the models saw." >&2
+    exit 2
+  fi
   ensure_registry
   local sandbox
   sandbox="$(json_get "$id" | jq -r '.sandbox // empty')"
@@ -10946,8 +10952,31 @@ PY
       echo "Sensitive:    $(jq -r '.entries' <<<"$hygiene") sensitive ledger entr$([[ "$(jq -r '.entries' <<<"$hygiene")" == 1 ]] && echo y || echo ies), $(jq -r '.outputs' <<<"$hygiene") job(s) whose outputs are sensitive ($(jq -r '.carried' <<<"$hygiene") of their files in this package); the scan over $(jq -r '.scanned' <<<"$hygiene") file(s) found $(jq -r '.hits' <<<"$hygiene") place(s) holding their words (HYGIENE.json). This package is not redacted: hand it over with --redact."
     fi
   fi
+  # The agents' sessions, masked, for an internal handover (--with-sessions): one
+  # archive and a manifest (scripts/package-tools.ts sessions). Never made by
+  # halves: a failure leaves no package.
+  local sessions_note=""
+  if [[ "$with_sessions" -eq 1 ]]; then
+    local sess sess_rc=0 sess_n
+    sess="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/package-tools.ts" sessions "$sandbox" "$out" 2>"$out.sessions.err")" || sess_rc=$?
+    if [[ "$sess_rc" -ne 0 ]]; then
+      echo "BLOCKER: the sessions could not be packaged; nothing was handed over: $(head -c 400 "$out.sessions.err")" >&2
+      rm -rf "$out" "$out.sessions.err"; exit 1
+    fi
+    rm -f "$out.sessions.err"
+    if [[ "$(jq -r '.files' <<<"$sess")" == 0 ]]; then
+      echo "WARN: --with-sessions: $sandbox/.pi-sessions holds no regular file; the package carries no sessions." >&2
+      sessions_note="; sessions requested, none to carry"
+    else
+      echo "Sessions:     $(jq -r '.files' <<<"$sess") file(s) in $(jq -r '.archive' <<<"$sess") (sha256 $(jq -r '.sha256' <<<"$sess")), $(jq -r '.masked' <<<"$sess") sensitive value(s) masked; the key and id map are in $out.sessions.private.json, which stays with the run's owner"
+      sess_n="$(jq -r '.skipped' <<<"$sess")"
+      [[ "$sess_n" -gt 0 ]] && echo "              $sess_n entr$([[ "$sess_n" == 1 ]] && echo y || echo ies) under .pi-sessions/ not copied (links and other non-regular files; sessions/sessions.manifest.json names them)"
+      [[ "$(jq -r '.changed' <<<"$sess")" -gt 0 ]] && echo "WARN: $(jq -r '.changed' <<<"$sess") session file(s) changed while they were copied: $(jq -r '.changed_files | map("\(.path) (\(.listed_bytes) bytes at the cutoff, \(.copied_bytes) copied)") | join("; ")' <<<"$sess")" >&2
+      sessions_note="; with sessions (sessions/, masked, for an internal handover)"
+    fi
+  fi
   # What kind of package this is, said in it.
-  printf '%s\n' "$([[ "$with_outputs" -eq 1 ]] && echo "with outputs: the jobs' sealed outputs are included" || echo "record only: the jobs' outputs stay in the run, each named by its sha256")$([[ "$redact" -eq 1 ]] && echo "; redacted (REDACTIONS.txt)")" > "$out/PACKAGE-KIND.txt"
+  printf '%s\n' "$([[ "$with_outputs" -eq 1 ]] && echo "with outputs: the jobs' sealed outputs are included" || echo "record only: the jobs' outputs stay in the run, each named by its sha256")$([[ "$redact" -eq 1 ]] && echo "; redacted (REDACTIONS.txt)")$sessions_note" > "$out/PACKAGE-KIND.txt"
   # Each part a recipient holds the record to, present or absent with why:
   # under the manifest, so a part taken out, and out of the list, breaks it.
   node --experimental-strip-types --no-warnings "$ROOT/scripts/package-tools.ts" components "$sandbox" "$out" >/dev/null || { echo "BLOCKER: the package's components could not be listed; nothing was handed over." >&2; rm -rf "$out"; exit 1; }
