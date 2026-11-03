@@ -1,7 +1,7 @@
 {
   "id": "virtualization-backup-forensics",
   "name": "Virtualization and Backup Forensics Pack",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Method and tooling for the control plane of virtualization and backup: what hypervisor management records and VM configuration files say, whether a snapshot or disk chain is complete and which markers a consolidation or an unclean close may leave, what a backup catalogue, job record and retention setting show, and which recovery points survive. It reads exports and configuration files offline; it never runs hypervisor or backup software, reads no guest content, and supports only the products its tools list.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -35,11 +35,11 @@
       "skills/snapshots/header-markers.md": "c01e00e7fb425ce9db276791f1a2ea7558cf5549b80de4a871e8b0f74bda52f7",
       "skills/snapshots/markers.md": "bf91f21590cc5f2afb6379b740fc491cd7a7c199398dbf9ba20cfd83240b017e",
       "tests/pack.test.sh": "35f4ae3f6e7e8ad51e0bc57a3904852dc550a7b23756951a21285a3497c213f4",
-      "tools/backup_audit_normalise/manifest.json": "6a5f60478858fa3660e227708e67343a8f2e5cf67391f0102de3faf64d0f700b",
+      "tools/backup_audit_normalise/manifest.json": "96ad820b47711c597e6ade7b0852084a82289051bc91bed78f822d0bcc594ab2",
       "tools/backup_audit_normalise/run.py": "0601951b69eec633284501bf1eadada7c5011feed9d34be8a421ccf6899a980c",
-      "tools/snapshot_chain_check/manifest.json": "4413b256146d8f173972e622f5c3d002e10d100725b2327215bdadb7d335bf58",
+      "tools/snapshot_chain_check/manifest.json": "3cf5bcad39bcdd5cdab4ca46784bccf2c86b60f8174e8a1bb7c3e1b03ff71caf",
       "tools/snapshot_chain_check/run.py": "081abeab99be581cbf3d6488d14b49c0a66881d69bcdbc354fcb0df0b143abc6",
-      "tools/virtualization_inventory/manifest.json": "0e1413df3eee4b34fb1fee50707c5596ec94f487e0044a0a9d6af1005cb8203d",
+      "tools/virtualization_inventory/manifest.json": "a8da06fd7691d8a970945803b18138b7e73b856361b404a77ecf26d77e7bcb38",
       "tools/virtualization_inventory/run.py": "2f2382fa80dfb4deb2885770f8e7c715a73d55ac983dfe0fc70ea9c148d36d04"
     }
   },
