@@ -17,8 +17,9 @@ import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { disputeEntry, initSandbox, recordEntry } from "../extensions/protocol.ts";
-import { ledgerChain, makeDigestReplacer, packSessions, redactPackage, type Replaced, SESSIONS_ARCHIVE, SESSIONS_MANIFEST, type SessionsManifest, verifyPackage, verifySessions, writeComponents } from "../scripts/package-tools.ts";
+import { hygieneReport, ledgerChain, makeDigestReplacer, packSessions, redactPackage, type Replaced, SESSIONS_ARCHIVE, SESSIONS_MANIFEST, type SessionsManifest, verifyPackage, verifySessions, writeComponents } from "../scripts/package-tools.ts";
 import { takeCustody } from "../scripts/custody.ts";
+import { fixtureFiles, writeFiles } from "./sensitive-access-fixture.ts";
 import { sealTree, storePaths } from "../scripts/evidence-store.ts";
 import { appendReview } from "../scripts/review.ts";
 
@@ -584,4 +585,18 @@ test("makeDigestReplacer gives the old function's output on small inputs, and 50
   assert.ok(!out.includes(many[12_345]!), "the digest is replaced everywhere");
   assert.equal(records.length, 1);
   assert.ok(cpuSeconds < 20, `${cpuSeconds.toFixed(2)} CPU seconds for 50,000 digests over ${(text.length / 1048576).toFixed(1)} MB`);
+});
+
+test("HYGIENE.json carries the access record as whole counts {roots, readers, edges, maybe}: no seat, job or path is named in it", async () => {
+  const base = await mkdtemp(join(tmpdir(), "hygiene-access-"));
+  dirs.push(base);
+  const S = await writeFiles(base, fixtureFiles());
+  const pkg = join(base, "pkg");
+  await mkdir(pkg, { recursive: true });
+  await hygieneReport(S, pkg);
+  const hyg = JSON.parse(await readFile(join(pkg, "HYGIENE.json"), "utf8")) as { access: Record<string, number> };
+  // j000001 is the one root; agent-2 the one seat the hub's line shows reading; three jobs took an output as an input;
+  // two jobs declared no scope and could read 2 and 4 of the outputs: six possible reaches, none of them a read.
+  assert.deepEqual(hyg.access, { roots: 1, readers: 1, edges: 3, maybe: 6 });
+  assert.doesNotMatch(JSON.stringify(hyg.access), /agent-|j0000|store\//, "counts only");
 });

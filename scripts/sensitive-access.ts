@@ -1255,6 +1255,44 @@ export function renderAccess(rec: AccessRecord, prov: Provenance = provenance(re
   return `${out.join("\n")}\n`;
 }
 
+// --- counts ----------------------------------------------------------------------
+
+/** The numbers of a record that a summary line and HYGIENE.json state: whole counts, no name, no path, no value. */
+export type AccessCounts = {
+  /** The roots of the chains of use: jobs run as secret output, and derived jobs none of whose sources is in the record. */
+  roots: number;
+  /** Seats the harness observed reading a sensitive output (a possible reach is not a read). */
+  readers: number;
+  /** Links the harness verified: a job took a sensitive output as an input. */
+  edges: number;
+  /** Possible reaches: a command that walks a root which holds sensitive outputs, and a job with no scope that could read one. Not reads. */
+  maybe: number;
+};
+
+export function accessCounts(rec: AccessRecord, prov: Provenance = provenance(rec)): AccessCounts {
+  const readers = new Set<string>();
+  let edges = 0;
+  let maybe = rec.reach.reduce((n, r) => n + r.could_read.length, 0);
+  for (const e of rec.events) {
+    if (e.evidence === "harness_verified_link") edges += 1;
+    else if (e.evidence === "harness_observed_read" && e.certainty === "maybe") maybe += 1;
+    else if (e.evidence === "harness_observed_read" && e.source === "trace" && e.seat) readers.add(e.seat);
+  }
+  return { roots: prov.roots.length, readers: readers.size, edges, maybe };
+}
+
+/** The one line of a run summary: what the record holds, said as a lower bound, and where the list is. */
+export function accessSummaryLine(rec: AccessRecord | null): string {
+  if (!rec) return "the access record could not be read";
+  if (!rec.jobs.length) return "none: no job of the run is sensitive";
+  const c = accessCounts(rec);
+  const secret = rec.jobs.filter((j) => j.why === "secret_output").length;
+  const claims = new Set(rec.events.filter((e) => e.evidence === "agent_claim").map((e) => e.entry)).size;
+  const views = rec.events.filter((e) => e.source === "operator_audit").length;
+  const n = rec.jobs.length;
+  return `${n} job${n === 1 ? "" : "s"} (${secret} run as secret output, ${n - secret} derived); the harness observed ${c.readers} seat${c.readers === 1 ? "" : "s"} reading them, verified ${c.edges} link${c.edges === 1 ? "" : "s"} to jobs made from them, and the operator viewed them ${views} time${views === 1 ? "" : "s"}; ${claims} ledger entr${claims === 1 ? "y" : "ies"} written by agents cite${claims === 1 ? "s" : ""} them. This is a lower bound; swarm.sh access lists it`;
+}
+
 // --- command line ----------------------------------------------------------------
 
 /** The record narrowed to one job and/or one seat (the events that touch it; the reach it names). */

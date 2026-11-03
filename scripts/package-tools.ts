@@ -51,6 +51,7 @@ import { REVIEW_ACTIONS } from "./review.ts";
 import { packageLayout, verifyReleases } from "./release-record.ts";
 import { outputWords, sensitiveEntries, sensitiveIndex, withheldPaths } from "./output-hygiene.ts";
 import { MultiMatch } from "./multi-match.ts";
+import { accessCounts, accessRecord } from "./sensitive-access.ts";
 
 const sha256 = (b: string | Buffer) => createHash("sha256").update(b).digest("hex");
 
@@ -897,6 +898,8 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
  * under the manifest. A package to hand over is made with --redact.
  */
 export async function hygieneReport(sandbox: string, dir: string): Promise<{ entries: number; outputs: number; carried: number; hits: LeakHit[]; scanned: number }> {
+  // Who reached a sensitive output, as whole counts (scripts/sensitive-access.ts): no seat, job or path is named here.
+  const accessRec = await accessRecord(sandbox).catch(() => null);
   const raw = await readLedger(sandbox, { raw: true });
   const derived = await sensitiveEntries(sandbox, raw);
   const entries = raw.map((e) => (derived.has(e.seq) && !e.sensitive ? { ...e, sensitive: true } : e));
@@ -938,6 +941,7 @@ export async function hygieneReport(sandbox: string, dir: string): Promise<{ ent
           entries: [...derived.entries()].map(([seq, why]) => ({ seq, why })),
           sensitive_outputs: [...index.jobs.values()].map((j) => ({ job: j.id, why: j.sensitivity.why, from: j.sensitivity.from, status: j.status, files: j.files.length, carried: carriedPaths.filter((c) => c.startsWith(`store/jobs/${j.id}/`)).length })),
           carried: carriedPaths.length,
+          access: accessRec ? accessCounts(accessRec) : null,
           scan: { files: scan.files, words: tokens.length, hits: scan.hits },
         },
         null,

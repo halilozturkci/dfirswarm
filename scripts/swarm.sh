@@ -112,6 +112,7 @@ Commands:
   list               Every run, with spend and state
   status <id>        One run: its agents, markers and spend
   summary <id>       A Markdown report of a run, from its own files
+  access <id>        Who reached a sensitive output, from the access record; --job jN, --seat NAME, --json; a lower bound, it only reads
   context <id>       Each agent's context history from the trace: peaks, lines crossed, hand-offs, summary cost; metrics <id> the process, from its registers
   report <id>        One self-contained report.html; --pdf prints it, --lint checks its citations
   package <id>       Hand a run over: report, board, trace, hashes (--sign signs it)
@@ -9578,6 +9579,32 @@ cmd_summary() {
   node --experimental-strip-types "$ROOT/scripts/summary.ts" "$sandbox"
 }
 
+# Who reached a sensitive output (docs/adr/0018): the access record's reader
+# (scripts/sensitive-access.ts) called with this run's sandbox, runs directory
+# and id, and nothing else. It reads the run's chains and writes nothing.
+cmd_access() {
+  local id="" args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) args+=(--json); shift ;;
+      --job)
+        [[ "${2:-}" =~ ^[a-z0-9-]{1,64}$ ]] || { echo "--job needs a job id (j000001)" >&2; exit 2; }
+        args+=(--job "$2"); shift 2 ;;
+      --seat)
+        [[ -n "${2:-}" && "${2:0:2}" != "--" ]] || { echo "--seat needs a seat name" >&2; exit 2; }
+        args+=(--seat "$2"); shift 2 ;;
+      -*) die_usage "unknown access option: $1" ;;
+      *) [[ -z "$id" ]] || die_usage "access takes one <id>"; id="$1"; shift ;;
+    esac
+  done
+  [[ -n "$id" ]] || { echo "access requires <id>" >&2; exit 2; }
+  ensure_registry
+  local sandbox
+  sandbox="$(json_get "$id" | jq -r '.sandbox // empty')"
+  [[ -n "$sandbox" && -d "$sandbox" ]] || { echo "Unknown swarm id or missing sandbox: $id" >&2; exit 1; }
+  node --experimental-strip-types --no-warnings "$ROOT/scripts/sensitive-access.ts" "$sandbox" --runs-dir "$RUNS_DIR" --run-id "$id" ${args[@]+"${args[@]}"}
+}
+
 # The context history of a run from its trace: what each agent's context
 # did over time, where it crossed the lines, when it handed off, what the
 # summaries cost, and what the record says about the lines themselves.
@@ -12088,6 +12115,7 @@ Exit 0: all of it holds and the signer is one FILE allows (and so is every adopt
 EOF
       ;;
     image-for) echo "  image-for [--pack ID]... [--tools-from DIR] [--playwright] [--no-jobs] [--brains-with-packs]   the image a kickoff's agents would boot, as JSON: ref, digest (null when neither the lock nor msb has it), profile, pinned_by, reason, and jobs (each job image: profile, ref, the packs it serves); read only" ;;
+    access) echo "  access <id> [--job jN] [--seat NAME] [--json]   who reached a sensitive output, joined from the store's journal, the hub's lines on the trace, the ledger and the operator's audit, with a link the harness verified, a read it observed and an agent's claim kept apart; it ends with the sentence that the list is a lower bound; it only reads, and writes nothing" ;;
     export) echo "  export <id> --format csv|timesketch [--out FILE] [--redact]   the ledger as CSV or a Timesketch CSV import (default: <sandbox>/exports/); --redact replaces what a sensitive entry says" ;;
     hold|release) echo "  hold <id> [--reason TEXT] / release <id>   a held run's material is kept from purge and from a new run in its sandbox" ;;
     cap) cat <<'EOF'
@@ -12333,6 +12361,7 @@ main() {
     ui) cmd_ui "$@" ;;
     reap) cmd_reap "$@" ;;
     summary) cmd_summary "$@" ;;
+    access) cmd_access "$@" ;;
     context) cmd_context "$@" ;;
     metrics) cmd_metrics "$@" ;;
     replay) cmd_replay "$@" ;;

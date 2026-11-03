@@ -45,6 +45,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { OperatorRequest } from "../extensions/requests.ts";
+import { HARNESS_READS_SENTENCE, LOWER_BOUND_SENTENCE, accessRecord, provenance, type AccessEvent, type AccessRecord, type ProvenanceNode } from "./sensitive-access.ts";
 import {
   answerProblems,
   attestationAct,
@@ -189,6 +190,12 @@ export type ReportBodyOptions = {
   grounding?: Record<string, string>;
   /** The run's model, for an agent team.json names without one (report.ts: the registry's). */
   defaultModel?: string;
+  /**
+   * The access record (scripts/sensitive-access.ts accessRecord), when the
+   * caller has read it (report.ts reads it once, with the runs directory it
+   * knows); read here, from the sandbox, when not given; none when null.
+   */
+  access?: AccessRecord | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -342,6 +349,8 @@ type JobRecord = {
 type CustodyView = {
   at?: string;
   summary?: string;
+  /** "microvm" or "host", as the kickoff anchored it. */
+  isolation?: string | null;
   inputs?: { unchanged?: boolean; files?: number; changed?: unknown[]; missing?: unknown[]; added?: unknown[]; skipped?: unknown[]; unreadable?: unknown[]; checked?: { files?: number } } | null;
   acquisition?: { source: string | null; given: number; matched: number; mismatched: string[]; not_compared: string[] } | null;
 };
@@ -407,6 +416,10 @@ type Run = {
   cost: QuestionCost | null;
   /** The finish register (leads/finish.jsonl, docs/adr/0015): the coordinator's lease, readiness, the checks, the report's review. Null for a run without one. */
   finish: FinishState | null;
+  /** The access record of the run (who reached a sensitive output); null when it could not be read. */
+  access: AccessRecord | null;
+  /** Where each sensitive job's sensitivity comes from, in words, by job id. */
+  sensitivity: Map<string, string>;
   /** What the negative bar holds each question to: material, and whether it asks whether something exists (the registers'). */
   bar: (id: string) => { material: boolean; existence: boolean };
   /**
@@ -598,6 +611,7 @@ async function loadRun(sandboxArg: string, opts: ReportBodyOptions): Promise<Run
     : null;
   const caseId = /Case\s+`([^`]+)`/.exec(goal?.caseLine ?? "")?.[1] ?? "";
   const release = opts.release ?? null;
+  const access = opts.access !== undefined ? opts.access : await accessRecord(sandbox).catch(() => null);
   // The case contract: external lineage, the operator requests, the material added, the policy's word on more evidence.
   const contract: Run["contract"] = await (async () => {
     const { externalLineage } = await import("./net-broker.ts");
@@ -655,6 +669,8 @@ async function loadRun(sandboxArg: string, opts: ReportBodyOptions): Promise<Run
     cost,
     contract,
     finish: (await stat(join(sandbox, FINISH_LOG)).catch(() => null)) ? await readFinish(sandbox).catch(() => null) : null,
+    access,
+    sensitivity: sensitivityWords(access),
   };
 }
 
@@ -2810,6 +2826,137 @@ function evidenceGaps(run: Run, limits: LedgerEntry[]): Block[] {
   return blocks;
 }
 
+// ---------------------------------------------------------------------------
+// Sensitive outputs and who used them (docs/adr/0018): the access record, as the reader joins it
+// ---------------------------------------------------------------------------
+
+const ACCESS_VIA: Record<string, string> = {
+  path: "a path it was given",
+  text: "the text of a command that names it",
+  api_page: "a page of its log that a job status answer returned",
+};
+const ACCESS_CERTAINTY: Record<string, string> = { certain: "certain", path: "a named path", text: "text that names it", maybe: "a possible reach" };
+const accessWhen = (at: string | null): string => (at ? at.replace("T", " ").replace(/\.\d+Z$|Z$/, "") : "no time");
+
+/** Where each sensitive job's sensitivity comes from, in words, by job id (the journal's account: why the job is sensitive, and the way for each source). */
+function sensitivityWords(rec: AccessRecord | null): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!rec) return out;
+  for (const j of rec.jobs) {
+    if (j.why === "secret_output") {
+      out.set(j.id, j.declared === "tool_manifest" ? "run as secret output: the tool's manifest declares its output secret" : "run as secret output: the seat that asked for it marked its output secret");
+      continue;
+    }
+    const ways = rec.events.filter((e) => e.evidence === "harness_verified_link" && e.by_job === j.id);
+    const from = j.from.map((f) => {
+      const how = [...new Set(ways.filter((e) => e.job === f).map((e) => (e.how ? e.how.replace(/_/g, " ") : "the way is not recorded")))];
+      return `${f}${how.length ? ` (${how.join(", ")})` : ""}`;
+    });
+    out.set(j.id, `derived: made from the sensitive output of ${from.length ? from.join(", ") : "a job the record does not name"}`);
+  }
+  return out;
+}
+
+/** The ledger entry's Sensitive row: the mark, and where it comes from. */
+function entrySensitivity(run: Run, seq: number): string {
+  const base = "it, or what it cites, holds a credential, a key or personal data";
+  if (!run.access) return base;
+  const cites = [...new Set(run.access.events.filter((x) => x.source === "ledger" && x.entry === seq && x.job).map((x) => x.job as string))].sort();
+  if (!cites.length) return `${base}; it is marked sensitive and cites no output the record holds as sensitive`;
+  return `${base}; it cites ${cites.map((id) => `job ${id} (${run.sensitivity.get(id) ?? "sensitive"})`).join("; ")}`;
+}
+
+/**
+ * The section "Sensitive outputs and who used them": per sensitive job, built
+ * from the access record alone (scripts/sensitive-access.ts). The harness's
+ * observed reads, the links it verified and what an agent claims are kept
+ * apart; "opened" is said only of an agent's claim. A run with no sensitive
+ * output says so in one line. The list is a lower bound.
+ */
+function accessBlocks(run: Run): Block[] {
+  const rec = run.access;
+  const blocks: Block[] = [{ k: "h", level: 3, text: "Sensitive outputs and who used them" }];
+  if (!rec) {
+    blocks.push({ k: "p", s: ["The access record could not be read for this run, so this report does not say who used a sensitive output."] });
+    return blocks;
+  }
+  if (!rec.jobs.length) {
+    blocks.push({ k: "p", s: ["No job of this run produced a sensitive output or was made from one."] });
+    return blocks;
+  }
+  const prov = provenance(rec);
+  const nodes = new Map<string, ProvenanceNode>();
+  const visit = (n: ProvenanceNode) => {
+    if (nodes.has(n.job)) return;
+    nodes.set(n.job, n);
+    for (const c of n.used_by) if (!c.repeated) visit(c.node);
+  };
+  for (const r of prov.roots) visit(r);
+  const modelOf = (seat: string) => run.team.find((t) => t.id === seat)?.model ?? "model not recorded";
+  const hostOf = run.custody?.isolation === "microvm" ? "its own microVM" : run.custody?.isolation === "host" ? "the host machine, unisolated" : "host not recorded";
+  const leadOf = (id: string) => run.leads?.views.find((v) => v.jobs.includes(id))?.id;
+  blocks.push({
+    k: "p",
+    lede: true,
+    s: [`${plural(rec.jobs.length, "job")} of this run ${rec.jobs.length === 1 ? "is" : "are"} sensitive. For each: who asked for it, where its sensitivity comes from, which seat the harness observed reading it, the jobs made from it, the ledger entries that cite it and the operator's views. A link the harness verified, a read it observed and what an agent says it did are three different things and are kept apart.`],
+  });
+  for (const [id, n] of nodes) {
+    const job = run.jobs.get(id);
+    const tool = job?.spec.tool ?? job?.spec.recipe ?? job?.spec.command ?? n.kind ?? "unknown";
+    const lead = leadOf(id);
+    const rows: Row[] = [];
+    rows.push({ label: "Output", s: [run.jobs.has(id) ? { a: `#job-${id}`, text: `job ${id}` } : `job ${id}`, `, ${job?.spec.tool ? "tool " : job?.spec.recipe ? "recipe " : "command "}`, { code: tool.length > 160 ? `${tool.slice(0, 160)}…` : tool }, `, asked for by ${n.seat ?? "an unknown seat"}${lead ? `, under lead ${lead}` : ", under no lead the register holds"}`] });
+    rows.push({ label: "Sensitive because", s: [run.sensitivity.get(id) ?? "the record does not say"] });
+    if (n.source_unknown) rows.push({ label: "", s: ["its sources are not among the sensitive jobs of the record"] });
+    // The harness's observed reads, by seat and way.
+    const groups = new Map<string, { seat: string; via: string; certainty: string; count: number; first: string | null; last: string | null; more: boolean }>();
+    const maybe: AccessEvent[] = [];
+    for (const e of n.observed) {
+      if (e.source !== "trace" || !e.seat) continue;
+      if (e.certainty === "maybe") {
+        maybe.push(e);
+        continue;
+      }
+      const key = `${e.seat}\0${e.via}\0${e.certainty}`;
+      const g = groups.get(key) ?? groups.set(key, { seat: e.seat, via: e.via, certainty: e.certainty, count: 0, first: null, last: null, more: false }).get(key)!;
+      if (e.burst) g.more = true;
+      else g.count += 1;
+      if (e.at && (!g.first || e.at < g.first)) g.first = e.at;
+      if (e.at && (!g.last || e.at > g.last)) g.last = e.at;
+    }
+    if (!groups.size) rows.push({ label: "Read by", s: ["no seat: the harness observed no read of it (a lower bound)"] });
+    [...groups.values()].forEach((g, i) =>
+      rows.push({ label: i ? "" : "Read by", s: [`${g.seat} (${modelOf(g.seat)}, on ${hostOf}): ${plural(g.count, "time")}${g.more ? " and more (the rest are on the trace)" : ""}, first ${accessWhen(g.first)}, last ${accessWhen(g.last)}; through ${ACCESS_VIA[g.via] ?? g.via}; ${ACCESS_CERTAINTY[g.certainty] ?? g.certainty}; observed by the harness`], voice: "fact" }),
+    );
+    for (const e of maybe) rows.push({ label: "Possible reach", s: [`${e.seat}: ${e.tool_row?.tool ?? "a command"} could reach it${e.paths[0] ? ` (${e.paths[0]})` : ""} at ${accessWhen(e.at)}: not a read`] });
+    if (n.could_be_read_by.length) rows.push({ label: "Could have read", s: [`${n.could_be_read_by.join(", ")}: jobs that declared no scope and could read it when they started; not a read`] });
+    // The jobs made from it, from the journal.
+    n.used_by.forEach((c, i) =>
+      rows.push({ label: i ? "" : "Made into", s: [run.jobs.has(c.node.job) ? { a: `#job-${c.node.job}`, text: `job ${c.node.job}` } : `job ${c.node.job}`, ` took it as an input${c.link.how ? ` (${c.link.how.replace(/_/g, " ")})` : ""}, asked for by ${c.link.seat ?? "an unknown seat"}; a link the harness verified${c.repeated ? "; shown under its own source too" : ""}`] }),
+    );
+    for (const l of n.later_jobs_of_readers) rows.push({ label: "Inference", s: [`${l.seat} read it and later asked for job ${l.job} (${accessWhen(l.at)}), which declared no link to it: an inference, not a record`] });
+    // What an agent says.
+    n.claims.forEach((e, i) =>
+      rows.push({ label: i ? "" : "Cited by", s: [{ e: e.entry ?? 0 }, ` by ${e.seat ?? "an unknown seat"} cites it: the agent's own claim that it opened it, not something the harness observed`], voice: "interpretation" }),
+    );
+    // The operator's views.
+    const views = n.observed.filter((e) => e.source === "operator_audit");
+    if (views.length) {
+      const by = new Map<string, { count: number; first: string | null; last: string | null }>();
+      for (const e of views) {
+        const g = by.get(e.operator ?? "?") ?? by.set(e.operator ?? "?", { count: 0, first: null, last: null }).get(e.operator ?? "?")!;
+        g.count += 1;
+        if (e.at && (!g.first || e.at < g.first)) g.first = e.at;
+        if (e.at && (!g.last || e.at > g.last)) g.last = e.at;
+      }
+      [...by].forEach(([op, g], i) => rows.push({ label: i ? "" : "Operator's views", s: [`${op}: ${plural(g.count, "view")} in the console, first ${accessWhen(g.first)}, last ${accessWhen(g.last)}; recorded in the operator's audit`] }));
+    }
+    blocks.push({ k: "box", cls: "exhibit job", id: `access-${id}`, level: 4, title: [{ plain: `Job ${id}` }], chips: [{ text: n.why === "secret_output" ? "secret output" : n.why === "derived" ? "derived" : "sensitive", tone: "brick" }], body: [{ k: "rows", rows }] });
+  }
+  blocks.push({ k: "p", s: [HARNESS_READS_SENTENCE] }, { k: "p", s: [LOWER_BOUND_SENTENCE] });
+  return blocks;
+}
+
 function limitsSection(run: Run, memo: Map<number, EntryState>): BodySection {
   const blocks: Block[] = [];
   const out = (e: LedgerEntry, extra: Row[]) => blocks.push(citeBlock(e, run, memo, extra));
@@ -2909,6 +3056,7 @@ function limitsSection(run: Run, memo: Map<number, EntryState>): BodySection {
   }
 
   if (run.html.limits) blocks.push({ k: "h", level: 3, text: "The limits of this run" }, { k: "html", html: run.html.limits });
+  blocks.push(...accessBlocks(run));
   blocks.push({ k: "h", level: 3, text: "What this report does not claim" });
   blocks.push({
     k: "list",
@@ -3113,7 +3261,7 @@ function exhibitBox(e: LedgerEntry, run: Run, memo: Map<number, EntryState>): Bl
   else if (s.grounding === "grounded") rows.push({ label: "Grounding", s: ["a call before this entry named its source"] });
   else if (s.grounding === GROUNDED_VIA_JOB) rows.push({ label: "Grounding", s: ["no call named its source; a job this entry cites was given an evidence input before it was recorded, which says the job was given the input and not that it read this path"] });
   rows.push({ label: "Examiner review", s: [reviewWords(run, s)] });
-  if (e.sensitive) rows.push({ label: "Sensitive", s: ["it, or what it cites, holds a credential, a key or personal data"] });
+  if (e.sensitive) rows.push({ label: "Sensitive", s: [entrySensitivity(run, e.seq)] });
   rows.push({ label: "Recorded by", s: [e.authors.join(", ")] });
   const models = [...new Set(e.authors.map((id) => run.team.find((t) => t.id === id)?.model).filter((m): m is string => Boolean(m)))];
   if (models.length) rows.push({ label: "Model", s: [models.join(", ")] });
@@ -3152,6 +3300,7 @@ function jobsSection(run: Run): BodySection {
     const sp = j.spec;
     const rows: Row[] = [];
     rows.push({ label: "Kind", s: [`${sp.kind ?? "unknown"}${sp.profile ? `, profile ${sp.profile}` : ""}`] });
+    if (run.sensitivity.has(j.id)) rows.push({ label: "Sensitive", s: [run.sensitivity.get(j.id) as string] });
     rows.push({ label: "Ended", s: [`${j.status ?? "unknown"}${j.exit !== undefined ? ` (exit ${j.exit === null ? "none" : j.exit})` : ""}${j.reason ? `: ${j.reason}` : ""}`] });
     if (j.requester) rows.push({ label: "Asked for by", s: [`${j.requester.agent ?? "?"}${j.requester.name ? ` (${j.requester.name})` : ""}${j.requester.doing ? `, doing: ${j.requester.doing}` : ""}`] });
     rows.push({ label: "Image", s: [{ code: j.image ?? "not recorded" }, " ", { code: j.image_digest ?? "digest not recorded" }] });
