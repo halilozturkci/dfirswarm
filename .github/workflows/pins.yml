@@ -6,7 +6,10 @@ name: pinned downloads
 # the same address) is fetched and its sha256 compared. A pin that rotted or
 # changed fails the run and is named in the job summary, so it is found here
 # and not by the next pull request's image build. Re-pinning is a manual change:
-# images/README.md, "Re-pinning a download".
+# images/README.md, "Re-pinning a download". A failed scheduled run opens one
+# tracking issue labelled ci-failure (or comments on the open one), the next
+# green one closes it (scripts/ci-report-failure.sh, as ci.yml and
+# image-boot.yml do); a run by hand is not reported.
 
 on:
   schedule:
@@ -40,3 +43,25 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
+
+  report-failure:
+    name: tracking issue for a failed run
+    needs: [check]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open or comment on the tracking issue, or close it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW: ${{ github.workflow }}
+        run: bash scripts/ci-report-failure.sh

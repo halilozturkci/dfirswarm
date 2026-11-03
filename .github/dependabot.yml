@@ -22,3 +22,41 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # The images' inputs. Each opens a pull request that a person reviews; none
+  # is merged by itself. The base image digests in images/base.Dockerfile and
+  # tests/linux/Dockerfile move here; the apt snapshot date is moved by
+  # .github/workflows/apt-snapshot.yml. The pinned downloads of the packs
+  # (requires/host.json) are not an ecosystem Dependabot reads: the weekly
+  # .github/workflows/pins.yml asks every one of them.
+  - package-ecosystem: docker
+    directory: /images
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    ignore:
+      # A Node major moves by hand, with the images' own tests.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker
+    directory: /tests/linux
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    ignore:
+      # The Linux test image follows .nvmrc and engines.node: a newer major
+      # moves with them.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: pip
+    directory: /images
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+  - package-ecosystem: npm
+    directory: /spikes/microvm-smoke
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    ignore:
+      # Same hold as the root: measured on this microsandbox.
+      - dependency-name: "microsandbox"
