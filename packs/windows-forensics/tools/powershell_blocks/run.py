@@ -2128,6 +2128,7 @@ NS = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
 PARSER = "powershell_blocks/1"
 DEADLINE_SECONDS = 54             # the manifest allows 60; the seal stop (56.5) is 2.5 seconds later
 READ_SECONDS = 36                 # reading stops here, so that the files and the answer are made inside the run's own clock
+OUTPUT_SECONDS = 48               # listing the blocks stops here (the rows are judged one by one, which costs time in proportion to their number)
 FILE_MAGIC = b"ElfFile\x00"
 MAX_FRAGMENTS = 200000            # fragments kept (metadata only: the text is never held)
 MAX_BLOCKS = 100000
@@ -2148,7 +2149,7 @@ STARTED = time.monotonic()
 OWN_NAMES.update((
     "all_problems", "arrival", "auto_logged_warning", "block", "block_count", "block_status", "blocks", "blocks_by_source", "blocks_by_status", "blocks_file",
     "channel", "chunk_offset", "chunks_declared", "chunks_in_file", "chunks_not_read", "chunks_read", "complete", "computer", "conflict", "duplicate_numbers",
-    "duplicates", "error", "expected_fragments", "file_bytes", "fragment_count", "fragments_file", "fragments_kept", "fragments_malformed",
+    "duplicates", "error", "expected_fragments", "file_bytes", "fragment_count", "fragments_file", "channels", "blocks_listed", "blocks_not_listed", "fragments_kept", "fragments_malformed",
     "fragments_not_kept", "fragments_text_withheld_upstream", "fragments_with_unpaired_surrogates", "gaps", "header_dirty", "header_flags", "input_format",
     "levels", "lines_too_long", "level", "message_number", "message_total", "message_totals", "missing_count", "missing_ranges", "missing_ranges_total",
     "note", "numbers_distinct", "numbers_out_of_range", "other", "parse_errors", "parser", "path", "paths", "paths_not_listed", "powershell_core",
@@ -2682,9 +2683,11 @@ def main():
     c = blocks.c
     keys = sorted(blocks.groups)
     by_status = {"complete": 0, "gaps": 0, "conflict": 0}
+    equal_extra = 0
     by_source = {}
     text_out = text_tmp = text_src = None
     text_done = text_skipped = 0
+    not_listed = 0
     if write_text:
         try:
             fd, name = tempfile.mkstemp(dir=text_holder.path.parent, prefix=".powershell_blocks-text-")
@@ -2698,13 +2701,18 @@ def main():
     for i, (source, computer, sbid) in enumerate(keys):
         if STOP["signal"] is not None:
             raise Interrupted(STOP["signal"])
+        if time.monotonic() - STARTED > OUTPUT_SECONDS:
+            not_listed = len(keys) - i          # the rows of these blocks are not made: the clock for the files is spent
+            text_skipped += not_listed if write_text else 0
+            break
         group = blocks.groups[(source, computer, sbid)]
         a = analyse(group["frags"])
         by_status[a["status"]] += 1
+        equal_extra += sum(d[1] - 1 for d in a["dups"] if d[2]) if a["status"] == "complete" else 0
         by_source[source] = by_source.get(source, 0) + 1
         withheld = sum(1 for f in a["order"] if f[11] & 2)
         row = {
-            "block": i, "source": source, "channel": sorted(group["channels"])[0] if group["channels"] else "", "computer": computer, "script_block_id": sbid,
+            "block": i, "source": source, "channel": sorted(group["channels"])[0] if group["channels"] else "", "channels": sorted(group["channels"]), "computer": computer, "script_block_id": sbid,
             "block_status": a["status"], "expected_fragments": a["expected"], "message_totals": a["totals"][:LISTED], "fragment_count": len(a["order"]),
             "numbers_distinct": a["distinct"], "missing_count": a["missing_count"], "missing_ranges": a["missing"][:LISTED], "missing_ranges_total": len(a["missing"]),
             "duplicate_numbers": len(a["dups"]), "unequal_copies": a["unequal"],
@@ -2780,6 +2788,8 @@ def main():
         reasons.append("%d Path value(s) are not listed" % c["paths_not_listed"])
     if text_skipped:
         reasons.append("%d block(s) were not written to the text file: the clock ran out" % text_skipped)
+    if not_listed:
+        reasons.append("%d of %d block(s) were not listed: the output clock (%d seconds) ran out, so their rows and fragments are in no file (blocks_not_listed)" % (not_listed, len(keys), OUTPUT_SECONDS))
     if by_status["gaps"]:
         reasons.append("%d block(s) have fragments missing (block_status gaps)" % by_status["gaps"])
     if by_status["conflict"]:
@@ -2789,7 +2799,10 @@ def main():
     if reasons:
         status, basis = "partial", "; ".join(reasons)
     else:
-        status, basis = "complete", "every record of the input was read and every block has all of its fragments, once each, with one MessageTotal"
+        status = "complete"
+        basis = "every record of the input was read and every block has every number from 1 to its one MessageTotal"
+        if equal_extra:
+            basis += "; %d extra copy(ies) of equal text are listed under duplicates" % equal_extra
     answer = {
         "parser": PARSER,
         "status": status,
@@ -2809,7 +2822,9 @@ def main():
         "fragments_text_withheld_upstream": c["withheld_upstream"],
         "fragments_with_unpaired_surrogates": c["surrogates"],
         "lines_too_long": c["lines_too_long"],
-        "block_count": blocks_result["matched"],
+        "block_count": len(keys),
+        "blocks_listed": blocks_result["matched"],
+        "blocks_not_listed": not_listed,
         "blocks_by_status": by_status,
         "blocks_by_source": by_source,
         "returned": blocks_result["returned"],
@@ -2818,7 +2833,7 @@ def main():
         "problem_count": c["problems"],
         "problems": problems_page.page,
         "note": "A block is the 4104 records that share a source (Windows PowerShell or PowerShell 7, kept apart), a Computer and a ScriptBlockId, in the order of "
-                "MessageNumber. block_status: complete (every number 1..MessageTotal once, one MessageTotal), gaps (numbers missing, listed as ranges), conflict "
+                "MessageNumber. block_status: complete (every number 1..MessageTotal present, one MessageTotal; extra copies of equal text are listed under duplicates), gaps (numbers missing, listed as ranges), conflict "
                 "(MessageTotal values that disagree, a number outside 1..MessageTotal, or copies of one number with different text). A missing fragment is a fact "
                 "about the log (it wrapped, was cleared or was carved), not about the script. Level 3 (a Warning) is a block PowerShell logged by itself. The text of "
                 "the blocks is never shown and never evaluated or decoded; text_length counts the characters of the first copy of every number. Per fragment, "

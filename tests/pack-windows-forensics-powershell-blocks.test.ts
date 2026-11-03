@@ -119,6 +119,11 @@ test("a duplicate with the same text and one with different text are told apart"
     const out = await run(cwd, { path: await put(cwd, [...same, ...differs]) });
     const a = blockOf(out, sid(1));
     assert.equal(a.block_status, "complete", "a copy that says the same is noted, not a conflict");
+    assert.equal(out.status, "partial", "the other block conflicts");
+    const only = await run(cwd, { path: await put(cwd, same, "same.jsonl") });
+    assert.equal(only.status, "complete");
+    assert.match(only.status_basis, /1 extra copy\(ies\) of equal text are listed under duplicates/, "an answer with a duplicate does not say every fragment is there once");
+    assert.doesNotMatch(only.status_basis, /once each/);
     assert.deepEqual(a.duplicates, [{ message_number: 2, records: 2, same_text: true }]);
     const b = blockOf(out, sid(2));
     assert.equal(b.block_status, "conflict");
@@ -379,6 +384,28 @@ test("100,000 fragments of one block are read inside the clock and the answer st
     assert.equal(out.fragments_kept, n);
     assert.ok(first.stdout.length < 20_000, "the answer does not grow with the fragments");
     assert.equal((await rowsOf(cwd, out.fragments_file)).length, n, "and the file holds every fragment");
+  });
+});
+
+test("the clock for listing blocks ends the loop: the blocks not listed are counted and the answer is partial", async () => {
+  await withCwd(async (cwd) => {
+    const rows = Array.from({ length: 40 }, (_, i) => frag(1, 1, { id: sid(i + 1) }));
+    const path = await put(cwd, rows);
+    const out = JSON.parse((await runTool(withConstant("OUTPUT_SECONDS", 0), cwd, { path })).stdout) as Answer;
+    assert.equal(out.block_count, 40);
+    assert.equal(out.blocks_not_listed, 40);
+    assert.equal(out.blocks_listed, 0);
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /40 of 40 block\(s\) were not listed/);
+  });
+});
+
+test("two other channels with one Computer and ScriptBlockId are one block that shows both channels", async () => {
+  await withCwd(async (cwd) => {
+    const out = await run(cwd, { path: await put(cwd, [frag(1, 2, { channel: "Other/A" }), frag(2, 2, { channel: "Other/B" })]) });
+    assert.equal(out.block_count, 1);
+    assert.deepEqual(out.blocks[0].channels, ["Other/A", "Other/B"]);
+    assert.equal(out.blocks[0].source, "other");
   });
 });
 
