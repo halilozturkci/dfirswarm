@@ -13,17 +13,22 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { disputeEntry, initSandbox, recordEntry } from "../extensions/protocol.ts";
-import { ledgerChain, packSessions, redactPackage, SESSIONS_ARCHIVE, SESSIONS_MANIFEST, type SessionsManifest, verifyPackage, verifySessions, writeComponents } from "../scripts/package-tools.ts";
+import { ledgerChain, makeDigestReplacer, packSessions, redactPackage, type Replaced, SESSIONS_ARCHIVE, SESSIONS_MANIFEST, type SessionsManifest, verifyPackage, verifySessions, writeComponents } from "../scripts/package-tools.ts";
 import { takeCustody } from "../scripts/custody.ts";
+import { sealTree, storePaths } from "../scripts/evidence-store.ts";
 import { appendReview } from "../scripts/review.ts";
 
 const dirs: string[] = [];
 after(async () => {
-  for (const d of dirs) await rm(d, { recursive: true, force: true });
+  // A sealed job output is read-only, as the store leaves it.
+  for (const d of dirs) {
+    spawnSync("chmod", ["-R", "u+w", d]);
+    await rm(d, { recursive: true, force: true });
+  }
 });
 const sha = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
 const SECRET = "123456-654321-111222-333444-555666-777888-999000-121212";
@@ -452,4 +457,131 @@ test("a value in a JSON escape, in UTF-16 text and in a session file's name is m
   assert.match(escapedLine, /hidden-[0-9a-f]{24}/);
   JSON.parse(escapedLine.trim());
   assert.equal(verifySessions(pkg).ok, true);
+});
+
+// --- redaction on sealed copies, directory citations and many digests ----------------------------------
+
+test("a package that holds a read-only (0444) sealed log of a sensitive job redacts and verifies, and the run's own log keeps its mode", async () => {
+  const { root, pkg } = await packaged();
+  // The run's sealed original and the package's copy of it, both as the store leaves them: read-only.
+  await mkdir(join(root, "store", "jobs", "j000001"), { recursive: true });
+  const original = join(root, "store", "jobs", "j000001", "stdout.log");
+  await writeFile(original, `recovery key: ${SECRET}\n`);
+  await chmod(original, 0o444);
+  const copy = join(pkg, "store", "jobs", "j000001", "stdout.log");
+  await chmod(copy, 0o444);
+  const r = await redactPackage(root, pkg);
+  assert.deepEqual(r.leaks, []);
+  assert.doesNotMatch(await readFile(copy, "utf8"), new RegExp(SECRET));
+  assert.equal((await stat(copy)).mode & 0o777, 0o644, "the redacted copy is the copy's mode with the owner's write bit");
+  assert.equal((await stat(original)).mode & 0o777, 0o444, "the run's sealed original keeps its mode");
+  assert.match(await readFile(original, "utf8"), new RegExp(SECRET), "and its bytes");
+  assert.deepEqual((await readdir(join(pkg, "store", "jobs", "j000001"))).filter((n) => n.includes(".tmp-")), [], "no temporary file is left");
+  const v = verifyPackage(pkg);
+  assert.equal(v.ok, true, v.lines.join("\n"));
+});
+
+/** A sandbox whose sensitive entry cites a directory of a sealed job's output, and a package --with-outputs that holds the files under it. */
+async function citingDirectory(): Promise<{ root: string; pkg: string; dir: string }> {
+  const root = await mkdtemp(join(tmpdir(), "pkg-cite-"));
+  dirs.push(root);
+  await initSandbox(root, { reset: true, agentIds: ["a0"] });
+  const staging = join(root, "..", `staging-${sha(root).slice(0, 8)}`);
+  dirs.push(staging);
+  await mkdir(join(staging, "archive", "contact"), { recursive: true });
+  await writeFile(join(staging, "archive", "contact", "a.txt"), "Joe Doe, 12 Elm Street\n");
+  await writeFile(join(staging, "archive", "contact", "b.txt"), "Jane Roe, 3 Oak Avenue\n");
+  await sealTree(root, staging, join(storePaths(root).jobs, "j000001", "out"), "j000001", 1);
+  await writeFile(join(storePaths(root).jobs, "j000001", "job.json"), JSON.stringify({ id: "j000001", state: "committed", requester: { agent: "a0" }, status: "ok", exit: 0, spec: { kind: "command", scope: "all", command: "export" } }));
+  // A ref names an object of the job's manifest, so a directory is not recorded as one: the entry cites a file, and the line is then written as citing the directory
+  // (the ledger is read raw here, as redaction reads it), the shape a run packaged with its outputs can hold.
+  const e = await recordEntry({ sandboxRoot: root, agentId: "a0" }, { kind: "ioc", value: "the contact archive", source: "the export", evidence: "a listing", sensitive: true, refs: ["job:j000001/archive/contact/a.txt"] });
+  assert.ok(e.ok, JSON.stringify(e));
+  const entries = join(root, "ledger", "entries.jsonl");
+  await writeFile(entries, (await readFile(entries, "utf8")).replace("job:j000001/archive/contact/a.txt", "job:j000001/archive/contact/"));
+  const pkg = join(root, "package");
+  const out = join(pkg, "store", "jobs", "j000001", "out", "archive", "contact");
+  await mkdir(out, { recursive: true });
+  await mkdir(join(out, "nested"), { recursive: true });
+  await writeFile(join(out, "a.txt"), "Joe Doe, 12 Elm Street\n");
+  await writeFile(join(out, "b.txt"), "Jane Roe, 3 Oak Avenue\n");
+  await writeFile(join(out, "nested", "c.txt"), "a third record\n");
+  await writeFile(join(pkg, "ledger.jsonl"), await readFile(join(root, "ledger", "entries.jsonl")));
+  return { root, pkg, dir: out };
+}
+
+test("a sensitive entry that cites a job's output directory has every file under it withheld, each by its keyed id; a symlink there is refused and named", async () => {
+  const { root, pkg, dir } = await citingDirectory();
+  const r = await redactPackage(root, pkg);
+  for (const f of ["a.txt", "b.txt", join("nested", "c.txt")]) {
+    const text = await readFile(join(dir, f), "utf8");
+    assert.match(text, /cited by a sensitive ledger entry \(E-1\); matched hidden-[0-9a-f]{24}/, f);
+    assert.doesNotMatch(text, /Elm Street|Oak Avenue|third record/, f);
+  }
+  const ids = new Set((await Promise.all(["a.txt", "b.txt"].map((f) => readFile(join(dir, f), "utf8")))).map((x) => /matched (hidden-[0-9a-f]{24})/.exec(x)![1]));
+  assert.equal(ids.size, 2, "each file has its own id");
+  // A link under the cited directory is not followed: the redaction is refused, naming it.
+  const again = await citingDirectory();
+  await symlink("/etc/hostname", join(again.dir, "link.txt"));
+  await assert.rejects(redactPackage(again.root, again.pkg), /cites store\/jobs\/j000001\/out\/archive\/contact, which holds store\/jobs\/j000001\/out\/archive\/contact\/link\.txt: a symbolic link; redaction refuses it and does not follow it/);
+});
+
+test("makeDigestReplacer gives the old function's output on small inputs, and 50,000 digests over 20 MB take little CPU time", () => {
+  const hex = (n: number) => createHash("sha256").update(`digest-${n}`).digest("hex");
+  /** The function this replaced, kept as the oracle: once per digest, over the whole text. */
+  const oldReplace = (list: string[], hide: (sha: string) => string, text: string, replaced: Replaced[]): string => {
+    let t = text;
+    for (const sha of list) {
+      if (!t.includes(sha)) continue;
+      const id = hide(sha);
+      const count = t.split(sha).length - 1;
+      t = t.split(sha).join(id);
+      replaced.push({ what: "text", entry: null, sha256_of_original: id, count, why: "the digest of a sensitive output" });
+    }
+    return t;
+  };
+  const small = Array.from({ length: 40 }, (_, i) => hex(i));
+  const hide = (sha: string) => `hidden-${sha.slice(0, 24)}`;
+  const a = small[3]!;
+  const b = small[7]!;
+  const corpus = [
+    "",
+    "no digest here",
+    `one ${a} two`,
+    `${a}${a}`,
+    `${a} and ${b} and ${a}`,
+    `line one ${a}\nline two ${b}\n{"sha":"${a}","other":"${hex(500)}"}`,
+    `${a.toUpperCase()} upper case is not a sensitive digest as written`,
+    `${hex(500)} not sensitive, ${b} sensitive`,
+    // Overlapping runs: a digest inside a longer hex run, two digests back to back, a digest preceded and followed by hex.
+    `ab${a}cd`,
+    `${a}${b}`,
+    `${a}${a.slice(0, 20)}`,
+    `${b.slice(40)}${a}${b.slice(0, 40)}`,
+    `${small.join("")}`,
+    `x ${small.join(" ")} y`,
+  ];
+  for (const text of corpus) {
+    const wantRecords: Replaced[] = [];
+    const gotRecords: Replaced[] = [];
+    const want = oldReplace(small, hide, text, wantRecords);
+    const r = makeDigestReplacer(small, hide);
+    const got = r.replace(text, gotRecords);
+    assert.equal(got, want, JSON.stringify(text.slice(0, 60)));
+    assert.deepEqual(gotRecords, wantRecords, JSON.stringify(text.slice(0, 60)));
+    assert.equal(r.holds(text), small.some((d) => text.includes(d)), JSON.stringify(text.slice(0, 60)));
+  }
+  // 50,000 digests over a 20 MB text: process CPU time, not wall clock, with a wide bound. The old function does 50,000 passes over the text.
+  const many = Array.from({ length: 50_000 }, (_, i) => hex(100_000 + i));
+  const chunk = `${"a line of an ordinary report with a few words and no digest in it ".repeat(20)}\n${many[12_345]} ${hex(7)}\n`;
+  const text = chunk.repeat(Math.ceil((20 * 1024 * 1024) / chunk.length));
+  const replacer = makeDigestReplacer(many, (sha) => `hidden-${sha.slice(0, 24)}`);
+  const before = process.cpuUsage();
+  const records: Replaced[] = [];
+  const out = replacer.replace(text, records);
+  const used = process.cpuUsage(before);
+  const cpuSeconds = (used.user + used.system) / 1e6;
+  assert.ok(!out.includes(many[12_345]!), "the digest is replaced everywhere");
+  assert.equal(records.length, 1);
+  assert.ok(cpuSeconds < 20, `${cpuSeconds.toFixed(2)} CPU seconds for 50,000 digests over ${(text.length / 1048576).toFixed(1)} MB`);
 });

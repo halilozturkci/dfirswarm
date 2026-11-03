@@ -49,3 +49,16 @@ fields and listed one of four gaps. Each uncited object shows its lineage role
 (case evidence, case-derived); a validation control or a tool reference is
 listed apart, not as evidence no entry cites. Every list stays inside the
 post's bound.
+
+### Fixed: harness
+
+`package --redact` works on a package that holds sealed read-only (0444) files:
+a redacted file is written as a temporary file and renamed over the package's
+copy, and the run's own files are never touched. A sensitive citation of a
+directory (a job's output directory, in a package made `--with-outputs`)
+withholds every file under it, each by its own keyed id, instead of failing
+with EISDIR; a link or a device there is refused and named, never followed.
+Sensitive digests are replaced in one pass over a text (the hex runs found
+once, each digest looked up in a Set), so the cost grows with the text, not
+with the number of digests: 50,000 digests over 20 MB take a fraction of a
+CPU second.

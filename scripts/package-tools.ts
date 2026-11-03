@@ -40,7 +40,7 @@
  */
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -105,6 +105,63 @@ export type LeakHit = { path: string; entry: number; token_sha256: string; as: s
 export type ScanToken = SensitiveToken & { output?: string; id?: string };
 /** What a redacted package withheld whole, and why: never its bytes, always its sha256. */
 export type Withheld = { path: string; job: string | null; why: string; sha256_of_original: string; bytes: number };
+
+/**
+ * Every sensitive digest in a text, found in one pass. A digest is 64 hex
+ * characters, so it stands only inside a run of hex characters of 64 or more:
+ * the runs are found with one scan of the text and each window of 64 inside a
+ * run is looked up in a Set, so the cost grows with the text and not with the
+ * number of digests (it used to search the whole text once per digest: 65,579
+ * digests over a 25.5 MB report did not finish). The replacement inside a run
+ * keeps the old order (the digests in their list order, each replaced
+ * wherever it stands in the run), which only matters where two digests
+ * overlap. `replaced` gets one record per digest, in list order, with its
+ * count over the whole text, as before. `hide` gives (and records) the keyed
+ * id of a digest.
+ */
+export function makeDigestReplacer(digests: Iterable<string>, hide: (sha: string) => string): { holds: (text: string) => boolean; replace: (text: string, replaced: Replaced[]) => string } {
+  const order = new Map<string, number>();
+  for (const d of digests) if (!order.has(d)) order.set(d, order.size);
+  const RUN = /[0-9a-fA-F]{64,}/g;
+  /** The digests standing as a window of 64 in a run, in list order. */
+  const inRun = (run: string): string[] => {
+    let found: Set<string> | null = null;
+    for (let i = 0; i + 64 <= run.length; i += 1) {
+      const w = run.slice(i, i + 64);
+      if (order.has(w)) (found ??= new Set()).add(w);
+    }
+    return found ? [...found].sort((a, b) => order.get(a)! - order.get(b)!) : [];
+  };
+  return {
+    holds(text: string): boolean {
+      if (!order.size) return false;
+      for (const m of text.matchAll(RUN)) if (inRun(m[0]).length) return true;
+      return false;
+    },
+    replace(text: string, replaced: Replaced[]): string {
+      if (!order.size) return text;
+      const counts = new Map<string, number>();
+      let out = "";
+      let from = 0;
+      for (const m of text.matchAll(RUN)) {
+        const shas = inRun(m[0]);
+        if (!shas.length) continue;
+        let run = m[0];
+        for (const sha of shas) {
+          if (!run.includes(sha)) continue;
+          const count = run.split(sha).length - 1;
+          run = run.split(sha).join(hide(sha));
+          counts.set(sha, (counts.get(sha) ?? 0) + count);
+        }
+        out += text.slice(from, m.index!) + run;
+        from = m.index! + m[0].length;
+      }
+      if (!counts.size) return text;
+      for (const sha of [...counts.keys()].sort((a, b) => order.get(a)! - order.get(b)!)) replaced.push({ what: "text", entry: null, sha256_of_original: hide(sha), count: counts.get(sha), why: "the digest of a sensitive output" });
+      return out + text.slice(from);
+    },
+  };
+}
 
 /** A sensitive entry's words as they may stand in a file: as written, JSON-escaped. */
 const forms = (t: string) => [...new Set([t, JSON.stringify(t).slice(1, -1)])];
@@ -514,7 +571,18 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
   const changes: RedactionChange[] = [];
   let lines = 0;
   const change = (rel: string, before: Buffer, after: Buffer | string, why: string, replaced: Replaced[]) => {
-    writeFileSync(join(dir, rel), after);
+    // The package's copy of a sealed file is read-only (0444): it is replaced by a temporary file renamed over it, never written in place.
+    // The run's own files are never touched; the new file is the copy's mode with the owner's write bit.
+    const target = join(dir, rel);
+    const tmp = `${target}.tmp-${randomBytes(6).toString("hex")}`;
+    const mode = (lstatSync(target).mode & 0o777) | 0o200;
+    try {
+      writeFileSync(tmp, after, { mode });
+      renameSync(tmp, target);
+    } catch (err) {
+      rmSync(tmp, { force: true });
+      throw err;
+    }
     changes.push({ path: rel, before_sha256: sha256(before), after_sha256: sha256(after), why, replaced });
   };
   const holds = (l: string) => tokens.find((t) => forms(t.token).some((f) => holdsWord(l, f)));
@@ -672,8 +740,21 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
     }
   }
   // A file a sensitive entry cites, whole; by a keyed id, its digest and path in the sidecar.
-  for (const c of citedPaths(entries)) {
-    if (!existsSync(join(dir, c.path)) || handled.has(c.path)) continue;
+  // A citation may name a file or, in a package made --with-outputs, a directory of a job's output (job:j000001/archive/contact/): the path's kind is
+  // read with lstat, a directory expands to every regular file under it (each withheld by its own keyed id), and a link or a device anywhere there is
+  // refused and named, never followed.
+  const citedFiles: Array<{ path: string; seq: number }> = [];
+  const expandCited = (rel: string, seq: number, top: string): void => {
+    const abs = join(dir, rel);
+    const st = lstatSync(abs, { throwIfNoEntry: false });
+    if (!st) return;
+    if (st.isFile()) citedFiles.push({ path: rel, seq });
+    else if (st.isDirectory()) for (const name of readdirSync(abs).sort()) expandCited(`${rel.replace(/\/$/, "")}/${name}`, seq, top);
+    else throw new Error(`a sensitive entry (E-${seq}) cites ${safePath(top.replace(/\/$/, ""))}, which holds ${safePath(rel)}: ${st.isSymbolicLink() ? "a symbolic link" : "neither a regular file nor a directory"}; redaction refuses it and does not follow it`);
+  };
+  for (const c of citedPaths(entries)) expandCited(c.path, c.seq, c.path);
+  for (const c of citedFiles) {
+    if (handled.has(c.path)) continue;
     const before = readFileSync(join(dir, c.path));
     const id = hideDigest(sha256(before), `cited by a sensitive entry (E-${c.seq})`, c.path);
     handled.add(c.path);
@@ -683,18 +764,8 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
   // job record, the store journal, a revision index) is the content's name:
   // replaced by its keyed id, so the handover carries no digest a low-entropy
   // value could be brute-forced from.
-  const digestList = [...sensitiveDigests];
-  const replaceDigests = (text: string, replaced: Replaced[]): string => {
-    let t = text;
-    for (const sha of digestList) {
-      if (!t.includes(sha)) continue;
-      const id = hideDigest(sha, "the digest of a sensitive output");
-      const count = t.split(sha).length - 1;
-      t = t.split(sha).join(id);
-      replaced.push({ what: "text", entry: null, sha256_of_original: id, count, why: "the digest of a sensitive output" });
-    }
-    return t;
-  };
+  const digests = makeDigestReplacer(sensitiveDigests, (sha) => hideDigest(sha, "the digest of a sensitive output"));
+  const replaceDigests = digests.replace;
   let files = 0;
   if (sensitiveSeqs.size || tokens.length || withheld.length || sensitiveDigests.size) {
     for (const abs of walk(dir)) {
@@ -710,7 +781,7 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
       if (before.subarray(0, 8192).includes(0)) continue;
       const text = before.toString("utf8");
       const hasWord = tokens.length > 0 && Boolean(holds(text));
-      const hasDigest = digestList.some((d) => text.includes(d));
+      const hasDigest = digests.holds(text);
       if (!hasWord && !hasDigest) continue;
       const replaced: Replaced[] = [];
       let after: string | null = null;
@@ -727,7 +798,7 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
         const out: string[] = [];
         let ok = true;
         text.split("\n").forEach((l, i) => {
-          if (!l.trim() || (!holds(l) && !digestList.some((d) => l.includes(d)))) return out.push(l);
+          if (!l.trim() || (!holds(l) && !digests.holds(l))) return out.push(l);
           try {
             const v = holds(l) ? redactJsonValue(JSON.parse(l), `${i + 1}`, tokens, replaced) : JSON.parse(l);
             out.push(replaceDigests(JSON.stringify(v), replaced));
