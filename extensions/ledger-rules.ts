@@ -1462,8 +1462,8 @@ export const REVIEW_UNLOCATED_FIX =
  * register when the caller does not give it), a premise test that counts
  * (premise_untested). Each missing or failing one is a cap: the attest is
  * recorded best_candidate with the reason in `capped`, and the reply says
- * how to fix it. A review with neither a locator nor a derivation is warned
- * (`unlocated`, no_locator_or_derivation), not capped. Nothing else is
+ * how to fix it. The rival-area check (rival_area_uncovered) runs for every review, with or without locators. A review with neither a locator nor a derivation is also warned
+ * (`unlocated`, no_locator_or_derivation). Nothing else is
  * judged: byte presence proves presence, not attribution. `locators` is
  * every locator's verdict, for the reply of any review that gave them (a
  * partial answer's too, which none of this caps).
@@ -1488,20 +1488,39 @@ export async function reviewEvidenceCaps(sandboxRoot: string, answer: LedgerEntr
   if (presumption && !premiseTestCounts(review.premise_tested)) {
     caps.push({ code: "premise_untested", why: review.premise_tested ? `the review's premise test says nothing a reader can weigh (a placeholder outcome): ${answer.section} presumes ${PM.presumptionWords(presumption)}` : `${answer.section} presumes ${PM.presumptionWords(presumption)}, and the review does not test that premise (answer_review.premise_tested {outcome, refs})` });
   }
-  // A locator is not coverage (docs/adr/0013): each input a located value
-  // was read from is covered, for the question, where a rival value could
-  // live: a standing coverage record naming it, every area searched or not
-  // applicable, and a job over it among its results. A located object that
-  // traces to no input is not held.
-  if (review.reproduced_at?.length) {
+  // The rival-area check runs for every review (docs/adr/0013, "A locator is
+  // not coverage"): each input the review's evidence was read from is covered,
+  // for the question, where a rival value could live: a standing coverage
+  // record naming it, every area searched or not applicable, and a job over it
+  // among its results. The inputs are the located objects' when the review
+  // gives locators; otherwise those the answer's support reaches (the answer's
+  // refs and its cited entries' refs) and the derivation's inputs when it gives
+  // one. Whatever metadata a review gives or leaves out, the same answer gets
+  // the same verdict. An object that traces to no input is not held.
+  {
     const entries = [...(o.entries ?? (await readLedger(sandboxRoot).catch(() => [] as LedgerEntry[])))];
     const disputes = [...(o.disputes ?? (await readDisputes(sandboxRoot).catch(() => [] as LedgerDispute[])))];
-    const uncovered = await rivalAreasUncovered(sandboxRoot, answer, review.reproduced_at.map((l) => l.ref), entries, disputes);
+    const refs = review.reproduced_at?.length ? review.reproduced_at.map((l) => l.ref) : supportRefs(answer, entries, review);
+    const uncovered = await rivalAreasUncovered(sandboxRoot, answer, refs, entries, disputes);
     if (uncovered.length) caps.push({ code: "rival_area_uncovered", why: `a locator is not coverage: ${uncovered.map((u) => `the value was read from ${u.source}, and ${u.why}`).join("; ")}` });
   }
-  // Neither given: warned, never capped. One given and failing is capped by its own code above.
+  // Neither a locator nor a derivation given: warned as well. One given and failing is capped by its own code above.
   const unlocated: ReviewEvidenceWarning | null = !review.reproduced_at?.length && !review.derivation ? { code: "no_locator_or_derivation", why: UNLOCATED_WHY } : null;
   return { caps, unlocated, locators, derivation };
+}
+
+/**
+ * The refs an answer's support reaches, for a review that locates no value:
+ * the answer's own refs, the refs of every entry it reaches (answerReach: its
+ * support, contrary and limitations, and what those cite in turn), and the
+ * inputs of the review's derivation when it gives one.
+ */
+export function supportRefs(answer: LedgerEntry, entries: readonly LedgerEntry[], review: AnswerReview | null): string[] {
+  const bySeq = new Map(entries.map((e) => [e.seq, e]));
+  const out = new Set<string>(answer.refs ?? []);
+  for (const n of answerReach(answer, bySeq, supersededBy(entries as LedgerEntry[]))) for (const r of bySeq.get(n)?.refs ?? []) out.add(r);
+  for (const r of review?.derivation?.inputs ?? []) out.add(r);
+  return [...out];
 }
 
 /**
@@ -2962,6 +2981,23 @@ export function symbolicQuestions(text: string): string[] {
   return out;
 }
 
+/** The roles an entry is cited in by an answer. */
+export type CitedRole = "support" | "limitation";
+
+/**
+ * The one role-aware rule for an entry that rests on the kept output of a job
+ * that did not succeed (docs/adr/0013): an answer that cites it as support
+ * stands on those bytes, so the entry must say why they still hold (the
+ * answer's qualifies), at the append and at the finish alike; an answer that
+ * cites it as a limitation names what could not be done, and the failed job is
+ * the limitation's subject, not a defect of the answer. The append check,
+ * answerProblems (the answers check, the finish gate, the report and the
+ * adoption count through it) and the failed-job note all ask here.
+ */
+export function failedJobIsDefect(role: CitedRole): boolean {
+  return role === "support";
+}
+
 /**
  * Why each standing answer no longer stands on its own support, transitively:
  * an entry it cites was superseded and its correction is not cited with it,
@@ -3001,7 +3037,7 @@ export function answerProblems(entries: LedgerEntry[], disputes: LedgerDispute[]
       const sub = problemsOf(now);
       if (sub.length) out.push(`it cites ${r.q} (${r.section}), whose answer E-${now.seq} no longer stands on its own support`);
     }
-    for (const [edges, role] of [[a.support ?? [], "rests on"], [a.limitations ?? [], "is bounded by"]] as const) {
+    for (const [edges, role, citedAs] of [[a.support ?? [], "rests on", "support"], [a.limitations ?? [], "is bounded by", "limitation"]] as const) {
       for (const edge of edges) {
         const t = bySeq.get(edge.seq);
         if (!t) {
@@ -3020,7 +3056,7 @@ export function answerProblems(entries: LedgerEntry[], disputes: LedgerDispute[]
         const against = disputed.get(edge.hash);
         if (against?.length && !qualified(t.seq)) out.push(`it ${role} E-${t.seq}, disputed by ${against.map(disputeWords).join("; ")}`);
         const bad = failed.get(t.seq);
-        if (bad?.length && !qualified(t.seq)) out.push(`it ${role} E-${t.seq}, which rests on the kept output of a job that did not succeed (${bad.join(", ")}) and says nothing of it`);
+        if (bad?.length && !qualified(t.seq) && failedJobIsDefect(citedAs)) out.push(`it ${role} E-${t.seq}, which rests on the kept output of a job that did not succeed (${bad.join(", ")}) and says nothing of it`);
         if (t.kind === "answer") {
           const sub = problemsOf(t);
           if (sub.length) out.push(`it ${role} E-${t.seq}, an answer that no longer stands on its own support`);
@@ -3804,7 +3840,7 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
         }
         if (e.kind === "answer" && problems.has(n)) return { ok: false, reason: `E-${n} is an answer that no longer stands on its own support (${(problems.get(n) as string[]).join("; ")}): it is to be recorded again first` };
         const against = disputedBy.get(hashOf(e));
-        const failed = await unqualifiedFailedRefs(ctx.sandboxRoot, e);
+        const failed = failedJobIsDefect("support") ? await unqualifiedFailedRefs(ctx.sandboxRoot, e) : [];
         if (against?.length || failed.length) {
           if (!quals.some((q) => q.seq === n)) {
             return {

@@ -18,7 +18,7 @@ import * as P from "../extensions/protocol.ts";
 import * as L from "../extensions/leads.ts";
 import { checkLedgerAnswers } from "../scripts/check-answers.ts";
 import { finishGate } from "../scripts/finish-gate.ts";
-import { A, ESTABLISHED, F, ok, planned, rec, refused, run } from "./negative-bar-fixture.ts";
+import { A, covers, ESTABLISHED, F, ok, planned, rec, refused, run } from "./negative-bar-fixture.ts";
 
 const GOAL = [
   "## Goal",
@@ -64,6 +64,7 @@ async function answerTwo(r: Awaited<ReturnType<typeof run>>) {
   const lead = await planned(r.a0, "2");
   const f = ok(await rec(r.a0, { kind: "finding", ...F, value: "a remote tool's service entry", source: "the disk", evidence: "a registry key", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
   const a = ok(await rec(r.a1, { kind: "answer", section: "question:2", value: "Yes: a remote tool was installed as a service", reasoning: `E-${f.seq}`, ...A, confidence: "high", result: "established" })).entry;
+  await covers(r.a0, "2");
   const att = await P.attestEntry(r.a2, { seq: a.seq, how: "re-read the key from job:j000001", ...ESTABLISHED });
   assert.ok(att.ok, (att as { reason?: string }).reason);
   assert.ok((await L.closeLead(r.a0, lead, { disposition: "resolved", ref: `E-${f.seq}` })).ok);

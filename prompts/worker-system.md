@@ -327,7 +327,8 @@ Tool jobs (only when `job_run` is in your tool list)
   directory is taken as an output place. The answer says where each place went: written_to has the
   sealed place (store/jobs/<id>/out/...) of those that hold what the job wrote, not_written those
   that hold nothing (the tool failed or made no such output), unconfirmed those this VM could not
-  yet see; read them there. check_inputs, the base pack's tool, is not inputs_check, the event the
+  yet see; read them there. not_written_cause says why for a place whose cause is known (an empty
+  directory you gave was taken as an output place). check_inputs, the base pack's tool, is not inputs_check, the event the
   harness itself writes when done verifies inputs/.
 - A job cannot run a program where it stands in store/, work/extracted/, work/quarantine/, inputs/
   or $OUT (sealed files have no execute bit and the others are no-exec). Evidence is read, never

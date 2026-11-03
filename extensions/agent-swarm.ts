@@ -84,6 +84,7 @@ import {
   toolArgsForJob,
   writtenToOf,
   placedOutputs,
+  emptyDirPlaces,
   stagedPaths,
   stagedPathsIn,
   packSecretsFor,
@@ -2614,6 +2615,8 @@ export default function (pi: ExtensionAPI) {
       // three linux_triage jobs were refused before anything ran. What those
       // places already hold is what the tool reads, and stays as given.
       const toolArgs = params.tool ? await toolArgsForJob(toolCtx.cwd, (params.args ?? {}) as Record<string, unknown>, agentId) : undefined;
+      // An empty directory given for reading is taken as an output place; the reply says so when nothing was written there.
+      const emptyDirs = params.tool ? await emptyDirPlaces(toolCtx.cwd, (params.args ?? {}) as Record<string, unknown>, agentId).catch(() => new Set<string>()) : undefined;
       const spec: Record<string, unknown> = {
         ...(params.command ? { command: params.command } : {}),
         ...(params.tool ? { tool: params.tool, args: toolArgs } : {}),
@@ -2642,7 +2645,7 @@ export default function (pi: ExtensionAPI) {
       const flagged = typeof params.command === "string" ? evidenceCodeRun(params.command, Array.isArray(params.inputs) ? params.inputs : []) : null;
       const code = flagged ? await withOwnJobOutputs(toolCtx.cwd, flagged, agentId).catch(() => flagged) : null;
       // Where each output path the agent gave went instead: the job's sealed output, read and cited from there, when it holds something.
-      const placed = toolArgs ? placedOutputs(toolCtx.cwd, writtenToOf(params.args ?? {}, toolArgs, res.job), res.result) : {};
+      const placed = toolArgs ? placedOutputs(toolCtx.cwd, writtenToOf(params.args ?? {}, toolArgs, res.job), res.result, { emptyDirs }) : {};
       const result = { ok: true, ...placed, ...res.result, ...(code ? { evidence_code: { ...code, note: evidenceCodeNote(code, "job") } } : {}) };
       await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status, ...placed, ...(res.result.lead ? { lead: res.result.lead } : {}), ...(Array.isArray(res.result.similar) ? { similar: (res.result.similar as Array<{ job?: unknown }>).map((x) => x.job) } : {}), ...(code ? { evidence_code: code } : {}) }, Date.now() - started);
       return okResult(result);

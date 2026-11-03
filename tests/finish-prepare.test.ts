@@ -27,7 +27,7 @@ import { admitMaterial } from "../scripts/material.ts";
 import { measureRun } from "../scripts/metrics.ts";
 import { prepareResume } from "../scripts/resume.ts";
 import { custodyAnchorPath } from "../scripts/custody.ts";
-import { job, sha } from "./negative-bar-fixture.ts";
+import { ALL_AREAS, coverage, job, sha } from "./negative-bar-fixture.ts";
 
 const dirs: string[] = [];
 after(async () => {
@@ -92,6 +92,9 @@ async function established(r: { S: string; a0: Ctx; a1: Ctx; a2: Ctx }): Promise
   assert.ok(f.ok, JSON.stringify(f));
   const seq = (f as { entry: P.LedgerEntry }).entry.seq;
   const a = await P.recordEntry(r.a1, { kind: "answer", section: "question:1", value: "The first account, at 09:14", reasoning: `E-${seq}`, confidence: "high", confidence_why: "direct", alternatives_open: "none open", would_change: "a second source", result: "established" } as unknown as P.LedgerInput);
+  // The rival-area check runs for every review (docs/adr/0013): the log the finding was read from is covered for question 1.
+  const cov = await P.recordEntry(r.a0, coverage("1", ["input:logs/a.log"], ["job:j000001/hits.txt"], { areas: ALL_AREAS }) as unknown as P.LedgerInput);
+  assert.ok(cov.ok, JSON.stringify(cov));
   assert.ok(a.ok, JSON.stringify(a));
   const at = await P.attestEntry(r.a2, { seq: (a as { entry: P.LedgerEntry }).entry.seq, how: "re-read line 12", ...ESTABLISHED } as unknown as P.LedgerActInput);
   assert.ok(at.ok, JSON.stringify(at));

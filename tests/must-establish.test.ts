@@ -23,7 +23,7 @@ import * as L from "../extensions/leads.ts";
 import * as Q from "../extensions/questions.ts";
 import { checkLedgerAnswers } from "../scripts/check-answers.ts";
 import { finishGate } from "../scripts/finish-gate.ts";
-import { A, coverage, ESTABLISHED, F, ok, planned, rec, REVIEW, run } from "./negative-bar-fixture.ts";
+import { A, coverage, covers, ESTABLISHED, F, ok, planned, rec, REVIEW, run } from "./negative-bar-fixture.ts";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { questionArgv } from "../scripts/ui/questions.ts";
@@ -88,6 +88,7 @@ async function established(r: Awaited<ReturnType<typeof run>>, q: string) {
   const lead = await planned(r.a0, q);
   const f = ok(await rec(r.a0, { kind: "finding", ...F, value: `the record question ${q} asks for`, source: "the disk", evidence: "a registry key", refs: ["job:j000001/hits.txt"], answers: [q] })).entry;
   const a = ok(await rec(r.a1, { kind: "answer", section: `question:${q}`, value: `Established: the record question ${q} asks for`, reasoning: `E-${f.seq}`, ...A, confidence: "high", result: "established" })).entry;
+  await covers(r.a0, q);
   const att = await P.attestEntry(r.a2, { seq: a.seq, how: "re-read the key from job:j000001", ...ESTABLISHED });
   assert.ok(att.ok, (att as { reason?: string }).reason);
   assert.ok((await L.closeLead(r.a0, lead, { disposition: "resolved", ref: `E-${f.seq}` })).ok);
@@ -221,6 +222,7 @@ test("a reviewed not determinable is no disposition for it either; established i
   // Established on a finding, attested established by another seat: the requirement is met.
   const f1 = ok(await rec(r.a0, { kind: "finding", ...F, value: "alice logged on at 09:14", source: "a second log", evidence: "line 3", refs: ["job:j000001/hits.txt"], answers: ["1"] })).entry;
   const a = ok(await rec(r.a1, { kind: "answer", section: "question:1", value: "alice, at 09:14", reasoning: `E-${f1.seq}`, ...A, confidence: "high", result: "established", supersedes: nd.a.seq })).entry;
+  await covers(r.a0, "1");
   assert.ok((await P.attestEntry(r.a2, { seq: a.seq, how: "re-read the key from job:j000001", ...ESTABLISHED })).ok);
   f = await finish(r.S);
   assert.equal(f.check.dispositions["question:1"], "established");
@@ -294,6 +296,7 @@ test("an answered question that must be established is never told it must be, wh
     assert.ok(closed.ok && (closed as { lead: L.LeadView }).lead.quick_negative, "a quick negative");
     const f = ok(await rec(r.a0, { kind: "finding", ...F, value: `the record for ${q}`, source: "the disk", evidence: "a registry key", refs: ["job:j000001/hits.txt"], answers: [q] })).entry;
     const a = ok(await rec(r.a1, { kind: "answer", section: `question:${q}`, value: `Established for ${q}`, reasoning: `E-${f.seq}`, ...A, confidence: "high", result: "established", ...(frame ? { contrary_none_why: "nothing points elsewhere" } : {}) })).entry;
+    await covers(r.a0, q);
     // A person's question presumes its framing (docs/adr/0011): its established review tests that premise.
     const review = frame ? { ...ESTABLISHED, answer_review: { ...ESTABLISHED.answer_review, premise_tested: { outcome: "the record names the account that did it", refs: ["job:j000001/hits.txt"] } } } : ESTABLISHED;
     const att = await P.attestEntry(r.a2, { seq: a.seq, how: "re-read the key from job:j000001", ...review });

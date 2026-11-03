@@ -21,7 +21,7 @@ import * as L from "../extensions/leads.ts";
 import * as P from "../extensions/protocol.ts";
 import { ANSWERS_MARK, checkLedgerAnswers } from "../scripts/check-answers.ts";
 import { finishGate } from "../scripts/finish-gate.ts";
-import { A, ESTABLISHED, F, ok, planned, rec, run } from "./negative-bar-fixture.ts";
+import { A, covers, ESTABLISHED, F, ok, planned, rec, run } from "./negative-bar-fixture.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -125,6 +125,8 @@ test("an answer that leaves out findings the record ties to its question is warn
   assert.ok((await L.closeLead(r.a1, L2, { disposition: "resolved", ref: `E-${g.seq}`, result_refs: [`E-${other.seq}`] })).ok);
   const a1 = await answer(r.a1, "question:1", [cited.seq]);
   const a2 = await answer(r.a2, "question:2", [g.seq, other.seq]);
+  await covers(r.a0, "1");
+  await covers(r.a0, "2");
   for (const [c, a] of [[r.a2, a1], [r.a3, a2]] as const) {
     const att = await P.attestEntry(c, { seq: a.seq, how: "re-derived the cited findings", ...ESTABLISHED });
     assert.ok(att.ok, (att as { reason?: string }).reason);

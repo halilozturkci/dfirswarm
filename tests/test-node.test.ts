@@ -16,7 +16,7 @@ test("the repository's suites: the VM ones are skipped, this one and the nested 
   const { run, skipped } = nodeSuites();
   assert.ok(run.includes("tests/test-node.test.ts"));
   assert.ok(run.some((p) => p.startsWith("tests/rules/")), "a suite one directory down runs too");
-  for (const vm of ["tests/vm-integration.test.ts", "tests/vm-jobs.test.ts", "tests/vm-secret-rotation.test.ts", "tests/job-observe-vm.test.ts"]) {
+  for (const vm of ["tests/vm-integration.test.ts", "tests/vm-jobs.test.ts", "tests/vm-secret-rotation.test.ts"]) {
     assert.ok(skipped.includes(vm) && !run.includes(vm), vm);
   }
   assert.deepEqual(run, [...run].sort());

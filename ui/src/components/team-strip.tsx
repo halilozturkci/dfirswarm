@@ -18,6 +18,7 @@ import { Link } from "react-router-dom";
 import type { SwarmView } from "@/lib/types";
 import { money } from "@/lib/format";
 import { seatStates, type SeatTone } from "@/lib/seat-state";
+import { meteringWords } from "@/lib/metering";
 import { cn } from "@/lib/utils";
 
 /** done · working · quiet · reaped. The same vocabulary as the Agents tab; a VM seat's comes from its hub. */
@@ -45,6 +46,7 @@ export function TeamStrip({ view }: { view: SwarmView }) {
   if (!groups.length) return null;
 
   const unmetered = view.budget?.metered === false;
+  const metering = meteringWords(view.budget);
   const total = groups.reduce((sum, g) => sum + g.agents.reduce((s, id) => s + spendOf(id), 0), 0);
 
   return (
@@ -64,7 +66,7 @@ export function TeamStrip({ view }: { view: SwarmView }) {
                 {rest.join("/") || provider}
               </span>
               <span className="shrink-0 font-mono text-[10.5px] tabular text-band-ink-2">
-                {unmetered ? "free" : spend > 0 ? money(spend, 2) : "—"}
+                {unmetered ? metering.label : spend > 0 ? money(spend, 2) : "—"}
               </span>
             </div>
             <div className="flex items-baseline justify-between gap-2">

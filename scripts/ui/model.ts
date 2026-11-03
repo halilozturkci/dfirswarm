@@ -86,6 +86,10 @@ export type RegistryRun = {
   /** "kernel", "partial", "none" or "unmeasured": what the panes' own probes said the guard was. */
   write_guard_measured?: string;
   metered?: boolean;
+  unmetered_why?: string | null;
+  /** `ended` runs: who ended it (always "unknown") and the time of the trace's last line, as stop recorded them. */
+  ended_by?: string | null;
+  last_trace_at?: string | null;
   cap_tokens?: number | null;
   local_models?: string[];
   workspace_id?: string;
@@ -153,6 +157,10 @@ export type SwarmRow = SwarmSummary & {
   wall_clock_minutes: number;
   /** False when no model on the team bills: spend is an exact zero and cap_tokens is the brake. */
   metered: boolean;
+  /** Why a team is unmetered (local or subscription), as the kickoff recorded it; null when it did not. */
+  unmetered_why: "local" | "subscription" | null;
+  /** A run stop found with nothing alive: it ended without a stop, and nobody knows why (registry state `ended`). */
+  ended: { by: "unknown"; last_trace_at: string | null } | null;
   cap_tokens: number;
   net: string;
   agents_total: number;
@@ -795,7 +803,9 @@ export function derivePhase(state: string, done: boolean): SwarmPhase {
   if (state === "running") return "running";
   // `finished`: the hub put a VM run away after its sentinel; without the
   // sentinel it is a run that ended, which the console calls stopped.
-  if (state === "stopped" || state === "finished") return "stopped";
+  // `ended`: stop found the run with nothing alive; no one stopped it. It is over
+  // like a stopped run (the row carries `ended` to say how).
+  if (state === "stopped" || state === "finished" || state === "ended") return "stopped";
   if (state === "prepared") return "prepared";
   // A kickoff that did not get its agents running: said, not "unknown".
   if (state === "failed") return "failed";
@@ -844,6 +854,7 @@ async function enrichSummary(
   let started = run?.started_at ?? "";
   let wall = Number(run?.wall_clock_minutes) || 0;
   let metered = run?.metered !== false;
+  let unmeteredWhy: string | null = typeof run?.unmetered_why === "string" ? run.unmetered_why : null;
   let capTokens = Number(run?.cap_tokens) || 0;
   let stopReason: string | null = null;
   let stopPolicy: SwarmRow["stop_policy"] = "cap-stop";
@@ -858,6 +869,7 @@ async function enrichSummary(
       wall_base_at?: string;
       wall_clock_minutes?: number;
       metered?: boolean;
+      unmetered_why?: string;
       cap_tokens?: number;
       stop_reason?: string;
       stop_policy?: string;
@@ -881,6 +893,7 @@ async function enrichSummary(
     }
     if (!wall && budget.wall_clock_minutes) wall = Number(budget.wall_clock_minutes) || 0;
     if (budget.metered === false) metered = false;
+    if (typeof budget.unmetered_why === "string" && budget.unmetered_why) unmeteredWhy = budget.unmetered_why;
     if (!capTokens && budget.cap_tokens) capTokens = Number(budget.cap_tokens) || 0;
     if (typeof budget.stop_reason === "string" && budget.stop_reason) stopReason = budget.stop_reason;
   } catch {
@@ -941,6 +954,8 @@ async function enrichSummary(
     goal: typeof run?.goal === "string" ? run.goal : "",
     wall_clock_minutes: wall,
     metered,
+    unmetered_why: !metered && (unmeteredWhy === "local" || unmeteredWhy === "subscription") ? unmeteredWhy : null,
+    ended: summary.state === "ended" ? { by: "unknown", last_trace_at: typeof run?.last_trace_at === "string" ? run.last_trace_at : null } : null,
     cap_tokens: capTokens,
     net,
     agents_total: ids.length || summary.n,
@@ -992,7 +1007,7 @@ export async function liveHubDirs(runsDir: string): Promise<Array<{ id: string; 
     if (!isRecord(run) || typeof run.id !== "string" || typeof run.sandbox !== "string") continue;
     const iso = isRecord(run.isolation) ? run.isolation : null;
     if (iso?.mode !== "microvm") continue;
-    if (["stopped", "done", "purged", "failed", "finish_failed", "stop_incomplete"].includes(String(run.state ?? ""))) continue;
+    if (["stopped", "ended", "done", "purged", "failed", "finish_failed", "stop_incomplete"].includes(String(run.state ?? ""))) continue;
     const dir = await ownHubDir(run.sandbox);
     if (dir) out.push({ id: run.id, dir });
   }

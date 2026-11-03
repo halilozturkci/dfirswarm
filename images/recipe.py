@@ -330,6 +330,20 @@ def add_data(spec: dict, packs, name: str, b: dict, install: dict) -> None:
                              **{"name": f"{b['name']}-data", **item}, "required": True})
 
 
+SHORT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._+/-]{0,39}")
+
+
+def short_words(pack: str, program: str, key: str, value) -> list:
+    """A binary entry's `isa` or `formats`: a list of short strings (letters,
+    digits, space and . _ + / -, up to 40) that tools.md prints on the
+    program's line. Anything else is refused by name: tools.md is what an
+    agent reads to choose a program, so a value that does not print as written
+    is not carried."""
+    if not isinstance(value, list) or not all(isinstance(x, str) and SHORT.fullmatch(x) for x in value):
+        raise SystemExit(f"recipe: {pack}: requires/host.json: {program}'s {key} must be a list of short strings (letters, digits, space and . _ + / -, up to 40 characters each)")
+    return list(dict.fromkeys(value))
+
+
 def read_pack(packs, name: str) -> dict:
     spec = empty()
     host = pack_dir(packs, name) / "requires" / "host.json"
@@ -356,6 +370,12 @@ def read_pack(packs, name: str) -> dict:
             # seal has checked their shape.
             if b.get("facts"):
                 spec["binaries"][-1]["facts"] = b["facts"]
+            # What the program decodes (`isa`) and reads (`formats`), for tools.md.
+            for key in ("isa", "formats"):
+                if key in b:
+                    words_ = short_words(name, b["name"], key, b[key])
+                    if words_:
+                        spec["binaries"][-1][key] = words_
             pinned = [k for k in ("build", "source", "download") if isinstance(install.get(k), dict)]
             if pinned:
                 kind = pinned[0]

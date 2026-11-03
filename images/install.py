@@ -79,6 +79,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -260,6 +261,34 @@ def safe_members(t: tarfile.TarFile, dest: Path, strip: bool = False, skip: list
 
 
 DOWNLOAD_ATTEMPTS = 3
+# How long to wait before the second and the third attempt: 10 s, then 30 s,
+# so a server that is restarting or rate limiting is not asked three times in
+# a second. DFIRSWARM_FETCH_BACKOFF ("10,30") shortens it for a test; the last
+# wait is used again if there are more attempts than waits.
+def _backoff() -> list:
+    raw = os.environ.get("DFIRSWARM_FETCH_BACKOFF", "10,30")
+    try:
+        waits = [max(0.0, float(x)) for x in raw.split(",") if x.strip()]
+    except ValueError:
+        waits = []
+    return waits or [10.0, 30.0]
+
+
+def retryable(e: BaseException) -> tuple:
+    """(whether another attempt can help, what the failure was). A 4xx (not
+    found, forbidden, too many requests...) is the server's answer and the
+    same one comes again: it is not retried. A 5xx, a timeout, a connection
+    that dropped and a body that ended short are the network's or a busy
+    server's, and are."""
+    if isinstance(e, urllib.error.HTTPError):
+        if 400 <= e.code < 500:
+            return False, f"HTTP {e.code} {e.reason} (a client error: the server's answer, not retried)"
+        return True, f"HTTP {e.code} {e.reason} (a server error)"
+    if isinstance(e, (TimeoutError, socket.timeout)) or isinstance(getattr(e, "reason", None), (TimeoutError, socket.timeout)):
+        return True, f"timed out ({e})"
+    if isinstance(e, http.client.IncompleteRead):
+        return True, f"the body ended short ({e})"
+    return True, str(e)
 # A download's bounds: no more redirects than this, every hop over HTTPS, no
 # more bytes than its pin says (or this many when it pins none), and no longer
 # than this in all. A pack's URL is https (pack.sh); file:// and a loopback
@@ -267,6 +296,8 @@ DOWNLOAD_ATTEMPTS = 3
 MAX_REDIRECTS = 5
 MAX_BYTES = int(os.environ.get("DFIRSWARM_FETCH_MAX_BYTES", str(4 << 30)))
 FETCH_SECONDS = int(os.environ.get("DFIRSWARM_FETCH_SECONDS", "3600"))
+# How long one read may wait for the server (a stalled one ends the attempt, which is then retried).
+FETCH_TIMEOUT = float(os.environ.get("DFIRSWARM_FETCH_TIMEOUT", "300"))
 # A local copy of what a pin names, by its sha256 (recipe.py build --data-from
 # and --symbols-from put them here): used instead of the network, still checked.
 DATA_DIR = os.environ.get("DFIRSWARM_DATA_DIR", "")
@@ -356,7 +387,7 @@ def fetch_once(url: str, dest: Path, size: int | None, allowed_hosts: list | Non
     # own User-Agent with a 403, and says so in no other way.
     req = urllib.request.Request(url, headers={"User-Agent": "dfirswarm-image-build (+https://github.com/halilozturkci/dfirswarm)"})
     opener = urllib.request.build_opener(*(opener_handlers or [HttpsRedirects(allowed_hosts)]))
-    with opener.open(req, timeout=300) as r, open(dest, "wb") as out:
+    with opener.open(req, timeout=FETCH_TIMEOUT) as r, open(dest, "wb") as out:
         length = r.headers.get("Content-Length")
         if length and length.isdigit() and int(length) > cap:
             raise urllib.error.URLError(f"the server offers {length} bytes, more than the {cap} this pin allows")
@@ -395,16 +426,30 @@ def obtain(url: str, dest: Path, sha256: str, size: int | None = None, offline: 
     if offline:
         return "it is not fetched by the build, and no local copy of it was given", "local copy"
     why = None
+    waits = _backoff()
+
+    def wait_before_next(attempt: int, cause: str) -> None:
+        """Say what failed and how long the next attempt waits, then wait."""
+        wait = waits[min(attempt - 1, len(waits) - 1)]
+        print(f"  attempt {attempt} of {DOWNLOAD_ATTEMPTS} failed: {cause}; waiting {wait:g} s before attempt {attempt + 1}", flush=True)
+        time.sleep(wait)
+
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         print(f"+ fetch {url}" + (f" (attempt {attempt} of {DOWNLOAD_ATTEMPTS})" if attempt > 1 else ""), flush=True)
         try:
             hexd, got, length = fetch_once(url, dest, size)
         except (OSError, http.client.HTTPException) as e:
             dest.unlink(missing_ok=True)
-            why = f"download failed: {e}"
+            again, cause = retryable(e)
+            why = f"download failed: {cause}"
             # A refusal by the bounds is not cured by asking again.
             if "refused" in str(e) or "more than" in str(e) or "is not fetched" in str(e):
                 break
+            if not again:
+                print(f"  attempt {attempt} of {DOWNLOAD_ATTEMPTS} failed: {cause}", flush=True)
+                break
+            if attempt < DOWNLOAD_ATTEMPTS:
+                wait_before_next(attempt, cause)
             continue
         if hexd == want and (size is None or got == size):
             return None, "download"
@@ -415,6 +460,8 @@ def obtain(url: str, dest: Path, sha256: str, size: int | None = None, offline: 
         # another attempt fetches the same wrong bytes.
         if not short and length:
             break
+        if attempt < DOWNLOAD_ATTEMPTS:
+            wait_before_next(attempt, f"the body ended short{short}" if short else "the bytes are not the pinned ones")
     return why, "download"
 
 
@@ -1367,6 +1414,9 @@ def tools_md(record: dict, spec: dict | None) -> str:
     for b in (spec or {}).get("binaries", []):
         if b["name"] in seen:
             seen[b["name"]]["packs"].append(b["pack"])
+            # A program two packs declare shows what either says it decodes and reads, never one pack's list alone.
+            for key in ("isa", "formats"):
+                seen[b["name"]][key] = list(dict.fromkeys([*seen[b["name"]].get(key, []), *b.get(key, [])]))
             continue
         entry = {**b, "packs": [b["pack"]]}
         seen[b["name"]] = entry
@@ -1391,7 +1441,8 @@ def tools_md(record: dict, spec: dict | None) -> str:
         lines += ["## Programs", ""]
         for b in sorted(rows, key=lambda x: x["name"].lower()):
             v = version(b)
-            lines.append(f"- `{b['name']}` — {b.get('why') or 'no description'} ({', '.join(b['packs'])}{'; ' + v if v else ''})")
+            reads = "; ".join(x for x in (f"decodes: {', '.join(b['isa'])}" if b.get("isa") else "", f"reads: {', '.join(b['formats'])}" if b.get("formats") else "") if x)
+            lines.append(f"- `{b['name']}` — {b.get('why') or 'no description'} ({', '.join(b['packs'])}{'; ' + v if v else ''}){' — ' + reads if reads else ''}")
             # What the build recorded about the program: a file each, the
             # command that made it and whether it worked.
             for fname, fact in sorted(facts.items()):

@@ -19,7 +19,7 @@ import * as P from "../extensions/protocol.ts";
 import * as L from "../extensions/leads.ts";
 import { checkLedgerAnswers } from "../scripts/check-answers.ts";
 import { finishGate } from "../scripts/finish-gate.ts";
-import { A, coverage, ESTABLISHED, F, ok, planned, rec, REVIEW, run } from "./negative-bar-fixture.ts";
+import { A, coverage, coversDiskAndLog, ESTABLISHED, F, ok, planned, rec, REVIEW, run } from "./negative-bar-fixture.ts";
 
 const GOAL = [
   "## Goal",
@@ -66,6 +66,7 @@ async function answerOne(r: Awaited<ReturnType<typeof operatorRun>>, strength: "
   const f = ok(await rec(r.a0, { kind: "finding", ...F, value: "alice logged on at 09:14", source: "the log", evidence: "line 12", refs: ["job:j000002/hits.txt"], answers: ["1"] })).entry;
   ok(await rec(r.a1, { kind: "answer", section: "question:1", value: "alice", reasoning: `E-${f.seq} shows the logon`, ...A, confidence: "high", result: "established" }));
   const ans = (await P.readLedger(r.S)).find((e) => e.kind === "answer" && e.section === "question:1")!;
+  await coversDiskAndLog(r.a0, "1");
   const att = await P.attestEntry(r.a2, { seq: ans.seq, how: "re-read the log line from job:j000002", ...ESTABLISHED, strength } as never);
   assert.ok(att.ok, (att as { reason?: string }).reason);
   assert.ok((await L.closeLead(r.a0, lead, { disposition: "resolved", ref: `E-${f.seq}` })).ok);

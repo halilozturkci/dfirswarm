@@ -17,8 +17,9 @@
  *   tests/<helper>        the node suites that import it, directly or not; none
  *                         found: everything.
  *   docs, *.md, changelog.d
- *                         the suites that name the file, the link check and the
- *                         changelog suite.
+ *                         the suites that name the file, the link check, the
+ *                         Markdown link suite (tests/markdown-links.test.ts) and
+ *                         the changelog suite.
  *   anything else         everything: the harness (scripts/, extensions/),
  *                         images/, prompts/, the libraries, the workflow,
  *                         package*.json, a fixture, a path this map does not
@@ -149,7 +150,9 @@ export function select(changed: string[], layout: Layout): Selection {
     if (NARROW_DOC.test(f)) {
       naming(f);
       if (layout.shell.includes("pack-links")) shell.add("pack-links");
-      reasons.push(`${f}: the suites that name it, and the link check`);
+      // Every relative link of the tracked Markdown is checked by one node suite; a Markdown change can break one.
+      if (f.endsWith(".md") && layout.nodeRun.includes("tests/markdown-links.test.ts")) node.add("tests/markdown-links.test.ts");
+      reasons.push(`${f}: the suites that name it, and the link checks`);
       continue;
     }
     return everything(`${f}: outside what this map narrows; everything`);

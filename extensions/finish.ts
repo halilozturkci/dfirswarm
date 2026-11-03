@@ -1257,7 +1257,14 @@ async function goalExtraSections(sandboxRoot: string): Promise<string[]> {
  * words every point says them with, and `warned`, the same warnings whole:
  * said in finish status, never held on.
  */
-export type Readiness = { ready: boolean; revision: string; items: string[]; limited: string[]; confirming: string[]; warnings: string[]; warned: P.LedgerWarning[] };
+/**
+ * What holds one question, as readiness reads it: its section, the code of
+ * what holds it and the words (the regroup post lists these, so the post and
+ * the finish line say the same thing about a question).
+ */
+export type ReadinessHold = { section: string; code: string; why: string };
+
+export type Readiness = { ready: boolean; revision: string; items: string[]; limited: string[]; confirming: string[]; warnings: string[]; warned: P.LedgerWarning[]; held?: ReadinessHold[] };
 
 const readinessCache = new Map<string, Readiness>();
 
@@ -1402,6 +1409,7 @@ async function closeChanged(sandboxRoot: string, s: L.LeadsSnapshot, all: string
 async function computeReadiness(sandboxRoot: string, s: L.LeadsSnapshot, revision: string): Promise<Readiness> {
   const items: string[] = [];
   const limited: string[] = [];
+  const held: ReadinessHold[] = [];
   const lead = await L.leadDefects(sandboxRoot, s);
   const confirming: string[] = [];
   for (const d of lead.defects) {
@@ -1433,6 +1441,7 @@ async function computeReadiness(sandboxRoot: string, s: L.LeadsSnapshot, revisio
     // What an acceptance excuses (P.acceptanceExcuses): all but the negative bar's defects, a partial sweep, and evidence added before it.
     if (d.section && accepted.has(d.section) && P.acceptanceExcuses(d, acceptedAt.get(d.section))) continue;
     items.push(d.what);
+    if (d.section?.startsWith("question:")) held.push({ section: d.section, code: d.code, why: d.code === "no_answer" ? "no answer" : d.what });
   }
   // Best candidates, stale answers, and what else would limit the run.
   // A best candidate (an answer that claims established, every review of
@@ -1462,17 +1471,20 @@ async function computeReadiness(sandboxRoot: string, s: L.LeadsSnapshot, revisio
     const result = NB.answerResult(a);
     if (P.heldAsBestCandidate(a, P.answerReviews(a, attestations))) {
       items.push(`${sec} is a best candidate, not established (E-${a.seq} claims established, and every review holds it a best candidate only)`);
+      held.push({ section: sec, code: "best_candidate", why: `answer E-${a.seq} claims established and every review holds it a best candidate only` });
       continue;
     }
     const q = s.questions?.bySection.get(sec.slice("question:".length));
     if (q && (a.question_rev ?? 1) !== q.rev) {
       items.push(`${sec}'s answer E-${a.seq} predates revision ${q.rev} of ${q.id}`);
+      held.push({ section: sec, code: "predates_revision", why: `answer E-${a.seq} predates revision ${q.rev} of ${q.id}` });
       continue;
     }
     // Stale by evidence too (docs/adr/0014): evidence for the question arrived after the answer was recorded, as the gate holds it.
     const arrived = q?.evidence.find((x) => a.seq <= x.ledger_seq);
     if (q && arrived) {
       items.push(`${sec}'s answer E-${a.seq} predates new evidence for ${q.id} (${arrived.import})`);
+      held.push({ section: sec, code: "predates_evidence", why: `answer E-${a.seq} predates new evidence for ${q.id} (${arrived.import})` });
       continue;
     }
     // A question that must be established (docs/adr/0013): an answer that
@@ -1482,6 +1494,7 @@ async function computeReadiness(sandboxRoot: string, s: L.LeadsSnapshot, revisio
     const QM = await import("./questions.ts");
     if (q && QM.mustEstablish(q) && !QM.establishesBy(a)) {
       items.push(`${sec} must be established (required by ${QM.requiredByWords(q)}): its answer E-${a.seq} is ${NB.resultWords(result ?? "not_determinable")}, which ends no run on it: ${QM.MUST_ESTABLISH_WAYS}`);
+      held.push({ section: sec, code: "must_establish", why: `must be established (required by ${QM.requiredByWords(q)}): answer E-${a.seq} is ${NB.resultWords(result ?? "not_determinable")}, which ends no run on it` });
       continue;
     }
     if (result && result !== "established" && result !== "premise_not_supported") limited.push(`${sec} is ${NB.resultWords(result)}`);
@@ -1499,7 +1512,7 @@ async function computeReadiness(sandboxRoot: string, s: L.LeadsSnapshot, revisio
   const budget = await P.readBudget(sandboxRoot).catch(() => null);
   const operatorStop = P.stopPolicyOf(budget) === "operator";
   const blocking = operatorStop ? [...items, ...holdsUnderOperator] : items;
-  return { ready: !blocking.length, revision, items: blocking, limited, confirming: confirming.filter((c) => blocking.includes(c)), warnings, warned: gate.warnings };
+  return { ready: !blocking.length, revision, items: blocking, limited, confirming: confirming.filter((c) => blocking.includes(c)), warnings, warned: gate.warnings, held };
 }
 
 

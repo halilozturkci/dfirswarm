@@ -16,8 +16,10 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import * as P from "../extensions/protocol.ts";
 import * as L from "../extensions/leads.ts";
+import * as FIN from "../extensions/finish.ts";
 import { finishGate } from "../scripts/finish-gate.ts";
 import { refusalFor } from "../scripts/model-gateway.ts";
+import * as NB from "./negative-bar-fixture.ts";
 
 const dirs: string[] = [];
 after(async () => {
@@ -168,6 +170,85 @@ test("the regroup lists the questions not answered, the leads open and blocked, 
   assert.match(text, /Leads open, held by nobody \(1\):\n- L-3 "Walk the second profile"/);
   assert.match(text, /Leads blocked \(1\):\n- L-2 "Read the vault" \(a1\) waiting on L-1:resolved: L-1 is held by a0/);
   assert.match(text, /Waiting on the operator \(1\):\n- L-4 "The outside resource": Allow the host the plaintext names/);
-  assert.match(text, /Evidence no standing entry cites \(3\):\n- inputs\/disk\.E01 \(10 bytes\)\n- inputs\/phone\.tar \(20 bytes\)\n- catalogue g0002: the decrypted vault \(its file list, 42 listed\)/);
+  assert.match(text, /Evidence no standing entry cites \(3\):\n- inputs\/disk\.E01 \(10 bytes; case evidence\)\n- inputs\/phone\.tar \(20 bytes; case evidence\)\n- catalogue g0002: the decrypted vault \(its file list, 42 listed; lineage not recorded\)/);
   assert.match(text, /the next regroup comes in 30 minutes/);
+});
+
+/** Four questions the finish line holds for four different reasons. */
+const FOUR = [
+  "## Goal",
+  "",
+  "Examine the host.",
+  "",
+  "### Questions",
+  "",
+  "1. Who logged on?",
+  "2. Was a remote tool installed?",
+  "3. What was deleted?",
+  "4. When did it start?",
+  "",
+  "## Must establish",
+  "",
+  "- 3",
+  "",
+  "## Definition of done",
+  "",
+  "d",
+  "",
+  "## Checks",
+  "",
+  '- `node x "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4`',
+  "",
+].join("\n");
+
+test("the regroup lists every required question the finish line holds, whatever the kind of gap: no answer, a best candidate, an unmet must-establish and a disputed answer", async () => {
+  const c = await NB.run({ goal: FOUR });
+  const { A, covers, ESTABLISHED, F, ok, partialParts, partsReview, planned, rec } = NB;
+  // Question 2: an answer that claims established, every review of which holds it a best candidate only.
+  await planned(c.a0, "2");
+  const f2 = ok(await rec(c.a0, { kind: "finding", ...F, value: "a remote tool's service entry", source: "the disk", evidence: "a registry key", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const a2 = ok(await rec(c.a1, { kind: "answer", section: "question:2", value: "Yes: a remote tool was installed as a service", reasoning: `E-${f2.seq}`, ...A, result: "established" })).entry;
+  assert.ok((await P.attestEntry(c.a2, { seq: a2.seq, how: "re-read the key", ...ESTABLISHED, strength: "best_candidate" })).ok);
+  // Question 3 must be established: its answer is partial, which ends no run on it.
+  await planned(c.a0, "3", [{ source: "input:logs/a.log", method: "read the log" }]);
+  const f3 = ok(await rec(c.a0, { kind: "finding", ...F, value: "two files were deleted at 09:14", source: "the log", evidence: "line 12", refs: ["job:j000002/hits.txt"], answers: ["3"] })).entry;
+  const lim3 = ok(await rec(c.a0, { kind: "limitation", value: "The log does not name the files", source: "the log", evidence: "its fields", reason: "unavailable", answers: ["3"] })).entry;
+  const a3 = ok(await rec(c.a1, { kind: "answer", section: "question:3", value: "Two files, at 09:14; which ones is open", reasoning: `E-${f3.seq}; which is open (E-${lim3.seq})`, ...A, result: "partial", parts: partialParts(f3.seq, `E-${lim3.seq}`) })).entry;
+  assert.ok((await P.attestEntry(c.a2, { seq: a3.seq, how: "re-read line 12", ...partsReview(ESTABLISHED) })).ok);
+  // Question 4: established and attested, then disputed.
+  await planned(c.a0, "4");
+  const f4 = ok(await rec(c.a0, { kind: "finding", ...F, value: "it started at 08:00", source: "the disk", evidence: "a registry key", refs: ["job:j000001/hits.txt"], answers: ["4"] })).entry;
+  const a4 = ok(await rec(c.a1, { kind: "answer", section: "question:4", value: "It started at 08:00", reasoning: `E-${f4.seq}`, ...A, confidence: "high", result: "established" })).entry;
+  await covers(c.a0, "4");
+  assert.ok((await P.attestEntry(c.a2, { seq: a4.seq, how: "re-read the key", ...ESTABLISHED })).ok);
+  assert.ok((await P.disputeEntry(c.a3, { seq: a4.seq, why: "the registry key is the installer's, not the first run's" })).ok);
+  // The finish line holds all four questions, for four reasons; the post says all four, in its words.
+  const ready = await FIN.readiness(c.S);
+  assert.deepEqual([...new Set((ready.held ?? []).map((h) => h.section))].sort(), ["question:1", "question:2", "question:3", "question:4"], JSON.stringify(ready.items));
+  const snap = await L.leadsSnapshot(c.S);
+  const since = await L.lastProgress(c.S, snap, new Date(Date.now() - 3_600_000).toISOString());
+  const text = await L.regroupMessage(c.S, snap, { minutes: 20, since, count: 1, nextMinutes: 30 });
+  assert.match(text, /Questions not answered \(4\):/);
+  assert.match(text, /- question:1: no answer/);
+  assert.match(text, /- question:2: answer E-\d+ claims established and every review holds it a best candidate only/);
+  assert.match(text, /- question:3: must be established \(required by .*\): answer E-\d+ is partial/);
+  assert.match(text, /- question:4: .*disputed/);
+});
+
+test("a validation control and a tool reference are listed apart with their lineage role, not as evidence no entry cites; case-derived objects stay in the evidence list", async () => {
+  const c = await NB.run();
+  await writeFile(join(c.S, "inputs.json"), JSON.stringify({ files: [{ path: "inputs/disk.E01", bytes: 10, sha256: "a".repeat(64) }] }));
+  const made = (id: string, spec: Record<string, unknown>) => NB.job(c.S, id, "out.img", { spec });
+  await made("j000020", { kind: "command", scope: "declared", inputs: [], command: "mkimg" });
+  await made("j000021", { kind: "command", scope: "declared", inputs: ["input:disk.E01"], command: "carve" });
+  await made("j000022", { kind: "tool", scope: "declared", inputs: [], tool: "reference_table" });
+  for (const [g, job, name] of [["g0101", "j000020", "a control image"], ["g0102", "j000021", "a carved volume"], ["g0103", "j000022", "the tool's table"]] as const) {
+    await mkdir(join(c.S, "catalog", "gen", g), { recursive: true });
+    await writeFile(join(c.S, "catalog", "gen", g, "generation.json"), JSON.stringify({ id: g, target: { ref: `job:${job}/out.img`, name }, coverage: { covered: "its listing", members: 3 } }));
+  }
+  const snap = await L.leadsSnapshot(c.S);
+  const since = await L.lastProgress(c.S, snap, new Date(Date.now() - 3_600_000).toISOString());
+  const text = await L.regroupMessage(c.S, snap, { minutes: 20, since, count: 1, nextMinutes: 30 });
+  assert.match(text, /Evidence no standing entry cites \(2\):\n- inputs\/disk\.E01 \(10 bytes; case evidence\)\n- catalogue g0102: a carved volume \(its listing, 3 listed; case-derived\)\n/);
+  assert.match(text, /Controls and tool references, apart from the evidence \(2\):[^\n]*\n- catalogue g0101: a control image \(its listing, 3 listed; validation control\)\n- catalogue g0103: the tool's table \(its listing, 3 listed; tool reference\)/);
 });

@@ -114,6 +114,17 @@ models.
   kept outside the hand-over), then scans every file it hands over — and the
   filenames — for what should not be there; without `--redact`, `HYGIENE.json`
   names what in the package is sensitive.
+  `--with-sessions` adds `.pi-sessions/` for an **internal handover** only:
+  regular files copied at a cutoff, every recorded sensitive value (a
+  sensitive entry's words, a sensitive output's text, its digest) replaced by
+  its keyed id, one lossless archive and a manifest of each file's size and
+  sha256, checked by `verify`. It is refused together with `--redact`, so a
+  disclosure copy never carries sessions. A session file larger than 1 GiB is
+  not masked in one piece, and the component carries nothing and says so. Masking removes the recorded
+  sensitive values, not the evidence text the models read: a session still
+  holds what they saw of the case, and the archive is to be treated as
+  evidence content. The key and the id map are in a private sidecar
+  (`<dir>.sessions.private.json`) outside the package.
   What a package may carry under GDPR or similar laws is the operator's to
   decide; these are the means.
 - **Exports** (`swarm.sh export`, under `<sandbox>/exports/` by default):

@@ -149,3 +149,29 @@ jobs:
               process.exit(fit.blockers.length ? 1 : 0);
             });'
           exit "$code"
+
+  report-failure:
+    # The weekly boot that failed opens one issue labelled ci-failure (or
+    # comments on the open one) with the run's URL and the failed jobs; the next
+    # green one closes it (scripts/ci-report-failure.sh). A run by hand is not
+    # reported.
+    name: tracking issue for a failed run
+    needs: [boot]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open or comment on the tracking issue, or close it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW: ${{ github.workflow }}
+        run: bash scripts/ci-report-failure.sh

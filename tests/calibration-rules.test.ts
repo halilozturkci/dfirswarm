@@ -24,7 +24,7 @@ import { finishGate, NEGATIVE_BAR_CODES } from "../scripts/finish-gate.ts";
 import { admitMaterial } from "../scripts/material.ts";
 import { measureRun } from "../scripts/metrics.ts";
 import { renderReportBodyMarkdown } from "../scripts/report-body.ts";
-import { A, coverage, ESTABLISHED, F, ok, okq, partialParts, partsReview, planned, rec, refused, REVIEW, run } from "./negative-bar-fixture.ts";
+import { A, coverage, covers, ESTABLISHED, F, ok, okq, partialParts, partsReview, planned, rec, refused, REVIEW, run } from "./negative-bar-fixture.ts";
 
 const ROOT = join(fileURLToPath(import.meta.url), "..", "..");
 /** An answer an established review may hold so: its author's confidence high (a medium caps a review at best_candidate). */
@@ -64,10 +64,12 @@ test("new evidence stales every standing negative, not-determinable and partial 
   // An established answer and a partial one, each attested established.
   const f1 = ok(await rec(a0, { kind: "finding", ...F, value: "alice logged on", source: "a log", evidence: "line 1", refs: ["job:j000001/hits.txt"], answers: ["1"] })).entry;
   const ans1 = ok(await rec(a1, { kind: "answer", section: "question:1", value: "alice", reasoning: `E-${f1.seq}`, ...HIGH, result: "established" })).entry;
+  await covers(a0, "1");
   await attested(a2, { seq: ans1.seq, how: "read E-" + f1.seq + " again", ...ESTABLISHED });
   const f5 = ok(await rec(a0, { kind: "finding", ...F, value: "the tool ran as an administrator", source: "a log", evidence: "line 2", refs: ["job:j000001/hits.txt"], answers: ["5"] })).entry;
   const lim5 = ok(await rec(a0, { kind: "limitation", value: "The log does not name the administrator account", source: "a log", evidence: "its fields", reason: "unavailable", answers: ["5"] })).entry;
   const ans5 = ok(await rec(a1, { kind: "answer", section: "question:5", value: "an administrator, not named", reasoning: `E-${f5.seq}`, ...HIGH, result: "partial", parts: partialParts(f5.seq, `E-${lim5.seq}`) })).entry;
+  await covers(a0, "5");
   await attested(a2, { seq: ans5.seq, how: "read E-" + f5.seq + " again", ...partsReview(ESTABLISHED) });
   const sections = ["1", "2", "4", "5"];
   const before = await checkLedgerAnswers(S, sections, ["2"]);
@@ -274,6 +276,7 @@ test("a question asking for every one, all or a complete list is a completeness 
   assert.deepEqual(cov2.entry.areas, { allocated: "searched", deleted: "searched", unallocated: "searched", slack: "skipped", secondary: "not_applicable" });
   assert.match(cov2.note ?? "", /areas: allocated searched, deleted searched, unallocated searched, slack skipped, secondary not applicable/);
   const r3 = ok(await rec(a1, { kind: "answer", section: "question:1", value: "Two files were copied", reasoning: `E-${f1.seq}, searched as E-${cov2.entry.seq}`, ...HIGH, result: "established", supersedes: r2.seq })).entry;
+  await covers(a0, "1");
   await attested(a3, { seq: r3.seq, how: "read the listing and the coverage again", ...ESTABLISHED });
   r = await checkLedgerAnswers(S, ["1"]);
   assert.deepEqual(defectsOf(r, "question:1", "completeness_uncovered"), [], r.lines.join("\n"));
@@ -290,6 +293,7 @@ test("an established attest names an alternative it weighed and why the evidence
   const { S, a0, a1, a2 } = await run();
   const f = ok(await rec(a0, { kind: "finding", ...F, value: "alice logged on", source: "a log", evidence: "line 1", refs: ["job:j000001/hits.txt"], answers: ["1"] })).entry;
   const ans = ok(await rec(a1, { kind: "answer", section: "question:1", value: "alice", reasoning: `E-${f.seq}`, ...HIGH, result: "established" })).entry;
+  await covers(a0, "1");
   refused(await P.attestEntry(a2, { seq: ans.seq, how: "x", ...ESTABLISHED, answer_review: { ...ESTABLISHED.answer_review, alternatives: [] } }), /answer_review\.alternatives lists each alternative explanation you considered and why the evidence rules it out/);
   refused(await P.attestEntry(a2, { seq: ans.seq, how: "x", ...ESTABLISHED, answer_review: { ...ESTABLISHED.answer_review, alternatives: [{ explanation: "bob" }] } }), /answer_review\.alternatives\[\]\.why is required/);
   const first = await attested(a2, { seq: ans.seq, how: "read the log line again", ...WITHOUT_ALTERNATIVE });
@@ -317,6 +321,7 @@ test("an alternative counts only when it names the entries that rule it out and 
   const f = ok(await rec(a0, { kind: "finding", ...F, value: "alice logged on", source: "a log", evidence: "line 1", refs: ["job:j000001/hits.txt"], answers: ["1"] })).entry;
   const g = ok(await rec(a0, { kind: "finding", ...F, value: "bob's session was closed at the time", source: "a log", evidence: "line 9", refs: ["job:j000001/hits.txt"], answers: ["1"] })).entry;
   const ans = ok(await rec(a1, { kind: "answer", section: "question:1", value: "alice", reasoning: `E-${f.seq}`, ...HIGH, result: "established" })).entry;
+  await covers(a0, "1");
   const review = (alternatives: unknown) => ({ ...ESTABLISHED, answer_review: { ...ESTABLISHED.answer_review, alternatives } });
   // An entry that is not in the ledger: refused, as any ref that does not resolve.
   refused(await P.attestEntry(a2, { seq: ans.seq, how: "x", ...review([{ explanation: "another user at the same console", why: "the log shows bob logged off", evidence: ["E-999"] }]) }), /answer_review\.alternatives\[\]\.evidence names E-999: there is no entry #999 in the ledger/);
@@ -347,6 +352,7 @@ test("the run records a high confidence only on an established answer another se
   await planned(a3, "4");
   const f = ok(await rec(a0, { kind: "finding", ...F, value: "alice logged on", source: "a log", evidence: "line 1", refs: ["job:j000001/hits.txt"], answers: ["1"] })).entry;
   const est = ok(await rec(a1, { kind: "answer", section: "question:1", value: "alice", reasoning: `E-${f.seq}`, ...HIGH, result: "established" }));
+  await covers(a0, "1");
   assert.match(est.note ?? "", /confidence high is recorded as medium until another seat attests this answer established, naming the alternatives it weighed/);
   const abs = ok(await rec(a3, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["4"] })).entry;
   const cov = ok(await rec(a3, coverage("4", ["input:logs/a.log"], [`E-${abs.seq}`], { acquisition_none_why: "no other source records it" }))).entry;

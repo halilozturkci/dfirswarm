@@ -516,13 +516,13 @@ test("a secret name glued to a letter or written in CamelCase (adminPassword=, v
 
 // ---- time and size: every layer is linear ---------------------------------------------------------------------------------
 
-test("the layers take time proportional to the length of a string: 6,250, 25,000 and 100,000 characters of each pathological shape (`a-a-a-...`, `a_a_a_...`, `~:~:`, `Ab1/Ab1/`, `u:p@u:p@`, `password=password=`, a run of backslashes, `eyJeyJ`, `\\u20\\u20`, `t10.AB` and a run of underscores, `iqn.`, `naa.`, `eui.`, `WIN-` runs, `password=<` runs, `--a-b-c-key` flags, `password=<redacted> abcdefgh` repeated, `t10.` and `iqn.` ids with a long run of one letter, `WD2D` runs, `pwd-srv01` and `pwd.vmdk` repeated, groups of four, counters, time stamps and brackets after a secret's name, glued and CamelCase flags, key files, `iqn.` ids with a hexadecimal serial), in CPU seconds, the least of up to three rounds, each step at most 8 times the one before", async () => {
+test("the layers take time proportional to the length of a string: 6,250, 25,000 and 100,000 characters of each pathological shape (`a-a-a-...`, `a_a_a_...`, `~:~:`, `Ab1/Ab1/`, `u:p@u:p@`, `password=password=`, a run of backslashes, `eyJeyJ`, `\\u20\\u20`, `t10.AB` and a run of underscores, `iqn.`, `naa.`, `eui.`, `WIN-` runs, `password=<` runs, `--a-b-c-key` flags, `password=<redacted> abcdefgh` repeated, `t10.` and `iqn.` ids with a long run of one letter, `WD2D` runs, `pwd-srv01` and `pwd.vmdk` repeated, groups of four, counters, time stamps and brackets after a secret's name, glued and CamelCase flags, key files, `iqn.` ids with a hexadecimal serial), in CPU seconds, the median of three rounds, each step at most 8 times the one before", async () => {
   for (const [label, script] of TOOLS) {
     for (const field of [null, "name", "file", "uid"]) {
       const t = await host(script, { op: "linear", sizes: SIZES, field });
       for (const [shape, row] of Object.entries(t as Record<string, Record<string, number | null>>)) {
         const times = SIZES.map((n) => row[String(n)]);
-        assert.ok(ladderOk(times), `${label} ${field} ${shape}: ${SIZES.map((n, i) => `${n} characters ${times[i] === null ? "not run" : `${times[i]} s`}`).join(", ")} is not linear (best of up to three rounds, each step four times the length)`);
+        assert.ok(ladderOk(times), `${label} ${field} ${shape}: ${SIZES.map((n, i) => `${n} characters ${times[i] === null ? "not run" : `${times[i]} s`}`).join(", ")} is not linear (median of three rounds, each step four times the length)`);
         assert.ok((times[times.length - 1] as number) < 3, `${label} ${field} ${shape}: 100 KB took ${times[times.length - 1]} s`);
       }
     }

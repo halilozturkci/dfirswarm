@@ -3004,6 +3004,7 @@ write_team_budget() {
   SWARM_CAP_PER_AGENT_TOKENS="${cap_per_agent_tokens:-}" \
   SWARM_CAP_PER_MODEL="$(printf '%s\n' ${MODEL_CAPS[@]+"${MODEL_CAPS[@]}"})" \
   SWARM_METERED="${metered:-1}" \
+  SWARM_UNMETERED_WHY="$(unmetered_why_word "${metered:-1}" "${subscription_models_csv:-}")" \
   SWARM_CAP_TOKENS="${cap_tokens:-}" \
   SWARM_TOKEN_ALERTS="${token_alerts:-}" \
   SWARM_UNTIL_SOLVED="${until_solved:-0}" \
@@ -3029,6 +3030,8 @@ for line in os.environ.get("SWARM_CAP_PER_MODEL", "").splitlines():
         # 6 and matches what jq's tonumber puts in the run record.
         cap_per_model[name] = json.loads(value)
 metered = os.environ.get("SWARM_METERED", "1") != "0"
+# Why a team is unmetered: local models, or an OAuth subscription whose dollars Pi only estimates.
+unmetered_why = os.environ.get("SWARM_UNMETERED_WHY", "").strip()
 cap_tokens = os.environ.get("SWARM_CAP_TOKENS", "").strip()
 agents = []
 for i, aid in enumerate(ids):
@@ -3055,6 +3058,7 @@ budget = {
     # False when no model on the team bills: spend stays an exact zero, the
     # USD cap cannot fire, and cap_tokens is the brake.
     "metered": metered,
+    **({"unmetered_why": unmetered_why} if not metered and unmetered_why in ("local", "subscription") else {}),
     **({"cap_tokens": int(cap_tokens)} if cap_tokens else {}),
     # The operator's token marks (--token-alert): each told once as the run
     # crosses it, on the board, the trace and the notify hook; advisory.
@@ -5970,6 +5974,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --arg inbox_page_chars "${inbox_page_chars:-40000}" \
     --arg skill_release "${skill_release:-compaction}" \
     --argjson metered "$metered" \
+    --arg unmetered_why "$(unmetered_why_word "$metered" "$subscription_models_csv")" \
     --arg cap_tokens "$cap_tokens" \
     --arg token_alerts "$token_alerts" \
     --arg local_models "$local_models_csv" \
@@ -6064,6 +6069,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
       inbox_page_chars: ($inbox_page_chars | tonumber),
       skill_release: $skill_release,
       metered: ($metered == 1),
+      unmetered_why: (if $unmetered_why == "" then null else $unmetered_why end),
       cap_tokens: (if $cap_tokens == "" then null else ($cap_tokens | tonumber) end),
       token_alerts: (if $token_alerts == "" then null else ($token_alerts | split(",") | map(tonumber)) end),
       local_models: (if $local_models == "" then [] else ($local_models | split(",")) end),
@@ -9388,7 +9394,7 @@ last_trace_ts() { # <sandbox>
 
 cmd_stop() {
   local stop_args=("$@")
-  local id="${1:-}" no_custody=0 custody_timeout="" after_hub=0 vms_left=0
+  local id="${1:-}" no_custody=0 custody_timeout="" after_hub=0 vms_left=0 found_dead=0 dead_last_trace=""
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -9439,9 +9445,19 @@ cmd_stop() {
   fi
   # A run recorded as running whose every process is gone did not end by
   # itself: the host restarted, or the run crashed. Said, with the last line
-  # the trace has, before this stop records it as stopped.
-  if [[ -n "$sandbox" && "$(jq -r '.state // empty' <<<"$rec")" == "running" ]] && ! run_has_live_process "$sandbox" "$rec"; then
-    echo "NOTE:         nothing of run $id was alive (no hub, collector, watchdog or VM): the host restarted or the run crashed$(last_trace_ts "$sandbox" | sed 's/^/; its last trace line is from /')."
+  # the trace has, and recorded as what it is: ended, by nobody known (the
+  # registry's `ended` with `ended_by: "unknown"` and the last trace time),
+  # not as a stop that someone made. A run already recorded as ended keeps
+  # what was recorded then.
+  if [[ -n "$sandbox" ]] && [[ "$(jq -r '.state // empty' <<<"$rec")" =~ ^(running|ended)$ ]] && ! run_has_live_process "$sandbox" "$rec"; then
+    found_dead=1
+    if [[ "$(jq -r '.state // empty' <<<"$rec")" == ended ]]; then
+      dead_last_trace="$(jq -r '.last_trace_at // empty' <<<"$rec")"
+      echo "NOTE:         run $id is recorded as ended without a stop (cause unknown)$(printf '%s' "$dead_last_trace" | sed 's/^/; its last trace line is from /') and still has nothing alive."
+    else
+      dead_last_trace="$(last_trace_ts "$sandbox")"
+      echo "NOTE:         nothing of run $id was alive (no hub, collector, watchdog or VM): the host restarted or the run crashed$(printf '%s' "$dead_last_trace" | sed 's/^/; its last trace line is from /'). It is recorded as ended, cause unknown."
+    fi
   fi
   # The VMs before the daemons: an agent's last lines reach the trace through
   # the hub and the collector, so those stay up until the VMs are down.
@@ -9475,8 +9491,12 @@ cmd_stop() {
     node --experimental-strip-types --no-warnings "$ROOT/scripts/stop-policy.ts" stopped "$sandbox" --by operator --why "swarm.sh stop" >/dev/null 2>&1 || true
   fi
   local final_state="stopped"
+  [[ "$found_dead" -eq 1 ]] && final_state="ended"
   [[ -n "$sandbox" && -f "$sandbox/done/SWARM_DONE" ]] && final_state="done"
   registry_update_state "$id" "$final_state"
+  if [[ "$final_state" == ended ]]; then
+    registry_merge "$id" "$(jq -cn --arg lt "$dead_last_trace" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson prior "$(jq -c '{at: (.ended_at // null)}' <<<"$rec")"       '{ended_by: "unknown", last_trace_at: (if $lt == "" then null else $lt end), ended_at: ($prior.at // $at)}')" || true
+  fi
   # What the host can say about the run once nothing is running any more:
   # the evidence re-hashed, the sessions sealed, every kept output checked.
   # Before the evidence image is detached (custody of an empty mount point
@@ -9532,8 +9552,17 @@ cmd_stop() {
     registry_update_state "$id" "done"
     echo "Stopped $id (the sentinel was present; recorded as done)"
     notify_run "$sandbox" finished '{"state":"done","by":"stop"}'
+  elif [[ "$final_state" == ended ]]; then
+    registry_update_state "$id" "ended"
+    echo "Ended $id: it was found with nothing alive, so it ended without a stop and the cause is unknown (recorded as ended$([[ -n "$dead_last_trace" ]] && printf ', last trace %s' "$dead_last_trace"))"
+    # The same words in the trace, once: a second stop finds the line there.
+    if ! grep -qs '"tool":"run_ended"' "$sandbox/traces/events.jsonl" "$sandbox/traces/system-spill.jsonl"; then
+      system_trace "$sandbox" run_ended "$(jq -cn --arg lt "$dead_last_trace" '{via: "swarm.sh stop", by: "unknown", reason: "found with nothing alive; the cause is not known", last_trace_at: (if $lt == "" then null else $lt end)}')"
+    fi
+    [[ "$after_hub" -eq 1 ]] || notify_run "$sandbox" finished '{"state":"ended","by":"unknown"}'
   else
     registry_update_state "$id" "stopped"
+    [[ "$(jq -r '.state // empty' <<<"$rec")" != ended ]] || registry_merge "$id" '{"ended_by":null,"last_trace_at":null,"ended_at":null}' || true
     echo "Stopped $id"
     [[ "$after_hub" -eq 1 ]] || notify_run "$sandbox" finished '{"state":"stopped","by":"stop"}'
   fi
@@ -10625,9 +10654,19 @@ pkg_copy() { # <src> <dst> [non-empty]
   cp -P "$1" "$2"
 }
 
+# Why a team that is not metered is not: "subscription" when any of its models runs on an OAuth subscription (Pi's dollars are then an
+# estimate), "local" when every model is served from this machine or network; empty for a metered team. The kickoff's CLI line says the
+# same by the same facts, and the console reads this word.
+unmetered_why_word() { # <metered 0|1> <subscription models csv>
+  if [[ "${1:-1}" == "0" ]]; then
+    if [[ -n "${2:-}" ]]; then echo subscription; else echo local; fi
+  fi
+  return 0
+}
+
 cmd_package() {
-  local id="${1:-}" sign=0 key="" redact=0 with_outputs=0 leaks=fail
-  [[ -n "$id" && "$id" != -* ]] || { echo "package requires <id> [--sign [--key FILE]] [--redact [--redact-leaks list]] [--with-outputs]" >&2; exit 2; }
+  local id="${1:-}" sign=0 key="" redact=0 with_outputs=0 with_sessions=0 leaks=fail
+  [[ -n "$id" && "$id" != -* ]] || { echo "package requires <id> [--sign [--key FILE]] [--redact [--redact-leaks list]] [--with-outputs] [--with-sessions]" >&2; exit 2; }
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -10636,9 +10675,15 @@ cmd_package() {
       --redact) redact=1; shift ;;
       --redact-leaks) leaks="$2"; shift 2 ;;
       --with-outputs) with_outputs=1; shift ;;
+      --with-sessions) with_sessions=1; shift ;;
       *) echo "package: unknown option $1" >&2; exit 2 ;;
     esac
   done
+  # Sessions hold everything the models saw: they travel in an internal handover, never in the copy that leaves the organisation.
+  if [[ "$with_sessions" -eq 1 && "$redact" -eq 1 ]]; then
+    echo "package: --with-sessions cannot be combined with --redact: a redacted package is the copy that leaves the organisation, and sessions hold everything the models saw." >&2
+    exit 2
+  fi
   ensure_registry
   local sandbox
   sandbox="$(json_get "$id" | jq -r '.sandbox // empty')"
@@ -10946,8 +10991,31 @@ PY
       echo "Sensitive:    $(jq -r '.entries' <<<"$hygiene") sensitive ledger entr$([[ "$(jq -r '.entries' <<<"$hygiene")" == 1 ]] && echo y || echo ies), $(jq -r '.outputs' <<<"$hygiene") job(s) whose outputs are sensitive ($(jq -r '.carried' <<<"$hygiene") of their files in this package); the scan over $(jq -r '.scanned' <<<"$hygiene") file(s) found $(jq -r '.hits' <<<"$hygiene") place(s) holding their words (HYGIENE.json). This package is not redacted: hand it over with --redact."
     fi
   fi
+  # The agents' sessions, masked, for an internal handover (--with-sessions): one
+  # archive and a manifest (scripts/package-tools.ts sessions). Never made by
+  # halves: a failure leaves no package.
+  local sessions_note=""
+  if [[ "$with_sessions" -eq 1 ]]; then
+    local sess sess_rc=0 sess_n
+    sess="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/package-tools.ts" sessions "$sandbox" "$out" 2>"$out.sessions.err")" || sess_rc=$?
+    if [[ "$sess_rc" -ne 0 ]]; then
+      echo "BLOCKER: the sessions could not be packaged; nothing was handed over: $(head -c 400 "$out.sessions.err")" >&2
+      rm -rf "$out" "$out.sessions.err"; exit 1
+    fi
+    rm -f "$out.sessions.err"
+    if [[ "$(jq -r '.files' <<<"$sess")" == 0 ]]; then
+      echo "WARN: --with-sessions: $sandbox/.pi-sessions holds no regular file; the package carries no sessions." >&2
+      sessions_note="; sessions requested, none to carry"
+    else
+      echo "Sessions:     $(jq -r '.files' <<<"$sess") file(s) in $(jq -r '.archive' <<<"$sess") (sha256 $(jq -r '.sha256' <<<"$sess")), $(jq -r '.masked' <<<"$sess") sensitive value(s) masked; the key and id map are in $out.sessions.private.json, which stays with the run's owner"
+      sess_n="$(jq -r '.skipped' <<<"$sess")"
+      [[ "$sess_n" -gt 0 ]] && echo "              $sess_n entr$([[ "$sess_n" == 1 ]] && echo y || echo ies) under .pi-sessions/ not copied (links and other non-regular files; sessions/sessions.manifest.json names them)"
+      [[ "$(jq -r '.changed' <<<"$sess")" -gt 0 ]] && echo "WARN: $(jq -r '.changed' <<<"$sess") session file(s) changed while they were copied: $(jq -r '.changed_files | map("\(.path) (\(.listed_bytes) bytes at the cutoff, \(.copied_bytes) copied)") | join("; ")' <<<"$sess")" >&2
+      sessions_note="; with sessions (sessions/, masked, for an internal handover)"
+    fi
+  fi
   # What kind of package this is, said in it.
-  printf '%s\n' "$([[ "$with_outputs" -eq 1 ]] && echo "with outputs: the jobs' sealed outputs are included" || echo "record only: the jobs' outputs stay in the run, each named by its sha256")$([[ "$redact" -eq 1 ]] && echo "; redacted (REDACTIONS.txt)")" > "$out/PACKAGE-KIND.txt"
+  printf '%s\n' "$([[ "$with_outputs" -eq 1 ]] && echo "with outputs: the jobs' sealed outputs are included" || echo "record only: the jobs' outputs stay in the run, each named by its sha256")$([[ "$redact" -eq 1 ]] && echo "; redacted (REDACTIONS.txt)")$sessions_note" > "$out/PACKAGE-KIND.txt"
   # Each part a recipient holds the record to, present or absent with why:
   # under the manifest, so a part taken out, and out of the list, breaks it.
   node --experimental-strip-types --no-warnings "$ROOT/scripts/package-tools.ts" components "$sandbox" "$out" >/dev/null || { echo "BLOCKER: the package's components could not be listed; nothing was handed over." >&2; rm -rf "$out"; exit 1; }

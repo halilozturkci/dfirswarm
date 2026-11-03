@@ -109,6 +109,50 @@ else
   echo "skip - neither caffeinate nor systemd-inhibit on this host"
 fi
 
+
+# --- a run found dead at stop is recorded as ended, cause unknown ---------------------
+# Not "stopped": nobody stopped it. The registry says ended, by an unknown cause, with
+# the time of the trace's last line; the trace holds the same words once; a second stop
+# keeps them; a run with something alive still gets a plain stopped.
+ER="$TMP/ended-runs"
+mkdir -p "$ER"
+ended_run() { # <id> <state> [live]: a host run with a trace whose last line is at a known time
+  local sb="$ER/$1"
+  mkdir -p "$sb/traces" "$sb/done"
+  printf '{"swarm_id":"%s","n":1,"agents":[{"id":"%s0","role":"worker"}]}\n' "$1" "$1" > "$sb/team.json"
+  printf '{"ts":"2026-01-02T03:04:05.000Z","agent":"%s0","tool":"read","args":{},"result":{"ok":true}}\n' "$1" > "$sb/traces/events.jsonl"
+  jq -n --arg id "$1" --arg sb "$sb" --arg st "$2" '{runs: [{id: $id, label: "ended", state: $st, sandbox: $sb, n: 1, isolation: {mode: "host"}}]}' > "$ER/registry.json"
+}
+ended_lines() { cat "$ER/$1/traces/events.jsonl" "$ER/$1/traces/system-spill.jsonl" 2>/dev/null | grep '"tool":"run_ended"' || true; }
+ended_field() { jq -r --arg id "$1" "$2" "$ER/registry.json"; }
+ended_run sdead1 running
+out="$(SWARM_RUNS_DIR="$ER" bash "$ROOT/scripts/swarm.sh" stop sdead1 --no-custody 2>&1)" || fail "the stop of a dead run failed: $out"
+[[ "$(ended_field sdead1 '.runs[0].state')" == ended ]] || fail "a run found dead was recorded as $(ended_field sdead1 '.runs[0].state'), not ended: $out"
+[[ "$(ended_field sdead1 '.runs[0].ended_by')" == unknown ]] || fail "the cause of a dead run was not recorded as unknown"
+[[ "$(ended_field sdead1 '.runs[0].last_trace_at')" == 2026-01-02T03:04:05.000Z ]] || fail "the last trace time was not recorded: $(ended_field sdead1 '.runs[0]')"
+grep -q "ended without a stop" <<<"$out" || fail "stop did not say the run ended without a stop: $out"
+grep -q "^Stopped " <<<"$out" && fail "a dead run was reported as Stopped: $out"
+[[ "$(ended_lines sdead1 | grep -c .)" == 1 ]] || fail "the trace does not hold one run_ended line"
+ended_lines sdead1 | jq -e '.args.by == "unknown" and .args.last_trace_at == "2026-01-02T03:04:05.000Z"' >/dev/null || fail "the run_ended line does not say unknown and the last trace time"
+# A second stop of it keeps what was recorded, and writes the line no second time.
+out="$(SWARM_RUNS_DIR="$ER" bash "$ROOT/scripts/swarm.sh" stop sdead1 --no-custody 2>&1)" || fail "the second stop failed: $out"
+[[ "$(ended_field sdead1 '.runs[0].state')" == ended && "$(ended_field sdead1 '.runs[0].last_trace_at')" == 2026-01-02T03:04:05.000Z ]] || fail "a second stop changed the record: $(ended_field sdead1 '.runs[0]')"
+[[ "$(ended_lines sdead1 | grep -c .)" == 1 ]] || fail "a second stop wrote the line again"
+# A run with a live process is stopped, never ended.
+ended_run slive1 running
+bash -c 'exec -a "trace-collector.mjs $0" sleep 300' "$ER/slive1" >/dev/null 2>&1 &
+LIVE_PID=$!
+PIDS+=("$LIVE_PID")
+printf '%s\n' "$LIVE_PID" > "$ER/slive1/collector.pid"
+out="$(SWARM_RUNS_DIR="$ER" bash "$ROOT/scripts/swarm.sh" stop slive1 --no-custody 2>&1)" || fail "the stop of a live run failed: $out"
+[[ "$(ended_field slive1 '.runs[0].state')" == stopped ]] || fail "a live run's stop gave $(ended_field slive1 '.runs[0].state'), not stopped: $out"
+[[ "$(ended_field slive1 '.runs[0].ended_by')" == null ]] || fail "a stopped run carries a cause of ending"
+[[ -z "$(ended_lines slive1)" ]] || fail "a live run's stop wrote a run_ended line"
+kill "$LIVE_PID" 2>/dev/null || true
+# The console reads the state as a run that is over.
+[[ "$(node --experimental-strip-types --no-warnings -e 'import(process.argv[1]).then((m) => console.log(m.derivePhase("ended", false)))' "$ROOT/scripts/ui/model.ts")" == stopped ]] || fail "the console does not read ended as a run that is over"
+pass "a run found with nothing alive is recorded as ended (cause unknown, last trace time) with the same words in the trace, a second stop keeps them, and a live run's stop still gives stopped"
+
 # --- the harness a VM run started with ---------------------------------------------
 for f in freeze_harness vm_build_spec vm_token_validity vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do
   eval "$(fn "$f")"

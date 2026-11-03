@@ -4365,8 +4365,38 @@ export async function lastProgress(sandboxRoot: string, snap: LeadsSnapshot, sta
  * file no ref names (directly, or through a catalogued member of it), and a
  * catalogued object (an archive's members, a disk's volumes) no ref reaches.
  * Generic: the catalogue says what it holds; nothing here reads a format.
+ *
+ * Each object carries its lineage role, from what made it: `case evidence`
+ * (an input file the case supplied), `case-derived` (made by a job that read
+ * the case's inputs), `validation control` (made by a job that read none, to
+ * check a tool against a known answer) or `tool reference` (what a tool
+ * itself supplied). A control and a reference are not evidence of the case:
+ * they are listed apart (`apart`), so the post never asks the seats to cite
+ * what the case does not hold. An object whose maker is not on record stays
+ * in the evidence list, `lineage not recorded`: listing too much is the safe
+ * side.
  */
-export async function uncitedEvidence(sandboxRoot: string, snap: LeadsSnapshot): Promise<string[]> {
+export type UncitedEvidence = { evidence: string[]; apart: string[] };
+export type LineageRole = "case evidence" | "case-derived" | "validation control" | "tool reference" | "lineage not recorded";
+
+/** The lineage role of a catalogued object made from a job's output, from the job's own record. */
+export async function jobLineage(sandboxRoot: string, ref: string): Promise<LineageRole> {
+  const id = /^job:(j\d{6,})(?:\/|$)/.exec(ref)?.[1];
+  if (!id) return "lineage not recorded";
+  const raw = await readFile(join(sandboxRoot, "store", "jobs", id, "job.json"), "utf8").catch(() => null);
+  if (!raw) return "lineage not recorded";
+  try {
+    const spec = (JSON.parse(raw) as { spec?: { kind?: string; scope?: string; inputs?: unknown } }).spec ?? {};
+    const inputs = Array.isArray(spec.inputs) ? spec.inputs.map(String) : [];
+    // A job that read everything, or declared a case input (an input file, a catalogued member, another job's output), derives from the case.
+    if (spec.scope === "all" || spec.scope === undefined || inputs.some((x) => x === "all" || x.startsWith("input:") || x.startsWith("member:") || x.startsWith("job:"))) return "case-derived";
+    return spec.kind === "tool" ? "tool reference" : "validation control";
+  } catch {
+    return "lineage not recorded";
+  }
+}
+
+export async function uncitedEvidence(sandboxRoot: string, snap: LeadsSnapshot): Promise<UncitedEvidence> {
   const refs = new Set<string>();
   for (const e of snap.ledger.entries) if (!snap.ledger.replaced.has(e.seq)) for (const r of e.refs ?? []) refs.add(r);
   const gens: Array<{ id: string; ref: string; name: string; what: string }> = [];
@@ -4382,35 +4412,45 @@ export async function uncitedEvidence(sandboxRoot: string, snap: LeadsSnapshot):
   }
   const cited = (ref: string) => [...refs].some((r) => r === ref || r.startsWith(`${ref}/`));
   const genCited = (g: { id: string; ref: string }) => [...refs].some((r) => r.startsWith(`member:${g.id}#`)) || (g.ref ? cited(g.ref) : false);
-  const out: string[] = [];
+  const evidence: string[] = [];
+  const apart: string[] = [];
   const manifest = await P.readInputsManifest(sandboxRoot).catch(() => null);
   for (const f of manifest?.files ?? []) {
     const ref = `input:${f.path.replace(/^inputs\//, "")}`;
     const viaGen = gens.some((g) => g.ref === ref && genCited(g));
-    if (!cited(ref) && !viaGen) out.push(`${f.path} (${f.bytes} bytes)`);
+    if (!cited(ref) && !viaGen) evidence.push(`${f.path} (${f.bytes} bytes; case evidence)`);
   }
   // A catalogued object made from a job's output (an extracted archive, a
   // decrypted volume) that no ref reaches; one made from an input is said
-  // with its input above.
-  for (const g of gens) if (!genCited(g) && !g.ref.startsWith("input:")) out.push(`catalogue ${g.id}: ${g.name}${g.what ? ` (${g.what})` : ""}`);
-  return out;
+  // with its input above. Its role comes from the job that made it.
+  for (const g of gens) {
+    if (genCited(g) || g.ref.startsWith("input:")) continue;
+    const role = await jobLineage(sandboxRoot, g.ref);
+    const line = `catalogue ${g.id}: ${g.name} (${[g.what, role].filter(Boolean).join("; ")})`;
+    (role === "validation control" || role === "tool reference" ? apart : evidence).push(line);
+  }
+  return { evidence, apart };
 }
 
-/** How each goal question stands for the regroup: no answer, or an answer that does not settle it. */
-export function questionStanding(snap: LeadsSnapshot): Array<{ id: string; why: string; blocks: string[] }> {
+/**
+ * How each goal question stands for the regroup, as the finish line's
+ * readiness sees it (finish.ts readiness: the view the answers check, the
+ * finish status and the done all read): what holds it, in the finish line's
+ * words, whether that is no answer, an answer under the bar, a part left
+ * out, a stale answer or a must-establish requirement not met. A question
+ * readiness holds nothing against is not listed.
+ */
+export async function questionStanding(sandboxRoot: string, snap: LeadsSnapshot): Promise<Array<{ id: string; why: string; blocks: string[] }>> {
+  const FIN = await import("./finish.ts");
+  const view = await FIN.readiness(sandboxRoot).catch(() => null);
   const out: Array<{ id: string; why: string; blocks: string[] }> = [];
   for (const q of snap.goal.questions) {
     if (withdrawnSection(snap, q)) continue;
-    const a = snap.ledger.entries.find((e) => e.kind === "answer" && e.section === `question:${q}` && !snap.ledger.replaced.has(e.seq));
-    let why = "";
-    if (!a) why = "no answer";
-    else if (a.inconclusive) why = `answer E-${a.seq} is inconclusive`;
-    else if (!(a.support ?? []).length && (a.limitations ?? []).length) why = `answer E-${a.seq} rests on limitations only`;
-    else if (snap.goal.existence.length && !snap.goal.existence.includes(q)) {
-      const kinds = (a.support ?? []).map((x) => snap.ledger.bySeq.get(x.seq)?.kind);
-      if (kinds.length && kinds.every((k) => k === "absence")) why = `answer E-${a.seq} rests on a search that found nothing, and the question asks for more than whether it exists`;
-    }
-    if (!why) continue;
+    const holds = (view?.held ?? []).filter((h) => P.sectionKey(h.section) === P.sectionKey(`question:${q}`));
+    // A finish line that cannot be read says what the ledger alone says: no standing answer.
+    const noAnswer = !view && !snap.ledger.entries.some((e) => e.kind === "answer" && e.section === `question:${q}` && !snap.ledger.replaced.has(e.seq));
+    if (!holds.length && !noAnswer) continue;
+    const why = noAnswer ? "no answer" : [...new Set(holds.map((h) => h.why))].join("; ");
     const blocks: string[] = [];
     for (const l of snap.state.leads.values()) {
       if (!l.answers.includes(q)) continue;
@@ -4429,11 +4469,11 @@ export function questionStanding(snap: LeadsSnapshot): Array<{ id: string; why: 
 /** The regroup post: what is open, what is blocked, what waits on the operator, and what nobody has cited. */
 export async function regroupMessage(sandboxRoot: string, snap: LeadsSnapshot, o: { minutes: number; since: { at: number; what: string }; count: number; nextMinutes: number; running?: string[] }): Promise<string> {
   const ranked = rankedLeads(snap);
-  const qs = questionStanding(snap);
+  const qs = await questionStanding(sandboxRoot, snap);
   const open = ranked.filter((v) => v.status === "open");
   const blocked = ranked.filter((v) => v.status === "blocked");
   const operator = ranked.filter((v) => v.disposition === "needs_operator");
-  const uncited = await uncitedEvidence(sandboxRoot, snap);
+  const { evidence: uncited, apart } = await uncitedEvidence(sandboxRoot, snap);
   // Every list is bounded: the post is delivered whole whatever the inbox page bound is (readInbox hands a first post over entire), so the
   // bound is in the post itself. A list over `n` items shows its first `n`, the count of the rest, and a file the harness wrote that holds
   // every list whole, with its size and sha256: nothing is cut, every item stays reachable.
@@ -4446,6 +4486,8 @@ export async function regroupMessage(sandboxRoot: string, snap: LeadsSnapshot, o
     { title: `Waiting on the operator (${operator.length}):`, none: "- none", items: operator.map((v) => `- ${v.id} "${v.title}": ${v.ref}`) },
     ...(o.running?.length ? [{ title: `Jobs running under leads (${o.running.length}): each was nudged to its holder a window ago; a running job does not hold this off for ever:`, none: "- none", items: o.running.map((r) => `- ${r}`) }] : []),
     { title: `Evidence no standing entry cites (${uncited.length}):`, none: "- none", items: uncited.map((u) => `- ${u}`) },
+    // Objects the case did not supply and nobody is asked to cite: a validation control a producer made, what a tool itself supplied.
+    ...(apart.length ? [{ title: `Controls and tool references, apart from the evidence (${apart.length}): not case evidence, and nothing asks that an entry cite them:`, none: "- none", items: apart.map((u) => `- ${u}`) }] : []),
   ];
   const head = `REGROUP ${o.count}: nothing has moved for ${o.minutes} minutes: no new standing entry, no lead closed and no job committed since ${new Date(o.since.at).toISOString()} (${o.since.what}). This run is until solved, so it goes on until every question has a disposition under the bar; find another route, or, where the evidence cannot answer a question, dispose of it under the bar (a coverage record over the routes searched, another seat's review, then not_determinable).`;
   const tail = "Each of you: say on the board which route you take next. An artefact above that no entry cites, a lead nobody holds (lead_claim), a need that can be met another way (lead_link), a question with no lead (lead_open), a job whose output nobody read to its end, a question whose routes are searched and which is to be disposed of under the bar (coverage record, review, not_determinable), or what only the operator can give (lead_close needs_operator, saying what). " +

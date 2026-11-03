@@ -7110,10 +7110,35 @@ export async function heldOwnPaths(root: string, args: Record<string, unknown>, 
 }
 
 /**
+ * The places in a tool's arguments, in the agent's own writable directories,
+ * that are empty directories now, as the agent wrote them. job_run takes such
+ * a place as an output place (toolArgsForJob), so the reply can say that
+ * was the cause when nothing was written there.
+ */
+export async function emptyDirPlaces(root: string, args: Record<string, unknown>, agentId: string | undefined): Promise<Set<string>> {
+  const empty = new Set<string>();
+  if (!agentId) return empty;
+  const places: Array<[string, string]> = [];
+  mapPlaces(args, (v) => {
+    const place = ownPlace(v, agentId, root);
+    if (place) places.push([v, place.rel]);
+    return v;
+  });
+  for (const [given, rel] of places) {
+    const st = await stat(join(root, rel)).catch(() => null);
+    if (st?.isDirectory() && (await readdir(join(root, rel)).catch(() => [""])).length === 0) empty.add(given);
+  }
+  return empty;
+}
+
+/**
  * A tool's arguments as job_run submits them: what a direct call run again
  * as a job gets (ownPathsToOut over heldOwnPaths), so a manifest that asks
- * for work/<id>/x is right whichever way the tool reaches a worker. Here a
- * place that exists at all is read, not written (no attempt came first).
+ * for work/<id>/x is right whichever way the tool reaches a worker. Here no
+ * attempt came first, so a file of any size (an empty btmp too) is read, and
+ * so is a directory with entries; an empty directory holds nothing to read
+ * and is taken as an output place, {OUT}/<name> (see emptyDirPlaces, which
+ * names those so the reply can say so).
  */
 export async function toolArgsForJob(root: string, args: Record<string, unknown>, agentId: string | undefined): Promise<Record<string, unknown>> {
   const held = await heldOwnPaths(root, args, agentId, { existing: true }).catch(() => new Set<string>());
@@ -7148,9 +7173,12 @@ export function writtenToOf(given: unknown, mapped: unknown, job: string): Recor
  * or the sealed tree this VM sees says written, and nothing is said not
  * written: a place neither shows is `unconfirmed` (this VM's view of a tree
  * just sealed may lag). Before, `written_to` named a place whether or not
- * anything was there.
+ * anything was there. A `not_written` place that the agent gave as an empty
+ * directory (`emptyDirs`, from emptyDirPlaces) also gets a line in
+ * `not_written_cause`: the empty directory was taken as an output place, so
+ * nothing was read from it, and the tool wrote nothing there.
  */
-export function placedOutputs(root: string, moved: Record<string, string>, job: { state?: unknown; outputs?: unknown }): Record<string, Record<string, string>> {
+export function placedOutputs(root: string, moved: Record<string, string>, job: { state?: unknown; outputs?: unknown }, o: { emptyDirs?: Set<string> } = {}): Record<string, Record<string, string>> {
   if (!Object.keys(moved).length) return {};
   if (job.state !== "committed" && job.state !== "failed" && job.state !== "cancelled") return { writes_to: moved };
   const out = (job.outputs && typeof job.outputs === "object" ? job.outputs : {}) as { files?: unknown; list?: unknown };
@@ -7164,7 +7192,11 @@ export function placedOutputs(root: string, moved: Record<string, string>, job: 
     const kind = listed ? "written_to" : whole || out.files === 0 || job.state !== "committed" ? "not_written" : existsSync(join(root, place)) ? "written_to" : "unconfirmed";
     sorted[kind][given] = place;
   }
-  return Object.fromEntries(Object.entries(sorted).filter(([, v]) => Object.keys(v).length));
+  const cause: Record<string, string> = {};
+  for (const given of Object.keys(sorted.not_written)) {
+    if (o.emptyDirs?.has(given)) cause[given] = "an empty directory was given for reading; job_run takes an empty directory as an output place, so nothing was read from it and the tool wrote nothing there";
+  }
+  return Object.fromEntries(Object.entries({ ...sorted, not_written_cause: cause }).filter(([, v]) => Object.keys(v).length));
 }
 
 /**

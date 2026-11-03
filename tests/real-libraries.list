@@ -1,0 +1,11 @@
+# The test files whose tests are gated on a library or a program the other jobs do not install: they skip
+# without it, and a skip passes. The real-libraries job in .github/workflows/ci.yml installs python-evtx,
+# regipy, Pillow and pytsk3 (the lines packs/*/requires/python.txt declare), pyewf and ewfacquirestream
+# (Ubuntu's python3-libewf and ewf-tools) and qemu-img (qemu-utils), runs exactly these files and fails
+# if any test in them was skipped. One path a line; a line starting with # is a note.
+tests/pack-windows-forensics-evtx-bounds.test.ts
+tests/pack-windows-forensics-artefacts-recipe.test.ts
+tests/pack-windows-forensics-registry.test.ts
+tests/pack-windows-forensics-registry-bounds.test.ts
+tests/pack-virtualization-chain.test.ts
+tests/tool-library-folded.test.ts

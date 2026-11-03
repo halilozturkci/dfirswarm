@@ -19,6 +19,7 @@ import { useLive, useResource, useSwarmVersion } from "@/lib/live";
 import { CHECKS_CHANGE_KINDS } from "@/lib/live-version";
 import { reachedDone, stopHasWork } from "@/lib/overview-status";
 import type { SwarmView } from "@/lib/types";
+import { meteringWords } from "@/lib/metering";
 import { cn } from "@/lib/utils";
 import { StoryPanel } from "./detail/story-panel";
 import { FinishLinePanel } from "./detail/finish-line";
@@ -503,6 +504,7 @@ export function SwarmDetailScreen() {
   // A team of local models is not charged: its cap is in tokens, and the
   // header measures it that way rather than showing "$0.00 of $0.00".
   const unmetered = b.metered === false;
+  const metering = meteringWords(b);
   const capTokens = typeof b.cap_tokens === "number" && b.cap_tokens > 0 ? b.cap_tokens : 0;
   const capPct = unmetered ? (capTokens > 0 ? (b.tokens / capTokens) * 100 : 0) : s.cap_usd > 0 ? (s.spent_usd / s.cap_usd) * 100 : 0;
   const overCap = unmetered ? capTokens > 0 && b.tokens >= capTokens : s.cap_usd > 0 && s.spent_usd >= s.cap_usd;
@@ -696,7 +698,7 @@ export function SwarmDetailScreen() {
               unmetered
                 ? overCap
                   ? `${compact(b.tokens - capTokens)} tokens over the cap`
-                  : `free · no metered cost${capTokens > 0 ? ` · ${compact(capTokens - b.tokens)} left` : ""}`
+                  : `${metering.label} · ${metering.note}${capTokens > 0 ? ` · ${compact(capTokens - b.tokens)} left` : ""}`
                 : overCap
                   ? `${money(s.spent_usd - s.cap_usd)} over the cap`
                   : `${money(Math.max(0, s.cap_usd - s.spent_usd), 2)} left of ${money(s.cap_usd, 2)}`

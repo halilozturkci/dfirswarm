@@ -1,6 +1,6 @@
 # Ledger
 
-8 entries: 0 events, 0 indicators, 3 findings, 1 searches that found nothing, 1 coverage records, 3 answers. Written by the harness from `record`, `attest` and `dispute`; cite it as `ledger/ledger.md`.
+9 entries: 0 events, 0 indicators, 3 findings, 1 searches that found nothing, 2 coverage records, 3 answers. Written by the harness from `record`, `attest` and `dispute`; cite it as `ledger/ledger.md`.
 
 ## Timeline
 
@@ -33,3 +33,4 @@
 ## Coverage records
 
 - **#2** for question:1: proposition: The event question 1 asks about happened [answers 1] [attested by a2] — objects: `input:logs/a.log` — time range: the whole of each object, no time bound — method: a keyword search (settings: case-insensitive, every encoding the tool offers) — covered: every byte of the objects named — skipped: none: the search ran to its end — failures: none — results: E-1, job:j000002/hits.txt — alternatives: the event may have left its trace only in memory, which the case does not hold — detection opportunity: trace expected yes, the event writes to the objects searched, and they keep it — inventory 6b7f01894e8e2a6c059e2d4d6130c309436116548ea9697440118f05b264e3db — **coverage complete** — no literal form to look for: the fixture's event has no literal form a byte search could find — reviewed by a2: challenged the detection assumptions: the event writes to the objects searched, and they keep it for their whole range; reproduced a decisive check: ran the decisive search again over the same objects: nothing; not tried another route: no second source for the event in the case — by a0
+- **#9** for question:3: proposition: The event question 3 asks about happened [answers 3] — objects: `input:disk.E01` — time range: the whole of each object, no time bound — method: a keyword search (settings: case-insensitive, every encoding the tool offers) — covered: every byte of the objects named — skipped: none: the search ran to its end — failures: none — results: job:j000001/hits.txt — alternatives: the event may have left its trace only in memory, which the case does not hold — detection opportunity: trace expected yes, the event writes to the objects searched, and they keep it — inventory 6b7f01894e8e2a6c059e2d4d6130c309436116548ea9697440118f05b264e3db — **coverage complete** — no literal form to look for: the fixture event has no literal form a byte search could find — **unreviewed** — by a0

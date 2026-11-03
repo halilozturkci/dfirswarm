@@ -147,7 +147,7 @@ vault were left as hypotheses.
 
 [`observations.md`](observations.md) — eleven findings with the evidence for
 each, written to be folded into
-[docs/improvement-plan.md](../../improvement-plan.md): the catalog
+[docs/improvement-plan.md](../../../improvement-plan.md): the catalog
 cataloguing one EWF set six times, forging that starts fifteen minutes late,
 a Tools tab that cannot say why it is empty, tab-group labels that look like
 tabs, a local model's first turn outliving the idle watchdog, a provider

@@ -71,8 +71,8 @@ def cpu(fn, *a):
 
 
 def ids_time():
-    # every id kind of the identifier grammar, in the shapes that make a pattern try one split after another: each combination on a ladder of sizes, the least
-    # CPU time of up to three rounds, and the combinations whose time is not linear named (the first few: the rest would only take longer)
+    # every id kind of the identifier grammar, in the shapes that make a pattern try one split after another: each combination on a ladder of sizes, the median
+    # CPU time of three rounds (the median), and the combinations whose time is not linear named (the first few: the rest would only take longer)
     heads = ["t10.AB", "t10.AB_", "t10.AB_x", "t10.ATA_____Model", "iqn.2020-01.a", "iqn.2020-01.a:", "naa.", "eui.", "wwn-0x", "vml.", "WIN-", "DESKTOP-", "LAPTOP-", "a1b2c3d4-", "{", "00112233-44556677-8899-"]
     fillers = ["_", "-", "a", "A1", ".", ":", " ", "_a", "a_", "0", "f", "Ab"]
     worst = {str(n): 0.0 for n in req["sizes"]}
@@ -274,10 +274,10 @@ const TOOLS: [string, string][] = [["snapshot_chain_check", CHAIN], ["virtualiza
 
 // ---- P2-T: every id kind is read in time proportional to the string ---------------------------------------------------------
 
-test("an id of every kind (t10., iqn., naa., eui., wwn-, vml., WIN-, DESKTOP-, LAPTOP-, a GUID) followed by 2,048, 8,192 or 32,768 characters of underscores, dashes, dots, colons or letters is judged in time proportional to its length (0.3 CPU s at 32,768 characters), in every field kind and in the second check; the least of up to three rounds, each step at most 8 times the one before", async () => {
+test("an id of every kind (t10., iqn., naa., eui., wwn-, vml., WIN-, DESKTOP-, LAPTOP-, a GUID) followed by 2,048, 8,192 or 32,768 characters of underscores, dashes, dots, colons or letters is judged in time proportional to its length (0.3 CPU s at 32,768 characters), in every field kind and in the second check; the median of three rounds, each step at most 8 times the one before", async () => {
   for (const [label, script] of TOOLS) {
     const got = await host(script, { op: "ids_time", sizes: [2048, 8192, 32768] }) as { worst: Record<string, number>; bad: unknown[] };
-    assert.deepEqual(got.bad, [], `${label}: not linear (the least CPU seconds of up to three rounds at 2,048, 8,192 and 32,768 characters, each step four times the length)`);
+    assert.deepEqual(got.bad, [], `${label}: not linear (the median CPU seconds of three rounds at 2,048, 8,192 and 32,768 characters, each step four times the length)`);
     assert.ok(got.worst["8192"] < 0.5, `${label}: 8,192 characters took ${got.worst["8192"]} CPU s (the quadratic pattern took 3 at 4,096)`);
     assert.ok(got.worst["32768"] < ONE_STRING_CPU_SECONDS, `${label}: 32,768 characters took ${got.worst["32768"]} CPU s (limit ${ONE_STRING_CPU_SECONDS})`);
   }
