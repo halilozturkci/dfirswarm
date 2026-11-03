@@ -3001,6 +3001,127 @@ def parse_pbs_task_log(fh, source, events, clock, max_line, stats, times):
         stats["no_closing_files"].append(source["id"])
 
 
+# ---- Proxmox Backup Server configuration files ----------------------------------------------------------------------------
+# Built from the Proxmox Backup documentation page "Configuration Files" (its title read "Proxmox Backup 4.2.8-1 documentation", retrieved 2026-11-03):
+# datastore.cfg, prune.cfg, sync.cfg, verification.cfg and remote.cfg are section-per-object text files: a header `<type>: <id>` at column 0, then the
+# object's properties, indented, one `<name> <value>` per line. The page's examples indent with spaces and does not say whether a tab is allowed; both are read.
+# The property names below are the ones the page lists for each type; any other property, or a type the page does not list, is unparsed and located.
+PBS_KEEP = ("keep-hourly", "keep-daily", "keep-weekly", "keep-monthly", "keep-yearly", "keep-last")
+PBS_CONFIG_TYPES = {
+    "datastore": {"required": ("path",), "optional": ("backend", "backing-device", "comment", "counter-reset-schedule", "gc-on-unmount", "gc-schedule", "maintenance-mode",
+                                                        "notification-mode", "notification-thresholds", "notify", "notify-user", "prune-schedule", "tuning", "verify-new") + PBS_KEEP},
+    "prune": {"required": ("schedule", "store"), "optional": ("comment", "disable", "max-depth", "ns") + PBS_KEEP},
+    "sync": {"required": ("remote-store", "store"), "optional": ("active-encryption-key", "associated-key", "comment", "encrypted-only", "group-filter", "max-depth", "ns", "owner", "remote",
+                                                                 "remote-ns", "remove-vanished", "resync-corrupt", "run-on-mount", "schedule", "sync-direction", "transfer-last",
+                                                                 "unmount-on-done", "verified-only", "worker-threads", "burst-in", "burst-out", "rate-in", "rate-out")},
+    "verification": {"required": ("store",), "optional": ("comment", "ignore-verified", "max-depth", "ns", "outdated-after", "read-threads", "schedule", "verify-threads")},
+    "remote": {"required": ("password", "auth-id", "host"), "optional": ("comment", "fingerprint", "port", "use-node-proxy")},
+}
+PBS_CONFIG_FILES = {"datastore.cfg": "datastore", "prune.cfg": "prune", "sync.cfg": "sync", "verification.cfg": "verification", "remote.cfg": "remote"}
+PBS_CFG_HEADER = re.compile(r"^([A-Za-z][A-Za-z0-9_-]{0,63}): ?(.{1,512})$")
+PBS_CFG_PROPERTY = re.compile(r"^[ \t]+([A-Za-z][A-Za-z0-9_-]{0,63})(?:[ \t]+(.*))?$")
+PBS_NOTIFY = re.compile(r"^(?:gc|prune|sync|verify)=(?:never|always|error)(?:,(?:gc|prune|sync|verify)=(?:never|always|error))*$")
+PBS_SECRET_WORDS = ("password", "passwd", "secret", "token", "key", "credential", "passphrase")
+
+
+def pbs_secret_property(name):
+    low = name.lower()
+    return any(w in low for w in PBS_SECRET_WORDS)
+
+
+def parse_pbs_config(fh, source, events, clock, max_line, stats):
+    section = None          # (type, id, seen property names, line of the header)
+    unknown_section = False
+    props_total = 0
+
+    def close():
+        if section is None:
+            return
+        kind, ident, seen, hline = section
+        missing = [r for r in PBS_CONFIG_TYPES[kind]["required"] if r not in seen]
+        if missing:
+            stats["config_missing"].append("%s line %d: section %s lacks the property the documentation requires: %s" % (source["id"], hline, kind, ", ".join(missing)))
+
+    for n, off, length, raw in read_lines(fh, max_line):
+        clock.check()
+        if raw is None:
+            stats["over_limit"] += 1
+            stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": "line over max_line_bytes: located, not read"})
+            continue
+        line = decode_line(raw)
+        if not line.strip() or line.lstrip().startswith("#"):
+            stats["blank"] += 1
+            continue
+        loc = {"line": n, "byte_offset": off, "byte_length": length}
+
+        def bad(reason):
+            stats["unparsed"] += 1
+            if len(stats["problem_lines"]) < 200:
+                stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": reason})
+
+        if line[0] not in " \t":
+            close()
+            section = None
+            unknown_section = False
+            m = PBS_CFG_HEADER.match(line.rstrip())
+            if not m:
+                bad("not a `<type>: <id>` section header of the documented files")
+                unknown_section = True
+                continue
+            if m.group(1) not in PBS_CONFIG_TYPES:
+                bad("a section type the documentation does not list for these files")
+                unknown_section = True
+                continue
+            section = (m.group(1), m.group(2).strip(), set(), n)
+            stats["parsed"] += 1
+            stats["config_sections"] += 1
+            continue
+        if unknown_section:
+            bad("a property of a section that was not read")
+            continue
+        if section is None:
+            bad("a property line before any section header")
+            continue
+        m = PBS_CFG_PROPERTY.match(line.rstrip())
+        if not m:
+            bad("not a `<name> <value>` property line")
+            continue
+        kind, ident, seen, hline = section
+        name, value = m.group(1), (m.group(2) or "").strip()
+        table = PBS_CONFIG_TYPES[kind]
+        if name not in table["required"] and name not in table["optional"]:
+            bad("a property the documentation does not list for a %s section" % kind)
+            continue
+        if name in PBS_KEEP and not (value.isdigit() and len(value) <= 9):
+            bad("%s takes a whole number" % name)
+            continue
+        if name == "notify" and not PBS_NOTIFY.match(value):
+            bad("notify takes gc, prune, sync and verify set to never, always or error")
+            continue
+        seen.add(name)
+        props_total += 1
+        stats["parsed"] += 1
+        setting = {"section_type": kind, "property": name}
+        extra = {}
+        if name == "comment" or pbs_secret_property(name):
+            # a comment is free text and a credential is a secret: neither is printed; both go to the text file of a secret_output job
+            setting["value"] = None
+            setting["value_withheld"] = "a comment (free text)" if name == "comment" else "a property that holds a secret or a key"
+            setting["value_chars"] = len(value)
+            extra["message"] = "%s %s: %s %s" % (kind, ident, name, value)
+        else:
+            setting["value"] = value
+            if name in PBS_KEEP:
+                setting["value_number"] = int(value)
+        retention = name in PBS_KEEP or name in ("gc-schedule", "prune-schedule", "notify", "schedule")
+        events.add(source, loc, "pbs_config", time_utc=None, time_raw=None, time_basis="a configuration file carries no time", category="other",
+                   category_basis="a setting as configured; the file says nothing of when it was set or changed", action_raw=name, object=ident, result="unknown",
+                   result_basis="a setting states no result", setting=setting, retention_setting=retention, **extra)
+    close()
+    if props_total == 0 and stats["config_sections"] == 0:
+        stats["config_empty"] += 1
+
+
 # ---- declared mappings -----------------------------------------------------------------------------------------------
 
 MISSING = object()   # a declared field the record does not have (a field that is there and null or empty is not missing)
@@ -3295,6 +3416,9 @@ PROVENANCE = {
     "pbs_task_log": {"product": "proxmox_backup_server", "source_kind": "task log file (tasks/<XX>/<UPID>)", "schema_basis": "vendor_documentation",
                      "validated_against_real_export": False,
                      "documentation": "Proxmox Backup source, proxmox-rest-server worker_task.rs (git.proxmox.com, master), and the Proxmox Backup documentation page Backup Client Usage (its title read Proxmox Backup 4.2.8-1 documentation); retrieved 2026-11-03"},
+    "pbs_config": {"product": "proxmox_backup_server", "source_kind": "configuration file (datastore.cfg, prune.cfg, sync.cfg, verification.cfg, remote.cfg)", "schema_basis": "vendor_documentation",
+                   "validated_against_real_export": False,
+                   "documentation": "Proxmox Backup documentation page Configuration Files (its title read Proxmox Backup 4.2.8-1 documentation); retrieved 2026-11-03"},
     "pve_task_index": {"product": "proxmox_ve_or_proxmox_backup_server", "source_kind": "task index file (UPID lines)", "schema_basis": "synthetic_fixtures",
                        "validated_against_real_export": False,
                        "documentation": "the UPID layouts as this tool's code describes them; tested on synthetic fixtures only"},
@@ -3325,8 +3449,8 @@ def main():
     if not paths:
         fail("name the exports: path is one file, paths a list of up to %d" % MAX_PATHS)
     fmt = args.get("format", "auto")
-    if fmt not in ("auto", "pve_task_index", "pve_vzdump_log", "pbs_task_log", "declared_csv", "declared_jsonl", "declared_xml"):
-        fail("format must be auto, pve_task_index, pve_vzdump_log, pbs_task_log, declared_csv, declared_jsonl or declared_xml")
+    if fmt not in ("auto", "pve_task_index", "pve_vzdump_log", "pbs_task_log", "pbs_config", "declared_csv", "declared_jsonl", "declared_xml"):
+        fail("format must be auto, pve_task_index, pve_vzdump_log, pbs_task_log, pbs_config, declared_csv, declared_jsonl or declared_xml")
     product = want_str(args, "product", maximum=200)
     if product and fmt == "auto" and product.lower() not in ("proxmox", "proxmox_ve", "proxmox_backup_server", "pve", "pbs"):
         known = product.lower() in KNOWN_UNSUPPORTED
@@ -3381,7 +3505,7 @@ def main():
     clock = Clock(seconds)
     sources, problems = [], []
     stats = {"parsed": 0, "unparsed": 0, "blank": 0, "over_limit": 0, "problem_lines": [], "mapping_errors": [], "read_errors": [], "unmapped_actions": collections.Counter(), "unmapped_actions_over": 0,
-             "fields_absent": collections.Counter(), "records_declared": 0, "no_closing": 0, "no_closing_files": []}
+             "fields_absent": collections.Counter(), "records_declared": 0, "no_closing": 0, "no_closing_files": [], "config_missing": [], "config_sections": 0, "config_empty": 0}
     unrecognised = []
     partial = []
     for number, p in enumerate(paths, 1):
@@ -3410,8 +3534,12 @@ def main():
                 head = fh.read(4096)
                 fh.seek(0)
                 first = next((l for l in head.decode("utf-8", "replace").splitlines() if l.strip()), "")
+                first_cfg = next((l for l in head.decode("utf-8", "replace").splitlines() if l.strip() and not l.lstrip().startswith("#")), "")
+                cfg_m = PBS_CFG_HEADER.match(first_cfg.rstrip()) if first_cfg[:1] not in (" ", "\t") else None
                 if first.startswith("UPID:"):
                     kind = "pve_task_index"
+                elif cfg_m and PBS_CONFIG_FILES.get(os.path.basename(p)) == cfg_m.group(1):
+                    kind = "pbs_config"           # the file name and its first section's type, together: the documented signature
                 elif LOG_PREFIX.match(first):
                     kind = "pve_vzdump_log"
                 else:
@@ -3430,6 +3558,8 @@ def main():
                     parse_task_index(fh, rec, events, clock, max_line, stats)
                 elif kind == "pve_vzdump_log":
                     parse_vzdump_log(fh, rec, events, clock, max_line, stats, times)
+                elif kind == "pbs_config":
+                    parse_pbs_config(fh, rec, events, clock, max_line, stats)
                 elif kind == "pbs_task_log":
                     parse_pbs_task_log(fh, rec, events, clock, max_line, stats, pbs_times)
                 elif kind == "declared_csv":
@@ -3465,6 +3595,9 @@ def main():
     values.close()
     page = events.page.finish()
     unmapped = sorted(stats["unmapped_actions"].items(), key=lambda kv: -kv[1])[:50]
+    partial.extend(stats["config_missing"][:20])
+    if len(stats["config_missing"]) > 20:
+        partial.append("%d more sections lack a required property" % (len(stats["config_missing"]) - 20))
     if stats["no_closing"]:
         partial.append("%d Proxmox Backup Server task log(s) (%s) do not end with a TASK result line: the task was running, was cut, or the file is not whole" % (
             stats["no_closing"], ", ".join(stats["no_closing_files"][:20])))
