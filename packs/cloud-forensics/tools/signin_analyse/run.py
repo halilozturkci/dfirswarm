@@ -99,12 +99,12 @@ def in_job():
 
 def describe(exc):
     code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
-    return scrub("%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc)))
+    return scrub_text("%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc)))
 
 
 def scrub_all(value):
     if isinstance(value, str):
-        return scrub(value)
+        return scrub_text(value)
     if isinstance(value, dict):
         return {k: scrub_all(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -115,7 +115,7 @@ def scrub_all(value):
 def fail(message, **extra):
     """An error answer: JSON, exit 1, the same `status` every answer of this pack carries. A name in it that is shaped
     like a credential is withheld like any other output."""
-    print(json.dumps({"error": scrub(str(message)), "status": "failed",
+    print(json.dumps({"error": scrub_text(str(message)), "status": "failed",
                       "status_basis": "the tool stopped with an error (see error)", **scrub_all(extra)}, default=str))
     raise SystemExit(1)
 
@@ -354,7 +354,7 @@ def shown_text(value):
     own text. A list or an object is what it is (its kind and size) and never its content: it reaches the answer, field by field and
     cleaned, in the record, and str() of it would print a name and its value side by side."""
     if isinstance(value, str):
-        return scrub(value)
+        return scrub_text(value)
     if isinstance(value, (bool, int, float)):
         return str(value)
     if isinstance(value, dict):
@@ -369,7 +369,7 @@ def failed_record(exc):
     malformed record never ends the run: it is counted, located and listed, and the next is read."""
     if isinstance(exc, TimeUp):
         return "the time limit ended the read inside this record: it was not processed"
-    message = scrub(str(exc))
+    message = scrub_text(str(exc))
     return "the record could not be processed (%s%s); it is counted and listed here and the read went on" % (
         type(exc).__name__, ": " + message if message and len(message) <= 200 else "")
 
@@ -702,215 +702,41 @@ class SecretValues:
         }
 
 
-# ---- withholding: nothing named or shaped like a credential is printed -------------------------------------------
-# The values a cloud log can carry that are secrets are named, or they are shaped, or neither. A name or a shape is a
-# way to recognise some of them and never all, so the skill says to run the tool as a job with secret_output: true
-# whenever the export may hold request parameters or properties; what the rules below catch is withheld regardless, in
-# every channel (rows, paths, error messages, the files the answer names), the same strings in all three tools.
-# A filter a caller gives (identity, user, events, operations) is matched against the text as it is printed, never
-# against a withheld original: a count of matches would tell the caller one bit of it per call.
+# ---- withholding: where each slot goes --------------------------------------------------------------------------
+# The rules are the shared WITHHOLDING block's (below this one, the same text in every tool of the repository that carries it): the name
+# layer (`name_is_sensitive`), the structure rule (`clean_value`) and the text rules (`credential_spans`). What is this block's is
+# the routing: which slot goes to which rule, and what is printed in its place. Every slot a tool prints has one of three treatments.
+#   - A designed-visible identifier is printed as it is and judged by nothing: an event id, a request id, an access key id (the
+#     `session_origin` link is made by it), an Entra object id, a record Id, a correlation id, an ARN, an account id, a hash a record
+#     names. The tools key on these, and the shared `scrub` withholds identifier-shaped runs (a hex digest, a GUID-shaped id, an AKIA
+#     key id), so no slot that can hold one goes through it.
+#   - Free text (every string of a record, a path, a file name, a JSON pointer, a table key, a reason, an error message) goes through
+#     `scrub_text`: the credential rules only, never the rules for identifier-shaped runs. A string longer than WITHHOLD_LIMIT is withheld
+#     whole (the shared block's other carriers keep 64 KiB; these tools keep 1 MiB).
+#   - A named field (a key that says it holds a secret, or the `Value` of a pair whose `Name` does) goes through the name layer, at any
+#     depth, whatever its value looks like, a number included.
+# The values the rules find are withheld in every channel (rows, paths, error messages, the files the answer names), the same strings
+# in all three tools. A filter a caller gives (identity, user, events, operations) is matched against the text as it is printed,
+# never against a withheld original: a count of matches would tell the caller one bit of it per call.
 
-# a value under such a name is a digest of something, not a key: the length rules do not apply to it (x-amz-checksum-sha256)
-CHECKSUM_NAME = re.compile(r"(?i)checksum|digest|sha[0-9]|md5|etag|crc[0-9]")
-REDACTED = re.compile(r"^\W*(?:hidden_due_to_security_reasons|redacted|masked|removed|\*+|x{3,}|\[\])\W*$", re.I)
-NOT_A_VALUE = frozenset(("true", "false", "null", "none", "nil", "undefined", "required", "optional", "enabled", "disabled"))
-SENSITIVE_EXACT = {
-    "password", "newpassword", "oldpassword", "currentpassword", "passwd", "pwd", "passphrase", "passcode", "pin", "otp",
-    "pass", "dbpass", "userpass", "adminpass", "rootpass", "plaintext",
-    "secret", "clientsecret", "secretkey", "secretaccesskey", "awssecretaccesskey", "awssecretkey", "secretstring",
-    "secretbinary", "secrettext", "secretvalue", "accesskeysecret",
-    "sessiontoken", "securitytoken", "accesstoken", "refreshtoken", "idtoken", "bearertoken", "authtoken", "token",
-    "tokencode", "mfacode", "verificationcode", "authorizationcode",
-    "authorization", "proxyauthorization", "cookie", "setcookie", "apikey", "privatekey", "privatekeypem",
-    "sharedaccesskey", "sharedaccesssignature", "accountkey", "primarykey", "secondarykey", "keyvalue", "masterkey",
-    "storagekey", "subscriptionkey", "ocpapimsubscriptionkey",
-    "connectionstring", "credential", "credentials", "assertion", "samlresponse", "mfasecret",
-    "sastoken", "sassignature", "signature", "sig",
-    "passwordhash", "nthash", "ntlmhash", "lmhash",
-}
-SENSITIVE_SUFFIX = ("password", "passwd", "passphrase", "secret", "apikey", "privatekey", "sessiontoken", "securitytoken",
-                    "accesstoken", "refreshtoken", "clientsecret", "token", "secrettext", "secretkey", "secretaccesskey",
-                    "primarykey", "secondarykey", "accountkey", "sharedaccesskey", "subscriptionkey", "passwordhash",
-                    "ntlmhash", "nthash", "passcode", "signature", "cookie")
-NOT_SECRET_TOKEN = ("nexttoken", "pagetoken", "continuationtoken", "paginationtoken", "nextpagetoken", "pagingtoken",
-                    "startingtoken", "nextmarkertoken", "clienttoken", "clientrequesttoken", "idempotencytoken",
-                    "nextforwardtoken", "nextbackwardtoken", "requesttoken")
-CONTAINERS = ("credential", "credentials")
-_NAME_CACHE = {}
-
-
-def is_container_name(name):
-    """`credentials` names a group of fields (an access key id, an expiry, a token): each is judged by its own name."""
-    return re.sub(r"[^a-z0-9]", "", str(name).lower()) in CONTAINERS
-
-
-def name_is_sensitive(name):
-    hit = _NAME_CACHE.get(name)
-    if hit is None:
-        flat = re.sub(r"[^a-z0-9]", "", str(name).lower())
-        hit = flat in SENSITIVE_EXACT or (len(flat) > 6 and flat.endswith(SENSITIVE_SUFFIX) and not flat.endswith(NOT_SECRET_TOKEN))
-        if len(_NAME_CACHE) < 20000:
-            _NAME_CACHE[name] = hit
-    return hit
-
-
-_B64 = "A-Za-z0-9+/_-"
-_B64_RUN = re.compile(r"(?<![%s])[%s]{128,}={0,2}(?![%s])" % (_B64, _B64, _B64))
-_B64_EDGE = "(?<![A-Za-z0-9+/=_-])"
-_B64_END = "(?![A-Za-z0-9+/=_-])"
-# The names an assignment is recognised by. A long compound name may carry any prefix (dbPassword=, apiToken=, adminSecret:);
-# a short one needs the edge of a word (sig= is not design=).
-_STRONG = (r"password|passwd|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|"
-           r"security[_-]?token|auth[_-]?token|bearer[_-]?token|account[_-]?key|shared[_-]?access[_-]?key|primary[_-]?key|"
-           r"secondary[_-]?key|private[_-]?key|subscription[_-]?key|sas[_-]?token|password[_-]?hash|nt[_-]?hash|ntlm[_-]?hash|"
-           r"lm[_-]?hash|client[_-]?secret|secret[_-]?access[_-]?key|secret[_-]?key|secret[_-]?text|secret[_-]?value|token|signature|plaintext")
-_SHORT = r"(?<![A-Za-z0-9])(?:pwd|pass|sig|pin|otp|sas)"
-_SEP = r"""(?:\\*["']|["'])?\s*(?:[:=]|%3[dD]|%3[aA])\s*"""
-# a short name is a name only as `pwd=value` or `pass:value`: "pass: 3 attempts" is prose
-_SEPS = r"""(?:\\*["']|["'])?(?:\s*(?:=|%3[dD])\s*|:(?=\S))"""
-_NAME = r"(?:(?:%s)%s|%s%s)" % (_STRONG, _SEP, _SHORT, _SEPS)
-ARN_TAIL = re.compile(r"arn:[A-Za-z0-9-]+:[A-Za-z0-9-]+:[A-Za-z0-9-]*:[0-9]*:$")
-SCHEMES = ("bearer", "basic", "digest", "negotiate", "ntlm")
-PAIR_WHY = "a value paired with a credential name"
-TOKEN_RULES = [
-    # anchored at the start of a run and possessive, so that a megabyte of `eyJ` is read once, not once per `eyJ`
-    ("a JSON Web Token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+\.[A-Za-z0-9_-]{2,}+(?:\.[A-Za-z0-9_-]*+)?"), 0),
-    ("a JSON Web Encryption token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+(?:\.[A-Za-z0-9_-]*+){4}"), 0),
-    ("a password in a URL", re.compile(r"(?i)(?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,20}://[^\s:/@\"'<>\\]{0,256}:([^\s/\"'<>\\]{1,1024})@(?=[^\s/@\"'<>]{1,255})"), 1),
-    ("an Azure Functions key", re.compile(r"""(?i)(?:x-functions-key["']?\s*[:=]\s*(?:\\*["'])?|[?&;]code=)([A-Za-z0-9_/+=-]{16,512})"""), 1),
-    ("a private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|[\s\S]*)"), 0),
-    ("a base64 block of key lines", re.compile(r"(?:[A-Za-z0-9+/]{60,80}={0,2}\r?\n){2,}[A-Za-z0-9+/]{2,80}={0,2}"), 0),
-    ("an authorization header value", re.compile(
-        r"""(?i)authorization["']?\s*[:=]\s*(?:\\*["'])?(?:(?:bearer|basic|digest|negotiate|ntlm|token)\s+)?([^\s"'&,;\\]{1,4096})"""), 1),
-    ("a cookie header value", re.compile(r"""(?i)cookie["']?\s*[:=]\s*(?:\\*["'])?([^\r\n"'\\]{1,4096})"""), 1),
-    ("a scheme and its credential", re.compile(r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{3,4096})|\b(?:negotiate|ntlm|digest)\s+([A-Za-z0-9._~+/=-]{24,4096})"), -2),
-    # a Name/Value pair written as JSON text inside a string (an AuditData in a column of another name, a parameter list in a cell): the
-    # structural rule of Withheld.clean cannot see it, so the text rule reads the pair, and the name decides as it does there
-    (PAIR_WHY, re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})\\*"\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*\\*"((?:[^"\\]|\\.){1,4096}?)(?=\\*")"""), 2),
-    ("a value assigned to a credential name (quoted)", re.compile(
-        r"""(?i)%s\\*(["'])(.{1,4096}?)(?=\\*\1)""" % _NAME), 2),
-    ("a value assigned to a credential name", re.compile(
-        r"""(?i)%s((?:(?!%%26)[^\s"'&<>\\]){1,4096})""" % _NAME), 1),
-    ("a value given to a credential switch", re.compile(
-        r"""(?i)(?<![A-Za-z0-9_])-(?:password|pass|pwd|passphrase|secret|clientsecret|apikey|accesstoken|token)\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
-    ("a secret given to ConvertTo-SecureString", re.compile(
-        r"""(?i)ConvertTo-SecureString\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
-    ("a hash pair of an account database", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}:([0-9a-fA-F]{32})(?![0-9a-fA-F])"), 1),
-    ("a token of a known family", re.compile(
-        r"(?:GOCSPX-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])|"
-        r"ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{30,}|(?:IQoJb3JpZ2lu|FQoGZXIvYXdz|FwoGZXIvYXdz)[A-Za-z0-9+/=]{40,}|"
-        r"[A-Za-z0-9_.~-]{3}[0-9]Q~[A-Za-z0-9_.~-]{30,}|[01]\.A[A-Za-z0-9_-]{50,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})"), 0),
-]
-# A random-looking run of an exact length that keys have: 32, 40 (an AWS secret access key), 43 + "=" and 86 + "==" (a base64 key).
-SHAPES = [
-    ("a key-length base64 string", re.compile(_B64_EDGE + r"(?:[A-Za-z0-9+/]{32}|[A-Za-z0-9+/]{40}|[A-Za-z0-9+/]{43}=|[A-Za-z0-9+/]{86}==)" + _B64_END), True),
-]
+WITHHOLD_LIMIT = MAX_SCAN_CHARS   # read by the shared block below: a text longer than this is withheld whole
+WITHHOLD_TICK = check_deadline    # called by the shared block below during a long scan: it raises TimeUp at the deadline
 WITHHELD_TEXT = "[withheld: %s, %d characters]"
 LOCAL = {"paths": 0, "text": 0}
 
 
-def _random_like(run):
-    """A run that looks like random base64 and not like a path, a name or a hash: mixed case and digits in the proportions
-    random text has (a long path is mostly lower case with few capitals; a hex digest has no case to mix)."""
-    n = len(run)
-    upper = sum(1 for ch in run if "A" <= ch <= "Z")
-    lower = sum(1 for ch in run if "a" <= ch <= "z")
-    digit = sum(1 for ch in run if "0" <= ch <= "9")
-    return upper * 100 >= 15 * n and lower * 100 >= 15 * n and digit * 100 >= 5 * n
-
-
-# What a text must hold for any rule below to match it: a literal one of them looks for, or a run long enough for a shape. A text
-# with none of these is judged clean without running the rules (most values of a log: names, ids, times, addresses). Each
-# alternative is a necessary condition of at least one rule; tests/pack-cloud-shared.test.ts holds the two paths equal.
-_QUICK = re.compile(r"eyJ|-----BEGIN|\n|authorization|cookie|bearer|basic|digest|negotiate|ntlm|pass|pwd|secret|token|key|signature|sig|"
-                    r"plaintext|hash|pin|otp|sas|securestring|gh[pousr]_|github_pat_|xox|AIza|ya29\.|1//0|IQoJb|FQoG|FwoG|Q~|[01]\.A|[sr]k_|"
-                    r"://|gocspx|functions|code=|credential|assertion|mfacode|saml|"
-                    r"[A-Za-z0-9+/]{32}|[A-Za-z0-9+/_-]{128}", re.I)
-
-
-_CLEAN = set()                    # short texts already judged to hold nothing (names, addresses and ids repeat across a log)
-SCAN_GATE = 4096                  # a text longer than this is scanned with the deadline in view, rule by rule
-
-
-def token_spans(text, shapes=True, strict=False):
-    """(start, end, why) of each stretch of `text` shaped like a credential, in order and not overlapping. `shapes` False leaves
-    out the rules that recognise a key by its length alone (a value that is named a checksum or a digest is not scanned for them).
-    With `strict` a scan that meets the deadline raises TimeUp (a record is being read); without it the text is withheld whole."""
-    if shapes and text in _CLEAN:
-        return []
-    spans = _spans(text, shapes, strict) if _QUICK.search(text) else []
-    if shapes and not spans and len(text) <= 256 and len(_CLEAN) < 100000:
-        _CLEAN.add(text)
-    return spans
-
-
-def _name_before(text, start, at):
-    """The letters and digits of the name an assigned value follows (`nextToken=` gives `nexttoken`)."""
-    return re.sub(r"[^a-z0-9]", "", text[max(0, at - 64):at].lower())
-
-
-def _spans(text, shapes=True, strict=False):
-    spans = []
-    big = len(text) > SCAN_GATE
-    for why, rx, group in TOKEN_RULES:
-        if big and out_of_time():
-            if strict:
-                raise TimeUp()
-            return [(0, len(text), "text not scanned: the time limit ended the scan")]      # fail closed
-        for m in rx.finditer(text):
-            if big and strict:
-                check_deadline()
-            if why == PAIR_WHY and not name_is_sensitive(m.group(1)):
-                continue
-            if "assigned to a credential name" in why:
-                if ARN_TAIL.search(text[max(0, m.start() - 120):m.start()]):
-                    continue                              # arn:aws:secretsmanager:...:secret:NAME is a name, not a value
-                if _name_before(text, m.start(), m.start(m.lastindex or 0)).endswith(NOT_SECRET_TOKEN):
-                    continue                              # nextToken=, pageToken=, clientToken=: a position or an idempotency key
-            groups = (1, 2, 3) if group == -1 else ((1, 2) if group == -2 else (group,))
-            for g in groups:
-                if g and m.group(g) is None:
-                    continue
-                start, end = m.span(g)
-                value = text[start:end]
-                if g and (REDACTED.match(value) or value.lower() in NOT_A_VALUE or value.startswith(("${", "{{"))):
-                    continue
-                if why == "a scheme and its credential" and g == 1 and not (re.search(r"[0-9+/=_.~-]", value) or len(value) >= 16):
-                    continue                              # "basic authentication" is prose, "Basic dXNlcjpwYXNz" is not
-                if g == 1 and group == -1 and len(m.groups()) >= 2 and m.group(1) in ("'", '"'):
-                    continue                              # group 1 of the switch rules is the quote
-                spans.append((start, end, why))
-    if big and out_of_time():
-        if strict:
-            raise TimeUp()
-        return [(0, len(text), "text not scanned: the time limit ended the scan")]
-    for m in _B64_RUN.finditer(text):
-        if _random_like(m.group(0)):
-            spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
-    if shapes:
-        for why, rx, check in SHAPES:
-            for m in rx.finditer(text):
-                if not check or _random_like(m.group(0)):
-                    spans.append((m.start(), m.end(), why))
-    spans.sort()
-    merged = []
-    for s in spans:
-        if merged and s[0] < merged[-1][1]:
-            if s[1] > merged[-1][1]:
-                merged[-1] = (merged[-1][0], s[1], merged[-1][2])
-            continue
-        merged.append(s)
-    return merged
-
-
-def scrub(text):
-    """`text` with each stretch shaped like a credential replaced by a marker that holds only its length."""
+def scrub_text(text):
+    """`text` with each credential in it replaced by a marker that holds only its length."""
     if not isinstance(text, str) or len(text) < 5:
         return text
     if len(text) > MAX_SCAN_CHARS:
         LOCAL["text"] += 1
         return WITHHELD_TEXT % ("text longer than 1 MiB", len(text))
-    spans = token_spans(text)
+    try:
+        spans = credential_spans(text)
+    except TimeUp:
+        LOCAL["text"] += 1
+        return WITHHELD_TEXT % ("text not scanned: the time limit ended the scan", len(text))      # fail closed
     if not spans:
         return text
     out, at = [], 0
@@ -941,7 +767,7 @@ def shown_pointer(pointer):
         hit = _SEGMENTS.get(part)
         if hit is None:
             key = part.replace("~1", "/").replace("~0", "~")
-            safe = scrub(key)
+            safe = scrub_text(key)
             hit = part if safe == key else safe.replace("~", "~0").replace("/", "~1")
             if len(_SEGMENTS) < 20000:
                 _SEGMENTS[part] = hit
@@ -955,7 +781,7 @@ def shown_path(path):
         return path
     parts = path.split("/")
     for i, part in enumerate(parts):
-        clean = scrub(part)
+        clean = scrub_text(part)
         if clean != part:
             parts[i] = clean
             LOCAL["paths"] += 1
@@ -965,10 +791,8 @@ def shown_path(path):
 class Withheld:
     """Cleans values on their way into an answer, counts what was withheld, lists where, and hands the originals to the
     values file when the caller asked for it (write_values, in a job). A row's `locator` says which record it came from.
-    `quiet` cleans without recording (for a value that is stored on the way, such as an index entry)."""
-
-    VALUE_KEYS = ("Value", "NewValue", "OldValue", "value", "newValue", "oldValue")
-    NAME_KEYS = ("Name", "name", "Key", "key")
+    `quiet` cleans without recording (for a value that is stored on the way, such as an index entry). The walk over a value is the
+    shared block's `clean_value`; this class records what it finds."""
 
     def __init__(self, vault, limit, quiet=False):
         self.vault = vault
@@ -999,39 +823,15 @@ class Withheld:
             return "list of %d items" % len(value)
         return "a number"
 
+    def field(self, locator, pointer, why, original):
+        """What is printed for a field the name layer withheld (or a value nested too deep), after noting it."""
+        self.note(locator, pointer, why, len(original) if isinstance(original, str) else len(dumps_deep(original, default=str)), original)
+        return "[withheld: %s, %s]" % (why, self.size_of(original))
+
     def clean(self, value, locator, pointer="", depth=0, shapes=True):
-        if isinstance(value, str):
-            return self.clean_text(value, locator, pointer, shapes)
-        check_deadline()
-        if depth > MAX_DEPTH and isinstance(value, (dict, list)):
-            self.note(locator, pointer, "nested deeper than %d levels" % MAX_DEPTH, len(dumps_deep(value, default=str)), value)
-            return "[withheld: nested deeper than %d levels, %s]" % (MAX_DEPTH, self.size_of(value))
-        if isinstance(value, dict):
-            named = None
-            for key in self.NAME_KEYS:
-                if isinstance(value.get(key), str):
-                    named = value[key]
-                    break
-            pair_secret = named is not None and name_is_sensitive(named)
-            out = {}
-            for k, v in value.items():
-                ks = str(k)
-                point = "%s/%s" % (pointer, ks.replace("~", "~0").replace("/", "~1"))
-                safe_key = scrub(ks)
-                if safe_key in out:
-                    safe_key = "%s#%d" % (safe_key, len(out))
-                sensitive = name_is_sensitive(ks) or (pair_secret and ks in self.VALUE_KEYS)
-                if sensitive and is_container_name(ks) and isinstance(v, (dict, list)):
-                    sensitive = False
-                if sensitive and not (v is None or isinstance(v, bool) or v == "") and not (isinstance(v, str) and (REDACTED.match(v) or v.lower() in NOT_A_VALUE)):
-                    self.note(locator, point, "credential-named field", len(v) if isinstance(v, str) else len(dumps_deep(v, default=str)), v)
-                    out[safe_key] = "[withheld: credential-named field, %s]" % self.size_of(v)
-                else:
-                    out[safe_key] = self.clean(v, locator, point, depth + 1, shapes and not CHECKSUM_NAME.search(ks))
-            return out
-        if isinstance(value, list):
-            return [self.clean(v, locator, "%s/%d" % (pointer, i), depth + 1, shapes) for i, v in enumerate(value)]
-        return value
+        return clean_value(value, lambda text, point, shaped: self.clean_text(text, locator, point, shaped),
+                           lambda point, why, original: self.field(locator, point, why, original),
+                           scrub_text, pointer, depth, shapes, MAX_DEPTH)
 
     def clean_text(self, text, locator, pointer, shapes=True):
         if len(text) < 5:
@@ -1040,7 +840,7 @@ class Withheld:
             self.note(locator, pointer, "text longer than 1 MiB", len(text), text)
             return WITHHELD_TEXT % ("text longer than 1 MiB", len(text))
         check_deadline(1 + len(text) // 256)
-        spans = token_spans(text, shapes, strict=True)
+        spans = credential_spans(text, shapes)          # at the deadline this raises TimeUp: a record is being read
         if not spans:
             return text
         if len(spans) > MAX_SPANS_PER_TEXT:
@@ -1062,6 +862,7 @@ class Withheld:
         page = self.page.finish()
         return {"count": self.count, "by_reason": self.reasons, "locators": self.page.page, "page": page,
                 "text_withheld_from_paths_and_messages": LOCAL["paths"] + LOCAL["text"]}
+
 
 
 # ---- timestamps -------------------------------------------------------------------------------------------------
@@ -1739,7 +1540,7 @@ def _skip_value(src, i, limit):
 
 
 _STR_RUN = re.compile(r'[^"\\]*+(?:\\.[^"\\]*+)*+', re.S)  # a string's body up to its closing quote, or to a lone backslash at the buffer's end (possessive, Python 3.11 and later: the plain form keeps state for every escape)
-_RUN = re.compile(r'(?:[^"{}\[\]]++|"[^"\\]*+(?:\\.[^"\\]*+)*+")*+', re.S)   # plain text and whole strings, up to the next bracket or a string the buffer ends inside
+_JSON_RUN = re.compile(r'(?:[^"{}\[\]]++|"[^"\\]*+(?:\\.[^"\\]*+)*+")*+', re.S)   # plain text and whole strings, up to the next bracket or a string the buffer ends inside
 _BRACKET = re.compile(r'[{}\[\]]')
 _NOT_BRACKET = re.compile(r'[^{}\[\]]+')
 _DEPTH_STEP = [0] * 256
@@ -1796,7 +1597,7 @@ def _skip_stream(src):
                     continue
                 j = e                       # the buffer ends inside the string, or on a backslash whose next character is still to come
                 break
-            j = _RUN.match(buf, j).end()    # plain text and whole strings, at C speed, up to a bracket
+            j = _JSON_RUN.match(buf, j).end()    # plain text and whole strings, at C speed, up to a bracket
             if j >= n:
                 break
             if buf[j] == '"':               # a string the buffer ends inside
@@ -2186,6 +1987,604 @@ def first_of(item, keys, *names):
 
 # ---- END SHARED BLOCK -------------------------------------------------------------------------------------------
 
+# BEGIN SHARED WITHHOLDING
+# The same text is in every tool that withholds identifier-shaped strings and credentials (the network, base, encrypted-containers,
+# memory, virtualization, ransomware and reverse-engineering packs, and the three tools of the cloud pack), so that they withhold the
+# same strings; the tests that hold the copies equal are tests/shared-blocks-census.test.ts (how many carry it),
+# tests/pack-re-delta10.test.ts (every copy equal, found by the marker), tests/pack-network-withholding.test.ts,
+# tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts, tests/pack-re-process.test.ts and
+# tests/pack-cloud-shared.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a path
+# component, a URL, a message that quotes either; and a credential (a value given to a password, a token, a cookie, a pair, a
+# switch) by the name it is given under. A carrier may set two names above this block: WITHHOLD_LIMIT, the length past which a text is
+# withheld whole (65536 when it sets none), and WITHHOLD_TICK, a hook that long scans call and that may raise to end them at the
+# carrier's deadline (none when it sets none). Nothing else in the block is a carrier's to change.
+COUNTS = {"names": 0, "urls": 0, "text": 0}
+# A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
+# `/` joins pieces of a base64 token and is handled apart, below.
+_RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
+_SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
+_HEX = re.compile(r"[0-9a-fA-F]{32,}")
+# The prefixed secrets that one expression finds. A JWT is not among them: `eyJ` + 8 name characters + `.` + 8 + `.` + the rest, tried at
+# every `eyJ`, runs to the end of the run of name characters and fails again at each next `eyJ` of a text made of them, which costs the
+# square of the length. `_prefixed_spans` reads a JWT in one pass instead, and puts it in order with these.
+_PREFIX_RULES = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+                           r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
+                           r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+_JWT_RUN = re.compile(r"[A-Za-z0-9_-]+")
+# User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
+_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
+
+
+def _withheld(what, length, kind):
+    COUNTS[kind] = COUNTS.get(kind, 0) + 1
+    return ("<%s withheld %d characters>" % (what, length)) if what else ("<withheld %d characters>" % length)
+
+
+def _token_run(run):
+    """Is this run of name characters shaped like a token, and not like words, dates or versions?"""
+    if _HEX.search(run):
+        return True
+    chunks = [(m.group()[0].isdigit(), m.start(), m.end()) for m in re.finditer(r"[A-Za-z]+|[0-9]+", run)]
+    # digits packed between letters ("a9b2c7"), which words, dates and versions do not do
+    packed = 0
+    for i, (is_digit, start, end) in enumerate(chunks):
+        if not is_digit or end - start > 3:
+            continue
+        before = i > 0 and not chunks[i - 1][0] and chunks[i - 1][2] == start
+        after = i + 1 < len(chunks) and not chunks[i + 1][0] and chunks[i + 1][1] == end
+        packed += 1 if before or after else 0
+    if packed >= 3:
+        return True
+    letters = [c for c in run if c.isalpha()]
+    case_flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
+    if len(letters) >= 20 and case_flips >= max(8, 0.4 * len(letters)):
+        return True
+    if run.endswith("==") and len(run) >= 16:
+        return True
+    if run.endswith("=") and len(run) >= 24:
+        return True
+    return len(run) >= 40 and run.isalnum() and any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+
+
+def _randomish(piece):
+    """A piece of a path that is not a plain word: digits among letters, or capitals inside a word."""
+    if len(piece) < 4 or "." in piece or re.fullmatch(r"[A-Z][a-z]+", piece):
+        return False
+    letters = [c for c in piece if c.isalpha()]
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
+
+
+_SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
+# A text longer than this is withheld whole, by its length, and not examined: no name, path or URL is tens of thousands of characters
+# long, and the answer says how long the text was. Every rule below reads a text of this length in well under a second whatever its
+# characters are, so that no call of `scrub` or `token_spans` can run for long on a text a file chose; the limit is the backstop for
+# a shape of text that no rule was tried on, and the rules themselves are linear.
+TEXT_LIMIT = globals().get("WITHHOLD_LIMIT", 65536)
+
+
+def _prefixed_spans(text, tail=None):
+    """The spans of the prefixed secrets in the text (a vendor prefix, a JWT, `Basic`/`Bearer` and its value), left to right and apart,
+    as one expression holding all of them would find them (the first match at each offset, the next search where the last ended), in
+    time linear in the text. With `tail`, an expression matched where each span ends, the span takes what it matches.
+
+    A JWT is read from the runs of name characters (`[A-Za-z0-9_-]+`), cut once: its head is the first `eyJ` of a run that is followed
+    by 8 or more characters of that run, and it ends where the third part of the JWT does; every later `eyJ` of the run reads the same
+    rest, so the first one is the one that matches and a run that does not hold a JWT is not read again for each `eyJ` in it."""
+    from bisect import bisect_right
+    size = len(text)
+    starts, ends, rest = [], [], {}
+    if "eyJ" in text:
+        for m in _JWT_RUN.finditer(text):
+            starts.append(m.start())
+            ends.append(m.end())
+
+    def jwt_end(r):      # where a JWT whose head is in run r ends, or -1: `.`, a run of 8 or more, `.`, then the rest of the next run
+        if r not in rest:
+            end, last = -1, ends[r] + 1
+            if (last < size and text[last - 1] == "." and r + 1 < len(starts) and starts[r + 1] == last
+                    and ends[r + 1] - last >= 8 and ends[r + 1] < size and text[ends[r + 1]] == "."):
+                end = ends[r + 1] + 1
+                if r + 2 < len(starts) and starts[r + 2] == end:
+                    end = ends[r + 2]
+            rest[r] = end
+        return rest[r]
+
+    def next_jwt(at):    # (start, end) of the first JWT that starts at or after `at`, or None
+        while True:
+            p = text.find("eyJ", at)
+            if p < 0:
+                return None
+            r = bisect_right(starts, p) - 1
+            if p + 11 <= ends[r] and jwt_end(r) >= 0:
+                return p, jwt_end(r)
+            at = ends[r]  # no `eyJ` further in this run can be a head either
+
+    spans, at = [], 0
+    other = _PREFIX_RULES.search(text)
+    jwt = next_jwt(0) if starts else None
+    while other is not None or jwt is not None:
+        if other is not None and other.start() < at:      # it began inside the span just taken: look again from its end
+            other = _PREFIX_RULES.search(text, at)
+        elif jwt is not None and jwt[0] < at:
+            jwt = next_jwt(at)
+        else:
+            start, end = other.span() if jwt is None or (other is not None and other.start() < jwt[0]) else jwt
+            if tail is not None:
+                end = tail.match(text, end).end()
+            spans.append((start, end))
+            at = end
+    return spans
+
+
+def _grow_spans(text, spans):
+    """Each flagged span takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+
+    One pass cuts the text into pieces (runs of name characters) and keeps where each starts and ends. A span then walks
+    that array by index; a piece is judged once, and a walk that reaches a piece an earlier walk has settled stops there, so
+    the work is linear in the text and no range is sliced or searched again. (Looking back with a search over everything
+    before a piece costs the cube of the length for a name of many `/`-joined pieces.)"""
+    from bisect import bisect_left
+    starts, ends = [], []
+    for m in _SPAN_PIECE.finditer(text):
+        starts.append(m.start())
+        ends.append(m.end())
+    count, size = len(starts), len(text)
+    judged_left, judged_right, settled_left, settled_right = {}, {}, {}, {}
+
+    def padded(k):       # where piece k ends with the up to two `=` of padding after it
+        e = ends[k]
+        if e < size and text[e] == "=":
+            e += 2 if e + 1 < size and text[e + 1] == "=" else 1
+        return e
+
+    def left_ok(j):
+        if j not in judged_left:
+            judged_left[j] = _randomish(text[starts[j]:ends[j]])
+        return judged_left[j]
+
+    def right_ok(k):
+        if k not in judged_right:
+            judged_right[k] = _randomish(text[starts[k]:padded(k)])
+        return judged_right[k]
+
+    def before(at):      # the piece that growing left from offset `at` takes, or -1. `$` also ends a match before a final line break.
+        if at < 2 or text[at - 1] != "/":
+            return -1
+        for stop in ((at - 1, at - 2) if text[at - 2] == "\n" else (at - 1,)):
+            j = bisect_left(ends, stop)
+            if j < count and ends[j] == stop:
+                return j if left_ok(j) else -1
+        return -1
+
+    def after(k):        # the piece that growing right from the end of piece k takes, or -1
+        e = padded(k)
+        if k + 1 >= count or e >= size - 1 or text[e] != "/" or starts[k + 1] != e + 1:
+            return -1
+        return k + 1 if right_ok(k + 1) else -1
+
+    def settle(i, step, memo):
+        trail = []
+        while i not in memo:
+            trail.append(i)
+            j = step(i)
+            if j < 0:
+                memo[i] = i
+                break
+            i = j
+        final = memo[i]
+        for t in trail:
+            memo[t] = final
+        return final
+
+    grown = []
+    for start, end in spans:
+        j = before(start)
+        if j >= 0:
+            start = starts[settle(j, lambda i: before(starts[i]), settled_left)]
+        if end < size - 1 and text[end] == "/":
+            k = bisect_left(starts, end + 1)
+            if k < count and starts[k] == end + 1 and right_ok(k):
+                end = padded(settle(k, after, settled_right))
+        grown.append((start, end))
+    return grown
+
+
+def token_spans(text):
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text))]
+    spans = _prefixed_spans(text)
+    for m in _RUN.finditer(text):
+        if _token_run(m.group()):
+            spans.append(m.span())
+    # A base64 token holds `/`: pieces too short to be one alone (an AWS-style secret has two) are caught as a whole.
+    for m in _SLASHED.finditer(text):
+        run = m.group()
+        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
+            spans.append(m.span())
+    grown = _grow_spans(text, spans) if spans else []
+    grown.sort()
+    merged = []
+    for start, end in grown:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def token_shaped(text):
+    return bool(token_spans(text))
+
+
+# ---- credentials: a value is withheld by the name it is given under and by the text around it ----------------------------------
+# The rules above find strings that are shaped like an identifier. These find a secret that has no shape, because of what it is
+# assigned to (`password=`, a `Name`/`Value` pair, a `-Password` switch, `curl -u user:pass`, `mysql -pSECRET`), and the common
+# token families, private key blocks and hashes of an account database. A name decides whether a value is a secret, a value
+# decides nothing. Every rule runs in time linear in the text (a bounded stretch after each anchor, no nested repeat), and a
+# carrier whose texts are long (a cloud log: a megabyte) sets WITHHOLD_TICK to a hook that ends the work at its deadline.
+_CRED_CHECKSUM_NAME = re.compile(r"(?i)checksum|digest|sha[0-9]|md5|etag|crc[0-9]")
+_CRED_REDACTED = re.compile(r"^\W*(?:hidden_due_to_security_reasons|redacted|masked|removed|\*+|x{3,}|\[\])\W*$", re.I)
+_CRED_NOT_A_VALUE = frozenset(("true", "false", "null", "none", "nil", "undefined", "required", "optional", "enabled", "disabled"))
+_CRED_EXACT = {
+    "password", "newpassword", "oldpassword", "currentpassword", "passwd", "pwd", "passphrase", "passcode", "pin", "otp",
+    "pass", "dbpass", "userpass", "adminpass", "rootpass", "plaintext",
+    "secret", "clientsecret", "secretkey", "secretaccesskey", "awssecretaccesskey", "awssecretkey", "secretstring",
+    "secretbinary", "secrettext", "secretvalue", "accesskeysecret",
+    "sessiontoken", "securitytoken", "accesstoken", "refreshtoken", "idtoken", "bearertoken", "authtoken", "token",
+    "tokencode", "mfacode", "verificationcode", "authorizationcode",
+    "authorization", "proxyauthorization", "cookie", "setcookie", "apikey", "privatekey", "privatekeypem",
+    "sharedaccesskey", "sharedaccesssignature", "accountkey", "primarykey", "secondarykey", "keyvalue", "masterkey",
+    "storagekey", "subscriptionkey", "ocpapimsubscriptionkey",
+    "connectionstring", "credential", "credentials", "assertion", "samlresponse", "mfasecret",
+    "sastoken", "sassignature", "signature", "sig",
+    "passwordhash", "nthash", "ntlmhash", "lmhash",
+}
+_CRED_SUFFIX = ("password", "passwd", "passphrase", "secret", "apikey", "privatekey", "sessiontoken", "securitytoken",
+                "accesstoken", "refreshtoken", "clientsecret", "token", "secrettext", "secretkey", "secretaccesskey",
+                "primarykey", "secondarykey", "accountkey", "sharedaccesskey", "subscriptionkey", "passwordhash",
+                "ntlmhash", "nthash", "passcode", "signature", "cookie")
+# a position or an idempotency key under a name that ends in `token`
+_CRED_NOT_SECRET = ("nexttoken", "pagetoken", "continuationtoken", "paginationtoken", "nextpagetoken", "pagingtoken",
+                    "startingtoken", "nextmarkertoken", "clienttoken", "clientrequesttoken", "idempotencytoken",
+                    "nextforwardtoken", "nextbackwardtoken", "requesttoken")
+_CRED_CONTAINERS = ("credential", "credentials")
+_CRED_NAME_CACHE = {}
+_CRED_NAME_KEYS = ("Name", "name", "Key", "key")
+_CRED_VALUE_KEYS = ("Value", "NewValue", "OldValue", "value", "newValue", "oldValue")
+
+
+def is_container_name(name):
+    """`credentials` names a group of fields (an access key id, an expiry, a token): each is judged by its own name."""
+    return re.sub(r"[^a-z0-9]", "", str(name).lower()) in _CRED_CONTAINERS
+
+
+def name_is_sensitive(name):
+    """Does a field or a parameter of this name hold a secret? (`Password`, `client_secret`, `x-api-key`; not `nextToken`.)"""
+    hit = _CRED_NAME_CACHE.get(name)
+    if hit is None:
+        flat = re.sub(r"[^a-z0-9]", "", str(name).lower())
+        hit = flat in _CRED_EXACT or (len(flat) > 6 and flat.endswith(_CRED_SUFFIX) and not flat.endswith(_CRED_NOT_SECRET))
+        if len(_CRED_NAME_CACHE) < 20000:
+            _CRED_NAME_CACHE[name] = hit
+    return hit
+
+
+_CRED_B64 = "A-Za-z0-9+/_-"
+_CRED_B64_RUN = re.compile(r"(?<![%s])[%s]{128,}={0,2}(?![%s])" % (_CRED_B64, _CRED_B64, _CRED_B64))
+_CRED_B64_EDGE = "(?<![A-Za-z0-9+/=_-])"
+_CRED_B64_END = "(?![A-Za-z0-9+/=_-])"
+# The names an assignment is recognised by. A long compound name may carry any prefix (dbPassword=, apiToken=, adminSecret:);
+# a short one needs the edge of a word (sig= is not design=).
+_CRED_STRONG = (r"password|passwd|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|"
+                r"security[_-]?token|auth[_-]?token|bearer[_-]?token|account[_-]?key|shared[_-]?access[_-]?key|primary[_-]?key|"
+                r"secondary[_-]?key|private[_-]?key|subscription[_-]?key|sas[_-]?token|password[_-]?hash|nt[_-]?hash|ntlm[_-]?hash|"
+                r"lm[_-]?hash|client[_-]?secret|secret[_-]?access[_-]?key|secret[_-]?key|secret[_-]?text|secret[_-]?value|token|signature|plaintext")
+_CRED_SHORT = r"(?<![A-Za-z0-9])(?:pwd|pass|sig|pin|otp|sas)"
+_CRED_SEP = r"""(?:\\*["']|["'])?\s*(?:[:=]|%3[dD]|%3[aA])\s*"""
+# a short name is a name only as `pwd=value` or `pass:value`: "pass: 3 attempts" is prose
+_CRED_SEPS = r"""(?:\\*["']|["'])?(?:\s*(?:=|%3[dD])\s*|:(?=\S))"""
+_CRED_NAME = r"(?:(?:%s)%s|%s%s)" % (_CRED_STRONG, _CRED_SEP, _CRED_SHORT, _CRED_SEPS)
+_CRED_ARN_TAIL = re.compile(r"arn:[A-Za-z0-9-]+:[A-Za-z0-9-]+:[A-Za-z0-9-]*:[0-9]*:$")
+_CRED_PAIR_WHY = "a value paired with a credential name"
+_CRED_RULES = [
+    # anchored at the start of a run and possessive, so that a megabyte of `eyJ` is read once, not once per `eyJ`
+    ("a JSON Web Token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+\.[A-Za-z0-9_-]{2,}+(?:\.[A-Za-z0-9_-]*+)?"), 0),
+    ("a JSON Web Encryption token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+(?:\.[A-Za-z0-9_-]*+){4}"), 0),
+    ("a password in a URL", re.compile(r"(?i)(?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,20}://[^\s:/@\"'<>\\]{0,256}:([^\s/\"'<>\\]{1,1024})@(?=[^\s/@\"'<>]{1,255})"), 1),
+    ("an Azure Functions key", re.compile(r"""(?i)(?:x-functions-key["']?\s*[:=]\s*(?:\\*["'])?|[?&;]code=)([A-Za-z0-9_/+=-]{16,512})"""), 1),
+    ("a private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|[\s\S]*)"), 0),
+    ("a base64 block of key lines", re.compile(r"(?:[A-Za-z0-9+/]{60,80}={0,2}\r?\n){2,}[A-Za-z0-9+/]{2,80}={0,2}"), 0),
+    ("an authorization header value", re.compile(
+        r"""(?i)authorization["']?\s*[:=]\s*(?:\\*["'])?(?:(?:bearer|basic|digest|negotiate|ntlm|token)\s+)?([^\s"'&,;\\]{1,4096})"""), 1),
+    ("a cookie header value", re.compile(r"""(?i)cookie["']?\s*[:=]\s*(?:\\*["'])?([^\r\n"'\\]{1,4096})"""), 1),
+    ("a scheme and its credential", re.compile(r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{3,4096})|\b(?:negotiate|ntlm|digest)\s+([A-Za-z0-9._~+/=-]{24,4096})"), -2),
+    ("a value assigned to a credential name (quoted)", re.compile(
+        r"""(?i)%s\\*(["'])(.{1,4096}?)(?=\\*\1)""" % _CRED_NAME), 2),
+    ("a value assigned to a credential name", re.compile(
+        r"""(?i)%s((?:(?!%%26)[^\s"'&<>\\]){1,4096})""" % _CRED_NAME), 1),
+    ("a value given to a credential switch", re.compile(
+        r"""(?i)(?<![A-Za-z0-9_])-(?:password|pass|pwd|passphrase|secret|clientsecret|apikey|accesstoken|token)\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    ("a secret given to ConvertTo-SecureString", re.compile(
+        r"""(?i)ConvertTo-SecureString\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    # `mysql -u<user> -p<password>`: with `-p` glued to its value, and only as an option of a MySQL or MariaDB client (`ssh -p 22`,
+    # `nc -p 80` and `mysql -p` alone, which asks for the password, name a port or nothing)
+    ("a password given to a MySQL client", re.compile(
+        r"""(?i:(?<![\w.-])(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mysqlshow|mariadb|mariadb-dump|mariadb-admin)(?:\.exe)?(?=\s))[^\n]{0,512}?(?<=\s)-p(?=\S)(?:"([^"\n]{1,256})"|'([^'\n]{1,256})'|([^\s"']{1,256}))"""), -3),
+    # `curl -u user:password`: the part after the colon, and only when there is one (`curl -u user` asks for it)
+    ("a password given to curl", re.compile(
+        r"""(?i:(?<![\w.-])curl(?:\.exe)?(?=\s))[^\n]{0,512}?(?<=\s)(?:-u|-U|--user|--proxy-user)(?:\s+|=)(?:"[^":\n]*:([^"\n]{1,256})"|'[^':\n]*:([^'\n]{1,256})'|[^\s:"']*:([^\s"']{1,256}))"""), -3),
+    ("a hash pair of an account database", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}:([0-9a-fA-F]{32})(?![0-9a-fA-F])"), 1),
+    ("a bcrypt hash", re.compile(r"(?<![A-Za-z0-9$])\$2[abxy]?\$[0-9]{2}\$[./A-Za-z0-9]{53}(?![./A-Za-z0-9])"), 0),
+    ("a token of a known family", re.compile(
+        r"(?:GOCSPX-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])|"
+        r"ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{30,}|(?:IQoJb3JpZ2lu|FQoGZXIvYXdz|FwoGZXIvYXdz)[A-Za-z0-9+/=]{40,}|"
+        r"[A-Za-z0-9_.~-]{3}[0-9]Q~[A-Za-z0-9_.~-]{30,}|[01]\.A[A-Za-z0-9_-]{50,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})"), 0),
+]
+_CRED_GROUPS = {-1: (1, 2, 3), -2: (1, 2), -3: (1, 2, 3)}
+# A random-looking run of an exact length that keys have: 32, 40 (an AWS secret access key), 43 + "=" and 86 + "==" (a base64 key).
+_CRED_SHAPES = [
+    ("a key-length base64 string", re.compile(_CRED_B64_EDGE + r"(?:[A-Za-z0-9+/]{32}|[A-Za-z0-9+/]{40}|[A-Za-z0-9+/]{43}=|[A-Za-z0-9+/]{86}==)" + _CRED_B64_END), True),
+]
+# A Name/Value pair written as JSON text inside a string (an AuditData in a column of another name, a parameter list in a cell): the
+# structure rule (clean_value) cannot see it, so the text rule reads the head of the pair, and the name decides as it does there. The
+# value is read by hand, not by an expression: a string up to its first quote (the backslashes before the quote are not part of it), a
+# number, a flat array of up to 4,096 characters, or a literal; and the next value of the same pair (`OldValue`, then `NewValue`).
+_CRED_PAIR_HEAD = re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})\\*"\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_NEXT_VALUE = re.compile(r"""(?i)\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_QUOTE = re.compile(r'\\*"')
+_CRED_BARE = re.compile(r"-?[0-9][0-9.eE+-]{0,39}|\[[^\[\]]{0,4096}\]|(?:null|true|false)\b")
+# What a text must hold for any rule to match it: a literal one of them looks for, or a run long enough for a shape. A text with none of
+# these is judged clean without running the rules (most names, addresses and ids).
+_CRED_QUICK = re.compile(r"eyJ|-----BEGIN|\n|authorization|cookie|bearer|basic|digest|negotiate|ntlm|pass|pwd|secret|token|key|signature|sig|"
+                         r"plaintext|hash|pin|otp|sas|securestring|gh[pousr]_|github_pat_|xox|AIza|ya29\.|1//0|IQoJb|FQoG|FwoG|Q~|[01]\.A|[sr]k_|"
+                         r"://|gocspx|functions|code=|credential|assertion|mfacode|saml|mysql|mariadb|curl|\$2|"
+                         r"[A-Za-z0-9+/]{32}|[A-Za-z0-9+/_-]{128}", re.I)
+_CRED_CLEAN = set()               # short texts already judged to hold nothing (names, addresses and ids repeat)
+_CRED_GATE = 4096                 # a text longer than this is scanned with the carrier's hook in view, rule by rule
+# The carrier's hook for long scans: called with the work done so far (1 per stretch found, 4096 between rules over a long text); it may
+# raise to end the scan at the carrier's deadline. Most carriers set none and the calls do nothing.
+_tick = globals().get("WITHHOLD_TICK") or (lambda units=1: None)
+
+
+def _cred_json_value(text, at):
+    """(start, end, after) of the JSON value whose text starts at `at`: `end` is where what is withheld ends, `after` where the next
+    token of the pair begins. None when no value starts there."""
+    q = _CRED_QUOTE.match(text, at)
+    if q:
+        start = q.end()
+        close = text.find('"', start)
+        if close < 0:
+            return start, len(text), len(text)      # a value that is cut off: the rest of the text is the value
+        return start, start + len(text[start:close].rstrip("\\")), close + 1
+    m = _CRED_BARE.match(text, at)
+    if m is None:
+        return None
+    if m.group()[0] in "nft":
+        return at, at, m.end()                     # null, true and false are not secrets
+    return m.start(), m.end(), m.end()
+
+
+def _cred_pair_spans(text, spans):
+    for head in _CRED_PAIR_HEAD.finditer(text):
+        if not name_is_sensitive(head.group(1)):
+            continue
+        at = head.end()
+        for _ in range(3):
+            got = _cred_json_value(text, at)
+            if got is None:
+                break
+            start, end, after = got
+            if end > start:
+                value = text[start:end]
+                if not (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{"))):
+                    spans.append((start, end, _CRED_PAIR_WHY))
+            more = _CRED_NEXT_VALUE.match(text, after)
+            if more is None:
+                break
+            at = more.end()
+
+
+def _cred_random_like(run):
+    """A run that looks like random base64 and not like a path, a name or a hash: mixed case and digits in the proportions
+    random text has (a long path is mostly lower case with few capitals; a hex digest has no case to mix)."""
+    n = len(run)
+    upper = sum(1 for ch in run if "A" <= ch <= "Z")
+    lower = sum(1 for ch in run if "a" <= ch <= "z")
+    digit = sum(1 for ch in run if "0" <= ch <= "9")
+    return upper * 100 >= 15 * n and lower * 100 >= 15 * n and digit * 100 >= 5 * n
+
+
+def _cred_name_before(text, at):
+    """The letters and digits of the name an assigned value follows (`nextToken=` gives `nexttoken`)."""
+    return re.sub(r"[^a-z0-9]", "", text[max(0, at - 64):at].lower())
+
+
+def _cred_spans(text, shapes):
+    spans = []
+    big = len(text) > _CRED_GATE
+    if "value" in text.lower():
+        _cred_pair_spans(text, spans)
+    for why, rx, group in _CRED_RULES:
+        if big:
+            _tick(4096)
+        for m in rx.finditer(text):
+            if big:
+                _tick(1)
+            if "assigned to a credential name" in why:
+                if _CRED_ARN_TAIL.search(text[max(0, m.start() - 120):m.start()]):
+                    continue                              # arn:aws:secretsmanager:...:secret:NAME is a name, not a value
+                if _cred_name_before(text, m.start(m.lastindex or 0)).endswith(_CRED_NOT_SECRET):
+                    continue                              # nextToken=, pageToken=, clientToken=: a position or an idempotency key
+            for g in _CRED_GROUPS.get(group, (group,)):
+                if g and m.group(g) is None:
+                    continue
+                start, end = m.span(g)
+                value = text[start:end]
+                if g and (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{"))):
+                    continue
+                if why == "a scheme and its credential" and g == 1 and not (re.search(r"[0-9+/=_.~-]", value) or len(value) >= 16):
+                    continue                              # "basic authentication" is prose, "Basic dXNlcjpwYXNz" is not
+                if g == 1 and group == -1 and len(m.groups()) >= 2 and m.group(1) in ("'", '"'):
+                    continue                              # group 1 of the switch rules is the quote
+                spans.append((start, end, why))
+    if big:
+        _tick(4096)
+    for m in _CRED_B64_RUN.finditer(text):
+        if _cred_random_like(m.group(0)):
+            spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
+    if shapes:
+        for why, rx, check in _CRED_SHAPES:
+            for m in rx.finditer(text):
+                if not check or _cred_random_like(m.group(0)):
+                    spans.append((m.start(), m.end(), why))
+    spans.sort()
+    merged = []
+    for s in spans:
+        if merged and s[0] < merged[-1][1]:
+            if s[1] > merged[-1][1]:
+                merged[-1] = (merged[-1][0], s[1], merged[-1][2])
+            continue
+        merged.append(s)
+    return merged
+
+
+def credential_spans(text, shapes=True):
+    """(start, end, why) of each stretch of `text` that is a credential by the name it is given under or by its text, in order and
+    not overlapping. `shapes` False leaves out the rules that recognise a key by its length alone (a value that is named a checksum or
+    a digest is not scanned for them). This is not `token_spans`: an identifier (a GUID, a hex digest, an access key id, an ARN) is
+    not a credential here, and a tool that prints identifiers on purpose asks only for these."""
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text), "text longer than %d characters" % TEXT_LIMIT)]
+    if shapes and text in _CRED_CLEAN:
+        return []
+    spans = _cred_spans(text, shapes) if _CRED_QUICK.search(text) else []
+    if shapes and not spans and len(text) <= 256 and len(_CRED_CLEAN) < 100000:
+        _CRED_CLEAN.add(text)
+    return spans
+
+
+def clean_value(value, leaf, note, key=None, pointer="", depth=0, shapes=True, max_depth=200):
+    """The structure rule: `value` (what a JSON document decoded to) with every credential in it replaced. A string goes to
+    `leaf(text, pointer, shapes)`, which returns what is printed for it. A field whose name says it holds a secret (or a `Value` whose
+    `Name` does), at any depth, is not read at all: `note(pointer, why, original)` returns what is printed for it (a number under such
+    a name is withheld too: 0 and 1 are not nothing). A key goes through `key(text)` when one is given. A value nested deeper than
+    `max_depth` is replaced the same way."""
+    if isinstance(value, str):
+        return leaf(value, pointer, shapes)
+    _tick(1)
+    if depth > max_depth and isinstance(value, (dict, list)):
+        return note(pointer, "nested deeper than %d levels" % max_depth, value)
+    if isinstance(value, dict):
+        named = None
+        for k in _CRED_NAME_KEYS:
+            if isinstance(value.get(k), str):
+                named = value[k]
+                break
+        pair_secret = named is not None and name_is_sensitive(named)
+        out = {}
+        for k, v in value.items():
+            ks = str(k)
+            point = "%s/%s" % (pointer, ks.replace("~", "~0").replace("/", "~1"))
+            safe_key = key(ks) if key is not None else ks
+            if safe_key in out:
+                safe_key = "%s#%d" % (safe_key, len(out))
+            sensitive = name_is_sensitive(ks) or (pair_secret and ks in _CRED_VALUE_KEYS)
+            if sensitive and is_container_name(ks) and isinstance(v, (dict, list)):
+                sensitive = False
+            if sensitive and not (v is None or isinstance(v, bool) or v == "") and not (isinstance(v, str) and (_CRED_REDACTED.match(v) or v.lower() in _CRED_NOT_A_VALUE)):
+                out[safe_key] = note(point, "credential-named field", v)
+            else:
+                out[safe_key] = clean_value(v, leaf, note, key, point, depth + 1, shapes and not _CRED_CHECKSUM_NAME.search(ks), max_depth)
+        return out
+    if isinstance(value, list):
+        return [clean_value(v, leaf, note, key, "%s/%d" % (pointer, i), depth + 1, shapes, max_depth) for i, v in enumerate(value)]
+    return value
+
+
+def _credentials_withheld(text, kind):
+    """`text` with each credential in it withheld. It runs after the rules above, on text that may hold their markers: a stretch that
+    begins at a marker is theirs already."""
+    if not _CRED_QUICK.search(text):
+        return text
+    out, last = [], 0
+    for start, end, why in credential_spans(text):
+        if text.startswith("<", start):
+            continue
+        out.append(text[last:start])
+        out.append(_withheld(why, end - start, kind))
+        last = end
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
+
+
+def scrub(text, kind="text"):
+    """The text with every token-shaped run, every user-info and every credential withheld."""
+    if len(text) > TEXT_LIMIT:
+        return _withheld("over-long text", len(text), kind)
+    text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    out, last = [], 0
+    for start, end in token_spans(text):
+        out.append(text[last:start])
+        out.append(_withheld("token-shaped text", end - start, kind))
+        last = end
+    out.append(text[last:])
+    return _credentials_withheld("".join(out), kind)
+
+
+def redact_url(url):
+    """A URL or request target without its user-info, its token-shaped path text, its query values or its fragment."""
+    rest, fragment = (url.split("#", 1) + [None])[:2]
+    rest, query = (rest.split("?", 1) + [None])[:2]
+    scheme = authority = ""
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/]*)(.*)$", rest, re.S)
+    if m:
+        scheme, authority, rest = m.group(1), m.group(2), m.group(3)
+        if "@" in authority:
+            userinfo, authority = authority.rsplit("@", 1)
+            authority = _withheld("userinfo", len(userinfo), "urls") + "@" + authority
+    out = scheme + authority + scrub(rest, "urls")
+    if query is not None:
+        pairs = []
+        for pair in query.split("&"):
+            name, eq, value = pair.partition("=")
+            pairs.append(scrub(name, "urls") + (eq + _withheld("", len(value), "urls") if eq else ""))
+        out += "?" + "&".join(pairs)
+    if fragment is not None:
+        out += "#" + _withheld("", len(fragment), "urls")
+    return out
+
+
+def cell(value):
+    """Text for one tab-separated cell or one printed path: no tab or line break, and a byte that was not UTF-8
+    (a lone surrogate) written as \\xNN, so that no writer raises on it."""
+    text = value if isinstance(value, str) else str(value)
+    out = []
+    for ch in text:
+        o = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\n":
+            out.append("\\n")
+        elif 0xDC80 <= o <= 0xDCFF:
+            out.append("\\x%02x" % (o - 0xDC00))
+        elif 0xD800 <= o <= 0xDFFF:
+            out.append("\\u%04x" % o)
+        elif o < 0x20 or o == 0x7F:
+            out.append("\\x%02x" % o)
+        else:
+            out.append(ch)
+    return "".join(out)
+# END SHARED WITHHOLDING
+
 
 TOOL = "signin_analyse"
 # The label moves when what a record says changes (docs/packs.md, 'A tool's version and its PARSER label'). 4: until the
@@ -2571,7 +2970,7 @@ def main():
                     first_reject = first_reject or (info["record"], info["line"], reason)
                     if kind == "reject" and ("larger than max_record_bytes" in str(reason) or "a line longer than" in str(reason)):
                         size_rejects += 1
-                    if rejected.reject({"file": row["file"], "record": info["record"], "line": info["line"], "reason": scrub(reason)}):
+                    if rejected.reject({"file": row["file"], "record": info["record"], "line": info["line"], "reason": scrub_text(reason)}):
                         stopped_all_rejected = True
                         break
                     continue
@@ -2709,7 +3108,7 @@ def main():
         if batch:
             db.executemany("INSERT INTO ev VALUES (%s)" % ",".join("?" * 23), batch)
         db.commit()
-        envelope_markers = [scrub(k) for k in getattr(src, "extra_keys", []) if pagination_key(k)]
+        envelope_markers = [scrub_text(k) for k in getattr(src, "extra_keys", []) if pagination_key(k)]
         if envelope_markers:
             pagination.append({"file": row["file"], "keys": envelope_markers})
         if src.error:
@@ -2760,7 +3159,7 @@ def main():
         elif problems:
             row["status"] = "partial"
         if problems:
-            row["problems"] = [scrub(p) for p in problems]
+            row["problems"] = [scrub_text(p) for p in problems]
         census_files.add(row)
 
         analysis = analyse(db, limit, ceiling, window, min_failures, min_prompts)
@@ -2803,7 +3202,7 @@ def main():
             ("times in a column named Date (UTC) were read as UTC on the column's own say-so: %d event(s)" % assumed["column_named_utc"]) if assumed["column_named_utc"] else None,
             ("day/month/year strings were read as %s (%s)" % (order, order_basis)) if order and (state.order["dmy"] or state.order["mdy"] or date_order) else None) if a],
         "file_census": census_files.page, "rejected_records": rejected.page.page,
-        "file_problems": [scrub(p) for p in problems],
+        "file_problems": [scrub_text(p) for p in problems],
         "pagination_markers": pagination,
         "events": events_page.page, "event_count": counts["events"], "events_inline": len(events_page.page),
         ("partial_events" if read_cut else "complete_events"): pages["events"].get("all_results"),
@@ -2978,4 +3377,4 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception as exc:  # never an empty or clean answer for a failure
-        fail("unexpected failure: %s: %s" % (type(exc).__name__, scrub(str(exc))))
+        fail("unexpected failure: %s: %s" % (type(exc).__name__, scrub_text(str(exc))))
