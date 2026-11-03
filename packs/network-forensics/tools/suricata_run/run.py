@@ -46,7 +46,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "suricata_run", "version": 10}
+TOOL = {"name": "suricata_run", "version": 11}
 PARSER = "suricata_run/5"
 
 
@@ -71,6 +71,7 @@ for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
 
 
 import stat
+import array
 import collections
 import contextlib
 import errno
@@ -1179,6 +1180,19 @@ def file_sha256(path):
     return h.hexdigest()
 
 
+def count_rule_lines(fh):
+    """The lines that are neither empty nor comments, read in pieces of at most 1 MiB so that one hostile line is never held whole: a line longer
+    than a piece is counted once, by its first piece."""
+    count, at_start = 0, True
+    while True:
+        raw = fh.readline(1 << 20)
+        if not raw:
+            return count
+        if at_start and raw.strip() and not raw.lstrip().startswith(b"#"):
+            count += 1
+        at_start = raw.endswith(b"\n")
+
+
 def rule_load_counts(*paths):
     """What Suricata itself printed about loading rules, or None when it printed nothing of the kind."""
     found = None
@@ -1192,6 +1206,308 @@ def rule_load_counts(*paths):
         except OSError:
             continue
     return found
+
+
+# --- dry_run: the engine receipt without a capture ---------------------------------------------------------------------------------
+
+DRY_LINE = 1 << 20          # a rule (its continuation lines included) longer than this is located and not read
+DRY_SIDS = 2_000_000        # active sids kept for the ranges: 16 MB as an array, the sorted copy is the larger cost
+DRY_SHOWN = 100             # sid ranges and rev values answered inline; every range is in sid-ranges.txt
+DRY_FAILURES = 10           # load failures answered inline; every line of the engine's output is in its files
+DRY_FAILURE_CHARS = 300
+DRY_LINE_NUMBERS = 10
+DRY_FAILURE_READ = 1 << 16  # the part of one line of the engine's output that is read
+RULE_ACTION = re.compile(rb"(alert|pass|drop|reject|rejectsrc|rejectdst|rejectboth|config)[ \t]")
+RULE_SID = re.compile(rb"[;( \t]sid[ \t]*:[ \t]*(\d{1,18})[ \t]*;")
+RULE_SID_KEY = re.compile(rb"[;( \t]sid[ \t]*:")
+RULE_REV = re.compile(rb"[;( \t]rev[ \t]*:[ \t]*(\d{1,18})[ \t]*;")
+LOADED_FULL = re.compile(r"(\d+) rules? successfully loaded, (\d+) rules? failed(?:, (\d+) rules? skipped)?")
+FAILURE_LINE = re.compile(r"<Error>|ERRCODE|\bfailed\b|\berror\b", re.I)
+AT_LINE = re.compile(r"\bat line (\d{1,12})\b")
+DUMP_CONFIG = re.compile(rb"--dump-config\b")
+
+
+class RangesFile:
+    """Every sid range, one `low-high` line each, in a private file of its own. A write that is refused is a fact about the disk: the file is
+    removed (it would hold fewer ranges than the answer counts) and the answer says the ranges beyond the inline ones are not on disk."""
+
+    def __init__(self, path):
+        self.path, self.fh, self.written, self.problem = path, None, 0, None
+
+    def add(self, low, high):
+        if self.problem:
+            return
+        try:
+            if self.fh is None:
+                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                self.fh = os.fdopen(fd, "w", encoding="ascii")
+            self.fh.write("%d-%d\n" % (low, high))
+            self.written += 1
+        except OSError as exc:
+            self.fail(exc)
+
+    def fail(self, exc):
+        self.problem = describe(exc)
+        try:
+            if self.fh is not None:
+                self.fh.close()
+        except OSError:
+            pass
+        self.fh = None
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
+        self.written = 0
+
+    def close(self):
+        if self.fh is not None and not self.problem:
+            try:
+                self.fh.close()
+            except OSError as exc:
+                self.fail(exc)
+            self.fh = None
+
+
+def analyse_rules(path, out_dir, deadline):
+    """One bounded pass over a rules file, read as text and not as the engine parses it: the number of rules per action (commented-out rules apart,
+    each with its own count), the sid ranges and the rev values. A rule is a line that starts with an action word, with its continuation lines
+    (a trailing backslash) joined; a commented-out rule is a line that starts with # and then an action word and has a sid. The sid and rev are the first
+    `sid:N;` and `rev:N;` in the text. A line longer than DRY_LINE is located and not read; the clock is looked at after every 1,024 lines and every
+    1 MiB; the sids kept are at most DRY_SIDS. Nothing here is quadratic: each byte is looked at a constant number of times."""
+    s = {"lines_read": 0, "rules_active": 0, "rules_disabled": 0, "active_by_action": collections.Counter(), "disabled_by_action": collections.Counter(),
+         "active_lines_that_are_not_rules": 0, "active_without_sid": 0, "active_sid_unreadable": 0, "active_without_rev": 0, "active_rev_unreadable": 0,
+         "disabled_without_sid": 0, "disabled_sid_min": None, "disabled_sid_max": None, "rev_values": collections.Counter(), "rev_values_over_cap": 0,
+         "over_limit_lines": [], "over_limit_total": 0, "sids_not_kept": 0, "cut": None}
+    sids = array.array("Q")
+
+    def active(text):
+        m = RULE_ACTION.match(text)
+        if not m:
+            s["active_lines_that_are_not_rules"] += 1
+            return
+        s["rules_active"] += 1
+        s["active_by_action"][m.group(1).decode("ascii")] += 1
+        m = RULE_SID.search(text)
+        if m:
+            if len(sids) < DRY_SIDS:
+                sids.append(int(m.group(1)))
+            else:
+                s["sids_not_kept"] += 1
+        elif RULE_SID_KEY.search(text):
+            s["active_sid_unreadable"] += 1
+        else:
+            s["active_without_sid"] += 1
+        m = RULE_REV.search(text)
+        if m:
+            value = int(m.group(1))
+            if value in s["rev_values"] or len(s["rev_values"]) < DRY_SHOWN:
+                s["rev_values"][value] += 1
+            else:
+                s["rev_values_over_cap"] += 1
+        elif re.search(rb"[;( \t]rev[ \t]*:", text):
+            s["active_rev_unreadable"] += 1
+        else:
+            s["active_without_rev"] += 1
+
+    def disabled(text):
+        body = text.lstrip(b"#").lstrip()
+        m = RULE_ACTION.match(body)
+        if not m or not RULE_SID_KEY.search(body):
+            return                      # prose after a #, not a rule
+        s["rules_disabled"] += 1
+        s["disabled_by_action"][m.group(1).decode("ascii")] += 1
+        m = RULE_SID.search(body)
+        if not m:
+            s["disabled_without_sid"] += 1
+            return
+        value = int(m.group(1))
+        s["disabled_sid_min"] = value if s["disabled_sid_min"] is None else min(s["disabled_sid_min"], value)
+        s["disabled_sid_max"] = value if s["disabled_sid_max"] is None else max(s["disabled_sid_max"], value)
+
+    def over(line):
+        s["over_limit_total"] += 1
+        if len(s["over_limit_lines"]) < DRY_LINE_NUMBERS:
+            s["over_limit_lines"].append(line)
+
+    pieces, piece_bytes, piece_line, piece_over = None, 0, 0, False
+    since_clock = 0
+    with open_regular(path) as fh:
+        while True:
+            raw = fh.readline(DRY_LINE + 1)
+            if not raw:
+                break
+            since_clock += len(raw)
+            if since_clock >= CLOCK_BYTES or s["lines_read"] & 1023 == 0:
+                since_clock = 0
+                if time.monotonic() > deadline:
+                    s["cut"] = {"lines_read": s["lines_read"], "stopped_at_byte": fh.tell() - len(raw)}
+                    break
+            s["lines_read"] += 1
+            line = s["lines_read"]
+            if len(raw) > DRY_LINE and not raw.endswith(b"\n"):
+                while True:
+                    more = fh.readline(DRY_LINE)
+                    if not more or more.endswith(b"\n"):
+                        break
+                    if time.monotonic() > deadline:
+                        s["cut"] = {"lines_read": line - 1, "stopped_at_byte": fh.tell()}
+                        break
+                if s["cut"]:
+                    s["lines_read"] -= 1
+                    break
+                over(piece_line if pieces is not None or piece_over else line)
+                pieces, piece_bytes, piece_over = None, 0, False
+                continue
+            text = raw.strip()
+            if pieces is None and not piece_over:
+                if not text:
+                    continue
+                if text.startswith(b"#"):
+                    disabled(text)
+                    continue
+                piece_line, pieces, piece_bytes = line, [], 0
+            continues = text.endswith(b"\\")
+            body = text[:-1] if continues else text
+            piece_bytes += len(body)
+            if not piece_over:
+                if piece_bytes > DRY_LINE:
+                    piece_over, pieces = True, None
+                else:
+                    pieces.append(body)
+            if continues:
+                continue
+            if piece_over:
+                over(piece_line)
+            else:
+                active(b" ".join(pieces))
+            pieces, piece_bytes, piece_over = None, 0, False
+        if s["cut"] is None and (pieces is not None or piece_over):
+            if piece_over:
+                over(piece_line)
+            else:
+                active(b" ".join(pieces))
+
+    sids_sorted = sorted(sids)
+    ranges_file = RangesFile(os.path.join(out_dir, "sid-ranges.txt"))
+    inline, ranges = [], {"total": 0}
+
+    def emit(lo, hi):
+        ranges["total"] += 1
+        if len(inline) < DRY_SHOWN:
+            inline.append([lo, hi])
+            return
+        if ranges["total"] == DRY_SHOWN + 1:
+            for a, b in inline:
+                ranges_file.add(a, b)
+        ranges_file.add(lo, hi)
+
+    distinct = duplicates = 0
+    low = high = None
+    for value in sids_sorted:
+        if high is not None and value == high:
+            duplicates += 1
+            continue
+        distinct += 1
+        if high is not None and value == high + 1:
+            high = value
+            continue
+        if low is not None:
+            emit(low, high)
+        low = high = value
+    if low is not None:
+        emit(low, high)
+    total = ranges["total"]
+    ranges_file.close()
+    ranges_in_file = ranges_file.written if total > DRY_SHOWN and not ranges_file.problem else None
+    problems = []
+    if s["cut"]:
+        problems.append("the tool's own clock ran out while the rules file was read: the counts are those of the first %d lines" % s["cut"]["lines_read"])
+    if s["over_limit_total"]:
+        problems.append("%d rule(s) longer than %d bytes were located by line number and not read: they are in no count here" % (s["over_limit_total"], DRY_LINE))
+    if s["sids_not_kept"]:
+        problems.append("%d sid(s) beyond the first %d were not kept: the ranges and the duplicate count cover the first %d" % (s["sids_not_kept"], DRY_SIDS, DRY_SIDS))
+    if ranges_file.problem:
+        problems.append("the file of all sid ranges could not be written (%s): the first %d ranges are answered inline and the rest are not on disk" % (ranges_file.problem, DRY_SHOWN))
+    return {
+        "whole": not problems,
+        "problems": problems,
+        "lines_read": s["lines_read"],
+        "cut_by_its_clock": s["cut"],
+        "rules_active": s["rules_active"],
+        "active_by_action": dict(s["active_by_action"]),
+        "active_lines_that_are_not_rules": s["active_lines_that_are_not_rules"],
+        "rules_disabled": s["rules_disabled"],
+        "disabled_by_action": dict(s["disabled_by_action"]),
+        "disabled_sid_min": s["disabled_sid_min"], "disabled_sid_max": s["disabled_sid_max"], "disabled_without_sid": s["disabled_without_sid"],
+        "sid": {"count": len(sids_sorted), "distinct": distinct, "duplicates": duplicates,
+                "min": sids_sorted[0] if sids_sorted else None, "max": sids_sorted[-1] if sids_sorted else None,
+                "ranges_total": total, "ranges": inline, "ranges_shown": len(inline), "ranges_file": "sid-ranges.txt" if ranges_in_file else None,
+                "ranges_in_file": ranges_in_file, "not_kept": s["sids_not_kept"],
+                "without_sid": s["active_without_sid"], "unreadable": s["active_sid_unreadable"]},
+        "rev": {"values": {str(k): v for k, v in sorted(s["rev_values"].items())}, "values_over_cap": s["rev_values_over_cap"],
+                "without_rev": s["active_without_rev"], "unreadable": s["active_rev_unreadable"]},
+        "over_limit_lines": s["over_limit_lines"], "over_limit_total": s["over_limit_total"],
+        "note": ("read as text, not as the engine parses it: a rule is a line that starts with an action word (continuation lines joined), a commented-out rule "
+                 "is a # line with an action word and a sid, and sid and rev are the first sid:N; and rev:N; in the text. What the engine loaded is rule_load."),
+    }
+
+
+def rule_load_detail(*paths):
+    """The numbers Suricata printed about loading rules (loaded, failed and, where the build prints it, skipped), or None."""
+    found = None
+    for path in paths:
+        try:
+            with open_regular(path, follow=False) as fh:
+                while True:
+                    raw = fh.readline(DRY_FAILURE_READ)
+                    if not raw:
+                        break
+                    m = LOADED_FULL.search(raw.decode("utf-8", "replace"))
+                    if m:
+                        found = {"loaded": int(m.group(1)), "failed": int(m.group(2)), "skipped": int(m.group(3)) if m.group(3) is not None else None,
+                                 "from": os.path.basename(path)}
+        except OSError:
+            continue
+    return found
+
+
+def withheld_cut(text, name):
+    """A line of the engine's output as the answer shows it: the whole line goes through the block first, and only then is it cut, so that a cut never
+    leaves a piece of a secret too short for the block to recognise."""
+    shown = scrub(text)
+    return shown[:DRY_FAILURE_CHARS] + (" ...(%d more characters in %s)" % (len(shown) - DRY_FAILURE_CHARS, name) if len(shown) > DRY_FAILURE_CHARS else "")
+
+
+def first_failures(paths, deadline):
+    """(the first DRY_FAILURES lines the engine printed about a failure, how many there were, whether the clock cut the reading). Each line is
+    read to DRY_FAILURE_READ bytes, cut for the answer to DRY_FAILURE_CHARS characters (the whole line is in the file) and passed through the block."""
+    shown, total, cut = [], 0, False
+    for path in paths:
+        try:
+            with open_regular(path, follow=False) as fh:
+                n = 0
+                while True:
+                    raw = fh.readline(DRY_FAILURE_READ)
+                    if not raw:
+                        break
+                    n += 1
+                    if n & 1023 == 0 and time.monotonic() > deadline:
+                        cut = True
+                        break
+                    text = raw.decode("utf-8", "replace")
+                    if FAILURE_LINE.search(text) and not LOADED_FULL.search(text):
+                        total += 1
+                        if len(shown) < DRY_FAILURES:
+                            text = text.strip()
+                            at = AT_LINE.search(text)
+                            shown.append({"from": os.path.basename(path), "line": n, "rules_line": int(at.group(1)) if at else None,
+                                          "text": withheld_cut(text, os.path.basename(path))})
+        except OSError:
+            continue
+        if cut:
+            break
+    return shown, total, cut
 
 
 VARS = (
@@ -1271,6 +1587,160 @@ def answer_out(text):
         signal.pthread_sigmask(signal.SIG_UNBLOCK, held)
 
 
+EVE_TYPES = ["alert", "anomaly", "dns", "http", "tls", "files", "flow"]      # the types configuration() writes, by name
+
+
+def write_new(path, data):
+    """A file of this run's own, new, private and whole; the problem as a sentence (None when written) when the write is refused."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        return None
+    except OSError as exc:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return describe(exc)
+
+
+def dry_run_receipt(c):
+    """dry_run: the engine receipt without a capture. Nothing here opens a capture, listens on a port or writes outside out_dir. Five parts: the
+    identities of the rules and the configuration, the effective configuration (the -T test, the dump of the configuration where the build has the
+    command), the rule-load status, the log outputs and what is not covered. complete says that every part the build can give was given and the
+    engine's own test and load numbers show a configuration that loads every rule; a command the build lacks is named, not failed."""
+    started, out_dir, binary = c["started"], c["out_dir"], c["binary"]
+    deadline = min(started + c["timeout"], started + MANIFEST_SECONDS - READ_MARGIN)
+    try:     # SURICATA_RUN_DRY_SECONDS (seconds from here) exists for the tests, as SURICATA_RUN_READ_SECONDS does for the reading of eve.json
+        deadline = time.monotonic() + float(os.environ["SURICATA_RUN_DRY_SECONDS"])
+    except (KeyError, ValueError):
+        pass
+    problems = []
+
+    def remaining():
+        return deadline - time.monotonic()
+
+    PROGRESS["stage"] = "reading the rules file"
+    analysis = None
+    try:
+        analysis = analyse_rules(c["rules"], out_dir, deadline)
+    except OSError as exc:
+        problems.append("the rules file could not be read for the counts (%s)" % describe(exc))
+    if analysis is not None:
+        problems.extend(analysis["problems"])
+
+    PROGRESS["stage"] = "reading the engine's help"
+    help_code, help_out, help_err, help_timed = preflight([binary, "--help"], max(1.0, min(PREFLIGHT_SECONDS, remaining())))
+    help_path = os.path.join(out_dir, "suricata-help.txt")
+    help_problem = write_new(help_path, help_out + (b"\n--- stderr ---\n" + help_err if help_err else b""))
+    if help_problem:
+        problems.append("the engine's help could not be kept in a file (%s)" % help_problem)
+    help_known = help_code is not None and not help_timed
+    has_dump = bool(DUMP_CONFIG.search(help_out + help_err)) if help_known else None
+
+    dump = {"available": has_dump, "command": None, "exit_code": None, "timed_out": False, "file": None, "bytes": None, "sha256": None, "stderr": None}
+    if has_dump is None:
+        dump["reason"] = "`suricata --help` %s, so whether this build has --dump-config is not known" % ("did not finish" if help_timed else "did not run")
+        problems.append(dump["reason"])
+    elif not has_dump:
+        dump["reason"] = ("this build's help (suricata-help.txt) does not list --dump-config: the effective configuration is not dumped; "
+                          "the configuration test and the file's digest are what is recorded")
+    elif remaining() < 1:
+        dump["reason"] = "the tool's own clock ran out before the dump"
+        problems.append(dump["reason"])
+    else:
+        PROGRESS["stage"] = "dumping the configuration"
+        dump_out, dump_err = os.path.join(out_dir, "suricata-dump-config.txt"), os.path.join(out_dir, "suricata-dump-config.stderr")
+        argv = [binary, "--dump-config", "-c", os.path.abspath(c["config_path"])]
+        dump["command"] = argv
+        try:
+            code, timed = run_to_files(argv, dump_out, dump_err, min(TEST_SECONDS, max(1.0, remaining())))
+            dump.update(exit_code=code, timed_out=timed, file=dump_out, stderr=dump_err)
+            if code != 0:
+                problems.append("`suricata --dump-config` %s" % ("did not finish in time" if timed else "exited %s" % code))
+            else:
+                dump["bytes"], dump["sha256"] = os.path.getsize(dump_out), file_sha256(dump_out)
+        except OSError as exc:
+            problems.append("`suricata --dump-config` could not be run or read (%s)" % describe(exc))
+
+    loads = rule_load_detail(c["test_out"], c["test_err"])
+    failures, failure_total, failures_cut = first_failures([c["test_err"], c["test_out"]], deadline)
+    if failures_cut:
+        problems.append("the tool's own clock ran out while the engine's output was searched for load failures: the list and its count are those of the lines read")
+    if c["test_code"] != 0:
+        problems.append("the configuration test (suricata -T) %s" % ("did not finish in time" if c["test_timed_out"] else "failed with exit code %s" % c["test_code"]))
+    if loads and loads["failed"]:
+        problems.append("Suricata reported %d rule(s) that failed to load" % loads["failed"])
+    if loads and c["rule_lines"] and not loads["loaded"]:
+        problems.append("Suricata reported 0 rules loaded though the rules file has %d rule lines" % c["rule_lines"])
+    if loads is None and c["test_code"] == 0:
+        problems.append("the engine printed no rule-load numbers, so nothing here shows that any rule loaded (rule_load.known is false)")
+    if c["version_line"] is None:
+        problems.append("`suricata --build-info` %s, so the version of the engine is not recorded" % ("exited %s" % c["build_code"] if c["build_code"] is not None else "did not run"))
+
+    for name in os.listdir(out_dir):
+        full = os.path.join(out_dir, name)
+        try:
+            if not os.path.islink(full):
+                os.chmod(full, 0o700 if os.path.isdir(full) else 0o600)
+        except OSError:
+            pass
+    ok = not problems
+    generated = c["generated"]
+    basis = ("the engine's configuration test passed, every rule loaded, the rules file was read whole%s, and no capture was read" %
+             ("" if has_dump else " (this build has no --dump-config: named in effective_configuration.dump_config)") if ok else
+             "; ".join(problems[:6]) + (" (and %d more, all in problems)" % (len(problems) - 6) if len(problems) > 6 else "") + ": no capture was read")
+    answer_out(json.dumps({
+        "tool": TOOL, "parser": PARSER, "dry_run": True,
+        "status": "complete" if ok else "partial", "status_basis": basis,
+        "out_dir": out_dir,
+        "identities": {
+            "rules": {"path": c["rules"], "sha256": c["rules_sha"], "bytes": c["rules_bytes"], "rule_lines": c["rule_lines"],
+                      "rule_lines_note": "lines that are neither empty nor comments; not the number of rules the engine loaded", "analysis": analysis},
+            "configuration": {"path": c["config_path"], "sha256": c["config_sha"], "generated_by_this_tool": generated,
+                              "note": ("written by this tool: only the keys it names are set, the rest are the engine's own defaults" if generated else
+                                       "supplied by the caller and not read by this tool")},
+            "engine": {"suricata_version": c["version_line"], "build_info": c["build_path"], "build_info_exit_code": c["build_code"]},
+        },
+        "effective_configuration": {
+            "test": {"command": c["test_argv"], "exit_code": c["test_code"], "timed_out": c["test_timed_out"], "stdout": c["test_out"], "stderr": c["test_err"]},
+            "dump_config": dump,
+            "help": help_path if not help_problem else None,
+            "checksum_mode": c["checksum_mode"],
+            "vars": ({"HOME_NET": c["home_net"], "note": "HOME_NET is the home_net argument, or the private ranges when it was not given; the other address groups and "
+                      "the port groups are set to the usual names rulesets use: this tool's assumptions, not read from your environment"} if generated else None),
+        },
+        "rule_load": {"configuration_test": loads, "known": loads is not None,
+                      "disabled_in_file": analysis["rules_disabled"] if analysis else None,
+                      "first_failures": failures, "failure_lines_total": failure_total,
+                      "failures_note": "lines of the engine's own output that name an error or a failure, the first %d, each cut to %d characters and passed through the block; "
+                                       "every line is in the test files named under effective_configuration.test" % (DRY_FAILURES, DRY_FAILURE_CHARS),
+                      "note": "loaded, failed and skipped are read from Suricata's own output when it printed them (None is not zero); disabled is the commented-out rules "
+                              "counted in the rules file, which the engine does not see"},
+        "log_outputs": ({"source": "the configuration this tool wrote", "log_directory": out_dir,
+                         "files": [{"name": "eve.json", "kind": "eve-log", "filetype": "regular", "types": EVE_TYPES, "tls_extended": True}],
+                         "note": "the engine's console output goes to suricata.stdout and suricata.stderr of a run; any other file the engine writes under the log directory is "
+                                 "decided by that build's defaults, and a run lists it"} if generated else
+                        {"source": "the caller's configuration", "files": None,
+                         "note": "not read by this tool: the outputs it sets are in the dump of the effective configuration when the build has one, and a run lists the files it wrote"}),
+        "not_covered": [
+            "No ruleset ships with the pack and none is fetched: the rules are the file you gave.",
+            "There is no automatic download and no suricata-update; this mode downloads nothing.",
+            "No capture was read: nothing here says what the rules would match, or that any rule fires.",
+            "The counts per action, the sid ranges and the rev values are read from the text of the rules file; what the engine loaded is rule_load.",
+            "Whether this build produces JA3 or JA4 fingerprints is not shown by a dry run.",
+        ],
+        "problems": problems,
+        "ok": ok,
+        "withheld": dict(COUNTS),
+        "out_dir_contains_secret_values": True,
+        "out_dir_note": ("The directory holds the engine's build information, help, test output and the configuration, which can quote rule text. It is private (mode 0700, "
+                         "files 0600). Run this tool as a job with secret_output: true so the job output is sealed."),
+    }, indent=2))
+    return 0
+
+
 def main():
     started = time.monotonic()
     STATE["last_word"] = last_word
@@ -1281,8 +1751,15 @@ def main():
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")
+    dry_run = args.get("dry_run", False)
+    if not isinstance(dry_run, bool):
+        fail("dry_run must be true or false")
     path, rules, out_dir = args.get("path"), args.get("rules"), args.get("out_dir")
+    if dry_run and path is not None:
+        fail("path is not taken with dry_run: a dry run reads no capture (it gives the engine receipt of the rules and the configuration); leave path out, or leave dry_run out to run a capture")
     for label, value in (("path", path), ("rules", rules)):
+        if label == "path" and dry_run:
+            continue
         if not isinstance(value, str) or not os.path.isfile(value):
             fail("%s must name a readable file" % label, **{label: value if isinstance(value, str) else None})
     if not isinstance(out_dir, str) or not out_dir:
@@ -1364,7 +1841,7 @@ def main():
     try:
         config_sha, rules_sha = file_sha256(config_path), file_sha256(rules)
         with open_regular(rules) as fh:
-            rule_lines = sum(1 for raw in fh if raw.strip() and not raw.lstrip().startswith(b"#"))
+            rule_lines = count_rule_lines(fh)
         rules_bytes = os.path.getsize(rules)
     except OSError as exc:
         fail("a configuration or rules file could not be read (%s)" % describe(exc))
@@ -1374,6 +1851,12 @@ def main():
     test_out, test_err = os.path.join(out_dir, "suricata-test.stdout"), os.path.join(out_dir, "suricata-test.stderr")
     PROGRESS["stage"] = "testing the configuration"
     test_code, test_timed_out = run_to_files(test_argv, test_out, test_err, TEST_SECONDS)
+    if dry_run:
+        return dry_run_receipt(dict(
+            started=started, timeout=timeout, binary=binary, out_dir=out_dir, version_line=version_line, build_path=build_path, build_code=build_code,
+            config_path=config_path, config_sha=config_sha, generated=generated, home_net=home_net, checksum_mode=checksum_mode, rules=rules,
+            rules_sha=rules_sha, rules_bytes=rules_bytes, rule_lines=rule_lines, test_argv=test_argv, test_code=test_code, test_timed_out=test_timed_out,
+            test_out=test_out, test_err=test_err))
     if test_code != 0:
         fail("the configuration test (suricata -T) %s, so nothing was run" % ("did not finish in time" if test_timed_out else "failed with exit code %s" % test_code),
              exit_code=test_code, command=test_argv, config=config_path, config_sha256=config_sha, config_generated=generated,

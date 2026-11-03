@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.6.18",
+  "version": "1.7.0",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. No flow-record reader (NetFlow, IPFIX) is bundled.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -47,10 +47,10 @@
       "tools/pcap_extract/run.py": "8271d6827c99a635318d5520705a27635cd4ffc2f9d7734d0af9142c54a6c1d2",
       "tools/pcap_summary/manifest.json": "2da4136bd17255e03919541ef6aa223892047f3f4fe2ae91ed3bb46f3e610bbf",
       "tools/pcap_summary/run.py": "e830561506f7d48c2e50072ed540b69f58ae050369834f4633482a077f821af6",
-      "tools/suricata_run/manifest.json": "447d99185b2958b508734739b54aec2d6e1f3fce467ea40c59cf69e52d4328cb",
-      "tools/suricata_run/run.py": "8f3edef48d684ac15d163465bc73fb6a9a4d64c0c97f6ebc4a36e78337ebddcc",
-      "tools/zeek_run/manifest.json": "789738fa532cf46e27cafafc027350887bfbba100a5e2aac98667185e32f4102",
-      "tools/zeek_run/run.py": "7964297e7f6e9e86df8ed58248ee5198ba7025cf8657dd3dfd00ab2d4fd2839a"
+      "tools/suricata_run/manifest.json": "abe40cf3705a07066f8eac5e2e22969bb0bc46e0499a78bb7c6321f65808732e",
+      "tools/suricata_run/run.py": "437922d1b6f4d5617244d6bfc083357be9cdcbcd847ff5b30da7a7cf5f49c54a",
+      "tools/zeek_run/manifest.json": "db2e07466fe1f935c4ff39573eea6c1d2c56685f99c5e67b73bd4479417160ea",
+      "tools/zeek_run/run.py": "6ab9fe135a9a51b833b35cf7d21a9410dfc20bf2a6e2284555716aed0d02c08d"
     }
   },
   "tools": [
