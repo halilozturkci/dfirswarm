@@ -23,8 +23,8 @@ updates:
     schedule:
       interval: weekly
   # The images' inputs. Each opens a pull request that a person reviews; none
-  # is merged by itself. The base image digests in images/base.Dockerfile and
-  # tests/linux/Dockerfile move here; the apt snapshot date is moved by
+  # is merged by itself. The base image digests in images/base.Dockerfile
+  # move here, and tests/linux/Dockerfile (a tag, no digest) is watched too; the apt snapshot date is moved by
   # .github/workflows/apt-snapshot.yml. The pinned downloads of the packs
   # (requires/host.json) are not an ecosystem Dependabot reads: the weekly
   # .github/workflows/pins.yml asks every one of them.

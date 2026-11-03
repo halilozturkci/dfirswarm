@@ -224,6 +224,15 @@ test("a host that never answers is cut by the run's deadline, whatever the per-r
   assert.ok(Date.now() - t0 < 20_000, `took ${Date.now() - t0} ms`);
 });
 
+test("a --deadline that is not a number of milliseconds above zero is refused, not read as NaN", async () => {
+  const root = tree("deadline-arg", [{ name: "tool", version: "1.2.3", path: "/rel/tool-1.2.3.zip", bytes: GOOD }]);
+  for (const bad of ["abc", "0", "-5", "NaN"]) {
+    const { code, out } = await run(root, ["--deadline", bad]);
+    assert.equal(code, 2, `${bad}: ${out}`);
+    assert.match(out, /--deadline wants a number of milliseconds above zero/);
+  }
+});
+
 test("Dependabot watches the images' inputs, no entry merges itself, and the weekly workflow reports through the failure reporter", () => {
   const dep = readFileSync(join(ROOT, ".github/dependabot.yml"), "utf8");
   const entries = dep.split(/^ {2}- package-ecosystem: /m).slice(1).map((e) => ({ eco: e.split("\n")[0]!.trim(), dir: /directory: (\S+)/.exec(e)?.[1], interval: /interval: (\S+)/.exec(e)?.[1] }));

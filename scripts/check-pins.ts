@@ -220,6 +220,11 @@ export async function main(argv: string[]): Promise<number> {
     timeoutMs: Number(arg(argv, "--timeout", "120000")),
     deadlineAt: Date.now() + Number(arg(argv, "--deadline", "1200000")),
   };
+  const deadlineMs = Number(arg(argv, "--deadline", "1200000"));
+  if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) {
+    console.error(`check-pins: --deadline wants a number of milliseconds above zero, got ${JSON.stringify(arg(argv, "--deadline", ""))}`);
+    return 2;
+  }
   const pins = collectPins(root);
   if (pins.length === 0) {
     console.error(`check-pins: no pinned URL under ${root}/packs/*/requires/host.json`);
