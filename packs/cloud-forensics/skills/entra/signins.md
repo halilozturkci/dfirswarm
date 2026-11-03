@@ -3,11 +3,11 @@ id: entra/signins
 title: Entra sign-ins and their evidential limits
 when: Supplied Entra sign-in exports need authentication, client, policy or account-activity analysis.
 needs: [logs/what-exists]
-tools: [signin_analyse]
+tools: [signin_analyse, cloud_normalise]
 requires_host: []
 ---
 
-Use when you hold Entra sign-in exports and must say who authenticated, from where, how, and with what result. Not for changes to identities, applications or policy (directory audit: no reader here), for token or containment questions (`identity/tokens`), or for the unified audit log. Offline: supplied exports only; never authenticate to the tenant.
+Use when you hold Entra sign-in exports and must say who authenticated, from where, how, and with what result. Not for changes to identities, applications or policy (directory audit: cloud_normalise), for token or containment questions (`identity/tokens`), or for the unified audit log. Offline: supplied exports only; never authenticate to the tenant.
 
 **Sources.** Sign-ins describe authentication and access attempts; directory audit describes changes. Interactive, non-interactive, service-principal and managed-identity sign-ins are separate exports: record which. A successful sign-in does not show a human acted or that a resource operation followed.
 

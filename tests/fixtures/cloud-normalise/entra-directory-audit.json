@@ -1,0 +1,48 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#auditLogs/directoryAudits",
+  "value": [
+    {
+      "id": "Directory_2f8b6e0a-1111-4222-8333-aaaaaaaaaaaa_ABCDE_12345678",
+      "category": "ApplicationManagement",
+      "correlationId": "2f8b6e0a-1111-4222-8333-aaaaaaaaaaaa",
+      "result": "success",
+      "resultReason": "",
+      "activityDisplayName": "Update application - Certificates and secrets management",
+      "activityDateTime": "2026-02-14T09:20:30.1234567Z",
+      "loggedByService": "Core Directory",
+      "operationType": "Update",
+      "initiatedBy": { "user": { "id": "11111111-aaaa-4bbb-8ccc-222222222222", "displayName": "Alice Admin", "userPrincipalName": "alice@example.org", "ipAddress": "198.51.100.7" } },
+      "targetResources": [
+        {
+          "id": "33333333-aaaa-4bbb-8ccc-444444444444",
+          "displayName": "payroll-sync",
+          "type": "Application",
+          "modifiedProperties": [
+            { "displayName": "KeyDescription", "oldValue": "[]", "newValue": "[\"CRED-DESCRIPTION-1\"]" },
+            { "displayName": "PasswordCredential", "oldValue": null, "newValue": "[{\"KeyId\":\"55555555-aaaa-4bbb-8ccc-666666666666\",\"CustomKeyIdentifier\":null}]" }
+          ]
+        }
+      ],
+      "additionalDetails": [ { "key": "User-Agent", "value": "Mozilla/5.0" } ]
+    },
+    {
+      "id": "Directory_9d0c1b2a-1111-4222-8333-bbbbbbbbbbbb_FGHIJ_87654321",
+      "category": "RoleManagement",
+      "correlationId": "9d0c1b2a-1111-4222-8333-bbbbbbbbbbbb",
+      "result": "failure",
+      "resultReason": "Insufficient privileges",
+      "activityDisplayName": "Add member to role",
+      "activityDateTime": "2026-02-14T09:25:00Z",
+      "loggedByService": "Core Directory",
+      "operationType": "Assign",
+      "initiatedBy": { "app": { "appId": "77777777-aaaa-4bbb-8ccc-888888888888", "displayName": "provisioning-bot", "servicePrincipalId": "99999999-aaaa-4bbb-8ccc-000000000000", "servicePrincipalName": null } },
+      "targetResources": [
+        { "id": "44444444-aaaa-4bbb-8ccc-555555555555", "displayName": null, "type": "User", "userPrincipalName": "bob@example.org", "modifiedProperties": [ { "displayName": "Role.DisplayName", "oldValue": null, "newValue": "\"Global Administrator\"" } ] },
+        { "id": "66666666-aaaa-4bbb-8ccc-777777777777", "displayName": "Global Administrator", "type": "Role", "modifiedProperties": [] }
+      ],
+      "additionalDetails": []
+    },
+    { "id": "not-an-audit-row", "createdDateTime": "2026-02-14T09:30:00Z", "userPrincipalName": "carol@example.org", "appDisplayName": "Portal", "status": { "errorCode": 0 } }
+  ],
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/auditLogs/directoryAudits?$skiptoken=abc"
+}
