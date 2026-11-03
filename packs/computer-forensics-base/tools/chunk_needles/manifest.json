@@ -1,6 +1,6 @@
 {
   "name": "chunk_needles",
-  "description": "Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return per needle the counts and locators (id, offset in the scanned stream, encoding, context length) and a source that names the image, volume offset, inode and sector size. Every occurrence is found, overlapping ones included, whatever chunk is. Context bytes are NOT returned (they are where secrets sit): write_values: true, only in a job run as secret output (the manifest makes every job that sets it one), writes them to a 0600 file under $OUT. Needles are recorded in the trace: never put a secret in one. earlier_answers says how many other files answer the same question. The scan has a clock (max_seconds, default 100), read between reads and every 256 matches, so dense matches times many needles end at it too: when it is used the answer is for the occurrences that start before next_start, with complete false, status partial and how to go on. complete is false beside every partial status, a values file that stopped at its cap included. finding_id names the occurrence (its offset in the stream and the needle variant). A needle's locators file stops at 20,000,000 rows or 1 GiB and then says all_results_complete false and all_results_stopped_at_offset; the counts are of the whole stream. status and status_basis say whether the whole stream was read. The locators of every needle that goes past its inline page are kept in one file (all_results) whose rows name their needle (needle_index and needle), so the number of needles does not decide the number of open files; a list that cannot be written whole (the file could not be made or written, or it reached its byte cap) makes the answer partial, and status_basis names the needles (needle_index) and says what to do. SIGTERM, SIGINT and SIGHUP end it with one JSON answer (partial, with interrupted true and the signal, and what was done), exit 128 plus the signal, and the removal of the hidden file it was writing.",
+  "description": "Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return per needle the counts and locators (id, offset in the scanned stream, encoding, context length) and a source that names the image, volume offset, inode and sector size. Every occurrence is found, overlapping ones included, whatever chunk is. Context bytes are NOT returned (they are where secrets sit): write_values: true, only in a job run as secret output (the manifest makes every job that sets it one), writes them to a 0600 file under $OUT. Needles are recorded in the trace: never put a secret in one. earlier_answers says how many other files answer the same question. The scan has a clock (max_seconds, default 100), read between reads and every 256 matches, so dense matches times many needles end at it too: when it is used the answer is for the occurrences that start before next_start, with complete false, status partial and how to go on. complete is false beside every partial status, a values file that stopped at its cap included. finding_id names the occurrence (its offset in the stream and the needle variant). A needle's locators file stops at 20,000,000 rows or 1 GiB and then says all_results_complete false and all_results_stopped_at_offset; the counts are of the whole stream. status and status_basis say whether the whole stream was read. The locators of every needle that goes past its inline page are kept in one file (all_results) whose rows name their needle (needle_index and needle), so the number of needles does not decide the number of open files; a list that cannot be written whole (the file could not be made or written, or it reached its byte cap) makes the answer partial, and status_basis names the needles (needle_index) and says what to do. SIGTERM, SIGINT and SIGHUP end it with one JSON answer (partial, with interrupted true and the signal, and what was done), exit 128 plus the signal, and the removal of the hidden file it was writing. With descriptor (and optionally descriptor_sha256 and verify_sources) in place of image and sector_size (offset must be one of the descriptor's volumes, and may be left out when it has one), the sources are given to the Sleuth Kit in order, the descriptor's sector size is passed as -b when it is not 512, and the answer is otherwise the one the same image gives by path. source adds descriptor and images.",
   "params": {
     "needles": {
       "type": "string",
@@ -19,7 +19,7 @@
     },
     "image": {
       "type": "string",
-      "description": "Image path. Defaults to the single disk image under inputs/: one with a disk image's extension, or one the catalogue read as a disk (catalog/<input>/partitions.txt)."
+      "description": "Image path. Defaults to the single disk image under inputs/: one with a disk image's extension, or one the catalogue read as a disk (catalog/<input>/partitions.txt). Give this or descriptor."
     },
     "offset": {
       "type": "integer",
@@ -51,6 +51,18 @@
     "max_seconds": {
       "type": "integer",
       "description": "The scan's own clock in seconds (1 to 110, default 100): a scan that reaches it answers for the occurrences that start before next_start, says complete: false and status partial, and names how to go on. Cost grows with needles times bytes: 1,000 needles read about 2 MiB a second on a loaded host."
+    },
+    "descriptor": {
+      "type": "string",
+      "description": "A layer descriptor layer_describe wrote (layer-<sha256>.json), in place of image and sector_size. Its bytes must hash to the name it carries; it is refused when it lists a missing dependency, when a source it names is no longer a regular file of the size it records, or when a volume's offset is past the end of the media. A descriptor with several volumes needs offset to say which; offset must be one of its volumes."
+    },
+    "descriptor_sha256": {
+      "type": "string",
+      "description": "Pins the descriptor: its sha256 (64 hexadecimal digits) must be this one."
+    },
+    "verify_sources": {
+      "type": "boolean",
+      "description": "With a descriptor, read every source again and compare its sha256 with the descriptor's (up to 120 seconds). Without it only the sizes are checked, and a source swapped for another of the same size is not found."
     }
   },
   "runtime": "python3",
@@ -62,8 +74,8 @@
   ],
   "by": "sd1d102",
   "at": "2026-09-18T14:26:18.665Z",
-  "version": 18,
-  "sha256": "b333e44ff56802bcc48e200c4213ae7163333d957efeeb137d2f4e0f8add5835",
+  "version": 19,
+  "sha256": "81598cfbc9878e90302adfda52b33cb29aad77474e17f12180bae5d2f42082c8",
   "secret_output": {
     "when_args": [
       "write_values"

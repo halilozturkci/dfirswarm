@@ -6,6 +6,9 @@
 #
 # TARGET is JSON, inline or a file: {"paths": [...], "name": "inputs/x.E01"};
 # the image is paths[0] (a segment set's first segment: libewf reads the rest).
+# Or {"descriptor": "<layer-<sha256>.json>"} (optionally descriptor_sha256 and verify_sources): a layer descriptor from layer_describe stands
+# for the image. It is read whole and checked first (its bytes must hash to its name, it must list no missing dependency, and its sources must still be
+# what it records); its sources go to the Sleuth Kit in order and its sector size is passed as -b when it is not 512. descriptor.json keeps what was read.
 # With a partition table (`mmls`): partitions.txt and, per filesystem
 # partition, p<start>/{fsstat.txt, bodyfile.txt, filelist.txt, timeline.csv}.
 # With none but a filesystem at sector 0 (`fsstat`): the same under p0. Each
@@ -60,8 +63,177 @@ if not _ok(t.get("name") or ""):
     t["name"] = ""
 if field == "paths0":
     print(paths[0] if paths else "")
+elif field in ("descriptor", "descriptor_sha256", "verify_sources"):
+    v = t.get(field)
+    print("" if v is None else ("true" if v is True else str(v)) if _ok(str(v)) else "")
 else:
     print(t.get("name") or (paths[0] if paths else ""))
+PY
+}
+
+# descriptor_load <ref> <pin> <verify>: a layer descriptor read and checked the way image_layout, icat_extract and chunk_needles read it (copied text).
+# It writes one JSON document on stdout: the descriptor's file, sha256, layer, sector_size, images (the paths the Sleuth Kit is given, in order) and
+# checked; or {"error": ...}. The message never quotes a path from the descriptor.
+descriptor_load() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, os, sys, time
+# ---- the descriptor (layer_describe's file), read the same way in image_layout, icat_extract, chunk_needles and byte_range_extract -----
+DESCRIPTOR_MAX = 16 * 1024 * 1024
+DESCRIPTOR_VERIFY_SECONDS = 120          # the clock for verify_sources (a descriptor is checked before the program runs)
+DESCRIPTOR_LAYERS = ("raw", "split_raw", "ewf", "vmdk", "vhd", "vhdx", "qcow", "aff")
+
+
+class DescriptorError(Exception):
+    """The descriptor cannot be used. The message never quotes a path or text from the descriptor."""
+
+
+def load_descriptor(ref, pin=None, verify_sources=False, deadline=None):
+    """Read a layer descriptor and check it before anything is run on what it names. A dict: file, sha256, sector_size, unit, layer, images
+    (the paths a Sleuth Kit program is given, in order), sources, media_bytes, volumes (the allocated slots fsstat read: offset_sectors,
+    offset_bytes, fs_type) and checked ("sizes" or "sha256"). It is refused when its bytes do not hash to the name it carries (layer-<sha256>.json),
+    when it is not the shape layer_describe writes, when it lists a dependency that is not declared, when a source is no longer a regular file of
+    the size it records, or when a volume's offset is not inside the media. A source swapped for another of the same size is NOT found unless
+    verify_sources is true, which reads every source again and compares its sha256."""
+    import hashlib as _hashlib
+    import re as _re
+    import stat as _stat
+    if not isinstance(ref, str) or not ref or "\\0" in ref:
+        raise DescriptorError("descriptor is a path to a layer descriptor file")
+    if pin is not None and (not isinstance(pin, str) or not _re.fullmatch(r"[0-9a-f]{64}", pin)):
+        raise DescriptorError("descriptor_sha256 is 64 lower-case hexadecimal digits")
+    try:
+        fd = os.open(ref, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise DescriptorError("the descriptor cannot be opened: %s" % (exc.strerror or exc.__class__.__name__))
+    try:
+        st = os.fstat(fd)
+        if not _stat.S_ISREG(st.st_mode):
+            raise DescriptorError("the descriptor is not a regular file")
+        if st.st_size > DESCRIPTOR_MAX:
+            raise DescriptorError("the descriptor is larger than %d bytes" % DESCRIPTOR_MAX)
+        data = b""
+        while len(data) <= DESCRIPTOR_MAX:
+            block = os.read(fd, 1 << 20)
+            if not block:
+                break
+            data += block
+    except OSError as exc:
+        raise DescriptorError("the descriptor cannot be read: %s" % (exc.strerror or exc.__class__.__name__))
+    finally:
+        os.close(fd)
+    if len(data) > DESCRIPTOR_MAX:
+        raise DescriptorError("the descriptor is larger than %d bytes" % DESCRIPTOR_MAX)
+    sha = _hashlib.sha256(data).hexdigest()
+    name = os.path.basename(ref)
+    if name != "layer-%s.json" % sha:
+        raise DescriptorError("the descriptor's bytes do not hash to the name it carries (layer-<sha256>.json): it was changed, renamed, or is not a descriptor layer_describe wrote")
+    if pin is not None and pin != sha:
+        raise DescriptorError("the descriptor's sha256 is not the one descriptor_sha256 pins")
+    try:
+        doc = json.loads(data.decode("ascii"))
+    except (ValueError, RecursionError):
+        raise DescriptorError("the descriptor is not JSON")
+    if not isinstance(doc, dict) or doc.get("kind") != "layer_descriptor" or doc.get("descriptor_version") != 1:
+        raise DescriptorError("the descriptor is not a layer descriptor of version 1")
+    if doc.get("status") not in ("complete", "partial"):
+        raise DescriptorError("the descriptor's status is not complete or partial")
+    size = doc.get("sector_size")
+    if not isinstance(size, int) or isinstance(size, bool) or size < 512 or size > 65536 or size % 512:
+        raise DescriptorError("the descriptor's sector_size is not a multiple of 512 from 512 to 65536")
+    if doc.get("missing_dependencies"):
+        raise DescriptorError("the descriptor lists a dependency that is not declared (missing_dependencies): the set is not whole")
+    layer = (doc.get("container") or {}).get("layer") if isinstance(doc.get("container"), dict) else None
+    if layer not in DESCRIPTOR_LAYERS:
+        raise DescriptorError("the descriptor's container layer is not one this tool knows")
+    sources = doc.get("sources")
+    if not isinstance(sources, list) or not 1 <= len(sources) <= 10000:
+        raise DescriptorError("the descriptor lists no sources, or too many")
+    for i, s in enumerate(sources):
+        if not isinstance(s, dict) or s.get("index") != i or not isinstance(s.get("path"), str) or not s["path"] or "\\0" in s["path"]:
+            raise DescriptorError("source %d of the descriptor is malformed" % i)
+        if not isinstance(s.get("bytes"), int) or isinstance(s.get("bytes"), bool) or s["bytes"] < 0:
+            raise DescriptorError("source %d of the descriptor has no size" % i)
+        if s.get("sha256") is not None and not (isinstance(s["sha256"], str) and _re.fullmatch(r"[0-9a-f]{64}", s["sha256"])):
+            raise DescriptorError("source %d of the descriptor has a malformed sha256" % i)
+    used = sources if layer in ("raw", "split_raw", "ewf") else sources[:1]
+    checked = "sizes"
+    for s in used:
+        try:
+            fd = os.open(s["path"], os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+        except OSError as exc:
+            raise DescriptorError("source %d can no longer be opened: %s" % (s["index"], exc.strerror or exc.__class__.__name__))
+        try:
+            st = os.fstat(fd)
+            if not _stat.S_ISREG(st.st_mode):
+                raise DescriptorError("source %d is no longer a regular file" % s["index"])
+            if st.st_size != s["bytes"]:
+                raise DescriptorError("source %d is %d bytes, the descriptor says %d: it changed after the descriptor was made" % (s["index"], st.st_size, s["bytes"]))
+            if verify_sources:
+                if s.get("sha256") is None:
+                    raise DescriptorError("source %d has no sha256 in the descriptor, so verify_sources cannot check it" % s["index"])
+                h = _hashlib.sha256()
+                while True:
+                    block = os.read(fd, 1 << 20)
+                    if not block:
+                        break
+                    h.update(block)
+                    if deadline is not None and time.monotonic() > deadline:
+                        raise DescriptorError("the time budget ran out while source %d was being verified" % s["index"])
+                if h.hexdigest() != s["sha256"]:
+                    raise DescriptorError("source %d no longer hashes to the sha256 the descriptor records" % s["index"])
+                checked = "sha256"
+        except OSError as exc:
+            raise DescriptorError("source %d cannot be read: %s" % (s["index"], exc.strerror or exc.__class__.__name__))
+        finally:
+            os.close(fd)
+    media = doc.get("media") if isinstance(doc.get("media"), dict) else {}
+    media_bytes = media.get("bytes") if isinstance(media.get("bytes"), int) and not isinstance(media.get("bytes"), bool) else None
+    unit = doc.get("partition_unit") if isinstance(doc.get("partition_unit"), int) and not isinstance(doc.get("partition_unit"), bool) else size
+    volumes = []
+    for p in doc.get("partitions") if isinstance(doc.get("partitions"), list) else []:
+        fs = p.get("filesystem") if isinstance(p, dict) else None
+        if not isinstance(fs, dict) or fs.get("readable") is not True:
+            continue
+        sectors, byte_offset = p.get("offset_sectors"), p.get("offset_bytes")
+        if not isinstance(sectors, int) or isinstance(sectors, bool) or sectors < 0 or not isinstance(byte_offset, int) or byte_offset != sectors * unit:
+            raise DescriptorError("a volume of the descriptor has an offset that is not its sector offset times the sector size")
+        if media_bytes is not None and byte_offset >= media_bytes:
+            raise DescriptorError("a volume of the descriptor starts at byte %d, past the end of the %d-byte media" % (byte_offset, media_bytes))
+        volumes.append({"offset_sectors": sectors, "offset_bytes": byte_offset, "fs_type": fs.get("fs_type") if isinstance(fs.get("fs_type"), str) else None})
+    return {"file": name, "sha256": sha, "sector_size": size, "unit": unit, "layer": layer, "images": [s["path"] for s in used], "sources": sources,
+            "media_bytes": media_bytes, "volumes": volumes, "checked": checked, "status": doc["status"]}
+
+
+def descriptor_offset(desc, given):
+    """The volume offset in sectors a tool uses with a descriptor: the one the caller names, which must be a volume of the descriptor; else the only volume."""
+    starts = [v["offset_sectors"] for v in desc["volumes"]]
+    if given is not None:
+        if given not in starts:
+            raise DescriptorError("offset %s is not a volume of the descriptor (its volumes start at sectors %s)" % (given, ", ".join(str(s) for s in starts) or "none"))
+        return given
+    if len(starts) == 1:
+        return starts[0]
+    raise DescriptorError(("the descriptor has no volume fsstat read" if not starts else "the descriptor has several volumes; pass offset= (a start sector)") +
+                          ((": " + ", ".join(str(s) for s in starts)) if starts else ""))
+
+try:
+    d = load_descriptor(sys.argv[1], sys.argv[2] or None, sys.argv[3] == "true", time.monotonic() + DESCRIPTOR_VERIFY_SECONDS)
+    print(json.dumps({"file": d["file"], "sha256": d["sha256"], "layer": d["layer"], "sector_size": d["sector_size"], "images": d["images"], "checked": d["checked"]}))
+except DescriptorError as exc:
+    print(json.dumps({"error": str(exc)}))
+PY
+}
+desc_get() { # desc_get <json file> <key|image N>
+  python3 - "$1" "$2" "${3:-}" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+key = sys.argv[2]
+if key == "image":
+    print(d["images"][int(sys.argv[3])])
+elif key == "images":
+    print(len(d["images"]))
+else:
+    print(d.get(key, ""))
 PY
 }
 
@@ -266,9 +438,21 @@ if ($bad) {
 exit 142 if $term_at;
 exit 143 if $stopped;
 exit(($status & 127) ? 128 + ($status & 127) : ($status >> 8));'
+TSK_B=()           # -b <sector size>, when a descriptor's is not 512
+IMG_EXTRA=()       # the sources of a descriptor after the first, given to every Sleuth Kit program after the image
 bg() { # bg <seconds> <cmd...>: the command with a deadline; its redirections are the caller's
   local secs="$1" rc
   shift
+  if (( ${#TSK_B[@]} + ${#IMG_EXTRA[@]} > 0 )); then
+    case "$1" in
+      mmls|fsstat|fls|img_stat|icat|istat)
+        local prog="$1" last
+        shift
+        last="${*: -1}"
+        set -- "$prog" ${TSK_B[@]+"${TSK_B[@]}"} "$@"
+        if [[ "$last" == "$img" ]]; then set -- "$@" ${IMG_EXTRA[@]+"${IMG_EXTRA[@]}"}; fi ;;
+    esac
+  fi
   STEP_REFUSED=0
   local armed=1
   : > "$STEP_MARK" 2>/dev/null || armed=0          # armed before the step: the wrapper unlinks it to say a write was refused
@@ -516,6 +700,26 @@ done
 [[ -n "$target" ]] || { final; echo '{"ok": false, "error": "--target is required"}'; exit 2; }
 img="$(target_field "$target" paths0)"
 shown="$(target_field "$target" name)"
+DESC_TMP=""
+descriptor_ref="$(target_field "$target" descriptor)"
+if [[ -n "$descriptor_ref" ]]; then
+  # A layer descriptor stands for the image: its sources are the image, and its sector size is the sector size. It is checked whole before anything runs.
+  DESC_TMP="$(mktemp 2>/dev/null)" || { final; echo '{"applies": "unknown", "why": "no temporary file could be made to read the descriptor", "ok": false, "error": "no temporary file"}'; exit 2; }
+  descriptor_load "$descriptor_ref" "$(target_field "$target" descriptor_sha256)" "$(target_field "$target" verify_sources)" > "$DESC_TMP" 2>/dev/null
+  derr="$(desc_get "$DESC_TMP" error 2>/dev/null)"
+  if [[ -n "$derr" || ! -s "$DESC_TMP" ]]; then
+    rm -f "$DESC_TMP"; DESC_TMP=""
+    final; echo "{\"applies\": \"unknown\", \"ok\": false, \"status\": \"failed\", \"error\": \"the descriptor cannot be used\", \"status_basis\": \"the descriptor was refused, so nothing was run and nothing is said about the image\", \"why\": \"the descriptor cannot be used: $(printf '%s' "$derr" | tr -c 'A-Za-z0-9 ,.:;()_-' ' ' | head -c 300)\"}"
+    exit 2
+  fi
+  img="$(desc_get "$DESC_TMP" image 0)"
+  n_images="$(desc_get "$DESC_TMP" images)"
+  i=1
+  while (( i < n_images )); do IMG_EXTRA+=("$(desc_get "$DESC_TMP" image "$i")"); i=$((i + 1)); done
+  dsz="$(desc_get "$DESC_TMP" sector_size)"
+  if [[ "$dsz" != 512 ]]; then TSK_B=(-b "$dsz"); fi
+  [[ -n "$shown" && "$shown" != "$(target_field "$target" paths0)" ]] || shown="$img"
+fi
 [[ -n "$img" && -f "$img" ]] || { final; echo '{"applies": "unknown", "why": "the target is not a regular file, so it cannot be told what it is", "ok": false, "error": "the target is not a readable file"}'; exit 2; }
 
 # perl runs every step (its clock, its process group, its checked writer), so it must be here; the marker file is the wrapper's word that a
@@ -530,7 +734,7 @@ if ! have perl; then
   exit 2
 fi
 STEP_MARK_DIR=""
-trap '[[ -n "${STEP_MARK_DIR:-}" ]] && rm -rf "$STEP_MARK_DIR"; [[ -n "${out:-}" ]] && rm -f "$out/.fsstat.tmp" "$out/.disk_probe.tmp"; [[ -n "${TMPF:-}" ]] && rm -f "$TMPF" "$TMPF.stderr"; true' EXIT
+trap '[[ -n "${DESC_TMP:-}" ]] && rm -f "$DESC_TMP"; [[ -n "${STEP_MARK_DIR:-}" ]] && rm -rf "$STEP_MARK_DIR"; [[ -n "${out:-}" ]] && rm -f "$out/.fsstat.tmp" "$out/.disk_probe.tmp"; [[ -n "${TMPF:-}" ]] && rm -f "$TMPF" "$TMPF.stderr"; true' EXIT
 STEP_MARK_DIR="$(mktemp -d 2>/dev/null)" || { final; echo '{"ok": false, "status": "failed", "applies": "unknown", "error": "no temporary directory could be made", "status_basis": "nothing was run and nothing is said about the image"}'; exit 2; }
 STEP_MARK="$STEP_MARK_DIR/refused"
 
@@ -562,6 +766,15 @@ case "$cmd" in
     [[ -n "$out" ]] || { final; echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
     mkdir -p "$out" 2>/dev/null && [[ -d "$out" && -w "$out" ]] || { final; echo '{"ok": false, "status": "failed", "error": "--out cannot be used: it is not a directory that can be made and written", "status_basis": "the output directory could not be made, so nothing was run"}'; exit 2; }
     : > "$out/index.tsv"
+    if [[ -n "$DESC_TMP" ]]; then
+      # the descriptor the run read through, beside the other outputs (it is no limit and no error, so it is not a note)
+      if cp "$DESC_TMP" "$out/descriptor.json" 2>/dev/null; then
+        index_row "descriptor.json" "the layer descriptor this run read through: its file and sha256, the layer, the sources given to the Sleuth Kit in order, and how they were checked"
+      else
+        WRITE_FAILED=1
+        notes+=("descriptor.json could not be written whole")
+      fi
+    fi
     volumes=0
     candidate_volumes=0
     # Said before the first step, so a run stopped anywhere leaves a coverage file that says it was.
