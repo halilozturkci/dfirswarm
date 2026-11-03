@@ -22,5 +22,6 @@ Use when the evidence is the control plane of virtualization or backup: hypervis
 | What do the catalogue, repository and retention setting each say? | `backup/catalogues-and-retention` |
 | Was a backup deleted, or only a deletion requested or reported? | `backup/deletion-vs-loss` |
 | Which recovery points still stand, and could one be restored? | `recovery/survivability` |
+| Which backup exports can the tool read? | `backup/product-presets` |
 
 The incident sequence of a ransomware case (what ran, in what order, who is told) belongs to the ransomware pack when loaded; guest artefacts belong to the Windows, Linux and macOS packs.

@@ -14,11 +14,11 @@ and `qemu-img` and Dissect are the base pack's.
 
 ## What it carries
 
-**Eleven skills**, a router, a method leaf and nine decision-rule leaves:
+**Twelve skills**, a router, a method leaf and ten decision-rule leaves:
 `router/start`, `evidence/boundaries`, `control-plane/chronology`,
 `hypervisor/activity`, `hypervisor/inventory`, `snapshots/chain-integrity`,
 `snapshots/markers`, `snapshots/header-markers`, `backup/catalogues-and-retention`,
-`backup/deletion-vs-loss`, `recovery/survivability`.
+`backup/deletion-vs-loss`, `backup/product-presets`, `recovery/survivability`.
 
 **Three tools,** each with the standard library only and each saying what it did
 not read:
@@ -33,9 +33,14 @@ not read:
   extent and chain with its identity check, plus markers (an unclean close, a
   leftover delta, a lock artefact) as candidates. `qemu-img` runs only when asked.
 - `backup_audit_normalise` turns the Proxmox VE and Proxmox Backup Server task
-  index (both UPID layouts) and Proxmox VE task logs, or an export of any product
-  read through a mapping the caller declares, into canonical events. Any other product is `unsupported`
-  until fixtures for it exist.
+  index (both UPID layouts), Proxmox VE task logs, Proxmox Backup Server task log
+  files, configuration files and data blobs (not decrypted, not inflated), the
+  Proxmox Backup client's JSON snapshot listing (a preset), or an export of any
+  product read through a mapping the caller declares (CSV, JSON Lines, a JSON
+  array or XML), into canonical events. The Proxmox Backup readers are built from
+  the product's documentation and source and the Proxmox VE ones from synthetic
+  fixtures; none is validated against a real export, and every answer says so
+  (`provenance`). Any other product is `unsupported` until a reader for it exists.
 
 **One goal template**: `what-recovery-survives.md`.
 
@@ -73,11 +78,11 @@ examined, and a credential in a configuration is an indicator, not a login.
 
 ## Not covered
 
-Products with no reader here are `unsupported` until anonymised exports exist:
+Products with no reader or preset here are `unsupported` until anonymised exports exist:
 Veeam, Commvault, Rubrik, Cohesity, Acronis, NetBackup, vCenter's database and
 events, Hyper-V's binary configuration, Nutanix, oVirt and XenServer. A declared
-mapping can read a CSV, JSON Lines or XML export of any of them, and says it is
-declared.
+mapping can read a CSV, JSON Lines, JSON array or XML export of any of them, and
+says it is declared.
 
 ## Install and use
 
