@@ -184,3 +184,12 @@ test("the skills name every tool of the pack, and the pack's method-only leaves 
   const namesNone = [...skills.values()].filter((s) => !/`(?:snapshot_chain_check|virtualization_inventory|backup_audit_normalise)`/.test(s.body)).map((s) => `skills/${s.id}.md`).sort();
   assert.deepEqual(methodOnly, namesNone);
 });
+
+test("no leaf calls whoever acted on the management plane an operator: in this repository the operator is the authorised human who runs the case", async () => {
+  const skills = await load(SKILLS);
+  for (const s of skills.values()) {
+    assert.doesNotMatch(s.text, /\boperator acted\b/i, `${s.id} names who acted as the operator`);
+    assert.doesNotMatch(s.text, /\boperators?\b/i, `${s.id} uses "operator": say which person or account acted, or administrator or intruder where the evidence says so`);
+  }
+  assert.match(skills.get("control-plane/chronology")!.body, /Which person or account acted/);
+});

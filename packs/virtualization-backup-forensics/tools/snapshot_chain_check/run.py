@@ -2943,6 +2943,11 @@ def install_signal_handlers():
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
+# The process block's handlers (they end the programs the tool runs, then give the last word) are in as soon as the module has
+# run this far, not when main() starts: a signal from here on gives one answer and exit 128 plus the signal number. What stays
+# open is the start of the interpreter and the compiling of this file.
+STATE["last_word"] = stop_word
+install_signal_handlers()
 
 
 # A value that is a number, a UUID or a run of hex bytes is shown as it is.
@@ -3704,8 +3709,6 @@ CHAIN_DETAIL = {
 
 
 def main():
-    STATE["last_word"] = stop_word
-    install_signal_handlers()
     args = read_args()
     root = want_str(args, "root")
     paths = want_str_list(args, "paths", 100000)
