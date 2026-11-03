@@ -28,4 +28,4 @@ Four states, each needing its own evidence. Do not let one stand in for the next
 
 **Shows.** Which of the four states each object has evidence for. **Does not show.** Intent, the human, or that recovery is impossible: check surviving copies (`recovery/survivability`).
 **Record.** Per object: each state, its source and locator, its time and clock, and what is unverified.
-**Sensitive output.** Run `backup_audit_normalise` as a job with `secret_output: true`; cite an event's locator, not its message. An object or job name is shown only if plain, else `<withheld: N bytes, field F>`; hosts, actors, actions and messages have token-shaped runs, user-info and the value after `password=`-style names withheld; a short plain password passes unseen.
+**Sensitive output.** Run `backup_audit_normalise` as a job with `secret_output: true`; cite an event's locator, not its message. An object or job name is shown only if plain, else `<withheld N characters: reason>`; hosts, actors, actions and messages have token-shaped runs, user-info and the value after `password=`-style names withheld; a short plain password passes unseen.

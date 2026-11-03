@@ -28,4 +28,4 @@ Use when `snapshot_chain_check` lists a marker about a disk's own header or desc
 
 **Shows.** What a header or descriptor records about itself and its parent, held against the set. **Does not show.** Who wrote it, when, why, or whether data was lost.
 **Record.** Marker, source ids, the observation verbatim, the edge's `resolution` and `id_check`, records for and against.
-**Sensitive output.** Run `snapshot_chain_check` as a job with `secret_output: true`. Names, paths and ids are shown only if plain, else `<withheld: N bytes, field F>`; a short password used as a name passes unseen.
+**Sensitive output.** Run `snapshot_chain_check` as a job with `secret_output: true`. Names, paths and ids show only if plain, else `<withheld N characters: reason>`; a short password used as a name passes unseen.

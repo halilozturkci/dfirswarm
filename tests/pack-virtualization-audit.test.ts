@@ -88,7 +88,8 @@ test("byte offsets and lengths find each line in the evidence; CRLF, a missing f
       assert.match(slice, /^UPID:/, `event ${e.seq} starts where its locator says`);
     }
     assert.equal(out.events.length, 4);
-    assert.equal(out.events[2].object.startsWith("caf"), true, "non-UTF-8 bytes are escapes, not a crash");
+    // CHANGED with the one text: a name holding a lone surrogate (what a non-UTF-8 byte becomes) is withheld whole as invisible characters in a name; it was shown with the bytes escaped
+    assert.match(out.events[2].object, /^<withheld \d+ characters: invisible characters in a name>$/, "non-UTF-8 bytes in a name are withheld, not a crash");
     assert.equal(out.events[3].result, "unknown");
   });
 });
@@ -400,14 +401,14 @@ test("names the answer shows are shape-checked: an actor, an object, a host, a r
     const timeRun = await tool(AUDIT, cwd, { path: "inputs/y.csv", format: "declared_csv", mapping: { time: "t", action: "a" } });
     const timeOut = body(timeRun);
     for (const needle of [C.github, C.aws, C.hex]) assert.equal(timeRun.stdout.includes(needle), false, "a raw time that looks like a token is withheld too");
-    assert.match(timeOut.events[0].time_raw, /<(?:token-shaped text withheld \d+ characters|withheld: \d+ bytes, field time_raw)>/);
+    assert.match(timeOut.events[0].time_raw, /<(?:token-shaped text withheld \d+ characters|withheld \d+ characters: token-shaped text)>/);
     await put(cwd, "inputs/x.csv", `t,a,o,u,h,r,j\n2024-01-05T02:00:00Z,run,/srv/${C.aws}/${C.hex},${C.github},host-${C.hex},fail ${C.userinfo}@h,job-${C.aws}\n`);
     const run = await tool(AUDIT, cwd, { path: "inputs/x.csv", format: "declared_csv", mapping: { time: "t", action: "a", object: "o", actor: "u", host: "h", result: "r", job: "j" } });
     const out = body(run);
     const all = await everythingBut(cwd, run.stdout + run.stderr, []);
     for (const needle of [C.github, C.aws, C.hex, "S3cr3tPassw0rd"]) assert.equal(all.includes(needle), false, needle.slice(0, 6));
     assert.ok(out.withheld.strings_changed >= 4);
-    assert.match(out.events[0].actor, /<token-shaped text withheld \d+ characters>/);
+    assert.match(out.events[0].actor, /<(?:token-shaped text withheld \d+ characters|withheld \d+ characters: token-shaped text)>/);
   });
 });
 

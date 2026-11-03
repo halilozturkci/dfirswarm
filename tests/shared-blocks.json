@@ -4,10 +4,7 @@
   "families": {
     "ARCHIVE BLOCK": { "variants": [ { "carriers": 3, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },
     "BACKSTOP": { "variants": [ { "carriers": 6, "example": "packs/ransomware-response/tools/encrypted_survey/run.py" } ] },
-    "BOUNDARY": { "variants": [
-      { "carriers": 13, "example": "packs/windows-forensics/tools/regkv/run.py" },
-      { "carriers": 3, "example": "packs/virtualization-backup-forensics/tools/virtualization_inventory/run.py", "why": "the virtualization pack's own text, until its three tools move onto the windows text (the BOUNDARY step 2 package)" }
-    ] },
+    "BOUNDARY": { "variants": [ { "carriers": 16, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "COMMON": { "variants": [ { "carriers": 3, "example": "packs/virtualization-backup-forensics/tools/backup_audit_normalise/run.py" } ] },
     "EVTX READ": { "variants": [ { "carriers": 3, "example": "packs/windows-forensics/tools/evtx_carve/run.py" } ] },
     "FILES": { "variants": [ { "carriers": 2, "example": "packs/virtualization-backup-forensics/tools/snapshot_chain_check/run.py" } ] },

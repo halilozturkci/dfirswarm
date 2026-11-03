@@ -19,4 +19,4 @@ Use when you read what a backup system believes it holds, what its storage holds
 
 **Shows.** What the product recorded, as it recorded it. **Does not show.** That a restore works, that a deletion removed the bytes, or who the human was.
 **Record.** Product and version as shown, export time, mapping declared, counts of events and unparsed lines, unmapped actions, the three accounts and where they disagree.
-**Sensitive output.** Run as a job with `secret_output: true`; cite the event's locator. Plain object and job names are shown, else `<withheld: N bytes, field F>`; hosts and free text have tokens, user-info and `password=` values withheld; a short plain password passes.
+**Sensitive output.** Run as a job with `secret_output: true`; cite the event's locator. Plain object and job names are shown, else `<withheld N characters: reason>`; hosts and free text have tokens, user-info and `password=` values withheld; a short plain password passes.

@@ -19,4 +19,4 @@ Use when a disk may depend on a parent or earlier snapshot and you must say whet
 
 **Shows.** The files' own statements about their parents, and whether the set satisfies them. **Does not show.** That the disk boots, what the parent held when the child was made, or why a parent is absent.
 **Record.** Each leaf's chain and status, each edge's resolution and id check, missing extents, hashes, tool version, qemu-img's answer or absence.
-**Sensitive output.** Run as a job with `secret_output: true`. Names, paths and ids are shown only if plain, else `<withheld: N bytes, field F>`; a short password used as a name passes unseen.
+**Sensitive output.** Run as a job with `secret_output: true`. Names, paths and ids show only if plain, else `<withheld N characters: reason>`; a short password used as a name passes unseen.

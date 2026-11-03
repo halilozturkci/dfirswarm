@@ -20,4 +20,4 @@ Use when the question is what was done to a VM, a snapshot or a datastore throug
 
 **Shows.** An operation, object, account and time as the system recorded them. **Does not show.** The person, intent, or that the operation completed as the VM's files now stand.
 **Record.** Source, record locator, operation, object, account, address, outcome, clock, and the planes you did not have.
-**Sensitive output.** Run the tools as jobs with `secret_output: true`; cite the record's locator, not its text. A VM, path or id is shown only if plain, else `<withheld: N bytes, field F>`; hosts and text have tokens, user-info and `password=` values withheld; a short plain password passes unseen.
+**Sensitive output.** Run the tools as jobs with `secret_output: true`; cite the locator, not the text. A VM, path or id is shown only if plain, else `<withheld N characters: reason>`; hosts and text have tokens, user-info and `password=` values withheld; a short plain password passes unseen.
