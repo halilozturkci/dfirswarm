@@ -23,6 +23,7 @@ export const ZEEK = join(TOOLS, "zeek_run", "run.py");
 export const SURICATA = join(TOOLS, "suricata_run", "run.py");
 export const EXTRACT = join(TOOLS, "pcap_extract", "run.py");
 export const TRANSFORM = join(TOOLS, "capture_transform", "run.py");
+export const FLOW = join(TOOLS, "flow_reader", "run.py");
 export const LOGS = join(TOOLS, "network_log_summary", "run.py");
 export const RECIPE = join(NET, "recipes", "network-capture", "run.py");
 export const AGENT = { AGENT_ID: "s1" };

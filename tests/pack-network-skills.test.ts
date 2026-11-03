@@ -205,16 +205,24 @@ test("each new leaf opens Use when ... Not for, names only tools that exist, and
   }
 });
 
-test("flows/interpret names no flow tool while none exists, and names it once one does", async () => {
+test("flows/interpret names the flow tool once it exists, and the leaf, the capture leaf and the README no longer say a flow reader is missing", async () => {
   const skills = await load(SKILLS);
   const s = skills.get("flows/interpret")!;
   const exists = (await toolNames()).has("flow_reader");
   assert.equal(((s.meta.tools as string[]) ?? []).includes("flow_reader"), exists);
   assert.equal(s.body.includes("flow_reader"), exists, "the leaf and the tool agree");
   if (!exists) assert.match(s.body, /no flow reader/i, "it says a flow reader is not provided");
-  // It agrees with the capture leaf and the README on that point.
-  assert.match(skills.get("capture/what-you-have")!.body, /no flow reader/i);
-  assert.match(await readFile(join(NET, "README.md"), "utf8"), /no flow reader is provided/);
+  // It agrees with the capture leaf and the README on that point, whichever side of it the pack is on.
+  assert.equal(/no flow reader/i.test(skills.get("capture/what-you-have")!.body), !exists);
+  const readme = await readFile(join(NET, "README.md"), "utf8");
+  assert.equal(/no flow reader is provided/.test(readme), !exists);
+  assert.equal(/No tool here reads flow records/.test(readme), !exists);
+  assert.equal(JSON.parse(await readFile(join(NET, "pack.json"), "utf8")).description.includes("No flow-record reader"), !exists);
+  if (exists) {
+    assert.deepEqual((s.meta.requires_host as string[]) ?? [], ["nfdump"], "the leaf names the program the tool runs");
+    assert.match(s.body, /counters_exact/);
+    assert.match(s.body, /refuses a capture and sFlow by name/);
+  }
 });
 
 test("evidence/captured-secrets is a prerequisite of the three leaves that reach secrets, and no chain enters the warning band", async () => {

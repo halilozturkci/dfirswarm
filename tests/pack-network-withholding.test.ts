@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { EXTRACT, LOGS, RECIPE, SUMMARY, SURICATA, TRANSFORM, ZEEK } from "./pack-network-harness.ts";
+import { EXTRACT, FLOW, LOGS, RECIPE, SUMMARY, SURICATA, TRANSFORM, ZEEK } from "./pack-network-harness.ts";
 import { runPySnippet } from "./tool-library-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 
@@ -37,10 +37,10 @@ async function processBlock(path: string): Promise<string> {
   return text.slice(start, end + "# END SHARED PROCESS".length);
 }
 
-test("the three engine tools, capture_transform and the recipe carry the same process block, byte for byte, and none starts a program in a session of its own", async () => {
-  const blocks = await Promise.all([EXTRACT, ZEEK, SURICATA, RECIPE, TRANSFORM].map(processBlock));
+test("the three engine tools, capture_transform, flow_reader and the recipe carry the same process block, byte for byte, and none starts a program in a session of its own", async () => {
+  const blocks = await Promise.all([EXTRACT, ZEEK, SURICATA, RECIPE, TRANSFORM, FLOW].map(processBlock));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
-  for (const path of [EXTRACT, ZEEK, SURICATA, RECIPE, TRANSFORM]) {
+  for (const path of [EXTRACT, ZEEK, SURICATA, RECIPE, TRANSFORM, FLOW]) {
     const text = await readFile(path, "utf8");
     assert.doesNotMatch(text.replace(/^\s*#.*$/gm, "").replace(/"""[\s\S]*?"""/g, ""), /start_new_session|setsid|preexec_fn=os\.setsid|process_group/, `${path} starts a program outside the tool's process group`);
     assert.doesNotMatch(text, /threading/, `${path} uses a thread (preexec_fn and threads do not mix)`);

@@ -7,7 +7,7 @@ tools: [pcap_summary, zeek_run]
 requires_host: [capinfos, zeek, tshark]
 ---
 
-Use when you hold a pcap or pcapng and must say what it can show. Not for flow exports (identify the producer, sampling and byte-counter meaning first; no flow reader is bundled) or text logs (`logs/web-proxy-firewall`).
+Use when you hold a pcap or pcapng and must say what it can show. Not for flow exports (`flows/interpret`: identify the producer, sampling and byte-counter meaning first) or text logs (`logs/web-proxy-firewall`).
 
 1. Hash the file (as `evidence/verify` says: fetch it if you have not). Run `pcap_summary` and a full `capinfos FILE`; keep both and reconcile their packet counts. `pcap_summary` is a census, not a session engine: read its interface table, drop counters, unsupported blocks and truncation counts. A capture cut off mid-record is summarised up to the cut (`status` partial, `stopped_reading`): nothing past it is in the numbers. Its whole-result files are not bounded by the capture and can reach 27 times it (a block-type file 3.5 times), 47 times while it runs: give `$OUT` that room. On a capture case the `network-capture` recipe's tables (`packets.tsv`, `dns.tsv`, `http.tsv`, `tls.tsv`, `coverage.json`) are one tshark's reading of the file, not the file: `fields_missing` in `coverage.json` names what that build did not list.
 2. **Snap length** limits bytes kept per packet; it does not say whether content survived. A 96-byte record can hold payload: minimal Ethernet, IPv4 and TCP headers take 54 bytes. Use the measured truncation (`truncation`, `payload_bytes_captured_total`) for the packets that matter; report what is recoverable, cut, or undetermined.
