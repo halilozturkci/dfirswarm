@@ -1,0 +1,119 @@
+{
+  "name": "capture_transform",
+  "description": "Make DERIVATIVE captures from original captures and account for every packet. One operation per call: split (editcap -c packets per file, or -i seconds per file), merge (mergecap, chronological, or -a appended in the order given), filter (tcpdump -n -r IN -w OUT with a recorded BPF filter), dedup (editcap -d, -D a window of N packets, or -w a window of seconds), convert (editcap -F pcap or pcapng) and hexdump (text2pcap over a text hex dump). Originals are only opened for reading, by this tool (size and SHA-256) and by the programs it runs; an output never replaces a file that is there (the next free name, -2, -3, takes it). Every derivative is written first to a hidden temporary directory inside out_dir and placed whole, so a stop leaves no half file under a final name. Every answer says, for the run, packets_in, packets_out and dropped, with dropped_by naming why (a split, a merge and a convert drop none and the answer says whether the counts agree; a filter drops what its recorded BPF filter did not match; a dedup drops the duplicates editcap removed), the exact settings and argument vectors, the version of each program (the first line of its --version), and for each input and output its size, SHA-256, packet count, file type, encapsulation and number of interfaces as capinfos -M reported them. Every derivative is labelled \"derivative, not evidence\"; a text2pcap result is labelled synthetic as well: its timestamps (and its headers, when ethernet_type, ip_protocol, udp_ports or tcp_ports asks for them) were made by text2pcap and it is never evidence that traffic occurred. A filter or a dedup drops packets, so the derivative is not the capture, and the answer says so. A pcapng converted to pcap loses what the pcap format has no place for (the answer lists it; the tool does not read the input's blocks, pcap_summary counts them for the original). A zero-packet derivative is reported with its name. A time shift (editcap -t) has no parameter and a parameter that names one is refused. If capinfos cannot describe an input as a capture the tool refuses before running anything; a program that exits nonzero, or does not finish within max_seconds (killed with everything it started), places nothing. The packet counts come from capinfos and the settings of each program are those Wireshark 4 and tcpdump document: a program that refuses an option makes the run failed with its own diagnostic, which is kept. Programs run in the tool's own process group (never a session of its own) with the kernel asked to end them if the tool dies. The derivative rows are paged: the first limit rows are answered inline and the whole list is the file all_results names, written without replacing an earlier one. SENSITIVE: a derivative holds the payload of the packets it keeps, credentials included: the directory is private (0700, files 0600) and the manifest declares secret_output: \"required\", so every job of this tool is sealed. Every answer carries status (complete when the program exited 0, capinfos counted every output, the packets add up and every derivative was placed whole; partial otherwise, with status_basis; failed for a refusal) and status_basis; exit 0 means the programs ran, and a refusal is JSON and exit 1. max_seconds (10 to 1000, default 900) is the tool's own clock and stays under the manifest's 1200. SIGTERM, SIGINT and SIGHUP kill the programs and what they started, remove the temporary directory and the hidden file of a page, print partial JSON that names the derivatives already placed, and exit 128 plus the signal; a signal that arrives while the final answer is written ends the tool with that one document. A stop that arrives before the script's first lines have run (the interpreter's own start and its compile of the script) gets no answer.",
+  "params": {
+    "operation": {
+      "type": "string",
+      "description": "split, merge, filter, dedup, convert or hexdump"
+    },
+    "inputs": {
+      "type": "array",
+      "description": "The original captures to read (one, or two to 64 for merge); for hexdump the one text file. Each must be a regular file; they are never written"
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "A directory under work/ (in a job, under $OUT; work/<your id>/name is mapped to $OUT/name) for the derivatives. It is private (0700, files 0600). It may hold earlier results: none is replaced"
+    },
+    "packets": {
+      "type": "integer",
+      "description": "split: a part every N packets (editcap -c). Exactly one of packets and seconds"
+    },
+    "seconds": {
+      "type": "integer",
+      "description": "split: a part every N seconds (editcap -i)"
+    },
+    "dedup_window": {
+      "type": "integer",
+      "description": "dedup: remove duplicates within a window of N packets (editcap -D, 0 to 1000000). With neither this nor dedup_seconds, editcap -d and its default window"
+    },
+    "dedup_seconds": {
+      "type": "number",
+      "description": "dedup: remove duplicates within a window of this many seconds (editcap -w, above 0 and at most 3600)"
+    },
+    "bpf_filter": {
+      "type": "string",
+      "description": "filter: a BPF filter expression, passed to tcpdump after -- and recorded; packets it does not match are dropped and counted"
+    },
+    "format": {
+      "type": "string",
+      "description": "pcap or pcapng: the output format (-F). Required for convert; for the other operations the program's own default applies when it is left out"
+    },
+    "merge_order": {
+      "type": "string",
+      "description": "merge: chronological (default) or append (mergecap -a: the inputs in the order given, their times not compared)"
+    },
+    "link_type": {
+      "type": "integer",
+      "description": "hexdump: the link-layer type number (text2pcap -l, 0 to 65535)"
+    },
+    "ethernet_type": {
+      "type": "string",
+      "description": "hexdump: make an Ethernet header with this type, such as 0x0800 (text2pcap -e). One of ethernet_type, ip_protocol, udp_ports and tcp_ports at most"
+    },
+    "ip_protocol": {
+      "type": "integer",
+      "description": "hexdump: make Ethernet and IP headers for this IP protocol number (text2pcap -i)"
+    },
+    "udp_ports": {
+      "type": "array",
+      "description": "hexdump: [source port, destination port]: make Ethernet, IP and UDP headers (text2pcap -u)"
+    },
+    "tcp_ports": {
+      "type": "array",
+      "description": "hexdump: [source port, destination port]: make Ethernet, IP and TCP headers (text2pcap -T)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Derivative rows answered inline (default 200); the whole list is the file all_results names"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own clock, 10 to 1000 seconds, default 900: a program still running at the end is killed with everything it started, and nothing is placed"
+    }
+  },
+  "requires": [
+    "editcap",
+    "mergecap",
+    "tcpdump",
+    "text2pcap",
+    "capinfos"
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 1200,
+  "example": "{\"operation\": \"split\", \"inputs\": [\"inputs/capture.pcap\"], \"packets\": 100000, \"out_dir\": \"work/<your id>/derivatives\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T12:00:00.000Z",
+  "version": 1,
+  "sha256": "2b019d9e19dd81cf93bd7932c99265ecfdef8fb44a028258a13d053eb8ce732a",
+  "use": {
+    "extensions": [
+      ".pcap",
+      ".pcapng",
+      ".cap"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "d4c3b2a1"
+      },
+      {
+        "offset": 0,
+        "hex": "a1b2c3d4"
+      },
+      {
+        "offset": 0,
+        "hex": "4d3cb2a1"
+      },
+      {
+        "offset": 0,
+        "hex": "a1b23c4d"
+      },
+      {
+        "offset": 0,
+        "hex": "0a0d0d0a"
+      }
+    ]
+  },
+  "secret_output": "required"
+}

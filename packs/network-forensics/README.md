@@ -18,7 +18,7 @@ leaves they point to when needed: `capture/what-you-have` (and
 `logs/web-proxy-firewall`, `correlate/host`, `evidence/captured-secrets`, `flows/interpret`,
 `analysis/engines-and-coverage`.
 
-**Six tools.** `pcap_summary` reads classic pcap and pcapng with **no external
+**Seven tools.** `pcap_summary` reads classic pcap and pcapng with **no external
 dependency**: it returns a census of the capture (an interface table with link
 type and snap length per interface, pcapng drop counters, the time range, packets
 truncated and how much payload survived, and tuple or endpoint aggregates with
@@ -33,21 +33,26 @@ complete EVE log. `pcap_extract` performs Wireshark object export with a receipt
 from the first moment and ties an HTTP object to a frame when its bytes equal one
 response body. `network_log_summary` reads Apache/nginx access logs, Squid native
 logs and upper-case KEY=VALUE firewall records into a table with line numbers
-and byte offsets and an explicit timestamp column. The tools that print text from the evidence (`pcap_extract`, `zeek_run`,
+and byte offsets and an explicit timestamp column. `capture_transform` makes derivative
+captures with `editcap`, `mergecap`, `tcpdump -r` and `text2pcap` (split, merge, filter, dedup,
+convert, and a hex dump to a synthetic capture): it never writes the original, labels every
+output "derivative, not evidence", and says how many packets went in, came out and were dropped.
+The tools that print text from the evidence (`pcap_extract`, `zeek_run`,
 `suricata_run`, `network_log_summary`, and the capture's own option text in
 `pcap_summary`) keep their output in a private directory and withhold what
 looks like a credential from their answers, column by column (by shape: a short
 secret that does not look like a token is not recognised; a hash, GUID or UUID
 is withheld too and recoverable in a job): run them as jobs with
-`secret_output: true`. Every answer of the six carries `status` (`complete`,
+`secret_output: true`. Every answer of the seven carries `status` (`complete`,
 `partial` or `failed`) and `status_basis`, exit 0 means the engine ran, and
 SIGTERM, SIGINT and SIGHUP end a tool with partial JSON, from the first lines of
-its script on (the six tools and the recipe install a minimal handler before
+its script on (six of the tools and the recipe install a minimal handler before
 their other imports, which answers "stopped before any work" and exits 128 plus
-the signal). The one window left is the interpreter's own start and its compile
+the signal; `capture_transform` installs the handler of its stop block after four
+imports, which answers status `failed` with `interrupted` true and exits 128 plus the signal). The one window left is the interpreter's own start and its compile
 of the script, before the script's first line has run: a stop there gives no
 answer. Measured on 2026-11-01 (SIGTERM at a random offset of 0-250 ms after the
-start, 80 runs of each script, one CPU, no network), 6 to 19 of 80 runs gave no
+start, 80 runs of each of those scripts, one CPU, no network; `capture_transform` was not measured), 6 to 19 of 80 runs gave no
 JSON, all but one of them within 55 ms of the start, on a quiet host; a busy host sees more (misses up to about 80 ms were seen). No flow
 export (NetFlow, IPFIX, sFlow) is read by any tool here: `flows/interpret` says what to
 settle first (the exporter, the sampling, the timeouts, what its counters mean) and that

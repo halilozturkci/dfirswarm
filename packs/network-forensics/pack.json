@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. No flow-record reader (NetFlow, IPFIX) is bundled.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,7 +18,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "edd17672b8bc8d63088a12fd9672c106b2426ebefc56537761a020ba929ce103",
+      "README.md": "3639c154e03473eb0926fa58297b89fa31850beabcad8e04e59387dff0f26b94",
       "goals/what-left-the-network.md": "8e6dd6ae10d2bd8380b567e8bffb3bc644ac90602eed83edbd3773fd8ebdc811",
       "recipes/network-capture/recipe.json": "1482cf3a27b265327ef9234754f9d4dd02f0306f2b4ddf594edaae8925fc5c07",
       "recipes/network-capture/run.py": "9f65fef58d95cfedd0b3d248faa1d964dbb6030a2687fe8eb4f047e5d8db5c21",
@@ -28,7 +28,7 @@
       "skills/analysis/engines-and-coverage.md": "e535f675b6a3c368cf35667ec980bf57a3dc5f43cdcd8f83b8be5cb40dc1904b",
       "skills/beacons/periodicity.md": "82ad96c0851e7f01a3620f3716a72d6da1ed4c1e66c8f460d392c2a67baeb5a2",
       "skills/capture/carve-from-images.md": "adc9464ec4f5f9750b0297b5a971d046f72e55bf4563f121eed56bdc66a8eaa4",
-      "skills/capture/derivatives.md": "739ec5b87ee9a70a1b02f3c5b0a8dd073c0d05ff0c4124698300dd434ce1984b",
+      "skills/capture/derivatives.md": "c872d5808115237f39ab8df24ae15f4252287c4da12c8401c7ebdc802fc78090",
       "skills/capture/what-you-have.md": "de36f306993a478ea035c383338a9ecc71029126888d76050533581a9067045a",
       "skills/correlate/host.md": "ee0f846f373c713c85fe93bf32237daf3973ea1a6ef8908048ba0ed2cc22a5ea",
       "skills/evidence/captured-secrets.md": "9fe1974b20c1aed0b562d74341314a104f0d9b99e4a59b22f635ce348bccce20",
@@ -45,6 +45,8 @@
       "tests/pack.test.sh": "f83730891c6dc137fa0aa1ddd26b6d1d3ba9bc9609ff6a277ffb7ed9a3d7d372",
       "tools/beacon_score/manifest.json": "22cc98f291bba21d04b24a2e3ddfdf819871383cc32a7398130d3ed1ccae7961",
       "tools/beacon_score/run.py": "e1f43f8e890e860e5fe369205aa4bcfc0be65446f8fbb6aa6719fdfc98d6ddb2",
+      "tools/capture_transform/manifest.json": "b973d481f54062a5d9d2a8004ce52237729467403a66b096cb31e74e9b1837f2",
+      "tools/capture_transform/run.py": "2b019d9e19dd81cf93bd7932c99265ecfdef8fb44a028258a13d053eb8ce732a",
       "tools/network_log_summary/manifest.json": "e3c6ae4ab6abe2911e922d350ecbf1b03fc3d5915a6db1ad312c50b3af0a89c2",
       "tools/network_log_summary/run.py": "f1fca6b5689a182e0f5901a17d228fdfe08546eb8dfbc1f6650fcde1d6100f2b",
       "tools/pcap_extract/manifest.json": "0d99907a18a38b7a6fd49ef88ad1335bd5e01ae6249a639d0e6c60f08f62cc18",
@@ -59,6 +61,7 @@
   },
   "tools": [
     "beacon_score",
+    "capture_transform",
     "network_log_summary",
     "pcap_extract",
     "pcap_summary",
