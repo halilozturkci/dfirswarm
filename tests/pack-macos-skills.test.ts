@@ -64,7 +64,7 @@ const SECRET_LEAVES = ["accounts/users", "artifacts/plists", "artifacts/knowledg
 
 test("every skill is a leaf within the budget, opens with Use when/only if ... Not for ..., has a short index entry, and old ids stay", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, OLD_IDS.length + Object.keys(CHILDREN).length + 1, "the pack's leaves and its router");
+  assert.equal(skills.size, OLD_IDS.length + Object.keys(CHILDREN).length + 1 + EXTRA_IDS.length, "the pack's leaves, its router and the leaves with no parent");
   for (const id of OLD_IDS) assert.ok(skills.has(id), `old id ${id} is alive`);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= 800, `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
@@ -210,12 +210,13 @@ test("no skill states an Apple version fact it cannot source, and the APFS time 
 
 const ROUTER = "macos/router";
 const FAMILY = ["windows-forensics", "linux-forensics", "memory-forensics", "macos-forensics", "ransomware-response"];
-// The 17 ids the pack had before the router: other packs' `needs` and text name them, and every one still resolves.
+// The 17 ids the pack had before the router, and the first-level leaves added since (EXTRA_IDS): other packs' `needs` and text name them, and every one still resolves.
+const EXTRA_IDS = ["security/keychains"];
 const BEFORE = [
   "accounts/attribution-remote", "accounts/users", "artifacts/fsevents", "artifacts/fsevents-dating", "artifacts/knowledgec",
   "artifacts/knowledgec-fields-time", "artifacts/plists", "artifacts/plists-archives-dates", "filesystem/apfs", "filesystem/apfs-encryption",
   "filesystem/apfs-recovery", "logs/unified", "logs/unified-readers", "persistence/login-items-quieter", "persistence/mechanisms",
-  "triage/clocks-hardware", "triage/system-profile",
+  "security/keychains", "triage/clocks-hardware", "triage/system-profile",
 ];
 
 test("macos/router is the pack's only router, within 500 tokens, holds no rule, and names every other skill exactly once; every old id is alive", async () => {
@@ -236,7 +237,7 @@ test("macos/router is the pack's only router, within 500 tokens, holds no rule, 
   const named = [...router.body.matchAll(/`([a-z0-9-]+\/[a-z0-9-]+)`/g)].map((m) => m[1]);
   assert.equal(new Set(named).size, named.length, `a skill is named twice: ${named.filter((n, i) => named.indexOf(n) !== i).join(", ")}`);
   assert.deepEqual([...named].sort(), [...skills.keys()].filter((id) => id !== ROUTER).sort());
-  assert.equal(BEFORE.length, 17);
+  assert.equal(BEFORE.length, 18);
   for (const id of BEFORE) assert.ok(skills.has(id), `${id} is still a skill`);
   assert.equal(skills.size, BEFORE.length + 1, "the router is the only skill added");
   // The generated index names it as the pack's router, which is the line the harness reads.

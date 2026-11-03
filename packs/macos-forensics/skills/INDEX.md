@@ -20,5 +20,6 @@ Router: `macos/router`
 - `macos/router` macOS notes by question: Pick one when none is listed, or you cannot choose.
 - `persistence/login-items-quieter` Login items, background items and the quieter routes: A sweep reaches login items, cron, profiles, extensions or privacy permissions.
 - `persistence/mechanisms` Where something arranges to run again: Distinguish persistence configuration, registration, enabled state and execution.
+- `security/keychains` macOS keychains, identification and opening: A keychain file is in the evidence, or an answer needs what a Mac's keychain held.
 - `triage/clocks-hardware` Zone, epochs and hardware generation of the Mac: Convert a local time, or say which Mac hardware generation the evidence shows.
 - `triage/system-profile` Build the system profile before anything else: Establish the acquisition, OS build, hardware evidence, clocks and acquired volumes.
