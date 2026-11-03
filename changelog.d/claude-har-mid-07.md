@@ -39,3 +39,13 @@ failed job is no longer reported as having a defect: one role-aware rule
 is the subject of a limitation, not a defect of the answer; an entry cited as
 support that rests on a failed job is still refused at the append and flagged
 by the answers check until the answer qualifies it.
+
+### Fixed: harness
+
+The regroup post lists each required question as the finish line's readiness
+view sees it (no answer, a best candidate, a stale answer, a dispute, a
+must-establish requirement not met), where it used to judge by three legacy
+fields and listed one of four gaps. Each uncited object shows its lineage role
+(case evidence, case-derived); a validation control or a tool reference is
+listed apart, not as evidence no entry cites. Every list stays inside the
+post's bound.
