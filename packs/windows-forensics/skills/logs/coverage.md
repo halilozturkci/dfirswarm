@@ -21,6 +21,6 @@ An empty channel is a coverage condition to explain, not a verdict: disabled or 
 - **Across channels.** Build a timeline from times, each source with its clock caveat. Where a clock moved, keep the record order and the times and mark the records near the change.
 - **Parse status.** A negative over a `partial` run, or with `parse_errors` above zero, is bounded by what was read.
 
-Sensitive output: `evtx_query` rows carry command lines and typed text; run it as a job with `secret_output: true` where the log may hold them (`logs/security`).
+Sensitive output: `evtx_query` rows carry command lines and typed text; run it as a job with `secret_output: true` where the log may hold them (`logs/security`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 
 Shows: what this file, in this state, holds. Does not show: that an event never happened, or that a channel's absence of 1102 or 104 excludes a clearing. Record: files, first and last record time, counts, `parse_errors`, the configuration evidence, and the explanations left open.

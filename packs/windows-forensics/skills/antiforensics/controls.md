@@ -17,4 +17,4 @@ Use when an antivirus exclusion, a disabled protection or a deleted virtual mach
 
 Shows: a recorded change to a control, or a candidate guest disk with the extents that survive. Does not show: who made the change, that it took effect, or that the guest can be rebuilt. Record: the policy and event records with their times, the requested, effective or blocked state, the extent map of a recovered guest.
 
-Sensitive output: `regkv`, `evtx_query` and `evtx_carve` can return command lines and script text; run them as jobs (`secret_output: true`); `regkv` withholds by name, place and shape; a plain password is printed.
+Sensitive output: `regkv`, `evtx_query` and `evtx_carve` can return command lines and script text; run them as jobs (`secret_output: true`); `regkv` withholds by name, place and shape; a plain password is printed. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

@@ -18,4 +18,4 @@ Use when file times disagree with other records or the clock may have moved. Not
 
 Shows: a disagreement between sources, or a recorded clock change, at a stated place. Does not show: that a time was manipulated, by whom, or what the true time was. Record: the raw values from each source, the independent records compared, the interval of any clock change.
 
-Sensitive output: `mft_records` with `with_resident` and `evtx_query` can return file content and command lines; run them as jobs (`secret_output: true`).
+Sensitive output: `mft_records` with `with_resident` and `evtx_query` can return file content and command lines; run them as jobs (`secret_output: true`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

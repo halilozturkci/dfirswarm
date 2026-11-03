@@ -16,4 +16,4 @@ Use when the source is a hibernation file, pagefile or swap file. Not for a plai
 
 Shows: that bytes were stored in this file at that offset. Does not show: when they were written, which process held them, or that a hibernation file predates a cleanup. Record: file, its header facts, offset, and how the time of the file was established or that it was not.
 
-Sensitive output: a pagefile or hibernation file can hold the memory of any process; run carving over it as a job (`secret_output: true`).
+Sensitive output: a pagefile or hibernation file can hold the memory of any process; run carving over it as a job (`secret_output: true`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

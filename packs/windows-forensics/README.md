@@ -44,18 +44,26 @@ whole answer of every call, and writes `coverage.json` with `parsed`, `partial`,
 `unsupported`, `failed` or `not_attempted` for each family. `complete` there is not coverage of
 the host.
 
-What a tool measures, and what it does not, is in its manifest, and a tool says
-what it did not read rather than hand back a clean answer for a run that did not
-read everything: `partial` or `failed` in a `status` where it has one, and
-otherwise its own counts (`structure_complete`, `unrecognised_bytes`,
-`records_examined` against `parse_errors`). An exit status of 0 means the engine
-ran, not that the examination is complete. Five of them can reach secret material and print none
-of it: `browser_history` replaces the credential cells of Login Data, Cookies and
-Firefox's key database by their length, `regkv` and `registry_recover` do the same for values that can
-be secrets, `lnk_jumplist` withholds a link's arguments, and `yara_scan` returns where a rule matched, never the bytes it
-matched; `yara_scan`, in a job run with `secret_output: true`, can be asked
-(`write_matches`) to write the matched bytes to a sealed file; `registry_recover` and `lnk_jumplist` can be asked
-(`write_values`, `write_strings`) to write theirs, in a job run with `secret_output: true`.
+What a tool measures, and what it does not, is in its manifest, and a tool says what it did not read
+rather than hand back a clean answer for a run that did not read everything: `partial` or `failed`
+in a `status` where it has one, and otherwise its own counts (`structure_complete`,
+`unrecognised_bytes`, `records_examined` against `parse_errors`). An exit status of 0 means the
+engine ran, not that the examination is complete. Several of them can reach secret material and keep
+it out of their answers by shape or by name, not wholesale, so a secret of another shape is printed:
+`browser_history` replaces the credential cells of Login Data, Cookies and Firefox's key database,
+and the cells of columns named for a secret, by their length, and masks URL secrets by parameter
+name and user-info (a token in a path or under another name is printed); `regkv` and
+`registry_recover` do the same for values judged secret by name or place (a secret inside a value
+that does not look like one, such as a command line, is printed); `lnk_parse` and `lnk_jumplist`
+keep a link's arguments out of the answer and show a first word only when it is a program, a script
+or a known switch name; `utf16_urls` masks URL secrets by parameter name and user-info; and
+`yara_scan` returns where a rule matched, never the bytes it matched (its rule and string
+identifiers are the rule file's words and are printed). Describe a found secret by where it sits,
+its kind, length and what it grants, never by its value. `yara_scan`, in a job run with
+`secret_output: true`, can be asked (`write_matches`) to write the matched bytes to a sealed file;
+`registry_recover` and `lnk_jumplist` can be asked (`write_values`, `write_strings`) to write
+theirs, and so can `browser_history` and `utf16_urls` (`write_url_secrets`), in a job run with
+`secret_output: true`.
 
 **Three goal templates** in `goals/`, each with its own questions, definition of
 done and checks: `intrusion-triage.md`, `data-left-the-building.md`,

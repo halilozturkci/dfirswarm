@@ -19,4 +19,4 @@ Use when you read Jump List files. Not for the Recent folder's own links (`artif
 
 Shows: that an application or the shell listed that item (recent use, a pin, a destination or a task), with the entry's own last access. Does not show: an opening event, the target's timestamp, a person. Record: application id (the file name), source file, DestList version, entry and stream, the link written for it.
 
-Sensitive output: the links inside carry arguments and working directories; run `jumplist` as a job (`secret_output: true`). `lnk_parse` withholds the arguments from its answer.
+Sensitive output: the links inside carry arguments and working directories; run `jumplist` as a job (`secret_output: true`). `lnk_parse` and `lnk_jumplist` keep the arguments out of their answers by shape, so a secret in a field that does not look like one is printed (`artifacts/links`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

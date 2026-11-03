@@ -20,4 +20,6 @@ Use when you ask which volume shadow copies exist. Not for reading files out of 
 
 Shows: what `vshadowinfo` found in this volume's metadata at this offset. Does not show: that none ever existed, that any was deleted, or what a store contains. Record: image, offset in bytes and the sector arithmetic, `status`, both store counts, `problems`, the output files.
 
+Sensitive output: `vss_stores` lists identifiers, times and sizes and writes its output files at 0600; what a store holds is as sensitive as the volume (`filesystem/shadowcopies-open`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
+
 Open `filesystem/shadowcopies-open` only if you must read files, hives or logs out of a store.

@@ -23,4 +23,4 @@ A negative is bounded by the profiles collected, the hive state and the acquisit
 
 Shows: that the shell, or an application, kept a reference to the target, with the metadata it had when the record was written. Does not show: a person, that a file was opened, read, copied or run, where content came from, when it was first or last used, or that the item still exists. Record: profile, source file and its own times, hive state, which clock each time is on, the second reader.
 
-Sensitive output: `lnk_parse` and `jumplist` run as jobs (`secret_output: true`); the two leaves say what each withholds.
+Sensitive output: `lnk_parse` and `jumplist` run as jobs (`secret_output: true`); the two leaves say what each withholds. Withholding is by shape or by name: a secret of another shape is printed. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

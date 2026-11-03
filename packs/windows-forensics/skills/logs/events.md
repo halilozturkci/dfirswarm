@@ -39,6 +39,6 @@ Logon types name how a logon was requested:
 
 Type 2 does not identify a person at the console. Type 3 does not identify an SMB operation or the user behind it. Type 8 does not by itself show a password crossing a network unprotected. Type 10 is a remote-interactive session, RDP among them.
 
-Sensitive output: `evtx_query` rows carry command lines and typed text; run it as a job with `secret_output: true` where the log may hold them (`logs/security`).
+Sensitive output: `evtx_query` rows carry command lines and typed text; run it as a job with `secret_output: true` where the log may hold them (`logs/security`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 
 Shows: how the provider classed the event. Does not show: intent, completion of the operation, or that the account's owner acted. Record: provider, channel, id, `Version`, and the fields you read the meaning from.

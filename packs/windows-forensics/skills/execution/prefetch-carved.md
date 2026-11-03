@@ -16,3 +16,5 @@ Use when you sweep a raw source for `MAM\x04` Prefetch records. Not for a .pf yo
 - **A missing .pf** is not a negative by itself: establish the prefetcher's configuration in the SYSTEM hive (`registry/overview`), its service state and what was collected.
 
 Shows: a Prefetch structure was in the source at that offset. Does not show: that a file of that name existed on disk, was deleted or ran in this session. Record: source digest and range scanned, the accounting fields, each hit's offset, version and `file_information_size`.
+
+Sensitive output: `mam_scan` withholds nothing: a hit's `filename_strings` are paths as stored from memory and can hold a secret. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

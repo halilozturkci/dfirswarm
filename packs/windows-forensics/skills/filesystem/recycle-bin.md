@@ -16,3 +16,5 @@ Use when you read `$Recycle.Bin` metadata. Not for deleted records in general (`
 - The deletion time is when the item went to the bin, on the clock that wrote it. It is not when the bin was emptied. No `$I` does not show the file was not deleted: a deletion that bypasses the bin, a disabled bin or an emptied one (its `$I` records may survive as deleted entries) leaves no live one.
 
 Shows: this account's bin received an item with this path and size at this time. Does not show: who deleted it, that it was deleted rather than moved out, or where the content is now. Record: the `$I` and its record, SID, `$R` state, the truncation and not-attempted counts, the corroboration you looked for.
+
+Sensitive output: `recyclebin_i` returns `original_path` as stored and withholds nothing; a path can spell a secret. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
