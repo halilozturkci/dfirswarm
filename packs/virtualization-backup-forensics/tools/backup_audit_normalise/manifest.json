@@ -72,16 +72,21 @@
     },
     "write_text": {
       "type": "boolean",
-      "description": "Write each event's free-text message, and the original of every name or value the answer shows withheld or shortened, to one 0600 file under $OUT (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+      "description": "Write each event's free-text message, and the original of every name or value the answer shows withheld or shortened, to one 0600 file under $OUT (default false). Refused unless the tool runs as a job that is secret output: the manifest declares it, so a job with write_text true is made secret by the job service whether or not the agent asked"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 60,
+  "secret_output": {
+    "when_args": [
+      "write_text"
+    ]
+  },
   "example": "{\"path\": \"work/extracted/pve/tasks/index\", \"format\": \"pve_task_index\"}",
   "by": "maintainer",
   "at": "2026-10-15T09:00:00.000Z",
-  "version": 2,
+  "version": 3,
   "use": {
     "names": [
       "UPID:*",
