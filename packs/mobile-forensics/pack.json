@@ -1,7 +1,7 @@
 {
   "id": "mobile-forensics",
   "name": "Mobile Forensics Pack",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Method and tooling for a phone: what kind of extraction you were handed and what it cannot contain, iOS backups and their manifest, Android package and user data, the app databases that carry messages and location, protobuf blobs, and what deleted means inside SQLite.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -20,7 +20,7 @@
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "NOTICE": "f7eaab3fffac84c598325af3dd05679ef50f5b6371b72ff8561cc8aea306bb3b",
-      "README.md": "67ad7d13330bb1f08e4f28c62dfe0cfc4724e5f68ced0120fa4d3be0f630120d",
+      "README.md": "c605bf099b7a9a6ba9abe0aaff8a1f7b1e3b2d1f51e544413216995db2c1fc54",
       "goals/phone-examination.md": "fd8ad9d83c5622c98faf741d3b4a4c35c7d3140b8288b5a5840b8632f24fa6e7",
       "recipes/android-aleapp/recipe.json": "cb3441ca7e64cb4493785eb8745b514f09180d8201a5f1bb41cf08bb9bb21a8c",
       "recipes/android-aleapp/run.py": "3434e9ad3c93c5e26414f7d0dc384103dc0269a930aaa6f64e447309ee371063",
@@ -39,7 +39,7 @@
       "skills/apps/databases.md": "e1e3ee4349e70a4d2063218bd894fffb5e7d239334fe499ae92d4d9dbd6ede72",
       "skills/apps/fragments.md": "0c0cacc603fe922f4c73158505a20e215c86d5548b6a2387486d25ca2f36ddd8",
       "skills/extractions/backup-detail.md": "3f3167403b10d194ed35d43b51238248258441df737867bc88757af81a2ee171",
-      "skills/extractions/what-you-have.md": "e56d1f433b9ec435c802a6dfd64c278a0f110e4d6ce6e9d98999b5cf152a38da",
+      "skills/extractions/what-you-have.md": "1e45e8e1df8b377ba7b0140589c3b4f40b439d2a11db4efc41142bc6039ad5c1",
       "skills/ios/artifacts.md": "82a7a068e72c91f73d2301c452fd1a7a95d0c19908fff14798f8fb0017a551c6",
       "skills/ios/biome-segb.md": "9772ef7e119aef651209086e2e062ca7f8350501c88b270c2d30e1bc1446fad8",
       "skills/ios/containers-and-time.md": "c277dfdce245ddc21acbebd1a83e92de20af769c1cc951be10bbdcd41d2307e9",
@@ -50,6 +50,8 @@
       "tests/pack.test.sh": "3f253d7348f592a100e39a5aae0e05069f6c8b6b5854296e8b4cc33652f74ab6",
       "tools/backup_materialise/manifest.json": "4ff47dfd642c5fbe2b4fd3d1fc5dc85738dfaec48b6a74139abeeed9c05a3f3b",
       "tools/backup_materialise/run.py": "b08fb02e8f2fce6d97d2d6499f03f17689ca98a695c5a7b1491b7cbf20fa0f95",
+      "tools/heic_inspect/manifest.json": "0cb1351ca48bc3ecfe25bc59bed61af333c1e0a1e02db1c40c8fd8d83d4b3c3e",
+      "tools/heic_inspect/run.py": "ae6b3ef4dad58fed5b3c62c1fb19c979b87911c29c4297ef30e7a46a4472c558",
       "tools/manifest_db/manifest.json": "1bf12345cbf0c489971e4fbe2865ecbc488f63245793b44b80ae5d543e3edb9a",
       "tools/manifest_db/run.py": "12086c730cc0f6462c40379d67a0850d155479a8993f758ed504e6c331e6e413",
       "tools/protobuf_peek/manifest.json": "fa084c3f16068ea356d5722f5e7adb9dd8c4e431fc8638bdc6bd5cddbf89b3e4",
@@ -60,6 +62,7 @@
   },
   "tools": [
     "backup_materialise",
+    "heic_inspect",
     "manifest_db",
     "protobuf_peek",
     "sqlite_freespace"

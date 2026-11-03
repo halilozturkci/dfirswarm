@@ -17,7 +17,7 @@ here) and `extractions/backup-detail`; `apps/databases` and `apps/fragments`;
 most 400 tokens), which names the ten by the question each answers, holds no rule, and
 is the one line a run shows for the pack when its skills index is over budget.
 
-**Four tools.** Each says in its manifest what it measures and what it does
+**Five tools.** Each says in its manifest what it measures and what it does
 not, and each returns its whole result: an inline page and, when there is more,
 a file the answer names. None of them decrypts anything or reads a password.
 `sqlite_freespace` and `protobuf_peek` read no `-wal` or `-journal`; `manifest_db`
@@ -65,6 +65,18 @@ opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
   `copy_content` (false by default, a plan) writes content and is a secret-output
   mode: a job run as secret output only; a name shaped like a recovery password is
   the placeholder everywhere and its real name is only in the 0600 values file.
+- `heic_inspect` makes a JPEG or PNG preview of a HEIC or HEIF original under
+  `$OUT/heic_inspect` and ties it back to the original: the size and SHA-256 of
+  both, the dimensions, the image count, which item is primary, and the backend's
+  settings and errors. One backend per run, recorded and never a silent fallback:
+  `heif-convert` (in the tool's process group) or `pillow-heif` (in a child process).
+  A pixel or size limit is checked on the original's own boxes and a conversion past
+  it is refused before any backend starts. A bounded standard-library walk of the
+  ISO-BMFF boxes (`ftyp` brands, then under `meta` the handler, primary item, items,
+  locations, properties and references) reports hostile sizes and counts with their
+  offsets. Metadata comes from the original with `exiftool`, never from the preview:
+  the answer holds presence and counts, and the values go only to the 0600 file of a
+  `write_values` job run as secret output.
 - `sqlite_freespace` reads the free space of a SQLite database's main file
   (freelist pages, the unallocated gap of a page, the freeblock chain) and returns
   where each text fragment is: page, kind of region, byte offset (read back from

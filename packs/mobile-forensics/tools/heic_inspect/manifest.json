@@ -1,0 +1,85 @@
+{
+  "name": "heic_inspect",
+  "description": "A preview of a HEIC or HEIF original, tied back to the original, with a bounded standard-library walk of its boxes. Three sources, never mixed. (1) The original itself: its size and SHA-256, and a walk of its ISO-BMFF boxes without a decoder: the ftyp brands (heic, heix, mif1 and msf1 are the ones read; a file with none of them is partial), under meta the handler (hdlr), the primary item (pitm), the items (iinf/infe: type, hidden or not), their data (iloc), the properties (iprp/ipco/ipma: the ispe size and the irot rotation) and the references between items (iref: the tiles of a grid, thumbnails), and for a grid item its rows, columns and output size from the item's own data. The answer gives the primary item's size, the image count (all image items, the visible ones, the hidden ones such as tiles) and the grid structure. Hostile structure is bounded and reported as a problem with its offset (nothing is stopped silently): a size of 0 (runs to the end of its parent), a size past its parent or the file (clipped), a size smaller than its header (the walk of that level stops), counts far beyond what the box can hold (not believed), duplicate item ids, a second meta, item data outside the file or overlapping another item's, nesting (only the boxes a HEIF reader needs are entered: meta, iprp, ipco, iinf, iref; any other container is listed and not entered, and counted in boxes_not_entered); at most 20,000 boxes are walked (walk_truncated_at_max_boxes, and the status is partial), at most 100,000 entries are read from one box and at most 8 MiB of one box body. Every box and every problem is a line of a result file the answer names, whole (the inline lists are a prefix); box_rows is the lines the file holds. (2) The metadata, from the original with exiftool and from nowhere else: the preview's own metadata never stands in for it. The answer carries presence and counts (the number of tags, the tags per family of groups exiftool defines (EXIF, GPS, XMP, ...) with every other group counted as 'other', whether there are EXIF, XMP and GPS tags) and no value, no tag name and no namespace text of the file. (3) The preview, from ONE backend per run, recorded in the answer: heif-convert (the libheif example program, run as `heif-convert [-q quality] <original> <output>` in this tool's process group, never a session of its own, with the kernel asked to end it if the tool dies) or pillow-heif (a Python library, run in a child process of its own, never in this process). A backend that is not there is said and nothing else is tried (no silent fallback); the walk and the metadata are still given and the status is partial. Before any backend is started the decompression-bomb guard runs: the original's size against max_bytes (default 1 GiB) and the pixels the original's own primary ispe declares against max_pixels (default 200,000,000, computed without overflow), and an original that declares no size for its primary image cannot pass it; a conversion past a limit is refused with the reason and nothing is started. The program's output goes to files that are watched: at the time given to it, or when what it wrote passes max_output_bytes (default 1 GiB), it and everything it started are ended, and a stop signal ends them too; what it wrote in its work directory is removed. heif-convert writes one file per image of the file: the tool keeps the one asked for with image (counted as the backend numbers them) or, by default, the primary, and says so when it cannot tell which of several is the primary. The preview is written to $OUT/heic_inspect/preview-<first 16 hex of the original's SHA-256>[-img<N>].jpg or .png and never replaces a file: the same bytes are named again, any other result takes the next free -2, -3 ... and the answer names the earlier file it kept. The answer ties the preview to the original: both identities (size, SHA-256), the preview's dimensions read from its own header, whether they match what the original declares, the backend and its settings (format, quality or the backend's default, the exit code, the seconds, the backend's errors, scrubbed). NOT done: no decoder of its own (the pixels are the backend's), no check that the picture is what the file claims, no reading of the preview's metadata; the command lines were written from the documented usage of heif-convert and pillow-heif and the behaviour with a real decoder is exercised only where heif-convert is on PATH. SENSITIVE: the preview is picture content and may carry the original's EXIF if the backend writes it: it is output of the job like any other, so run with secret_output: true when the case treats the pictures as sensitive. The values of the original's metadata (a position, a device serial, a name, a time) are written only on write_values: true, only in a job run as secret output (SECRET_OUTPUT=1), to a 0600 JSON Lines file under $OUT, heic-inspect-values.jsonl (or -2, -3 ... beside an earlier one), created exclusively before anything is read; otherwise the request is refused as JSON before anything is made. The answer is strict JSON. Each row of the box file carries nothing of the picture; the answer carries parser heic_inspect/1.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The HEIC or HEIF file (.heic, .heif, .heics): a regular file, opened without waiting and without following a link",
+      "required": true
+    },
+    "format": {
+      "type": "string",
+      "description": "jpeg (default) or png: the preview's format"
+    },
+    "quality": {
+      "type": "integer",
+      "description": "JPEG quality, 1 to 100 (jpeg only); without it the backend's own default is used and the answer says so"
+    },
+    "image": {
+      "type": "integer",
+      "description": "The image to keep, counted as the backend numbers the images of the file (1 is the first); by default the primary image"
+    },
+    "backend": {
+      "type": "string",
+      "description": "heif-convert (default) or pillow-heif: the one backend of this run; there is no fallback to the other"
+    },
+    "convert": {
+      "type": "boolean",
+      "description": "Write a preview (default true); false gives the box walk and the metadata only"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the values of the original's metadata to a 0600 file (default false). Accepted only in a job run as secret output (SECRET_OUTPUT=1); refused as JSON otherwise, before anything is made"
+    },
+    "max_pixels": {
+      "type": "integer",
+      "description": "Refuse to convert when the primary image's own ispe declares more pixels than this (default 200000000, at most 4000000000)"
+    },
+    "max_bytes": {
+      "type": "integer",
+      "description": "Refuse to convert an original larger than this (default 1 GiB)"
+    },
+    "max_output_bytes": {
+      "type": "integer",
+      "description": "End the backend and what it started when what it wrote passes this many bytes (default 1 GiB)"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The tool's own clock (default 240, at most 255): the hashing and the walk have 20 % of it, the backend at most half of it; the answer says partial and where it stopped"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Boxes and problems in the inline answer (default 200, and at most 1 MiB of rows); the whole list is in the file the answer names"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"path\": \"inputs/IMG_0001.heic\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T08:00:00.000Z",
+  "version": 1,
+  "use": {
+    "extensions": [
+      ".heic",
+      ".heif",
+      ".heics"
+    ],
+    "magic": [
+      {
+        "offset": 4,
+        "hex": "66747970"
+      }
+    ]
+  },
+  "requires": [
+    "heif-convert",
+    "exiftool"
+  ],
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  },
+  "sha256": "ae6b3ef4dad58fed5b3c62c1fb19c979b87911c29c4297ef30e7a46a4472c558"
+}

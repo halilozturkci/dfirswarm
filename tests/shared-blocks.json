@@ -22,9 +22,9 @@
       { "carriers": 37, "example": "packs/windows-forensics/tools/regkv/run.py" },
       { "carriers": 8, "example": "packs/memory-forensics/tools/mem_carve/run.py", "why": "the memory pack's own pager text" }
     ] },
-    "PLACE": { "variants": [ { "carriers": 43, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
+    "PLACE": { "variants": [ { "carriers": 44, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "PROCESS": { "variants": [
-      { "carriers": 30, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
+      { "carriers": 31, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
       { "carriers": 11, "example": "packs/windows-forensics/recipes/windows-artefacts/run.py", "why": "the windows lineage: its stop and process handling differs from the general text" }
     ] },
     "RECORDS BLOCK": { "variants": [ { "carriers": 7, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },

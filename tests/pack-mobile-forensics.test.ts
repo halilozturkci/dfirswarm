@@ -1997,7 +1997,7 @@ test("protobuf_peek reads a nested message under the acceptance rule and keeps e
 });
 
 test("the shared helper block of the pack's tools is byte for byte one", async () => {
-  const blocks = await Promise.all(["sqlite_freespace", "manifest_db", "protobuf_peek", "backup_materialise"].map(async (t) => {
+  const blocks = await Promise.all(["sqlite_freespace", "manifest_db", "protobuf_peek", "backup_materialise", "heic_inspect"].map(async (t) => {
     const text = await readFile(join(TOOLS, t, "run.py"), "utf8");
     const a = text.indexOf("# --- shared with the pack's other tools: begin");
     const b = text.indexOf("# --- shared with the pack's other tools: end");
@@ -2007,6 +2007,7 @@ test("the shared helper block of the pack's tools is byte for byte one", async (
   assert.equal(blocks[0], blocks[1]);
   assert.equal(blocks[0], blocks[2]);
   assert.equal(blocks[0], blocks[3]);
+  assert.equal(blocks[0], blocks[4]);
 });
 
 // --- review fixes: filters on the text that is printed, bounded cells, secret output, signals, windows ---------
@@ -3396,8 +3397,8 @@ t.run_main(main)
 
 test("every tool of the pack names the version of its manifest in PARSER, which every record's provenance carries", async () => {
   const names = (await readdir(TOOLS, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name).sort();
-  assert.deepEqual(names, ["backup_materialise", "manifest_db", "protobuf_peek", "sqlite_freespace"]);
-  const NEW_TOOLS = ["backup_materialise"];      // written after #213: version 1 is their first
+  assert.deepEqual(names, ["backup_materialise", "heic_inspect", "manifest_db", "protobuf_peek", "sqlite_freespace"]);
+  const NEW_TOOLS = ["backup_materialise", "heic_inspect"];      // written after #213: version 1 is their first
   for (const name of names) {
     const manifestJson = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8")) as { version: number };
     const match = /^PARSER = "([a-z_]+)\/(\d+)"$/m.exec(await readFile(join(TOOLS, name, "run.py"), "utf8"));
