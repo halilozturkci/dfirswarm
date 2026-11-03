@@ -2,8 +2,8 @@
 """Read shell links and jump lists as one set of rows: where each structure sits, what it decodes to, and whether it holds together.
 
 An adapter, not a new decoder. A shell link is decoded by this pack's lnk_parse, the DestList stream of a jump list by this
-pack's jumplist, and a link can be read again by liblnk's `lnkinfo` as an independent reader; what this tool adds is the part
-those two do not do: it reads the OLE compound file a jump list is stored in (MS-CFB, with the standard library only, so olefile
+pack's jumplist, a link can be read again by liblnk's `lnkinfo` as an independent reader, and a DestList by Eric Zimmerman's `JLECmd` (through
+dotnet) where it is installed; what this tool adds is the part those do not do: it reads the OLE compound file a jump list is stored in (MS-CFB, with the standard library only, so olefile
 is not needed) and says where every stream sits in the file, whether the container is consistent, which DestList entry names
 which stream, and which entries have no stream and which streams no entry. The rows are JSON Lines, the whole of them kept in a
 file the answer names.
@@ -18,6 +18,11 @@ place) is from the start of that link structure; `container` / `file_offset` and
 Each link row has `integrity`: structure_complete, lnk_parse's problems, and what `lnkinfo` says (time, size, volume, target and
 label compared field by field, or why it was not run). status is complete only when no row is incomplete, no container problem is
 named, no independent read disagrees, nothing was left unread, and the tool's own clock did not run out.
+
+JLECmd reads each jump list's DestList again (once per file, in this tool's process group, under this tool's clock and an output cap, its CSV in a directory under the
+output that is removed afterwards) and the two are compared field by field: the entry count, and per entry the path, the access time, the pin state and the application id.
+Each DestList entry row has `integrity.jlecmd`: agree, disagree or not_run. A disagreement makes the status partial; a JLECmd that is absent or fails is not_run, said, and
+never agree.
 
 The container is checked, not only read: the header, the DIFAT (a FAT sector named twice or outside the file, more of them than a file of
 this size can need), the FAT marks of the FAT and DIFAT sectors, the directory (name lengths, object types, a tree that loops, names an entry
@@ -36,6 +41,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import signal
 import stat
 import struct
@@ -45,7 +51,7 @@ import tempfile
 import time
 from pathlib import Path
 
-PARSER = "lnk_jumplist/2"
+PARSER = "lnk_jumplist/3"
 LNK_MAGIC = bytes.fromhex("4c0000000114020000000000c000000000000046")
 OLE_MAGIC = bytes.fromhex("d0cf11e0a1b11ae1")
 MAX_LNK_BYTES = 64 << 20          # a link past this is not read whole: it is named and not parsed
@@ -57,6 +63,10 @@ DEFAULT_SECONDS = 100
 MAX_SECONDS = 110
 DEFAULT_FILES = 20_000
 LNKINFO_MAX = 400                 # links read again by lnkinfo in one run
+JLECMD_MAX = 200                  # jump lists read again by JLECmd in one run (one dotnet start each)
+JLECMD_SECONDS = 30               # the longest one JLECmd run is given
+JLECMD_MARGIN = 6                 # seconds of the tool's own clock kept back from every JLECmd run, for ending it and for the answer
+JLECMD_BYTES = 32 << 20           # the most any one file JLECmd writes may hold (the kernel enforces it); a file that reaches it is not read
 BLOCK = 1 << 20
 
 # Lossless paging (the same in every library tool that pages): the page an
@@ -940,6 +950,7 @@ def describe(exc):
 
 CLOCK = {"deadline": None}
 TEMPS = []
+TEMP_DIRS = []                    # the directories JLECmd writes into; each is removed when its run ends, or by the last word
 
 
 def out_of_time():
@@ -960,6 +971,9 @@ def forget_temps():
         except OSError:
             pass
         TEMPS.remove(path)
+    for path in list(TEMP_DIRS):
+        shutil.rmtree(path, ignore_errors=True)
+        TEMP_DIRS.remove(path)
 
 
 def shown_path(path):
@@ -1601,6 +1615,201 @@ def compare_lnkinfo(decoded, info):
                 differ.append({"field": "target", "lnk_parse": target, "lnkinfo": theirs})
     return checked, differ
 
+# ---- JLECmd, the second reader of a DestList ----------------------------------------------------------------------------------------------
+
+JLECMD_COLUMNS = ("EntryNumber", "Path", "LastModified", "PinStatus", "AppId")   # what this tool compares; a CSV without one of them is not compared
+JLECMD_TIME = re.compile(r"^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d:\d\d)\.(\d{7})Z?$")
+JLECMD_PIN = {"pinned": True, "unpinned": False}
+JLECMD_ROWS_SHOWN = 20
+
+
+def jlecmd_why(why):
+    return why if len(why) <= 300 else why[:300] + "..."
+
+
+def jlecmd_table(csv_path):
+    """(table, None) or (None, why): JLECmd's CSV for one jump list, as {entry number: its compared fields}, or why it was not read."""
+    import csv
+    try:
+        size = csv_path.stat().st_size
+        if size >= JLECMD_BYTES:
+            return None, "JLECmd's CSV reached the %d-byte cap: nothing was read from it" % JLECMD_BYTES
+        rows, numbers, twice = {}, 0, []
+        with open(csv_path, "r", encoding="utf-8-sig", newline="") as fh:
+            reader = csv.DictReader(fh)
+            missing = [c for c in JLECMD_COLUMNS if c not in (reader.fieldnames or [])]
+            if missing:
+                return None, "JLECmd's CSV has no column %s: its output is not in the shape this tool reads" % ", ".join(missing)
+            for record in reader:
+                numbers += 1
+                try:
+                    number = int((record["EntryNumber"] or "").strip())
+                except ValueError:
+                    return None, "JLECmd's CSV row %d has an EntryNumber that is not a whole number" % numbers
+                m = JLECMD_TIME.match((record["LastModified"] or "").strip())
+                pin = JLECMD_PIN.get((record["PinStatus"] or "").strip().lower())
+                if m is None:
+                    return None, "JLECmd's CSV row %d gives LastModified in a form that is not a date to 100 nanoseconds" % numbers
+                if pin is None:
+                    return None, "JLECmd's CSV row %d gives PinStatus as something other than Pinned or Unpinned" % numbers
+                if number in rows:
+                    twice.append(number)
+                    continue
+                rows[number] = {"path": record["Path"], "last_access": "%sT%s.%sZ" % m.groups(), "pinned": pin, "app_id": (record["AppId"] or "").strip().lower()}
+        return {"rows": rows, "count": numbers, "twice": twice}, None
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        return None, "JLECmd's CSV could not be read: %s" % describe(exc)
+
+
+def jlecmd_run(source, directory, seconds):
+    """(table, None) or (None, why): JLECmd reads the jump list `source` and writes a CSV into a directory of its own under `directory`, which is removed
+    afterwards. It runs through dotnet (the installed JLECmd is a wrapper that does), in this tool's process group, under communicate_bounded with `seconds`.
+    Nothing it prints is kept: its output goes to files in that directory, and the kernel stops any one file at JLECMD_BYTES."""
+    program = shutil.which("JLECmd")
+    if not program:
+        return None, "JLECmd is not in this image (it runs through dotnet; requires/host.json pins it)"
+    try:
+        work = tempfile.mkdtemp(dir=directory, prefix=".jlecmd-")
+    except OSError as exc:
+        return None, "JLECmd's output directory could not be made: %s" % describe(exc)
+    TEMP_DIRS.append(work)
+    try:
+        argv = [program, "-f", os.path.abspath(source), "--csv", work, "--dt", "yyyy-MM-dd HH:mm:ss.fffffff", "-q"]
+        with open(os.path.join(work, "stdout.txt"), "wb") as out, open(os.path.join(work, "stderr.txt"), "wb") as err:
+            saved = None
+            try:
+                try:
+                    import resource
+                    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+                    if soft == resource.RLIM_INFINITY or soft > JLECMD_BYTES:
+                        saved = (soft, hard)
+                        resource.setrlimit(resource.RLIMIT_FSIZE, (JLECMD_BYTES, hard))
+                except (ImportError, ValueError, OSError):
+                    saved = None
+                proc = spawn(argv, stdout=out, stderr=err)
+            except OSError as exc:
+                return None, "JLECmd could not be started: %s" % describe(exc)
+            finally:
+                if saved is not None:       # only the child was to have the limit
+                    try:
+                        resource.setrlimit(resource.RLIMIT_FSIZE, saved)
+                    except (ValueError, OSError):
+                        pass
+            ACTIVE.append(proc)
+            try:
+                _o, _e, timed_out = communicate_bounded(proc, max(1.0, seconds))
+            finally:
+                if proc in ACTIVE:
+                    ACTIVE.remove(proc)
+        if timed_out:
+            return None, "JLECmd did not answer in %d seconds (it and what it started were ended)" % max(1, int(seconds))
+        names = sorted(os.listdir(work))
+        for name in names:
+            try:
+                if os.lstat(os.path.join(work, name)).st_size >= JLECMD_BYTES:
+                    return None, "JLECmd's output reached the %d-byte cap: it was ended and nothing was read" % JLECMD_BYTES
+            except OSError:
+                pass
+        if proc.returncode != 0:
+            return None, "JLECmd exited %d (it could not read the jump list)" % proc.returncode
+        csvs = [n for n in names if n.endswith("_AutomaticDestinations.csv")]
+        if len(csvs) != 1:
+            return None, "JLECmd wrote %d automatic-destinations CSV file(s), not the one expected (it may not have been able to read the jump list)" % len(csvs)
+        return jlecmd_table(Path(work) / csvs[0])
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+        if work in TEMP_DIRS:
+            TEMP_DIRS.remove(work)
+
+
+def jlecmd_compare(entries, table, app_id):
+    """Field by field, for one jump list: the entry count, then per entry the path, the access time and the pin state, then the application id.
+    Returns (compared, file-level differences, {entry number: differences}, {entry number: fields not compared, with why})."""
+    compared = ["entry_count", "path", "access_time", "pin_state"]
+    file_diff, per, skipped = [], {}, {}
+    if len(entries) != table["count"]:
+        file_diff.append({"field": "entry_count", "destlist": len(entries), "jlecmd": table["count"]})
+    if table["twice"]:
+        file_diff.append({"field": "entry_numbers", "jlecmd_lists_twice": table["twice"][:JLECMD_ROWS_SHOWN]})
+    mine = set()
+    for e in entries:
+        number = e["entry_number"]
+        mine.add(number)
+        theirs = table["rows"].get(number)
+        if theirs is None:
+            per.setdefault(number, []).append({"field": "entry", "destlist": "present", "jlecmd": "absent"})
+            continue
+        if e["path"] != theirs["path"]:
+            per.setdefault(number, []).append({"field": "path", "destlist": e["path"], "jlecmd": theirs["path"]})
+        mine_time = e["last_access"]
+        if mine_time is None and e.get("last_access_filetime") == "0":
+            mine_time = "1601-01-01T00:00:00.0000000Z"       # FILETIME 0 is that instant; the DestList's own field is then "not set", and JLECmd prints the instant
+        if mine_time is None:
+            # a FILETIME past year 9999: this tool has no date for it, so there is nothing to compare, and the entry says so
+            skipped.setdefault(number, []).append({"field": "access_time", "why": "the DestList's FILETIME %s is not a date this tool can show" % e.get("last_access_filetime")})
+        elif mine_time != theirs["last_access"]:
+            per.setdefault(number, []).append({"field": "access_time", "destlist": mine_time, "jlecmd": theirs["last_access"]})
+        if e["pinned"] != theirs["pinned"]:
+            per.setdefault(number, []).append({"field": "pin_state", "destlist": "pinned" if e["pinned"] else "unpinned", "jlecmd": "pinned" if theirs["pinned"] else "unpinned"})
+    extra = sorted(n for n in table["rows"] if n not in mine)
+    if extra:
+        file_diff.append({"field": "entries", "only_in_jlecmd": extra[:JLECMD_ROWS_SHOWN], "only_in_jlecmd_count": len(extra)})
+    if app_id:
+        compared.append("application_id")
+        wrong = sorted({r["app_id"] for r in table["rows"].values() if r["app_id"] != app_id.lower()})
+        if wrong:
+            file_diff.append({"field": "application_id", "file_name": app_id.lower(), "jlecmd": wrong[:JLECMD_ROWS_SHOWN]})
+    return compared, file_diff, per, skipped
+
+
+def jlecmd_check(run, path, entries, readable, cut, app_id):
+    """The second read of one jump list's DestList: {result: agree | disagree | not_run, why / compared / differences, per_entry}.
+    The caller does not call it for a container with no DestList stream."""
+    stats = run.jlecmd
+
+    def not_run(why, key):
+        stats["not_run"] += 1
+        stats["why_not_run"][key] = stats["why_not_run"].get(key, 0) + 1
+        return {"result": "not_run", "why": jlecmd_why(why)}
+
+    if not readable:
+        return not_run("the DestList was not parsed by this tool: there is nothing to compare", "no DestList read")
+    if cut:
+        return not_run("the DestList was read only to its first %d entries: JLECmd's count cannot be compared with a part" % len(entries), "DestList cut")
+    if not entries:
+        return not_run("this tool read no entry of the DestList: there is nothing to compare", "no entries read")
+    if stats["checked"] + stats["failed"] >= JLECMD_MAX:
+        return not_run("more than %d jump lists in this run: the second read is made for the first %d" % (JLECMD_MAX, JLECMD_MAX), "budget")
+    seconds = min(float(JLECMD_SECONDS), CLOCK["deadline"] - time.monotonic() - JLECMD_MARGIN)
+    if seconds < 3:
+        return not_run("the tool's own clock left less than %d seconds for JLECmd" % (JLECMD_MARGIN + 3), "clock")
+    table, why = jlecmd_run(path, run.dir, seconds)
+    if table is None:
+        if not why.startswith("JLECmd is not in this image"):
+            stats["failed"] += 1
+        return not_run(why, re.sub(r"row \d+", "a row", why.split(" (")[0].split(": ")[0])[:120])
+    compared, file_diff, per, skipped = jlecmd_compare(entries, table, app_id)
+    stats["checked"] += 1
+    stats["entries_agreed"] += len(entries) - len(per)
+    stats["entries_disagreed"] += len(per)
+    if file_diff or per:
+        stats["disagreed"] += 1
+    else:
+        stats["agreed"] += 1
+    return {"result": "disagree" if (file_diff or per) else "agree", "compared": compared, "jlecmd_entries": table["count"], "destlist_entries": len(entries),
+            **({"differences": file_diff} if file_diff else {}), "per_entry": per, "per_entry_not_compared": skipped}
+
+
+def jlecmd_entry(check, number):
+    """One DestList entry's `integrity.jlecmd`, from the file's check."""
+    if check["result"] == "not_run":
+        return {"result": "not_run", "why": check["why"]}
+    diffs = check["per_entry"].get(number)
+    skipped = check["per_entry_not_compared"].get(number)
+    left_out = {s["field"] for s in skipped or []}
+    return {"result": "disagree" if diffs else "agree", "compared": [c for c in check["compared"] if c not in left_out],
+            **({"differences": diffs} if diffs else {}), **({"not_compared": skipped} if skipped else {})}
+
 
 # ---- the rows ----------------------------------------------------------------------------------------------------------------------------
 
@@ -1614,6 +1823,8 @@ class Run:
         self.container_problems = 0
         self.not_attempted = []
         self.lnkinfo = {"checked": 0, "agreed": 0, "disagreed": 0, "not_run": 0, "why_not_run": {}}
+        # JLECmd is counted per jump list (one read of a DestList); `failed` is the runs that were made and gave nothing to compare.
+        self.jlecmd = {"checked": 0, "agreed": 0, "disagreed": 0, "not_run": 0, "failed": 0, "entries_agreed": 0, "entries_disagreed": 0, "why_not_run": {}}
         self.unread = 0
         self.lnk = load_sibling("lnk_parse")
         self.jumplist = load_sibling("jumplist")
@@ -1810,6 +2021,11 @@ def read_automatic(run, path, size):
             # DestList is not a jump list, or its DestList's directory entry is damaged.
             cfb.flag("no-destlist", "there is no stream named DestList, and the container holds %d other stream(s): this is a compound file but not a jump list container (or the directory entry of its DestList is damaged)" % len(streams))
         by_stream, entry_rows = {}, []
+        app_id = os.path.basename(path).split(".")[0] if re.fullmatch(r"[0-9a-fA-F]{16}", os.path.basename(path).split(".")[0]) else None
+        jl_check = None
+        if destlist_row is not None and not run.stopped:
+            jl_check = jlecmd_check(run, path, dest_entries, "entries_claimed" in destlist_row, destlist_row.get("entries_not_read_from") is not None, app_id)
+            destlist_row["integrity"] = {"jlecmd": {k: v for k, v in jl_check.items() if k not in ("per_entry", "per_entry_not_compared")}}
         heads = {s["path"].lower(): (head, whole) for s, _e, whole, _m, head in shown}
         destlist_cut = destlist_row is not None and destlist_row.get("entries_not_read_from") is not None
         dest_starts = [x[0] for x in destlist[1]] if destlist is not None else []
@@ -1823,6 +2039,8 @@ def read_automatic(run, path, size):
             present = e["stream"] in heads
             e_row = {"row": "destlist_entry", "source": path, **e, "container_offset": pieces[0][0] if pieces else None,
                      "container_contiguous": len(pieces) == 1, "stream_present": present}
+            if jl_check is not None:
+                e_row["integrity"] = {"jlecmd": jlecmd_entry(jl_check, e["entry_number"])}
             if e["stream"] in by_stream:
                 cfb.flag("destlist-twice", "DestList entries %d and %d both name stream %r" % (by_stream[e["stream"]]["entry_number"], e["entry_number"], e["stream"]))
             by_stream[e["stream"]] = e_row
@@ -1837,7 +2055,7 @@ def read_automatic(run, path, size):
                 cfb.flag("destlist-nostream", "DestList entry %d names stream %r, which the container does not hold" % (e_row["entry_number"], number))
         container_problems = cfb.problems
         run.add({"row": "file", "path": path, "kind": "automaticDestinations-ms" if has_destlist else "compound file without a DestList", "bytes": size, "status": "read",
-                 "application_id": os.path.basename(path).split(".")[0] if re.fullmatch(r"[0-9a-fA-F]{16}", os.path.basename(path).split(".")[0]) else None})
+                 "application_id": app_id})
         run.add({"row": "container", "source": path, "major_version": cfb.major, "sector_size": cfb.ss, "mini_sector_size": cfb.mini_ss, "mini_stream_cutoff": cfb.cutoff,
                  "sectors_in_file": cfb.sectors, "fat_sectors": cfb.n_fat, "directory_entries": len(cfb.directory), "streams": len(streams),
                  "problems": container_problems, "problem_count": cfb.found.total(), "consistent": not container_problems})
@@ -2061,6 +2279,8 @@ def main():
         reasons.append("%d link(s) are incomplete and %d unreadable" % (run.integrity["incomplete"], run.integrity["unreadable"]))
     if run.integrity["disagrees"]:
         reasons.append("lnkinfo disagrees with lnk_parse on %d link(s)" % run.integrity["disagrees"])
+    if run.jlecmd["disagreed"]:
+        reasons.append("JLECmd disagrees with the DestList read on %d jump list(s) (%d DestList entries differ; integrity.jlecmd in the rows says how)" % (run.jlecmd["disagreed"], run.jlecmd["entries_disagreed"]))
     if not run.counts["files"] and WALK["stopped"]:
         status, basis = "partial", "; ".join(reasons)
     elif not run.counts["files"] and not unread_count:
@@ -2070,11 +2290,15 @@ def main():
     else:
         status = "partial" if reasons else "complete"
         basis = "; ".join(reasons) if reasons else "every file was read to its end, every container is consistent, and every link's structure is complete" + (
-            " and agrees with lnkinfo where lnkinfo was run" if run.lnkinfo["checked"] else "")
+            " and agrees with lnkinfo where lnkinfo was run" if run.lnkinfo["checked"] else "") + (
+            " and with JLECmd where JLECmd was run" if run.jlecmd["checked"] else "")
         if not reasons and run.lnkinfo["not_run"]:
             basis += "; lnkinfo, the independent reader, was not run for %d link(s) (lnkinfo.why_not_run says why)" % run.lnkinfo["not_run"]
+        if not reasons and run.jlecmd["not_run"]:
+            basis += "; JLECmd, the second reader of a DestList, was not run for %d jump list(s)%s (jlecmd.why_not_run says why)" % (
+                run.jlecmd["not_run"], " and gave no result for %d of them" % run.jlecmd["failed"] if run.jlecmd["failed"] else "")
     receipt = {"parser": PARSER, "status": status, "status_basis": basis, "path": path, "counts": run.counts, "kinds": kinds, "integrity": run.integrity,
-               "container_problems": run.container_problems, "lnkinfo": run.lnkinfo, "skipped": unread_count, "walk_entries": WALK["entries"]}
+               "container_problems": run.container_problems, "lnkinfo": run.lnkinfo, "jlecmd": run.jlecmd, "skipped": unread_count, "walk_entries": WALK["entries"]}
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".receipt-")
     TEMPS.append(tmp)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -2087,7 +2311,7 @@ def main():
               "secret_values": run.values.summary("JSON Lines, mode 0600: finding_id, link_offset, field, [offset, piece, continued_in_next,] value"),
               "elapsed_seconds": round(time.monotonic() - started, 2),
               "note": "Offsets inside a link's record are from the start of that link structure; file_offset and extents say where it sits in the file. lnk_parse decodes the link, "
-                      "jumplist's layouts decode the DestList, lnkinfo is the independent read; nothing here executes or resolves a target."}
+                      "jumplist's layouts decode the DestList, lnkinfo is the independent read of a link and JLECmd, where it is installed, of a DestList; nothing here executes or resolves a target."}
     print(json.dumps(answer, indent=1))
     if status == "failed":
         sys.exit(1)
