@@ -1,8 +1,8 @@
 {
   "id": "macos-forensics",
   "name": "macOS Forensics Pack",
-  "version": "1.6.2",
-  "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, accounts and the limits of attribution, and what APFS retains. TCC, background items, Safari history, Biome framing and an APFS inventory have a tool here and no skill of their own yet; Keychain, Gatekeeper and XProtect and Spotlight have neither.",
+  "version": "1.7.0",
+  "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, accounts and the limits of attribution, keychains opened with the case's password, and what APFS retains. TCC, background items, Safari history, Biome framing and an APFS inventory have a tool here and no skill of their own yet; Gatekeeper and XProtect and Spotlight have neither.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
     "DFIR Swarm"
@@ -32,11 +32,12 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "b27c32325d0bb45ecf26bc169c34decd3730181a5be05df49d7f542714c27e1c",
+      "README.md": "87caf59efe34f52bdb8a7f3f101a38d03a80b0177724cb18b42c198857a5e176",
       "goals/mac-compromise.md": "50e6a65c7611900ec2e7b8089b3f2c1d86cf5bcb8c14ae1059e986df6cb2f00a",
-      "requires/host.json": "4f9dfec469045efdd9f69b1556d25d02f58471aebd843137a401df0dbaf8883b",
+      "requires/host.json": "630ebbedd0dc8883b5e8b5f8c4bffc0b6bce2df975a6fc10cf152425b30f5254",
+      "requires/locks/chainbreaker.txt": "dab6391c45828b4a1ef378402b6381c60183c214a25fbbb9d7fc843af0b189d3",
       "requires/python.txt": "b9fd9b97af3d66de786eb48c116a119308a6b2087411ef45b2cc1aa369dc6eba",
-      "skills/INDEX.md": "9b6daee3e1e9e2c2d4608c72c8e7e168877ee44a553c82fd0da717c20b1968d6",
+      "skills/INDEX.md": "693dc616bf0d8b12fe2c6ed00006364cc5f4228d4f7c0ca3b39f1a6566d3a0a1",
       "skills/accounts/attribution-remote.md": "e7800e17fce7a64152802da68c41e727310147573871c8abd75ea45fd050c283",
       "skills/accounts/users.md": "937a329df9af595b5ce709a8c4455eee943f8394178446e8e233b90674cee97c",
       "skills/artifacts/fsevents-dating.md": "95c61474b053b29ff7c77b070626363f3dd2a0acf1659057b2a8ff9bbce25f80",
@@ -50,15 +51,18 @@
       "skills/filesystem/apfs.md": "1e01caaf090691891c1ba2b092370801c7ad0b8a4fbb57d5b76b10f114fc951c",
       "skills/logs/unified-readers.md": "29d2a3df002263255506da4610990ad41e703c745c3ee6c3d907d1110806ef63",
       "skills/logs/unified.md": "ad2d363eb8fcfd96f0b76ad665a11ef382ecc621a7e376b420b851f5fa1c7d36",
-      "skills/macos/router.md": "2413036e296d4f0c4f38f4ca2c27cfee65c6d013d6de8950120eda78d32d79be",
+      "skills/macos/router.md": "15771864687be7bc274a117ff646bd33da89cee354987ef8fe1e30857829ec79",
       "skills/persistence/login-items-quieter.md": "928ba8d5df09c44a5eb4008da3f5190e337053d5a378fbf2fcef24cf6bd60d11",
       "skills/persistence/mechanisms.md": "bb9b414728736035d90bbe875ff87d17a1b2211e816f3cde0eb1630c89883756",
+      "skills/security/keychains.md": "2a07a66d0616d8e1270cb601399cef745fdd82f0e9716b8f3842103a0801f0d6",
       "skills/triage/clocks-hardware.md": "eb682191ae96e05cbfddcb047da966fa3192c0d475ea7ad0abc1889a15d921ac",
       "skills/triage/system-profile.md": "6771e67fea5bc88e0dcb72e1a1c61c3ff77606fec1d7128a010251acbf4bbf16",
       "tools/apfs_inventory/manifest.json": "dbb12725192355700b0fc51b3a58378d45658f114a9857a4e0fa53fb2ecac118",
       "tools/apfs_inventory/run.py": "9a341b9a0eeae9e074fbea09d8de835e089bdbad4eebeee7088810503fed36de",
       "tools/fsevents_parse/manifest.json": "d9765574c30365a6e04e96c9a7671c4396d35bc9c85fb370eda0e5464e4481a4",
       "tools/fsevents_parse/run.py": "157c296aa94c23f0a27b465a5a3e32a2ce42b3a3d7b545fac7abc7a7b20f9c9a",
+      "tools/keychain_open/manifest.json": "fc0ee1f75e8c1b9c959803ae12eaebb5a071fffe423a70e4c6aad0ae33573067",
+      "tools/keychain_open/run.py": "7ea7bf03490aad2fcf541ae03d3242bdc9925701778abb08d56452c6e05c03a4",
       "tools/knowledgec_query/manifest.json": "0598cea975d548800015cc9d21af06a56690f486e35acfa0e0734c44ee1082ad",
       "tools/knowledgec_query/run.py": "0f4f73f83701143dde034947c73b2dcdc50f85d4870d8405f78322548a00b2c5",
       "tools/macos_login_items/manifest.json": "d398c3471ea8ad479dc347d1e4fcf5cb2552866265f349c2ee898ac29253116c",
@@ -78,6 +82,7 @@
   "tools": [
     "apfs_inventory",
     "fsevents_parse",
+    "keychain_open",
     "knowledgec_query",
     "macos_login_items",
     "macos_tcc",
@@ -86,5 +91,5 @@
     "segb_read",
     "unified_log"
   ],
-  "skills": 18
+  "skills": 19
 }
