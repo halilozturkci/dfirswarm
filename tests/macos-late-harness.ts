@@ -23,7 +23,7 @@ export const LATE = { macos_tcc: TCC, macos_login_items: BTM, safari_history: SA
 /** Run a tool as the harness starts one: leading its own process group (the shared process block ends what holds a pipe only when the tool leads its group). */
 export function leader(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, bin?: string): Promise<Run> {
   return new Promise((resolve, reject) => {
-    const e = { ...process.env, AGENT_ID: "s1", ...env };
+    const e: NodeJS.ProcessEnv = { ...process.env, AGENT_ID: "s1", ...env };
     if (bin) e.PATH = `${bin}:${e.PATH ?? ""}`;
     const child = spawn("python3", [script], { cwd, env: e, detached: true });
     const out: Buffer[] = [];
@@ -39,7 +39,7 @@ export function leader(script: string, cwd: string, args: unknown, env: Record<s
 /** Run a tool, send it `signal` after `afterMs`, and return how it ended. */
 export function signalled(script: string, cwd: string, args: unknown, signal: NodeJS.Signals, afterMs: number, env: Record<string, string> = {}, bin?: string): Promise<Run & { signal: string | null }> {
   return new Promise((resolve, reject) => {
-    const e = { ...process.env, AGENT_ID: "s1", ...env };
+    const e: NodeJS.ProcessEnv = { ...process.env, AGENT_ID: "s1", ...env };
     if (bin) e.PATH = `${bin}:${e.PATH ?? ""}`;
     const child = spawn("python3", [script], { cwd, env: e });
     const out: Buffer[] = [];
