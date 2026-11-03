@@ -631,6 +631,30 @@ def bound(args, name, default):
     return value
 
 
+PAGES = []                      # every pager this run made: the last-resort handler removes their temporary files
+PARTIAL = {"out_file": None}    # the out_file once it is made: an unexpected error names it as possibly partial
+
+
+class TrackedPage(LosslessPage):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        PAGES.append(self)
+
+
+def remove_temporaries():
+    for page in PAGES:
+        try:
+            if page._out is not None:
+                page._out.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if page._tmp is not None:
+                os.unlink(page._tmp)
+        except OSError:
+            pass
+
+
 def main():
     started = time.monotonic()
     try:
@@ -699,7 +723,8 @@ def main():
                 values.close()
                 fail("out_file could not be created", out_file=named, reason=describe(exc))
             sink = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
-        paging = None if sink else LosslessPage("plist_read", [path, key], limit, inline_bytes)
+            PARTIAL["out_file"] = named
+        paging = None if sink else TrackedPage("plist_read", [path, key], limit, inline_bytes)
 
         counter = [0]
 
@@ -735,8 +760,12 @@ def main():
                     values.add(fid, {"file": row["file"], **locator}, value)
                 if sink:
                     line = json.dumps(row, default=str, sort_keys=True)
-                    sink.write(line + "\n")
-                    sink.flush()
+                    try:
+                        sink.write(line + "\n")
+                        sink.flush()
+                    except OSError as exc:
+                        fail("the rows could not be written to out_file (%s: %s): the run stopped there; the rows written before are in it" % (
+                             type(exc).__name__, exc.strerror or "error"), rows_written=rows_total[0] - 1)
                     if not inline_state["full"] and len(inline) < limit:
                         if inline_state["bytes"] + len(line) <= inline_bytes:
                             inline.append(row)
@@ -747,7 +776,11 @@ def main():
                     else:
                         inline_state["full"] = True
                 else:
-                    paging.add(row)
+                    try:
+                        paging.add(row)
+                    except OSError as exc:
+                        fail("the rows could not be written to the result file (%s: %s): the run stopped there" % (type(exc).__name__, exc.strerror or "error"),
+                             rows_written=rows_total[0] - 1)
 
         def out_of_time():
             return time.monotonic() - started > max_seconds
@@ -990,6 +1023,8 @@ if __name__ == "__main__":
                           "interrupted": signal_name(stop.signum)}))
         sys.exit(128 + stop.signum)
     except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the file)
+        remove_temporaries()
         print(json.dumps({"error": "the tool stopped on an unexpected error", "type": type(exc).__name__, "status": "failed",
-                          "status_basis": "the tool stopped with an unexpected error: nothing is complete"}))
+                          "status_basis": "the tool stopped with an unexpected error: nothing is complete",
+                          **({"partial_out_file": PARTIAL["out_file"], "partial_out_file_note": "written before the error, rows whole up to the last newline; the last row may be cut"} if PARTIAL["out_file"] else {})}))
         sys.exit(1)

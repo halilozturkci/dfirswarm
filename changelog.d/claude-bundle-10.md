@@ -71,3 +71,27 @@
 - An `out_dir` that holds `.logarchive-input` from a run that was killed is still
   refused, and the refusal now says it is a staged copy of the evidence, with its file
   count and bytes. Nothing is swept.
+
+### Fixed: macos-forensics fix round 1: clocks over raw input, refused writes, staging looks, last resort
+
+- fsevents_parse keeps `max_seconds` over an uncompressed record file: the read, the skip over
+  bytes that are not a page and the drain are looked at once per 1 MiB (a 16 GiB tail with
+  `max_seconds` 5 took 150 s). The rest of a file after an unsupported page is counted
+  from its size and not read. A record that cannot be written to `out_file` is a failed
+  write ("could not write"), no longer "read failed", and is not counted.
+- knowledgec_query no longer says a valid database "is not a SQLite database" when SQLite could not
+  write the index of the private copy (disk full, file too large): the refusal says the staging
+  area could not be written, with the SQLite error name. A row that cannot be written stops the
+  run with that said. The looks at the directory of private copies take at most 10,000
+  entries and 5 s (`sweep_cut`), the WAL frame count is under the clock, and copies an
+  earlier version left in `work/<id>` are named (`copies_in_work_dir_not_swept`), not swept.
+- unified_log: staging, the comparison of members, the copy of each file and the census are
+  under the clock; files are opened without waiting and without following a link. A line
+  of exactly 8 MiB is read (the cap does not count the newline), a line nested a million
+  levels deep is a line that did not parse, and the reader's pre-exec step ends at once if
+  the tool is already gone.
+- All four tools: after an unexpected error the pager's temporary file is removed and a
+  partial `out_file` (or the reader's output) is named; plist_read stops with a clear
+  message when a row cannot be written. fsevents_parse's `run.py` is executable again.
+- Left (P3): the hash of the staged database after a rollback journal is bounded by the
+  time the copy took, not by a clock of its own.

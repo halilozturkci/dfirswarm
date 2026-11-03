@@ -172,14 +172,14 @@ import importlib.util, os, shutil, signal, sys
 spec = importlib.util.spec_from_file_location("tool", sys.argv[1])
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-real = shutil.copyfile
+real = m.copy_file
 count = [0]
-def copyfile(*a, **k):
+def copy_file(*a, **k):
     count[0] += 1
     if count[0] > 5:
         os.kill(os.getpid(), signal.SIGKILL)       # the harness's end of a tool at its timeout, in the middle of staging
     return real(*a, **k)
-shutil.copyfile = copyfile
+m.copy_file = copy_file
 m.install_stop_handlers()
 m.main()
 `;
