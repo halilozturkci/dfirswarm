@@ -18,7 +18,7 @@ segments of a raw split set) and a list of ranges, each an `offset` and a `lengt
   * Budgets: `max_total_bytes` for everything written and `max_seconds` for the run, read between blocks. A range the byte budget cuts stays
     .partial; the ranges after it are `not_run`; the answer names the stop (`stopped_by`) and `next_range`, the one to go on from.
   * `complete` only when every range is whole, none was cut or left unrun, every row is in ranges.jsonl and the sources did not change. A
-    short range, a budget stop or a failed write makes it `partial`; a refused source, a source that changed, or no range written at all, `failed`.
+    short range, a budget stop or a failed write makes it `partial`; a refused source, a source that changed, or every range failed or left unrun, `failed`.
   * It says nothing about whether the bytes of a range form a file: a byte range is not a file. The bytes are evidence content and can hold
     credentials: run it as a job with secret_output true when a range may hold a credential store. The manifest does not force it, because a
     range of a whole case would make every output sensitive.
