@@ -812,6 +812,11 @@ def withheld_summary(shower):
                      "are withheld, and a string over %d characters is shown cut with its whole length. A secret that does not look "
                      "like a token (a short password in a name) is not recognised, so run the tool as a job with secret_output: true.") % shower.limit}
 # END SHARED COMMON
+# The stop handlers are in as soon as the module has run this far, not when main() starts: a signal from here on gives the
+# last word and exit 128 plus the signal number. What stays open is the start of the interpreter and the compiling of this file.
+install_stop_handlers()
+
+
 # BEGIN SHARED BOUNDARY
 # The same text is in virtualization_inventory, snapshot_chain_check and backup_audit_normalise; tests/pack-virtualization-
 # shared.test.ts holds the copies equal. The one way out. Every key and every value of an answer, of an error answer and of
@@ -2751,7 +2756,6 @@ def want_map(args, key, allowed):
 
 
 def main():
-    install_stop_handlers()
     args = read_args()
     paths = want_str_list(args, "paths", MAX_PATHS)
     one = want_str(args, "path")
