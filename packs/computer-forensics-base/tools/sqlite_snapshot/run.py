@@ -661,6 +661,8 @@ _CRED_SHAPES = [
 _CRED_PAIR_HEAD = re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})\\*"\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
 _CRED_NEXT_VALUE = re.compile(r"""(?i)\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
 _CRED_QUOTE = re.compile(r'\\*"')
+# a format directive (`%s`, `%d`), a template field (`{0}`, `{name}`) or a `%VAR%` is where a value goes, not a value
+_CRED_PLACEHOLDER = re.compile(r"%[-+ #0-9.]*[sdiuxXfeEgGcr](?![A-Za-z0-9])|\{\w*\}|%\w+%$")
 _CRED_BARE = re.compile(r"-?[0-9][0-9.eE+-]{0,39}|\[[^\[\]]{0,4096}\]|(?:null|true|false)\b")
 # What a text must hold for any rule to match it: a literal one of them looks for, or a run long enough for a shape. A text with none of
 # these is judged clean without running the rules (most names, addresses and ids).
@@ -705,7 +707,7 @@ def _cred_pair_spans(text, spans):
             start, end, after = got
             if end > start:
                 value = text[start:end]
-                if not (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{"))):
+                if not (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
                     spans.append((start, end, _CRED_PAIR_WHY))
             more = _CRED_NEXT_VALUE.match(text, after)
             if more is None:
@@ -749,7 +751,7 @@ def _cred_spans(text, shapes):
                     continue
                 start, end = m.span(g)
                 value = text[start:end]
-                if g and (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{"))):
+                if g and (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
                     continue
                 if why == "a scheme and its credential" and g == 1 and not (re.search(r"[0-9+/=_.~-]", value) or len(value) >= 16):
                     continue                              # "basic authentication" is prose, "Basic dXNlcjpwYXNz" is not

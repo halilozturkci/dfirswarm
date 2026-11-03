@@ -52,7 +52,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 15,
-  "sha256": "4f0b9976d2e6789f047f4cee18a4c6a739da22fc8beb1f3c0ed3f505ebc384ed",
+  "sha256": "a4a8afeeb9582c3376fa9d5ee8b5c4144be018ac4f3f64f790bd76a1702faeee",
   "secret_output": {
     "when_args": [
       "write_values"

@@ -54,12 +54,12 @@
       "skills/logs/sources.md": "1ff58fa6b521168b1a1d439cfd2275cb636ce2dc2593f7861eb93829d02c92ff",
       "skills/logs/what-exists.md": "8b29caefc5a4930d4af9b52706d79ae93c87c30ec6d9b62efeb4157108922dc5",
       "skills/m365/unified-audit-log.md": "04ba5c0035ac630d1274dc377ae9f8b93ac56845ba01713737353ec618bafe53",
-      "tools/cloudtrail_parse/manifest.json": "be9471c21e79a448f0b65cc314fb6eed820217d38422ab308aa49655530a7394",
-      "tools/cloudtrail_parse/run.py": "b8d71e1a7a5f9a21880ef5a40613f4b63df8e6abf8365206b67f4de23f236a02",
-      "tools/signin_analyse/manifest.json": "e50bcf6ef0b5c5dfbd2e5fba381c0ebd6db7cad046dfed248e64b00130f75e02",
-      "tools/signin_analyse/run.py": "8cb181fd69bd26d40f3cfe08521c79c24ab20a2104ccc561013661056b8523b1",
-      "tools/ual_parse/manifest.json": "7c3ca98dbf7ef33d7cfd7bc452739d8f08952258cfecbe659f85834c9896b182",
-      "tools/ual_parse/run.py": "30d7a193c81e9f211f46edb6a452e4280a91308c559c633d85aca54e8ec2ffc0"
+      "tools/cloudtrail_parse/manifest.json": "2aa55efb8a27603ee774be30dfcce2d8792e0c9042bc5a04a579c0766b0b703d",
+      "tools/cloudtrail_parse/run.py": "26c719a785eddb9a3ad1f619324fee38603e7871a72ed6516bf4243754126cfa",
+      "tools/signin_analyse/manifest.json": "80c1178890dd5b1a43295e3c54dcd3b682fbb9f3fcfd1272d466531229bba44f",
+      "tools/signin_analyse/run.py": "9139f26ee4460ab5b5763c6c27cead1b5ca2bced7b0a88711b24c2abfa9ff4de",
+      "tools/ual_parse/manifest.json": "52032ddbbfa24a464371ac40d1d6e8821c84aa857ea9608234072802f07d07e5",
+      "tools/ual_parse/run.py": "5006a6c52c3ba96cae2e3a989c16a373cc6840303f25572a517e4ded7d2b9a09"
     }
   },
   "tools": [
