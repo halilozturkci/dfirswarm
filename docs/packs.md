@@ -771,8 +771,9 @@ import each other), and holds to this:
   ([ADR 0018](adr/0018-sensitive-outputs-are-used-by-agents-and-every-access-is-recorded.md)):
   the sandbox's `store/` is mounted read-only in an agent's VM, an agent that opens a
   values file reads every row, and a later job is given the file to use it. The file
-  is the sensitivity mark's unit, and the mark, the redaction of a package and the
-  access record cover what the agent does with it. These measures keep a value out
+  is the sensitivity mark's unit, and the mark, the redaction of a package (which
+  replaces the trace lines the access record marks) and the access record (a lower
+  bound) cover what the agent does with it. These measures keep a value out
   of what the tool prints (the answer, its status and counts, the file's size and
   digest), because that is quoted in a post or the ledger without the mark. They stay
   as they are built and are not extended: a hint of a value in an answer's size,

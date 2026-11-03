@@ -63,8 +63,11 @@ page is the decision they rest on.
    mark is not a reason to hide the job from the board, the console or the
    report.
 3. **The operator's console shows sensitive content.** The operator is the
-   owner of the run and sees what the run holds. Each time the console opens
-   a sensitive file, that is recorded.
+   owner of the run and sees what the run holds. Each time the console
+   serves a sensitive job's log, that is recorded on the operator's audit,
+   as a `console_view` line, before it is served; the console has no route
+   that serves a job's output file, and one added later records its views
+   the same way.
 4. **A broad-scope job that names a sensitive path runs.** A job with no
    declared scope whose command, arguments, source or targets name a
    sensitive output is not refused. The dependency is declared on the agent's
