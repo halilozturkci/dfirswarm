@@ -1,7 +1,7 @@
 {
   "id": "android-backup-apps",
-  "version": "1.0.3",
-  "description": "The broad extraction an Android adb backup would need: every app's data parsed into a searchable form. Declared so that the preparation of an adb backup is on the record as declined, with why, rather than missing.",
+  "version": "1.1.0",
+  "description": "An unencrypted Android adb backup's app data (header versions 1 to 5), laid out as ALEAPP reads it and then parsed by ALEAPP: the backup's apps/<package>/<domain>/... members are mapped onto data/data/<package>/... (a table of the FullBackup tree tokens that is the author's recollection of AOSP's constants and has not been checked against the source), and ALEAPP's artefact modules run over that layout with -t fs and write a TSV report per artefact that has records, a timeline database and an HTML report. The result is a derivative of an adb backup, never a file-system acquisition: derivative/DERIVATIVE.json and coverage.json say so. An encrypted backup (AES-256) is refused as failed and no password is read. The run says complete only when the layout was made from a payload read to the end of its zlib stream, the tar's two end blocks came with nothing after them, every member laid out by design was written, and the ALEAPP receipt is as android-aleapp's (modules.tsv).",
   "object": "Android adb backup",
   "order": 39,
   "min_bytes": 24,
@@ -20,15 +20,28 @@
   "purpose": "broad_extraction",
   "capability": "android-backup-artifacts",
   "exclusions": [
-    "every app's data: nothing is parsed (see unavailable)"
+    "what the mapping does not lay out: the APK, obb, external storage files, shared/, links, devices, FIFOs, directories, unknown domains and rejected member names (each listed in ab-members.tsv)",
+    "artefacts no module of the pinned ALEAPP release parses: their files stay in the layout, unread by this extraction",
+    "deleted records beyond what a module reads itself (SQLite free pages, WAL): nothing is carved",
+    "an encrypted backup: it is refused, and no password is read",
+    "a module the log does not account for as completed (errored, or started and not finished): see modules.tsv"
   ],
-  "unavailable": "no program in the mobile job image parses an adb backup's app tree (apps/<package>/db, f, sp, r) as a whole: ALEAPP reads a file-system layout (data/data/<package>/databases), and nothing in the image converts one into the other. The android-backup recipe lists every member; read the databases it lists with sqlite3 and the pack's tools",
   "limits": {
-    "seconds": 60
+    "seconds": 14400
   },
   "outputs": [
+    "derivative/",
+    "ab-members.tsv",
+    "aleapp/",
+    "aleapp.stdout",
+    "aleapp.stderr",
+    "modules.tsv",
+    "index.tsv",
     "coverage.json"
   ],
-  "covers": "Nothing: it is declared, never run. Its detect step reads the backup's header only.",
-  "sha256": "7fec31ff2c5968666f5ecf7158e562353501d271013d03229978e9a1261bc524"
+  "covers": "What the mapping lays out of the backup's apps (see ab-members.tsv for every member and its state) and what ALEAPP's modules parse from that layout: one TSV per artefact that has records, its timeline and every file it wrote, kept under aleapp/, and modules.tsv with the outcome of each module its log names. It is a derivative of an adb backup, not the phone's file system, and the mapping table behind it has not been checked against the AOSP source. A module that finds nothing writes no report (no_record), which does not show the artefact never existed; a module that errored or whose end the log does not show is not covered. The program is run in this recipe's process group with a time limit (--max-seconds, default 14100 seconds): one that does not finish is ended with everything it started, what it wrote is kept, and the run says partial or failed, never complete; a stop signal ends it and its children before the recipe ends. The layout and the report contain the phone's own content and are a sensitive output.",
+  "sha256": "2284ea18f34f761d1cbd5fa8badff73f574f75b8655bd8fb0ac1a0f99a9b5e19",
+  "requires": [
+    "aleapp"
+  ]
 }

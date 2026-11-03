@@ -145,10 +145,11 @@ grep -q $'^aleapp/_TSV Exports/Messages (tar).tsv\tALEAPP artefact report' "$WOR
 BAA="$PACK/recipes/android-backup-apps/run.py"
 python3 "$BAA" detect --target "$AB_TARGET" | grep -q '"applies": true'
 refuses python3 "$BAA" detect --target "$IOS_TARGET"
-out="$(python3 "$BAA" run --target "$AB_TARGET" --out "$WORK/baa-out")" && exit 1
-jq -e '.status == "failed" and (.status_basis | length > 0) and (.why | test("app tree"))' <<<"$out" >/dev/null
-jq -e '.status == "failed" and (.status_basis | length > 0)' "$WORK/baa-out/coverage.json" >/dev/null
-[[ "$(jq -r .unavailable "$PACK/recipes/android-backup-apps/recipe.json")" == *"app tree"* && "$(jq -c .auto "$PACK/recipes/android-backup-apps/recipe.json")" == "[]" ]]
+# The recipe is real: it lays the backup out and runs ALEAPP over the layout (the stand-in), and answers with the status pair; it is no longer declared unavailable.
+PATH="$WORK/bin:$PATH" python3 "$BAA" run --target "$AB_TARGET" --out "$WORK/baa-out" >/dev/null || true
+jq -e '(.status == "complete" or .status == "partial" or .status == "failed") and (.status_basis | length > 0)' "$WORK/baa-out/coverage.json" >/dev/null
+jq -e '.recipe == "android-backup-apps"' "$WORK/baa-out/coverage.json" >/dev/null
+[[ "$(jq -r 'has("unavailable")' "$PACK/recipes/android-backup-apps/recipe.json")" == "false" && "$(jq -c .auto "$PACK/recipes/android-backup-apps/recipe.json")" == "[]" ]]
 
 (cd "$WORK" && AGENT_ID=t1 python3 "$PACK/tools/manifest_db/run.py" <<<"{\"path\":\"$WORK/backup\"}" > "$WORK/manifest.json")
 jq -e '.encrypted == false and .encryption.state == "not_encrypted" and .entry_count == 750 and (.domains | length) == 30 and .truncated == true and .pages.entries.matched == 750' "$WORK/manifest.json" >/dev/null

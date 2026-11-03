@@ -171,11 +171,15 @@ reports leaves the run `partial`. A module with no report is `no_record`, which
 does not show the artefact is absent from the phone, and an `unsupported` module
 is one whose own gate does not take the operating-system version. Their `exclusions` say
 what they do not hold, and a run stopped before its end says partial: the program runs in a process group of its own with a time limit (`--max-seconds`), and a stop signal ends it and its children. And one
-declared and never run: `android-backup-apps`, the broad extraction an adb backup
-would need, which the image cannot do (ALEAPP reads a file-system layout, an adb
-backup keeps each app under `apps/<package>/`), so the harness records the
-preparation of every adb backup declined with that reason instead of a parse that
-would find next to nothing. Every recipe says exactly what it did not cover in
+run on request, not by the kickoff: `android-backup-apps`, which lays an unencrypted adb backup
+(header versions 1 to 5) out the way the `ab_layout` tool does (`apps/<package>/<domain>/...` onto
+`data/data/<package>/...`; the copy of that logic is in the recipe, a recipe does not import a tool) and runs
+ALEAPP over the layout with `-t fs`, with the same `modules.tsv` receipt as `android-aleapp`. Its result is a
+derivative of an adb backup, never a file-system acquisition, and says so in `derivative/DERIVATIVE.json`
+and in `coverage.json`; the mapping table behind it is the author's recollection of AOSP's FullBackup
+tokens and has not been checked against the source. An encrypted backup is refused (failed), a stream
+that is not whole (a missing end block, bytes after the end) makes the run partial, and `ab-members.tsv`
+lists every member and its state. Every recipe says exactly what it did not cover in
 `coverage.json`. What the harness does with a broad extraction (its receipts, the
 lead that offers one, the hold on a negative that claims absence while it runs) is
 ADR 0013's "A source's broad extraction before a negative on it".
