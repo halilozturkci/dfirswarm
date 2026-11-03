@@ -27,8 +27,8 @@ opened only when the leaf above points to them.
 | Scripts | `scripts/static-analysis` |
 | Rules | `rules/yara`, `rules/authoring` |
 
-Not provided, and the skills say so where it matters: a .NET metadata-table
-reader or decompiler, a Python archive extractor, a bytecode disassembler or
+Not provided, and the skills say so where it matters: a .NET decompiler (`pe_directories` reads the
+metadata tables only when asked, with `clr_tables`), a Python archive extractor, a bytecode disassembler or
 decompiler, a packer-signature detector, parse-only script tooling,
 a decompiler for native code, and a trust-aware Authenticode verifier. The new skills
 name only programs the pack declares.
@@ -61,7 +61,8 @@ reaches each, and its embedded files; an RTF's groups, objects and fields. A
 verifier, salt or hash a structure holds is reported by length, never as bytes,
 and no key is tried. `pe_directories` reads the PE directories `pe_info` only
 declares: exports, delay-load imports, TLS callbacks, the resource tree with the
-version information and manifest, the CLR header and metadata root, the debug
+version information and manifest, the CLR header and metadata root (and, with
+`clr_tables`, the rows of the main metadata tables), the debug
 directory and the Rich header. Neither verifies a signature or says what code does.
 Both withhold what they print by shape only: user-info, secret-named values and
 token-shaped text are withheld; a secret of another shape (a plain password, a
