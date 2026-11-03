@@ -1,0 +1,25 @@
+# Scripts tracked as executable (mode 100755). A commit that drops the bit makes ./scripts/<name> say Permission denied in a clone;
+# tests/script-modes.test.ts holds each to it. One path a line; add a script here when it is made executable.
+scripts/askpass-fd3.sh
+scripts/await-done.sh
+scripts/ci-report-failure.sh
+scripts/cloud-setup.sh
+scripts/dry-run.sh
+scripts/evidence-catalog.sh
+scripts/hub-supervise.sh
+scripts/idle-nudge.sh
+scripts/macos-runner-setup.sh
+scripts/merge-prep.sh
+scripts/netguard-proxy.mjs
+scripts/netguard.sh
+scripts/pack-versions.py
+scripts/pack.sh
+scripts/print-pdf.sh
+scripts/reap.sh
+scripts/spawn.sh
+scripts/swarm.sh
+scripts/symbols.py
+scripts/test-gate.sh
+scripts/test-slice2.sh
+scripts/toolbox.sh
+scripts/watch.sh

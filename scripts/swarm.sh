@@ -3032,7 +3032,7 @@ for line in os.environ.get("SWARM_CAP_PER_MODEL", "").splitlines():
 metered = os.environ.get("SWARM_METERED", "1") != "0"
 # Why a team is unmetered: local models, or an OAuth subscription whose dollars Pi only estimates.
 unmetered_why = os.environ.get("SWARM_UNMETERED_WHY", "").strip()
-cap_tokens =os.environ.get("SWARM_CAP_TOKENS", "").strip()
+cap_tokens = os.environ.get("SWARM_CAP_TOKENS", "").strip()
 agents = []
 for i, aid in enumerate(ids):
     role = "worker"
@@ -6070,7 +6070,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
       skill_release: $skill_release,
       metered: ($metered == 1),
       unmetered_why: (if $unmetered_why == "" then null else $unmetered_why end),
-      cap_tokens:(if $cap_tokens == "" then null else ($cap_tokens | tonumber) end),
+      cap_tokens: (if $cap_tokens == "" then null else ($cap_tokens | tonumber) end),
       token_alerts: (if $token_alerts == "" then null else ($token_alerts | split(",") | map(tonumber)) end),
       local_models: (if $local_models == "" then [] else ($local_models | split(",")) end),
       goal: $goal,

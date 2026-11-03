@@ -12,6 +12,7 @@ import { useAgentColours } from "@/lib/agent-colour";
 import { compact, mmss, money, shortDuration } from "@/lib/format";
 import type { SwarmEvent, SwarmView } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { meteringWords } from "@/lib/metering";
 
 /** Matches STOP_GRACE_MS in extensions/protocol.ts. */
 export const GRACE_MS = 2 * 60 * 1000;
@@ -72,7 +73,7 @@ export function TeamPanel({ view, onSelect }: { view: SwarmView; onSelect?: (id:
         <SerifH as="h3" size={22}>
           Team
         </SerifH>
-        <span className="text-[12px] text-ink-3">{mixed ? "mixed models · " : ""}{unmetered ? "tokens per agent · free" : "spend per agent"}{byHub ? " · state by the hub" : ""}</span>
+        <span className="text-[12px] text-ink-3">{mixed ? "mixed models · " : ""}{unmetered ? `tokens per agent · ${meteringWords(view.budget).label}` : "spend per agent"}{byHub ? " · state by the hub" : ""}</span>
       </div>
       <div className="grid grid-cols-[minmax(64px,auto)_minmax(0,1fr)_60px_56px] items-center gap-x-3 gap-y-2 text-[12.5px]">
         {view.agents.map((a) => {

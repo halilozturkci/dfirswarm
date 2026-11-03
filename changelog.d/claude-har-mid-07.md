@@ -150,3 +150,10 @@ one) with the run's URL, the event and the names of the failed jobs, and the
 next green run closes it (`scripts/ci-report-failure.sh`, a last
 `report-failure` job). A pull request is never reported, and the job is not a
 required check: `CI green` does not need it.
+
+Fix round: `scripts/swarm.sh` is executable again (a package commit had dropped the
+bit, so `./scripts/swarm.sh` said "Permission denied"), and a test holds every
+script tracked as executable on the base to keep its bit. The console's team
+panel says "subscription" or "free" by the same words as the rest. The worker
+prompt and the data-protection notes now name `not_written_cause` and the 1 GiB
+session-file limit.
