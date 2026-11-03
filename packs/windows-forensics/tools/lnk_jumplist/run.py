@@ -51,7 +51,7 @@ import tempfile
 import time
 from pathlib import Path
 
-PARSER = "lnk_jumplist/2"
+PARSER = "lnk_jumplist/3"
 LNK_MAGIC = bytes.fromhex("4c0000000114020000000000c000000000000046")
 OLE_MAGIC = bytes.fromhex("d0cf11e0a1b11ae1")
 MAX_LNK_BYTES = 64 << 20          # a link past this is not read whole: it is named and not parsed
@@ -1675,17 +1675,17 @@ def jlecmd_run(source, directory, seconds):
     TEMP_DIRS.append(work)
     try:
         argv = [program, "-f", os.path.abspath(source), "--csv", work, "--dt", "yyyy-MM-dd HH:mm:ss.fffffff", "-q"]
-        saved = None
-        try:
-            import resource
-            soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
-            if soft == resource.RLIM_INFINITY or soft > JLECMD_BYTES:
-                saved = (soft, hard)
-                resource.setrlimit(resource.RLIMIT_FSIZE, (JLECMD_BYTES, hard))
-        except (ImportError, ValueError, OSError):
-            saved = None
         with open(os.path.join(work, "stdout.txt"), "wb") as out, open(os.path.join(work, "stderr.txt"), "wb") as err:
+            saved = None
             try:
+                try:
+                    import resource
+                    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+                    if soft == resource.RLIM_INFINITY or soft > JLECMD_BYTES:
+                        saved = (soft, hard)
+                        resource.setrlimit(resource.RLIMIT_FSIZE, (JLECMD_BYTES, hard))
+                except (ImportError, ValueError, OSError):
+                    saved = None
                 proc = spawn(argv, stdout=out, stderr=err)
             except OSError as exc:
                 return None, "JLECmd could not be started: %s" % describe(exc)
@@ -1724,9 +1724,9 @@ def jlecmd_run(source, directory, seconds):
 
 def jlecmd_compare(entries, table, app_id):
     """Field by field, for one jump list: the entry count, then per entry the path, the access time and the pin state, then the application id.
-    Returns (compared, file-level differences, {entry number: differences})."""
+    Returns (compared, file-level differences, {entry number: differences}, {entry number: fields not compared, with why})."""
     compared = ["entry_count", "path", "access_time", "pin_state"]
-    file_diff, per = [], {}
+    file_diff, per, skipped = [], {}, {}
     if len(entries) != table["count"]:
         file_diff.append({"field": "entry_count", "destlist": len(entries), "jlecmd": table["count"]})
     if table["twice"]:
@@ -1741,8 +1741,14 @@ def jlecmd_compare(entries, table, app_id):
             continue
         if e["path"] != theirs["path"]:
             per.setdefault(number, []).append({"field": "path", "destlist": e["path"], "jlecmd": theirs["path"]})
-        if e["last_access"] is not None and e["last_access"] != theirs["last_access"]:
-            per.setdefault(number, []).append({"field": "access_time", "destlist": e["last_access"], "jlecmd": theirs["last_access"]})
+        mine_time = e["last_access"]
+        if mine_time is None and e.get("last_access_filetime") == "0":
+            mine_time = "1601-01-01T00:00:00.0000000Z"       # FILETIME 0 is that instant; the DestList's own field is then "not set", and JLECmd prints the instant
+        if mine_time is None:
+            # a FILETIME past year 9999: this tool has no date for it, so there is nothing to compare, and the entry says so
+            skipped.setdefault(number, []).append({"field": "access_time", "why": "the DestList's FILETIME %s is not a date this tool can show" % e.get("last_access_filetime")})
+        elif mine_time != theirs["last_access"]:
+            per.setdefault(number, []).append({"field": "access_time", "destlist": mine_time, "jlecmd": theirs["last_access"]})
         if e["pinned"] != theirs["pinned"]:
             per.setdefault(number, []).append({"field": "pin_state", "destlist": "pinned" if e["pinned"] else "unpinned", "jlecmd": "pinned" if theirs["pinned"] else "unpinned"})
     extra = sorted(n for n in table["rows"] if n not in mine)
@@ -1753,7 +1759,7 @@ def jlecmd_compare(entries, table, app_id):
         wrong = sorted({r["app_id"] for r in table["rows"].values() if r["app_id"] != app_id.lower()})
         if wrong:
             file_diff.append({"field": "application_id", "file_name": app_id.lower(), "jlecmd": wrong[:JLECMD_ROWS_SHOWN]})
-    return compared, file_diff, per
+    return compared, file_diff, per, skipped
 
 
 def jlecmd_check(run, path, entries, readable, cut, app_id):
@@ -1782,7 +1788,7 @@ def jlecmd_check(run, path, entries, readable, cut, app_id):
         if not why.startswith("JLECmd is not in this image"):
             stats["failed"] += 1
         return not_run(why, re.sub(r"row \d+", "a row", why.split(" (")[0].split(": ")[0])[:120])
-    compared, file_diff, per = jlecmd_compare(entries, table, app_id)
+    compared, file_diff, per, skipped = jlecmd_compare(entries, table, app_id)
     stats["checked"] += 1
     stats["entries_agreed"] += len(entries) - len(per)
     stats["entries_disagreed"] += len(per)
@@ -1791,7 +1797,7 @@ def jlecmd_check(run, path, entries, readable, cut, app_id):
     else:
         stats["agreed"] += 1
     return {"result": "disagree" if (file_diff or per) else "agree", "compared": compared, "jlecmd_entries": table["count"], "destlist_entries": len(entries),
-            **({"differences": file_diff} if file_diff else {}), "per_entry": per}
+            **({"differences": file_diff} if file_diff else {}), "per_entry": per, "per_entry_not_compared": skipped}
 
 
 def jlecmd_entry(check, number):
@@ -1799,7 +1805,10 @@ def jlecmd_entry(check, number):
     if check["result"] == "not_run":
         return {"result": "not_run", "why": check["why"]}
     diffs = check["per_entry"].get(number)
-    return {"result": "disagree" if diffs else "agree", "compared": check["compared"], **({"differences": diffs} if diffs else {})}
+    skipped = check["per_entry_not_compared"].get(number)
+    left_out = {s["field"] for s in skipped or []}
+    return {"result": "disagree" if diffs else "agree", "compared": [c for c in check["compared"] if c not in left_out],
+            **({"differences": diffs} if diffs else {}), **({"not_compared": skipped} if skipped else {})}
 
 
 # ---- the rows ----------------------------------------------------------------------------------------------------------------------------
@@ -2016,7 +2025,7 @@ def read_automatic(run, path, size):
         jl_check = None
         if destlist_row is not None and not run.stopped:
             jl_check = jlecmd_check(run, path, dest_entries, "entries_claimed" in destlist_row, destlist_row.get("entries_not_read_from") is not None, app_id)
-            destlist_row["integrity"] = {"jlecmd": {k: v for k, v in jl_check.items() if k != "per_entry"}}
+            destlist_row["integrity"] = {"jlecmd": {k: v for k, v in jl_check.items() if k not in ("per_entry", "per_entry_not_compared")}}
         heads = {s["path"].lower(): (head, whole) for s, _e, whole, _m, head in shown}
         destlist_cut = destlist_row is not None and destlist_row.get("entries_not_read_from") is not None
         dest_starts = [x[0] for x in destlist[1]] if destlist is not None else []

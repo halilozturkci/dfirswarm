@@ -99,10 +99,12 @@ test("JLECmd agrees: every entry says agree, the receipt counts it, the status i
   });
 });
 
-test("a quoted path with a comma in JLECmd's CSV is one field, and a UTF-8 byte order mark is not part of the first column's name", async () => {
+test("a quoted path with a comma in JLECmd's CSV is one field, and a UTF-8 byte order mark before the first column does not hide that column", async () => {
   await withCwd(async (cwd, bin) => {
     await writeFile(join(cwd, "work", NAME), AUTO({ 1: "C:\\case\\a,b \"c\".txt" }));
-    await stub(bin, "JLECmd", jlecmd("\uFEFF" + csvText([{ ...GOOD[0], path: "C:\\case\\a,b \"c\".txt" }, GOOD[1]]), join(cwd, "args.txt")));
+    // EntryNumber is the first header, so a byte order mark kept in the name would make the column missing and the result not_run.
+    const head = "EntryNumber,Path,LastModified,PinStatus,AppId";
+    await stub(bin, "JLECmd", jlecmd("\uFEFF" + csvText([{ ...GOOD[0], path: "C:\\case\\a,b \"c\".txt" }, GOOD[1]], head), join(cwd, "args.txt")));
     const out = body<Answer>(await tool("lnk_jumplist", cwd, { path: `work/${NAME}` }, {}, bin));
     assert.deepEqual(results(await rowsOf(cwd, out)), ["agree", "agree"], JSON.stringify(out.jlecmd));
   });
@@ -266,5 +268,76 @@ test("the real JLECmd (through dotnet) reads the fixture's DestList and agrees w
     console.log(`# real JLECmd: ${version.replace(/\n/g, " | ")}`);
     assert.equal(out.jlecmd.checked, 1, JSON.stringify(out.jlecmd));
     assert.deepEqual(results(await rowsOf(cwd, out)), ["agree", "agree"], JSON.stringify(out.jlecmd));
+  });
+});
+
+// ---- the time of an entry, the guards, the budget ------------------------------------------------------------------------------------
+
+const AUTO_TIMES = (first: bigint): Buffer =>
+  cfb([
+    { name: "1", data: LOCAL },
+    { name: "2", data: LOCAL },
+    { name: "DestList", data: destList(4, [{ number: 1, host: "WKS", filetime: first, pin: -1, path: entryPath(1) }, { number: 2, host: "WKS", filetime: FILETIME_A + 20_000_000n, pin: 0, path: entryPath(2) }]) },
+  ]);
+
+test("an entry whose DestList FILETIME has no date is compared, not skipped: 0 must be JLECmd's 1601 instant, a value past year 9999 is not_compared and not listed as compared", async () => {
+  await withCwd(async (cwd, bin) => {
+    const run = async (first: bigint, theirs: string): Promise<{ out: Answer; rows: Row[] }> => {
+      await writeFile(join(cwd, "work", NAME), AUTO_TIMES(first));
+      await stub(bin, "JLECmd", jlecmd(csvText([{ ...GOOD[0], time: theirs }, GOOD[1]]), join(cwd, "args.txt")));
+      const out = body<Answer>(await tool("lnk_jumplist", cwd, { path: `work/${NAME}` }, {}, bin));
+      return { out, rows: await rowsOf(cwd, out) };
+    };
+    // FILETIME 0 and JLECmd printing a 2023 date: a disagreement, not an agreement that skipped the field.
+    let r = await run(0n, "2023-11-13 00:53:21.1234567");
+    assert.equal(r.out.status, "partial");
+    assert.deepEqual(results(r.rows), ["disagree", "agree"]);
+    assert.deepEqual(entriesOf(r.rows)[0].integrity.jlecmd.differences, [{ field: "access_time", destlist: "1601-01-01T00:00:00.0000000Z", jlecmd: "2023-11-13T00:53:21.1234567Z" }]);
+    // FILETIME 0 and JLECmd printing the same instant: agreement, with access_time compared.
+    r = await run(0n, "1601-01-01 00:00:00.0000000");
+    assert.equal(r.out.status, "complete", r.out.status_basis);
+    assert.deepEqual(results(r.rows), ["agree", "agree"]);
+    assert.ok(entriesOf(r.rows)[0].integrity.jlecmd.compared.includes("access_time"));
+    // A FILETIME past year 9999: nothing to compare, said in the entry, and access_time is not among its compared fields.
+    r = await run(0xffffffffffffffffn, "2023-11-13 00:53:21.1234567");
+    const one = entriesOf(r.rows)[0].integrity.jlecmd;
+    assert.equal(one.result, "agree");
+    assert.ok(!one.compared.includes("access_time"), JSON.stringify(one));
+    assert.equal(one.not_compared[0].field, "access_time");
+    assert.ok(entriesOf(r.rows)[1].integrity.jlecmd.compared.includes("access_time"));
+  });
+});
+
+test("guards: a CSV that lists an entry twice, two CSV files, and a DestList read only to its first 50,000 entries are each disagree or not_run, never agree", async () => {
+  await withCwd(async (cwd, bin) => {
+    await writeFile(join(cwd, "work", NAME), AUTO());
+    await stub(bin, "JLECmd", jlecmd(csvText([...GOOD, GOOD[1]]), join(cwd, "args.txt")));
+    let out = body<Answer>(await tool("lnk_jumplist", cwd, { path: `work/${NAME}` }, {}, bin));
+    assert.equal(out.status, "partial");
+    assert.match(JSON.stringify((await rowsOf(cwd, out)).find((r) => r.row === "destlist")!.integrity.jlecmd.differences), /jlecmd_lists_twice/);
+    await stub(bin, "JLECmd", jlecmd(csvText(GOOD), join(cwd, "args.txt"), 'cp "$d/20261103000000_AutomaticDestinations.csv" "$d/20261103000001_AutomaticDestinations.csv"'));
+    out = body<Answer>(await tool("lnk_jumplist", cwd, { path: `work/${NAME}` }, {}, bin));
+    assert.equal(out.jlecmd.agreed, 0);
+    assert.match(JSON.stringify(out.jlecmd.why_not_run), /wrote 2 automatic-destinations CSV/);
+    const marker = join(cwd, "called.txt");
+    await stub(bin, "JLECmd", `echo called >> "${marker}"; exit 1`);
+    const many = Array.from({ length: 50_001 }, (_, i) => ({ number: i + 1, host: "W", filetime: FILETIME_A, pin: -1, path: "a" }));
+    await writeFile(join(cwd, "work", NAME), cfb([{ name: "1", data: LOCAL }, { name: "DestList", data: destList(4, many) }]));
+    out = body<Answer>(await tool("lnk_jumplist", cwd, { path: `work/${NAME}`, max_seconds: 100 }, {}, bin));
+    assert.match(JSON.stringify(out.jlecmd.why_not_run), /DestList cut/);
+    assert.equal(await readFile(marker, "utf8").catch(() => ""), "");
+  });
+});
+
+test("the budget: after 200 jump lists were given to JLECmd the rest are not_run, said, and not started", async () => {
+  await withCwd(async (cwd, bin) => {
+    const calls = join(cwd, "calls.txt");
+    await stub(bin, "JLECmd", `echo x >> "${calls}"; exit 1`);
+    for (let i = 0; i < 203; i++) await writeFile(join(cwd, "work", `${i.toString(16).padStart(16, "0")}.automaticDestinations-ms`), AUTO());
+    const out = body<Answer>(await tool("lnk_jumplist", cwd, { path: "work", max_seconds: 100 }, {}, bin));
+    assert.equal(out.jlecmd.failed, 200);
+    assert.equal(out.jlecmd.why_not_run.budget, 3);
+    assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 200);
+    assert.equal(out.jlecmd.agreed, 0);
   });
 });
