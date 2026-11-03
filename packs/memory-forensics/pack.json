@@ -1,7 +1,7 @@
 {
   "id": "memory-forensics",
   "name": "Memory Forensics Pack",
-  "version": "1.15.0",
+  "version": "1.15.2",
   "description": "Method and tooling for a memory image: what the container is before anything else, what can be read with no framework at all, processes and injection, network state, credential material, and the discipline that keeps a string in memory from becoming a claim about behaviour.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -28,7 +28,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "ecee1c3ea048d18049e29ef0d5f318ee9d4825e14951c37b799e7c8759958339",
+      "README.md": "8ef6580a2c68bcf4f170700feabefb1fba5e7718ec1836c9e6d5aa7f5b73d73f",
       "goals/memory-triage.md": "16661eee801bceda2ea7010e733ce1ad677f1e38489834ddb1be782d95b0b985",
       "requires/host.json": "0acbd4125515941f933809791a302f536589d85d3dc8d1730bf414585a5ae44f",
       "requires/python.txt": "805da5f067cc98775d074649955d9cca3e18379ef9284f73d162d6aae998f0f6",
@@ -45,7 +45,7 @@
       "skills/patterns/yara.md": "b2062131417e39c13042709b724c836bbcb04262454c9919626b086428c8d591",
       "skills/processes/injection.md": "1ebcee919230e1df158728c4360fb9f1f52d32952c69a0c709a6b52da1fbd93a",
       "skills/processes/kernel-integrity.md": "32d1b3653cfc3de5d87c50f19aaa03c7409b106f3dac58c93f3ce1fecef6ed73",
-      "skills/processes/preserve-regions.md": "994df88602236c206e1cb9342f4dacf3da9538d177c7f1ebc7d1019a48652757",
+      "skills/processes/preserve-regions.md": "181ce4a691eb94f82d9a76ae470bcfb38651c483448554e8687102bb90c7b9e9",
       "skills/strings/discipline.md": "c33bacce4c1586a72a3894f674ef5622ce67bc1ffe9685b1c21bf24bb6bb29a6",
       "skills/symbols/linux.md": "94f8e304fb40d42924be77ac1b92d41a6fbcebc66ad39d9edfc701be15a47ab2",
       "skills/symbols/macos.md": "fb289f37448aeb7c66306f38cacdcab9f00860d25e1bf256d84944bfa35e0d16",
@@ -68,8 +68,8 @@
       "tools/isf_intake/run.py": "8e123b6b6ee58b6374ff6424b256013de8350863bfab63c0332211eb0c2788e6",
       "tools/mem_carve/manifest.json": "0f51c51c9ee84d517e29d2894c1ba1bb57d389b82090e0e3043d7024a0768673",
       "tools/mem_carve/run.py": "c5ae768971a392774f695f59218e1f13b5da551820509582d56a960481a42edf",
-      "tools/mem_fs/manifest.json": "f5b842edb901136dba8be336cef9fa2da75edbd0379484b885315941f05a7d47",
-      "tools/mem_fs/run.py": "d8a45d0cf6129e12b887b9141d148094b31262d8833df57eb8cda0c542983c07",
+      "tools/mem_fs/manifest.json": "1ff8a13adddc174b6c1956d7652aad484087719347f7508b18011da08905fae4",
+      "tools/mem_fs/run.py": "07fe1abef1643ebee3aa9dd7c8e8713e4473a4ae2c67e0f90fc788bc6ba1c862",
       "tools/mem_profile/manifest.json": "df7b7893ef88066b64e156cf12a6cac8f317c02c3fe2560b686701c47fd24fe9",
       "tools/mem_profile/run.py": "7926facfc4c253eb0806529feac6f76c44b25ca70a599f038e2320d61f020c95",
       "tools/mem_registry/manifest.json": "bbb7c15f17c5f216bb39e03ce670f2e772416fd2879d01f319e0a381b8652baa",

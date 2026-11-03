@@ -680,7 +680,10 @@ test("mem_fs export writes the bytes of a virtual file exactly, in a job, and ke
     assert.equal(byPath["name/1234-notepad.exe/minidump/memory.dmp"].sha256, sha256(region));
     assert.equal(byPath["name/1234-notepad.exe/minidump/memory.dmp"].bytes, region.length);
     assert.equal(byPath["sys/proc/proc.txt"].sha256, sha256(PROC_TEXT));
-    assert.doesNotMatch(run.stdout, /[0-9a-f]{64}/i, "a digest is in the answer");
+    // No digest of content is in the answer; the only digests it names are those of the ranges files (offsets and lengths, never content).
+    for (const r of rows) assert.ok(!run.stdout.includes(r.sha256 as string), "a digest of content is in the answer");
+    const named = new Set(rows.map((r) => r.ranges_file_sha256 as string));
+    for (const digest of run.stdout.match(/[0-9a-f]{64}/gi) ?? []) assert.ok(named.has(digest), "a digest that is not a ranges file's is in the answer");
     assert.ok(!run.stdout.includes(SECRET_TOKEN), "a planted secret is in the answer");
     assert.equal(answer.content, undefined);
     assert.equal(answer.secret_values?.contains_secret_values, true);

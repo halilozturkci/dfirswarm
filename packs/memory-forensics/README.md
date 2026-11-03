@@ -33,7 +33,8 @@ structures that other parsers read (a hive, an event log chunk, a Prefetch recor
 says for each where the signature is, where the structure starts and what its header
 supports, and cuts a fixed-size slice for the parser: a survey, not a recovery.
 `mem_fs` starts MemProcFS for one call, lists a directory of its file tree or copies
-chosen files byte for byte into the job's output, and stops it; the mount is released
+chosen files byte for byte into the job's output (with a ranges file for each: the ranges read, the ranges
+unavailable or not copied, and the zero-filled pages, which are zeros, not proof of missing data), and stops it; the mount is released
 when it returns, unless the clean-up failed (an engine that cannot be ended, an unmount helper
 that does not answer): the answer then names a `cleanup` problem and the mount may remain.
 Whether MemProcFS contacts a symbol server is governed by the job's network policy; the tool
@@ -57,7 +58,7 @@ exercised here. On a host or image without `/dev/fuse` or a `fusermount3`/`fuser
 **Sensitive output.** Memory holds whatever the machine held. `mem_fs` writes file
 content only when it runs as a job, only on `write_values: true`, and only under
 `$OUT/mem_fs`; its answer carries the locator of each file, never its content or a
-digest of it (`recovery_key_scan` of the encrypted-containers pack is the reference
+digest of it (the one digest it names is that of a file's ranges file, which holds offsets and lengths; `recovery_key_scan` of the encrypted-containers pack is the reference
 implementation of that pattern). `mem_fs`, `mem_carve`, `mem_registry`, `carve_handoff` and `vol_views` declare `secret_output`
 for `write_values`, so the harness seals the job as sensitive, and all five check
 `SECRET_OUTPUT=1` and refuse as JSON otherwise. `mem_carve` cuts slices out of an image
