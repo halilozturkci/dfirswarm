@@ -128,6 +128,8 @@ import {
   nudgePeerViaBroker,
   postSender,
   useHarnessTrace,
+  SENSITIVE_READ_NOTE,
+  couldNameOutput,
 } from "./protocol.ts";
 // The board: protocol.ts on the host, the hub on the other side of a VM's wall (board.ts says why).
 import {
@@ -199,6 +201,7 @@ import {
   netRequest,
   netFetch,
   netView,
+  sensitiveRead,
 } from "./board.ts";
 // The lead register's host-side pieces: a host run's wait checks it itself (a VM's hub does it there).
 import { LEAD_DISPOSITIONS, leadsWaitCheck, reopenOnLedger } from "./leads.ts";
@@ -528,6 +531,8 @@ export default function (pi: ExtensionAPI) {
   const longRuns = new Map<string, KeptRun>();
   const repeatHinted = new Set<string>();
   const jobHinted = new Set<string>();
+  /** The sensitive jobs this seat was told about already (docs/adr/0018): the note on a read is once per seat and job. */
+  const toldSensitive = new Set<string>();
   let jobsOffered: boolean | undefined;
   /** When this agent was steered for its own cap, if it was. */
   let agentCapSteeredAt: number | null = null;
@@ -1900,6 +1905,26 @@ export default function (pi: ExtensionAPI) {
     return { truncated: true, by: t.truncatedBy ?? null, total_lines: t.totalLines ?? null, shown_lines: t.outputLines ?? null, total_bytes: t.totalBytes ?? null, shown_bytes: t.outputBytes ?? null };
   }
 
+  /**
+   * The sensitive jobs a tool call read, by the one classifier (scripts/sensitive-access.ts): asked of the hub, which holds the run's index and
+   * the copies it kept; in a host run, with no hub, the classifier is run here with the index the seat can read (no kept copies), and when it
+   * cannot run, none. The extension holds no rule of its own.
+   */
+  async function sensitiveJobsRead(cwd: string, tool: string, args: Record<string, unknown>): Promise<string[]> {
+    if (!couldNameOutput(tool, args)) return [];
+    const asked = await sensitiveRead(cwd, { tool, args });
+    if (asked !== null) return asked;
+    try {
+      const [{ classifyTraceRow }, { sensitiveIndex }] = await Promise.all([import("../scripts/sensitive-access.ts"), import("../scripts/output-hygiene.ts")]);
+      const ix = await sensitiveIndex(cwd);
+      if (!ix.jobs.size) return [];
+      const hits = classifyTraceRow({ tool, args }, ix, { sandbox: cwd });
+      return [...new Set(hits.filter((h) => h.job !== null && h.certainty !== "maybe").map((h) => h.job as string))].sort();
+    } catch {
+      return [];
+    }
+  }
+
   pi.on("tool_result", async (event, ctx) => {
     const name = (event as { toolName?: string }).toolName ?? "";
     const callId = (event as { toolCallId?: string }).toolCallId;
@@ -1966,6 +1991,16 @@ export default function (pi: ExtensionAPI) {
         content = [...(Array.isArray(content) ? content : []), { type: "text", text: jobHintText(durationMs) }];
         contentChanged = true;
         await logEvent(ctx.cwd, agentId, "job_hint", { command: head }, { ok: true, ms: durationMs }).catch(() => undefined);
+      }
+    }
+    // A read of a sensitive output: one sentence on the result, once per seat and job. It informs and never blocks; a failure to ask is no note.
+    if (agentId && !isError && input) {
+      const read = await sensitiveJobsRead(ctx.cwd, name, input).catch(() => [] as string[]);
+      const fresh = read.filter((job) => !toldSensitive.has(job));
+      if (fresh.length) {
+        for (const job of fresh) toldSensitive.add(job);
+        content = [...(Array.isArray(content) ? content : []), { type: "text", text: SENSITIVE_READ_NOTE }];
+        contentChanged = true;
       }
     }
     // Pi takes a tool's failure only from a throw: an `isError: true` in what

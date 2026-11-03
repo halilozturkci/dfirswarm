@@ -26,7 +26,7 @@ import { bytes, dateTime, duration } from "@/lib/format";
 import { useAgentNames } from "@/lib/hooks";
 import { useResource } from "@/lib/live";
 import { paginate } from "@/lib/pager";
-import type { StoreJobDetail, StoreJobRow, StoreJobsView, StoreSameAs, StoreSimilar, SwarmView } from "@/lib/types";
+import type { StoreAccess, StoreJobDetail, StoreJobRow, StoreJobsView, StoreSameAs, StoreSimilar, SwarmView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const OUTCOME: Record<string, { label: string; tone: Tone }> = {
@@ -235,6 +235,13 @@ function JobsTable({ rows, colour, onOpen }: { rows: StoreJobRow[]; colour: (id:
                   {r.id}
                 </button>
                 {r.attempts > 1 ? <div className="text-[11px] text-ink-3">{r.attempts} attempts</div> : null}
+                {r.sensitive ? (
+                  <div className="mt-1" title="From the access record: a lower bound. Its output is read by agents and every read the harness sees is recorded.">
+                    <Chip tone="brick" mono>
+                      {r.sensitive.badge}
+                    </Chip>
+                  </div>
+                ) : null}
               </td>
               <td className="px-3 py-2">
                 <span className="mr-1.5 text-[11px] uppercase tracking-[0.03em] text-ink-3">{r.kind}</span>
@@ -411,6 +418,50 @@ function LogView({ run, job, log, version }: { run: string; job: string; log: St
   );
 }
 
+/** Who reached a sensitive job's output, from the access record: its readers and the jobs made from it. A lower bound, said as such. */
+function AccessFacts({ access, colour }: { access: StoreAccess; colour: (id: string) => string }) {
+  return (
+    <>
+      <Fact label="Sensitive">
+        <span>
+          <Chip tone="brick" mono>
+            {access.badge}
+          </Chip>
+        </span>
+        <span className="text-ink-3">{access.why === "secret_output" ? "run as secret output" : "made from a sensitive output"}; the operator's views of its logs in this console are recorded on the operator's audit ({plural(access.console_views, "view")} so far)</span>
+      </Fact>
+      <Fact label="Read by">
+        {access.readers.length ? (
+          access.readers.map((x) => (
+            <span key={x.seat}>
+              <span className="font-medium" style={{ color: colour(x.seat) }}>
+                {x.seat}
+              </span>
+              : {plural(x.reads, "time")}, first {x.first ? dateTime(x.first) : "no time"}, last {x.last ? dateTime(x.last) : "no time"}; {x.certainty === "certain" ? "a page of its log was returned" : x.certainty === "path" ? "a path it was given" : "text of a command that names it"}
+            </span>
+          ))
+        ) : (
+          <span>no seat: the harness observed no read of it</span>
+        )}
+      </Fact>
+      <Fact label="Used by">
+        {access.dependents.length ? (
+          access.dependents.map((x) => (
+            <span key={x.job}>
+              job <span className="font-mono">{x.job}</span> took it as an input{x.how ? ` (${x.how.replace(/_/g, " ")})` : ""}
+              {x.seat ? `, asked for by ${x.seat}` : ""}
+            </span>
+          ))
+        ) : (
+          <span>no job took it as an input</span>
+        )}
+        {access.cited_by.length ? <span className="text-ink-3">cited by {access.cited_by.map((n) => `E-${n}`).join(", ")}: an agent's own claim</span> : null}
+        <span className="text-ink-3">{access.lower_bound}</span>
+      </Fact>
+    </>
+  );
+}
+
 function JobDetail({ view, jobId, version, onBack, onOpen }: { view: SwarmView; jobId: string; version: number; onBack: () => void; onOpen: (id: string) => void }) {
   const id = view.summary.id;
   const colour = useAgentColours(view.agents);
@@ -493,6 +544,7 @@ function JobDetail({ view, jobId, version, onBack, onOpen }: { view: SwarmView; 
               </span>
             ) : null}
           </Fact>
+          {d.access ? <AccessFacts access={d.access} colour={colour} /> : null}
           <Fact label="Record" bad={r.fenced === false}>
             <span>
               {recordLabel(r).label}

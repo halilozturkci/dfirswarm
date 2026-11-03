@@ -1357,6 +1357,20 @@ export type StoreJobOutputs = { files: number; bytes: number; rejected: number; 
  * `outcome`) is what the job did; `state` is where its record stands:
  * `committed` means its output was sealed into the store, whatever it did.
  */
+/** The badge of a sensitive job on the jobs list, from the access record: "sensitive · N seats read · M jobs used". */
+export type StoreSensitive = { why: "secret_output" | "derived"; seats_read: number; jobs_used: number; badge: string };
+
+/** A sensitive job's readers and dependents, from the access record: a lower bound. */
+export type StoreAccess = {
+  why: "secret_output" | "derived";
+  badge: string;
+  readers: Array<{ seat: string; reads: number; first: string | null; last: string | null; certainty: string }>;
+  dependents: Array<{ job: string; seat: string | null; how: string | null }>;
+  cited_by: number[];
+  console_views: number;
+  lower_bound: string;
+};
+
 export type StoreJobRow = {
   id: string;
   kind: string;
@@ -1403,6 +1417,8 @@ export type StoreJobRow = {
   note: string | null;
   /** A program its image did not hold (exit 127, or "command not found"): shown for the images' upkeep. */
   program_missing?: { program: string | null; profile: string | null; image: string | null } | null;
+  /** The badge of a sensitive job (the access record); null for any other. */
+  sensitive?: StoreSensitive | null;
 };
 
 /** A similar job as the journal names it (scripts/job-reuse.ts Similar). */
@@ -1484,6 +1500,8 @@ export type StoreJobDetail = {
     page: { offset: number; limit: number; total: number; next: number | null };
   } | null;
   logs: Array<{ name: string; path: string; bytes: number | null; sha256: string | null; present: boolean; why: string | null }>;
+  /** Who reached this job's output, when it is sensitive: null otherwise. */
+  access?: StoreAccess | null;
 };
 
 /** GET /api/swarms/:id/jobs/:job/log/:name: a page of a job's log, by bytes, ending on a character boundary. */

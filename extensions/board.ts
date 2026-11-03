@@ -39,6 +39,8 @@ export function boardSocket(env: NodeJS.ProcessEnv = process.env): string {
 const CALL_TIMEOUT_MS = 120_000;
 /** One reply line, however large a result (an inbox page, a ledger) gets. */
 const MAX_REPLY_BYTES = 256 * 1024 * 1024;
+/** How long a seat waits for the hub to say whether its call read a sensitive output. */
+const SENSITIVE_READ_MS = 5_000;
 /** A part of a transfer the hub has not acknowledged in this long: the link is dead. */
 const PART_TIMEOUT_MS = 30_000;
 
@@ -376,6 +378,7 @@ export const REMOTE_FUNCTIONS = [
   "teamView",
   "markDone",
   "runFinishLine",
+  "sensitiveRead",
   "nameOf",
   "netFetch",
   "netRequest",
@@ -608,6 +611,19 @@ export const restoreFileVersion: typeof P.restoreFileVersion = async (ctx, rawPa
 };
 export const forgeTool = remote("forgeTool", P.forgeTool);
 export const forgedToolSeal = remote("forgedToolSeal", P.forgedToolSeal);
+/**
+ * The sensitive jobs a seat's tool call read, as the hub's classifier reads it
+ * (scripts/sensitive-access.ts): their ids, certain or named only. Null when
+ * there is no hub to ask (a host run): the caller then runs the classifier
+ * itself or says nothing.
+ */
+export async function sensitiveRead(sandboxRoot: string, row: { tool: string; args: Record<string, unknown> }): Promise<string[] | null> {
+  const socket = boardSocket();
+  if (!socket) return null;
+  // A note must never hold the call: a hub that does not answer in a few seconds is no note.
+  const jobs = (await callBoard(socket, "sensitiveRead", [sandboxRoot, row], { timeoutMs: SENSITIVE_READ_MS })) as unknown;
+  return Array.isArray(jobs) ? jobs.filter((j): j is string => typeof j === "string") : [];
+}
 export const guardWrite = remote("guardWrite", P.guardWrite);
 export const harnessStop = P.harnessStop;
 export const heldBy = remote("heldBy", P.heldBy);

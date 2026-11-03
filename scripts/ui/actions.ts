@@ -1098,6 +1098,17 @@ export class ActionRunner {
     return { ...env, ...this.opts.env, SWARM_RUNS_DIR: this.opts.runsDir, SWARM_OPERATOR_VIA: "console" };
   }
 
+  /**
+   * The console is about to serve a sensitive job's output or log: one
+   * `console_view` line on the operator's audit, written by swarm.sh (the
+   * one writer, under its lock and chain, with SWARM_OPERATOR_VIA=console).
+   * Says whether the line landed; the caller serves nothing when it did not.
+   */
+  async viewed(swarmId: string, job: string, path: string, timeoutMs = 20_000): Promise<{ ok: true } | { ok: false; why: string }> {
+    const { code, output } = await this.exec(["console-view", swarmId, job, path], timeoutMs);
+    return code === 0 ? { ok: true } : { ok: false, why: output.trim().split("\n").filter(Boolean).at(-1) ?? `swarm.sh console-view exited ${code}` };
+  }
+
   /** Run swarm.sh and wait: its output whole, in the order it came, and apart. */
   private exec(argv: string[], timeoutMs: number): Promise<{ code: number; output: string; stdout: string; stderr: string }> {
     return new Promise((done) => {

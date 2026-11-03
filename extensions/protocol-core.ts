@@ -8462,3 +8462,31 @@ export async function claimPauseNotice(sandboxRoot: string, pausedAt: string): P
     () => false,
   );
 }
+
+// --- a read of a sensitive output (docs/adr/0018) ---------------------------------------------------
+
+/**
+ * The one sentence a seat's tool result ends with, once per seat and job, when
+ * the call read a sensitive output. It informs and never blocks, like the
+ * evidence-code note. prompts/worker-system.md quotes it word for word
+ * (tests/seat-sensitive-note.test.ts holds the two equal).
+ */
+export const SENSITIVE_READ_NOTE = "This output is sensitive: the run records reads of it, and its value does not belong in a post, the ledger or a command line; give it to another job as an input.";
+
+/** The tools of a seat whose rows may name a sensitive output (the classifier, scripts/sensitive-access.ts, reads these and no others). */
+export const ACCESS_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "powershell"]);
+/** Where a row can name the store, the catalogue, a kept output or a job: the rest need no look at the journal. */
+export const ACCESS_PROBE = /store|catalog|tool-output|j\d{6}/;
+
+/**
+ * Whether a seat's tool call could name a sensitive output, so that the
+ * classifier is worth asking: a read tool or a shell, with a path or a
+ * command that mentions the store, the catalogue, a kept output or a job id,
+ * or no path at all. A cheap test that decides nothing: the classifier does.
+ */
+export function couldNameOutput(tool: unknown, args: unknown): boolean {
+  if (typeof tool !== "string" || !ACCESS_TOOLS.has(tool) || typeof args !== "object" || args === null || Array.isArray(args)) return false;
+  const a = args as Record<string, unknown>;
+  const probe = tool === "bash" || tool === "powershell" ? a.command : ["path", "filePath", "file_path", "file"].map((k) => a[k]).find((v) => typeof v === "string" && v.trim()) ?? "";
+  return typeof probe === "string" && (probe === "" || ACCESS_PROBE.test(probe));
+}

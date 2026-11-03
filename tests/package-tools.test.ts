@@ -17,8 +17,9 @@ import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { disputeEntry, initSandbox, recordEntry } from "../extensions/protocol.ts";
-import { ledgerChain, makeDigestReplacer, packSessions, redactPackage, type Replaced, SESSIONS_ARCHIVE, SESSIONS_MANIFEST, type SessionsManifest, verifyPackage, verifySessions, writeComponents } from "../scripts/package-tools.ts";
+import { hygieneReport, ledgerChain, makeDigestReplacer, packSessions, redactPackage, type Replaced, SESSIONS_ARCHIVE, SESSIONS_MANIFEST, type SessionsManifest, verifyPackage, verifySessions, writeComponents } from "../scripts/package-tools.ts";
 import { takeCustody } from "../scripts/custody.ts";
+import { T, fixtureFiles, hubLine, jl, traceRow, writeFiles } from "./sensitive-access-fixture.ts";
 import { sealTree, storePaths } from "../scripts/evidence-store.ts";
 import { appendReview } from "../scripts/review.ts";
 
@@ -584,4 +585,85 @@ test("makeDigestReplacer gives the old function's output on small inputs, and 50
   assert.ok(!out.includes(many[12_345]!), "the digest is replaced everywhere");
   assert.equal(records.length, 1);
   assert.ok(cpuSeconds < 20, `${cpuSeconds.toFixed(2)} CPU seconds for 50,000 digests over ${(text.length / 1048576).toFixed(1)} MB`);
+});
+
+test("HYGIENE.json carries the access record as whole counts {roots, readers, edges, maybe}: no seat, job or path is named in it", async () => {
+  const base = await mkdtemp(join(tmpdir(), "hygiene-access-"));
+  dirs.push(base);
+  const S = await writeFiles(base, fixtureFiles());
+  const pkg = join(base, "pkg");
+  await mkdir(pkg, { recursive: true });
+  await hygieneReport(S, pkg);
+  const hyg = JSON.parse(await readFile(join(pkg, "HYGIENE.json"), "utf8")) as { access: Record<string, number> };
+  // j000001 is the one root; agent-2 the one seat the hub's line shows reading; three jobs took an output as an input;
+  // two jobs declared no scope and could read 2 and 4 of the outputs: six possible reaches, none of them a read.
+  assert.deepEqual(hyg.access, { roots: 1, readers: 1, edges: 3, maybe: 6, marked_trace_lines: 0, marked_kept_copies: 0 });
+  assert.doesNotMatch(JSON.stringify(hyg.access), /agent-|j0000|store\//, "counts only");
+});
+
+// --- --redact replaces the trace lines the access record marks (PKG-ACC-04) ---------------------------------------
+
+/** A run whose ledger holds no sensitive entry (so no word is looked for), with a package made of its trace and a kept output. */
+async function markedRun(o: { sensitive?: boolean } = {}): Promise<{ S: string; pkg: string; lines: string[]; kept: string }> {
+  const base = await mkdtemp(join(tmpdir(), "redact-marks-"));
+  dirs.push(base);
+  const kept = "tool-output/agent-2/bash-1.out";
+  const trace = [
+    traceRow("agent-2", 1, "bash", { command: "cat store/jobs/j000001/out/values.jsonl" }, T(10), { ok: true, full_output: { path: kept } }),
+    hubLine(T(10, 1), "agent-2", { job: "j000001", via: "text", certainty: "text", part: "out", paths: ["store/jobs/j000001/out/values.jsonl"] }, { sid: "sid-agent-2", seq: 1, tool: "bash" }, { kept_as: kept }),
+    traceRow("agent-3", 2, "bash", { command: "cat store/jobs/*/out/*" }, T(11)),
+    traceRow("agent-3", 3, "bash", { command: "ls inputs" }, T(12)),
+    traceRow("agent-2", 4, "read", { path: "store/jobs/j000010/out/x" }, T(13)),
+  ];
+  // A run with no sensitive output has no line of the hub on its trace.
+  const files = fixtureFiles({ trace: o.sensitive === false ? trace.filter((l) => (l as { tool?: string }).tool !== "sensitive_access") : trace, ledger: [] });
+  if (o.sensitive === false) {
+    files["run1/store/journal.jsonl"] = jl({ v: 1, seq: 0, at: T(0), type: "job_accepted", job: "j000010", spec: { kind: "command" }, requester: { agent: "agent-2" } });
+    delete files["run1/store/jobs/j000001/manifest.json"];
+  }
+  const S = await writeFiles(base, files);
+  const pkg = join(base, "pkg");
+  await mkdir(join(pkg, "trace"), { recursive: true });
+  await mkdir(join(pkg, "tool-output", "agent-2"), { recursive: true });
+  await writeFile(join(pkg, "trace", "events.jsonl"), files["run1/traces/events.jsonl"]);
+  await writeFile(join(pkg, kept), "the whole output a seat's command returned\n");
+  return { S, pkg, lines: files["run1/traces/events.jsonl"].trim().split("\n"), kept };
+}
+
+test("--redact replaces the trace lines the access record marks (the possible reaches and the commands that name an output included) and the whole copy kept of the read; the rest stays", async () => {
+  const { S, pkg, lines, kept } = await markedRun();
+  const r = await redactPackage(S, pkg, { leaks: "list" });
+  const out = (await readFile(join(pkg, "trace", "events.jsonl"), "utf8")).trim().split("\n");
+  assert.equal(out.length, lines.length, "no line is dropped");
+  assert.deepEqual(JSON.parse(out[0]), { redacted: true, line_sha256: sha(lines[0]) }, "the seat's tool result that named the output is replaced by the hash of the line");
+  assert.equal(out[1], lines[1], "the hub's own line names a job and a path, never a value: it stays");
+  assert.deepEqual(JSON.parse(out[2]), { redacted: true, line_sha256: sha(lines[2]) }, "a command that walks a root which holds it is marked too");
+  assert.deepEqual([out[3], out[4]], [lines[3], lines[4]], "a call that names nothing sensitive stays");
+  assert.equal(r.lines, 2);
+  // The whole copy kept of the read is replaced by a stub that names a keyed id, not the digest.
+  const stub = await readFile(join(pkg, kept), "utf8");
+  assert.match(stub, /^\[redacted: marked sensitive\]: a whole output kept from a seat's read of a sensitive output \(the access record marks it\); matched hidden-[0-9a-f]{24}/);
+  assert.doesNotMatch(stub, /[0-9a-f]{64}|seat's command returned/);
+  // The chain still reads: a redacted line stands for the line it replaced, by its hash.
+  const chain = out.map((l) => JSON.parse(l) as { redacted?: boolean; line_sha256?: string });
+  assert.deepEqual(chain.map((c, i) => (c.redacted ? c.line_sha256 : sha(out[i]))), [sha(lines[0]), sha(lines[1]), sha(lines[2]), sha(lines[3]), sha(lines[4])]);
+});
+
+test("without --redact nothing changes, and HYGIENE.json counts the lines the record marks and advises --redact", async () => {
+  const { S, pkg, lines } = await markedRun();
+  await hygieneReport(S, pkg);
+  assert.equal(await readFile(join(pkg, "trace", "events.jsonl"), "utf8"), `${lines.join("\n")}\n`, "the trace is as it was");
+  const hyg = JSON.parse(await readFile(join(pkg, "HYGIENE.json"), "utf8")) as { access: { marked_trace_lines: number; marked_kept_copies: number; advice?: string } };
+  assert.equal(hyg.access.marked_trace_lines, 2);
+  assert.equal(hyg.access.marked_kept_copies, 1);
+  assert.match(hyg.access.advice ?? "", /2 trace line\(s\) of seats' tool results and 1 kept whole output\(s\).* a package made with --redact replaces them/);
+});
+
+test("a run with no sensitive output marks nothing: the trace of its package is not touched", async () => {
+  const { S, pkg, lines } = await markedRun({ sensitive: false });
+  const before = await readFile(join(pkg, "trace", "events.jsonl"), "utf8");
+  const r = await redactPackage(S, pkg, { leaks: "list" });
+  assert.equal(r.lines, 0);
+  assert.equal(await readFile(join(pkg, "trace", "events.jsonl"), "utf8"), before);
+  assert.equal(before, `${lines.join("\n")}\n`);
 });

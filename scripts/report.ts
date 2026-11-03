@@ -50,6 +50,7 @@ import {
 import { createHash } from "node:crypto";
 import { hashArtifacts, type ArtifactIndex } from "./artifacts.ts";
 import { GROUNDED_VIA_JOB, humanReviewFrom, renderReportBody, type HumanReview } from "./report-body.ts";
+import { accessRecord } from "./sensitive-access.ts";
 import { custodyAnchorPath, manifestMeta, sealedIndex, verdictAnchorLine, verdictAnchorState } from "./custody.ts";
 import { hashRegularFile, openRegular, readRegularText } from "./regular-file.ts";
 import { jsonlLines } from "../extensions/jsonl-lines.ts";
@@ -1819,7 +1820,10 @@ ${artifacts.skipped.length ? `<p>Not hashed: ${artifacts.skipped.map((s) => `<co
     }
     return null;
   })();
+  // Who reached a sensitive output: read once, here, with the runs directory this report knows, and given to the body (its section "Sensitive outputs and who used them").
+  const access = await accessRecord(sandbox, { runsDir }).catch(() => null);
   const body = await renderReportBody(sandbox, {
+    access,
     review: bodyReview(review, rel.examiner),
     release: rel.release,
     grounding: { ...coverage.grounding, ...Object.fromEntries(coverage.grounded_via_job.map((seq) => [seq, GROUNDED_VIA_JOB])) },

@@ -68,7 +68,10 @@ establish, and nothing here settles it.
 
 The report names each seat's model and the hosts it was served from, and
 the summary model with them, so the record of a run says who received its
-content. `--local-only` keeps every model on this machine or this network
+content. For a sensitive output the report also has a section, "Sensitive
+outputs and who used them", that names each seat the harness observed
+reading it, with that seat's model and host, and says the list is a lower
+bound. `--local-only` keeps every model on this machine or this network
 and narrows netguard to those endpoints; the evidence then reaches no cloud
 model. [Credentials and teams](credentials-and-teams.md) covers local
 models.

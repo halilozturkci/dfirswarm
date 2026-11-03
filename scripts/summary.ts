@@ -35,6 +35,7 @@ import { loadRunContext, readJsonFile } from "./run-record.ts";
 import { manifestMeta, verdictAnchorLine, verdictAnchorState } from "./custody.ts";
 import { bodyReview, gatewayRecordOf, heldRows, readReviewState, reviewLine, sourceCheckedLine, vmSpendNote, type GatewayTotals } from "./report.ts";
 import { reportBodyFacts, type BodyFacts } from "./report-body.ts";
+import { accessRecord, accessSummaryLine } from "./sensitive-access.ts";
 import { bodyRelease } from "./release-record.ts";
 import { coverageLine, coverageOf } from "./coverage.ts";
 import { readRegularText } from "./regular-file.ts";
@@ -251,6 +252,8 @@ export async function summarize(sandboxArg: string, options: { runsDir?: string 
   const rel = bodyRelease(sandbox);
   const facts = await reportBodyFacts(sandbox, { review: bodyReview(review, rel.examiner), release: rel.release, ...(run?.model ? { defaultModel: run.model } : {}) });
   lines.push(`- Answers: ${answersLine(facts)}`);
+  // Who reached a sensitive output: one line from the access record (swarm.sh access has the list).
+  lines.push(`- Sensitive outputs: ${accessSummaryLine(await accessRecord(sandbox, { runsDir }).catch(() => null))}`);
   for (const [k, v] of heldRows(run as Record<string, unknown> | null)) lines.push(`- ${k}: ${v}`);
   const flags: string[] = [];
   if (run?.model) flags.push(`model ${run.model}`);
