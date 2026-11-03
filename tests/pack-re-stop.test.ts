@@ -2,7 +2,7 @@
  * Every reverse-engineering tool and recipe answers once, with exit 128 + the signal, on SIGTERM, SIGINT and SIGHUP at any moment after its
  * stop handlers are installed, and the handlers are installed at module level, not when main() starts:
  *   - doc_probe, entropy_map and pe_info take the windows-lineage shared STOP block (tests/pack-shared-stop.test.ts pins its text);
- *   - fuzzy_hash, the capa-floss recipe and the static-binary recipe install their shared PROCESS block's handlers right after the block, with a
+ *   - fuzzy_hash, unpack_safe, authenticode_verify, the capa-floss recipe and the static-binary recipe install their shared PROCESS block's handlers right after the block, with a
  *     minimal last word that main() replaces;
  *   - doc_structure and pe_directories install their own handlers (and not their SIGALRM hard limit, which only a deadline arms) at module level.
  *
@@ -26,6 +26,7 @@ import { buildPeDirs } from "./pack-re-doc-fixtures.ts";
 
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
 const UNPACK_SAFE = join(TOOLS, "unpack_safe", "run.py");
+const AUTHENTICODE_VERIFY = join(TOOLS, "authenticode_verify", "run.py");
 const SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
 const NUMBER = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 } as const;
 
@@ -87,6 +88,16 @@ if [ "$1" = "-l" ]; then exit 0; fi
 sleep 60`);
       await put(cwd, "inputs/sample.bin", "x".repeat(2000));
       return { argv: [], stdin: JSON.stringify({ path: "inputs/sample.bin" }) };
+    },
+  },
+  {
+    name: "authenticode_verify", script: AUTHENTICODE_VERIFY, marker: MODULE_LEVEL,
+    work: async (cwd, bin) => {
+      await stub(bin, "osslsigncode", `if [ "$1" = "--version" ]; then echo "osslsigncode 2.5, using:"; exit 0; fi
+sleep 60`);
+      await put(cwd, "inputs/s.exe", buildPe({}).file);
+      await put(cwd, "inputs/ca.pem", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n");
+      return { argv: [], stdin: JSON.stringify({ path: "inputs/s.exe", trust_ca: "inputs/ca.pem" }) };
     },
   },
   {

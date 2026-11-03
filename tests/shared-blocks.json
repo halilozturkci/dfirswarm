@@ -14,14 +14,14 @@
       { "carriers": 9, "example": "packs/encrypted-containers/tools/archive_probe/run.py" },
       { "carriers": 6, "example": "packs/ransomware-response/tools/encrypted_survey/run.py", "why": "ransomware-response's own names text, not the encrypted-containers one" }
     ] },
-    "ONE WAY OUT": { "variants": [ { "carriers": 8, "example": "packs/reverse-engineering/recipes/capa-floss/run.py" } ] },
+    "ONE WAY OUT": { "variants": [ { "carriers": 9, "example": "packs/reverse-engineering/recipes/capa-floss/run.py" } ] },
     "PAGE": { "variants": [
       { "carriers": 42, "example": "packs/windows-forensics/tools/regkv/run.py" },
       { "carriers": 8, "example": "packs/memory-forensics/tools/mem_carve/run.py", "why": "the memory pack's own pager text" }
     ] },
     "PLACE": { "variants": [ { "carriers": 51, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "PROCESS": { "variants": [
-      { "carriers": 35, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
+      { "carriers": 36, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
       { "carriers": 14, "example": "packs/windows-forensics/recipes/windows-artefacts/run.py", "why": "the windows lineage: its stop and process handling differs from the general text" }
     ] },
     "RECORDS BLOCK": { "variants": [ { "carriers": 7, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },
@@ -37,6 +37,6 @@
       { "carriers": 9, "example": "packs/encrypted-containers/tools/archive_probe/run.py", "why": "the encrypted-containers lineage" },
       { "carriers": 10, "example": "packs/macos-forensics/tools/fsevents_parse/run.py", "why": "the macOS lineage" }
     ] },
-    "WITHHOLDING": { "variants": [ { "carriers": 50, "example": "packs/computer-forensics-base/tools/archive_extract/run.py" } ] }
+    "WITHHOLDING": { "variants": [ { "carriers": 51, "example": "packs/computer-forensics-base/tools/archive_extract/run.py" } ] }
   }
 }
