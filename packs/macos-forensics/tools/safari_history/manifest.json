@@ -53,8 +53,8 @@
   "example": "{\"path\": \"work/extracted/Users/alice/Library/Safari/History.db\", \"out_file\": \"work/<your id>/safari.jsonl\"}",
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
-  "version": 1,
-  "sha256": "1889d623088a84b26af1e7325c6867603d491f032c488e1c75405853da381ee6",
+  "version": 2,
+  "sha256": "470e29cd5b7f238b558906d56cde2f8cc768551caf0663822f7f7fca33f62863",
   "use": {
     "names": [
       "History.db"

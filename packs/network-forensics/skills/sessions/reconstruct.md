@@ -2,7 +2,7 @@
 id: sessions/reconstruct
 title: Reconstructing transactions and objects
 when: You need what was actually sent, not just who spoke to whom.
-needs: [capture/what-you-have]
+needs: [capture/what-you-have, evidence/captured-secrets]
 tools: [pcap_summary, pcap_extract, zeek_run]
 requires_host: [tcpflow, ngrep, tshark, zeek]
 ---

@@ -28,4 +28,4 @@ Script block logging, module logging and transcription are policy: read it with 
 - **Qualifiers of a negative:** script block logging shown on, off or not established; which profiles, transcripts and logs the case supplied.
 
 Shows: engine-logged text and its host and account. Does not show: who typed it, intent, completion or effect. Record: file, channel, record id, `record_offset`, the policy evidence, the parts you hold.
-Sensitive output: command lines and script text can hold a credential; run `evtx_query` here as a job with `secret_output: true`.
+Sensitive output: command lines and script text can hold a credential; run `evtx_query` here as a job with `secret_output: true`. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

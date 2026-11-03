@@ -17,6 +17,6 @@ Both stores attach activity to an account context: a profile's hive for UserAssi
 - **Value names** are NT device paths, `\Device\HarddiskVolumeN\...`: keep them as they are with the SID. MountedDevices alone may not resolve a historical volume number to a drive letter; use volume and mount evidence (`registry/system-profile`, `registry/devices`) and leave it unresolved rather than invent a letter.
 - **Agreement.** When these stores and Prefetch agree and their clocks and meanings are compatible, an application-activity hypothesis is stronger; it does not identify the human, show one shared launch time or exclude automation.
 - A negative says whether the hive was dirty, the logs applied and the user's hive collected at all: a user whose hive was not collected is not a user with no entry.
-- Sensitive output: `regkv` withholds secret-looking values by name or place (`registry/readers`); program paths and counts are not secrets.
+- Sensitive output: `regkv` withholds secret-looking values by name or place (`registry/readers`); program paths and counts are not secrets. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 
 Shows: shell or service activity recorded against a profile or SID. Does not show: who was at the keyboard, that the program finished or had an effect, every program that ran, or an exact launch time shared by the sources. Record: hive digest and state, control set, GUID or SID, raw value, the decoder and its version.

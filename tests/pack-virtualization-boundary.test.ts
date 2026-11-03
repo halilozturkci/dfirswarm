@@ -2,7 +2,7 @@
  * virtualization-backup-forensics: the way out, in three layers (the BOUNDARY block, the same text in the three tools).
  *
  *   layer 1  an allow-list per field type: a name, a path, an identifier or a simple value is shown only when it fits the
- *            plain grammar of its type, else it is `<withheld: N bytes, field F>` and the original goes to the values file;
+ *            plain grammar of its type, else it is `<withheld N characters: not a plain name>` and the original goes to the values file;
  *   layer 2  a deny-list for every other string, run on a copy normalised by Unicode property, with the value after a
  *            secret's name found anywhere, in linear time;
  *   layer 3  a check of its own, written apart from the two layers above, on what was serialised.
@@ -185,8 +185,8 @@ def rates():
             r = random.Random(zlib.crc32(("%s|%s|%d" % (shape, ctx, req["seed"])).encode()))
             whole = frag = backstop_alone = 0
             for _ in range(req["n"]):
-                tool.RUN["chars"] = 0
-                tool.RUN["stop"] = None
+                tool._STOP["chars"] = 0
+                tool._STOP["by"] = None
                 plant, cores = make(shape, r)
                 text = fmt % plant
                 final = tool.seal_text(text, "boundary", field)
@@ -227,7 +227,7 @@ def linear():
                             ("key_files", lambda n: ("--key ~/.ssh/id_rsa --tls-auth ta.key " * n)[:n]), ("iqn_hex", lambda n: ("iqn.2010-06.com.purestorage:flasharray." + "a1" * n)[:n]), ("flag_dashes", lambda n: ("--a-b-c-d-e-password" * n)[:n]),
                             ("secret_tags_long", lambda n: ("pwd-" + "srv01-" * n)[:n])):
         def once(text):
-            tool._SEALED.clear(); tool._CHECKED.clear(); tool.RUN["chars"] = 0; tool.RUN["stop"] = None
+            tool._MEMO.clear(); tool._CHECKED.clear(); tool._KEYS.clear(); tool._STOP["chars"] = 0; tool._STOP["by"] = None
             tool.seal_text(text, "boundary", req.get("field"))
             tool._suspect(text)
         times = ladder(once, [make_text(n) for n in req["sizes"]])
@@ -238,28 +238,36 @@ def linear():
 
 
 def stop():
-    tool.RUN["deadline"] = time.monotonic() - 1
-    tool.RUN["stop"] = None
+    tool._CLOCK["deadline"] = time.monotonic() - 1
+    tool._STOP["by"] = None
+    tool._STOP["strings"] = 0
     a = tool.seal_text("a plain sentence that was not judged before " + str(random.random()), "boundary", None)
     b = tool.seal_text("web01", "boundary", "name")
-    return {"after_deadline": a, "short_name": b, "stop": tool.RUN["stop"], "count": tool.RUN["stopped_strings"]}
+    out = {"after_deadline": a, "short_name": b, "stop": tool._STOP["by"], "count": tool._STOP["strings"]}
+    tool._CLOCK["deadline"] = None
+    return out
 
 
 def answer():
-    tool.RUN["deadline"] = time.monotonic() - 1
-    tool.RUN["stop"] = None
-    tool.seal_text("a plain sentence nobody judged before " + str(random.random()), "boundary", None)
+    # the seal stop of the tool has passed: nothing is judged, the strings that were not judged are withheld by their size, a short plain word stays readable
+    tool._STOP["by"] = None
+    tool._STOP["strings"] = 0
+    tool._CLOCK["stop"] = time.monotonic() - 1
     doc = json.loads(tool.answer_text({"status": "complete", "status_basis": "every file was read", "note": "hello"}))
+    tool._CLOCK["stop"] = None
     return {"status": doc["status"], "basis": doc["status_basis"], "stopped_by": doc["boundary"]["stopped_by"], "withheld_by_the_stop": doc["boundary"]["strings_withheld_by_the_stop"], "note": doc["note"]}
 
 
 def cap():
-    tool.RUN["cap"] = 100
-    tool.RUN["chars"] = 0
-    tool.RUN["stop"] = None
+    tool._STOP["cap"] = 100
+    tool._STOP["chars"] = 0
+    tool._STOP["by"] = None
     a = tool.seal_text("ab cd " * 10 + "q1", "boundary", None)
     b = tool.seal_text("ef gh " * 10 + "q2", "boundary", None)
-    return {"first": a == "ab cd " * 10 + "q1", "second": b, "stop": tool.RUN["stop"]}
+    stop = tool._STOP["by"]
+    # the final answer is judged whatever the cap says, and says the run stopped
+    doc = json.loads(tool.answer_text({"status": "complete", "status_basis": "every file was read", "note": "a plain final sentence"}))
+    return {"first": a == "ab cd " * 10 + "q1", "second": b, "stop": stop, "final_note": doc["note"], "final_status": doc["status"], "final_stopped_by": doc["boundary"]["stopped_by"]}
 
 
 print(json.dumps({"rates": rates, "judge": judge, "linear": linear, "stop": stop, "answer": answer, "cap": cap}[req["op"]]()))
@@ -288,7 +296,7 @@ const TOOLS: [string, string][] = [["snapshot_chain_check", CHAIN], ["virtualiza
 test("an identifier field shows a plain name, a path, a device id and a content id, and withholds a token-shaped or odd one with its size and field", async () => {
   const shown: [string, string][] = [
     ["name", "Web-Server-01 (clone)"], ["name", "SRV-WEB01"], ["name", "Ubuntu 22.04 LTS"], ["name", "VM Snapshot 10%2f4%2f2024, 10:15:30 AM"], ["name", "nyc-grafana-57 - (10/05/2024 - 18:48:16)"],
-    ["name", "ProxyK8sMgmtNode10"], ["name", "Sunucu-Üretim-01"], ["name", "iqn.2004-12.com.example:sql-f1f9be4b"], ["name", "ExchangeMailboxServerPrimary01"],
+    ["name", "Sunucu-Üretim-01"], ["name", "iqn.2004-12.com.example:sql-f1f9be4b"], ["name", "ExchangeMailboxServerPrimary01"],
     ["path", "/vmfs/volumes/5f3d1a2b-9c8d7e6f-1a2b-0123456789ab/web01/web01-000002.vmdk"], ["path", "[datastore1] web01/web01.vmdk"], ["path", "/vmfs/volumes/datastore1/My VM/My VM.vmdk"],
     ["path", "C:\\ClusterStorage\\Volume1\\ProxyHr19\\VcenterOracle13_D41A224A-5C97-FDC1-1593-D7243F90EE4F.avhdx"], ["path", "/dev/disk/by-id/naa.6818b904ce6087413e3b266f850f1578"],
     ["path", "/vmfs/devices/disks/t10.ATA_____Samsung_SSD_870_EVO_1TB_____S5Y2NX0T571161"], ["path", "local-lvm:vm-100-disk-0"], ["path", "local:100/vm-100-disk-1.qcow2"], ["path", "/var/lib/vz/images/100/vm-100-disk-1.qcow2"],
@@ -304,21 +312,35 @@ test("an identifier field shows a plain name, a path, a device id and a content 
   ];
   const FIELD: Record<string, string> = { name: "name", path: "file", id: "uid", simple: "version" };
   const withheld: [string, string][] = [
-    ["name", "Q7fZx9LmR2kT4vb8nwc1y6pd3shJ0aXe5uQz"], ["name", "AKIAIOSFODNN7EXAMPLE"], ["name", "web01 vncPassword=Q7fZxLmRkTvbnwcy"], ["name", "svc:Pa55w0rd@nas01"], ["name", "a".repeat(161)],
+    ["name", "Q7fZx9LmR2kT4vb8nwc1y6pd3shJ0aXe5uQz"], ["name", "AKIAIOSFODNN7EXAMPLE"], ["name", "web01 vncPassword=Q7fZxLmRkTvbnwcy"], ["name", "svc:Pa55w0rd@nas01"],
     ["name", "ghp_aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1vW3xY5"], ["path", "/var/lib/libvirt/images/web01.qcow2?rootPassword=hJaXeuQzWpLmNbVc/x"], ["path", "https://svc:Pa55w0rdQ7fZ@nas01/share"], ["path", "pass:OfmHIEuiuW9NBS1"], ["path", "vm-Snapshot99130122398bae6eecece52413628fd183c188c7.vmsn"], ["path", "auth:abc"],
     ["name", "-password Zq7kP2mR"], ["name", "--password Zq7kP2mR"], ["name", "set password Zq7kP2mR"], ["name", "-pwd Zq7kP2mR"], ["name", "-token Zq7kP2mR"], ["name", "-secret Zq7kP2mR"],
     ["name", "d--pwd Zq7kP2mR"], ["name", "pwd-Zq7kP2mR"], ["name", "Token Zq7kP2mR"], ["name", "-pwdZq7kP2mR"], ["name", "-password abcdef"], ["path", "vm/-password Zq7kP2mR/a.vmdk"], ["simple", "-token Zq7kP2mR"],
     ["path", "/vmfs/volumes/vsan:" + "0123456789abcdef" + "0123456789abcdef" + "01234567/a/b.vmdk"], ["path", "/vmfs/devices/disks/t10.ATA_____Model_X_____" + "q7fz" + "x9lm" + "r2kt" + "4vb8nwc1"],
-    ["id", "pwd-Zq7kP2mR"], ["id", "Q7fZx9LmR2kT4vb8nwc1y6pd3shJ0aXe5uQz"], ["id", "d41d8cd98f00b204e9800998ecf8427e5ca9d41d8cd98f00b204e9800998ecf8"], ["simple", "ghp_aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1vW3xY5"], ["simple", "x=1"],
+    ["id", "pwd-Zq7kP2mR"], ["id", "Q7fZx9LmR2kT4vb8nwc1y6pd3shJ0aXe5uQz"], ["id", "d41d8cd98f00b204e9800998ecf8427e5ca9d41d8cd98f00b204e9800998ecf8"], ["simple", "ghp_aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1vW3xY5"],
   ];
   for (const [label, script] of TOOLS) {
     const got = await host(script, { op: "judge", items: [...shown, ...withheld].map(([k, t]) => [FIELD[k], t]) });
     shown.forEach(([k, t], i) => assert.equal(got[i].sealed, t, `${label}: a ${k} that is not a secret is shown as it is`));
     withheld.forEach(([k, t], i) => {
       const s: string = got[shown.length + i].sealed;
-      assert.match(s, /<withheld: \d+ bytes, field [a-z_ ]+>|<token-shaped text withheld \d+ characters>/, `${label}: ${k} ${t.slice(0, 30)} -> ${s}`);
-      if (t.length > 30) assert.equal(s.includes(t.slice(8, 30)), false);
+      assert.match(s, /<withheld \d+ (?:characters|bytes)(?:: [a-z][a-z ,/+:-]+)?>|<token-shaped text withheld \d+ characters>/, `${label}: ${k} ${t.slice(0, 30)} -> ${s}`);
+      // CHANGED with the one text: the path before a withheld value stays readable (the old block withheld all of it), so the value is looked for, not the start of the string
+      if (t.length > 30) assert.equal(s.includes(t.includes("rootPassword=") ? "hJaXeuQz" : t.slice(8, 30)), false);
     });
+  }
+});
+
+test("CHANGED with the one text: a machine name with several one-letter pieces is withheld, and a version field takes an `=` (the documented false positive and the documented widening)", async () => {
+  for (const [label, script] of TOOLS) {
+    const got = await host(script, { op: "judge", items: [["name", "ProxyK8sMgmtNode10"], ["version", "x=1"], ["name", "ProxyServer10"]] });
+    assert.match(got[0].sealed, /^<withheld \d+ characters: not a plain name>$/, `${label}: ProxyK8sMgmtNode10 was shown by the old block and is a false positive of the one text`);
+    assert.equal(got[1].sealed, "x=1", `${label}: a version field is judged as a path, which takes an =`);
+    assert.equal(got[2].sealed, "ProxyServer10", label);
+    // a name is judged as a path (a snapshot name holds a date with `/`): a component of 161 characters made of words is shown, as the one text allows 255, and 301 is not (161 times the same letter is withheld: a run of one letter is not a name)
+    const long = await host(script, { op: "judge", items: [["name", "backup-".repeat(23)], ["name", "backup-".repeat(43)]] });
+    assert.equal(long[0].sealed, "backup-".repeat(23), label);
+    assert.match(long[1].sealed, /^<withheld \d+ characters: not a plain name>$/, label);
   }
 });
 
@@ -486,7 +508,7 @@ test("a token split by a bidi isolate, a variation selector, a tag character, a 
         const text = out.stdout.normalize("NFKC");
         for (let k = 0; k + 12 <= secret.length; k++) assert.equal(text.includes(secret.slice(k, k + 12)), false, `${label}: ${split.codePointAt(0)?.toString(16)} leaves ${secret.slice(k, k + 12)}`);
         const doc = JSON.parse(out.stdout);
-        assert.equal(doc.boundary.strings_replaced_by_the_check, 0, `${label}: the seal did the work, not the check`);
+        assert.equal(doc.boundary.strings_replaced_by_the_backstop, 0, `${label}: the seal did the work, not the check`);
       });
     }
   }
@@ -532,8 +554,9 @@ test("the layers take time proportional to the length of a string: 6,250, 25,000
 test("past its time or character budget a string is withheld by its size, and the answer says it stopped", async () => {
   for (const [label, script] of TOOLS) {
     const got = await host(script, { op: "stop" });
-    assert.match(got.after_deadline, /^<withheld: \d+ bytes, run limit>$/, label);
-    assert.equal(got.stop, "max_seconds");
+    assert.match(got.after_deadline, /^<withheld \d+ bytes: backstop: the judging time ran out>$/, label);
+    // CHANGED with the one text: the stop names "the judging time" (the seal stop of the tool), not "max_seconds"
+    assert.match(got.stop, /^the judging time/);
     assert.ok(got.count >= 1);
   }
 });
@@ -542,14 +565,17 @@ test("a run that passes its time or its character cap says so in the answer: par
   for (const [label, script] of TOOLS) {
     const a = await host(script, { op: "answer" });
     assert.equal(a.status, "partial", label);
-    assert.equal(a.stopped_by, "max_seconds");
-    assert.match(a.basis, /judging the strings stopped at max_seconds/);
+    assert.match(a.stopped_by, /^the judging time/);     // CHANGED with the one text: it names the judging time, not "max_seconds"
+    assert.match(a.basis, /judging the strings stopped at the judging time/);
     assert.ok(a.withheld_by_the_stop >= 1);
     assert.equal(a.note, "hello", "the final answer itself is still judged and shown");
     const c = await host(script, { op: "cap" });
     assert.equal(c.first, true);
-    assert.match(c.second, /^<withheld: 62 bytes, run limit>$/);
+    assert.match(c.second, /^<withheld 62 bytes: backstop: the judging time ran out>$/);     // CHANGED: the placeholder of the one text
     assert.match(c.stop, /cap of \d+ characters/);
+    assert.equal(c.final_note, "a plain final sentence", "the final answer is judged whatever the cap says");
+    assert.equal(c.final_status, "partial");
+    assert.match(c.final_stopped_by, /cap of \d+ characters/);
   }
 });
 
@@ -695,7 +721,7 @@ test("the files a run writes: the values file holds the original of a name the a
     await put(cwd, "inputs/vm/a.vmx", vmx([["displayName", secret], ["guestOS", "ubuntu-64"]]));
     const plain = await tool(INVENTORY, cwd, { root: "inputs" });
     assert.equal(plain.stdout.includes(secret), false);
-    assert.match(JSON.parse(plain.stdout).vms[0].name, /^<withheld: 36 bytes, field displayName>$/);
+    assert.match(JSON.parse(plain.stdout).vms[0].name, /^<withheld 36 characters: not a plain name>$/);
     const out = await asJob(INVENTORY, cwd, { root: "inputs", write_text: true }, undefined, {}, "outv");
     const doc = body(out);
     assert.equal(out.stdout.includes(secret), false);

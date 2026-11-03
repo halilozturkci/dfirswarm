@@ -207,3 +207,20 @@ test("a link, a directory and a file past which the offset points are refused as
     }
   });
 });
+
+test("a signal before any container section was read is failed, after one it is partial; neither is complete", async () => {
+  await withCwd(async (cwd, bin) => {
+    const img = await image(cwd);
+    await fsapfsStub(bin, `print("fsapfsinfo 20231209")\nsys.stdout.flush()\ntime.sleep(300)`);
+    const none = await signalled(APFS, cwd, { path: img, max_seconds: 60 }, "SIGTERM", 1500, {}, bin);
+    assert.equal(none.code, 143, none.stderr + none.stdout.slice(0, 300));
+    const n = JSON.parse(none.stdout);
+    assert.equal(n.interrupted, "SIGTERM");
+    assert.equal(n.status, "failed", "nothing was read yet");
+    await fsapfsStub(bin, `print("fsapfsinfo 20231209")\nprint()\nprint("Container information:")\nprint("\tNumber of volumes\t: 2")\nsys.stdout.flush()\ntime.sleep(300)`);
+    const some = await signalled(APFS, cwd, { path: img, max_seconds: 60 }, "SIGTERM", 1500, {}, bin);
+    const s = JSON.parse(some.stdout);
+    assert.equal(s.interrupted, "SIGTERM");
+    assert.equal(s.status, "partial", "a container section had been read");
+  });
+});

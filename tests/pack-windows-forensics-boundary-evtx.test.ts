@@ -134,7 +134,8 @@ test("evtx_query and evtx_carve: contains reads the text the answer prints, so a
     const backstopped = new Set<number>();
     for (const row of await rowsOf(cwd)) {
       const shown = (row.data as Answer | undefined)?.CommandLine;
-      if (typeof shown === "string" && shown.includes("backstop: a random-looking run") && typeof row.record_id === "number") backstopped.add(row.record_id);
+      // CHANGED with the text of PKG-XP-05: the layers now withhold more keys, and what only the backstop replaces is labelled a named secret (10 of 2400) or a random-looking run; any backstop label is the case this test needs
+      if (typeof shown === "string" && shown.includes("backstop: ") && typeof row.record_id === "number") backstopped.add(row.record_id);
     }
     const found = candidates.map((c, i) => ({ c, rec: i + 1 })).filter((x) => backstopped.has(x.rec)).slice(0, 2);
     assert.ok(found.length >= 1, "the planted keys include one that only the backstop replaces");

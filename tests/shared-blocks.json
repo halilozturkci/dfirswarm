@@ -4,10 +4,7 @@
   "families": {
     "ARCHIVE BLOCK": { "variants": [ { "carriers": 3, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },
     "BACKSTOP": { "variants": [ { "carriers": 6, "example": "packs/ransomware-response/tools/encrypted_survey/run.py" } ] },
-    "BOUNDARY": { "variants": [
-      { "carriers": 18, "example": "packs/windows-forensics/tools/regkv/run.py" },
-      { "carriers": 3, "example": "packs/virtualization-backup-forensics/tools/virtualization_inventory/run.py", "why": "the virtualization pack's own text, until its three tools move onto the windows text (the BOUNDARY step 2 package)" }
-    ] },
+    "BOUNDARY": { "variants": [ { "carriers": 21, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "COMMON": { "variants": [ { "carriers": 3, "example": "packs/virtualization-backup-forensics/tools/backup_audit_normalise/run.py" } ] },
     "EVTX READ": { "variants": [ { "carriers": 3, "example": "packs/windows-forensics/tools/evtx_carve/run.py" } ] },
     "FILES": { "variants": [ { "carriers": 2, "example": "packs/virtualization-backup-forensics/tools/snapshot_chain_check/run.py" } ] },
@@ -19,12 +16,12 @@
     ] },
     "ONE WAY OUT": { "variants": [ { "carriers": 7, "example": "packs/reverse-engineering/recipes/capa-floss/run.py" } ] },
     "PAGE": { "variants": [
-      { "carriers": 37, "example": "packs/windows-forensics/tools/regkv/run.py" },
+      { "carriers": 38, "example": "packs/windows-forensics/tools/regkv/run.py" },
       { "carriers": 8, "example": "packs/memory-forensics/tools/mem_carve/run.py", "why": "the memory pack's own pager text" }
     ] },
-    "PLACE": { "variants": [ { "carriers": 45, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
+    "PLACE": { "variants": [ { "carriers": 46, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "PROCESS": { "variants": [
-      { "carriers": 32, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
+      { "carriers": 33, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
       { "carriers": 12, "example": "packs/windows-forensics/recipes/windows-artefacts/run.py", "why": "the windows lineage: its stop and process handling differs from the general text" }
     ] },
     "RECORDS BLOCK": { "variants": [ { "carriers": 7, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },
@@ -36,7 +33,7 @@
     ] },
     "SHOWN": { "variants": [ { "carriers": 7, "example": "packs/memory-forensics/tools/mem_fs/run.py" } ] },
     "STOP": { "variants": [
-      { "carriers": 58, "example": "packs/windows-forensics/tools/regkv/run.py", "why": "the windows lineage (the windows pack, and the ransomware-response and reverse-engineering tools that adopted its text)" },
+      { "carriers": 59, "example": "packs/windows-forensics/tools/regkv/run.py", "why": "the windows lineage (the windows pack, and the ransomware-response and reverse-engineering tools that adopted its text)" },
       { "carriers": 9, "example": "packs/encrypted-containers/tools/archive_probe/run.py", "why": "the encrypted-containers lineage" },
       { "carriers": 9, "example": "packs/macos-forensics/tools/fsevents_parse/run.py", "why": "the macOS lineage" }
     ] },

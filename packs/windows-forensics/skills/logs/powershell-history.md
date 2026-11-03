@@ -15,4 +15,4 @@ Use when you read the PSReadLine history file, decode a command line or see an o
 - Changes to Defender or other controls arise through policy, management software and interfaces other than PowerShell; read their own records (`antiforensics/controls`).
 
 Shows: what the host chose to save, and what the command line asked for. Does not show: who typed it, that the code completed or had an effect, that a missing command was never run, or that the file is whole. Record: path, encoding, extent, the profile, file times, and the decoding step.
-Sensitive output: command lines and decoded text can hold credentials; run `evtx_query` and any decoding as jobs with `secret_output: true`, and do not carry the encoded form of a command that holds one into a note.
+Sensitive output: command lines and decoded text can hold credentials; run `evtx_query` and any decoding as jobs with `secret_output: true`, and do not carry the encoded form of a command that holds one into a note. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

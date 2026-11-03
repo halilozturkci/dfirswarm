@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { withCwd } from "./tool-library-harness.ts";
-import { TCC, body, everything, filesUnder, ok, secretJob, signalled, tccDb, tool } from "./macos-late-harness.ts";
+import { SAFARI, TCC, body, everything, filesUnder, ok, secretJob, signalled, tccDb, tool } from "./macos-late-harness.ts";
 
 const MIC = { service: "kTCCServiceMicrophone", client: "com.apple.Terminal", client_type: 0, auth_value: 2, auth_reason: 3, auth_version: 1, last_modified: 1700000000 };
 const FILES = { service: "kTCCServiceSystemPolicyAllFiles", client: "/usr/local/bin/tool", client_type: 1, auth_value: 0, auth_reason: 6, auth_version: 1, policy_id: 7, last_modified: 1700000100, csreq: "hex:fade0c0000000010" };
@@ -206,5 +206,67 @@ test("the evidence's digest is the same before and after a run with a -wal", asy
     const d0 = await digest();
     ok(await tool(TCC, cwd, { path: db }));
     assert.equal(await digest(), d0);
+  });
+});
+
+// ---- fix round 1: the authorizer is held by a test, unknown values are named ---------------------------------------------------------------------
+
+const AUTH_PROBE = `
+import json, sqlite3, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+a = src.index("def read_only_authorizer(")
+b = src.index(chr(10) + "def ", a)
+code = src[a:b]
+if sys.argv[2] == "loosened":
+    assert "return sqlite3.SQLITE_DENY" in code
+    code = code.replace("return sqlite3.SQLITE_DENY", "return sqlite3.SQLITE_OK")
+ns = {"sqlite3": sqlite3}
+exec(code, ns)
+f = ns["read_only_authorizer"]
+cases = {"select": f(sqlite3.SQLITE_SELECT, None, None, "main", None), "read": f(sqlite3.SQLITE_READ, "access", "client", "main", None),
+         "insert": f(sqlite3.SQLITE_INSERT, "access", None, "main", None), "update": f(sqlite3.SQLITE_UPDATE, "access", "client", "main", None),
+         "delete": f(sqlite3.SQLITE_DELETE, "access", None, "main", None), "create": f(sqlite3.SQLITE_CREATE_TABLE, "x", None, "main", None),
+         "attach": f(sqlite3.SQLITE_ATTACH, "/tmp/x", None, None, None), "transaction": f(sqlite3.SQLITE_TRANSACTION, "BEGIN", None, None, None),
+         "pragma_write": f(sqlite3.SQLITE_PRAGMA, "journal_mode", "DELETE", "main", None), "pragma_checkpoint": f(sqlite3.SQLITE_PRAGMA, "wal_checkpoint", "PASSIVE", "main", None)}
+print(json.dumps({k: v == sqlite3.SQLITE_OK for k, v in cases.items()}))
+`;
+
+async function probe(script: string, mode: string): Promise<Record<string, boolean>> {
+  const { runPySnippet } = await import("./tool-library-harness.ts");
+  const out = await runPySnippet(AUTH_PROBE, [script, mode], undefined);
+  assert.equal(out.code, 0, out.stderr);
+  return JSON.parse(out.stdout) as Record<string, boolean>;
+}
+
+test("the read-only authorizer allows reading and the checkpoint pragma and nothing else; the same check fails on a loosened copy", async () => {
+  const allowed = { select: true, read: true, pragma_checkpoint: true };
+  const denied = ["insert", "update", "delete", "create", "attach", "transaction", "pragma_write"];
+  for (const script of [TCC, SAFARI]) {
+    const real = await probe(script, "real");
+    for (const [k, v] of Object.entries(allowed)) assert.equal(real[k], v, `${script}: ${k}`);
+    for (const k of denied) assert.equal(real[k], false, `${script}: ${k} is denied`);
+    const loose = await probe(script, "loosened");
+    assert.ok(denied.some((k) => loose[k] === true), "the loosened copy allows a write: the check above would fail on it");
+  }
+});
+
+test("an auth_value outside 0..3, a missing admin version, and an empty policy_id are named, not decoded and not counted as managed", async () => {
+  await withCwd(async (cwd) => {
+    const db = await tccDb(cwd, "tcc-odd.db", "14", [{ ...MIC, auth_value: 9 }, { ...MIC, client: "com.example.empty", policy_id: "" }]);
+    const a = ok(await tool(TCC, cwd, { path: db }));
+    assert.equal(a.status, "partial");
+    assert.match(a.problems.join(" "), /1 row\(s\) have an auth_value that is not 0, 1, 2 or 3/);
+    const odd = a.entries.find((e: { columns: { auth_value: number } }) => e.columns.auth_value === 9);
+    assert.equal(odd.auth_value_meaning ?? null, null);
+    assert.equal(odd.columns.auth_value, 9);
+    const empty = a.entries.find((e: { columns: { client: string } }) => e.columns.client === "com.example.empty");
+    assert.equal(empty.managed, false, "an empty policy_id is not a managed row");
+    const noVersion = await tccDb(cwd, "tcc-nover.db", "14", [MIC]);
+    const { runPySnippet } = await import("./tool-library-harness.ts");
+    const del = await runPySnippet(`import sqlite3,sys\nc=sqlite3.connect(sys.argv[1]);c.execute("DELETE FROM admin");c.commit();c.close()`, [join(cwd, noVersion)], undefined);
+    assert.equal(del.code, 0, del.stderr);
+    const b = ok(await tool(TCC, cwd, { path: noVersion }));
+    assert.equal(b.status, "partial");
+    assert.match(b.problems.join(" "), /admin table has no integer version row/);
   });
 });

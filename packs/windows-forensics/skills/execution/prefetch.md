@@ -18,3 +18,5 @@ Use when you read a Prefetch file you have. Not for records carved from a raw so
 - A zero-length entry with named streams is an anomaly to enumerate (`filesystem/ads`), not a launch.
 
 Shows: what the prefetcher recorded for one executable path. Does not show: who ran it, where it was started from, that it finished or had an effect, or that these are all its runs. Record: file digest, container and version, `status`, `file_information_size`, raw FILETIMEs.
+
+Sensitive output: `prefetch_mam` withholds nothing; `filename_strings` are paths as stored. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

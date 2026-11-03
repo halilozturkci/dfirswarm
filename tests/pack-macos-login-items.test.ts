@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { withCwd } from "./tool-library-harness.ts";
 import { BTM, btmFile, everything, ok, signalled, storeSpec, tool } from "./macos-late-harness.ts";
 
@@ -179,5 +179,68 @@ test("SIGTERM ends the sweep with one JSON answer, exit 143, and the rows writte
     const lines = (await readFile(join(cwd, "work", "rows.jsonl"), "utf8")).split("\n").filter(Boolean);
     assert.equal(lines.length, a.entry_count);
     for (const l of lines) JSON.parse(l);
+  });
+});
+
+// ---- fix round 1: references anywhere in an object are followed; a frame of the walk costs a constant ------------------------------------------------
+
+const CLS = { $classname: "Item", $classes: ["Item", "NSObject"] };
+const itemObj = (name: string): Record<string, unknown> => ({ $class: { uid: 0 }, name: { uid: 99 }, bundleIdentifier: name });
+
+async function names(cwd: string, objects: unknown[], file = "BackgroundItems-v4.btm"): Promise<{ answer: Record<string, any>; items: string[] }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const a = ok(await tool(BTM, cwd, { path: await btmFile(cwd, file, { objects, top: { root: { uid: 1 } } }) }));
+  return { answer: a, items: a.entries.filter((e: { row_type: string }) => e.row_type === "item").map((e: { fields: { bundleIdentifier: { value: string } } }) => e.fields.bundleIdentifier.value) };
+}
+
+test("an item reached through a list in a list, through a UID that is itself an entry of $objects, or through 200 nested lists is found, not missed", async () => {
+  await withCwd(async (cwd) => {
+    const base = (z: unknown): unknown[] => [CLS, { $class: { uid: 0 }, k: { uid: 2 }, z }, itemObj("com.example.a"), itemObj("com.example.b")];
+    const nested = await names(cwd, base([[{ uid: 3 }]]));
+    assert.deepEqual(nested.items.sort(), ["com.example.a", "com.example.b"]);
+    assert.equal(nested.answer.status, "partial", "object 99 of the fixture's name field does not exist, which is named");
+    const viaUid = await names(cwd, [CLS, { $class: { uid: 0 }, k: { uid: 2 }, z: { uid: 3 } }, itemObj("com.example.a"), { uid: 4 }, itemObj("com.example.b")]);
+    assert.deepEqual(viaUid.items.sort(), ["com.example.a", "com.example.b"]);
+    let deep: unknown = { uid: 3 };
+    for (let i = 0; i < 200; i++) deep = [deep];
+    const nest500 = await names(cwd, base(deep));
+    assert.deepEqual(nest500.items.sort(), ["com.example.a", "com.example.b"]);
+    const inDict = await names(cwd, base({ x: { y: [{ uid: 3 }] } }));
+    assert.deepEqual(inDict.items.sort(), ["com.example.a", "com.example.b"]);
+  });
+});
+
+test("a cycle through objects that are only references is a row with its reason, not a hang", async () => {
+  await withCwd(async (cwd) => {
+    const r = await names(cwd, [CLS, { $class: { uid: 0 }, k: { uid: 2 }, z: { uid: 3 } }, itemObj("com.example.a"), { uid: 4 }, { uid: 3 }]);
+    assert.equal(r.answer.status, "partial");
+    assert.ok(r.answer.entries.some((e: { reason?: string }) => /its own ancestor/.test(e.reason ?? "")));
+    assert.deepEqual(r.items, ["com.example.a"]);
+  });
+});
+
+test("a chain of 150,000 objects under a ceiling of address space: bounded by the depth, a larger depth than the cap is refused, nothing runs out of memory", async () => {
+  await withCwd(async (cwd) => {
+    const n = 150000;
+    const objects: unknown[] = ["$null"];
+    for (let i = 1; i <= n; i++) objects.push(i < n ? { k: { uid: i + 1 } } : { k: "end" });
+    const file = await btmFile(cwd, "chain.btm", { objects, top: { root: { uid: 1 } } });
+    const run = (args: unknown): Promise<{ code: number | null; out: string }> =>
+      new Promise((resolve) => {
+        const child = spawn("bash", ["-c", `ulimit -v 700000; exec python3 ${JSON.stringify(BTM)}`], { cwd, env: { ...process.env, AGENT_ID: "s1" } });
+        const out: Buffer[] = [];
+        child.stdout.on("data", (c: Buffer) => out.push(c));
+        child.on("close", (code) => resolve({ code, out: Buffer.concat(out).toString("utf8") }));
+        child.stdin.end(JSON.stringify(args));
+      });
+    const refused = await run({ path: file, max_depth: 100000 });
+    const r = JSON.parse(refused.out);
+    assert.equal(refused.code, 1);
+    assert.equal(r.status, "failed");
+    assert.match(r.error, /cap of 10000/);
+    const bounded = await run({ path: file, max_depth: 10000, max_nodes: 1000000 });
+    const b = JSON.parse(bounded.out);
+    assert.equal(bounded.code, 0, bounded.out.slice(0, 200));
+    assert.equal(b.status, "partial");
+    assert.ok(b.entries.some((e: { reason?: string }) => /depth bound \(10000\)/.test(e.reason ?? "")));
   });
 });

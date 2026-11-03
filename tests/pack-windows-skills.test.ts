@@ -176,6 +176,66 @@ test("the claims the review took apart are gone, no skill states a version fact 
   }
 });
 
+// ---- What the skills and the README say about withholding, and how a found secret is described. ----
+
+// A tool "can reach a secret" when its manifest declares secret_output: the job that writes values must be a secret job.
+async function secretTools(): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const e of await readdir(TOOLS, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const manifest = JSON.parse(await readFile(join(TOOLS, e.name, "manifest.json"), "utf8"));
+    if ("secret_output" in manifest) out.add(e.name);
+  }
+  return out;
+}
+const namedTools = (skill: Skill, tools: Set<string>): string[] =>
+  [...tools].filter((t) => ((skill.meta.tools as string[]) ?? []).includes(t) || skill.body.includes("`" + t + "`"));
+const SENSITIVE_LINE = /^(?:- )?(?:\*\*)?Sensitive output/;
+
+test("every leaf that names a tool able to reach a secret says how to describe a found secret: where it sits, kind, length, what it grants, never its value, a fragment or a digest", async () => {
+  const skills = await load(SKILLS);
+  const tools = await secretTools();
+  assert.ok(tools.size >= 10, "the tools that declare secret_output were found");
+  const FOUND = /\bdescribe a found secret by where it sits\b[^.]*\bkind\b[^.]*\blength\b[^.]*\bgrants\b[^.]*\bnever\b[^.]*\bvalue\b[^.]*\bfragment\b[^.]*\b(?:digest|hash)\b/i;
+  let checked = 0;
+  for (const s of skills.values()) {
+    if (namedTools(s, tools).length === 0) continue;
+    checked++;
+    assert.match(s.body, FOUND, `${s.id} names a tool that can reach a secret and does not say how to describe a found secret`);
+  }
+  assert.ok(checked >= 40, `${checked} leaves were checked`);
+});
+
+test("a Sensitive-output line that names lnk_parse, lnk_jumplist, yara_scan, browser_history, utf16_urls or jumplist says what its withholding goes by and that what it does not cover is printed", async () => {
+  const skills = await load(SKILLS);
+  const SIX = /`(?:lnk_parse|lnk_jumplist|yara_scan|browser_history|utf16_urls|jumplist)`/;
+  let lines = 0;
+  for (const s of skills.values()) {
+    for (const line of s.body.split("\n")) {
+      if (!SENSITIVE_LINE.test(line) || !SIX.test(line)) continue;
+      lines++;
+      assert.match(line, /\bprinted\b/, `${s.id}: its Sensitive-output line names the tool and does not say what is printed`);
+      assert.match(line, /\b(?:by shape|by name|name and shape|by parameter name|out of the answer)\b/i, `${s.id}: its Sensitive-output line does not say what the withholding goes by`);
+    }
+  }
+  assert.ok(lines >= 6, `${lines} lines were checked`);
+});
+
+test("the README does not say a tool prints none of a secret, and says the withholding is by shape or by name", async () => {
+  const readme = (await readFile(join(PACK, "README.md"), "utf8")).replace(/\s+/g, " ");
+  assert.doesNotMatch(readme, /print none of it/i);
+  assert.match(readme, /by shape or by name, not wholesale, so a secret of another shape is printed/);
+});
+
+test("the six leaves that read a file system or a Prefetch structure have a Sensitive-output line, and no skill calls the adversary an operator", async () => {
+  const skills = await load(SKILLS);
+  for (const id of ["filesystem/indx", "filesystem/journals", "filesystem/recycle-bin", "filesystem/shadowcopies", "execution/prefetch", "execution/prefetch-carved"]) {
+    const s = skills.get(id)!;
+    assert.ok(s.body.split("\n").some((l) => SENSITIVE_LINE.test(l)), `${id} has a Sensitive-output line`);
+  }
+  for (const s of skills.values()) assert.doesNotMatch(s.body, /\boperator\b/i, `${s.id} says "operator": write the attacker or the intruder`);
+});
+
 // ---- The router: the one entry a run shows for this pack when its index is over the run's budget. ----
 
 const ROUTER = "windows/router";

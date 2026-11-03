@@ -15,5 +15,5 @@ Use when any time is converted or joined. Not for what an artefact's time means 
 - `istat` prints a file's times in the examiner host's zone unless told otherwise: run `istat -z UTC` (check each other Sleuth Kit program that prints times for the same option) and record the Sleuth Kit version and the exact invocation beside what you quote. A time copied from a rendering without that record is a local-time claim: convert it again from the raw value.
 - Two machines or logs in one timeline: put every source in UTC first and state the zone taken for each local-time source and why.
 
-Sensitive output: only time fields are read here (leave `mft_records` `with_resident` off; if it is on, a job with `secret_output: true`); `regkv` withholds by name and place only (`registry/readers`).
+Sensitive output: only time fields are read here (leave `mft_records` `with_resident` off; if it is on, a job with `secret_output: true`); `regkv` withholds by name and place only (`registry/readers`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 Shows: which clock a value is on and which rule converts it. Does not show: that the clock was right, or that today's zone applied then. Record: raw value, epoch or zone rule and its source, tool version and invocation.

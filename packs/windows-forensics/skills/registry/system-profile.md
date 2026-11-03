@@ -21,5 +21,5 @@ Read the hives by `registry/overview`; each is a configuration state, not a hist
 - Volume: `fsstat` gives the filesystem serial and `image_layout` a `volume_serial` per partition; a link or jump list records a 32-bit serial of its own (`lnk_parse` prints eight hex digits). Compare like with like and say which digits. Equal serials support an association and do not prove one (a clone carries the same serial); keep a mismatch as a mismatch. Record partition, filesystem type and acquisition source.
 - Network: the interface keys hold the addresses and DHCP lease times last written (numbers: `timestamp_decode`, record the epoch).
 
-Sensitive output: `regkv` withholds by name and place only (`registry/readers`).
+Sensitive output: `regkv` withholds by name and place only (`registry/readers`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 Shows: configuration as last written. Does not show: who used the machine, the original install date, a connection history, or a profile in use at a moment; a profile or interface key absent from one hive is not absent from the machine. Record: key path, value, build source and table, serial digits compared.
