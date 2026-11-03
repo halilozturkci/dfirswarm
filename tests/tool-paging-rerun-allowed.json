@@ -27,6 +27,8 @@
     { "tool": "reverse-engineering/elf_directories", "item": "PKG-XP-08", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "reverse-engineering/pe_directories", "item": "PKG-XP-08", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "reverse-engineering/pe_info", "item": "PKG-XP-08", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
+    { "tool": "triage-collection/collection_profile_compare", "item": "PKG-XP-08", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
+    { "tool": "triage-collection/collection_timestamps", "item": "PKG-XP-08", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "triage-collection/collection_coverage", "item": "PKG-XP-08", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "triage-collection/collection_id", "item": "PKG-XP-08", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "triage-collection/collection_index", "item": "PKG-XP-08", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },

@@ -26,8 +26,8 @@ async function block(path: string): Promise<string> {
 }
 
 test("every tool carries the same shared block, byte for byte", async () => {
-  const [a, ...rest] = await Promise.all([ID, INDEX, ...MANIFEST_TOOLS.map((n) => join(TOOLS, n, "run.py"))].map(block));
-  assert.equal(rest.length, 5);
+  const [a, ...rest] = await Promise.all([ID, INDEX, ...MANIFEST_TOOLS.map((n) => join(TOOLS, n, "run.py")), join(TOOLS, "collection_timestamps", "run.py"), join(TOOLS, "collection_profile_compare", "run.py")].map(block));
+  assert.equal(rest.length, 7, "eight carriers");
   for (const b of rest) assert.equal(a, b);
   assert.ok(a.length > 8000);
 });
@@ -149,10 +149,10 @@ function ascii(text: string): string {
 }
 
 const MANIFEST_TOOLS = ["collection_manifest_parse", "collection_manifest_verify", "collection_path_map", "collection_coverage"];
-const NAMES = ["collection_id", "collection_index", ...MANIFEST_TOOLS];
+const NAMES = ["collection_id", "collection_index", ...MANIFEST_TOOLS, "collection_timestamps", "collection_profile_compare"];
 
 test("every manifest has a use, a raised version, the sha256 of its script and a description that says what is and is not measured", async () => {
-  const versions: Record<string, number> = { collection_id: 8, collection_index: 8, collection_manifest_parse: 6, collection_manifest_verify: 6, collection_path_map: 7, collection_coverage: 7 };
+  const versions: Record<string, number> = { collection_id: 8, collection_index: 8, collection_manifest_parse: 6, collection_manifest_verify: 6, collection_path_map: 7, collection_coverage: 7, collection_timestamps: 2, collection_profile_compare: 1 };
   for (const name of NAMES) {
     const manifest: Json = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
     assert.ok(manifest.use?.names?.length >= (name === "collection_id" ? 5 : 1), `${name} says what it reads`);

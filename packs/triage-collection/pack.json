@@ -1,7 +1,7 @@
 {
   "id": "triage-collection",
   "name": "Triage and Collection Pack",
-  "version": "1.8.7",
+  "version": "1.11.0",
   "description": "What to do when the evidence is a collector's output rather than an image: surveying what was delivered and which collectors left records, reading those records without turning them into findings, keeping the source, delivered and analysis paths apart, saying what the delivery can and cannot establish, requesting more evidence through the operator, and handing files to the platform packs.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,10 +18,10 @@
   "checksums": {
     "sha256": {
       "LICENCE": "c271b022edf4f543b6fc7c4e6fc0b138c57648f0dffe25a4e34c7e9f1c178d8a",
-      "README.md": "3f5985ad204385174f6c72c03c4c8d7b8caeb5d04d847962593324df72bf3f1b",
+      "README.md": "203f8fdffb98faf6eb69415ad7eda47adc0c8bbd008365a99bd552026f22b648",
       "goals/collection-intake.md": "ed89303440885a201a191d42de56977b609170e07f15c0268114bb68511651c2",
-      "recipes/collection-intake/recipe.json": "c19e894f45e4e17751816a632fbcade468a664aa3524320a238fb194f50ba68b",
-      "recipes/collection-intake/run.py": "30cead053da53920f218ece5869e5b2cbb843efd6066df9f25e267b339971be3",
+      "recipes/collection-intake/recipe.json": "3de49a66d172238f62f36979d9c6bbdbedf3ab90dbd7adb9e4066f316f061676",
+      "recipes/collection-intake/run.py": "df3f1f19103a05b4cf74fbc6f23030c86b171358ee5dc0e8359805a661bb929e",
       "requires/host.json": "ac64fed9b7f55c84cfd47753314c6f14f26d5538f9e482e6fc520173e42aeffa",
       "requires/python.txt": "4f753bdd539922ce6d87e00b3c099f7c18af8cf5d04139588668f957d7d3eddd",
       "skills/INDEX.md": "3ac62b06c23cfe9cc450c25e388df629bd1f493b6d00888f4ae0d467b219ddd0",
@@ -40,23 +40,27 @@
       "skills/plan/sources-windows.md": "8b4491f285b16f045932f3adedacd18f80f8a015560e2057b85145d11f054d12",
       "skills/plan/what-to-collect.md": "baf9ca058dea6ef8fa4ce94a6414ff777ae4200bbb02a3522ca6dd5afe104911",
       "skills/triage/router.md": "b95524e4cc7876dfaf65af89a1be3e3ea2d19a3724227046701a194db3b93e16",
-      "skills/verify/collector-effects.md": "79302260229c2989d4afadeb1c69a157528c2620d0d0f36d5e6f481b8d538185",
+      "skills/verify/collector-effects.md": "0e3bf905e1c4a03d71b80d93e8d997e1d2dc0c7b7233b34e8e5880b5aa18750c",
       "skills/verify/manifests.md": "8764ea365e2c655917f333c9343d387702de22a19602d8a31d3f0a21b88e432f",
       "skills/verify/raw-and-derived.md": "b9018d3a208c3500fd2ab5029f7eb2decfbdb4cc392d1e6cae65d5ff3ca7f1fd",
-      "skills/verify/target-outcomes.md": "420b464d85ca59e391bd3dfb36b5ef5161917a0055b27cae8c349ebbe98eb185",
-      "skills/verify/time-layers.md": "1c5ae12396541f66581eb5ede022671d3bfd076ff004dc57b84de0e51a5f72eb",
-      "tools/collection_coverage/manifest.json": "beb547e63d4dfd384d453655e9049de0c23671730e1cf3939b4c2e1663c29e2c",
-      "tools/collection_coverage/run.py": "054042dc268c3b7b2053fae9e2b618569a90488bd26c355c948d342f22e18a9b",
-      "tools/collection_id/manifest.json": "437a6a9df91d16b2ce60e01142fb0323b2cccd3bffc48d0301667317b5f9f7c5",
-      "tools/collection_id/run.py": "9e39b88cae723f0a219c4aea372315bc89a130a1259666a53e960552ac1f9037",
-      "tools/collection_index/manifest.json": "c342404dba57ecd846d025ca1daaa2cb32c4591fd5ed8e70a8875ba3b85426c2",
-      "tools/collection_index/run.py": "437bb3f68124e9f498347cedc0ba5ce9beb4a258d991ee43385cfc075fccb287",
-      "tools/collection_manifest_parse/manifest.json": "638303bb42b77d262429e4a2e41d2bd4f9bf861cedf7173444ff4abb11cf62c3",
-      "tools/collection_manifest_parse/run.py": "ee0a67baedd08a6a58a36d9ad41110deee74b802290ad7bfe673b345b4800de7",
-      "tools/collection_manifest_verify/manifest.json": "14a08758a0b02251d544f49673907f7af9f6e82f0b7d2a6d657a19d14a18ab60",
-      "tools/collection_manifest_verify/run.py": "75f54fa23da423b953c39a7c84a471b6d9ca22d39e2bef8cd8af0f15e091fcc7",
-      "tools/collection_path_map/manifest.json": "cbc877295dfd05264af74baa84430f00056a8e312debf1f1ee39303ecb0feb2a",
-      "tools/collection_path_map/run.py": "2d10838ccedab78348a85d3922712f569c32aa73ff65ff64719b45bba7d7aee9"
+      "skills/verify/target-outcomes.md": "6b5ba4f0674353fcce72f5fa2040147fe5e48c5e0eaa61b7308cb75e81f78b3d",
+      "skills/verify/time-layers.md": "3695a9909e38474757c5a4cca83beba51482fc480d3553d3918f56a909c76504",
+      "tools/collection_coverage/manifest.json": "676b0e12a07cd04c22616e96aac5cddd1ab149b7aca912914ec92eb338884091",
+      "tools/collection_coverage/run.py": "8f02292ae9776931e8ee043dcfc016384425642979ba4f2dd5d5245079178bf7",
+      "tools/collection_id/manifest.json": "47d3c222f4f8ff65b152adcde4ab4db72bde819c0b775632c9bde1af8b68e265",
+      "tools/collection_id/run.py": "ad405d674128b247bd29248bbc6ce06d39c62967df09f62d0f33bf2b3e8279f2",
+      "tools/collection_index/manifest.json": "cedc331a9cb510b93dd3a507e7377fdf84a4c0fc472d4703788847ab0669f869",
+      "tools/collection_index/run.py": "c9eca7feb5c52619468f872f83257f37a6a1b4ba68076a19cccf31f809faf9ca",
+      "tools/collection_manifest_parse/manifest.json": "4fe99760d47cd0320b9458be46d299d1235936fce48b2e3e10e017714586f3f6",
+      "tools/collection_manifest_parse/run.py": "9d1d3bb898418b881564d82a1e05f96ae4c85972c7a67798e39c130917941d6c",
+      "tools/collection_manifest_verify/manifest.json": "8057aeb970707b050bc0ef0d51ef10aabaaefa6bcd8f2f37cfde90c0b62cc1dc",
+      "tools/collection_manifest_verify/run.py": "2a8c57b62a8c695269d3d364e00c2c9c4aa76b67d89a9227a89de454b4b58b58",
+      "tools/collection_path_map/manifest.json": "1f2a7d2192361d88add4004f4891007920f331a342844b345ca8bb0e9762bfdc",
+      "tools/collection_path_map/run.py": "5fb68af6065ad4b0b829a19beb039e15bcab8a0f2adbe5c228e321382e8dae38",
+      "tools/collection_profile_compare/manifest.json": "a3bd368f228ae86c2262ac2a382cbbc0650e670079db840000471231d0760591",
+      "tools/collection_profile_compare/run.py": "342b9724962a68c57d68b8b0b5c71dceae8d2845178caa7acb13bd6a8632e87d",
+      "tools/collection_timestamps/manifest.json": "4da813d4854f36349ed03b4731c728bf36b441517178d887ca846d5902d4def8",
+      "tools/collection_timestamps/run.py": "01c28bed9ea4a5fc6e7c7ed82a477f39e4fe17fabe8f4a2f523b6fb7fd4804d2"
     }
   },
   "tools": [
@@ -65,7 +69,9 @@
     "collection_index",
     "collection_manifest_parse",
     "collection_manifest_verify",
-    "collection_path_map"
+    "collection_path_map",
+    "collection_profile_compare",
+    "collection_timestamps"
   ],
   "skills": 20,
   "unreferenced_ok": [

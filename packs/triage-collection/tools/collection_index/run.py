@@ -1112,6 +1112,8 @@ def _b_named_secret(flat):
     size = len(flat)
     for m in _B_DELIM.finditer(flat):
         i = m.start()
+        if i > 0 and flat[i - 1] in "=:":                 # a delimiter right after a delimiter has no name before it: a run of 2 MiB of them is skipped, not judged one by one
+            continue
         j = i + 1
         while j < size and j - i <= 5 and flat[j] in " \t\"'\\":
             j += 1

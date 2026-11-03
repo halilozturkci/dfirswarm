@@ -656,6 +656,27 @@ jq -e '[.downloads[].name] == ["deb-tool"] and [.sources[].name] == ["src-tool"]
 jq -e '.manual == [] and .not_applicable == [{"name": "mac-only", "pack": "reverse-engineering", "why": "Only macOS has it."}]
        and ([.binaries[].name] | index("mac-only") == null)' "$spec" >/dev/null \
   || fail "another system's program is not listed as not applicable, or is still expected in the image: $(jq -c '{manual, not_applicable}' "$spec")"
+# The data a pack pins for a program that is not in the image (definitions a tool reads, not a program it runs) is installed all the same: the rule
+# goes by kind (not_in_image with install.data), never by a program's or a pack's name.
+fake2="$TMP/fakepacks-data/reverse-engineering"
+mkdir -p "$fake2/requires" "$TMP/fakepacks-data/ransomware-response/requires"
+printf '{"id": "reverse-engineering", "name": "f", "version": "1.0.0", "description": "f", "licence": "MIT", "depends": []}
+' > "$fake2/pack.json"
+cat > "$fake2/requires/host.json" <<JSON
+{"binaries": [
+ {"name": "collector-only", "optional": true, "why": "t", "licence": "MIT", "redistributable": false,
+  "install": {"data": [{"version": "1.2", "url": "https://example.org/collector-only-1.2.tar.gz", "sha256": "$sha", "bytes": 1, "package": "pip", "into": "defs"}]},
+  "not_in_image": "A collector, run on the host to be collected."},
+ {"name": "plain-gone", "optional": true, "why": "t", "licence": "MIT", "redistributable": false, "not_in_image": "Only macOS has it."}
+]}
+JSON
+printf '{"id": "ransomware-response", "name": "f", "version": "1.0.0", "description": "f", "licence": "MIT", "depends": []}
+' > "$TMP/fakepacks-data/ransomware-response/pack.json"
+printf '{"binaries": []}
+' > "$TMP/fakepacks-data/ransomware-response/requires/host.json"
+python3 "$R" build re --packs "$TMP/fakepacks-data" --out "$TMP/ctx-notin-data" --allow-nonredistributable >/dev/null || fail "a context for a program that is not in the image, with data, could not be written"
+jq -e '[.data[] | select(.program == "collector-only") | .name] == ["collector-only-data"] and ([.data[] | select(.program == "plain-gone")] == [])
+       and ([.not_applicable[].name] | sort) == ["collector-only", "plain-gone"] and ([.binaries[].name] | index("collector-only") == null)' "$TMP/ctx-notin-data/spec.json" >/dev/null   || fail "the data of a program that is not in the image is dropped, or the program is expected in the image: $(jq -c '{data: [.data[].name], na: [.not_applicable[].name], b: [.binaries[].name]}' "$TMP/ctx-notin-data/spec.json")"
 grep -q '^mac-only  (reverse-engineering)  Only macOS has it.' "$TMP/ctx-kinds/NOTICE" || fail "the NOTICE does not say which programs belong to another system"
 df="$TMP/ctx-kinds/Dockerfile"
 grep -q '^FROM ${BASE} AS build-built-tool$' "$df" || fail "a program built from source has no builder stage: $(cat "$df")"

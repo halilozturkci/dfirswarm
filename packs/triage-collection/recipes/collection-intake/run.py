@@ -180,6 +180,7 @@ MEMORY_CHECK_EVERY = 1024          # the census asks for the memory this many en
 MAX_CENSUS = 2000000              # entries held for the join; past it the census is partial and no record is called missing
 REC_LINE = 1 << 20                # a log line longer than this is read in part; the whole line stays in the evidence at its locator
 REC_CHUNK = 1 << 20
+MAX_PATH_PARTS = 1024              # components of a claimed path the join looks at: the tail of a longer one (no real path has more); a longer exact claim names no file
 REC_FIRST = 25                    # problems of a source kept in its summary; every one goes to the caller's sink
 MAX_CONSECUTIVE_BAD_ROWS = 1000
 INSIDE_COLLECTED = ("[root]", "uploads")        # a directory below which the files are the source host's own
@@ -1140,9 +1141,11 @@ def candidate_paths(rec):
     collector, kind = rec.get("collector"), rec.get("kind")
     claim = rec.get("delivered_path_claim")
     if collector == "KAPE" and kind == "copy" and isinstance(claim, str):
-        return "suffix", path_parts(claim)
+        return "suffix", path_parts(claim)[-MAX_PATH_PARTS:]
     if collector == "Velociraptor" and isinstance(claim, str):
         raw = [p for p in claim.split("/") if p]
+        if len(raw) > MAX_PATH_PARTS:
+            return "exact", []
         forms = []
         for lead in ((), ("uploads",), ("uploads", "auto")):
             where = "/".join(lead) or "the container"
@@ -1151,6 +1154,8 @@ def candidate_paths(rec):
         return "exact", forms
     if collector == "UAC" and kind == "hash_claim" and isinstance(rec.get("source_path_claim"), str):
         parts = [p for p in rec["source_path_claim"].split("/") if p]
+        if len(parts) > MAX_PATH_PARTS:
+            return "exact", []
         return "exact", [(("[root]",) + tuple(parts), "UAC's [root] convention: a hypothesis, not a record of the collector")]
     return None, None
 
@@ -1585,6 +1590,10 @@ def open_regular(path):
         raise
 
 
+# ---- BEGIN ARCHIVE BLOCK ---------------------------------------------------------------------------------------------
+# Identical in the collection-intake recipe and collection_timestamps (tests/pack-triage-archive-block.test.ts holds the copies equal): the bounded
+# readers of a zip and of a tar (plain, gzip, bzip2, xz) and the checks of how an archive ended. It needs open_regular (binary), describe, struct,
+# tarfile and zipfile. Edit it in both, never in one.
 def tar_kind(head):
     """How the bytes of a tar are wrapped, from the first bytes: gz, bz2, xz, or tar (not compressed)."""
     if head[:2] == b"\x1f\x8b":
@@ -1968,6 +1977,9 @@ def zip_problem(path, infos, start_dir, expired):
 
 def end_problem(fmt, end):
     return end.get("zip") if fmt == "zip" else tar_end_problem(end)
+
+
+# ---- END ARCHIVE BLOCK -----------------------------------------------------------------------------------------------
 
 
 def iterate(path, fmt, expired=None, end=None):

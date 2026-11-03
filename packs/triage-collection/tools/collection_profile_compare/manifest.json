@@ -1,0 +1,80 @@
+{
+  "name": "collection_profile_compare",
+  "description": "Compare what a collector's profile could request with what the delivery's own records say was requested, excluded and collected: a parser and a comparator, never a live collector. Nothing in a delivery or in a definition is executed, and a profile, artefact definition or target file found inside the delivery is data to describe, never trusted as the definition. The definitions are three pinned corpora read from the definitions directory: UAC's release (profiles and artefact YAML), Velociraptor's source tree (artifacts/definitions) and the KapeFiles repository (Targets/*.tkape). Each archive is hashed and compared with the list of sha256 this script carries before one member is read; an archive that is not on the list is refused, and with allow_unpinned: true it is read all the same and everything taken from it carries version unknown and pinned: false, never the version its name says. Every definition file used is reported with its corpus, version, the archive's sha256 and its own sha256; without a corpus the answer says definitions_not_available and is partial. In this version only UAC 3.4.0's list holds a hash (the release tarball pinned in requires/host.json): the Velociraptor and KAPE lists are empty until their archives are pinned, so those two corpora are read only with allow_unpinned. UAC: a profile's artifacts list is resolved in order (include globs over the artefact files, ! entries that remove files already included); the profile is named by profile, by the word after profile on a line of the UAC log (a reading of the log's words) or by delivered_profile; an entry with a variable is unresolved_dynamic_selection and an entry matching no pinned artefact is unknown; a profile file in the delivery is compared with the pinned profile of the same name and reported as differs, never used. Velociraptor: collection_context.json (an ArtifactCollectorContext: request.artifacts and request.specs[].parameters.env key and value pairs) is read as data and each artefact is looked up by name in the pinned definitions; a parameter that can select what is collected (a glob, path, regex, list) whose value is not in the record is unresolved_dynamic_selection, a name that is not in the definitions or a parameter the definition lacks is unknown, an artefact that embeds KAPE target definitions stays unresolved, and a definition file carried in the collection that differs from the pinned one is reported as differs. The VQL is never run. KAPE: the targets named by kape_targets or by the --target of a console log line are resolved through the .tkape files (Targets entries with Name, Category, Path, FileMask, Recursive, IsDirectory; a Path that names another .tkape is followed to a depth of 8, a cycle is refused by name, a target not in the set is unknown), a path with a KAPE variable such as %user% is unresolved and never expanded, and the copy and skip logs are counted against each entry's directory and mask. The answer has could_request, requested, excluded, collected, not_collected (with the collector's own words where a log gives them), unresolved, differs, unknown and proposed_additional_evidence (a list for the operator, never a command); each section's first rows are inline and every row is in the findings file. A delivered or pinned YAML file is read by a bounded reader of the subset the definitions use: anchors, aliases, tags, merge keys, complex keys, more than one document, tabs in indentation and duplicate keys are refused by name, and so are a file over 2 MiB, over 100,000 lines, nested deeper than 24, over 200,000 nodes or with a scalar over 1 MiB; the refusal makes the answer partial. Not measured: that the collector finished or used the profile it names, that content was copied correctly (names are matched, files are not read), why anything was not collected, or the original path of a file; the form of the UAC log's profile line and of the console log's command line is not pinned to a version. Run it as a job with secret_output: true (withholding by shape applies in every call; write_values: true is refused unless the job runs as secret output, which the tool checks). Paths, names and log text are withheld where shaped like a recovery password, an access key, a token, a private-key block, URL user-info, or the value after a credential header, key name or password option; write_values: true (jobs only) writes the real strings to $OUT/collection-profile-compare-values.jsonl, mode 0600, created first, a second run in the same job refused. The answer starts with the summary and ends with the entries. Every key and value of the answer and of the table files it names is withheld by shape, and the structure is then read back by a second check written apart from the first; a string that check finds suspect is replaced by <withheld: N bytes>, counted in the answer's boundary entry, and the answer is partial. Withholding is by shape. Measured on random plants (1,000 per shape and context: alone, in a path, a file name, a log line, a URL, an option, glued to letters), the 33 listed shapes (token prefixes, JWT, PEM, connection strings, user-info, name=value and option forms, recovery passwords), the unlisted token families (GitLab, Stripe, Google, npm, SendGrid, DigitalOcean, Twilio), names such as DB_PASSWORD= and adminPassword:, and tokens split by NUL, zero-width, bidi, UTF-16-in-8-bit or full-width characters or written in another case come out in 0.2% or fewer of the plants; AWS-secret-shaped keys and base64 of 20 to 48 bytes in 0.7% or fewer, base64 of 16 bytes in 2.5%, 20 random letters and digits in 1.5% and 32 in 0.5%; base36 text of 24 to 32 characters in 18% to 26%. A plain password or passphrase alone in a name, a UUID-shaped key, 24 lower-case letters and 16 characters of base32 are printed (100%). A secret of another shape is printed: a file whose secrets matter is read in a secret_output job. Cost on real names, measured: 0.47% of this repository's paths, 0.14% of 37,916 Linux package paths and 3.64% of 57,142 macOS system and application paths (hardware ids and GUID-named profiles read as random) are withheld.",
+  "params": {
+    "root": {
+      "type": "string",
+      "description": "The delivered collection directory (an archive is not opened: extract it into a job's output first)"
+    },
+    "definitions": {
+      "type": "string",
+      "description": "A directory holding the corpus archives (uac-*.tar.gz, velociraptor-*.tar.gz, KapeFiles-*.zip); without it no definition is read and the answer is partial"
+    },
+    "allow_unpinned": {
+      "type": "boolean",
+      "description": "Read a corpus archive whose sha256 is not on the tool's list (default false), reporting everything taken from it with version unknown and pinned false"
+    },
+    "collectors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Limit the comparison to some of: uac, velociraptor, kape (default all that the delivery holds records of)"
+    },
+    "profile": {
+      "type": "string",
+      "description": "The UAC profile name, when the delivery's log does not give one"
+    },
+    "delivered_profile": {
+      "type": "string",
+      "description": "A UAC profile file in the delivery (a path below root): described and compared with the pinned profile of the same name, never used as the definition"
+    },
+    "kape_targets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The KAPE target names the run used, when the console log's command line does not give them"
+    },
+    "needs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Words that narrow proposed_additional_evidence to artefacts and targets whose name, category or description holds one of them"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of the findings table shown inline per section (default 200); the whole is in the file the answer names"
+    },
+    "time_limit_seconds": {
+      "type": "integer",
+      "description": "Stop after this long (default 3000, at most 3400): the answer then says it stopped, status partial, and what was not read"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the real strings that were withheld to $OUT/collection-profile-compare-values.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the file is created first and one already there is refused"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 3600,
+  "example": "{\"root\": \"inputs/uac-collection\", \"definitions\": \"inputs/definitions\"}",
+  "by": "maintainer",
+  "at": "2026-11-02T12:00:00.000Z",
+  "version": 1,
+  "sha256": "342b9724962a68c57d68b8b0b5c71dceae8d2845178caa7acb13bd6a8632e87d",
+  "use": {
+    "names": [
+      "uac.log",
+      "*_ConsoleLog.txt",
+      "*_CopyLog.csv",
+      "collection_context.json"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  }
+}
