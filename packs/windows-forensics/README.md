@@ -39,7 +39,12 @@ the container's consistency, and a second read by `lnkinfo`) and `powershell_blo
 logging records, event 4104, reassembled into blocks with the fragments each block expects, has and lacks;
 it carries no script text unless a secret-output job asks for it) and `vss_materialise` (copies
 chosen files out of chosen shadow copies through a FUSE mount it always unmounts, tagged with the
-snapshot's identity; without FUSE it answers `blocked: no FUSE` and writes nothing).
+snapshot's identity; without FUSE it answers `blocked: no FUSE` and writes nothing), `userassist_bam_shimcache` (UserAssist, BAM, DAM and ShimCache records with the raw bytes beside the decoded
+fields, the layout and its basis, and `unsupported` for a layout it does not know; its offsets are from published notes, not checked
+against real hives, and no second reader cross-checks it) and
+`persistence_normalise` (scheduled tasks, services and autorun keys: the task XML files, the TaskCache, the service keys, the Run, Winlogon, AppInit,
+IFEO and Active Setup entries and the events of an `evtx_query` result file as items with observations that are not verdicts; the WMI repository is not
+examined and no second reader is started).
 
 **One recipe**, `windows-artefacts`, run on request over an extracted collection: it reads each
 family of artefact it finds with the tool above that reads it (and runs a fixed list of

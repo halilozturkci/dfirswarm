@@ -119,6 +119,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "windows-forensics/tools/evtx_query": w("log", "strings"),
   "windows-forensics/tools/lnk_jumplist": w("strings"),
   "windows-forensics/tools/lnk_parse": w("java", "pwsh", "strings"),
+  "windows-forensics/tools/persistence_normalise": w("log", "strings"),
   "windows-forensics/tools/powershell_blocks": w("log", "strings"),
   "windows-forensics/tools/regkv": w("log", "strings"),
   "windows-forensics/tools/registry_recover": w("log"),
@@ -131,6 +132,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "virtualization-backup-forensics/tools/virtualization_inventory": w("log", "strings"),
   "windows-forensics/tools/sigma_hunt": { hayabusa: "one of two engines, either of which is enough (the description says so, and tests/pack-windows-forensics.test.ts pins that it declares neither: declaring both would claim both are needed)", zircolite: "one of two engines, either of which is enough (see hayabusa)" },
   "windows-forensics/tools/shellbags": w("log", "strings"),
+  "windows-forensics/tools/userassist_bam_shimcache": w("log", "strings"),
   "windows-forensics/tools/yara_scan": w("strings"),
 };
 
