@@ -134,3 +134,12 @@ reads (`formats: ["ELF"]`, from `readelf --help`), so `tools.md` prints it on
 its line. The other programs (r2, capa, floss, upx, olevba) carry no `isa` or
 `formats` yet: nothing is declared that the program's own documentation for
 the pinned version has not been read to state.
+
+### Added: ci
+
+A CI job, `real-libraries`, installs the libraries the packs declare
+(python-evtx, regipy, Pillow and pytsk3 from `packs/*/requires/python.txt`,
+pyewf and ewfacquirestream from Ubuntu's packages, and qemu-img), runs exactly
+the files of `tests/real-libraries.list` (the tests that are gated on those and
+skip without them, so had never run in CI) and fails when any test in them was
+skipped, naming it. `CI green` needs it.

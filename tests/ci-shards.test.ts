@@ -323,3 +323,46 @@ test("the re-real-programs job reports and does not gate: continue-on-error is o
   assert.match(job, /actions\/setup-python@[0-9a-f]{40} # v[\d.]+\n {8}with:\n {10}python-version: "3\.11"/, "the FLOSS lock is resolved for 3.11");
   assert.match(jobText("green"), /^ {4}needs: \[[^\]\n]*\bre-real-programs\b[^\]\n]*\]$/m);
 });
+
+test("the real-libraries job runs the listed files, fails on any skipped test, and CI green needs it", () => {
+  const job = jobText("real-libraries");
+  assert.match(job, /^ {4}needs: select\n {4}if: needs\.select\.outputs\.all == 'true' \|\| needs\.select\.outputs\.py311 == 'true'$/m, "it runs for everything and for a change the Python 3.11 job is also asked for");
+  assert.doesNotMatch(job, /continue-on-error/, "it gates: a failure fails CI green");
+  assert.match(job, /apt-get install -y -q qemu-utils /, "it installs qemu-img");
+  assert.match(job, /grep -hE '\^\(python-evtx\|regipy\|Pillow\|pytsk3\)[^\n]*packs\/\*\/requires\/python\.txt/, "it installs the libraries as the packs declare them, with no versions of its own");
+  assert.match(job, /--test-reporter=tap \$\(grep -vE '\^\[\[:space:\]\]\*\(#\|\$\)' tests\/real-libraries\.list\)/, "it runs the files of tests/real-libraries.list");
+  assert.match(jobText("green"), /^ {4}needs: \[[^\]\n]*\breal-libraries\b[^\]\n]*\]$/m, "CI green needs the job");
+  // The files it runs are real test files, one a line.
+  const listed = readFileSync(join(ROOT, "tests/real-libraries.list"), "utf8").split("\n").filter((l) => l.trim() && !l.startsWith("#"));
+  assert.equal(listed.length, 6);
+  for (const f of listed) assert.ok(readFileSync(join(ROOT, f), "utf8").length > 0, f + " is a test file");
+  // The skip check is the step's own text, run here on a TAP sample with and without a skip.
+  const step = job.match(/- name: Fail when any test was skipped\n {8}if: [^\n]*\n {8}run: \|\n((?: {10}[^\n]*\n)+)/);
+  assert.ok(step, "the job has a step that fails on a skip");
+  const script = step[1].replace(/^ {10}/gm, "");
+  const dir = mkdtempSync(join(tmpdir(), "real-libraries-"));
+  try {
+    const run = (tap: string | null) => {
+      const file = join(dir, "sample.tap");
+      if (tap !== null) writeFileSync(file, tap);
+      try {
+        return { code: 0, out: execFileSync("bash", ["-c", script], { env: { PATH: process.env.PATH ?? "", TAP: file, RUNNER_TEMP: dir }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
+      } catch (e) {
+        const err = e as { status: number; stdout: string };
+        return { code: err.status, out: err.stdout };
+      }
+    };
+    const clean = "TAP version 13\n# Subtest: a\nok 1 - a\n  ---\n  duration_ms: 1\n  ...\n1..1\n# tests 1\n# skipped 0\n";
+    assert.equal(run(clean).code, 0, "a run with no skip passes");
+    const skipped = "TAP version 13\nok 1 - a\n  # Subtest: nested\n  ok 1 - nested b # SKIP python-evtx is not installed on this host\nok 2 - c # SKIP no lib\n1..2\n# skipped 2\n";
+    const bad = run(skipped);
+    assert.notEqual(bad.code, 0, "a run with a skip fails");
+    assert.match(bad.out, /nested b # SKIP python-evtx is not installed/, "and names the skipped test");
+    assert.match(bad.out, /ok 2 - c # SKIP/);
+    assert.equal(run("TAP version 13\nok 1 - todo # TODO\n").code, 0, "a todo is not a skip");
+    rmSync(join(dir, "sample.tap"));
+    assert.notEqual(run(null).code, 0, "no TAP output at all fails");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

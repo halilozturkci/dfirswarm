@@ -480,6 +480,58 @@ jobs:
         continue-on-error: true
         run: node --experimental-strip-types --no-warnings --test tests/pack-re-real-programs.test.ts tests/pack-re-capa-floss.test.ts
 
+  real-libraries:
+    # The tests that need a real library or program (python-evtx, regipy,
+    # Pillow, pytsk3, pyewf with ewfacquirestream, qemu-img) are gated on it
+    # and SKIP where it is missing, and a skip passes: no other job installs
+    # them, so these tests had never run in CI. This job installs what the
+    # packs declare (the lines of packs/*/requires/python.txt for the four
+    # that pip carries, with no version of its own; Ubuntu's python3-libewf and
+    # ewf-tools for pyewf and ewfacquirestream; qemu-utils), runs exactly the
+    # files of tests/real-libraries.list and fails when any test in them was
+    # skipped, naming it. It runs for everything (the nightly run, a run by
+    # hand, the full-ci label) and when select asks for the Python 3.11 job (a
+    # pack, the tool library, an image file or a pack-tool suite changed: the
+    # files it runs are those suites). CI green needs it.
+    name: real libraries · no skipped test
+    needs: select
+    if: needs.select.outputs.all == 'true' || needs.select.outputs.py311 == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: The libraries the packs declare, and qemu-img
+        run: |
+          set -eu
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-utils ewf-tools python3-libewf python3-venv
+          python3 -m venv --system-site-packages "$RUNNER_TEMP/real-venv"
+          grep -hE '^(python-evtx|regipy|Pillow|pytsk3)([=<>~ ]|$)' packs/*/requires/python.txt | sed 's/[[:space:]]*#.*//' | sort -u > "$RUNNER_TEMP/real-libraries.txt"
+          cat "$RUNNER_TEMP/real-libraries.txt"
+          "$RUNNER_TEMP/real-venv/bin/pip" install -r "$RUNNER_TEMP/real-libraries.txt"
+          echo "$RUNNER_TEMP/real-venv/bin" >> "$GITHUB_PATH"
+      - name: The files that need them
+        run: |
+          set -o pipefail
+          node --experimental-strip-types --no-warnings --test --test-reporter=tap $(grep -vE '^[[:space:]]*(#|$)' tests/real-libraries.list) | tee "$RUNNER_TEMP/real-libraries.tap"
+      - name: Fail when any test was skipped
+        if: success() || failure()
+        run: |
+          tap="${TAP:-$RUNNER_TEMP/real-libraries.tap}"
+          [ -s "$tap" ] || { echo "::error::no TAP output to read ($tap)"; exit 1; }
+          skipped="$(grep -E '^[[:space:]]*(not )?ok [0-9]+ .*# SKIP' "$tap" || true)"
+          if [ -n "$skipped" ]; then
+            echo "::error::tests were skipped; the libraries are installed here, so a skip means a gate that does not see them"
+            printf '%s\n' "$skipped"
+            exit 1
+          fi
+          echo "no test was skipped"
+
   replay-impact:
     # A pull request's impact line (scripts/replay-impact.ts): every contract
     # fixture replayed under the pull request's base and under its head, each
@@ -791,7 +843,7 @@ jobs:
     #   - a part that has not started after the grace period, or was skipped,
     #     does not block, and a notice names it.
     # The timeout covers the grace period plus the longest part (90 minutes).
-    needs: [select, test, node-floor, node-24, python-311, re-real-programs, replay-impact, pack-versions, guards-without-namespaces, microvm]
+    needs: [select, test, node-floor, node-24, python-311, re-real-programs, real-libraries, replay-impact, pack-versions, guards-without-namespaces, microvm]
     runs-on: ubuntu-24.04
     timeout-minutes: 115
     permissions:
