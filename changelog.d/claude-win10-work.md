@@ -1,0 +1,7 @@
+### Fixed: a windows page that cannot be written removes its hidden temporary file
+
+In the 17 windows-forensics tools that page (and the 10 tool-library twins), `LosslessPage._cannot_write` closes the open file and removes the hidden `.<name>.jsonl-*` temporary file before it answers `failed` and exits. A full disk or a quota no longer leaves the file behind. `tests/pack-windows-forensics-page-full.test.ts` runs every copy with `RLIMIT_FSIZE` and `SIGXFSZ` ignored. The comment of the windows PROCESS block no longer names five tools (eight carried it): it says "every windows-forensics tool and recipe that starts a program" and also names the other packs that copy it. `macos-forensics` `apfs_inventory` carries that block, so its comment changed with it (no behaviour change).
+
+### Fixed: registry_recover says one file named as log1 and log2 is one file, and refuses a file-type-1 log with HvLE entries
+
+The same file given twice (the same path, a link, a hard link) is read once and the second role says "is the same file as log1", instead of "does not follow the last applied entry". A log whose base block says file type 1 (old format) but holds HvLE entries is refused like a primary hive. The windows-forensics pack (1.7.20), `macos-forensics` (1.6.2), the 20 tool versions and the 11 library twins that carry the changed texts are resealed; the registry-bounds equality test now lists every carrier of PLACE, PAGE and STOP.

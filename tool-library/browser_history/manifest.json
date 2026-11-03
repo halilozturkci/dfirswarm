@@ -29,8 +29,8 @@
   "example": "{\"path\": \"work/extracted/History\", \"query\": \"chrome_history\", \"limit\": 100}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 6,
-  "sha256": "b88b9590af207d7d820f5a3840ad533f79c7e3760c787b99b4d6bf4c54a57d94",
+  "version": 7,
+  "sha256": "802e4d5ef25daa151ab7edfb65f12a972ec1f695d53109c6fbb664da30b013c4",
   "use": {
     "names": [
       "History",

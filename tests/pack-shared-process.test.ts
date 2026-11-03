@@ -27,7 +27,7 @@ const sha = (text: string): string => createHash("sha256").update(text).digest("
 
 /** The two texts, as a copy carries them (from BEGIN to END, the way the other suites cut them). */
 export const GENERAL_SHA = "318081f44222ce78d9fc6da2b1e1727401eb1a00fbc2c1702f7103b4d844def1";
-export const WINDOWS_SHA = "1e95417c9e212cbab3e75bda29fb71f0370521c4aaa1839ef3de734f91a71520";
+export const WINDOWS_SHA = "ecd1a67ef1a50271256d1258b99541f2d0507c899d5fba1160304d70497f1c28";
 
 async function carriers(): Promise<string[]> {
   const found: string[] = [];

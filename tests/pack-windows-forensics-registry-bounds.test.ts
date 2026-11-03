@@ -373,9 +373,9 @@ test("regkv's and amcache_apps' tool-library twins are byte-equal to the pack's 
 
 test("the windows-forensics tools that carry a shared block (place, page, stop, hive bounds) carry it identically", async () => {
   for (const [begin, end, expect] of [
-    ["# BEGIN SHARED PLACE", "# END SHARED PLACE", ["regkv", "shellbags", "amcache_apps", "registry_recover", "lnk_jumplist"]],
-    ["# BEGIN SHARED PAGE", "# END SHARED PAGE", ["regkv", "shellbags", "amcache_apps", "registry_recover", "lnk_jumplist"]],
-    ["# BEGIN SHARED STOP", "# END SHARED STOP", ["regkv", "shellbags", "amcache_apps"]],
+    ["# BEGIN SHARED PLACE", "# END SHARED PLACE", ["amcache_apps", "browser_history", "esedb_query", "evtx_carve", "evtx_query", "indx_carve", "jumplist", "lnk_jumplist", "lnk_parse", "mam_scan", "mft_records", "recyclebin_i", "registry_recover", "regkv", "shellbags", "usn_journal", "utf16_urls", "yara_scan"]],
+    ["# BEGIN SHARED PAGE", "# END SHARED PAGE", ["amcache_apps", "browser_history", "evtx_carve", "indx_carve", "jumplist", "lnk_jumplist", "lnk_parse", "mam_scan", "mft_records", "recyclebin_i", "registry_recover", "regkv", "shellbags", "usn_journal", "utf16_urls", "yara_scan"]],
+    ["# BEGIN SHARED STOP", "# END SHARED STOP", ["amcache_apps", "browser_history", "indx_carve", "jumplist", "lnk_parse", "mam_scan", "mft_records", "prefetch_mam", "recyclebin_i", "regkv", "shellbags", "usn_journal", "utf16_urls"]],
     ["# BEGIN SHARED HIVE BOUNDS", "# END SHARED HIVE BOUNDS", ["regkv", "shellbags", "amcache_apps", "registry_recover"]],
   ] as Array<[string, string, string[]]>) {
     const found: Record<string, string> = {};

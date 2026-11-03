@@ -541,3 +541,41 @@ test("structure-aware mutations of a log (400 cases): JSON every time, the origi
     assert.deepEqual(left, [], "no temporary file is left");
   });
 });
+
+test("one file named as log1 and as log2 is said to be one file, not reported as an entry that does not follow", async () => {
+  await withCwd(async (cwd) => {
+    const log = hvleLog(G[2], [{ sequence: 10, hiveBinsDataSize: BINS, pages: differingPages(G[0], G[1]) }], { primary: 10 });
+    const args = await put(cwd, { hive: withSequences(G[0], 11, 10), logs: { log1: log } });
+    args.log2 = args.log1;
+    const out = body<Answer>(await tool("registry_recover", cwd, args));
+    const text = JSON.stringify(out) + (await readFile(join(cwd, out.receipt), "utf8").catch(() => ""));
+    assert.match(text, /same file as log1/);
+    assert.doesNotMatch(text, /does not follow the last applied entry/);
+    assert.equal(out.entries_applied, 1, "the entries of the file are read once");
+  });
+  await withCwd(async (cwd) => {
+    // A hard link is the same file too.
+    const log = hvleLog(G[2], [{ sequence: 10, hiveBinsDataSize: BINS, pages: differingPages(G[0], G[1]) }], { primary: 10 });
+    const args = await put(cwd, { hive: withSequences(G[0], 11, 10), logs: { log1: log } });
+    spawnSync("ln", [join(cwd, "work", "h.log1"), join(cwd, "work", "h.log2")]);
+    args.log2 = "work/h.log2";
+    const out = body<Answer>(await tool("registry_recover", cwd, args));
+    assert.match(JSON.stringify(out) + (await readFile(join(cwd, out.receipt), "utf8").catch(() => "")), /same file as log1/);
+  });
+});
+
+test("a log whose base block says file type 1 (old format) but holds HvLE entries is refused like a primary hive", async () => {
+  await withCwd(async (cwd) => {
+    const log = hvleLog(G[2], [{ sequence: 10, hiveBinsDataSize: BINS, pages: differingPages(G[0], G[1]) }], { primary: 10 });
+    const h = Buffer.from(log.subarray(0, 512));
+    h.writeUInt32LE(1, 0x1c);
+    h.writeUInt32LE(0, 0x1fc);
+    let x = 0;
+    for (let i = 0; i < 508; i += 4) x ^= h.readUInt32LE(i);
+    h.writeUInt32LE(x >>> 0, 0x1fc);
+    h.copy(log, 0);
+    const out = body<Answer>(await tool("registry_recover", cwd, await put(cwd, { hive: withSequences(G[0], 11, 10), logs: { log1: log } })));
+    assert.equal(out.replayed, false);
+    assert.match(JSON.stringify(out) + (await readFile(join(cwd, out.receipt), "utf8").catch(() => "")), /file type 1.*HvLE entries follow/);
+  });
+});

@@ -99,6 +99,18 @@ class LosslessPage:
     def _cannot_write(self, exc: BaseException) -> None:
         """The whole result cannot be kept: say so as JSON and stop, never a traceback."""
         import sys as _sys
+        # The hidden temp file goes first: a page that cannot be written leaves nothing behind (a full disk, a quota).
+        out, self._out = self._out, None
+        try:
+            if out is not None:
+                out.close()
+        except BaseException:
+            pass
+        try:
+            if self._tmp is not None:
+                os.unlink(self._tmp)
+        except OSError:
+            pass
         _sys.stdout.write(json.dumps({
             "error": "the whole result (%d rows so far) cannot be written to %s: %s. Outside a job the place is your own "
                      "work/<your id>/ directory; in a job it is $OUT." % (self.total, self.shown, exc),
@@ -389,8 +401,8 @@ def read_row(fh, cap):
 
 
 # BEGIN SHARED PROCESS
-# The same text is in esedb_query, extract_stream, sigma_hunt, vss_stores and yara_scan; tests/pack-windows-forensics-process.test.ts
-# holds the copies equal. A program a tool runs is started in THIS tool's process group, never in a session of its own: the
+# The same text is in every windows-forensics tool and recipe that starts a program (and in any other pack's tool that copies it);
+# tests/pack-windows-forensics-process.test.ts holds the copies equal. A program a tool runs is started in THIS tool's process group, never in a session of its own: the
 # harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid, SIGKILL)), and a
 # program in a group of its own goes on writing after the tool is gone. On Linux the kernel is also asked to kill it if the
 # tool dies. The tool's own deadline kills the program and what it started by walking the process tree, and SIGTERM, SIGINT
