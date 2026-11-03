@@ -1,0 +1,51 @@
+{
+  "name": "byte_range_extract",
+  "description": "Copy declared byte ranges to new files, bounded, with a digest of each. The source is one regular file (source) or a layer descriptor from layer_describe (descriptor) whose layer is raw or split_raw, so that a range may cross the boundary between two segments; the decoded media of an E01, VMDK or QCOW is not these bytes and such a descriptor is refused as unsupported. ranges is a list of {offset, length}. Every source file is opened without waiting and without following a link and must be a regular file (a symbolic link, FIFO, directory or device is refused); the sources are looked at again at the end and a source that changed makes the run failed. Every range is written to a file of its own in a new directory, created with O_EXCL and O_NOFOLLOW (mode 0600 in a 0700 directory), as range-NNNNNN.bin.partial and renamed to range-NNNNNN.bin only when all the bytes asked for are there; a taken name gets a new one, and nothing is replaced. A range that ends past the end of the source, or starts beyond it, is short: it stays .partial, and its row gives requested and actual. A sparse file reads as zeros where it has holes. Overlapping ranges are each copied once and flagged. The sha256 of each range and, when every range is whole, of all of them in order is taken as the bytes are copied; the sha256 of fewer than 128 bytes is not written, because a short value can be reversed from its digest. The answer carries locators, lengths and digests, never a byte of a range. max_total_bytes bounds what is written (a range the budget cuts stays .partial and the ranges after it are not_run) and max_seconds the run; stopped_by and next_range say where to go on. status is complete only when every range is whole, none was cut or left unrun, every row is in ranges.jsonl and the sources did not change; a short range, a budget stop or a failed write is partial; a refused source, a source that changed, or nothing written is failed. A byte range is not a file: the tool says nothing about whether the bytes of a range form one. The bytes are evidence content and can hold credentials: run it as a job with secret_output true when a range may hold a credential store; the manifest does not force it, because a range of a whole case would make every output sensitive. A SIGTERM, SIGINT or SIGHUP ends it with one JSON answer (partial, interrupted, with the range that was being copied, left under its .partial name). Source paths in the answer go through the shared withholding.",
+  "params": {
+    "source": {
+      "type": "string",
+      "description": "A regular file to read the ranges from. Give this or descriptor."
+    },
+    "descriptor": {
+      "type": "string",
+      "description": "A layer descriptor layer_describe wrote (layer-<sha256>.json) whose layer is raw or split_raw: the ranges address the concatenation of its sources in order. It is refused when its bytes do not hash to its name, when it lists a missing dependency, or when a source is no longer a regular file of the size it records. Give this or source."
+    },
+    "descriptor_sha256": {
+      "type": "string",
+      "description": "Pins the descriptor: its sha256 (64 hexadecimal digits) must be this one."
+    },
+    "verify_sources": {
+      "type": "boolean",
+      "description": "With a descriptor, read every source again and compare its sha256 with the descriptor's (up to 120 seconds). Without it only the sizes are checked."
+    },
+    "ranges": {
+      "type": "array",
+      "description": "The ranges, 1 to 10000, each {\"offset\": n, \"length\": n} in bytes (whole numbers; length 0 gives an empty file). Overlapping ranges are allowed.",
+      "required": true
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "A new directory for the range files and ranges.jsonl (default: a new byte_range_extract directory beside the tool's other output). It must be empty or absent. In a job it must lie under $OUT: give {OUT}/<name>."
+    },
+    "max_total_bytes": {
+      "type": "integer",
+      "description": "The most bytes written in all (default 1 GiB, at most 1 TiB); past it the run stops, names where to go on and leaves the range it cut as .partial."
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "Time budget in seconds, 1 to 550 (default 500), inside the manifest's 600; read between blocks of 1 MiB."
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Range rows in the inline answer, 1 to 5000 (default 200). ranges_file (ranges.jsonl) holds every row."
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 600,
+  "example": "{\"source\":\"inputs/disk.dd\",\"ranges\":[{\"offset\":4096,\"length\":512}],\"out_dir\":\"{OUT}/ranges\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T09:00:00.000Z",
+  "version": 1,
+  "sha256": "d27d5053286768ed8a064a22f3a8806a4deda358c6fdda9c3df57d453dc5a463"
+}

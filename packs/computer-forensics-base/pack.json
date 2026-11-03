@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.13.1",
+  "version": "1.14.0",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -16,7 +16,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "1df0d6665bd036fc44a288726c699f4955ce7e17e3248a88a58dc38819203250",
-      "README.md": "f0577d65bf009c4a391c399cf6d86c12688b6286bab5672ef06161b06fe34444",
+      "README.md": "f4165e83ae507ecd65edf9c46fb1aeeacebca72265258f1e351d9db8d89b1ae5",
       "recipes/ad1-items/recipe.json": "68d0261dd41eeceda2be0a43a79fd95a6b91c58f1e40c553a663bef9f9c92803",
       "recipes/ad1-items/run.py": "1a0458624dee6977174fd9b7258157fceafee285573b0e53eadb6fe6160da1e0",
       "recipes/archive-members/recipe.json": "2dc1bd25554284e99ef674e34c28ae957f366d59ea8974275a451751b8d9de77",
@@ -49,7 +49,7 @@
       "skills/filesystem/encrypted.md": "11a9b8705b374179664772e950ea7c6fff26fb1d8016874a6f1844bea23036aa",
       "skills/filesystem/extract.md": "4a4c8eb9e87717e48c5f40836402f64ce9c73463f53b93cc1c1f5087623f20d3",
       "skills/filesystem/layers-mapping.md": "1d66ffcfc958264e7140bd3e8abba9f738592fca6052d848ae93b0f384730b39",
-      "skills/filesystem/layers.md": "129c95623752cad8bdbe92ab841b28ff4425406e42944236ceeaeafd26eb14c0",
+      "skills/filesystem/layers.md": "851289e9d25037913549481484294e3594bf62ec3a30e17f23b71811619b55dc",
       "skills/filesystem/scanners.md": "32492c2a0d81b632928e8a61aa8b6756a0b34584f9a08cc8681d8ca04b6ea346",
       "skills/filesystem/semantics.md": "9db1eafc72dbb98222678210d75dcd53737fc024b322baa6746d63779f0deec1",
       "skills/reporting/citations.md": "b2bd8e6562e54ff3676f14efdf80a9afad367fa6edcb307881b22b27b7ed9a6a",
@@ -64,6 +64,7 @@
       "tests/support.py": "ed8a4670ddbf90e4562e57319ea31501be0d0920571d7bdfdfe7e9392b37def8",
       "tests/test_archive_extract.py": "3a60a0bcb3c5996c677345870315a1fb58b8504b996b7e0f911696900bbbda96",
       "tests/test_archive_members.py": "3c7ed42a32080f1f2951d1ff78266bc71c8e755b00b582624dd657f19225c1a3",
+      "tests/test_byte_range_extract.py": "3d3b0ad8d166d06962721b32410dfaf34a0640d5689fced2a48e7ceb100699cd",
       "tests/test_catalog_search.py": "17142b159732d841ec5eaf1df1693ecfd1eb7b7686c3333a57280930551b94eb",
       "tests/test_check_inputs.py": "e7e3fa8a88761cd4eac5fd2fb1fc37a155df58f4e7b50a29753deeb136bf5ca6",
       "tests/test_chunk_needles.py": "993760f9d32785e2ecb5dc2845278a5200ec52cd84c8bdde43d4f25b3b47270c",
@@ -103,6 +104,8 @@
       "tools/ad1_extract/run.py": "7674da9361d88dd7de41b41c102c7aeca336155a41c97a106f2b48ba9765ff59",
       "tools/archive_extract/manifest.json": "226256142b3480926a2b460b165d15bcd2e54bdf64e2a049cd51a18f5711ac48",
       "tools/archive_extract/run.py": "5ade0ede1a35f8f493d1c8fdbc18d5a08e955bfc661034a9cb72bcde03073071",
+      "tools/byte_range_extract/manifest.json": "88baa45ba6b4f60c814003b01af2ed1cf0d7f410332a38bd448ad15f4c9cf384",
+      "tools/byte_range_extract/run.py": "d27d5053286768ed8a064a22f3a8806a4deda358c6fdda9c3df57d453dc5a463",
       "tools/catalog_search/manifest.json": "ce4d5a5fdbbe62b58803b129468183892d2495f4c0913a7cdbefcbb537df8ee3",
       "tools/catalog_search/run.py": "11ddb67e259a18bf3189d063c5eabd70c6fcb6172f2aaee94c7a1cfdc50a5466",
       "tools/check_inputs/manifest.json": "58671481ab6ccb02b39ee15443a4f046efedf3b0567f51af72729f8c64795704",
@@ -140,6 +143,7 @@
   "tools": [
     "ad1_extract",
     "archive_extract",
+    "byte_range_extract",
     "catalog_search",
     "check_inputs",
     "chunk_needles",
