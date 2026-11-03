@@ -143,3 +143,10 @@ pyewf and ewfacquirestream from Ubuntu's packages, and qemu-img), runs exactly
 the files of `tests/real-libraries.list` (the tests that are gated on those and
 skip without them, so had never run in CI) and fails when any test in them was
 skipped, naming it. `CI green` needs it.
+
+A scheduled run or a push to main of `ci.yml`, and the weekly `image-boot.yml`, that
+fails now opens one tracking issue labelled `ci-failure` (or comments on the open
+one) with the run's URL, the event and the names of the failed jobs, and the
+next green run closes it (`scripts/ci-report-failure.sh`, a last
+`report-failure` job). A pull request is never reported, and the job is not a
+required check: `CI green` does not need it.

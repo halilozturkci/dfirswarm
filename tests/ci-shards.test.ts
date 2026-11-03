@@ -234,7 +234,7 @@ test("the CI green job, the check main requires, needs every other job but macos
   // because a job it needs failed would let the pull request merge.
   assert.match(green, /^ {4}if: always\(\)$/m, "it must run whatever the jobs it needs did");
   const needs = green.match(/^ {4}needs: \[([^\]\n]*)\]$/m)?.[1].split(",").map((s) => s.trim()) ?? [];
-  assert.deepEqual([...needs].sort(), ids.filter((id) => id !== "green" && id !== "macos").sort(), "it must need every other job but macos, or a job it leaves out could fail and the pull request still merge (the macOS parts are read from the run's job list by scripts/ci-green.ts, so a queued Mac does not hold it)");
+  assert.deepEqual([...needs].sort(), ids.filter((id) => id !== "green" && id !== "macos" && id !== "report-failure").sort(), "it must need every other job but macos and the failure reporter (which needs it), or a job it leaves out could fail and the pull request still merge (the macOS parts are read from the run's job list by scripts/ci-green.ts, so a queued Mac does not hold it)");
   assert.match(green, /NEEDS: \$\{\{ toJSON\(needs\) \}\}/, "it reads every result it needs");
   assert.match(green, /scripts\/ci-green\.ts[\s\S]*--needs-env NEEDS[\s\S]*--jobs-from-gh/,"it decides through scripts/ci-green.ts: the needed jobs pass on success or skipped only (tests/ci-green.test.ts), and the macOS parts are read from this run attempt's jobs");
   assert.match(green, /^ {6}actions: read$/m, "it reads the run's jobs");
@@ -365,4 +365,25 @@ test("the real-libraries job runs the listed files, fails on any skipped test, a
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the failure reporters run only on a schedule or a push to main, need every job, may write issues, and are not among green's needs", () => {
+  const jobs = WORKFLOW.slice(WORKFLOW.search(/^jobs:\n/m));
+  const ids = [...jobs.matchAll(/^ {2}([a-z][\w-]*):\n/gm)].map((m) => m[1]);
+  const ci = jobText("report-failure");
+  assert.match(ci, /^ {4}if: always\(\) && \(github\.event_name == 'schedule' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\)\)$/m, "a pull request is never reported");
+  const needs = ci.match(/^ {4}needs: \[([^\]\n]*)\]$/m)?.[1].split(",").map((s) => s.trim()) ?? [];
+  assert.deepEqual([...needs].sort(), ids.filter((id) => id !== "report-failure" && id !== "macos").sort(), "it reads every job's result but macos, as CI green does (the Mac is one machine)");
+  assert.ok(needs.includes("green"), "it reads CI green's own result");
+  assert.doesNotMatch(jobText("green"), /^ {4}needs:.*report-failure/m, "CI green does not need the reporter: the reporter needs it");
+  assert.match(ci, /^ {4}permissions:\n {6}contents: read\n {6}issues: write$/m, "it may write issues and nothing else");
+  assert.match(ci, /NEEDS_JSON: \$\{\{ toJSON\(needs\) \}\}/);
+  assert.match(ci, /run: bash scripts\/ci-report-failure\.sh$/m);
+  const boot = readFileSync(join(ROOT, ".github/workflows/image-boot.yml"), "utf8");
+  const bootJob = boot.match(/^ {2}report-failure:\n([\s\S]*)/m)?.[1] ?? "";
+  assert.ok(bootJob, "image-boot.yml has a report-failure job");
+  assert.match(bootJob, /^ {4}needs: \[boot\]$/m);
+  assert.match(bootJob, /^ {4}if: always\(\) && github\.event_name == 'schedule'$/m, "only its weekly schedule is reported");
+  assert.match(bootJob, /^ {4}permissions:\n {6}contents: read\n {6}issues: write$/m);
+  assert.match(bootJob, /run: bash scripts\/ci-report-failure\.sh$/m);
 });

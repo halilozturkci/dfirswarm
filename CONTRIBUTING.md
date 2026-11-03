@@ -61,7 +61,7 @@ it, one still running is waited for up to its own limit, and one that has not
 started after a grace period of 15 minutes (the Mac is busy or off) does not
 block, and a notice names it. It is the check `main` requires, so a pull
 request with auto-merge on merges by itself once it is green (`images.yml` and
-`image-boot.yml` are not part of it). The Linux jobs run on `ubuntu-24.04`, not
+`image-boot.yml` are not part of it). A scheduled run (or a push to main) of `ci.yml`, and the weekly `image-boot.yml`, that fails opens one issue labelled `ci-failure`, or comments on the open one, naming the run, the event and the failed jobs, and the next green one closes it (`scripts/ci-report-failure.sh`; a pull request is never reported, and the reporting job is not a required check). The Linux jobs run on `ubuntu-24.04`, not
 `ubuntu-latest`, until a deliberate move.
 The pack tools are tested on three Pythons: 3.12 (the Linux jobs, Ubuntu 24.04),
 3.14 (the macOS jobs) and 3.11, the interpreter of the VM images (Debian 12),

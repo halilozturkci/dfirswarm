@@ -862,3 +862,31 @@ jobs:
           node --experimental-strip-types --no-warnings scripts/ci-green.ts
           --needs-env NEEDS
           --jobs-from-gh "${{ github.repository }}" "${{ github.run_id }}" "${{ github.run_attempt }}"
+
+  report-failure:
+    # A scheduled run or a push to main that failed opens one issue labelled
+    # ci-failure (or comments on the open one) with the run's URL, the event and
+    # the failed jobs; the next such run that is green closes it
+    # (scripts/ci-report-failure.sh). A pull request is never reported. It is not
+    # a required check and CI green does not need it: it only reports. It does
+    # not wait for the macOS job (CI green does not either).
+    name: tracking issue for a failed run
+    needs: [select, test, node-floor, node-24, python-311, re-real-programs, real-libraries, replay-impact, pack-versions, guards-without-namespaces, microvm, green]
+    if: always() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open or comment on the tracking issue, or close it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW: ${{ github.workflow }}
+        run: bash scripts/ci-report-failure.sh
