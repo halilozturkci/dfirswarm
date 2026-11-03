@@ -85,3 +85,10 @@ directory holds nothing to read, so it is taken as an output place
 (`{OUT}/<name>`), and the reply's new `not_written_cause` line says that. The
 comment on the mapping now states the rule the code keeps (a file of any size or
 a directory with entries is read; an empty directory is an output place).
+
+The shared growth helper of the timing tests (`tests/pack-re-timing.ts`, its Python
+`growth` and `ladder`) no longer stops at the first round that looks linear, which
+let a quadratic rule pass on one lucky round. It runs every round and judges
+the median of each text; a ladder text that most rounds never reached has no
+time and fails. The six files that use it keep the rule, and the nine-round
+runs of one file are five.

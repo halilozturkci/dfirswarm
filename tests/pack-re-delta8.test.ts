@@ -120,7 +120,7 @@ test("P1 text that merely looks like the element form is kept: prose with a tag-
   }
 });
 
-test("P1 the element rule takes time linear in the text: 128 KB and 512 KB of each hostile shape (runs of `>`, `<`, `&lt;`, open tags, attributes, settings, tokens that make a second pass), the larger at most 8 times the smaller (never taken as less than 0.05 s; best CPU time of up to three rounds: linear code takes 4 times, a quadratic rule 16), and none over 5 s", () => {
+test("P1 the element rule takes time linear in the text: 128 KB and 512 KB of each hostile shape (runs of `>`, `<`, `&lt;`, open tags, attributes, settings, tokens that make a second pass), the larger at most 8 times the smaller (never taken as less than 0.05 s; median CPU time of three rounds: linear code takes 4 times, a quadratic rule 16), and none over 5 s", () => {
   for (const path of COPIES) {
     const r = py(path, [
       GROWTH_PY,
