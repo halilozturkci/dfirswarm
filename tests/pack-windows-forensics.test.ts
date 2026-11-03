@@ -1961,7 +1961,7 @@ test("every windows-forensics tool manifest declares the programs its script run
   // None of the twenty manifests had `requires`, so an image chosen from the manifests could lack the program a tool calls
   // (tests/recipe.test.sh scans only tool-library/). sigma_hunt needs ONE of two engines and declares neither: its description says so.
   // registry_recover and lnk_jumplist call regfexport and lnkinfo as second readers and declare them.
-  const programs = ["fls", "icat", "istat", "img_stat", "mmls", "esedbexport", "yara", "vshadowinfo", "vshadowmount", "ewfexport", "sqlite3", "vol", "regfexport", "lnkinfo", "JLECmd"];
+  const programs = ["fls", "icat", "istat", "img_stat", "mmls", "esedbexport", "yara", "vshadowinfo", "vshadowmount", "ewfexport", "sqlite3", "vol", "regfexport", "lnkinfo", "JLECmd", "dotnet"];
   const dirs = await readdir(WIN);
   assert.equal(dirs.length, 24);
   for (const name of dirs.sort()) {

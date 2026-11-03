@@ -1,7 +1,7 @@
 {
   "id": "windows-forensics",
   "name": "Windows Forensics Pack",
-  "version": "1.7.25",
+  "version": "1.7.26",
   "description": "Artefact-by-artefact method and tooling for a Windows examination: the file system and its journals, the hives, execution evidence, the event logs and the records inside a cleared one, accounts and remote access, persistence, PowerShell, browsers, shadow copies, memory, and the traces anti-forensics leaves.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -58,7 +58,7 @@
       "skills/antiforensics/timestamps-clock.md": "9c7228ab35f54d0142d15ebf3332ff9b0a8d0621f0480329c23394b615b9bdf6",
       "skills/antiforensics/traces.md": "156a864668bb43ea48e346db65d7554d2ce94670b7a5efb5c128eeaab104d977",
       "skills/antiforensics/wiping.md": "de2903606d6fb44030e63fd8c50ff87d7367f2651774ced042f71d946a877184",
-      "skills/artifacts/jumplists.md": "16ebcd0188787c049c173f151e6cab98b100d2aaf51ec8ed35fcc23dd1b69890",
+      "skills/artifacts/jumplists.md": "6ebee0e1c2589b7bea22c674d5e24f025c676aaa203804777045e15b78881b87",
       "skills/artifacts/links.md": "30ca0fd5eff8096ed542cf3822ed14837eb7e670ce8ed9c93bad06fd8cb4b734",
       "skills/artifacts/shell.md": "7cf6a0e1aff50f8ab2733e6627a43d17e910a02d510a8fb56f8f46b26bdb2a86",
       "skills/artifacts/shellbags.md": "d123d471ce8074170d05477d425e37646a45a6e73efa23807e78f1031c025ac5",
