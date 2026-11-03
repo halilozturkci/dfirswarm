@@ -1,6 +1,6 @@
 {
   "name": "timestamp_decode",
-  "description": "Take a number out of an artefact and list what date it could be under every epoch in common forensic use: Unix (seconds to nanoseconds), FILETIME, WebKit, Apple (seconds, nanoseconds), HFS+, OLE automation and DOS (both word orders), with plausible readings ranked first. Candidates, not a determination: the artefact's own schema decides the clock. The value is read exactly (a decimal or hexadecimal, never through a float); fractions are kept to the nanosecond and anything beyond is returned as remainder_s. DOS and OLE readings carry no zone and are given without a Z. A reading outside the years 1 to 9999, or an impossible DOS date, is listed under refused, not dropped. Plausibility is judged against an explicit range (plausible_from, plausible_to; default 1990-01-01 to 2040-01-01), never the wall clock, and by default every reading is returned.",
+  "description": "Take a number out of an artefact and list what date it could be under every epoch in common forensic use: Unix (seconds to nanoseconds), FILETIME, WebKit, Apple (seconds, nanoseconds), HFS+, OLE automation and DOS (both word orders), with plausible readings ranked first. Candidates, not a determination: the artefact's own schema decides the clock. The value is read exactly (a decimal or hexadecimal, never through a float); fractions are kept to the nanosecond and anything beyond is returned as remainder_s. DOS and OLE readings carry no zone and are given without a Z. A reading outside the years 1 to 9999, or an impossible DOS date, is listed under refused, not dropped. Plausibility is judged against an explicit range (plausible_from, plausible_to; default 1990-01-01 to 2040-01-01), never the wall clock, and by default every reading is returned. SIGTERM, SIGINT and SIGHUP end it with one JSON answer (partial, with interrupted true and the signal, and what was done), exit 128 plus the signal, and the removal of the hidden file it was writing; the program it was running is ended by its pid.",
   "params": {
     "value": {
       "type": "string",
@@ -30,6 +30,6 @@
   "example": "{\"value\": \"133502964000000000\"}",
   "by": "maintainer",
   "at": "2026-09-22T14:00:00.000Z",
-  "version": 4,
-  "sha256": "4a1821fd0a104ba20946245cb6d4ae32598a121db46cae5567dd1d79b918fd46"
+  "version": 11,
+  "sha256": "12d7e896b93a04bc790d25ca1637a466fef98648da9155ccadec45e8bc853bbc"
 }

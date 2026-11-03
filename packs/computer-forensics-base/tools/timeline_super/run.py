@@ -37,10 +37,12 @@ Each program writes its log to out_dir (--logfile), its stdout and stderr to
 files there, and runs from out_dir: the run's own directory is read-only in an
 agent's VM and in a job's worker.
 """
+import errno
 import json
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -48,7 +50,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "timeline_super", "version": 8}
+TOOL = {"name": "timeline_super", "version": 15}
 DEFAULT_TIMEOUT = 1800
 TIMEOUT_MAX = 3300                # the manifest's own limit is 3600: the rest is for the version calls and the counting
 TOOL_SECONDS = 3500               # the whole call, counting included, ends before the manifest's limit
@@ -56,6 +58,7 @@ SAMPLE_MAX = 1000
 VERSION_TIMEOUT = 20
 LINE_MAX = 8 * 1024 * 1024        # a line past this is counted invalid, its tail skipped; the file keeps it whole
 MESSAGE_PREVIEW = 2000
+CLOCK_BYTES = 1 << 20              # the clock is read at least every this many bytes of psort's output
 INVALID_LISTED = 1000
 ZONE = re.compile(r"^[A-Za-z0-9_+\-/]{1,64}$")
 # BEGIN SHARED PROCESS
@@ -689,14 +692,214 @@ def install_signal_handlers():
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
 
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back and the last word cleared (a signal in the middle of the write would cut the
+    document, and the last word would add a second one), on the bounded write above."""
+    STATE["last_word"] = None
+    _reconcile(answer)
+    _guarded_write(lambda: print(json.dumps(answer, **dumps_kwargs)))
+
+
+def _unexpected_tool(kind, value, _tb):
+    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed first (a name that cannot be removed is said in the
+    answer), then one JSON document with the class and, for a file-system error, its reason (a message can quote a name from the evidence), and
+    exit 1; what was written before it is not claimed. A stop signal that arrives while this runs is held with the answer's write and is answered by
+    this document and exit 1, not by 128 + the signal."""
+    try:
+        left = drop_temporaries()
+        reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
+        said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
+        answer = {"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                  "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__}
+        if left:
+            answer["temporaries_left"] = left[:10]
+            answer["status_basis"] += "; hidden temporary files that could not be removed are listed in temporaries_left"
+        print_answer(answer)
+    except BaseException:       # noqa: BLE001 - nothing may stop the exit
+        pass
+    os._exit(1)
+
+
+sys.excepthook = _unexpected_tool
+
+
+def _early_last_word(signum):
+    """Until main() has its own: a stop before the arguments are read gives one document, `failed` and `interrupted`, and depends on nothing
+    defined later."""
+    sys.stdout.write(json.dumps({"ok": False, "tool": TOOL, "status": "failed", "interrupted": True, "signal": signum,
+                                 "status_basis": "the tool was stopped by signal %d before it had started a program, so it did nothing" % signum}) + "\n")
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _early_last_word
+install_signal_handlers()
+
 
 def emit(obj, code=0):
-    print(json.dumps(obj, indent=2))
+    print_answer(obj, indent=2)
     raise SystemExit(code)
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra}))
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra})
     raise SystemExit(1)
 
 
@@ -711,7 +914,10 @@ def resolve_output(out):
     modified.
     """
     root = Path.cwd().resolve()
-    dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    try:
+        dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:     # a symlink loop, a name too long, a lone surrogate
+        fail("output cannot be resolved: %s" % (exc.__class__.__name__ if not getattr(exc, "strerror", None) else exc.strerror), output=str(out))
     if dest != root and root not in dest.parents:
         fail("output must stay inside the run directory", output=str(out))
     inputs = root / "inputs"
@@ -824,6 +1030,18 @@ def stamp_value(row):
         return None, raw
 
 
+def open_regular(path):
+    """The file opened without blocking and checked on the descriptor to be a regular file (a pipe put where psort's output was cannot hold the run)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.ESPIPE, "not a regular file")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def summarise(output, sample, out_dir, stop_at, invalid_path):
     """Valid and invalid lines of psort's JSON Lines, read line by line with a cap on
     a line's size, so a hostile line cannot fill memory and a bad one is not a count.
@@ -835,24 +1053,35 @@ def summarise(output, sample, out_dir, stop_at, invalid_path):
     earliest = latest = None
     parsers_seen, head, bad = {}, [], []
     stopped_at_line = None
-    with open(output, "rb") as fh:
-        number, offset = 0, 0
+    with open_regular(output) as fh:
+        number, offset, since_check = 0, 0, 0
         while True:
             line = fh.readline(LINE_MAX + 1)
             if not line:
                 break
             start = offset
             number += 1
-            if number % 20000 == 0 and time.monotonic() > stop_at:
+            since_check += len(line)
+            # The clock is read every 20,000 lines and every CLOCK_BYTES bytes read: a file of a few enormous lines is as long as one of many small ones.
+            if (number % 20000 == 0 or since_check >= CLOCK_BYTES) and time.monotonic() > stop_at:
                 stopped_at_line = number
                 break
+            if since_check >= CLOCK_BYTES:
+                since_check = 0
             if len(line) > LINE_MAX and not line.endswith(b"\n"):
                 rest = 0
+                out_of_time = False
                 while True:
+                    if time.monotonic() > stop_at:
+                        out_of_time = True
+                        break
                     chunk = fh.readline(LINE_MAX)
                     rest += len(chunk)
                     if not chunk or chunk.endswith(b"\n"):
                         break
+                if out_of_time:
+                    stopped_at_line = number
+                    break
                 offset += len(line) + rest
                 oversized += 1
                 invalid += 1
@@ -893,25 +1122,33 @@ def summarise(output, sample, out_dir, stop_at, invalid_path):
                     entry["message_length"] = len(msg)
                     entry["message_note"] = "a preview: the whole line is line %d of the output file" % number
                 head.append(entry)
+    invalid_error = None
     if bad:
-        with open(invalid_path, "x", encoding="utf-8") as fh:
-            fh.write("line\tbyte_offset\tbytes\treason\tfirst 200 bytes (the whole line stays in the output file)\n")
-            for n, off, size, why, snippet in bad:
-                fh.write("%d\t%d\t%d\t%s\t%s\n" % (n, off, size, why.replace("\t", " ").replace("\n", " "),
-                                                   snippet.decode("utf-8", "replace").replace("\t", " ").replace("\n", " ")))
+        try:
+            with open(invalid_path, "x", encoding="utf-8") as fh:
+                fh.write("line\tbyte_offset\tbytes\treason\tfirst 200 bytes (the whole line stays in the output file)\n")
+                for n, off, size, why, snippet in bad:
+                    fh.write("%d\t%d\t%d\t%s\t%s\n" % (n, off, size, why.replace("\t", " ").replace("\n", " "),
+                                                       snippet.decode("utf-8", "replace").replace("\t", " ").replace("\n", " ")))
+        except OSError as exc:                  # a full disk or a file-size limit: the counts stay whole, the half listing is removed
+            invalid_error = getattr(exc, "strerror", None) or exc.__class__.__name__
+            try:
+                os.unlink(invalid_path)
+            except OSError:
+                pass
     return {"events": events, "invalid_lines": invalid, "oversized_lines": oversized, "events_without_a_time": untimed,
             "first_event": readable(earliest[1]) if earliest else None, "last_event": readable(latest[1]) if latest else None,
             "parsers_seen": parsers_seen, "head": head,
-            "invalid_lines_file": invalid_path if bad else None,
-            "invalid_lines_listed": len(bad), "invalid_lines_listing_complete": len(bad) == invalid,
+            "invalid_lines_file": invalid_path if bad and not invalid_error else None, "invalid_lines_file_error": invalid_error,
+            "invalid_lines_listed": len(bad) if not invalid_error else 0, "invalid_lines_listing_complete": len(bad) == invalid and not invalid_error,
             "stopped_at_line": stopped_at_line}
 
 
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
-        fail("arguments are not valid JSON", reason=str(exc))
+    except (ValueError, RecursionError) as exc:
+        fail("arguments are not valid JSON", reason=str(exc)[:200])
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
 
@@ -966,16 +1203,22 @@ def main():
     sample = args.get("sample", 20)
     if not isinstance(sample, int) or isinstance(sample, bool) or not 0 <= sample <= SAMPLE_MAX:
         fail("sample must be a whole number from 0 to %d" % SAMPLE_MAX)
-    install_signal_handlers()
 
     call_started = time.monotonic()
     began = time.time()
     deadline = time.monotonic() + timeout            # one budget for every stage
     preexisting = []
-    if dest.exists():
-        if not dest.is_dir():
-            fail("out_dir is not a directory", out_dir=out_dir)
-        preexisting = sorted(os.listdir(dest))
+    try:
+        dest_exists = dest.exists()
+        dest_is_dir = dest.is_dir() if dest_exists else False
+        if dest_exists and dest_is_dir:
+            preexisting = sorted(os.listdir(dest))
+    except OSError as exc:       # a name too long, a parent that cannot be searched, a directory that cannot be listed
+        fail("out_dir cannot be looked at: %s" % (exc.strerror or exc), out_dir=out_dir,
+             hint="in a job only $OUT is writable; elsewhere only work/<your id>/ is")
+    if os.path.lexists(dest) and not dest_is_dir:
+        fail("out_dir is not a directory", out_dir=out_dir)
+    if dest_exists:
         if preexisting and not resume:
             fail("out_dir already holds files, and a file left by an earlier run would be taken for this one's: "
                  "give a new directory, or resume: true to write beside them (only files written after this run began count)",
@@ -1091,6 +1334,8 @@ def main():
             result["events"] = summary["events"]
             result["invalid_lines"] = summary["invalid_lines"]
             result["oversized_lines"] = summary["oversized_lines"]
+            if summary["invalid_lines_file_error"]:
+                result["problems"].append("the file listing the invalid lines could not be written (%s): the count is whole, the listing is not" % summary["invalid_lines_file_error"])
             if summary["invalid_lines_file"]:
                 result["invalid_lines_file"] = summary["invalid_lines_file"]
                 result["invalid_lines_listing_complete"] = summary["invalid_lines_listing_complete"]
@@ -1113,6 +1358,10 @@ def main():
                 result["problems"].append("%d line(s) of the output are not valid JSON events and are not in the count; see %s"
                                           % (summary["invalid_lines"], summary["invalid_lines_file"] or "the output file"))
 
+    empty = bool(output_ok and result.get("events") == 0 and result.get("invalid_lines") == 0 and not result["problems"] and result["export_exit"] == 0)
+    if output_ok and result.get("events") == 0 and result.get("invalid_lines") == 0:
+        result["problems"].append("the programs ran and wrote no event: an empty timeline is not evidence that the source holds nothing, and whether a parser "
+                                  "failed is not established (read the storage file's processing report, Plaso's pinfo)")
     clean = (not result["problems"] and result["export_exit"] == 0 and (mode == "export" or result["collect_exit"] == 0))
     if clean and output_ok:
         result["status"] = "complete"
@@ -1122,12 +1371,17 @@ def main():
         result["status"] = "failed"
         result["error"] = result["problems"][0] if result["problems"] else "no timeline was produced"
     result["status_basis"] = {"complete": "the programs exited 0, wrote their files and every output line parsed",
-                              "partial": "a program did not exit 0 or an output line did not parse, and what was written is kept (see problems)",
+                              "partial": ("the programs ran and wrote no event, so nothing is shown about the source (see problems)" if empty else
+                                          "a program did not exit 0, the counting did not finish, or an output line did not parse, and what was written is kept (see problems)"),
                               "failed": "no timeline was produced"}[result["status"]]
+    notes = process_notes()
+    if notes:
+        result["process_notes"] = notes
     result["coverage_note"] = ("complete here means the programs exited 0, wrote their files and every output line parsed. It does not say every "
                                "parser read every source: read the storage file's processing report (Plaso's pinfo) before a negative rests on it. "
                                "A timestamp in this timeline is what a parser read, in UTC; it is a pointer to an artefact, which the artefact's own "
                                "skill then examines.")
+    STATE["last_word"] = None
     emit(result, 0 if result["status"] == "complete" else 1)
 
 

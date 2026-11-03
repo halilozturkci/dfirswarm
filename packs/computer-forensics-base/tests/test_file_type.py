@@ -248,10 +248,16 @@ class FileType(Case):
         out = io.StringIO()
         here = os.getcwd()
         os.chdir(self.dir)
+        import signal
+        old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])            # the tool's print_answer holds the stop signals back for good: this process is not the tool
+        old_handlers = [signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)]
         try:
             with contextlib.redirect_stdout(out):
                 mod.main()
         finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
+            for s, h in zip((signal.SIGTERM, signal.SIGHUP, signal.SIGINT), old_handlers):
+                signal.signal(s, h)
             os.chdir(here)
             sys.stdin = sys.__stdin__
         got = json.loads(out.getvalue())

@@ -1,6 +1,6 @@
 {
   "name": "icat_extract",
-  "description": "Extract one Sleuth Kit address (an inode, or inode-type-id for an NTFS stream such as 168-128-4) from a disk image to a NEW file under the run, streaming icat's output through a hash so no size is held in memory; an existing output is never replaced. Refuses an inode the catalogue lists only as a directory (icat would give its index). Returns the path, size, sha256, image, volume offset in sectors, the sector size passed to icat (-b, when given), the address asked for, icat's exit code and where its stderr is kept, and the path(s) the catalogue lists for exactly that address. An output budget (max_bytes) and a time budget (max_seconds) bound it; a run that hits one or whose icat fails part way keeps its bytes as <output>.partial and reports status partial, never a truncated file under the real name. It extracts what the record's data runs hold now: for a deleted entry that may be another file's bytes, and a matching header or size is a check, not proof.",
+  "description": "Extract one Sleuth Kit address (an inode, or inode-type-id for an NTFS stream such as 168-128-4) from a disk image to a NEW file under the run, streaming icat's output through a hash so no size is held in memory; an existing output is never replaced. Refuses an inode the catalogue lists only as a directory (icat would give its index). Returns the path, size, sha256, image, volume offset in sectors, the sector size passed to icat (-b, when given), the address asked for, icat's exit code and where its stderr is kept, and the path(s) the catalogue lists for exactly that address. An output budget (max_bytes) and a time budget (max_seconds) bound it; a run that hits one or whose icat fails part way keeps its bytes as <output>.partial and reports status partial, never a truncated file under the real name. It extracts what the record's data runs hold now: for a deleted entry that may be another file's bytes, and a matching header or size is a check, not proof. SIGTERM, SIGINT and SIGHUP end it with one JSON answer (partial, with interrupted true and the signal, and what was done), exit 128 plus the signal, and the removal of the hidden file it was writing.",
   "params": {
     "inode": {
       "type": "string",
@@ -77,6 +77,6 @@
   },
   "by": "s864a08",
   "at": "2026-09-18T16:09:29.146Z",
-  "version": 11,
-  "sha256": "6dd885c9cde3965ebae4a2d518644d07cd5a1fce547b232ec29ff9f6007769e6"
+  "version": 16,
+  "sha256": "1f353e9b83182d3d899ff1122d8e7d5f392a2809d8c60c2f435204c19041bcd1"
 }

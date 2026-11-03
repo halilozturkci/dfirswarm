@@ -14,6 +14,7 @@
  * streams.
  */
 import { createHash } from "node:crypto";
+import { closeSync, ftruncateSync, openSync, writeSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 
 export type Ad1Node = {
@@ -62,6 +63,9 @@ function metaFor(node: Ad1Node): Array<[number, number, Buffer]> {
  * address, so a test can damage it where it means to.
  */
 export type Put = (b: Buffer) => number;
+/** A run of zero bytes that costs no memory and, written by writeSparseAd1, no disk. */
+export type Hole = { hole: number };
+export type PutAny = (b: Buffer | Hole) => number;
 type LogicalOpts = { chunkSize?: number; version?: number; source?: string };
 
 /**
@@ -71,13 +75,18 @@ type LogicalOpts = { chunkSize?: number; version?: number; source?: string };
  * source name) are written around them.
  */
 export function ad1Logical(items: (put: Put, at: () => number, chunkSize: number) => number, opts: LogicalOpts = {}): Buffer {
+  return Buffer.concat(ad1LogicalParts(items, opts) as Buffer[]);
+}
+
+/** The same layout as ad1Logical, as its parts: buffers, and holes where a caller put({ hole: n }). */
+export function ad1LogicalParts(items: (put: PutAny, at: () => number, chunkSize: number) => number, opts: LogicalOpts = {}): Array<Buffer | Hole> {
   const chunkSize = opts.chunkSize ?? 65536;
-  const parts: Buffer[] = [];
+  const parts: Array<Buffer | Hole> = [];
   let len = 0;
-  const put: Put = (b) => {
+  const put: PutAny = (b) => {
     const at = len;
     parts.push(b);
-    len += b.length;
+    len += Buffer.isBuffer(b) ? b.length : b.hole;
     return at;
   };
   const header = Buffer.alloc(92);
@@ -98,7 +107,37 @@ export function ad1Logical(items: (put: Put, at: () => number, chunkSize: number
   own.writeUInt32LE(0x10002, 12);
   own.writeUInt32LE(source.length, 16);
   source.copy(own, 20);
-  return Buffer.concat(parts);
+  return parts;
+}
+
+/** One-segment image file of `parts`, with every hole left unwritten (a sparse file): returns the length of the image's data. */
+export function writeSparseAd1(path: string, parts: Array<Buffer | Hole>): number {
+  const len = parts.reduce((n, p) => n + (Buffer.isBuffer(p) ? p.length : p.hole), 0);
+  const head = Buffer.alloc(512);
+  head.write("ADSEGMENTEDFILE", 0, "latin1");
+  head.writeUInt32LE(1, 0x10);
+  head.writeUInt32LE(2, 0x14);
+  head.writeUInt32LE(1, 0x18);
+  head.writeUInt32LE(1, 0x1c);
+  head.writeBigUInt64LE(BigInt(512 + len), 0x20);
+  head.writeUInt32LE(512, 0x28);
+  const fd = openSync(path, "w");
+  try {
+    writeSync(fd, head, 0, 512, 0);
+    let at = 512;
+    for (const p of parts) {
+      if (Buffer.isBuffer(p)) {
+        writeSync(fd, p, 0, p.length, at);
+        at += p.length;
+      } else {
+        at += p.hole;
+      }
+    }
+    ftruncateSync(fd, at);
+  } finally {
+    closeSync(fd);
+  }
+  return len;
 }
 
 /** One item's header, put; the caller links it by writing next (+0) and child (+8). */

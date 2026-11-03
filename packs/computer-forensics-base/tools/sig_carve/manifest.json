@@ -1,6 +1,6 @@
 {
   "name": "sig_carve",
-  "description": "A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, and count every offset: the first max_hits of each signature come back with a preview (up to 32 bytes in hex and 64 as ASCII, none when context is 0), and every hit is in all_results when there are more. It carves nothing and estimates no size: a hit is where the bytes occur, not a file, so cut a decisive hit with file_carver (or read it in place) and check it with a parser of that format. Each header is found once, at its true offset, whatever the read size; an unknown signature name is an error, not an empty result. SCCA hits name candidate_start (the hit minus 4). The answer says which file and what range were scanned; a scan that reaches its time budget (about 100 seconds) answers for the range it covered, says scanned.complete: false and scanned.stopped, and names where to go on (start), with exit 0 (the engine ran); a read error exits 1. The file is read as given: an E01 or other container is its container bytes, not the disk inside. earlier_answers says how many other files answer the same scan.",
+  "description": "A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, and count every offset: the first max_hits of each signature come back with a preview (up to 32 bytes in hex and 64 as ASCII, none when context is 0), and every hit is in all_results when there are more. It carves nothing and estimates no size: a hit is where the bytes occur, not a file, so cut a decisive hit with file_carver (or read it in place) and check it with a parser of that format. Each header is found once, at its true offset, whatever the read size; an unknown signature name is an error, not an empty result. SCCA hits name candidate_start (the hit minus 4). The answer says which file and what range were scanned; a scan that reaches its time budget (about 100 seconds) answers for the range it covered, says scanned.complete: false and scanned.stopped, and names where to go on (start), with exit 0 (the engine ran); a read error exits 1. The file is read as given: an E01 or other container is its container bytes, not the disk inside. earlier_answers says how many other files answer the same scan. SIGTERM, SIGINT and SIGHUP end it with one JSON answer (partial, with interrupted true and the signal, and what was done), exit 128 plus the signal, and the removal of the hidden file it was writing.",
   "params": {
     "path": {
       "type": "string",
@@ -34,6 +34,6 @@
   "example": "{\"path\": \"inputs/[UNALLOCATED]\", \"sig\": \"all\", \"max_hits\": 10}",
   "by": "s183906",
   "at": "2026-09-18T22:13:29.602Z",
-  "version": 7,
-  "sha256": "72b6cbd6119d146a48dc1b962f4a48e4247ded348e8ac061452c2f6dc5485b98"
+  "version": 15,
+  "sha256": "94eaf5db18c7306c3604e9c4f1eff2139b587fa8ff86a5d173b8439fc89fafae"
 }

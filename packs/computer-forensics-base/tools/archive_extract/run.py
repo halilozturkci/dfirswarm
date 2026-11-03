@@ -70,7 +70,8 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 6}
+TOOL = {"name": "archive_extract", "version": 14}
+STARTED = time.monotonic()               # the run's clock starts with the tool: the archive hash and the 7z banner are on it too
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
 MAX_TOTAL_DEFAULT = 8 * 1024 ** 3
@@ -1020,6 +1021,219 @@ def install_signal_handlers():
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
 
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back and the last word cleared (a signal in the middle of the write would cut the
+    document, and the last word would add a second one), on the bounded write above."""
+    STATE["last_word"] = None
+    _reconcile(answer)
+    _guarded_write(lambda: print(json.dumps(answer, **dumps_kwargs)))
+
+
+def _unexpected_tool(kind, value, _tb):
+    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed first (a name that cannot be removed is said in the
+    answer), then one JSON document with the class and, for a file-system error, its reason (a message can quote a name from the evidence), and
+    exit 1; what was written before it is not claimed. A stop signal that arrives while this runs is held with the answer's write and is answered by
+    this document and exit 1, not by 128 + the signal."""
+    try:
+        left = drop_temporaries()
+        reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
+        said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
+        answer = {"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                  "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__}
+        if left:
+            answer["temporaries_left"] = left[:10]
+            answer["status_basis"] += "; hidden temporary files that could not be removed are listed in temporaries_left"
+        print_answer(answer)
+    except BaseException:       # noqa: BLE001 - nothing may stop the exit
+        pass
+    os._exit(1)
+
+
+sys.excepthook = _unexpected_tool
+
+
+def open_regular(path):
+    """open(path, "rb") for a caller's path that was checked as a regular file a moment ago: opened without waiting (O_NONBLOCK) and looked at with
+    fstat on the descriptor, so a FIFO or a device put in its place is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
+def _early_last_word(signum):
+    """Until main() has its own: a stop before the arguments are read gives one document, `failed` and `interrupted`, and depends on nothing
+    defined later."""
+    sys.stdout.write(json.dumps({"ok": False, "tool": TOOL, "status": "failed", "interrupted": True, "signal": signum,
+                                 "status_basis": "the tool was stopped by signal %d before it had read its arguments, so it did nothing" % signum}) + "\n")
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _early_last_word
+install_signal_handlers()
+
 
 def describe(exc):
     code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
@@ -1031,8 +1245,7 @@ def in_job():
 
 
 def say(obj, code=0):
-    print(json.dumps(obj, ensure_ascii=True))
-    sys.stdout.flush()
+    print_answer(obj, ensure_ascii=True)
     raise SystemExit(code)
 
 
@@ -1198,7 +1411,7 @@ class Decomp:
 
     def __init__(self, path, kind, max_ratio):
         self.kind, self.max_ratio = kind, max_ratio
-        self.fh = open(path, "rb")
+        self.fh = open_regular(path)
         self.consumed = 0          # compressed bytes read from the file
         self.produced = 0          # decompressed bytes handed out
         self.buf = b""
@@ -1446,7 +1659,7 @@ class RawSlice:
     """`size` bytes of a file from `offset`: a plain tar member's data, read without tarfile, so that an archive which ends early gives what is there."""
 
     def __init__(self, path, offset, size):
-        self.fh = open(path, "rb")
+        self.fh = open_regular(path)
         self.fh.seek(offset)
         self.remaining = size
 
@@ -1559,7 +1772,10 @@ def resolve_output(out):
     """Where `out` really lands, as a path under the run directory; a place outside it, the run directory itself or
     anything under inputs/ is refused, and in a job so is anything outside $OUT, the one place a job writes."""
     root = Path.cwd().resolve()
-    dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    try:
+        dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:     # a symlink loop, a name too long, a lone surrogate
+        fail("out_dir cannot be resolved: %s" % (exc.__class__.__name__ if not getattr(exc, "strerror", None) else exc.strerror), out_dir=scrub(str(out)))
     if dest == root or root not in dest.parents:
         fail("out_dir must stay inside the run directory", out_dir=str(out))
     inputs = root / "inputs"
@@ -1590,11 +1806,21 @@ def private_file(path, mode="w"):
 
 def write_json_atomic(path, obj):
     tmp = "%s.tmp.%d" % (path, os.getpid())
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, indent=2, ensure_ascii=True)
-        fh.write("\n")
-    os.replace(tmp, path)
+    temp_hold(tmp)                   # registered before the file exists: whatever stops this, the half-written file is not left beside the receipt
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            fh = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with fh:
+            json.dump(obj, fh, indent=2, ensure_ascii=True)
+            fh.write("\n")
+        temp_replace(tmp, path)
+    except BaseException:
+        temp_drop(tmp)
+        raise
 
 
 # ---- the engine -------------------------------------------------------------------------------------------------------
@@ -1611,7 +1837,7 @@ class Engine:
         self.members_fh = private_file(str(self.members_path))
         self.withheld_fh = None
         self.archive = archive_info
-        self.started = time.monotonic()
+        self.started = STARTED
         self.deadline = self.started + args["max_seconds"]
         self.counts = {}
         self.types = {}
@@ -1631,13 +1857,20 @@ class Engine:
         self.notes = []
         self.extra = {}
         self.status = "running"          # running | interrupted | failed while the run is not over; None once it is
+        self.receipt_error = None        # why receipt.json could not be written, when it could not
 
     # -- bookkeeping --
     def count(self, status):
         self.counts[status] = self.counts.get(status, 0) + 1
 
     def write_receipt(self):
-        write_json_atomic(str(self.receipt_path), self.receipt())
+        """Write receipt.json; a disk that refuses is said in the answer (receipt_error) and makes it partial, never a crash with no JSON."""
+        try:
+            write_json_atomic(str(self.receipt_path), self.receipt())
+            return True
+        except OSError as exc:
+            self.receipt_error = describe(exc)
+            return False
 
     def receipt(self):
         bad = {k: v for k, v in self.counts.items() if k not in ("extracted", "directory", "not_created")}
@@ -2067,7 +2300,7 @@ def read_rest(eng, stream, leftover, n):
 def zip_declared(path):
     """The member count and the central directory's size the end-of-central-directory record declares (zip64 too), read before zipfile loads it."""
     size = os.path.getsize(path)
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         fh.seek(max(0, size - 65557))
         tail = fh.read()
     at = tail.rfind(b"PK\x05\x06")
@@ -2078,7 +2311,7 @@ def zip_declared(path):
     if total == 0xFFFF or cd_bytes == 0xFFFFFFFF:
         loc = tail.rfind(b"PK\x06\x07", 0, at)
         if loc >= 0:
-            with open(path, "rb") as fh:
+            with open_regular(path) as fh:
                 fh.seek(struct.unpack_from("<Q", tail, loc + 8)[0])
                 rec = fh.read(56)
             if rec[:4] == b"PK\x06\x06":
@@ -2185,7 +2418,7 @@ def count_local_headers(path, cap=64 * 1024 * 1024):
     """How many local file headers (PK 03 04) the first `cap` bytes hold: a count for a zip whose directory is gone, not a listing."""
     count, tail = 0, b""
     try:
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             seen = 0
             while seen < cap:
                 block = fh.read(CHUNK)
@@ -2227,7 +2460,7 @@ def parse_gzip_header(head):
 
 def run_single(eng, path, kind, dec, from_index):
     """One compressed file that is not a tar: ONE member."""
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         head = fh.read(4096)
     name, mtime = parse_gzip_header(head) if kind == "gzip" else (None, None)
     base = os.path.basename(path)
@@ -2255,12 +2488,14 @@ def find_7z():
     return None
 
 
-def banner(program):
+def banner(program, seconds=15):
+    if seconds <= 0:
+        return None
     try:
         proc = spawn([program], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=dict(os.environ, LC_ALL="C"))
         ACTIVE.append(proc)
         try:
-            out, _, _ = communicate_bounded(proc, 15)
+            out, _, _ = communicate_bounded(proc, min(15, seconds))
         finally:
             if proc in ACTIVE:
                 ACTIVE.remove(proc)
@@ -2275,7 +2510,7 @@ def banner(program):
 def listing_records(path):
     """The records of `7z l -slt -ba` as dicts of bytes, one per blank-line-separated block, read a line at a time."""
     fields = {}
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         for line in fh:
             if len(line) > LISTING_LINE_MAX:
                 raise ArchiveError("7z printed a listing line of more than %d bytes" % LISTING_LINE_MAX)
@@ -2523,7 +2758,7 @@ def tar_header_ok(block):
 
 def detect(path):
     """(format, detail). Format is zip, 7z, tar, gzip, bzip2, xz, zstd, or an unsupported name, from the bytes."""
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         head = fh.read(4096)
     if head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
         return "zip", "zip signature at offset 0"
@@ -2541,7 +2776,7 @@ def detect(path):
     # A zip with something in front of it (a self-extractor): the end-of-central-directory record still says what it is.
     try:
         size = os.path.getsize(path)
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             fh.seek(max(0, size - 65557))
             if b"PK\x05\x06" in fh.read():
                 return "zip", "no signature at offset 0, but an end-of-central-directory record at the end (a zip with a prefix)"
@@ -2550,15 +2785,24 @@ def detect(path):
     return None, "not a zip, tar, gzip, bzip2, xz, zstd or 7z archive: its first bytes are %s" % head[:16].hex()
 
 
-def sha256_of(path, limit):
+def sha256_of(path, limit, deadline):
+    """(sha256, None), or (None, why it was not taken): the archive is larger than `limit`, or the run's clock ran out after some bytes.
+    Opened without blocking and checked to be a regular file on the descriptor; the clock is read for every block."""
     size = os.path.getsize(path)
     if size > limit:
-        return None
+        return None, "the archive is larger than %d bytes" % limit
     h = hashlib.sha256()
-    with open(path, "rb") as fh:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            raise OSError(0, "not a regular file any more")
+        done = 0
         for block in iter(lambda: fh.read(CHUNK), b""):
             h.update(block)
-    return h.hexdigest()
+            done += len(block)
+            if time.monotonic() > deadline:
+                return None, "the time budget ran out after %d bytes of the archive were hashed" % done
+    return h.hexdigest(), None
 
 
 # ---- main --------------------------------------------------------------------------------------------------------------
@@ -2566,8 +2810,8 @@ def sha256_of(path, limit):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
-        fail("arguments are not valid JSON", reason=str(exc))
+    except (ValueError, RecursionError) as exc:
+        fail("arguments are not valid JSON", reason=str(exc)[:200])
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
     path = args.get("path")
@@ -2616,7 +2860,6 @@ def main():
              supported=["zip", "tar (plain, gzip, bzip2, xz, zstd)", "gzip, bzip2, xz, zstd (a single file)", "7z (with the 7z program)"])
 
     os.umask(0o077)
-    install_signal_handlers()
     st = os.stat(path)
     digest = hashlib.sha256(("%s|%d|%d" % (os.path.abspath(path), size, st.st_mtime_ns)).encode("utf-8", "surrogateescape")).hexdigest()[:12]
     if args.get("out_dir"):
@@ -2628,23 +2871,29 @@ def main():
     else:
         agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
         dest = resolve_output(os.path.join("work", agent, "archive_extract-" + digest))
-    if not args.get("out_dir") and dest.exists() and not resume:
-        k = 2
-        while Path("%s.%d" % (dest, k)).exists():
-            k += 1
-        dest = Path("%s.%d" % (dest, k))
-    if dest.exists() and not dest.is_dir():
-        fail("out_dir exists and is not a directory", out_dir=scrub(str(dest)))
-    if dest.exists() and any(dest.iterdir()) and not resume:
-        fail("out_dir already holds files: an extraction never writes over an earlier one. Pass a new out_dir, or resume: true (with from_index) "
-             "to go on in this one; the new manifest is written beside the earlier one", out_dir=scrub(str(dest)))
-    if resume and dest.exists() and not (dest / "extracted").is_dir():
-        fail("resume: true needs an out_dir an earlier run made (it has no extracted/ directory)", out_dir=scrub(str(dest)))
+    try:                    # exists(), is_dir() and iterdir() raise for a name too long, a directory that cannot be searched, a loop: a refusal, never a traceback
+        if not args.get("out_dir") and dest.exists() and not resume:
+            k = 2
+            while Path("%s.%d" % (dest, k)).exists():
+                k += 1
+            dest = Path("%s.%d" % (dest, k))
+        if dest.exists() and not dest.is_dir():
+            fail("out_dir exists and is not a directory", out_dir=scrub(str(dest)))
+        if dest.exists() and any(dest.iterdir()) and not resume:
+            fail("out_dir already holds files: an extraction never writes over an earlier one. Pass a new out_dir, or resume: true (with from_index) "
+                 "to go on in this one; the new manifest is written beside the earlier one", out_dir=scrub(str(dest)))
+        if resume and dest.exists() and not (dest / "extracted").is_dir():
+            fail("resume: true needs an out_dir an earlier run made (it has no extracted/ directory)", out_dir=scrub(str(dest)))
+    except (OSError, ValueError, RuntimeError) as exc:
+        fail("out_dir cannot be used: %s" % describe(exc), out_dir=scrub(str(args.get("out_dir") or dest)))
     try:
+        made_dest, made_extracted = not dest.exists(), not (dest / "extracted").exists()
         dest.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(dest, 0o700)
+        if made_dest:
+            os.chmod(dest, 0o700)               # a directory the caller made keeps the caller's mode; one made here is private
         (dest / "extracted").mkdir(mode=0o700, exist_ok=True)
-        os.chmod(dest / "extracted", 0o700)
+        if made_extracted:
+            os.chmod(dest / "extracted", 0o700)
     except OSError as exc:
         fail("the output directory cannot be made: %s" % describe(exc), out_dir=scrub(str(dest)))
     run_no = 1
@@ -2658,13 +2907,13 @@ def main():
         if sevenz is None:
             fail("a 7z archive needs the 7z program (7z, 7zz or 7za), which is not on PATH; nothing was extracted", path=scrub(path), format="7z",
                  install="apt-get install -y p7zip-full, or brew install sevenzip")
-        info["program"] = {"path": sevenz, "banner": banner(sevenz)}
+        info["program"] = {"path": sevenz, "banner": banner(sevenz, STARTED + a["max_seconds"] - time.monotonic())}
     try:
-        info["sha256"] = sha256_of(path, HASH_ARCHIVE_MAX)
+        info["sha256"], why_not = sha256_of(path, HASH_ARCHIVE_MAX, STARTED + a["max_seconds"])
     except OSError as exc:
         fail("the archive cannot be read: %s" % describe(exc), path=scrub(path))
     if info["sha256"] is None:
-        info["sha256_skipped"] = "the archive is larger than %d bytes; the run's own record of the input has its sha256" % HASH_ARCHIVE_MAX
+        info["sha256_skipped"] = "%s; the run's own record of the input has its sha256" % why_not
     info["python"] = sys.version.split()[0]
     if resume:
         # A resume goes on in the directory of an earlier run of THIS archive: another archive's members would be mixed into it.
@@ -2691,6 +2940,12 @@ def main():
         eng.status = "interrupted"
         eng.write_receipt()
         eng.finish_files()
+        # one document on stdout: a stop is not a status (the statuses are complete, partial and failed), it is partial with interrupted true
+        print(json.dumps({"ok": False, "tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "out_dir": scrub(str(dest)),
+                          "members_seen": eng.rows, "next_index": eng.next_index, "receipt": eng.receipt_path.name if not eng.receipt_error else None,
+                          "receipt_error": eng.receipt_error,
+                          "status_basis": "the tool was stopped by signal %d: the members already written are on disk (an unfinished one is a .partial file), "
+                                          "members_file lists them, and next_index is where a run with from_index and resume true goes on" % signum}), flush=True)
     STATE["last_word"] = last_word
 
     dec = None
@@ -2755,6 +3010,11 @@ def main():
     eng.status = None
     eng.write_receipt()
     receipt = eng.receipt()
+    if eng.receipt_error:
+        receipt["status"] = "failed" if receipt["status"] == "failed" else "partial"
+        receipt["status_basis"] = ("the extraction ran, but %s could not be written (%s): the members already written are on disk, and the answer "
+                                   "is the only record of the run" % (eng.receipt_path.name, eng.receipt_error))
+        receipt["receipt_error"] = eng.receipt_error
     out = {"ok": True, **receipt, "members": eng.page,
            "members_returned": len(eng.page), "members_truncated": eng.rows > len(eng.page),
            "note": ("the inline members are a page; members_file has every member" if eng.rows > len(eng.page) else None)}

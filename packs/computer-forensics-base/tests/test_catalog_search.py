@@ -183,5 +183,119 @@ class CatalogSearch(Case):
             self.assertIs(r.json["ok"], False, raw)
 
 
+class CatalogSearchStatus(Case):
+    """Every answer of catalog_search carries `status` (complete, partial or failed) and a one-sentence `status_basis`; `complete`
+    and `ok` keep their meaning."""
+
+    def catalogue(self, rows=10, text=None):
+        self.write("catalog/Disk.E01/p2048/filelist.txt", text if text is not None else "".join("r/r %d-128-1:\tUsers/a/file%04d.log\n" % (i, i) for i in range(rows)))
+        self.write("catalog/Disk.E01/partitions.txt", "002:  000:000   0000002048   ...   NTFS\n")
+
+    def pair(self, r, status):
+        j = answer(r)
+        self.assertEqual(j.get("status"), status, j)
+        basis = j.get("status_basis")
+        self.assertTrue(isinstance(basis, str) and len(basis) > 20, j)
+        return j
+
+    def test_a_clean_run_is_complete(self):
+        self.catalogue()
+        r = run_tool("catalog_search", {"pattern": "file000[1-3]"}, self.dir)
+        j = self.pair(r, "complete")
+        self.assertEqual((r.code, j["matched"], j["complete"]), (0, 3, True))
+
+    def test_a_paged_run_is_complete_and_names_the_file_with_every_match(self):
+        self.catalogue(300)
+        j = self.pair(run_tool("catalog_search", {"pattern": "file", "limit": 5}, self.dir, env={"AGENT_ID": "s1"}), "complete")
+        self.assertIn("all_matches", j)
+        self.assertIn("all_matches", j["status_basis"])
+
+    def test_every_refusal_is_failed_with_the_pair(self):
+        self.catalogue()
+        for args in ({"pattern": "x", "which": "nonsense"}, {"pattern": "("}, {"pattern": "x", "exclude": "("}, {"pattern": "x", "limit": 0},
+                     {"pattern": "x", "limit": "many"}, {"pattern": "x", "offset": -1}, {"pattern": "x", "max_seconds": 999},
+                     {"pattern": 5}, {"pattern": "x" * 5000}, {"pattern": "x", "catalog": "Nope.E01"}, {"pattern": "x", "partition": "p9"},
+                     {"pattern": "x", "revision": "abc"}, {"pattern": "x", "revision": 7}, {"pattern": "x", "which": ["filelist"]},
+                     {"pattern": "x", "catalog": {"a": 1}}, {"pattern": "x", "limit": 1e999}, {"pattern": "x", "which": "timeline"}):
+            r = run_tool("catalog_search", args, self.dir)
+            self.assertEqual(r.code, 1, args)
+            self.pair(r, "failed")
+            self.assertNotIn("Traceback", r.stderr, args)
+        for raw in ("not json", "[]", "", "[" * 100000):
+            r = run_tool("catalog_search", None, self.dir, raw_input=raw)
+            self.pair(r, "failed")
+            self.assertNotIn("Traceback", r.stderr, raw)
+
+    def test_no_catalogue_at_all_is_failed_with_the_pair(self):
+        r = run_tool("catalog_search", {}, self.dir)
+        j = self.pair(r, "failed")
+        self.assertIs(j["ok"], False)
+        self.write("catalog/revisions/1/MANIFEST.json", "{}")
+        self.write("catalog/revisions/1/index.json", "not json")
+        self.pair(run_tool("catalog_search", {"pattern": "x", "which": "generations"}, self.dir), "failed")
+        self.pair(run_tool("catalog_search", {"pattern": "x", "catalog": "g0001"}, self.dir), "failed")
+
+    def test_a_refusal_lists_at_most_200_names_and_counts_them(self):
+        for i in range(250):
+            self.write("catalog/cat%03d/partitions.txt" % i, "p\n")
+        j = self.pair(run_tool("catalog_search", {"pattern": "x"}, self.dir), "failed")
+        self.assertEqual((len(j["candidates"]), j["candidates_total"]), (200, 250))
+
+    def test_a_clock_stop_is_partial_and_not_complete(self):
+        self.catalogue(text=("a" * 40 + "\n") * 3)
+        r = run_tool("catalog_search", {"pattern": "(a*)*b", "max_seconds": 1}, self.dir, timeout=60)
+        j = self.pair(r, "partial")
+        self.assertEqual((r.code, j["complete"]), (0, False))
+        self.assertIn("interrupted", j)
+
+    def test_a_clock_stop_over_the_generations_is_partial(self):
+        self.write("catalog/revisions/1/MANIFEST.json", "{}")
+        self.write("catalog/revisions/1/index.json", json.dumps({"generations": [{"id": "g0001", "recipe": "a" * 40, "status": "complete"}]}))
+        j = self.pair(run_tool("catalog_search", {"pattern": "(a*)*b", "which": "generations", "max_seconds": 1}, self.dir, timeout=60), "partial")
+        self.assertFalse(j["complete"])
+        self.assertIn("interrupted", j)
+
+    def test_the_generations_listing_is_complete(self):
+        self.write("catalog/revisions/1/MANIFEST.json", "{}")
+        self.write("catalog/revisions/1/index.json", json.dumps({"generations": [{"id": "g0001", "recipe": "r", "status": "complete"}]}))
+        j = self.pair(run_tool("catalog_search", {"pattern": "r", "which": "generations"}, self.dir), "complete")
+        self.assertEqual(j["matched"], 1)
+
+    def test_lines_too_long_to_search_make_it_partial(self):
+        self.catalogue(text="short file line\n" + "x" * ((1 << 20) + 10) + "\nanother file line\n")
+        j = self.pair(run_tool("catalog_search", {"pattern": "file"}, self.dir), "partial")
+        self.assertEqual((j["lines_not_searched"], j["complete"], j["matched"]), (1, False, 2))
+
+    def test_a_match_file_that_could_not_be_written_is_partial(self):
+        self.catalogue(300)
+        self.write("work", b"a file where the work directory should be")
+        j = self.pair(run_tool("catalog_search", {"pattern": "file", "limit": 5}, self.dir, env={"AGENT_ID": "s1"}), "partial")
+        self.assertIn("all_matches_error", j)
+        self.assertEqual((j["matched"], j["returned"]), (300, 5))
+        self.assertIn("all_matches_error", j["status_basis"])
+
+    def test_a_budget_that_runs_out_before_the_search_began_is_partial_json(self):
+        import subprocess
+        import sys
+        from support import tool_path
+        with open(tool_path("catalog_search"), encoding="utf-8") as fh:
+            src = fh.read()
+        patched = src.replace('revision = _revision(args.get("revision"))', "raise _Budget()", 1)
+        self.assertNotEqual(src, patched)
+        self.catalogue()
+        # The tool with one line replaced, run like the harness runs a tool.
+        path = self.path("patched_run.py")
+        self.write("patched_run.py", patched)
+        p = subprocess.run([sys.executable, path], input=json.dumps({"pattern": "x"}), capture_output=True, text=True, cwd=self.dir, timeout=60)
+        self.assertNotIn("Traceback", p.stderr)
+        j = json.loads(p.stdout)
+        self.assertEqual((p.returncode, j["status"], j["ok"]), (1, "partial", False), j)
+        self.assertGreater(len(j["status_basis"]), 20)
+
+    def test_the_probe_of_a_missing_path_in_an_empty_directory(self):
+        for args in ({}, {"pattern": "x", "catalog": "missing/path"}):
+            self.pair(run_tool("catalog_search", args, self.dir), "failed")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -230,8 +230,9 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     );
     const mismatch = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {});
     assert.notEqual(mismatch.code, 0);
-    const bad = JSON.parse(mismatch.stdout) as { status: string; modified: string[] };
-    assert.equal(bad.status, "FAIL");
+    const bad = JSON.parse(mismatch.stdout) as { status: string; ok: boolean; modified: string[] };
+    assert.equal(bad.status, "complete", "every file was checked: the status is about the check, ok is the verdict");
+    assert.equal(bad.ok, false);
     assert.ok(bad.modified.includes("inputs/AF-Case2.E01"));
 
     const { createHash } = await import("node:crypto");
@@ -249,7 +250,8 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     );
     const ok = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {});
     assert.equal(ok.code, 0, ok.stderr);
-    assert.equal((JSON.parse(ok.stdout) as { status: string }).status, "OK");
+    assert.equal((JSON.parse(ok.stdout) as { status: string }).status, "complete");
+    assert.equal((JSON.parse(ok.stdout) as { ok: boolean }).ok, true);
     assert.equal((JSON.parse(ok.stdout) as { baseline: string }).baseline, "the run's inputs.json");
 
     // In a job the run's inputs.json is not in the run directory the job sees: the job service gives a copy, named by
@@ -263,7 +265,7 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     const inJob = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {}, undefined, { JOB_ID: "j000006", OUT: out, SWARM_INPUTS_MANIFEST: join(copy, "inputs.json") });
     assert.equal(inJob.code, 0, inJob.stdout + inJob.stderr);
     const inJobBody = JSON.parse(inJob.stdout) as { status: string; baseline: string };
-    assert.equal(inJobBody.status, "OK");
+    assert.equal(inJobBody.status, "complete");
     assert.match(inJobBody.baseline, /a copy of the run.s inputs.json the job service gave this job when it started/, "the answer says its baseline was the job's copy");
     const none = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {}, undefined, { JOB_ID: "j000007", OUT: out });
     assert.notEqual(none.code, 0);
@@ -1169,7 +1171,10 @@ test("sqlite_query says a file is not SQLite, and whether it looks encrypted, in
       assert.equal(body.header_hex.slice(0, 8), "504b0304");
       assert.match(body.reading, /another format/);
       r = await runPy(script, cwd, { db_path: "work/none.db", sql: "select 1;" });
-      assert.deepEqual(JSON.parse(r.stdout), { ok: false, error: "database not found", db_path: "work/none.db" });
+      assert.deepEqual(JSON.parse(r.stdout), {
+        ok: false, error: "database not found", db_path: "work/none.db",
+        status: "failed", status_basis: "the tool stopped with an error or a refusal and returned no result of the request (see error)",
+      });
     });
   }
 });
@@ -1298,7 +1303,10 @@ test("catalog_search takes a catalogue by the name the index gives it, and bad i
     assert.match(r.stdout, /Data\/secret\.txt/);
     r = await runPy(join(tools, "catalog_search", "run.py"), cwd, { pattern: "x", which: "filelist", catalog: "Case5.E01" });
     assert.notEqual(r.code, 0);
-    assert.deepEqual(JSON.parse(r.stdout + r.stderr), { ok: false, error: "no catalogue Case5.E01", candidates: ["Case4.E01", "memdump.mem"] });
+    assert.deepEqual(JSON.parse(r.stdout + r.stderr), {
+      ok: false, error: "no catalogue Case5.E01", candidates: ["Case4.E01", "memdump.mem"],
+      status: "failed", status_basis: "the tool stopped with an error and read no result (see error)",
+    });
     // A disk and a memory catalogue: the disk's is the one with filesystems.
     await writeFile(join(cwd, "catalog", "Case4.E01", "partitions.txt"), "002:  000:000   0000002048   ...   NTFS\n");
     r = await runPy(join(tools, "catalog_search", "run.py"), cwd, { pattern: "NTUSER", which: "filelist", partition: "p2048" });

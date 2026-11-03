@@ -62,6 +62,7 @@ ad1_extract.coverage.json
 is written as incomplete before the first item and again at the end.
 """
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -70,15 +71,273 @@ import time
 import unicodedata
 from pathlib import Path
 
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+_shared_print_answer = print_answer
+
+
+def print_answer(answer, **dumps_kwargs):
+    _reconcile(answer)
+    _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
+
+
+def _unexpected_tool(kind, value, _tb):
+    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed first (a name that cannot be removed is said in the
+    answer), then one JSON document with the class and, for a file-system error, its reason (a message can quote a name from the evidence), and
+    exit 1; what was written before it is not claimed. A stop signal that arrives while this runs is held with the answer's write and is answered by
+    this document and exit 1, not by 128 + the signal."""
+    try:
+        left = drop_temporaries()
+        reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
+        said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
+        answer = {"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                  "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__}
+        if left:
+            answer["temporaries_left"] = left[:10]
+            answer["status_basis"] += "; hidden temporary files that could not be removed are listed in temporaries_left"
+        print_answer(answer)
+    except BaseException:       # noqa: BLE001 - nothing may stop the exit
+        pass
+    os._exit(1)
+
+
+sys.excepthook = _unexpected_tool
+
 NAME_MAX = 255
 SHOWN_ERRORS = 20
 MANIFEST = "ad1_extract.tsv"
 ERRORS = "ad1_extract.errors.txt"
 COVERAGE = "ad1_extract.coverage.json"
+GAPS = "ad1_extract.gaps.jsonl"
 ITEMS_DEFAULT, ITEMS_CEILING = 5_000_000, 100_000_000
 WALK_DEFAULT, WALK_CEILING = 5_000_000, 100_000_000       # items looked at, taken or not
 BYTES_DEFAULT, BYTES_CEILING = 256 * 1024 ** 3, 1024 ** 4
 SECONDS_DEFAULT, SECONDS_CEILING = 1500, 1700          # the ceiling is inside the manifest's own 1800-second limit
+RATIO_DEFAULT, RATIO_CEILING = 1000, 1_000_000         # bytes written per byte of the image's content read (the max_ratio archive_extract has)
+RATIO_SLACK = 1 << 20                                  # a file may expand this much past the ratio before it counts (a tiny image)
 
 
 # --- AD1 reader ---------------------------------------------------------------
@@ -117,6 +376,7 @@ import bisect as _bisect
 import heapq as _heapq
 import os as _os
 import struct as _struct
+import time as _time
 import zlib as _zlib
 
 AD1_SEGMENT_MAGIC = b"ADSEGMENTEDFILE\x00"
@@ -138,7 +398,8 @@ AD1_CACHE_MAX = 32 << 20          # bytes (estimated) of the last metadata chain
 AD1_CACHE_CHAINS = 8              # and how many of them
 AD1_FOLD_AT = 1 << 16             # reached-range entries held before they are merged
 AD1_SLACK = 0                     # non-zero bytes of the data nothing may lead to before the walk is not called whole
-AD1_GAP_SCAN_MAX = 256 << 20      # bytes of unreached data read to count its non-zero bytes
+AD1_GAP_BLOCK = 1 << 20            # bytes of unreached data read at a time: the clock is looked at before each block
+AD1_GAPS_LISTED = 20              # gaps named one by one in the report: those with non-zero bytes, or not read to their end
 AD1_GUID_TABLES = (b"ATTRGUID", b"LOCSGUID")   # the two tables FTK Imager leaves after the items; the header points at them
 
 
@@ -169,6 +430,19 @@ def ad1_where(parent):
     return parent.decode("utf-8", "replace") if parent else "the root"
 
 
+def open_regular(path):
+    """open(path, "rb") for an image path: opened without waiting (O_NONBLOCK) and looked at with fstat on the descriptor, so a FIFO or a device
+    (named, or put in the place of the file after it was checked) is refused and never waited on."""
+    fd = _os.open(path, _os.O_RDONLY | getattr(_os, "O_NONBLOCK", 0))
+    try:
+        if _os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file")
+    except BaseException:
+        _os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
 class AD1:
     """An AD1 image opened read-only from its first segment (and the paths of
     the rest, when given; else beside it, x.ad2, x.ad3, ...). `missing` names
@@ -177,7 +451,7 @@ class AD1:
     could not be taken."""
 
     def __init__(self, first, more=()):
-        with open(first, "rb") as fh:
+        with open_regular(first) as fh:
             self.segment = ad1_segment_header(fh.read(0x30))
         if self.segment["index"] != 1:
             raise AD1Error("segment %d of %d of an AD1 image: the image is read from its first segment" % (self.segment["index"], self.segment["count"]))
@@ -191,7 +465,7 @@ class AD1:
             p = given[k - 1] if k <= len(given) else (stem + ext[:-1] + str(k) if beside else None)
             margin, span, present = self.segment["header"], self.segment["bytes"] - self.segment["header"], 0
             if p and _os.path.isfile(p):
-                with open(p, "rb") as fh:
+                with open_regular(p) as fh:
                     h = ad1_segment_header(fh.read(0x30))
                     size = _os.fstat(fh.fileno()).st_size
                 if h["index"] != k or h["count"] != count:
@@ -212,6 +486,8 @@ class AD1:
         self._open = {}
         self._reached, self._lo, self._hi = _array.array("Q"), _array.array("Q"), _array.array("Q")
         self._chains, self._chains_held = {}, 0
+        self.packed_read = 0          # compressed bytes of content read so far, for a ratio against what is written
+        self.gap_report = None
         if self.read(0, 14) != AD1_LOGICAL_MAGIC:
             raise AD1Error("no ADLOGICALIMAGE header at the start of the image's data")
         (self.version,) = _struct.unpack("<I", self.read(16, 4))
@@ -245,7 +521,7 @@ class AD1:
         if fh is None:
             if len(self._open) >= AD1_OPEN_MAX:
                 self._open.pop(next(iter(self._open))).close()
-            fh = open(self.paths[k], "rb")
+            fh = open_regular(self.paths[k])
         self._open[k] = fh
         return fh
 
@@ -335,11 +611,15 @@ class AD1:
             if at < end:
                 yield at, end
 
-    def unreferenced(self):
+    def unreferenced(self, deadline=None, sink=None):
         """(bytes, non-zero bytes, whole) of the image's data that no structure the walk read or was led to covers, or None while a
-        segment is not there. Zero bytes between structures are padding; the non-zero ones are content nothing led to. `whole` is
-        False when only the first AD1_GAP_SCAN_MAX unreached bytes were read for their non-zero ones. The image's own metadata chain
-        counts as reached, so it is read here if the caller has not."""
+        segment is not there. Every such stretch is read to its end, in blocks of AD1_GAP_BLOCK, and the clock (`deadline`, a
+        time.monotonic() value) is looked at before each block: zero bytes between structures are padding, the non-zero ones are
+        content nothing led to. `whole` is False when the clock stopped the read before the end of the unreached data; `gap_report`
+        then says where (stopped_at, an address) and how much was read, and counts the gaps that hold non-zero bytes or were not
+        read to their end, naming the first AD1_GAPS_LISTED of them; `sink`, when given, is called with every such gap (from, to,
+        read, nonzero_bytes), so the caller can keep them all. The image's own metadata chain counts as reached, so it is read here
+        if the caller has not."""
         if self.missing:
             return None
         if self.meta_addr:
@@ -348,15 +628,34 @@ class AD1:
             except AD1Error:
                 pass
         self._fold()
-        total, nonzero, scanned = 0, 0, 0
+        total, nonzero, read, stopped = 0, 0, 0, False
+        rep = {"gaps": 0, "gaps_with_nonzero_bytes": 0, "gaps_not_read_to_the_end": 0, "stopped_at": None, "listed": []}
         for lo, hi in self._gaps():
             total += hi - lo
-            while lo < hi and scanned < AD1_GAP_SCAN_MAX:
-                block = self.read(lo, min(hi - lo, 1 << 20, AD1_GAP_SCAN_MAX - scanned))
-                nonzero += len(block) - block.count(0)
-                scanned += len(block)
+            rep["gaps"] += 1
+            start, nz, got = lo, 0, 0
+            while lo < hi and not stopped:
+                if deadline is not None and _time.monotonic() > deadline:
+                    stopped = True
+                    rep["stopped_at"] = lo
+                    break
+                block = self.read(lo, min(hi - lo, AD1_GAP_BLOCK))
+                nz += len(block) - block.count(0)
+                got += len(block)
                 lo += len(block)
-        return total, nonzero, scanned >= total
+            nonzero += nz
+            read += got
+            rep["gaps_with_nonzero_bytes"] += 1 if nz else 0
+            rep["gaps_not_read_to_the_end"] += 1 if got < hi - start else 0
+            if nz or got < hi - start:
+                gap = {"from": start, "to": hi, "read": got, "nonzero_bytes": nz}
+                if len(rep["listed"]) < AD1_GAPS_LISTED:
+                    rep["listed"].append(gap)
+                if sink is not None:
+                    sink(gap)
+        rep.update({"bytes": total, "read": read, "nonzero_bytes": nonzero})
+        self.gap_report = rep
+        return total, nonzero, read >= total
 
     def metadata(self, addr):
         """[(category, key, text bytes, address)] of a metadata chain. An item that shares its chain with an earlier one gets the same
@@ -461,7 +760,9 @@ class AD1:
         for i, (start, end) in enumerate(self.chunks(item)):
             z = _zlib.decompressobj()
             try:
-                block = z.decompress(self.read(start, end - start), bound + 1)
+                packed = self.read(start, end - start)
+                self.packed_read += len(packed)
+                block = z.decompress(packed, bound + 1)
             except _zlib.error as e:
                 raise AD1Error("its chunk %d does not inflate: %s" % (i, e))
             if len(block) > bound or z.unconsumed_tail:
@@ -476,23 +777,26 @@ class AD1:
             raise AD1Error("its content is %d bytes, not its size of %d" % (total, item["size"]))
 
 
-def ad1_unaccounted(img):
+def ad1_unaccounted(img, deadline=None, sink=None):
     """None, or words, once a walk has reached the end of the tree: the image's data holds bytes that no item, name, metadata entry,
     chunk table or chunk led to. A zeroed or damaged next or child pointer ends a chain early with no error, and the format has no item
-    count, so the walk cannot tell a tree that ended from a tree that was cut: it says what it could not account for."""
-    left = img.unreferenced()
+    count, so the walk cannot tell a tree that ended from a tree that was cut: it says what it could not account for. The unreached data
+    is read to its end unless the clock (`deadline`) stops it, and then the words say where."""
+    left = img.unreferenced(deadline, sink)
     if left is None:
         return None
+    rep = img.gap_report
+    stopped = "" if left[2] else "; the read of the unreached data stopped at its time budget at address %d, %d of its %d bytes in" % (rep["stopped_at"], rep["read"], left[0])
     if left[1] <= AD1_SLACK:
         if left[2]:
             return None
-        # Only the first AD1_GAP_SCAN_MAX bytes of the unreached data were read, and they held nothing: that says nothing of the rest, where a
-        # zeroed pointer's lost items can sit behind a long run of zeros.
+        # The clock stopped the read, and what was read held nothing: that says nothing of the rest, where a zeroed pointer's lost items
+        # can sit behind a long run of zeros.
         return ("%d of the %d bytes of the image's data that no item, name, metadata entry, chunk table or chunk of the tree leads to were read for non-zero bytes "
-                "(the first %d MiB) and held none; the rest was not read, so the tree is not shown to account for the image's data and the list is not shown to be whole"
-                % (min(left[0], AD1_GAP_SCAN_MAX), left[0], AD1_GAP_SCAN_MAX >> 20))
+                "(up to address %d) and held none; the read stopped at its time budget, so the rest was not read, the tree is not shown to account for the "
+                "image's data and the list is not shown to be whole" % (rep["read"], left[0], rep["stopped_at"]))
     return ("%s%d bytes of the image's data that are not zero are reached by no item, name, metadata entry, chunk table or chunk of the tree: a zeroed or damaged "
-            "next or child pointer would leave exactly such bytes, and the format has no item count, so the list is not shown to be whole" % ("" if left[2] else "at least ", left[1]))
+            "next or child pointer would leave exactly such bytes, and the format has no item count, so the list is not shown to be whole%s" % ("" if left[2] else "at least ", left[1], stopped))
 
 
 def ad1_text(meta, key):
@@ -504,8 +808,42 @@ def ad1_text(meta, key):
 # --- end of the AD1 reader ----------------------------------------------------
 
 
+GAPS_FILE_MAX = 100_000           # rows in the file of gaps; the counts in the report go on past it
+
+
+class GapFile:
+    """The gaps of the image's data that no structure led to and that hold non-zero bytes or were not read to their end, one JSON line
+    each, in a file made new on the first one and cut at GAPS_FILE_MAX rows (`cut` says so)."""
+
+    def __init__(self, path):
+        self.path, self.fh, self.written, self.cut, self.error = path, None, 0, False, None
+
+    def add(self, gap):
+        if self.error or self.cut:
+            return
+        if self.written >= GAPS_FILE_MAX:
+            self.cut = True
+            return
+        try:
+            if self.fh is None:
+                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+                self.fh = os.fdopen(fd, "w", encoding="ascii")
+            self.fh.write(json.dumps(gap) + "\n")
+            self.written += 1
+        except OSError as exc:
+            self.error = "the gaps could not be written (%s)" % (exc.strerror or exc)
+
+    def close(self):
+        if self.fh is not None:
+            try:
+                self.fh.close()
+            except OSError as exc:
+                self.error = self.error or "the gaps were not all written (%s)" % (exc.strerror or exc)
+            self.fh = None
+
+
 def fail(message, **extra):
-    print(json.dumps({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "error": message, **extra}))
+    print_answer({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "error": message, **extra})
     raise SystemExit(1)
 
 
@@ -536,7 +874,10 @@ def resolve_output(out):
     $OUT (the one place a job writes); called directly, inside the run
     directory (not the run directory itself); never under inputs/."""
     root = Path.cwd().resolve()
-    dest = Path(out).resolve() if Path(out).is_absolute() else (root / out).resolve()
+    try:
+        dest = Path(out).resolve() if Path(out).is_absolute() else (root / out).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:     # a symlink loop, a name too long, a lone surrogate
+        fail("out_dir cannot be resolved: %s" % (exc.__class__.__name__ if not getattr(exc, "strerror", None) else exc.strerror), out_dir=str(out))
     if os.environ.get("OUT") and os.environ.get("JOB_ID"):
         job_out = Path(os.environ["OUT"]).resolve()
         if dest != job_out and job_out not in dest.parents:
@@ -680,8 +1021,8 @@ def write_file(img, item, dest, notes, used, stop):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as e:
-        fail("arguments are JSON on stdin: %s" % e)
+    except (ValueError, RecursionError) as e:
+        fail("arguments are JSON on stdin: %s" % str(e)[:200])
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
     image = args.get("image")
@@ -689,7 +1030,7 @@ def main():
         fail("image is required: the AD1 image's first segment (.ad1)")
     want_n, want_addr = parse_members(args.get("members"))
     budgets = {}
-    for key, default, ceiling in (("max_items", ITEMS_DEFAULT, ITEMS_CEILING), ("max_walk", WALK_DEFAULT, WALK_CEILING), ("max_bytes", BYTES_DEFAULT, BYTES_CEILING), ("max_seconds", SECONDS_DEFAULT, SECONDS_CEILING)):
+    for key, default, ceiling in (("max_items", ITEMS_DEFAULT, ITEMS_CEILING), ("max_walk", WALK_DEFAULT, WALK_CEILING), ("max_bytes", BYTES_DEFAULT, BYTES_CEILING), ("max_ratio", RATIO_DEFAULT, RATIO_CEILING), ("max_seconds", SECONDS_DEFAULT, SECONDS_CEILING)):
         v = args.get(key, default)
         if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= ceiling:
             fail("%s is a whole number from 1 to %d" % (key, ceiling), **{key: v})
@@ -726,7 +1067,7 @@ def main():
     # subtree that subtree's state is dropped, and what is held is the depth of the tree, not the number of items.
     chain = []         # [{n, selected, placed_rel, dir_of, children_dir, is_dir}], the ancestors of the item being looked at
     # The manifest's own names, at the top of out_dir, are not an item's.
-    taken = {"": {fold(MANIFEST), fold(ERRORS), fold(COVERAGE)}}  # directory (relative) -> folded names already used there
+    taken = {"": {fold(MANIFEST), fold(ERRORS), fold(COVERAGE), fold(GAPS)}}  # directory (relative) -> folded names already used there
     walked = 0
     seen_n, seen_addr = set(), set()       # the wanted numbers and addresses that were met, not every item's
     counts = {"items": 0, "files": 0, "folders": 0, "bytes": 0, "renamed": 0, "mismatches": 0, "checked": 0}
@@ -741,17 +1082,28 @@ def main():
             reached[0] = reached[0] or "the time budget of %d seconds was reached" % budgets["max_seconds"]
         elif counts["bytes"] + this_file[0] > budgets["max_bytes"]:
             reached[0] = reached[0] or "the output budget of %d bytes was reached" % budgets["max_bytes"]
+        elif counts["bytes"] + this_file[0] > budgets["max_ratio"] * max(img.packed_read, 1) + RATIO_SLACK:
+            reached[0] = reached[0] or ("the expansion limit max_ratio of %d was reached: %d bytes written from %d bytes of the image's content read (more than %d times)"
+                                        % (budgets["max_ratio"], counts["bytes"] + this_file[0], img.packed_read, budgets["max_ratio"]))
         return reached[0]
 
     def coverage(status, extra=None):
         doc = {"tool": "ad1_extract", "image": image, "processing_status": status, "budgets": budgets, **counts, **tally,
                "elapsed_seconds": round(time.monotonic() - started, 1), **(extra or {})}
-        try:
-            with open(out / COVERAGE, "w", encoding="utf-8") as cf:
+        tmp = out / (COVERAGE + ".tmp")
+        temp_hold(tmp)
+        try:                                     # whole or not at all: beside, then renamed over the name
+            with open(tmp, "w", encoding="utf-8") as cf:
                 json.dump(doc, cf, indent=2)
                 cf.write("\n")
+            temp_replace(tmp, out / COVERAGE)
+            return True
         except OSError:
-            pass
+            temp_drop(tmp)
+            return False
+        except BaseException:
+            temp_drop(tmp)
+            raise
     try:
         out.mkdir(parents=True, exist_ok=True)
         man = open(out / MANIFEST, "x", encoding="utf-8", newline="\n")
@@ -759,10 +1111,52 @@ def main():
         img.close()
         fail("cannot write in out_dir: %s" % (e.strerror or e), out_dir=str(out_arg))
     stopped = None
-    coverage("incomplete")                # said before the first item, so a run cut short leaves this file
-    with man:
-        man.write("n\ttype\tpath\tpath_b64\tlocator\twritten\tsize\tsha256\tcheck\tnote\n")
+
+    writing = [None]                      # the file being written, so that a stop can keep it under a name that says it is not whole
+
+    held_gaps = [None]                    # the gaps file, so that a stop closes it with every row it was given (gaps.jsonl is whole lines up to the stop)
+
+    def _stopped(signum):
         try:
+            man.flush()
+        except (OSError, ValueError):
+            pass
+        if held_gaps[0] is not None:
+            held_gaps[0].close()
+        kept = None
+        if writing[0] is not None and os.path.lexists(writing[0]):
+            k, kept = 0, str(writing[0]) + ".partial"
+            while os.path.lexists(kept):
+                k += 1
+                kept = "%s.partial.%d" % (writing[0], k)
+            try:
+                os.rename(writing[0], kept)
+            except OSError:
+                kept = None
+        coverage("partial", {"integrity_status": "unverified", "interrupted": True, "signal": signum})
+        print(json.dumps({"ok": False, "status": "partial", "processing_status": "partial", "integrity_status": "unverified", "interrupted": True, "signal": signum,
+                          "image": image, "out_dir": str(out_arg), "manifest": os.path.join(str(out_arg), MANIFEST), "coverage": os.path.join(str(out_arg), COVERAGE),
+                          **counts, "partial_file": os.path.relpath(kept, str(out_arg)) if kept else None,
+                          "status_basis": "the tool was stopped by signal %d: what was written is in out_dir (the file being written is kept under a .partial name, and is not the item), "
+                                          "the manifest lists the items before the stop, and nothing is claimed about the rest" % signum}), flush=True)
+    install_signal_handlers(_stopped)
+    coverage("incomplete")                # said before the first item, so a run cut short leaves this file
+    close_error = []
+
+    @contextlib.contextmanager
+    def closing_manifest(fh):
+        """The manifest is closed whatever happens, and a close that fails (the last bytes could not be written) is said, not raised."""
+        try:
+            yield fh
+        finally:
+            try:
+                fh.close()
+            except OSError as exc:
+                close_error.append("stopped: %s; the manifest does not hold everything that was written" % (exc.strerror or exc))
+
+    with closing_manifest(man):
+        try:
+            man.write("n\ttype\tpath\tpath_b64\tlocator\twritten\tsize\tsha256\tcheck\tnote\n")
             for item in img.walk():
                 n = item["n"]
                 if time.monotonic() > deadline and not reached[0]:
@@ -840,7 +1234,9 @@ def main():
                 md5 = (ad1_text(item["meta"], 0x5001) or b"").strip().decode("ascii", "replace").lower()
                 sha1 = (ad1_text(item["meta"], 0x5002) or b"").strip().decode("ascii", "replace").lower()
                 this_file[0] = 0
+                writing[0] = dest
                 size, hs, check, why, kept, kept_hash = write_file(img, item, dest, notes, used, stop)
+                writing[0] = None
                 if hs is None:
                     errors.append("item %d (%s, %s): %s" % (n, esc(raw_path), locator, why))
                     if reached[0] and why == reached[0]:
@@ -873,6 +1269,8 @@ def main():
             stopped = "stopped: %s; the manifest lists what was written before" % (e.strerror or e)
         finally:
             img.close()
+    if close_error:
+        stopped = stopped or close_error[0]
     errors += img.walk_errors
     absent = sorted(want_n - seen_n) if want_n is not None else []
     gone = sorted(want_addr - seen_addr) if want_addr is not None else []
@@ -892,10 +1290,20 @@ def main():
     # A walk that reached the end of the tree says what of the image's data nothing led to (a zeroed next pointer ends a chain
     # with no error): it cannot call the list whole, nor the digests it checked the image's.
     unaccounted = None
+    gaps = None
     if walked_all and not img.walk_errors:
-        unaccounted = ad1_unaccounted(img)
+        # Read to its end under the call's clock; the gaps with non-zero bytes, or not read to their end, are all in ad1_extract.gaps.jsonl
+        # (at most GAPS_FILE_MAX of them), the first AD1_GAPS_LISTED in the answer.
+        gaps = GapFile(str(out / GAPS))
+        held_gaps[0] = gaps
+        try:
+            unaccounted = ad1_unaccounted(img, deadline, gaps.add)
+        finally:
+            gaps.close()
         if unaccounted:
             errors.append(unaccounted)
+            if img.gap_report["stopped_at"] is not None:
+                reached[0] = reached[0] or "the time budget of %d seconds was reached while the data nothing led to was being read" % budgets["max_seconds"]
     processing = "complete" if not errors else ("partial" if counts["files"] or counts["folders"] else "failed")
     if counts["mismatches"]:
         integrity = "mismatch"
@@ -905,7 +1313,23 @@ def main():
         integrity = "unverified"
     else:
         integrity = "verified"
-    coverage(processing, {"integrity_status": integrity})
+    unreferenced = None
+    if gaps is not None and img.gap_report is not None:
+        r = img.gap_report
+        unreferenced = {"bytes": r["bytes"], "bytes_read": r["read"], "nonzero_bytes": r["nonzero_bytes"], "gaps": r["gaps"],
+                        "gaps_with_nonzero_bytes": r["gaps_with_nonzero_bytes"], "gaps_not_read_to_the_end": r["gaps_not_read_to_the_end"],
+                        "stopped_at": r["stopped_at"], "listed": r["listed"]}
+        if gaps.written or gaps.error:
+            unreferenced["file"] = os.path.join(str(out_arg), GAPS) if gaps.written else None
+            unreferenced["file_rows"] = gaps.written
+            unreferenced["file_note"] = "every gap with non-zero bytes or not read to its end, one JSON line each (listed has the first %d)%s" % (
+                AD1_GAPS_LISTED, "; cut at %d rows" % GAPS_FILE_MAX if gaps.cut else "")
+            if gaps.error:
+                unreferenced["file_error"] = gaps.error
+    if not coverage(processing, {"integrity_status": integrity, **({"unreferenced_data": unreferenced} if unreferenced else {})}):
+        errors.append("%s could not be written whole (the earlier one, which says incomplete, stands)" % COVERAGE)
+        if processing == "complete":
+            processing = "partial"
     result = {"ok": processing == "complete" and integrity != "mismatch", "processing_status": processing, "integrity_status": integrity,
               "status": processing,
               "status_basis": {"complete": "the tree was walked to its end, every item selected was written, and the data the tree leads to accounts for the image's",
@@ -913,6 +1337,8 @@ def main():
                                "failed": "no item could be written (see errors)"}[processing],
               "image": image, "out_dir": str(out_arg), "manifest": os.path.join(str(out_arg), MANIFEST), "coverage": os.path.join(str(out_arg), COVERAGE),
               **counts, **tally, "segments_missing": img.missing, "budgets": budgets}
+    if unreferenced:
+        result["unreferenced_data"] = unreferenced
     if integrity == "mismatch":
         result["integrity_note"] = ("%d file(s) were written whose content does not match the digests the image records (check mismatch in the manifest). "
                                     "The files were written; the exit status is 0 for a complete extraction, so read integrity_status" % counts["mismatches"])
@@ -933,7 +1359,7 @@ def main():
                 result["errors_file_error"] = "the whole list could not be written: %s" % (e.strerror or e)
     if not in_job:
         result["note"] = "written where you called it, not sealed: run it as a job (job_run tool=ad1_extract) to have the files sealed into the store, citable as job:<id>/<path>, and catalogued by the derived catalogue"
-    print(json.dumps(result))
+    print_answer(result)
     # Exit 0 means the tool ran and what it examined is whole or said not to be: complete, or partial only because a budget stopped it
     # between items (processing_status says partial and stopped_by_budget says which). An item that broke or could not be written, a
     # manifest that could not be written, a segment that is not there: 1.

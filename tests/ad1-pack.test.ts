@@ -12,13 +12,13 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
-import { ad1Data, ad1Image, ad1Item, ad1Logical, ad1Segments, md5, sha1, sha256, type Ad1Node } from "./ad1-fixture.ts";
+import { ad1Data, ad1Image, ad1Item, ad1Logical, ad1LogicalParts, ad1Segments, md5, sha1, sha256, writeSparseAd1, type Ad1Node } from "./ad1-fixture.ts";
 import { JobService, type JobRecord } from "../scripts/job-service.ts";
 import { storePaths, verifyJournalText, type JournalLine } from "../scripts/evidence-store.ts";
 import { localWorker } from "./job-service-worker.ts";
@@ -778,7 +778,20 @@ function paddedCutImage(pad: number, linked: boolean): Buffer {
   return ad1Segments(data)[0];
 }
 
-test("a zero run longer than the gap scan ahead of the lost items is not a complete, verified answer", async () => {
+/** The same four items as paddedCutImage, with the pad a hole in the file (nothing is stored for it): written to `path`. */
+function writePaddedCutImage(path: string, pad: number, linked: boolean): void {
+  const parts = ad1LogicalParts((put) => {
+    put({ hole: pad });
+    const items = [0, 1, 2, 3].map((i) => ad1Item(put, `f${i}`));
+    items[1].header.writeBigUInt64LE(BigInt(items[2].at), 0);
+    items[2].header.writeBigUInt64LE(BigInt(items[3].at), 0);
+    if (linked) items[0].header.writeBigUInt64LE(BigInt(items[1].at), 0);
+    return items[0].at;
+  });
+  writeSparseAd1(path, parts);
+}
+
+test("data nothing led to is read to its end: items behind a 270 MiB zero hole are found, not left unread", async () => {
   const d = dir("ad1-gap-");
   const pad = 270 * 1024 * 1024;
   writeFileSync(join(d, "cut.ad1"), paddedCutImage(pad, false));
@@ -786,18 +799,149 @@ test("a zero run longer than the gap scan ahead of the lost items is not a compl
   assert.equal(tsv(join(out, "members.tsv")).length, 1, "three items are no longer in the tree");
   assert.equal(cov.status, "partial");
   assert.equal((cov as Record<string, unknown>).integrity_status, "unverified");
-  assert.match(cov.errors.join("\n"), /were read for non-zero bytes \(the first 256 MiB\) and held none; the rest was not read/);
+  assert.match(cov.errors.join("\n"), /\d+ bytes of the image's data that are not zero are reached by no item/);
+  assert.doesNotMatch(cov.errors.join("\n"), /the rest was not read/, "the zero run was read through, and what lies behind it was reached");
+  const gaps = (cov as Record<string, any>).unreferenced_gaps;
+  assert.equal(gaps.stopped_at, null);
+  assert.ok(gaps.gaps_with_nonzero_bytes >= 1 && gaps.listed.some((g: { nonzero_bytes: number }) => g.nonzero_bytes > 0), JSON.stringify(gaps));
+  assert.ok(Number((cov as Record<string, unknown>).unreferenced_bytes_read) >= pad, "every byte of the unreached data was read");
+  assert.ok(readFileSync(join(out, "unreferenced-gaps.jsonl"), "utf8").trim().split("\n").length >= 1, "every such gap is in the file");
   const cwd = runDir();
   writeFileSync(join(cwd, "inputs", "cut.ad1"), readFileSync(join(d, "cut.ad1")));
   const r = await runPy(TOOL, cwd, { image: "inputs/cut.ad1" }, undefined, { AGENT_ID: "s1" });
   const res = JSON.parse(r.stdout);
   assert.deepEqual([res.processing_status, res.integrity_status], ["partial", "unverified"]);
-  assert.match(res.errors.join("\n"), /the rest was not read/);
+  assert.match(res.errors.join("\n"), /reached by no item/);
+  assert.equal(res.unreferenced_data.stopped_at, null);
+  assert.ok(res.unreferenced_data.file.endsWith("ad1_extract.gaps.jsonl"));
   // A pad the scan reads to its end is padding, and a tree that leads to everything is complete.
   writeFileSync(join(d, "small.ad1"), paddedCutImage(8 * 1024 * 1024, true));
   const small = runRecipe([join(d, "small.ad1")]);
   assert.equal(small.cov.status, "complete", JSON.stringify(small.cov.errors));
   assert.equal(tsv(join(small.out, "members.tsv")).length, 4);
+});
+
+test("pads of 256 MiB and one block either side, built sparse, are read through: a lost item is never hidden behind the pad, a whole tree stays complete", () => {
+  const d = dir("ad1-pads-");
+  const MiB = 1024 * 1024;
+  for (const pad of [256 * MiB - MiB, 256 * MiB - 1, 256 * MiB, 256 * MiB + 1, 256 * MiB + MiB, 257 * MiB + 12345]) {
+    writePaddedCutImage(join(d, "cut.ad1"), pad, false);
+    const cut = runRecipe([join(d, "cut.ad1")]);
+    assert.equal(cut.cov.status, "partial", `pad ${pad}`);
+    assert.equal(cut.cov.integrity_status, "unverified", `pad ${pad}`);
+    assert.match(cut.cov.errors.join("\n"), /\d+ bytes of the image's data that are not zero are reached by no item/, `pad ${pad}`);
+    writePaddedCutImage(join(d, "whole.ad1"), pad, true);
+    const whole = runRecipe([join(d, "whole.ad1")]);
+    assert.equal(whole.cov.status, "complete", `pad ${pad}: ${JSON.stringify(whole.cov.errors)}`);
+    assert.equal(tsv(join(whole.out, "members.tsv")).length, 4, `pad ${pad}`);
+  }
+});
+
+test("a read of the unreached data that the clock stops says where, and is partial, never complete", async () => {
+  const d = dir("ad1-gap-clock-");
+  const big = 64 * 1024 * 1024 * 1024;       // a 64 GiB hole: a sparse file, so it costs no disk, and cannot be read in a second
+  writePaddedCutImage(join(d, "huge.ad1"), big, true);
+  const t0 = Date.now();
+  const rec = runRecipe([join(d, "huge.ad1")], { RECIPE_LISTING_SECONDS: "1" });
+  assert.ok(Date.now() - t0 < 60000, "the recipe ended near its clock");
+  assert.equal(rec.cov.status, "partial");
+  assert.equal(rec.cov.integrity_status, "unverified");
+  const stopped = (rec.cov as Record<string, any>).unreferenced_gaps.stopped_at;
+  assert.ok(typeof stopped === "number" && stopped > 0 && stopped < big, `stopped_at ${stopped}`);
+  assert.match(rec.cov.limits_hit.join("\n"), /^seconds: the read of the data nothing led to stopped at address \d+, \d+ of its \d+ bytes in$/m);
+  assert.match(rec.cov.errors.join("\n"), /the read stopped at its time budget, so the rest was not read/);
+  const cwd = runDir();
+  writePaddedCutImage(join(cwd, "inputs", "huge.ad1"), big, true);
+  const t1 = Date.now();
+  const r = await runPy(TOOL, cwd, { image: "inputs/huge.ad1", max_seconds: 1 }, undefined, { AGENT_ID: "s1" });
+  assert.ok(Date.now() - t1 < 60000, "the tool ended near its clock");
+  const res = JSON.parse(r.stdout);
+  assert.equal(res.processing_status, "partial");
+  assert.equal(res.integrity_status, "unverified");
+  assert.ok(res.unreferenced_data.stopped_at > 0 && res.unreferenced_data.stopped_at < big);
+  assert.match(res.errors.join("\n"), /stopped at its time budget/);
+  assert.match(res.stopped_by_budget, /the time budget of 1 seconds was reached while the data nothing led to was being read/);
+});
+
+test("ad1_extract holds what it writes to a ratio of what it read: a chunk sequence past max_ratio is partial and names the ratio", async () => {
+  const cwd = runDir();
+  const zeros = Buffer.alloc(8 * 1024 * 1024);
+  writeFileSync(join(cwd, "inputs", "zeros.ad1"), ad1Image([{ name: "zeros.bin", content: zeros }]));
+  const r = await runPy(TOOL, cwd, { image: "inputs/zeros.ad1", max_ratio: 10, out_dir: "work/s1/ratio" }, undefined, { AGENT_ID: "s1" });
+  const res = JSON.parse(r.stdout);
+  assert.equal(res.processing_status, "partial", JSON.stringify(res.errors));
+  assert.match(res.stopped_by_budget, /the expansion limit max_ratio of 10 was reached: \d+ bytes written from \d+ bytes of the image's content read \(more than 10 times\)/);
+  assert.equal(res.budgets.max_ratio, 10);
+  const rows = tsv(join(cwd, "work", "s1", "ratio", "ad1_extract.tsv"));
+  assert.equal(rows[0].check, "not-read");
+  assert.ok(Number(rows[0].size) < 3 * 1024 * 1024, "what was written is kept as a partial, a little past the ratio's slack");
+  // The default (1000) lets an ordinary image through, and the parameter is bounded.
+  const fine = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: "work/s1/fine" }, undefined, { AGENT_ID: "s1" });
+  assert.equal(JSON.parse(fine.stdout).processing_status, "complete");
+  for (const bad of [0, -1, 1_000_001, 1.5, "10", true]) {
+    const refused = await runPy(TOOL, cwd, { image: "inputs/zeros.ad1", max_ratio: bad, out_dir: "work/s1/bad" }, undefined, { AGENT_ID: "s1" });
+    assert.equal(JSON.parse(refused.stdout).ok, false, String(bad));
+  }
+});
+
+/** An image whose second file is 512 MiB of zeros (8,192 small chunks): reading it takes seconds, so a stop can come in the middle of it. */
+function bigZeroImage(): Buffer {
+  return ad1Image([{ name: "a.txt", content: B("first") }, { name: "zeros.bin", content: Buffer.alloc(512 * 1024 * 1024) }]);
+}
+
+async function stopMidway(argv: string[], cwd: string, stdin: string, ready: () => boolean, signal: "SIGTERM" | "SIGINT" | "SIGHUP"): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const child = spawn("python3", argv, { cwd, env: { ...process.env, AGENT_ID: "s1" }, stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (c: Buffer) => { stdout += c.toString("utf8"); });
+  child.stderr.on("data", (c: Buffer) => { stderr += c.toString("utf8"); });
+  child.stdin.end(stdin);
+  const closed = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
+  const end = Date.now() + 30000;
+  while (Date.now() < end && child.exitCode === null && !ready()) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(child.exitCode, null, `it ended before it could be signalled: ${stdout.slice(0, 300)} ${stderr.slice(-300)}`);
+  assert.ok(ready(), "it never reached the point to signal");
+  child.kill(signal);
+  const code = await closed;
+  return { code, stdout, stderr };
+}
+
+test("a stop signal in the middle of ad1_extract and of the ad1-items recipe gives one document, exit 128 + the signal, and keeps the half-written file apart", async () => {
+  const NUMBER = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 } as const;
+  const cwd = dir("ad1-stop-");
+  mkdirSync(join(cwd, "inputs"));
+  writeFileSync(join(cwd, "inputs", "big.ad1"), bigZeroImage());
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    const out = join(cwd, "work", `x-${signal}`);
+    const growing = (): boolean => {
+      try { return statSync(join(out, "zeros.bin")).size > 16 * 1024 * 1024; } catch { return false; }
+    };
+    const r = await stopMidway([TOOL], cwd, JSON.stringify({ image: "inputs/big.ad1", out_dir: `work/x-${signal}` }), growing, signal);
+    assert.equal(r.code, 128 + NUMBER[signal], `${signal}: ${r.stdout.slice(0, 300)} ${r.stderr.slice(-300)}`);
+    const said = JSON.parse(r.stdout);
+    assert.deepEqual([said.status, said.interrupted, said.signal, said.integrity_status], ["partial", true, NUMBER[signal], "unverified"]);
+    assert.match(said.partial_file, /zeros\.bin\.partial/);
+    assert.ok(existsSync(join(cwd, said.partial_file.startsWith("work") ? said.partial_file : join("work", `x-${signal}`, said.partial_file))), "the half-written file is kept");
+    assert.ok(!existsSync(join(out, "zeros.bin")), "and does not keep the item's own name");
+    const cov = JSON.parse(readFileSync(join(out, "ad1_extract.coverage.json"), "utf8"));
+    assert.deepEqual([cov.processing_status, cov.interrupted], ["partial", true]);
+    assert.deepEqual(readdirSync(out).filter((n) => n.startsWith(".")), [], "no hidden temporary file");
+  }
+  // The recipe lists 20,000 items: that takes seconds, and a stop comes once the listing has begun.
+  writeFileSync(join(cwd, "inputs", "many.ad1"), ad1Image(Array.from({ length: 20000 }, (_, i) => ({ name: `f${i}.txt`, content: B("x") }))));
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    const out = join(cwd, `recipe-${signal}`);
+    mkdirSync(out);
+    const listed = (): boolean => {
+      try { return readFileSync(join(out, "members.tsv"), "utf8").split("\n").length > 50; } catch { return false; }
+    };
+    const r = await stopMidway([RECIPE, "run", "--target", JSON.stringify({ paths: [join(cwd, "inputs", "many.ad1")] }), "--out", out], cwd, "", listed, signal);
+    assert.equal(r.code, 128 + NUMBER[signal], `${signal}: ${r.stdout.slice(0, 300)} ${r.stderr.slice(-300)}`);
+    const said = JSON.parse(r.stdout);
+    assert.deepEqual([said.status, said.interrupted, said.signal], ["partial", true, NUMBER[signal]]);
+    const cov = JSON.parse(readFileSync(join(out, "coverage.json"), "utf8"));
+    assert.deepEqual([cov.status, cov.interrupted, cov.signal], ["partial", true, NUMBER[signal]]);
+  }
 });
 
 test("arguments that are a JSON array, and a target that is not an object, are answers and not tracebacks", () => {
@@ -812,6 +956,30 @@ test("arguments that are a JSON array, and a target that is not an object, are a
     assert.equal(run.err, "", `${target}: no traceback`);
     assert.equal(JSON.parse(run.out).ok, false, target);
   }
+});
+
+test("a stop while ad1_extract writes gaps.jsonl closes it: every line is whole JSON and the file is not left open", async () => {
+  const cwd = dir("ad1-gapstop-");
+  mkdirSync(join(cwd, "inputs"));
+  // Non-zero data no item leads to, then the items (all reachable), then a 40 GiB hole at the end: the first gap is written when the walk
+  // reaches the first item, and the scan of the hole, which follows, takes long enough to be stopped in.
+  writeSparseAd1(join(cwd, "inputs", "cut.ad1"), ad1LogicalParts((put) => {
+    put(Buffer.alloc(8192, 0x41));
+    const items = [0, 1, 2, 3].map((i) => ad1Item(put, `f${i}`));
+    items[0].header.writeBigUInt64LE(BigInt(items[1].at), 0);
+    items[1].header.writeBigUInt64LE(BigInt(items[2].at), 0);
+    items[2].header.writeBigUInt64LE(BigInt(items[3].at), 0);
+    put({ hole: 40 * 1024 * 1024 * 1024 });
+    return items[0].at;
+  }));
+  const gaps = join(cwd, "work", "gapstop", "ad1_extract.gaps.jsonl");
+  const started = (): boolean => existsSync(gaps);
+  const r = await stopMidway([TOOL], cwd, JSON.stringify({ image: "inputs/cut.ad1", out_dir: "work/gapstop" }), started, "SIGTERM");
+  assert.equal(r.code, 128 + 15, `${r.stdout.slice(0, 300)} ${r.stderr.slice(-300)}`);
+  assert.equal(JSON.parse(r.stdout).interrupted, true);
+  const text = readFileSync(gaps, "utf8");
+  assert.ok(text.endsWith("\n"), "the gap found before the stop is in the file, and its last line is whole");
+  for (const line of text.split("\n").filter(Boolean)) JSON.parse(line);
 });
 
 test("file_type names an AD1 image and its encrypted form by their first bytes", async () => {
@@ -898,5 +1066,227 @@ test("an AD1 image a job makes is catalogued by the derived catalogue, and what 
     assert.equal(zipGen.status, "complete");
   } finally {
     await svc.stop("over");
+  }
+});
+
+function filesUnder(root: string): Map<string, number> {
+  const found = new Map<string, number>();
+  const walk = (d: string): void => {
+    for (const name of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, name.name);
+      if (name.isDirectory()) walk(p);
+      else found.set(p, statSync(p).size);
+    }
+  };
+  walk(root);
+  return found;
+}
+
+test("ad1_extract under a file-size limit: JSON every time, a manifest or coverage file cut short is never called complete", () => {
+  const cwd = dir("ad1-sweep-");
+  mkdirSync(join(cwd, "inputs"));
+  writeFileSync(join(cwd, "inputs", "many.ad1"), ad1Image(Array.from({ length: 300 }, (_, i) => ({ name: `file-with-a-longer-name-${i}.txt`, content: B(`content ${i}`) }))));
+  const runWith = (kb: number | null, out: string) => spawnSync("bash", ["-c", `${kb === null ? "" : `ulimit -f ${kb}; `}exec python3 "$0"`, TOOL], {
+    cwd, input: JSON.stringify({ image: "inputs/many.ad1", out_dir: out }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" },
+  });
+  const free = runWith(null, "work/free");
+  assert.equal(JSON.parse(free.stdout).status, "complete", free.stdout.slice(0, 300));
+  const largest = Math.max(...filesUnder(join(cwd, "work", "free")).values());
+  const bad: string[] = [];
+  for (let k = 0; k < 15; k++) {
+    const kb = Math.max(1, Math.round(1 + ((Math.ceil(largest / 1024) + 1) * k) / 14));
+    const out = `work/lim-${kb}-${k}`;
+    const r = runWith(kb, out);
+    let doc: Record<string, any> | null = null;
+    try { doc = JSON.parse(r.stdout); } catch { doc = null; }
+    if (doc === null) { bad.push(`${kb} KB: no JSON (exit ${r.status}, signal ${r.signal}) ${r.stderr.slice(-160)}`); continue; }
+    if (r.stderr.includes("Traceback")) { bad.push(`${kb} KB: traceback`); continue; }
+    const made = filesUnder(join(cwd, out));
+    for (const [p, size] of made) {
+      if (p.endsWith(".json")) { try { JSON.parse(readFileSync(p, "utf8")); } catch { bad.push(`${kb} KB: ${p} is cut JSON`); } }
+    }
+    if (doc.status === "complete") {
+      const cut = [...made].filter(([p, size]) => size >= kb * 1024 && !p.endsWith(".partial")).map(([p]) => p);
+      if (cut.length) bad.push(`${kb} KB: complete, but ${cut.slice(0, 2).join(", ")} reached the limit`);
+    }
+  }
+  assert.deepEqual(bad, []);
+});
+
+test("ad1_extract on a full disk: JSON every time, no file left behind that a complete run does not leave, and complete means every file whole", (t) => {
+  const scratched: string[] = [];
+  const scratch = (p: string) => { const d = mkdtempSync(p); scratched.push(d); return d; };
+  t.after(() => { for (const d of scratched) rmSync(d, { recursive: true, force: true }); });
+  const probe = spawnSync("unshare", ["-rm", "bash", "-c", 'mount -t tmpfs -o size=64k tmpfs "$1" && echo ok', "x", scratch(join(tmpdir(), "ad1-enospc-probe-"))], { encoding: "utf8" });
+  if (probe.stdout?.trim() !== "ok") { t.skip(`unshare -rm with a tmpfs mount is not allowed here: ${probe.stderr}`); return; }
+  const wrapper = join(scratch(join(tmpdir(), "ad1-enospc-")), "wrap.sh");
+  writeFileSync(wrapper, [
+    "set -u", 'SRC=$1; SIZE=$2; REPORT=$3; COPY=$4; shift 4', "STASH=$(mktemp -d /tmp/enospc-stash.XXXXXX) || exit 96",
+    'cp -a "$SRC"/. "$STASH"/ || exit 96', 'mount -t tmpfs -o size="$SIZE" tmpfs "$SRC" || exit 97', 'cp -a "$STASH"/. "$SRC"/ || exit 98', 'rm -rf "$STASH"',
+    'U0=$(df --output=used -B1 "$SRC" | tail -1 | tr -d " ")', 'cd "$SRC"', '"$@"', "rc=$?", 'U1=$(df --output=used -B1 "$SRC" | tail -1 | tr -d " ")',
+    'echo "$U0 $U1 $rc" > "$REPORT"', 'cp -a "$SRC"/. "$COPY"/', "exit $rc", ""].join("\n"));
+  let runNo = 0;
+  const run = (size: number) => {
+    runNo++;
+    const cwd = dir("ad1-enospc-");
+    mkdirSync(join(cwd, "inputs"));
+    writeFileSync(join(cwd, "inputs", "many.ad1"), ad1Image(Array.from({ length: 300 }, (_, i) => ({ name: `file-with-a-longer-name-${i}.txt`, content: B(`content ${i}`) }))));
+    const report = join(scratch(join(tmpdir(), "ad1-enospc-rep-")), `report-${runNo}`), copy = scratch(join(tmpdir(), "ad1-enospc-copy-"));
+    const r = spawnSync("unshare", ["-rm", "bash", wrapper, cwd, String(size), report, copy, "python3", TOOL], {
+      input: JSON.stringify({ image: "inputs/many.ad1", out_dir: "work/out" }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" },
+    });
+    const [u0, u1] = readFileSync(report, "utf8").trim().split(/\s+/).map(Number);
+    return { r, copy, used: u0, written: u1 - u0 };
+  };
+  const free = run(64 * 1024 * 1024);
+  assert.equal(JSON.parse(free.r.stdout).status, "complete", free.r.stdout.slice(0, 300));
+  const stable = filesUnder(join(free.copy, "work", "out"));
+  const page = 4096;
+  const bad: string[] = [];
+  const extras = new Set<number>([2 * page]);
+  const top = Math.floor(free.written * 1.6) + page;
+  for (let k = 1; k <= 14; k++) extras.add(Math.floor((top * k) / 14 / page) * page);
+  for (const d of [-page, 0, page]) extras.add(Math.floor((free.written + d) / page) * page);
+  for (const extra of [...extras].filter((e) => e > 0 && e <= top).sort((a, b) => a - b)) {
+    const size = free.used + extra;
+    const { r, copy } = run(size);
+    let doc: Record<string, any> | null = null;
+    try { doc = JSON.parse(r.stdout); } catch { doc = null; }
+    if (doc === null) { bad.push(`${size}: no JSON (exit ${r.status}, signal ${r.signal}) ${r.stderr.slice(-160)}`); continue; }
+    if (r.stderr.includes("Traceback")) { bad.push(`${size}: traceback`); continue; }
+    const made = filesUnder(join(copy, "work", "out"));
+    for (const [p] of made) {
+      if (p.endsWith(".json")) { try { JSON.parse(readFileSync(p, "utf8")); } catch { bad.push(`${size}: ${p} is cut JSON`); } }
+      const base = p.split("/").pop() ?? "";
+      if ((base.startsWith(".") || base.endsWith(".tmp")) && ![...stable.keys()].some((q) => q.endsWith("/" + base))) bad.push(`${size}: left behind ${base}`);
+    }
+    if (doc.status === "complete") {
+      const cut = [...made].filter(([p, n]) => !p.endsWith(".json") && stable.get(p.replace(copy, free.copy)) !== n && stable.has(p.replace(copy, free.copy)));
+      const gone = [...stable.keys()].filter((q) => !q.endsWith(".json") && !made.has(q.replace(free.copy, copy)));
+      if (cut.length || gone.length) bad.push(`${size}: complete, but ${[...cut.map(([p]) => p), ...gone].slice(0, 2).join(", ")} is cut or missing`);
+    }
+  }
+  assert.deepEqual(bad, []);
+});
+
+test("ad1_extract on a hostile out_dir: JSON every time, nothing hidden left, never complete where nothing can be written", () => {
+  const rootUser = process.getuid?.() === 0;
+  const cwd = dir("ad1-hostile-out-");
+  mkdirSync(join(cwd, "inputs"));
+  writeFileSync(join(cwd, "inputs", "one.ad1"), ad1Image([{ name: "a.txt", content: B("content") }]));
+  mkdirSync(join(cwd, "locked")); chmodSync(join(cwd, "locked"), 0);
+  mkdirSync(join(cwd, "ro")); chmodSync(join(cwd, "ro"), 0o555);
+  writeFileSync(join(cwd, "afile"), "x");
+  symlinkSync("/nonexistent/x", join(cwd, "dang"));
+  symlinkSync("/nonexistent", join(cwd, "dlink"));
+  const variants: Array<[string, string, boolean]> = [
+    ["long255", "w/" + "a".repeat(255), false], ["long300", "w/" + "a".repeat(300), true], ["mode0-parent", "locked/o", true], ["ro555", "ro", true],
+    ["file-for-dir", "afile", true], ["dangling-link", "dang", true], ["dangling-parent", "dlink/o", true], ["parents-missing", "nope/deeper/o", false],
+  ];
+  const bad: string[] = [];
+  try {
+    for (const [name, out, mustFail] of variants) {
+      if (rootUser && (name === "mode0-parent" || name === "ro555")) continue;      // root is not stopped by a mode
+      const r = spawnSync("python3", [TOOL], { cwd, input: JSON.stringify({ image: "inputs/one.ad1", out_dir: out }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+      let doc: Record<string, any> | null = null;
+      try { doc = JSON.parse(r.stdout); } catch { doc = null; }
+      if (doc === null) { bad.push(`${name}: no JSON (exit ${r.status}, signal ${r.signal}) ${r.stderr.slice(-200)}`); continue; }
+      if (r.stderr.includes("Traceback")) bad.push(`${name}: traceback`);
+      if (mustFail && doc.status === "complete") bad.push(`${name}: complete although nothing can be written there`);
+    }
+    const hidden = readdirSync(cwd).filter((n) => n.startsWith(".") && n !== ".");
+    if (hidden.length) bad.push(`hidden files left: ${hidden.join(", ")}`);
+  } finally {
+    chmodSync(join(cwd, "locked"), 0o755); chmodSync(join(cwd, "ro"), 0o755);
+  }
+  assert.deepEqual(bad, []);
+});
+
+test("ad1_extract under an injected fault (RuntimeError, ENOSPC, KeyboardInterrupt at the Nth os.* write, close, replace, rename, fsync, open, unlink, fdopen, link, stat, builtins.open, monotonic): one JSON document or a stop's exit code, and no temporary file left", () => {
+  const site = mkdtempSync(join(tmpdir(), "ad1-fault-site-"));
+  const cwd = dir("ad1-fault-");
+  try {
+    writeFileSync(join(site, "sitecustomize.py"), [
+      "import atexit, builtins, errno, json, os, sys, time",
+      'spec = os.environ.get("FAULT", "")',
+      'label, _, rest = spec.partition(":")',
+      'n, _, kind = rest.partition(":")',
+      "target = int(n) if n else None",
+      "counts = {}",
+      "def fault():",
+      '    if kind == "enospc": return OSError(errno.ENOSPC, "No space left on device")',
+      '    if kind == "kbint": return KeyboardInterrupt()',
+      '    return RuntimeError("injected fault")',
+      "def wrap(mod, name, lab):",
+      "    real = getattr(mod, name)",
+      "    def f(*a, **k):",
+      "        if sys.excepthook is not sys.__excepthook__:",
+      "            counts[lab] = counts.get(lab, 0) + 1",
+      "            if lab == label and counts[lab] == target:",
+      "                raise fault()",
+      "        return real(*a, **k)",
+      "    setattr(mod, name, f)",
+      'wrap(time, "monotonic", "time.monotonic")',
+      'for nm in ("write", "close", "replace", "rename", "fsync", "open", "unlink", "fdopen", "link", "stat", "fstat", "lstat"): wrap(os, nm, "os." + nm)',
+      'wrap(builtins, "open", "builtins.open")',
+      'if os.environ.get("FAULT_COUNTS"):',
+      '    atexit.register(lambda: open(os.environ["FAULT_COUNTS"], "w").write(json.dumps(counts)))',
+      "",
+    ].join("\n"));
+    mkdirSync(join(cwd, "inputs"));
+    writeFileSync(join(cwd, "inputs", "f.ad1"), ad1Image(Array.from({ length: 20 }, (_, i) => ({ name: `file-${i}.txt`, content: B(`content ${i}`) }))));
+    const left = (root: string): Set<string> => {
+      const found = new Set<string>();
+      const walk = (d: string): void => {
+        for (const e of readdirSync(d, { withFileTypes: true })) {
+          if (e.name.startsWith(".") || e.name.includes(".tmp")) found.add(join(d, e.name));
+          if (e.isDirectory()) walk(join(d, e.name));
+        }
+      };
+      walk(root);
+      return found;
+    };
+    let runNo = 0;
+    const run = (fault: string, countsFile?: string) => {
+      runNo++;
+      return spawnSync("python3", [TOOL], {
+        cwd, input: JSON.stringify({ image: "inputs/f.ad1", out_dir: `work/f${runNo}` }), encoding: "utf8",
+        env: { ...process.env, AGENT_ID: "s1", PYTHONPATH: site, FAULT: fault, ...(countsFile ? { FAULT_COUNTS: countsFile } : {}) },
+      });
+    };
+    const countsFile = join(site, "counts.json");
+    const clean = run("", countsFile);
+    assert.ok(clean.stdout.trim(), clean.stderr.slice(-200));
+    const counts = JSON.parse(readFileSync(countsFile, "utf8")) as Record<string, number>;
+    const full = !!process.env.FAULT_FULL;
+    const bad: string[] = [];
+    for (const label of ["time.monotonic", "os.write", "os.close", "os.replace", "os.rename", "os.fsync", "os.open", "os.unlink", "os.fdopen", "os.link", "os.stat", "os.fstat", "os.lstat", "builtins.open"]) {
+      const k = counts[label] ?? 0;
+      const picks = new Set<number>();
+      if (full) {
+        for (let n = 1; n <= Math.min(k, 40); n++) picks.add(n);
+        if (k > 40) for (let i = 1; i <= 8; i++) picks.add(40 + Math.floor(((k - 40) * i) / 8));
+      } else {
+        for (const n of [1, 2, 3, 5, 8, 13, 21]) if (n <= k) picks.add(n);
+        if (k > 0) picks.add(k);
+      }
+      for (const n of [...picks].sort((a, b) => a - b)) {
+        for (const kind of ["runtime", "enospc", "kbint"]) {
+          const before = left(cwd);
+          const r = run(`${label}:${n}:${kind}`);
+          let doc = true;
+          try { JSON.parse(r.stdout); } catch { doc = false; }
+          if (!doc && !((r.status ?? 0) >= 128 && !r.stdout.trim())) bad.push(`${label}@${n} ${kind}: stdout is not one JSON document (exit ${r.status}) ${r.stderr.slice(-120)}`);
+          if (r.signal) bad.push(`${label}@${n} ${kind}: killed by ${r.signal}`);
+          if (label !== "os.unlink") {
+            const now = [...left(cwd)].filter((p) => !before.has(p));
+            if (now.length) bad.push(`${label}@${n} ${kind}: left ${now.slice(0, 2).join(", ")}`);
+          }
+        }
+      }
+    }
+    assert.deepEqual(bad.slice(0, 40), []);
+  } finally {
+    rmSync(site, { recursive: true, force: true });
   }
 });

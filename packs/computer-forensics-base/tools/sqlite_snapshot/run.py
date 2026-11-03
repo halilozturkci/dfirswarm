@@ -44,7 +44,264 @@ import time
 import urllib.parse
 from pathlib import Path
 
-TOOL = {"name": "sqlite_snapshot", "version": 3}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+_shared_print_answer = print_answer
+
+
+def print_answer(answer, **dumps_kwargs):
+    _reconcile(answer)
+    _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
+
+
+def _unexpected_tool(kind, value, _tb):
+    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed first (a name that cannot be removed is said in the
+    answer), then one JSON document with the class and, for a file-system error, its reason (a message can quote a name from the evidence), and
+    exit 1; what was written before it is not claimed. A stop signal that arrives while this runs is held with the answer's write and is answered by
+    this document and exit 1, not by 128 + the signal."""
+    try:
+        left = drop_temporaries()
+        reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
+        said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
+        answer = {"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                  "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__}
+        if left:
+            answer["temporaries_left"] = left[:10]
+            answer["status_basis"] += "; hidden temporary files that could not be removed are listed in temporaries_left"
+        print_answer(answer)
+    except BaseException:       # noqa: BLE001 - nothing may stop the exit
+        pass
+    os._exit(1)
+
+
+sys.excepthook = _unexpected_tool
+
+PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+TOOL = {"name": "sqlite_snapshot", "version": 10}
 CHUNK = 1 << 20
 MAX_BYTES_DEFAULT = 8 * 1024 ** 3
 MAX_BYTES_CEILING = 1024 ** 4
@@ -357,7 +614,7 @@ def in_job():
 
 
 def say(obj, code=0):
-    print(json.dumps(obj, ensure_ascii=True))
+    print_answer(obj, ensure_ascii=True)
     sys.stdout.flush()
     raise SystemExit(code)
 
@@ -379,7 +636,10 @@ def resolve_output(out):
     """Where `out` really lands, as a path under the run directory; a place outside it, the run directory itself or
     anything under inputs/ is refused, and in a job so is anything outside $OUT, the one place a job writes."""
     root = Path.cwd().resolve()
-    dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    try:
+        dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:     # a symlink loop, a name too long, a lone surrogate
+        fail("out_dir cannot be resolved: %s" % (exc.__class__.__name__ if not getattr(exc, "strerror", None) else exc.strerror), out_dir=scrub(str(out)))
     if dest == root or root not in dest.parents:
         fail("out_dir must stay inside the run directory", out_dir=scrub(str(out)))
     inputs = root / "inputs"
@@ -398,6 +658,19 @@ def entropy(page):
     return -sum(c / len(page) * math.log2(c / len(page)) for c in counts.values())
 
 
+def open_regular(path):
+    """open(path, "rb") for a path that was just checked as a regular file: opened without waiting (O_NONBLOCK) and looked at with fstat on the
+    descriptor, so a FIFO or a device put in its place after the check is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
 def private_open(path, mode="wb"):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     return os.fdopen(fd, mode)
@@ -405,11 +678,21 @@ def private_open(path, mode="wb"):
 
 def write_json_atomic(path, obj):
     tmp = "%s.tmp.%d" % (path, os.getpid())
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, indent=2, ensure_ascii=True)
-        fh.write("\n")
-    os.replace(tmp, path)
+    temp_hold(tmp)                   # registered before the file exists: whatever stops this, the half-written file is not left beside the receipt
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            fh = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with fh:
+            json.dump(obj, fh, indent=2, ensure_ascii=True)
+            fh.write("\n")
+        temp_replace(tmp, path)
+    except BaseException:
+        temp_drop(tmp)
+        raise
 
 
 # ---- the WAL, read from the copy -----------------------------------------------------------------------------------------
@@ -433,7 +716,7 @@ def read_wal(path, db_page_size, deadline):
     if size < 32:
         info.update(state="shorter than its 32-byte header", valid_header=False, frames_in_file=0, frames_valid=0, frames_committed=0, frames_uncommitted_valid=0)
         return info
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         head = fh.read(32)
         magic, version, page, seq, salt1, salt2, ck1, ck2 = struct.unpack(">IIIIIIII", head)
         info.update(magic="%08x" % magic, format_version=version, page_size=page, checkpoint_sequence=seq, salt1="%08x" % salt1, salt2="%08x" % salt2)
@@ -498,7 +781,7 @@ def read_wal(path, db_page_size, deadline):
 
 
 def journal_state(path):
-    with open(path, "rb") as fh:
+    with open_regular(path) as fh:
         head = fh.read(28)
     if head[:8] == JOURNAL_MAGIC:
         return "header present: a rollback journal that was not rolled back (a write was interrupted)"
@@ -513,7 +796,7 @@ def copy_hashing(src, dst_path, deadline, limit_left):
     """Copy src to a new file at dst_path (exclusive, 0600), streamed through sha256. Returns (bytes, sha256)."""
     h = hashlib.sha256()
     n = 0
-    with open(src, "rb") as fi, private_open(dst_path) as fo:
+    with open_regular(src) as fi, private_open(dst_path) as fo:
         while True:
             if time.monotonic() > deadline:
                 raise TimeoutError("the time budget ended the copy after %d bytes" % n)
@@ -546,7 +829,7 @@ def pages_changed(a, b, page):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
@@ -574,7 +857,7 @@ def main():
     real = os.path.realpath(db)
     try:
         size = os.path.getsize(real)
-        with open(real, "rb") as fh:
+        with open_regular(real) as fh:
             first = fh.read(4096)
     except OSError as exc:
         fail("the database cannot be read: %s" % describe(exc), db_path=scrub(db))
@@ -658,19 +941,34 @@ def main():
     }
     receipt_path = str(dest / "snapshot.json")
 
-    def write_receipt():
-        write_json_atomic(receipt_path, receipt)
+    receipt_trouble = []
 
-    def on_signal(signum, _frame):
-        receipt["status"] = "interrupted"
+    def write_receipt():
+        """snapshot.json; a disk that refuses is said in the answer (receipt_error), not a crash with no JSON."""
+        try:
+            write_json_atomic(receipt_path, receipt)
+            return True
+        except OSError as exc:
+            receipt_trouble[:] = [describe(exc)]
+            return False
+
+    def last_word(signum):
+        """The receipt says it was stopped (a stop is not a status: partial, with interrupted true), the copy under way is named as a .partial
+        file, and one document is printed. Nothing of the evidence's names or bytes is in it."""
+        receipt["status"] = "partial"
+        receipt["ok"] = False
+        receipt["interrupted"] = True
+        receipt["signal"] = signum
+        left = sorted(n for n in os.listdir(dest / "original") if n.endswith(".partial")) if (dest / "original").is_dir() else []
         receipt["problems"].append("stopped by signal %d; files named .partial are incomplete" % signum)
         try:
             write_receipt()
         except OSError:
             pass
-        os._exit(128 + signum)
-    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(sig, on_signal)
+        print(json.dumps({"ok": False, "tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "snapshot_dir": rel_dest,
+                          "receipt": receipt_path, "partial_files": left,
+                          "status_basis": "the tool was stopped by signal %d: the receipt says so, and any copy under way is kept as a .partial file that is not the evidence's bytes" % signum}), flush=True)
+    install_signal_handlers(last_word)
     write_receipt()
 
     # 1. The copy of the set, hashed as it is read.
@@ -831,8 +1129,14 @@ def main():
     receipt["status_basis"] = ("every file of the set was copied and hashed, and the WAL was read and applied in the copy" if receipt["status"] == "complete" else
                                "a file of the set was not copied whole, or the WAL or journal could not be read or applied (see problems)")
     receipt["seconds"] = round(time.monotonic() - started, 2)
-    write_receipt()
-    say(dict(receipt), 0)
+    written = write_receipt()
+    answer = dict(receipt)
+    if not written:
+        answer["status"] = "partial"
+        answer["receipt_error"] = receipt_trouble[0]
+        answer["status_basis"] = ("the copy was made, but snapshot.json could not be written (%s): the files under original/ and applied/ are on disk, "
+                                  "and this answer is the only record of them" % receipt_trouble[0])
+    say(answer, 0)
 
 
 if __name__ == "__main__":
@@ -841,4 +1145,7 @@ if __name__ == "__main__":
     except (SystemExit, KeyboardInterrupt):
         raise
     except Exception as exc:   # noqa: BLE001 - a defect in this tool or a database it did not foresee: said as JSON, never a traceback
+        if isinstance(exc, (OSError, ValueError)):       # a hostile path or a file that changed: a refusal that says what kind, not a defect
+            say({"ok": False, "status": "failed", "status_basis": "a path or file could not be used (%s), so nothing more was done" % type(exc).__name__,
+                 "error": "a path or file could not be used: %s" % type(exc).__name__, "tool": TOOL}, 1)
         say({"ok": False, "status": "failed", "status_basis": "the tool stopped with an internal error: %s" % type(exc).__name__, "error": "internal error: %s: %s" % (type(exc).__name__, scrub(str(exc))), "tool": TOOL}, 1)

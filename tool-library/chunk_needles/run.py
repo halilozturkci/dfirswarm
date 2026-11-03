@@ -19,7 +19,243 @@ ioc_scan with `start`; an inode: icat_extract it, then ioc_scan the file).
 """
 import json, re, shutil, sys, subprocess, os, time
 
-TOOL = {"name": "chunk_needles", "version": 12}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+_shared_print_answer = print_answer
+
+
+def print_answer(answer, **dumps_kwargs):
+    _reconcile(answer)
+    _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
+
+PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
+PROGRESS = {"scanned": 0}
+
+TOOL = {"name": "chunk_needles", "version": 18}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -36,6 +272,8 @@ CLOCK_EVERY = 256                  # and between this many matches of one feed: 
 STARTED = time.monotonic()
 SECTOR_MAX = 65536
 INODE = re.compile(r"^\d+(-\d+(-\d+)?)?$")
+RESOLVE_SECONDS = 60               # the search for the image under inputs/ (when image= is not given)
+CANDIDATES_MAX = 200               # and the images it keeps before it asks the caller to say which
 
 # BEGIN SHARED SCAN
 # The same text is in ioc_scan, chunk_needles and sig_carve (tests/test_scan_core.py holds the copies equal and holds the
@@ -135,20 +373,40 @@ def _resolve_image(explicit=None):
     baking one in. One candidate is used; several mean the caller must say which.
     An image is known by its extension or, lacking one (a raw `dd` of a web
     server named after the host), by the catalogue: the kickoff writes
-    catalog/<input>/partitions.txt for every input it read as a disk."""
-    import glob, os
+    catalog/<input>/partitions.txt for every input it read as a disk.
+    The search is on a clock (RESOLVE_SECONDS, read for every entry) and keeps at most CANDIDATES_MAX names:
+    a tree it cannot finish, or one with more images than that, is said, and the caller passes image=."""
+    import glob, os, time
     if explicit:
         return explicit
+    deadline = time.monotonic() + RESOLVE_SECONDS
     cands = []
     for ext in ("*.E01", "*.e01", "*.raw", "*.dd", "*.001", "*.img", "*.vhd", "*.vhdx"):
         cands += glob.glob(os.path.join("inputs", ext))
-    seen = set()
     for root_dir in _inputs_roots():
-        for base, _dirs, files in os.walk(root_dir, followlinks=False):
-            for f in files:
-                p = os.path.join(base, f)
-                if os.path.isfile(os.path.join("catalog", _catalogue_slug(p), "partitions.txt")):
-                    cands.append(p)
+        stack = [root_dir]
+        while stack:
+            here = stack.pop()
+            try:
+                scan = os.scandir(here)
+            except OSError:
+                continue
+            with scan:
+                for entry in scan:
+                    if time.monotonic() > deadline:
+                        raise SystemExit(json.dumps({"ok": False, "error": "looking for the image under inputs/ used its %d seconds before it was done; pass image=" % RESOLVE_SECONDS}))
+                    try:
+                        is_dir = entry.is_dir()
+                        if is_dir and entry.is_symlink():
+                            continue                         # a directory link is a name and not a place to walk
+                    except OSError:
+                        continue
+                    if is_dir:
+                        stack.append(entry.path)
+                    elif os.path.isfile(os.path.join("catalog", _catalogue_slug(entry.path), "partitions.txt")):
+                        cands.append(entry.path)
+                        if len(set(cands)) > CANDIDATES_MAX:
+                            raise SystemExit(json.dumps({"ok": False, "error": "more than %d images under inputs/; pass image=" % CANDIDATES_MAX}))
     cands = sorted(set(cands))
     if len(cands) == 1:
         return cands[0]
@@ -200,6 +458,7 @@ def _resolve_catalog(explicit=None):
     raise SystemExit('{"ok": false, "error": "several catalogues; pass catalog=", "candidates": %s}' % json.dumps(subs))
 
 import errno
+import select
 import hashlib
 import tempfile
 from pathlib import Path
@@ -257,7 +516,9 @@ class SecretValues:
         # instead of failing, or writing through it, after the scan. With nothing found it
         # stays as an empty file, mode 0600, and the answer says written: 0.
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            refused = own_dir(self.path.parent)
+            if refused:
+                raise SecretValuesRefused("the values file could not be created: %s" % refused)
             fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except FileExistsError:
             raise SecretValuesRefused("the values file already exists: %s" % self.path)
@@ -341,6 +602,12 @@ def same_bytes(a, b, deadline=None):
 
 
 def publish(tmp, path, shown):
+    result = _publish(tmp, path, shown)
+    temp_done(tmp)                                        # it is in place (a link, a rename) or gone: no longer a temporary
+    return result
+
+
+def _publish(tmp, path, shown):
     """Move a finished file to `path` without replacing what is there: a file at the name is an earlier answer (a complete
     one, perhaps, where this run was cut short) and stays; this one is kept beside it as name.2.ext, unless it is the
     same bytes, when the file already there is it. Returns the path it has
@@ -372,11 +639,32 @@ def publish(tmp, path, shown):
         return candidate, shown_stem + suffix + ext
 
 
-class Locators:
-    """One needle's locators: an inline page, and the whole list in a file once it is more than the page."""
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
 
-    def __init__(self, tool, key, limit):
-        self.limit, self.page, self.total, self.stopped_at = limit, [], 0, None
+
+SHOWN_MAX = 120      # characters of a needle shown in a locator row; needle_index is the exact key
+
+
+class LocatorFile:
+    """The locators of every needle that went past its inline page, in ONE JSON Lines file: each row names its needle (needle_index,
+    the position in the needles given once a repeated one is dropped, and needle, its shown form), so the number of open files is one
+    however many needles there are. Rows are written in the order the scan finds them, and from the first that does not fit under the
+    cap none is written (the file holds every occurrence that starts before the offset it stopped at). A file that cannot be created
+    or written to its end is not kept: the answer says so (all_results_error) and is partial."""
+
+    def __init__(self, tool, key):
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         digest = hashlib.sha256(json.dumps(key, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
         name = "%s-%s.jsonl" % (self.tool, digest)
@@ -389,37 +677,54 @@ class Locators:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
         self.fh = self.tmp = self.error = None
-        self.written = 0
-        self.bytes = 0
+        self.written = self.bytes = 0
+        self.rows = {}                     # needle_index -> rows of it in the file
+        self.stopped_at = None
+        self.published = False
+
+    @property
+    def _tmp(self):
+        return self.tmp
 
     def _open(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.tool)
-        self.tmp, self.fh = Path(name), os.fdopen(fd, "w", encoding="utf-8")
-        for row in self.page:
-            line = json.dumps(row, ensure_ascii=True) + "\n"
-            self.fh.write(line)
-            self.written += 1
-            self.bytes += len(line)
+        refused = own_dir(self.path.parent)
+        if refused:
+            raise OSError(0, refused)
+        fd, name = temp_create(self.path.parent, ".%s-" % self.tool)
+        self.tmp = Path(name)
+        try:
+            self.fh = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
 
-    def add(self, row):
-        self.total += 1
-        if len(self.page) < self.limit:
-            self.page.append(row)
-            return
-        if self.fh is None and self.error is None:
+    def _lose(self, why):
+        self.error = "the whole result could not be written (%s); none of it was kept: the counts and the inline pages are of the whole scan" % why
+        self.discard()
+
+    def write(self, index, name, row):
+        """One row of needle `index`. True when it is in the file."""
+        if self.error is not None or self.stopped_at is not None:
+            return False
+        if self.fh is None:
             try:
                 self._open()
             except OSError as exc:
-                self.error = "the whole result could not be written (%s: %s)" % (self.path.parent, exc.strerror or exc)
-        if self.fh:
-            line = json.dumps(row, ensure_ascii=True) + "\n"
-            if self.stopped_at is None and self.written < ROW_CAP and self.bytes + len(line) <= LOCATORS_BYTES_MAX:
-                self.fh.write(line)
-                self.written += 1
-                self.bytes += len(line)
-            elif self.stopped_at is None:
-                self.stopped_at = row["off"]       # from the first row that did not fit on, none is written: the file is a prefix
+                self._lose("%s: %s" % (self.path.parent, exc.strerror or exc))
+                return False
+        line = json.dumps({"needle_index": index, "needle": name if len(name) <= SHOWN_MAX else name[:SHOWN_MAX] + "...", **row}, ensure_ascii=True) + "\n"
+        if self.written >= ROW_CAP or self.bytes + len(line) > LOCATORS_BYTES_MAX:
+            self.stopped_at = row["off"]       # from the first row that did not fit on, none is written: the file is a prefix
+            return False
+        try:
+            self.fh.write(line)
+        except OSError as exc:
+            self._lose("a write failed after %d rows: %s" % (self.written, exc.strerror or exc))
+            return False
+        self.written += 1
+        self.bytes += len(line)
+        self.rows[index] = self.rows.get(index, 0) + 1
+        return True
 
     def discard(self):
         """Close and remove the file being written, if it is still there: a run that did not finish keeps no half file."""
@@ -428,38 +733,89 @@ class Locators:
                 self.fh.close()
         except OSError:
             pass
+        self.fh = None
         if self.tmp is not None:
             try:
                 os.unlink(self.tmp)
             except OSError:
                 pass
+            self.tmp = None
+        self.rows = {}
 
     def finish(self):
-        info = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
-        if self.fh:
+        """Publish the file (never over one that is there). After this, `shown` names it, or `error` says why there is none."""
+        if self.fh is None:
+            return
+        try:
             self.fh.flush()
             os.fsync(self.fh.fileno())
             self.fh.close()
             self.path, self.shown = publish(self.tmp, self.path, self.shown)
             self.tmp = None
-            info["all_results"] = self.shown
-            info["earlier_answers"] = earlier_answers(self.path)
-            info["all_results_format"] = "JSON Lines, one locator per occurrence: finding_id, off, enc, context_length"
-            if self.stopped_at is not None:
-                info["all_results_complete"] = False
-                info["all_results_stopped_at_offset"] = self.stopped_at
-                info["all_results_cap_rows"] = ROW_CAP
-                info["all_results_cap_bytes"] = LOCATORS_BYTES_MAX
-                info["all_results_note"] = ("the file holds every occurrence that starts before all_results_stopped_at_offset, and is whole as far as it goes; "
-                                            "the counts and the inline page are of the whole scan")
-        if self.error:
-            info["all_results_error"] = self.error
+            self.fh = None
+            self.published = True
+        except OSError as exc:
+            self._lose("the file could not be completed: %s" % (exc.strerror or exc))
+
+
+class Locators:
+    """One needle's locators: an inline page, and the whole list in the shared LocatorFile once it is more than the page."""
+
+    def __init__(self, shared, index, name, limit):
+        self.shared, self.index, self.name, self.limit = shared, index, name, limit
+        self.page, self.total, self.spilled = [], 0, False
+
+    def add(self, row):
+        self.total += 1
+        if len(self.page) < self.limit:
+            self.page.append(row)
+            return
+        if not self.spilled:
+            self.spilled = True
+            for kept in self.page:             # this needle's page goes into the file first, so the file holds its whole list
+                self.shared.write(self.index, self.name, kept)
+        self.shared.write(self.index, self.name, row)
+
+    def finish(self):
+        s = self.shared
+        info = {"needle_index": self.index, "matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self.spilled:
+            have = s.rows.get(self.index, 0)
+            if s.published:
+                info["all_results"] = s.shown
+                info["earlier_answers"] = earlier_answers(s.path)
+                info["all_results_format"] = ("JSON Lines, one locator per occurrence of any needle that went past its page: needle_index (the position of the "
+                                              "needle in the needles given, a repeated one dropped), needle (its shown form), finding_id, off, enc, context_length")
+                info["all_results_rows"] = have
+                if have < self.total:
+                    info["all_results_complete"] = False
+                    info["all_results_stopped_at_offset"] = s.stopped_at
+                    info["all_results_cap_rows"] = ROW_CAP
+                    info["all_results_cap_bytes"] = LOCATORS_BYTES_MAX
+                    info["all_results_note"] = ("the file holds %d of this needle's %d occurrences. It reached its cap and stopped at offset %s: from there on no "
+                                                "row of any needle was written, and a needle that went past its page after that has none in it. The counts and "
+                                                "the inline page are of the whole scan" % (have, self.total, s.stopped_at))
+            if s.error:
+                info["all_results_error"] = s.error
         return info
 
 
+FAILED_BASIS = "the tool stopped with an error and scanned nothing (see error)"
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra}))
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra})
     sys.exit(1)
+
+
+def unexpected(kind, value, _tb):
+    """An error nobody expected is an answer too: its class only, since its message can quote what was read."""
+    print(json.dumps({"error": "internal error: %s" % kind.__name__, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS}))
+    sys.stdout.flush()
+    os._exit(1)
+
+
+sys.excepthook = unexpected
 
 
 def on_stdout(resolve, *given):
@@ -474,7 +830,7 @@ def on_stdout(resolve, *given):
                 doc = {"ok": False, "error": exc.code}
             if isinstance(doc, dict):
                 doc = {"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % doc.get("error"), **doc}
-            print(json.dumps(doc))
+            print_answer(doc)
             sys.exit(1)
         raise
 
@@ -490,8 +846,8 @@ def whole(args, key, default, low, high):
 
 try:
     args = json.load(sys.stdin)
-except ValueError as exc:
-    fail("arguments are not valid JSON", reason=str(exc))
+except (ValueError, RecursionError) as exc:
+    fail("arguments are not valid JSON", reason=str(exc)[:200])
 if not isinstance(args, dict):
     fail("arguments are a JSON object")
 needles = args.get("needles") or ""
@@ -538,10 +894,59 @@ except SecretValuesRefused as exc:
     fail(str(exc), write_values="refused")
 
 
+def _stopped(signum):
+    proc = CHILD["proc"]
+    if proc is not None:
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001 - best effort: the process is ended with the tool anyway
+            pass
+    try:
+        secret.close()
+    except Exception:  # noqa: BLE001
+        pass
+    print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "scanned_bytes": PROGRESS["scanned"],
+                      "secret_values": secret.summary(),
+                      "status_basis": "the tool was stopped by signal %d: the icat it was reading (if any) was ended, the counts and locators so far were not kept, and a values file "
+                                      "already begun holds the rows written before the stop" % signum}), flush=True)
+
+
+install_signal_handlers(_stopped)
+
+
+def open_regular(path):
+    """open(path, "rb") for a path that was just checked as a regular file: opened without waiting (O_NONBLOCK) and looked at with fstat on the
+    descriptor, so a FIFO or a device put in its place after the check is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
+def read_some(pipe, chunk, deadline):
+    """Up to `chunk` bytes from icat's pipe, waiting on the clock: b"" at the end of the stream, None when the clock ran out first. A blocking
+    read would wait for an icat that stalls (a damaged image, a hung disk) for as long as it likes."""
+    fd = pipe.fileno()
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        ready, _, _ = select.select([fd], [], [], min(left, 0.2))
+        if ready:
+            return os.read(fd, chunk)
+
+
 def scan_fh(fh, source, total=None):
     counts = {n: {"ascii": 0, "utf16le": 0} for n in need_list}
     key = [source["label"], source.get("image"), source.get("volume_offset_sectors"), source.get("inode"), source.get("sector_size"), context]
-    pages = {n: Locators("chunk_needles", key + [n], max_hits) for n in need_list}
+    shared = LocatorFile("chunk_needles", key + [need_list])
+    PAGES.append(shared)
+    pages = {n: Locators(shared, i, n, max_hits) for i, n in enumerate(need_list)}
 
     def emit(at, name, enc, nb, buf, base, vi):
         i = at - base
@@ -577,15 +982,20 @@ def scan_fh(fh, source, total=None):
             if cut[0] is None and taken[0] % CLOCK_EVERY == 0 and time.monotonic() > deadline:
                 cut[0] = at
         return True
+    piped = source["kind"] == "icat"
     try:
         while stopped is None:
-            data = fh.read(chunk)
+            data = read_some(fh, chunk, deadline) if piped else fh.read(chunk)
+            if data is None:                    # icat said nothing until the clock ran out: what it had given is scanned, the rest is the next scan's
+                stopped = scanner.done
+                break
             if not data:
                 break
             for off in range(0, len(data), FEED):
                 block = data[off:off + FEED] if len(data) > FEED else data
                 inside = not drain(scanner.feed(block))
                 scanned += len(block)
+                PROGRESS["scanned"] = scanned
                 if inside:
                     stopped = cut[0] + 1
                     break
@@ -594,39 +1004,36 @@ def scan_fh(fh, source, total=None):
                     break
         if stopped is None and not drain(scanner.feed(b"", final=True)):
             stopped = cut[0] + 1
+        shared.finish()
         hits = {}
         for n in need_list:
             page = pages[n].finish()
             hits[n] = {**counts[n], "locations": pages[n].page, **page}
     finally:
-        for n in need_list:
-            pages[n].discard()                  # no half-written file is left when the run did not finish
+        shared.discard()                        # no half-written file is left when the run did not finish
     return hits, scanned, stopped
 
 
 if path:
     if not os.path.isfile(path):
-        print(json.dumps({"error": f"path not found: {path}"}))
-        sys.exit(1)
+        fail(f"path not found: {path}")
     source = {"kind": "file", "path": path, "bytes": os.path.getsize(path)}
     source["label"] = path
     try:
-        with open(path, "rb") as f:
+        with open_regular(path) as f:
             hits, scanned, stopped = scan_fh(f, source, source["bytes"])
     except OSError as exc:
         fail("cannot read %s: %s" % (path, exc.strerror or exc))
 else:
     if inode is None:
-        print(json.dumps({"error": "path or inode required"}))
-        sys.exit(1)
+        fail("path or inode required")
     if isinstance(inode, bool) or not (isinstance(inode, int) and inode >= 0 or isinstance(inode, str) and INODE.match(inode)):
         fail("inode is a Sleuth Kit address: a number, or number-type-id for an NTFS stream (168-128-4)", inode=inode)
     if args.get("image") is not None and (not isinstance(args.get("image"), str) or "\0" in args.get("image")):
         fail("image is a string without a NUL byte")
     image = on_stdout(_resolve_image, args.get("image"))
     if not os.path.isfile(image):
-        print(json.dumps({"error": f"image not found: {image}"}))
-        sys.exit(1)
+        fail(f"image not found: {image}")
     given_offset = args.get("offset")
     if given_offset is not None and (isinstance(given_offset, bool) or not isinstance(given_offset, int) or given_offset < 0):
         fail("offset is a volume offset in sectors, a whole number", offset=given_offset)
@@ -642,8 +1049,13 @@ else:
     # in memory until the VM's kernel killed the tool, with no word said
     # (sixth CTF round, twice). stderr goes to a file so a chatty icat
     # cannot stall the pipe being read.
+    try:
+        open_regular(image).close()       # the image was checked a moment ago: a FIFO or device put in its place is refused, not handed to icat
+    except (OSError, ValueError) as exc:
+        fail("the image is not a regular file that can be read: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__), image=image)
     with tempfile.TemporaryFile() as errf:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
+        CHILD["proc"] = proc
         hits, scanned, stopped = scan_fh(proc.stdout, source)
         if stopped is not None:
             proc.kill()                       # icat is blocked writing to a pipe nobody reads any more; its exit is not a failure
@@ -652,15 +1064,19 @@ else:
         err_text = errf.read().decode("utf-8", "replace").strip()
     if rc != 0 and stopped is None:
         secret.close()
-        print(json.dumps({"error": err_text or f"icat exit {rc}", "image": image, "inode": inode, "offset": offset, "scanned_bytes": scanned,
+        print_answer({"error": err_text or f"icat exit {rc}", "tool": TOOL, "status": "failed", "status_basis": "icat failed, so what was found before it is not a result (see error)",
+                          "image": image, "inode": inode, "offset": offset, "scanned_bytes": scanned,
                           "note": "what was found before icat failed is not a result; any locator or values file written meanwhile is partial",
-                          "secret_values": secret.summary()}))
+                          "secret_values": secret.summary()})
         sys.exit(1)
 secret.close()
+# A needle whose list past the inline page is not whole in a file (the file could not be written, or reached its cap) is a loss the
+# counts do not show: it makes the answer partial, and the basis names the needles and where the rest is.
+lost = [h["needle_index"] for h in hits.values() if h.get("all_results_error") or h.get("all_results_complete") is False]
 answer = {
     "tool": TOOL, "source": source, "scanned_bytes": scanned, "hits": hits,
-    "complete": stopped is None and secret.stopped_at is None,
-    "status": "complete" if stopped is None else "partial",
+    "complete": stopped is None and secret.stopped_at is None and not lost,
+    "status": "complete" if stopped is None and not lost else "partial",
     "status_basis": ("the whole stream was read and every occurrence in it is reported" if stopped is None
                      else "the scan stopped at its clock before the end of the stream (see stopped): only occurrences that start before next_start are reported"),
     "match_policy": "every occurrence by its start offset in the scanned stream, overlapping ones included, case-sensitive; each needle as UTF-8 and as UTF-16LE",
@@ -674,7 +1090,14 @@ if stopped is not None:
                          % (max_seconds, scanned, stopped,
                             "go on with ioc_scan path=%s start=%d and the same needles" % (path, stopped) if path else
                             "extract the inode (icat_extract) and go on with ioc_scan on the file, start=%d" % stopped))
+if lost:
+    shown = ", ".join(str(i) for i in lost[:10]) + (" and %d more" % (len(lost) - 10) if len(lost) > 10 else "")
+    answer["status_basis"] = answer["status_basis"].replace(
+        "the whole stream was read and every occurrence in it is reported",
+        "the whole stream was read and the count and the inline page of every needle are of all of it") + (
+        "; the list of locators past the inline page is not whole for %d needle(s) (needle_index %s: all_results_error or all_results_complete in "
+        "hits) and the rest of it is not on disk: scan again with max_hits at least the needle's count (matched), or with fewer needles" % (len(lost), shown))
 if secret.stopped_at is not None:
     answer["status"] = "partial"
     answer["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"
-print(json.dumps(answer))
+print_answer(answer)

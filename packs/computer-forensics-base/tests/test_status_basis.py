@@ -5,7 +5,7 @@ import unittest
 
 from support import Case, run_tool
 
-WORDS = {"complete", "partial", "failed", "OK", "FAIL"}
+WORDS = {"complete", "partial", "failed"}
 
 
 class StatusBasis(Case):
@@ -24,7 +24,23 @@ class StatusBasis(Case):
         self.assertEqual(self.check("file_type", {"path": blob}).json["status"], "complete")
         self.assertEqual(self.check("timestamp_decode", {"value": "1700000000"}).json["status"], "complete")
         self.write("inputs.json", json.dumps({"files": []}))
-        self.assertEqual(self.check("check_inputs", {}).json["status"], "OK")
+        self.assertEqual(self.check("check_inputs", {}).json["status"], "complete")
+        self.write("catalog/Disk.E01/p2048/filelist.txt", "r/r 5-128-1:\tUsers/a/file.log\n")
+        self.write("catalog/Disk.E01/partitions.txt", "002:  000:000   0000002048   ...   NTFS\n")
+        self.assertEqual(self.check("catalog_search", {"pattern": "file"}).json["status"], "complete")
+        db = self.path("s.db")
+        import sqlite3
+        conn = sqlite3.connect(db)
+        conn.execute("create table t(x)")
+        conn.commit()
+        conn.close()
+        self.assertEqual(self.check("sqlite_query", {"db_path": db, "sql": "select * from t"}).json["status"], "complete")
+
+    def test_the_two_query_tools_say_failed_on_nothing_and_on_a_missing_path(self):
+        for name, args in (("catalog_search", {}), ("catalog_search", {"pattern": "x", "catalog": "nowhere"}),
+                           ("sqlite_query", {}), ("sqlite_query", {"db_path": "missing.db", "sql": "select 1"})):
+            r = self.check(name, args)
+            self.assertEqual((r.json["status"], r.json["ok"]), ("failed", False), (name, args))
 
     def test_every_refusal_of_twelve_tools_is_one_json_answer_with_the_status_pair_and_exit_1(self):
         # given nothing, a missing path, and a wrong type: JSON on stdout, status failed, a sentence for the basis, exit 1, no traceback

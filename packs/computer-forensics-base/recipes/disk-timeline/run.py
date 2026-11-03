@@ -40,6 +40,292 @@ import subprocess
 import sys
 import time
 
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+_shared_print_answer = print_answer
+
+
+def print_answer(answer, **dumps_kwargs):
+    _reconcile(answer)
+    _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
+
+
+def _probe_out(directory):
+    """The output directory is written to once, up front: a directory that cannot be written (not owned, mounted read-only, a full disk) is a refusal
+    before anything is run, not a PermissionError in the middle of the coverage file."""
+    probe = _os.path.join(directory, ".write-probe-%d" % _os.getpid())
+    temp_hold(probe)                 # registered before it is made: whatever stops this, it is removed
+    try:
+        fd = _os.open(probe, _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL, 0o600)
+        _os.close(fd)
+        if not temp_drop(probe):
+            raise OSError(0, "the probe file could not be removed")
+    except (OSError, ValueError) as exc:
+        temp_drop(probe)
+        print_answer({"ok": False, "status": "failed", "error": "--out cannot be written: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__),
+                      "status_basis": "the output directory cannot be written, so nothing was run"})
+        _sys.exit(2)
+
+
+def _unexpected_recipe(kind, value, _tb):
+    """What nobody foresaw (a file that cannot be written half way, a target of an odd type) is an answer too: its class only, exit 2."""
+    try:
+        drop_temporaries()
+    except BaseException:   # noqa: BLE001
+        pass
+    why = "a path, a file or the target could not be used: %s" % kind.__name__
+    if len(_sys.argv) > 1 and _sys.argv[1] == "detect":
+        doc = {"applies": "unknown", "why": why, "ok": False, "error": why}
+    else:
+        doc = {"ok": False, "status": "failed", "error": why, "status_basis": "the recipe stopped on %s, so what it had written is not a complete result" % kind.__name__}
+    try:
+        _sys.stdout.write(json.dumps(doc) + "\n")
+        _sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    _os._exit(2)
+
+
+_sys.excepthook = _unexpected_recipe
+
+
+def open_regular(path):
+    """open(path, "rb") for a caller's path that was checked as a regular file a moment ago: opened without waiting (O_NONBLOCK) and looked at with
+    fstat on the descriptor, so a FIFO or a device put in its place is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+CHILD = {"proc": None}     # the Plaso program being run, ended by its pid on a stop
+
 # What `complete` says: the pipeline finished. Plaso's own processing report says what each parser did.
 PIPELINE_NOTE = ("complete means log2timeline and psort both exited 0, wrote their files, said no error and no zero event count in what they "
                  "printed, in their logs or in pinfo's report, and the timeline holds an event; it does not say every parser read every "
@@ -51,14 +337,22 @@ NOT_COVERED = ("volume shadow copies (run with --vss_stores none); encrypted vol
 
 
 def target_of(value):
-    text = open(value, encoding="utf-8").read() if os.path.isfile(value) else value
+    text = value
+    if os.path.isfile(value):
+        try:
+            with open(value, encoding="utf-8") as fh:
+                text = fh.read(1 << 20)
+        except (OSError, ValueError) as exc:               # ValueError: bytes that are not UTF-8
+            raise ValueError("the target file cannot be read as UTF-8 text: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__))
     try:
         target = json.loads(text)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise ValueError("the target is not valid JSON: %s" % exc)
     if not isinstance(target, dict):
         raise ValueError("the target is a JSON object with a paths list")
     paths = target.get("paths") or []
+    if not isinstance(paths, list):
+        raise ValueError("the target is a JSON object with a paths list")
     if not paths or not isinstance(paths[0], str):
         raise ValueError("the target names no path")
     return target, paths[0]
@@ -81,7 +375,7 @@ def detect(path):
     if not os.path.isfile(path):
         return "unknown", "not a readable file, so it cannot be told whether it is a disk image"
     try:
-        with open(path, "rb") as fh:
+        with open_regular(path) as fh:
             head = fh.read(65536)
             size = os.path.getsize(path)
             tail = b""
@@ -126,9 +420,10 @@ PLASO_ZERO = re.compile(r"\bevents?\s+(?:extracted|written|exported|processed)\s
 SCAN_BYTES = 32 * 1024 * 1024
 
 
-def plaso_signals(out, names):
+def plaso_signals(out, names, unread=None):
     """The lines in these files of `out` that say Plaso failed or found nothing: [(file, kind, count, first line)].
-    A file is read to SCAN_BYTES, and a .gz that is not gzip is read as it is."""
+    A file is read to SCAN_BYTES, and a .gz that is not gzip is read as it is. When `unread` is a list, each file that goes on past
+    SCAN_BYTES is added to it as (file, bytes not read, or None when that is not known: the rest of a gzip stream is not measured)."""
     found = []
     for name in names:
         path = os.path.join(out, name)
@@ -137,11 +432,18 @@ def plaso_signals(out, names):
         counts, first = {"error": 0, "zero events": 0}, {}
         try:
             try:
-                with gzip.open(path, "rt", encoding="utf-8", errors="replace") as handle:
-                    lines = iter(handle.read(SCAN_BYTES).splitlines())
+                with gzip.open(path, "rb") as handle:
+                    raw = handle.read(SCAN_BYTES)
+                    more = bool(handle.read(1))
+                    left = None
             except (OSError, EOFError):
-                with open(path, "r", encoding="utf-8", errors="replace") as handle:
-                    lines = iter(handle.read(SCAN_BYTES).splitlines())
+                with open_regular(path) as handle:
+                    raw = handle.read(SCAN_BYTES)
+                    more = bool(handle.read(1))
+                    left = max(0, os.path.getsize(path) - SCAN_BYTES) if more else 0
+            if more and unread is not None:
+                unread.append((name, left))
+            lines = iter(raw.decode("utf-8", "replace").splitlines())
             for line in lines:
                 for kind, rx in (("error", PLASO_ERROR), ("zero events", PLASO_ZERO)):
                     if rx.search(line):
@@ -164,23 +466,42 @@ def program(*names):
 
 
 def write_coverage(out, status, covered, errors, extra=None, name="coverage.json"):
-    with open(os.path.join(out, name), "w", encoding="utf-8") as handle:
-        json.dump({"recipe": "disk-timeline", "status": status, "status_basis": covered, "covered": covered, "not_covered": NOT_COVERED,
-                   "limits_hit": [], "errors": list(errors), "coverage_note": PIPELINE_NOTE, **(extra or {})}, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    path = os.path.join(out, name)
+    tmp = path + ".tmp"
+    temp_hold(tmp)
+    try:                        # whole or not at all: written beside, then renamed over the name
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump({"recipe": "disk-timeline", "status": status, "status_basis": covered, "covered": covered, "not_covered": NOT_COVERED,
+                       "limits_hit": [], "errors": list(errors), "coverage_note": PIPELINE_NOTE, **(extra or {})}, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        temp_replace(tmp, path)
+    except BaseException:
+        temp_drop(tmp)
+        raise
 
 
 def step(out, name, argv):
     # cwd=out: what a step writes where it stands lands in out, never in the
     # (read-only) directory the job started in.
     with open(os.path.join(out, name + ".stdout"), "wb") as so, open(os.path.join(out, name + ".stderr"), "wb") as se:
-        return subprocess.run(argv, stdout=so, stderr=se, cwd=out).returncode
+        proc = subprocess.Popen(argv, stdout=so, stderr=se, cwd=out)
+        CHILD["proc"] = proc
+        try:
+            return proc.wait()
+        finally:
+            CHILD["proc"] = None
 
 
 def run(image, out, zone=None):
     out = os.path.abspath(out)
     image = os.path.abspath(image)
-    os.makedirs(out, exist_ok=True)
+    try:
+        os.makedirs(out, exist_ok=True)
+    except (OSError, ValueError) as exc:        # a name too long, a loop, a file in the way, a directory that cannot be entered
+        print_answer({"ok": False, "status": "failed", "error": "--out cannot be used: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__),
+                      "status_basis": "the output directory could not be made, so nothing was run"})
+        sys.exit(2)
+    _probe_out(out)
     extra = {"timezone": zone or "not given", "timezone_note": (
         "the zone given to log2timeline for the formats that store local time; psort writes its CSV in UTC" if zone else
         "none given: for the formats that store local time Plaso used its own default, which this recipe does not read back (the "
@@ -196,6 +517,22 @@ def run(image, out, zone=None):
         return 1, "coverage.refused.json"
     began = time.time()
     write_coverage(out, "partial", "started; log2timeline or psort did not finish (stopped before its end)", ["the run ended before Plaso did"], extra)
+
+    def _stopped(signum):
+        proc = CHILD["proc"]
+        if proc is not None:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001 - best effort
+                pass
+        try:
+            write_coverage(out, "partial", "the recipe was stopped by signal %d: the program running was ended, and what it had written is in out, not counted" % signum,
+                           ["stopped by signal %d before Plaso finished" % signum], dict(extra, interrupted=True, signal=signum))
+        except OSError:
+            pass
+        print(json.dumps({"ok": False, "status": "partial", "interrupted": True, "signal": signum, "coverage": "coverage.json"}), flush=True)
+    install_signal_handlers(_stopped)
     l2t = program("log2timeline", "log2timeline.py")
     psort = program("psort", "psort.py")
     if not l2t or not psort:
@@ -234,8 +571,15 @@ def run(image, out, zone=None):
             if prc != 0:
                 errors.append("pinfo exited %d; the processing report may be incomplete (pinfo.stderr)" % prc)
     # The programs exited, and said what they did: a worker that was killed or an error line makes it partial, and so does a timeline of no events.
+    not_read = []
     signals = plaso_signals(out, ["log2timeline.stdout", "log2timeline.stderr", "log2timeline.log.gz", "psort.stdout", "psort.stderr", "psort.log.gz",
-                                  "pinfo.txt", "pinfo.stderr"])
+                                  "pinfo.txt", "pinfo.stderr"], not_read)
+    if not_read:
+        extra["plaso_signals_not_read"] = [{"file": f, "bytes_not_read": b if b is not None else "more follows the first %d bytes (a gzip stream: not measured)" % SCAN_BYTES}
+                                           for f, b in not_read]
+        for f, b in not_read:
+            errors.append("%s: only its first %d bytes were read for error and no-event lines; %s, so a line past them is not looked at"
+                          % (f, SCAN_BYTES, ("%d bytes were not read" % b) if b is not None else "the rest of the stream was not read"))
     for name, kind, count, first in signals:
         errors.append("%s: %d line(s) say %s, the first: %s" % (name, count, "an error" if kind == "error" else "no events were extracted or written", first))
     csv_path = os.path.join(out, "timeline.csv")
@@ -275,29 +619,29 @@ def main():
     try:
         target, image = target_of(args.target)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}))
+        print_answer({"ok": False, "error": str(exc)})
         return 2
     applies, why = detect(image)
     if args.command == "detect":
-        print(json.dumps({"applies": applies, "why": why}))
+        print_answer({"applies": applies, "why": why})
         return 2 if applies == "unknown" else 0 if applies else 1
     if not args.out:
-        print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
+        print_answer({"ok": False, "error": "run needs --out DIR"})
         return 2
     if applies is not True:
-        print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
+        print_answer({"ok": False, "status": "unsupported", "why": why})
         return 2
     zone = target.get("timezone") if isinstance(target, dict) else None
     zone = zone or os.environ.get("RECIPE_TIMEZONE") or None
     if zone is not None and not (isinstance(zone, str) and ZONE.match(zone)):
-        print(json.dumps({"ok": False, "error": "timezone is a zone name such as Europe/Istanbul"}))
+        print_answer({"ok": False, "error": "timezone is a zone name such as Europe/Istanbul"})
         return 2
     rc, coverage_file = run(image, args.out, zone)
     status = json.load(open(os.path.join(args.out, coverage_file), encoding="utf-8")).get("status")
     result = {"ok": rc == 0, "status": status}
     if coverage_file != "coverage.json":
         result["coverage"] = coverage_file
-    print(json.dumps(result))
+    print_answer(result)
     return rc
 
 

@@ -64,6 +64,291 @@ import re
 import sys
 import time
 
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+_shared_print_answer = print_answer
+
+
+def print_answer(answer, **dumps_kwargs):
+    _reconcile(answer)
+    _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
+
+
+def _probe_out(directory):
+    """The output directory is written to once, up front: a directory that cannot be written (not owned, mounted read-only, a full disk) is a refusal
+    before anything is run, not a PermissionError in the middle of the coverage file."""
+    probe = _os.path.join(directory, ".write-probe-%d" % _os.getpid())
+    temp_hold(probe)                 # registered before it is made: whatever stops this, it is removed
+    try:
+        fd = _os.open(probe, _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL, 0o600)
+        _os.close(fd)
+        if not temp_drop(probe):
+            raise OSError(0, "the probe file could not be removed")
+    except (OSError, ValueError) as exc:
+        temp_drop(probe)
+        print_answer({"ok": False, "status": "failed", "error": "--out cannot be written: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__),
+                      "status_basis": "the output directory cannot be written, so nothing was run"})
+        _sys.exit(2)
+
+
+def _unexpected_recipe(kind, value, _tb):
+    """What nobody foresaw (a file that cannot be written half way, a target of an odd type) is an answer too: its class only, exit 2."""
+    try:
+        drop_temporaries()
+    except BaseException:   # noqa: BLE001
+        pass
+    why = "a path, a file or the target could not be used: %s" % kind.__name__
+    if len(_sys.argv) > 1 and _sys.argv[1] == "detect":
+        doc = {"applies": "unknown", "why": why, "ok": False, "error": why}
+    else:
+        doc = {"ok": False, "status": "failed", "error": why, "status_basis": "the recipe stopped on %s, so what it had written is not a complete result" % kind.__name__}
+    try:
+        _sys.stdout.write(json.dumps(doc) + "\n")
+        _sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    _os._exit(2)
+
+
+_sys.excepthook = _unexpected_recipe
+
+
+def _write_json_whole(path, doc, **dumps_kwargs):
+    """A JSON file whole or not at all: written beside, then renamed over the name. A write that fails (a full disk, a file-size limit) removes
+    the part and raises, so the recipe answers (the excepthook) and the earlier file, if any, stands; a cut coverage.json is never left."""
+    tmp = path + ".tmp"
+    temp_hold(tmp)
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(doc, fh, **dumps_kwargs)
+        temp_replace(tmp, path)
+    except BaseException:
+        temp_drop(tmp)
+        raise
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_ITEMS = 5_000_000
 COLUMNS = ["n", "type", "path", "path_b64", "size", "packed", "mtime", "tz", "mode", "uid", "gid", "link", "locator", "flags",
@@ -124,6 +409,7 @@ import bisect as _bisect
 import heapq as _heapq
 import os as _os
 import struct as _struct
+import time as _time
 import zlib as _zlib
 
 AD1_SEGMENT_MAGIC = b"ADSEGMENTEDFILE\x00"
@@ -145,7 +431,8 @@ AD1_CACHE_MAX = 32 << 20          # bytes (estimated) of the last metadata chain
 AD1_CACHE_CHAINS = 8              # and how many of them
 AD1_FOLD_AT = 1 << 16             # reached-range entries held before they are merged
 AD1_SLACK = 0                     # non-zero bytes of the data nothing may lead to before the walk is not called whole
-AD1_GAP_SCAN_MAX = 256 << 20      # bytes of unreached data read to count its non-zero bytes
+AD1_GAP_BLOCK = 1 << 20            # bytes of unreached data read at a time: the clock is looked at before each block
+AD1_GAPS_LISTED = 20              # gaps named one by one in the report: those with non-zero bytes, or not read to their end
 AD1_GUID_TABLES = (b"ATTRGUID", b"LOCSGUID")   # the two tables FTK Imager leaves after the items; the header points at them
 
 
@@ -176,6 +463,19 @@ def ad1_where(parent):
     return parent.decode("utf-8", "replace") if parent else "the root"
 
 
+def open_regular(path):
+    """open(path, "rb") for an image path: opened without waiting (O_NONBLOCK) and looked at with fstat on the descriptor, so a FIFO or a device
+    (named, or put in the place of the file after it was checked) is refused and never waited on."""
+    fd = _os.open(path, _os.O_RDONLY | getattr(_os, "O_NONBLOCK", 0))
+    try:
+        if _os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file")
+    except BaseException:
+        _os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
 class AD1:
     """An AD1 image opened read-only from its first segment (and the paths of
     the rest, when given; else beside it, x.ad2, x.ad3, ...). `missing` names
@@ -184,7 +484,7 @@ class AD1:
     could not be taken."""
 
     def __init__(self, first, more=()):
-        with open(first, "rb") as fh:
+        with open_regular(first) as fh:
             self.segment = ad1_segment_header(fh.read(0x30))
         if self.segment["index"] != 1:
             raise AD1Error("segment %d of %d of an AD1 image: the image is read from its first segment" % (self.segment["index"], self.segment["count"]))
@@ -198,7 +498,7 @@ class AD1:
             p = given[k - 1] if k <= len(given) else (stem + ext[:-1] + str(k) if beside else None)
             margin, span, present = self.segment["header"], self.segment["bytes"] - self.segment["header"], 0
             if p and _os.path.isfile(p):
-                with open(p, "rb") as fh:
+                with open_regular(p) as fh:
                     h = ad1_segment_header(fh.read(0x30))
                     size = _os.fstat(fh.fileno()).st_size
                 if h["index"] != k or h["count"] != count:
@@ -219,6 +519,8 @@ class AD1:
         self._open = {}
         self._reached, self._lo, self._hi = _array.array("Q"), _array.array("Q"), _array.array("Q")
         self._chains, self._chains_held = {}, 0
+        self.packed_read = 0          # compressed bytes of content read so far, for a ratio against what is written
+        self.gap_report = None
         if self.read(0, 14) != AD1_LOGICAL_MAGIC:
             raise AD1Error("no ADLOGICALIMAGE header at the start of the image's data")
         (self.version,) = _struct.unpack("<I", self.read(16, 4))
@@ -252,7 +554,7 @@ class AD1:
         if fh is None:
             if len(self._open) >= AD1_OPEN_MAX:
                 self._open.pop(next(iter(self._open))).close()
-            fh = open(self.paths[k], "rb")
+            fh = open_regular(self.paths[k])
         self._open[k] = fh
         return fh
 
@@ -342,11 +644,15 @@ class AD1:
             if at < end:
                 yield at, end
 
-    def unreferenced(self):
+    def unreferenced(self, deadline=None, sink=None):
         """(bytes, non-zero bytes, whole) of the image's data that no structure the walk read or was led to covers, or None while a
-        segment is not there. Zero bytes between structures are padding; the non-zero ones are content nothing led to. `whole` is
-        False when only the first AD1_GAP_SCAN_MAX unreached bytes were read for their non-zero ones. The image's own metadata chain
-        counts as reached, so it is read here if the caller has not."""
+        segment is not there. Every such stretch is read to its end, in blocks of AD1_GAP_BLOCK, and the clock (`deadline`, a
+        time.monotonic() value) is looked at before each block: zero bytes between structures are padding, the non-zero ones are
+        content nothing led to. `whole` is False when the clock stopped the read before the end of the unreached data; `gap_report`
+        then says where (stopped_at, an address) and how much was read, and counts the gaps that hold non-zero bytes or were not
+        read to their end, naming the first AD1_GAPS_LISTED of them; `sink`, when given, is called with every such gap (from, to,
+        read, nonzero_bytes), so the caller can keep them all. The image's own metadata chain counts as reached, so it is read here
+        if the caller has not."""
         if self.missing:
             return None
         if self.meta_addr:
@@ -355,15 +661,34 @@ class AD1:
             except AD1Error:
                 pass
         self._fold()
-        total, nonzero, scanned = 0, 0, 0
+        total, nonzero, read, stopped = 0, 0, 0, False
+        rep = {"gaps": 0, "gaps_with_nonzero_bytes": 0, "gaps_not_read_to_the_end": 0, "stopped_at": None, "listed": []}
         for lo, hi in self._gaps():
             total += hi - lo
-            while lo < hi and scanned < AD1_GAP_SCAN_MAX:
-                block = self.read(lo, min(hi - lo, 1 << 20, AD1_GAP_SCAN_MAX - scanned))
-                nonzero += len(block) - block.count(0)
-                scanned += len(block)
+            rep["gaps"] += 1
+            start, nz, got = lo, 0, 0
+            while lo < hi and not stopped:
+                if deadline is not None and _time.monotonic() > deadline:
+                    stopped = True
+                    rep["stopped_at"] = lo
+                    break
+                block = self.read(lo, min(hi - lo, AD1_GAP_BLOCK))
+                nz += len(block) - block.count(0)
+                got += len(block)
                 lo += len(block)
-        return total, nonzero, scanned >= total
+            nonzero += nz
+            read += got
+            rep["gaps_with_nonzero_bytes"] += 1 if nz else 0
+            rep["gaps_not_read_to_the_end"] += 1 if got < hi - start else 0
+            if nz or got < hi - start:
+                gap = {"from": start, "to": hi, "read": got, "nonzero_bytes": nz}
+                if len(rep["listed"]) < AD1_GAPS_LISTED:
+                    rep["listed"].append(gap)
+                if sink is not None:
+                    sink(gap)
+        rep.update({"bytes": total, "read": read, "nonzero_bytes": nonzero})
+        self.gap_report = rep
+        return total, nonzero, read >= total
 
     def metadata(self, addr):
         """[(category, key, text bytes, address)] of a metadata chain. An item that shares its chain with an earlier one gets the same
@@ -468,7 +793,9 @@ class AD1:
         for i, (start, end) in enumerate(self.chunks(item)):
             z = _zlib.decompressobj()
             try:
-                block = z.decompress(self.read(start, end - start), bound + 1)
+                packed = self.read(start, end - start)
+                self.packed_read += len(packed)
+                block = z.decompress(packed, bound + 1)
             except _zlib.error as e:
                 raise AD1Error("its chunk %d does not inflate: %s" % (i, e))
             if len(block) > bound or z.unconsumed_tail:
@@ -483,23 +810,26 @@ class AD1:
             raise AD1Error("its content is %d bytes, not its size of %d" % (total, item["size"]))
 
 
-def ad1_unaccounted(img):
+def ad1_unaccounted(img, deadline=None, sink=None):
     """None, or words, once a walk has reached the end of the tree: the image's data holds bytes that no item, name, metadata entry,
     chunk table or chunk led to. A zeroed or damaged next or child pointer ends a chain early with no error, and the format has no item
-    count, so the walk cannot tell a tree that ended from a tree that was cut: it says what it could not account for."""
-    left = img.unreferenced()
+    count, so the walk cannot tell a tree that ended from a tree that was cut: it says what it could not account for. The unreached data
+    is read to its end unless the clock (`deadline`) stops it, and then the words say where."""
+    left = img.unreferenced(deadline, sink)
     if left is None:
         return None
+    rep = img.gap_report
+    stopped = "" if left[2] else "; the read of the unreached data stopped at its time budget at address %d, %d of its %d bytes in" % (rep["stopped_at"], rep["read"], left[0])
     if left[1] <= AD1_SLACK:
         if left[2]:
             return None
-        # Only the first AD1_GAP_SCAN_MAX bytes of the unreached data were read, and they held nothing: that says nothing of the rest, where a
-        # zeroed pointer's lost items can sit behind a long run of zeros.
+        # The clock stopped the read, and what was read held nothing: that says nothing of the rest, where a zeroed pointer's lost items
+        # can sit behind a long run of zeros.
         return ("%d of the %d bytes of the image's data that no item, name, metadata entry, chunk table or chunk of the tree leads to were read for non-zero bytes "
-                "(the first %d MiB) and held none; the rest was not read, so the tree is not shown to account for the image's data and the list is not shown to be whole"
-                % (min(left[0], AD1_GAP_SCAN_MAX), left[0], AD1_GAP_SCAN_MAX >> 20))
+                "(up to address %d) and held none; the read stopped at its time budget, so the rest was not read, the tree is not shown to account for the "
+                "image's data and the list is not shown to be whole" % (rep["read"], left[0], rep["stopped_at"]))
     return ("%s%d bytes of the image's data that are not zero are reached by no item, name, metadata entry, chunk table or chunk of the tree: a zeroed or damaged "
-            "next or child pointer would leave exactly such bytes, and the format has no item count, so the list is not shown to be whole" % ("" if left[2] else "at least ", left[1]))
+            "next or child pointer would leave exactly such bytes, and the format has no item count, so the list is not shown to be whole%s" % ("" if left[2] else "at least ", left[1], stopped))
 
 
 def ad1_text(meta, key):
@@ -509,6 +839,40 @@ def ad1_text(meta, key):
             return v
     return None
 # --- end of the AD1 reader ----------------------------------------------------
+
+
+GAPS_FILE_MAX = 100_000           # rows in the file of gaps; the counts in the report go on past it
+
+
+class GapFile:
+    """The gaps of the image's data that no structure led to and that hold non-zero bytes or were not read to their end, one JSON line
+    each, in a file made new on the first one and cut at GAPS_FILE_MAX rows (`cut` says so)."""
+
+    def __init__(self, path):
+        self.path, self.fh, self.written, self.cut, self.error = path, None, 0, False, None
+
+    def add(self, gap):
+        if self.error or self.cut:
+            return
+        if self.written >= GAPS_FILE_MAX:
+            self.cut = True
+            return
+        try:
+            if self.fh is None:
+                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+                self.fh = os.fdopen(fd, "w", encoding="ascii")
+            self.fh.write(json.dumps(gap) + "\n")
+            self.written += 1
+        except OSError as exc:
+            self.error = "the gaps could not be written (%s)" % (exc.strerror or exc)
+
+    def close(self):
+        if self.fh is not None:
+            try:
+                self.fh.close()
+            except OSError as exc:
+                self.error = self.error or "the gaps were not all written (%s)" % (exc.strerror or exc)
+            self.fh = None
 
 
 def limits():
@@ -521,15 +885,21 @@ def limits():
 
 def refuse(message):
     """A target that cannot be read is an answer on stdout, as every other refusal here is, not a traceback."""
-    print(json.dumps({"ok": False, "error": message}))
+    print_answer({"ok": False, "error": message})
     sys.exit(2)
 
 
 def target_of(arg):
-    text = open(arg, encoding="utf-8").read() if os.path.isfile(arg) else arg
+    text = arg
+    if os.path.isfile(arg):
+        try:
+            with open(arg, encoding="utf-8") as fh:
+                text = fh.read(1 << 20)
+        except (OSError, ValueError) as exc:               # ValueError: bytes that are not UTF-8
+            refuse("the target file cannot be read as UTF-8 text: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__))
     try:
         t = json.loads(text)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         refuse("the target is not valid JSON: %s" % exc)
     if not isinstance(t, dict):
         refuse("the target is a JSON object with a paths list")
@@ -611,8 +981,8 @@ def detect(path):
                 return None, "segment %d of %d of an AD1 image: the image is read, and catalogued, from its first segment (.ad1)" % (seg["index"], seg["count"])
             fh.seek(seg["header"])
             logical = fh.read(20)
-    except OSError as e:
-        return "unknown", "unreadable, so it cannot be told whether it is an AD1 image: %s" % (e.strerror or e)
+    except (OSError, ValueError) as e:        # ValueError: a NUL or a lone surrogate in the path
+        return "unknown", "unreadable, so it cannot be told whether it is an AD1 image: %s" % (getattr(e, "strerror", None) or e.__class__.__name__)
     except AD1Error as e:
         return None, str(e)
     if not logical.startswith(AD1_LOGICAL_MAGIC):
@@ -721,7 +1091,13 @@ def run(target, paths, out_dir):
     seconds = limits()
     deadline = time.monotonic() + seconds * 0.9       # past this, no further file's content is inflated
     list_deadline = time.monotonic() + float(os.environ.get("RECIPE_LISTING_SECONDS") or seconds * 0.97)  # past this, no further item is listed
-    os.makedirs(out_dir, exist_ok=True)
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except (OSError, ValueError) as exc:        # a name too long, a loop, a file in the way, a directory that cannot be entered
+        print_answer({"ok": False, "status": "failed", "error": "--out cannot be used: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__),
+                      "status_basis": "the output directory could not be made, so nothing was run"})
+        sys.exit(2)
+    _probe_out(out_dir)
     cov = {"recipe": "ad1-items", "target": paths[0], "format": "AD1", "items": 0, "files": 0, "folders": 0, "checked": 0,
            "mismatches": [], "no_stored_hash": 0, "unread_at_limit": 0, "segments_missing": [],
            "covered": "every item of the image's tree, with its metadata, and each file's content inflated and checked against the digests the image records",
@@ -729,8 +1105,7 @@ def run(target, paths, out_dir):
            "limits_hit": [], "errors": []}
 
     def write_cov():
-        with open(os.path.join(out_dir, "coverage.json"), "w") as cf:
-            json.dump(cov, cf, indent=2)
+        _write_json_whole(os.path.join(out_dir, "coverage.json"), cov, indent=2)
 
     def finish(status, code):
         cov["status"] = status
@@ -741,7 +1116,7 @@ def run(target, paths, out_dir):
         if "integrity_status" not in cov:
             cov["integrity_status"] = "mismatch" if cov["mismatches"] else "unverified" if cov["files"] > cov["checked"] or cov["no_stored_hash"] or cov.get("unaccounted") else "verified" if cov["files"] else "not_applicable"
         write_cov()
-        print(json.dumps({"ok": code == 0, "status": status, "format": "AD1", "items": cov["items"]}))
+        print_answer({"ok": code == 0, "status": status, "format": "AD1", "items": cov["items"]})
         return code
 
     # Said before the first read: a run cut short leaves a coverage file that says it was, never none.
@@ -750,6 +1125,19 @@ def run(target, paths, out_dir):
     cov["why"] = "started; the run did not reach its end"
     write_cov()
     del cov["why"]
+
+    def _stopped(signum):
+        cov["status"] = "partial"
+        cov["interrupted"] = True
+        cov["signal"] = signum
+        cov["status_basis"] = "the recipe was stopped by signal %d: the items listed before the stop are in members.tsv, and nothing is claimed about the rest" % signum
+        cov["integrity_status"] = "unverified"
+        try:
+            write_cov()
+        except OSError:
+            pass
+        print(json.dumps({"ok": False, "status": "partial", "interrupted": True, "signal": signum, "format": "AD1", "items": cov["items"]}), flush=True)
+    install_signal_handlers(_stopped)
     img_source = b""
     try:
         img = AD1(paths[0], paths[1:])
@@ -807,13 +1195,30 @@ def run(target, paths, out_dir):
                 walked_all = not img.walk_errors
         cov["errors"] += img.walk_errors
         if walked_all and not cov["limits_hit"]:
-            left = img.unreferenced()
-            if left is not None:
-                cov["unreferenced_bytes"], cov["unreferenced_nonzero_bytes"] = left[0], left[1]
-            lost = ad1_unaccounted(img)
+            # The data nothing led to is read to its end under the listing's clock; the gaps that hold non-zero bytes or were not read
+            # to their end are all in unreferenced-gaps.jsonl (at most GAPS_FILE_MAX of them), the first AD1_GAPS_LISTED in the coverage.
+            gaps = GapFile(os.path.join(out_dir, "unreferenced-gaps.jsonl"))
+            try:
+                lost = ad1_unaccounted(img, list_deadline, gaps.add)
+            finally:
+                gaps.close()
+            rep = img.gap_report
+            if rep is not None:
+                cov["unreferenced_bytes"], cov["unreferenced_nonzero_bytes"] = rep["bytes"], rep["nonzero_bytes"]
+                cov["unreferenced_bytes_read"] = rep["read"]
+                cov["unreferenced_gaps"] = {k: rep[k] for k in ("gaps", "gaps_with_nonzero_bytes", "gaps_not_read_to_the_end", "stopped_at", "listed")}
+                if gaps.written or gaps.error:
+                    cov["unreferenced_gaps"]["file"] = "unreferenced-gaps.jsonl" if gaps.written else None
+                    cov["unreferenced_gaps"]["file_rows"] = gaps.written
+                    if gaps.cut:
+                        cov["unreferenced_gaps"]["file_cut_at_rows"] = GAPS_FILE_MAX
+                    if gaps.error:
+                        cov["unreferenced_gaps"]["file_error"] = gaps.error
             if lost:
                 cov["errors"].append(lost)
                 cov["unaccounted"] = True
+                if rep is not None and rep["stopped_at"] is not None:
+                    cov["limits_hit"].append("seconds: the read of the data nothing led to stopped at address %d, %d of its %d bytes in" % (rep["stopped_at"], rep["read"], rep["bytes"]))
         try:
             own = [{"category": c, "key": "0x%x" % k, "label": label(k), "text": esc(t)} for c, k, t, _a in img.metadata(img.meta_addr)]
         except AD1Error as e:
@@ -822,11 +1227,10 @@ def run(target, paths, out_dir):
         segs = []
         for k, p in enumerate(img.paths, 1):
             segs.append({"segment": k, "name": img.names[k - 1], "present": p is not None, **({"bytes": os.path.getsize(p)} if p else {})})
-        json.dump({"format": "AD1", "segment_header": img.segment, "segments": segs,
+        _write_json_whole(os.path.join(out_dir, "image.json"), {"format": "AD1", "segment_header": img.segment, "segments": segs,
                    "logical_image": {"version": img.version, "chunk_size": img.chunk_size, "first_item": img.first_item, "metadata": img.meta_addr},
                    "data_source_name": esc(img.source_name), "metadata": own,
-                   "items": cov["items"], "files": cov["files"], "folders": cov["folders"]},
-                  open(os.path.join(out_dir, "image.json"), "w"), indent=2, ensure_ascii=False)
+                   "items": cov["items"], "files": cov["files"], "folders": cov["folders"]}, indent=2, ensure_ascii=False)
     finally:
         img_source = img.source_name
         img.close()
@@ -844,25 +1248,25 @@ def run(target, paths, out_dir):
 
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("detect", "run"):
-        print(json.dumps({"ok": False, "error": "usage: run.py detect --target T [--probe-out DIR] | run --target T --out DIR"}))
+        print_answer({"ok": False, "error": "usage: run.py detect --target T [--probe-out DIR] | run --target T --out DIR"})
         return 2
     args = dict(zip(argv[2::2], argv[3::2]))
     if "--target" not in args:
-        print(json.dumps({"ok": False, "error": "--target is required"}))
+        print_answer({"ok": False, "error": "--target is required"})
         return 2
     target, paths = target_of(args["--target"])
     if argv[1] == "detect":
         fmt, why = detect(paths[0])
         if fmt == "unknown":
-            print(json.dumps({"applies": "unknown", "format": None, "why": why}))
+            print_answer({"applies": "unknown", "format": None, "why": why})
             return 2
-        print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
+        print_answer({"applies": fmt is not None, "format": fmt, "why": why})
         return 0 if fmt else 1
     if "--out" not in args:
-        print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
+        print_answer({"ok": False, "error": "run needs --out DIR"})
         return 2
     if not _is_regular(paths[0]):
-        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not a regular file, so nothing was run", "error": "not a regular file"}))
+        print_answer({"ok": False, "status": "failed", "status_basis": "the target is not a regular file, so nothing was run", "error": "not a regular file"})
         return 2
     return run(target, paths, args["--out"])
 
