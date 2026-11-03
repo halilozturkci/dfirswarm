@@ -1,6 +1,26 @@
 {
   "binaries": [
     {
+      "name": "chainbreaker",
+      "package": "chainbreaker",
+      "optional": true,
+      "why": "Open a macOS login or System keychain offline, when the case supplies its password or the SystemKey file, and list every item: metadata, and the secret of each record that holds one. Only keychain_open runs it, in a secret_output job. It reads the older keychain file format (the file begins with 'kych': login.keychain-db, login.keychain, System.keychain); it does not read the Local Items store (keychain-2.db, SQLite), and which versions of the format it parses is not established here. Pinned to the project's newest commit, 2eb467d (2023-03-30; its version file says 3.0.3, and its only release, v0.9, is older), installed in an environment of its own with pycryptodome 3.23.0 in a hash lock (requires/locks/chainbreaker.txt; the project's own requirements file, which pins an old pycryptodome, is not used). The project takes a password only on its command line or at a terminal prompt, so keychain_open imports it and hands the password over as a function argument, from a file of the job. Its licence is GPL version 2 (its setup.py says GPL-2.0, its source files say version 2 or any later version); it runs as a program of its own, never inside the image's Python.",
+      "install": {
+        "brew": "https://github.com/n0fate/chainbreaker",
+        "apt": "pinned source commit 2eb467d (install.source), with pycryptodome in a hash lock",
+        "source": {
+          "version": "3.0.3",
+          "url": "https://github.com/n0fate/chainbreaker/archive/2eb467d9355e61f1dfecee1cec41b06033186326.tar.gz",
+          "sha256": "b2b65dc21114eaa85ae1770bdc17d91fbe5f396e0aaff5a276d61222387fb405",
+          "entry": "chainbreaker/__main__.py",
+          "run": "python",
+          "pip_lock": "requires/locks/chainbreaker.txt"
+        }
+      },
+      "licence": "GPL-2.0",
+      "redistributable": false
+    },
+    {
       "name": "fsapfsinfo",
       "package": "libfsapfs",
       "optional": true,

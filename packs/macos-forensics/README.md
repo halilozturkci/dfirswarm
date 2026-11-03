@@ -8,7 +8,7 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Eighteen skills**, in six families: a decision-rule leaf for each question,
+**Nineteen skills**, in seven families: a decision-rule leaf for each question,
 second-level leaves a leaf points to ("only if") for the reference material, and the router
 `macos/router` (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf).
 
@@ -20,8 +20,9 @@ second-level leaves a leaf points to ("only if") for the reference material, and
 | Persistence | `persistence/mechanisms`; `persistence/login-items-quieter` |
 | Accounts | `accounts/users`; `accounts/attribution-remote` |
 | File system | `filesystem/apfs`; `filesystem/apfs-recovery`; `filesystem/apfs-encryption` |
+| Security | `security/keychains` (identification, and opening with the case's password) |
 
-**Nine tools.** Each says what it read and what it did not, and none turns a failure
+**Ten tools.** Each says what it read and what it did not, and none turns a failure
 into an empty result. Every answer carries `status` (`complete`, `partial` or `failed`)
 and `status_basis`; each tool has a clock of its own below its time limit and, once its
 sweep has started, ends on SIGTERM, SIGINT or SIGHUP with one JSON answer
@@ -72,6 +73,13 @@ whatever reads a tool's stdout stops reading a full pipe, only SIGKILL ends the 
 - `apfs_inventory` runs `fsapfsinfo` on a container image, keeps its whole output on disk and reads it as container and
   volume sections. It says in every answer that no snapshot is enumerated, no object is extracted and no password is
   passed (the reader takes one only on its command line).
+- `keychain_open` opens a login or System keychain (a file that begins with `kych`) when the case supplies its
+  password or the SystemKey file as a job input file, and writes every item, metadata and value, to one 0600 file
+  in a job run as secret output (the tool declares `secret_output: required`). The password goes to the reader as a
+  function argument from the file, never on a command line or in the environment. The answer tells the outcomes
+  apart (opened, partial, wrong secret, unsupported format, damaged, reader unavailable, clock, signal), counts
+  records per class, decrypted and not, and gives the file's size and sha256; it prints no name, value or hash of
+  one. The Local Items store (`keychain-2.db`) is answered `unsupported_format`. No password is guessed or cracked.
 
 The boundary is the windows-forensics pack's block, copied byte for byte (a test holds
 the copies equal): an allow-list per field type, a deny-list for free text and a second
@@ -82,7 +90,7 @@ a file whose secrets matter is read in a job run with `secret_output: true`.
 **One goal template**: `mac-compromise.md`.
 
 **Not in this pack.** A wrapper, recipe or skill for `mac_apt.py` (declared in
-`requires/host.json`, installed in the amd64 worker image only); Keychain, Gatekeeper and
+`requires/host.json`, installed in the amd64 worker image only); Gatekeeper and
 XProtect, Spotlight, Biome and recent-item skills, and TCC and background-item skills
 (`macos_tcc` and `macos_login_items` have a naming edit in the persistence leaf, not a
 leaf of their own); APFS snapshot content access. A macOS examination that needs them

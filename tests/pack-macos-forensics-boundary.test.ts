@@ -27,7 +27,7 @@ async function block(path: string, begin: string, end: string): Promise<string> 
   return text.slice(start, stop + end.length);
 }
 
-const TOOLS = ["plist_read", "fsevents_parse", "knowledgec_query", "unified_log", "macos_tcc", "macos_login_items", "safari_history", "segb_read", "apfs_inventory"];
+const TOOLS = ["plist_read", "fsevents_parse", "knowledgec_query", "unified_log", "macos_tcc", "macos_login_items", "safari_history", "segb_read", "apfs_inventory", "keychain_open"];
 
 test("the tools carry the same stop block, byte for byte", async () => {
   const blocks = await Promise.all(TOOLS.map((t) => block(join(MAC, t, "run.py"), "# BEGIN SHARED STOP", "# END SHARED STOP")));

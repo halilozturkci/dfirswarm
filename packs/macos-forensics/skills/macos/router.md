@@ -31,3 +31,6 @@ Accounts and persistence
 `accounts/attribution-remote` attribution limits, remote access
 `persistence/mechanisms` configured, registered, enabled, run
 `persistence/login-items-quieter` login items, cron, profiles, extensions, privacy
+
+Secrets
+`security/keychains` keychain files, opening with the case's password
