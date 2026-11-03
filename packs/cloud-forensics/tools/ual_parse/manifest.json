@@ -88,7 +88,7 @@
   "by": "maintainer",
   "at": "2026-10-27T12:00:00.000Z",
   "version": 12,
-  "sha256": "5006a6c52c3ba96cae2e3a989c16a373cc6840303f25572a517e4ded7d2b9a09",
+  "sha256": "56bb7521801a8267136a9661e02f94ea0cbc6de77caa93e461ee8a2097b02863",
   "use": {
     "names": [
       "AuditLog*.csv",

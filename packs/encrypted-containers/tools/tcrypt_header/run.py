@@ -562,12 +562,22 @@ _CRED_QUOTE = re.compile(r'\\*"')
 # a format directive (`%s`, `%d`), a template field (`{0}`, `{name}`) or a `%VAR%` is where a value goes, not a value
 _CRED_PLACEHOLDER = re.compile(r"%[-+ #0-9.]*[sdiuxXfeEgGcr](?![A-Za-z0-9])|\{\w*\}|%\w+%$")
 _CRED_BARE = re.compile(r"-?[0-9][0-9.eE+-]{0,39}|\[[^\[\]]{0,4096}\]|(?:null|true|false)\b")
-# What a text must hold for any rule to match it: a literal one of them looks for, or a run long enough for a shape. A text with none of
-# these is judged clean without running the rules (most names, addresses and ids).
-_CRED_QUICK = re.compile(r"eyJ|-----BEGIN|\n|authorization|cookie|bearer|basic|digest|negotiate|ntlm|pass|pwd|secret|token|key|signature|sig|"
-                         r"plaintext|hash|pin|otp|sas|securestring|gh[pousr]_|github_pat_|xox|AIza|ya29\.|1//0|IQoJb|FQoG|FwoG|Q~|[01]\.A|[sr]k_|"
-                         r"://|gocspx|functions|code=|credential|assertion|mfacode|saml|mysql|mariadb|curl|\$2|"
-                         r"[A-Za-z0-9+/]{32}|[A-Za-z0-9+/_-]{128}", re.I)
+# What a text must hold for a rule to match it: a literal (lower case) of which one must be in the text, checked before the rule runs, so
+# that a text with none of them (most names, addresses and ids) costs a few substring tests and no expression. An assignment rule also
+# needs a separator in the text. Each is a necessary condition of its rule.
+_CRED_ASSIGN = ("pass", "pwd", "secret", "key", "token", "signature", "plaintext", "sig", "pin", "otp", "sas", "hash")
+_CRED_NEEDLES = {
+    "a JSON Web Token": ("eyj",), "a JSON Web Encryption token": ("eyj",), "a password in a URL": ("://",),
+    "an Azure Functions key": ("x-functions-key", "code="), "a private key block": ("-----begin",), "a base64 block of key lines": ("\n",),
+    "an authorization header value": ("authorization",), "a cookie header value": ("cookie",),
+    "a scheme and its credential": ("bearer", "basic", "negotiate", "ntlm", "digest"),
+    "a value assigned to a credential name (quoted)": _CRED_ASSIGN, "a value assigned to a credential name": _CRED_ASSIGN,
+    "a value given to a credential switch": ("password", "pass", "pwd", "secret", "apikey", "accesstoken", "token"),
+    "a secret given to ConvertTo-SecureString": ("securestring",), "a password given to a MySQL client": ("mysql", "mariadb"),
+    "a password given to curl": ("curl",), "a hash pair of an account database": (":",), "a bcrypt hash": ("$2",),
+    "a token of a known family": ("gocspx-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xoxa-", "xoxb-", "xoxp-", "xoxr-", "xoxs-",
+                                  "aiza", "ya29.", "1//0", "iqojb3", "fqogzx", "fwogzx", "q~", "0.a", "1.a", "sk_", "rk_"),
+}
 _CRED_CLEAN = set()               # short texts already judged to hold nothing (names, addresses and ids repeat)
 _CRED_GATE = 4096                 # a text longer than this is scanned with the carrier's hook in view, rule by rule
 # The carrier's hook for long scans: called with the work done so far (1 per stretch found, 4096 between rules over a long text); it may
@@ -631,9 +641,19 @@ def _cred_name_before(text, at):
 def _cred_spans(text, shapes):
     spans = []
     big = len(text) > _CRED_GATE
-    if "value" in text.lower():
+    low = text.lower()
+    sep = "=" in text or ":" in text or "%3" in low
+    if "value" in low:
         _cred_pair_spans(text, spans)
     for why, rx, group in _CRED_RULES:
+        need = _CRED_NEEDLES[why]
+        if need is _CRED_ASSIGN and not sep:
+            continue
+        for n in need:
+            if n in low:
+                break
+        else:
+            continue
         if big:
             _tick(4096)
         for m in rx.finditer(text):
@@ -658,10 +678,10 @@ def _cred_spans(text, shapes):
                 spans.append((start, end, why))
     if big:
         _tick(4096)
-    for m in _CRED_B64_RUN.finditer(text):
+    for m in (_CRED_B64_RUN.finditer(text) if len(text) >= 128 else ()):
         if _cred_random_like(m.group(0)):
             spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
-    if shapes:
+    if shapes and len(text) >= 32:
         for why, rx, check in _CRED_SHAPES:
             for m in rx.finditer(text):
                 if not check or _cred_random_like(m.group(0)):
@@ -686,7 +706,7 @@ def credential_spans(text, shapes=True):
         return [(0, len(text), "text longer than %d characters" % TEXT_LIMIT)]
     if shapes and text in _CRED_CLEAN:
         return []
-    spans = _cred_spans(text, shapes) if _CRED_QUICK.search(text) else []
+    spans = _cred_spans(text, shapes)
     if shapes and not spans and len(text) <= 256 and len(_CRED_CLEAN) < 100000:
         _CRED_CLEAN.add(text)
     return spans
@@ -733,8 +753,6 @@ def clean_value(value, leaf, note, key=None, pointer="", depth=0, shapes=True, m
 def _credentials_withheld(text, kind):
     """`text` with each credential in it withheld. It runs after the rules above, on text that may hold their markers: a stretch that
     begins at a marker is theirs already."""
-    if not _CRED_QUICK.search(text):
-        return text
     out, last = [], 0
     for start, end, why in credential_spans(text):
         if text.startswith("<", start):
