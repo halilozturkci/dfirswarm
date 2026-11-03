@@ -92,3 +92,10 @@ let a quadratic rule pass on one lucky round. It runs every round and judges
 the median of each text; a ladder text that most rounds never reached has no
 time and fails. The six files that use it keep the rule, and the nine-round
 runs of one file are five.
+
+The image build's downloads back off before a retry: after a 5xx, a timeout, a
+dropped connection or a body that ended short the build waits 10 s and then 30 s
+before the next attempt (`DFIRSWARM_FETCH_BACKOFF` shortens the waits;
+`DFIRSWARM_FETCH_TIMEOUT` the read timeout), and a 4xx (a 404, a 403, a 429) is
+the server's answer and is not retried. The build's message names each
+attempt's cause and the wait.
