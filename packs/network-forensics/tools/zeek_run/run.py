@@ -50,7 +50,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "zeek_run", "version": 11}
+TOOL = {"name": "zeek_run", "version": 13}
 PARSER = "zeek_run/5"
 
 
@@ -1552,6 +1552,254 @@ def answer_out(text):
         signal.pthread_sigmask(signal.SIG_UNBLOCK, held)
 
 
+DRY_LIST_NAME = "network-forensics.dry-run.zeek"
+DRY_MARK = "network-forensics-dry-run"
+DRY_LIST_SCRIPT = ("# Written by zeek_run (network-forensics pack) for dry_run: it prints each script Zeek loads, once, and reads no capture.\n"
+                   "event zeek_script_loaded(path: string, level: count)\n"
+                   "    {\n"
+                   "    print fmt(\"" + DRY_MARK + "\\t%d\\t%s\", level, path);\n"
+                   "    }\n")
+DRY_LISTED = re.compile(re.escape(DRY_MARK) + r"\t(\d{1,6})\t(.*)")
+DRY_LINE_READ = 1 << 12     # the part of one line of Zeek's output that is read: a script path is shorter
+DRY_KEPT = 200_000          # listed scripts kept for the policy check; every one is in zeek-dry-run.stdout
+DRY_SHOWN = 200             # listed scripts answered inline
+DRY_FAILURES = 10
+DRY_FAILURE_CHARS = 300
+DRY_FAILURE_READ = 1 << 16
+DRY_TAIL_SEGMENTS = 12
+DRY_FAILURE = re.compile(r"(?i)\b(error|fatal|can't find|cannot|failed)\b")
+
+
+def read_listing(path, deadline):
+    """(listed script paths, how many lines were listed, lines cut to DRY_LINE_READ, the clock cut). Each line is read in pieces: one hostile line is never held whole."""
+    kept, total, cut_lines, clock_cut = [], 0, 0, False
+    with open_regular(path, follow=False) as fh:
+        n = 0
+        while True:
+            raw = fh.readline(DRY_LINE_READ)
+            if not raw:
+                break
+            n += 1
+            if n & 1023 == 0 and time.monotonic() > deadline:
+                clock_cut = True
+                break
+            if not raw.endswith(b"\n"):
+                more = fh.readline(DRY_LINE_READ)
+                if more:
+                    cut_lines += 1
+                    while not more.endswith(b"\n"):      # the rest of a long line is passed over, in pieces
+                        more = fh.readline(DRY_LINE_READ)
+                        if not more:
+                            break
+                        if time.monotonic() > deadline:
+                            clock_cut = True
+                            break
+                    if clock_cut:
+                        break
+            m = DRY_LISTED.fullmatch(raw.decode("utf-8", "replace").rstrip("\r\n"))
+            if m:
+                total += 1
+                if len(kept) < DRY_KEPT:
+                    kept.append(m.group(2))
+    return kept, total, cut_lines, clock_cut
+
+
+def withheld_cut(text, name):
+    """A line of the engine's output as the answer shows it: the whole line goes through the block first, and only then is it cut, so that a cut never
+    leaves a piece of a secret too short for the block to recognise."""
+    shown = scrub(text)
+    return shown[:DRY_FAILURE_CHARS] + (" ...(%d more characters in %s)" % (len(shown) - DRY_FAILURE_CHARS, name) if len(shown) > DRY_FAILURE_CHARS else "")
+
+
+def first_failures(paths, deadline):
+    """(the first DRY_FAILURES lines of Zeek's own output that name an error or a failure, how many there were, whether the clock cut the reading)."""
+    shown, total, cut = [], 0, False
+    for path in paths:
+        try:
+            with open_regular(path, follow=False) as fh:
+                n = 0
+                while True:
+                    raw = fh.readline(DRY_FAILURE_READ)
+                    if not raw:
+                        break
+                    n += 1
+                    if n & 1023 == 0 and time.monotonic() > deadline:
+                        cut = True
+                        break
+                    text = raw.decode("utf-8", "replace").strip()
+                    if DRY_FAILURE.search(text):
+                        total += 1
+                        if len(shown) < DRY_FAILURES:
+                            shown.append({"from": os.path.basename(path), "line": n,
+                                          "text": withheld_cut(text, os.path.basename(path))})
+        except OSError:
+            continue
+        if cut:
+            break
+    return shown, total, cut
+
+
+def write_new(path, data):
+    """A file of this run's own, new, private and whole; the problem as a sentence (None when written) when the write is refused."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        return None
+    except OSError as exc:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return describe(exc)
+
+
+def dry_run_receipt(c):
+    """dry_run: the engine receipt without a capture. Zeek is started once, with the policy script and a small script of this tool's that prints each script
+    Zeek loads, and with no capture and no interface: nothing is read, nothing listens, and everything is written under out_dir. complete says that
+    the version was read, the help was kept, Zeek exited 0 and listed the scripts it loaded, and every requested policy is among them."""
+    started, out_dir, binary = c["started"], c["out_dir"], c["binary"]
+    deadline = min(started + c["timeout"], started + MANIFEST_SECONDS - READ_MARGIN)
+    try:     # ZEEK_RUN_DRY_SECONDS (seconds from here) exists for the tests, as ZEEK_RUN_READ_SECONDS does for the reading of the logs
+        deadline = time.monotonic() + float(os.environ["ZEEK_RUN_DRY_SECONDS"])
+    except (KeyError, ValueError):
+        pass
+    problems = []
+
+    def remaining():
+        return deadline - time.monotonic()
+
+    if c["zeek_version"] is None:
+        problems.append("`zeek --version` %s, so the version of the engine is not recorded" % ("did not finish" if c["version_timed_out"] else "exited %s" % c["version_code"]))
+    PROGRESS["stage"] = "reading the engine's help"
+    help_code, help_out, help_err, help_timed = preflight([binary, "--help"], max(1.0, min(30, remaining())))
+    help_path = os.path.join(out_dir, "zeek-help.txt")
+    help_problem = write_new(help_path, help_out + (b"\n--- stderr ---\n" + help_err if help_err else b""))
+    if help_problem:
+        problems.append("the engine's help could not be kept in a file (%s)" % help_problem)
+    if help_timed or help_code is None:
+        problems.append("`zeek --help` %s" % ("did not finish" if help_timed else "did not run"))
+
+    list_path = os.path.join(out_dir, DRY_LIST_NAME)
+    list_problem = write_new(list_path, DRY_LIST_SCRIPT.encode("utf-8"))
+    if list_problem:
+        problems.append("the script that lists the loaded scripts could not be written (%s)" % list_problem)
+    stdout_path, stderr_path = os.path.join(out_dir, "zeek-dry-run.stdout"), os.path.join(out_dir, "zeek-dry-run.stderr")
+    argv = [binary] + ([os.path.abspath(c["script_path"])] if c["script_path"] else []) + [os.path.abspath(list_path)]     # the program runs in out_dir: absolute names
+    code, timed_out = None, False
+    listed, listed_total, listed_cut_lines, listing_cut = [], 0, 0, False
+    if not list_problem:
+        if remaining() < 1:
+            problems.append("the tool's own clock ran out before Zeek was started")
+        else:
+            PROGRESS["stage"] = "loading the policy"
+            try:
+                code, timed_out = run_to_files(argv, stdout_path, stderr_path, max(1.0, min(120, remaining())), cwd=out_dir)
+            except OSError as exc:
+                problems.append("zeek could not be run (%s)" % describe(exc))
+            else:
+                if timed_out:
+                    problems.append("zeek did not finish in time and was killed with everything it had started")
+                elif code != 0:
+                    problems.append("zeek exited %s while loading the policy (first_failures)" % code)
+                try:
+                    listed, listed_total, listed_cut_lines, listing_cut = read_listing(stdout_path, deadline)
+                except OSError as exc:
+                    problems.append("the listing of the loaded scripts could not be read (%s)" % describe(exc))
+                if listing_cut:
+                    problems.append("the tool's own clock ran out while the listing was read: the scripts counted are those of the lines read")
+                if code == 0 and not timed_out and listed_total == 0:
+                    problems.append("Zeek exited 0 but listed no script: this build did not raise zeek_script_loaded, so which scripts the policy loads is not shown")
+    failures, failure_total, failures_cut = first_failures([stderr_path, stdout_path], deadline) if code is not None or timed_out else ([], 0, False)
+    if failures_cut:
+        problems.append("the tool's own clock ran out while Zeek's output was searched for failures: the list and its count are those of the lines read")
+
+    tails = set()
+    for entry in listed:
+        segments = entry.split("/")
+        for k in range(1, min(len(segments), DRY_TAIL_SEGMENTS) + 1):
+            tails.add("/".join(segments[-k:]))
+    requested = []
+    for name in c["policies"]:
+        if not listed_total:
+            requested.append({"policy": name, "loaded": None})
+            continue
+        found = any(("%s%s" % (name, tail)) in tails for tail in (".zeek", ".bro", "/__load__.zeek", "/__load__.bro")) if len(name.split("/")) + 1 <= DRY_TAIL_SEGMENTS else False
+        requested.append({"policy": name, "loaded": found})
+        if not found:
+            problems.append("the policy %s is not among the scripts Zeek listed" % scrub(name))
+
+    log_files, names_left = [], 0
+    try:
+        written, names_left = c["log_names"].shown([n for n in os.listdir(out_dir) if n.endswith(".log")], deadline)
+        log_files = [n[:-4] for n in written]
+    except OSError as exc:
+        problems.append("the names of the logs the dry run wrote could not be set aside (%s)" % describe(exc))
+    if names_left:
+        problems.append("%d log(s) with a token-shaped name were not set aside under a withheld name before the tool's own clock ran out: they are whole in out_dir" % names_left)
+    c["log_names"].close()
+    for name in os.listdir(out_dir):
+        full = os.path.join(out_dir, name)
+        try:
+            if not os.path.islink(full):
+                os.chmod(full, 0o700 if os.path.isdir(full) else 0o600)
+        except OSError:
+            pass
+    ok = not problems
+    basis = ("Zeek exited 0, listed the scripts it loaded, and every requested policy is among them; no capture was read" if ok else
+             "; ".join(problems[:6]) + (" (and %d more, all in problems)" % (len(problems) - 6) if len(problems) > 6 else "") + ": no capture was read")
+    answer_out(json.dumps({
+        "tool": TOOL, "parser": PARSER, "dry_run": True,
+        "status": "complete" if ok else "partial", "status_basis": basis,
+        "out_dir": out_dir,
+        "identities": {
+            "policy_script": {"path": c["script_path"], "sha256": c["script_sha"], "bytes": c["script_bytes"], "policies": len(c["policies"]),
+                              "note": ("no policy script was written: Zeek runs with its base scripts only" if not c["policies"] else
+                                       "the script this tool writes for a run; the same bytes as a run writes for these policies")},
+            "listing_script": {"path": list_path if not list_problem else None, "note": "this tool's own script that prints each script Zeek loads; a run does not load it"},
+            "engine": {"zeek_version": c["zeek_version"], "help": help_path if not help_problem else None},
+            "rule_count": None,
+            "rule_count_note": "not applicable: this tool loads Zeek scripts, not signature rules (no sid, rev or action exists to count)",
+        },
+        "effective_configuration": {
+            "command": argv, "exit_code": code, "timed_out": timed_out, "stdout": stdout_path if code is not None or timed_out else None,
+            "stderr": stderr_path if code is not None or timed_out else None,
+            "checksum_validation": c["checksum_validation"],
+            "checksum_note": "no capture is read, so checksums are not looked at; the setting is recorded as a run would use it (-C unless checksum_validation is true)",
+            "loaded_scripts": {"total": listed_total, "shown": min(len(listed), DRY_SHOWN), "scripts": [scrub(p) for p in listed[:DRY_SHOWN]],
+                               "file": stdout_path if listed_total else None, "lines_cut": listed_cut_lines,
+                               "note": "as Zeek printed them from its zeek_script_loaded event, in the order given; the inline list is the first %d and the file holds every line" % DRY_SHOWN},
+        },
+        "script_load_status": {"requested": requested, "first_failures": failures, "failure_lines_total": failure_total,
+                               "failures_note": "lines of Zeek's own output that name an error or a failure, the first %d, each cut to %d characters and passed through the block; every line is "
+                                                "in the files named under effective_configuration%s" % (DRY_FAILURES, DRY_FAILURE_CHARS,
+                                                    "; Zeek exited 0, so these are its messages and not a failed load" if code == 0 and failure_total else ""),
+                               "note": "a policy is loaded when Zeek listed a script of that name (the .zeek file or its __load__.zeek); null means Zeek listed nothing, so nothing is shown either way"},
+        "log_outputs": {"directory": out_dir, "logs_written_by_the_dry_run": log_files,
+                        "format": "Zeek's own default writer (tab-separated ASCII) unless a loaded script changes it; this mode does not read it from the scripts",
+                        "streams_listed": False,
+                        "note": "which logs a run writes depends on the scripts loaded and on the traffic, and a dry run has no traffic: it does not list them. "
+                                "logs_written_by_the_dry_run are the .log files Zeek left in out_dir without one, and a run names what it wrote."},
+        "arguments_not_used": c["unused"],
+        "not_covered": [
+            "No ruleset or signature file ships with the pack and none is fetched; this tool loads Zeek scripts by name from Zeek's own path.",
+            "There is no automatic download and no package or script update; this mode downloads nothing.",
+            "No capture was read: nothing here says what the scripts would log, or that any log would have a record.",
+            "The scripts are those Zeek printed; whether they behave as their names suggest is a property of the build.",
+            "The log streams a run would write are not listed (see log_outputs).",
+        ],
+        "problems": problems,
+        "ok": ok,
+        "withheld": dict(COUNTS),
+        "log_names_withheld": c["log_names"].count,
+        "log_names_file": c["log_names"].path,
+        "out_dir_contains_secret_values": True,
+        "out_dir_note": ("The directory holds Zeek's help, its output while it loaded the policy and the scripts this tool wrote. It is private (mode 0700, files 0600). "
+                         "Run this tool as a job with secret_output: true so the job output is sealed."),
+    }, indent=2))
+    return 0
+
+
 def main():
     started = time.monotonic()
     STATE["last_word"] = last_word
@@ -1562,10 +1810,16 @@ def main():
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")
+    dry_run = args.get("dry_run", False)
+    if not isinstance(dry_run, bool):
+        fail("dry_run must be true or false")
     path = args.get("path")
-    if not isinstance(path, str) or not path:
+    if dry_run:
+        if path is not None:
+            fail("path is not taken with dry_run: a dry run reads no capture (it gives the engine receipt of the version and the policy); leave path out, or leave dry_run out to run a capture")
+    elif not isinstance(path, str) or not path:
         fail("path is required: a capture file")
-    if not os.path.isfile(path):
+    elif not os.path.isfile(path):
         fail("no such file", path=path)
     out_dir = args.get("out_dir")
     if not isinstance(out_dir, str) or not out_dir:
@@ -1623,7 +1877,8 @@ def main():
     argv = [binary]
     if not checksum_validation:
         argv.append("-C")
-    argv += ["-r", os.path.abspath(path)]
+    if not dry_run:
+        argv += ["-r", os.path.abspath(path)]
     if policies:
         script_path = os.path.join(out_dir, SCRIPT_NAME)
         text = ("# Written by zeek_run (network-forensics pack): the policies the caller asked for, loaded explicitly.\n"
@@ -1636,6 +1891,11 @@ def main():
             fail("the policy script could not be written (%s)" % describe(exc), out_dir=out_dir)
         script_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
         argv.append(os.path.abspath(script_path))
+    if dry_run:
+        return dry_run_receipt(dict(
+            started=started, timeout=timeout, binary=binary, out_dir=out_dir, zeek_version=zeek_version, version_code=version_code, version_timed_out=version_timed_out,
+            policies=policies, script_path=script_path, script_sha=script_sha, script_bytes=len(text.encode("utf-8")) if policies else None,
+            checksum_validation=checksum_validation, log_names=log_names, unused=sorted(k for k in ("logs", "limit") if k in args)))
     stdout_path = os.path.join(out_dir, "zeek.stdout")
     stderr_path = os.path.join(out_dir, "zeek.stderr")
     PROGRESS["stage"] = "running Zeek"

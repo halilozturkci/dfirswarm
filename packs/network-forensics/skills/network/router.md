@@ -15,10 +15,14 @@ The capture and the logs
 `capture/derivatives` filter, split, merge, rebuild
 `capture/carve-from-images` no capture, packet buffers in an image
 `logs/web-proxy-firewall` text logs, no capture
+`flows/interpret` flow records, not packets
+`evidence/captured-secrets` credentials and keys in the evidence
 
 Content and metadata
 `metadata/dns-tls` encrypted traffic, what stays visible
+`metadata/encrypted-dns` DoH, DoT, DoQ
 `metadata/fingerprints` JA3, JA4, signature matches
+`analysis/engines-and-coverage` engine analysis and its coverage
 `sessions/reconstruct` what was actually sent
 `sessions/objects` exporting protocol objects
 

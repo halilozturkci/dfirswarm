@@ -3,13 +3,13 @@ id: capture/derivatives
 title: Making a working derivative of a capture
 when: You need to filter, split, merge, deduplicate or build a capture from a hex dump.
 needs: []
-tools: []
+tools: [capture_transform]
 requires_host: [capinfos, editcap, mergecap, tcpdump, text2pcap]
 ---
 
 Use when you must change what a capture holds to work with it. Not for judging the original (`capture/what-you-have`).
 
-- The original stays untouched. Every derivative is a new file under `work/` (in a job, `$OUT`) with its command, settings, the input and output hashes and packet counts in and out, recorded with `capinfos FILE` of both. `editcap -h`, `mergecap -h` and `tcpdump -h` print the installed options.
+- The original stays untouched. `capture_transform` writes every derivative as a new file under `work/` (in a job, `$OUT`) with its command, settings, the input and output hashes and packet counts in and out (`capinfos FILE` of both). `editcap -h`, `mergecap -h` and `tcpdump -h` print the installed options.
 - `editcap` removes duplicates and splits by time or count: removing duplicates can delete genuine retransmissions or the same packet seen by two sensors, so say what rule was used and what it removed.
 - `mergecap` interleaves captures by timestamp: it does not correct unsynchronised clocks and cannot order input that is unordered inside. Record each input's clock source first.
 - `tcpdump -r IN 'FILTER' -w OUT` is offline filtering only; record the filter text. Never capture live. A filter that selects a host drops the rest of the conversation's context.
