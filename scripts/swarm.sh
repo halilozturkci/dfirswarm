@@ -3004,6 +3004,7 @@ write_team_budget() {
   SWARM_CAP_PER_AGENT_TOKENS="${cap_per_agent_tokens:-}" \
   SWARM_CAP_PER_MODEL="$(printf '%s\n' ${MODEL_CAPS[@]+"${MODEL_CAPS[@]}"})" \
   SWARM_METERED="${metered:-1}" \
+  SWARM_UNMETERED_WHY="$(unmetered_why_word "${metered:-1}" "${subscription_models_csv:-}")" \
   SWARM_CAP_TOKENS="${cap_tokens:-}" \
   SWARM_TOKEN_ALERTS="${token_alerts:-}" \
   SWARM_UNTIL_SOLVED="${until_solved:-0}" \
@@ -3029,7 +3030,9 @@ for line in os.environ.get("SWARM_CAP_PER_MODEL", "").splitlines():
         # 6 and matches what jq's tonumber puts in the run record.
         cap_per_model[name] = json.loads(value)
 metered = os.environ.get("SWARM_METERED", "1") != "0"
-cap_tokens = os.environ.get("SWARM_CAP_TOKENS", "").strip()
+# Why a team is unmetered: local models, or an OAuth subscription whose dollars Pi only estimates.
+unmetered_why = os.environ.get("SWARM_UNMETERED_WHY", "").strip()
+cap_tokens =os.environ.get("SWARM_CAP_TOKENS", "").strip()
 agents = []
 for i, aid in enumerate(ids):
     role = "worker"
@@ -3055,6 +3058,7 @@ budget = {
     # False when no model on the team bills: spend stays an exact zero, the
     # USD cap cannot fire, and cap_tokens is the brake.
     "metered": metered,
+    **({"unmetered_why": unmetered_why} if not metered and unmetered_why in ("local", "subscription") else {}),
     **({"cap_tokens": int(cap_tokens)} if cap_tokens else {}),
     # The operator's token marks (--token-alert): each told once as the run
     # crosses it, on the board, the trace and the notify hook; advisory.
@@ -5970,6 +5974,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --arg inbox_page_chars "${inbox_page_chars:-40000}" \
     --arg skill_release "${skill_release:-compaction}" \
     --argjson metered "$metered" \
+    --arg unmetered_why "$(unmetered_why_word "$metered" "$subscription_models_csv")" \
     --arg cap_tokens "$cap_tokens" \
     --arg token_alerts "$token_alerts" \
     --arg local_models "$local_models_csv" \
@@ -6064,7 +6069,8 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
       inbox_page_chars: ($inbox_page_chars | tonumber),
       skill_release: $skill_release,
       metered: ($metered == 1),
-      cap_tokens: (if $cap_tokens == "" then null else ($cap_tokens | tonumber) end),
+      unmetered_why: (if $unmetered_why == "" then null else $unmetered_why end),
+      cap_tokens:(if $cap_tokens == "" then null else ($cap_tokens | tonumber) end),
       token_alerts: (if $token_alerts == "" then null else ($token_alerts | split(",") | map(tonumber)) end),
       local_models: (if $local_models == "" then [] else ($local_models | split(",")) end),
       goal: $goal,
@@ -10623,6 +10629,16 @@ pkg_copy() { # <src> <dst> [non-empty]
   [[ -f "$1" && ! -L "$1" ]] || return 0
   [[ "${3:-}" == "non-empty" && ! -s "$1" ]] && return 0
   cp -P "$1" "$2"
+}
+
+# Why a team that is not metered is not: "subscription" when any of its models runs on an OAuth subscription (Pi's dollars are then an
+# estimate), "local" when every model is served from this machine or network; empty for a metered team. The kickoff's CLI line says the
+# same by the same facts, and the console reads this word.
+unmetered_why_word() { # <metered 0|1> <subscription models csv>
+  if [[ "${1:-1}" == "0" ]]; then
+    if [[ -n "${2:-}" ]]; then echo subscription; else echo local; fi
+  fi
+  return 0
 }
 
 cmd_package() {

@@ -26,6 +26,7 @@ import { useAgentNames } from "@/lib/hooks";
 import { useResource } from "@/lib/live";
 import { reachedDone } from "@/lib/overview-status";
 import type { AgentRow, SwarmEvent, SwarmView, ThreadRow, TimedPost } from "@/lib/types";
+import { meteringWords } from "@/lib/metering";
 import { cn } from "@/lib/utils";
 
 /** One colour per tag everywhere: the same table the story and the chips use. */
@@ -239,7 +240,7 @@ function ThreadOverlay({ view, thread, version, onClose }: { view: SwarmView; th
             />
             <span className="truncate text-saffron-ink">
               {b.metered === false
-                ? `free · ${b.tokens.toLocaleString()} tokens${(b.cap_tokens ?? 0) > 0 ? ` of ${(b.cap_tokens ?? 0).toLocaleString()}` : ""} | no metered cost`
+                ? `${meteringWords(b).label} · ${b.tokens.toLocaleString()} tokens${(b.cap_tokens ?? 0) > 0 ? ` of ${(b.cap_tokens ?? 0).toLocaleString()}` : ""} | ${meteringWords(b).note}`
                 : `${money(Math.max(0, b.cap_usd - b.spent_usd), 2)} left of ${money(b.cap_usd, 2)} | ${money(b.spent_usd)} spent | ${b.tokens.toLocaleString()} tokens`}
             </span>
           </div>

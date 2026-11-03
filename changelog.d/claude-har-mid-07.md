@@ -62,3 +62,12 @@ Sensitive digests are replaced in one pass over a text (the hex runs found
 once, each digest looked up in a Set), so the cost grows with the text, not
 with the number of digests: 50,000 digests over 20 MB take a fraction of a
 CPU second.
+
+### Changed: harness
+
+The console says what an unmetered team is. The kickoff now records why a team
+bills nothing per token (`unmetered_why`: `local` or `subscription`) in the
+budget and run records. A subscription team is shown as "subscription · not
+billed per token", with Pi's dollars marked as an estimate; a local team keeps
+"no metered cost · local models"; a run whose record does not say why shows
+"unmetered (reason not recorded)", never "free".

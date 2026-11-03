@@ -32,6 +32,8 @@ export type SwarmRow = {
   wall_clock_minutes: number;
   /** False when no model on the team bills: spend is an exact zero and cap_tokens is the brake. */
   metered: boolean;
+  /** Why a team is unmetered: `local` (served from this machine or network) or `subscription` (an OAuth login; Pi's dollars are an estimate); absent in a run from before it was recorded. */
+  unmetered_why?: "local" | "subscription" | null;
   cap_tokens: number;
   /** guarded · hosts · open · local for a host run; vm (each VM denies by default) · vm-open for a microVM run. */
   net: string;
@@ -289,6 +291,8 @@ export type BudgetRecord = {
   cap_per_model_usd?: Record<string, number>;
   /** False when no model on the team bills; the brake is then cap_tokens. */
   metered?: boolean;
+  /** Why: `local` or `subscription` (see SwarmRow.unmetered_why). */
+  unmetered_why?: "local" | "subscription" | null;
   cap_tokens?: number;
   /** The operator's token marks (--token-alert), ascending: told once each as the run crosses it; advisory. */
   token_alerts?: number[];

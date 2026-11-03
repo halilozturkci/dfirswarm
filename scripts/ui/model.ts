@@ -86,6 +86,7 @@ export type RegistryRun = {
   /** "kernel", "partial", "none" or "unmeasured": what the panes' own probes said the guard was. */
   write_guard_measured?: string;
   metered?: boolean;
+  unmetered_why?: string | null;
   cap_tokens?: number | null;
   local_models?: string[];
   workspace_id?: string;
@@ -153,6 +154,8 @@ export type SwarmRow = SwarmSummary & {
   wall_clock_minutes: number;
   /** False when no model on the team bills: spend is an exact zero and cap_tokens is the brake. */
   metered: boolean;
+  /** Why a team is unmetered (local or subscription), as the kickoff recorded it; null when it did not. */
+  unmetered_why: "local" | "subscription" | null;
   cap_tokens: number;
   net: string;
   agents_total: number;
@@ -844,6 +847,7 @@ async function enrichSummary(
   let started = run?.started_at ?? "";
   let wall = Number(run?.wall_clock_minutes) || 0;
   let metered = run?.metered !== false;
+  let unmeteredWhy: string | null = typeof run?.unmetered_why === "string" ? run.unmetered_why : null;
   let capTokens = Number(run?.cap_tokens) || 0;
   let stopReason: string | null = null;
   let stopPolicy: SwarmRow["stop_policy"] = "cap-stop";
@@ -858,6 +862,7 @@ async function enrichSummary(
       wall_base_at?: string;
       wall_clock_minutes?: number;
       metered?: boolean;
+      unmetered_why?: string;
       cap_tokens?: number;
       stop_reason?: string;
       stop_policy?: string;
@@ -881,6 +886,7 @@ async function enrichSummary(
     }
     if (!wall && budget.wall_clock_minutes) wall = Number(budget.wall_clock_minutes) || 0;
     if (budget.metered === false) metered = false;
+    if (typeof budget.unmetered_why === "string" && budget.unmetered_why) unmeteredWhy = budget.unmetered_why;
     if (!capTokens && budget.cap_tokens) capTokens = Number(budget.cap_tokens) || 0;
     if (typeof budget.stop_reason === "string" && budget.stop_reason) stopReason = budget.stop_reason;
   } catch {
@@ -941,6 +947,7 @@ async function enrichSummary(
     goal: typeof run?.goal === "string" ? run.goal : "",
     wall_clock_minutes: wall,
     metered,
+    unmetered_why: !metered && (unmeteredWhy === "local" || unmeteredWhy === "subscription") ? unmeteredWhy : null,
     cap_tokens: capTokens,
     net,
     agents_total: ids.length || summary.n,
