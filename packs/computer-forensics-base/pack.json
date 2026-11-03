@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.14.4",
+  "version": "1.14.5",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
