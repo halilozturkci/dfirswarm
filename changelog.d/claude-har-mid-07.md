@@ -99,3 +99,13 @@ before the next attempt (`DFIRSWARM_FETCH_BACKOFF` shortens the waits;
 `DFIRSWARM_FETCH_TIMEOUT` the read timeout), and a 4xx (a 404, a 403, a 429) is
 the server's answer and is not retried. The build's message names each
 attempt's cause and the wait.
+
+### Fixed: docs
+
+Three links in the belkactf6 use case that pointed one directory too high now
+resolve (`improvement-plan.md` twice, `safety.md` once). A new node test,
+`tests/markdown-links.test.ts`, resolves every relative link and reference
+definition in the tracked Markdown (fixtures excepted; fenced blocks and code
+spans are not read) and fails on any that is not a tracked file or directory,
+naming it as file:line -> target. A Markdown change now selects it in
+`scripts/test-select.ts`.

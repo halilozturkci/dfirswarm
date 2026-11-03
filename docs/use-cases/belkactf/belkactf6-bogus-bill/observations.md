@@ -273,7 +273,7 @@ records its hash and leaves the bytes behind, the way it already does for
 
 Every item above was turned into a change in the same branch as this run,
 with a test that fails without it. The improvement plan carries them as
-[A27–A34 and B16–B17](../../improvement-plan.md).
+[A27–A34 and B16–B17](../../../improvement-plan.md).
 
 | | Finding | Change |
 | --- | --- | --- |
