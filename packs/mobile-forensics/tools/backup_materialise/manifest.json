@@ -1,0 +1,63 @@
+{
+  "name": "backup_materialise",
+  "description": "Lay out an unencrypted (or already decrypted) iOS backup as a derivative: for a selection (domains, relative paths or prefixes, or the whole map with all: true; the tool never defaults to the whole map) the blobs the backup's Manifest.db names, under files/<domain>/<relativePath> beneath $OUT/derivative, each tied to its Manifest row. A one-line-per-row account is kept whole in a result file the answer names (the inline page is a prefix): the original file id, the domain and relative path as printed and, for a name that is not withheld, as base64 of their bytes (domain_b64, path_b64: a name that is not UTF-8 survives), the Manifest row number, the Size the Manifest's keyed archive records (and whether the blob has it), the state of the blob (copied, planned, missing, directory, symlink, special, refused_id, rejected_path, not_applicable for a Manifest directory or link entry, not_copied_max_bytes, not_attempted_max_seconds, write_failed), the SHA-256 of the blob when it was copied, and the name it was written under when that is not the name it had. The rows are read in row order, never through the file-id index, with every statement under the progress handler (a damaged page ends the read and what was read is kept; a Manifest.db cut inside its last page is said and is partial; a -wal or -journal of Manifest.db is applied in a working copy under tool-output, which is removed, never in place); a file id is joined to a path only when it is 40 hexadecimal digits, and the blob is looked for in the sharded and the flat layout through directory descriptors, opened without waiting and without following a link (a blob that is a link, a directory, a FIFO or another special file is refused and counted, and the file a link points at is untouched). The -wal, -shm and -journal of a selected file are laid out beside it when the Manifest has them (same domain, relativePath plus the suffix), whether or not the selection names them. Every domain and relative path is treated as hostile text: a path with '..' or '.' or an empty component, an absolute path, a NUL, a component of more than 255 bytes, a path of more than 4096 bytes or of more than 64 components, an empty domain or one with a slash is rejected, listed with its reason and never written; two rows on one name (a duplicate path, names that differ only in case or in Unicode form, a file and a directory) each get their own name (name-2.ext, ...; a directory met in another spelling is the first spelling), and each says so in name_collision and in the answer's collisions; a name that is taken on disk by an earlier run takes the next free -n and an identical file is named again, so a second run in the same $OUT never replaces a file (the larger earlier one is kept). Nothing is written outside $OUT: files are written to a hidden temporary beside their name (registered for removal before it is made), then given their name by a hard link, so a stop leaves no half file under a final name. status is complete only when Manifest.db was read to its end, every selected row is in the layout (in a plan: is present in the backup), the encryption state is known and the backup finished; otherwise partial, with a status_basis that names why (missing blobs, refused links, rejected paths, max_files, max_bytes, the clock, write_failed). A write the file system refused is write_failed on that row (a full disk or a size limit also stops further copying); it is not a fact about the backup. A write the file system refuses to the result file itself ends the run as failed, not as a row. The tool's own clock is max_seconds (the read of Manifest.db has 35 % of it, the copying until 93 %); rows not reached are listed as not_attempted_max_seconds. NOT done: no decryption, no password read or accepted (an encrypted backup, Manifest.plist IsEncrypted true, is refused; a missing flag is said, never read as unencrypted, and the answer is partial); this is not a file-system acquisition and the derivative is not the phone: it holds what the backup kept, under the backup's own map, and nothing the backup does not hold; Manifest directory entries are recorded and no directory is made for them; file times and modes are not set on the copies. SENSITIVE: copy_content writes what the backup holds, which can be secret. It is false by default (a plan: the map and the state of each blob, no content read and no digest of a blob computed, only the result file written) and is a secret_output mode of the manifest: it is accepted only in a job run as secret output (SECRET_OUTPUT=1) and is otherwise refused as JSON before anything is made. A path component shaped like a recovery password (42 or more decimal digits with at most three characters that are neither a letter nor a digit between two digits, after NFKC folding, a key split across components included) is withheld from every channel: the answer, the result file and the names under derivative/ carry the placeholder withheld-component, and its real name (domain and relative path) is written only to a 0600 values file, backup-materialise-values.jsonl (or -2, -3 ... beside an earlier one), created exclusively before anything is read, in a copy_content job. The selection is matched against the names as they are printed, so no selection can ask whether withheld text matches; the file id is printed for a withheld name too (it is the blob's name in the backup directory). A name over 8,192 characters is not judged and is rejected. Memory is bounded: at most max_files rows are kept (default 100,000, at most 500,000) and the layout holds at most 2,000,000 names. Each row carries parser backup_materialise/1; the label moves when what a row says changes. The answer is strict JSON.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The backup directory, or its Manifest.db",
+      "required": true
+    },
+    "all": {
+      "type": "boolean",
+      "description": "Select the whole map (default false). Give this or domains or paths, not several: the tool never defaults to the whole map"
+    },
+    "domains": {
+      "type": "array",
+      "description": "Domains to lay out, exactly as the answer prints them (e.g. HomeDomain, AppDomain-com.example); at most 1000"
+    },
+    "paths": {
+      "type": "array",
+      "description": "Relative paths to lay out, as the answer prints them: a path selects that file, a path ending in / selects everything below it. With domains, a row must match both. At most 1000"
+    },
+    "copy_content": {
+      "type": "boolean",
+      "description": "Copy the blobs into the derivative (default false: a plan that writes only the result file). Accepted only in a job run as secret output (SECRET_OUTPUT=1); refused as JSON otherwise, before anything is made. Writes the 0600 values file for withheld names"
+    },
+    "max_files": {
+      "type": "integer",
+      "description": "Rows laid out (default 100000, at most 500000); selected rows past it are counted and not laid out, and the answer says partial"
+    },
+    "max_bytes": {
+      "type": "integer",
+      "description": "Bytes copied in all (default 4 GiB); a file that would pass it is not started or is removed, counted as not_copied_max_bytes, and the answer says partial"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The tool's own clock (default 240, at most 255): the read of Manifest.db has 35 % of it, the copying until 93 %; the answer says partial and where it stopped"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows and collisions in the inline answer (default 200, and at most 1 MiB of rows); the whole account is in the file the answer names"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"path\": \"inputs/backup\", \"domains\": [\"HomeDomain\"]}",
+  "by": "maintainer",
+  "at": "2026-11-03T06:00:00.000Z",
+  "version": 2,
+  "use": {
+    "names": [
+      "Manifest.db",
+      "Manifest.plist"
+    ]
+  },
+  "requires": [],
+  "secret_output": {
+    "when_args": [
+      "copy_content"
+    ]
+  },
+  "sha256": "2dc994cb189e55c6987f416ddb435173cf8d212afb569643067c598bcad79b78"
+}

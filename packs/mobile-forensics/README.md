@@ -9,15 +9,20 @@ needed for much of what an iPhone stores.
 
 ## What it carries
 
-**Eleven skills**: ten short decision leaves (800 tokens at most) that point to
-a second-level leaf only when the case needs it: `extractions/what-you-have` (start
-here) and `extractions/backup-detail`; `apps/databases` and `apps/fragments`;
-`ios/artifacts`, `ios/containers-and-time`, `ios/biome-segb` and `ios/unified-logs`;
-`android/artifacts`; `location/sources`; and the pack's router, `mobile/router` (at
-most 400 tokens), which names the ten by the question each answers, holds no rule, and
-is the one line a run shows for the pack when its skills index is over budget.
+**Eighteen skills**: seventeen short decision leaves (800 tokens at most) that point
+to a second-level leaf only when the case needs it: `extractions/what-you-have`
+(start here), `extractions/backups` (local and cloud backups, derivatives, encrypted
+backups) with `extractions/backup-detail` as the second-level leaf for reading a
+backup answer, and `extractions/protection-state`; `apps/databases`, `apps/fragments`,
+`apps/messaging` and `apps/identity-containers`; `ios/artifacts`,
+`ios/containers-and-time`, `ios/biome-segb`, `ios/unified-logs` and
+`ios/knowledgec-activity`; `android/artifacts`; `location/sources`;
+`media/provenance`; `validation/parser-coverage`; and the pack's router,
+`mobile/router` (at most 400 tokens), which names the seventeen by the question each
+answers, holds no rule, and is the one line a run shows for the pack when its skills
+index is over budget.
 
-**Three tools.** Each says in its manifest what it measures and what it does
+**Six tools.** Each says in its manifest what it measures and what it does
 not, and each returns its whole result: an inline page and, when there is more,
 a file the answer names. None of them decrypts anything or reads a password.
 `sqlite_freespace` and `protobuf_peek` read no `-wal` or `-journal`; `manifest_db`
@@ -51,6 +56,43 @@ opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
   rows gets a tenth of the time, and an answer without it says so); a name column
   is read to its first 8,193 characters, and a row whose metadata is not in the
   answer for any reason makes the status partial.
+- `backup_materialise` lays an unencrypted (or already decrypted) iOS backup out as
+  a derivative under `$OUT/derivative/files/<domain>/<relativePath>`, for a selection
+  (domains, paths, or `all: true`; never the whole map by default), each file tied to
+  its Manifest row: the file id, the domain and path as printed and as base64 of
+  their bytes, the row number, the Size the Manifest records, the SHA-256 of the blob,
+  and the state of the blob (copied, missing, a directory, a link it does not follow,
+  a FIFO, refused). The whole account is a result file, one line per row. A hostile
+  `relativePath` (`..`, an absolute path, a NUL, a component over 255 bytes) is
+  rejected and listed; two rows on one name (duplicate, case-folded, a file and a
+  directory) each get their own name and say so; a second run never replaces a file.
+  It does not decrypt and is not an acquisition: the derivative is not the phone.
+  `copy_content` (false by default, a plan) writes content and is a secret-output
+  mode: a job run as secret output only; a name shaped like a recovery password is
+  the placeholder everywhere and its real name is only in the 0600 values file.
+- `heic_inspect` makes a JPEG or PNG preview of a HEIC or HEIF original under
+  `$OUT/heic_inspect` and ties it back to the original: the size and SHA-256 of
+  both, the dimensions, the image count, which item is primary, and the backend's
+  settings and errors. One backend per run, recorded and never a silent fallback:
+  `heif-convert` (in the tool's process group) or `pillow-heif` (in a child process).
+  A pixel or size limit is checked on the original's own boxes and a conversion past
+  it is refused before any backend starts. A bounded standard-library walk of the
+  ISO-BMFF boxes (`ftyp` brands, then under `meta` the handler, primary item, items,
+  locations, properties and references) reports hostile sizes and counts with their
+  offsets. Metadata comes from the original with `exiftool`, never from the preview:
+  the answer holds presence and counts, and the values go only to the 0600 file of a
+  `write_values` job run as secret output.
+- `ab_layout` maps an unencrypted Android `.ab` backup (header versions 1 to 5)
+  onto the layout ALEAPP reads and calls the result what it is: a derivative of an
+  adb backup, in a banner file and in the answer, never an acquisition. The tar is
+  streamed once under a decompression budget, and the end of the zlib stream, the
+  tar's two end blocks and anything after them are checked. `apps/<package>/<domain>/...`
+  members go to `data/data/<package>/...` by a mapping table in the manifest (its basis
+  is the author's recollection of AOSP's FullBackup tokens, not checked against the
+  source); `_manifest`, the SQLite companions and per-member provenance are kept.
+  Unknown domains, links, devices, directories and `shared/` are listed and not
+  extracted; hostile names are rejected and listed. `copy_content` (false by default,
+  a plan) is a secret-output mode, and an encrypted payload is refused after its header.
 - `sqlite_freespace` reads the free space of a SQLite database's main file
   (freelist pages, the unallocated gap of a page, the freeblock chain) and returns
   where each text fragment is: page, kind of region, byte offset (read back from
@@ -134,11 +176,15 @@ reports leaves the run `partial`. A module with no report is `no_record`, which
 does not show the artefact is absent from the phone, and an `unsupported` module
 is one whose own gate does not take the operating-system version. Their `exclusions` say
 what they do not hold, and a run stopped before its end says partial: the program runs in a process group of its own with a time limit (`--max-seconds`), and a stop signal ends it and its children. And one
-declared and never run: `android-backup-apps`, the broad extraction an adb backup
-would need, which the image cannot do (ALEAPP reads a file-system layout, an adb
-backup keeps each app under `apps/<package>/`), so the harness records the
-preparation of every adb backup declined with that reason instead of a parse that
-would find next to nothing. Every recipe says exactly what it did not cover in
+run on request, not by the kickoff: `android-backup-apps`, which lays an unencrypted adb backup
+(header versions 1 to 5) out the way the `ab_layout` tool does (`apps/<package>/<domain>/...` onto
+`data/data/<package>/...`; the copy of that logic is in the recipe, a recipe does not import a tool) and runs
+ALEAPP over the layout with `-t fs`, with the same `modules.tsv` receipt as `android-aleapp`. Its result is a
+derivative of an adb backup, never a file-system acquisition, and says so in `derivative/DERIVATIVE.json`
+and in `coverage.json`; the mapping table behind it is the author's recollection of AOSP's FullBackup
+tokens and has not been checked against the source. An encrypted backup is refused (failed), a stream
+that is not whole (a missing end block, bytes after the end) makes the run partial, and `ab-members.tsv`
+lists every member and its state. Every recipe says exactly what it did not cover in
 `coverage.json`. What the harness does with a broad extraction (its receipts, the
 lead that offers one, the hold on a negative that claims absence while it runs) is
 ADR 0013's "A source's broad extraction before a negative on it".

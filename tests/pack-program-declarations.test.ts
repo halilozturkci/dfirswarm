@@ -95,6 +95,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "macos-forensics/tools/knowledgec_query": w("log", "strings"),
   "macos-forensics/tools/unified_log": { ...w("strings"), log: "the macOS system log command, looked for with which() only when sys.platform is darwin and for the live store; it is not in any image, and the reader this tool needs is unifiedlog_iterator (its requires)" },
   "mobile-forensics/recipes/android-aleapp": w("log"),
+  "mobile-forensics/recipes/android-backup-apps": w("log"),
   "mobile-forensics/recipes/ios-ileapp": w("log"),
   "ransomware-response/tools/encrypted_survey": w("7z", "java", "log"),
   "reverse-engineering/recipes/capa-floss": w("strings"),

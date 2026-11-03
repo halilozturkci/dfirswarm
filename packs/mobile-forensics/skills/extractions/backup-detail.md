@@ -7,7 +7,7 @@ tools: [manifest_db]
 requires_host: []
 ---
 
-Use only if the evidence is an iOS backup directory or an Android adb backup (`.ab`). Not for a file-system extraction.
+Use only if you read a `manifest_db` or `android-backup` answer. Not for what a backup covers (`extractions/backups`).
 
 **iOS backup** (`manifest_db` on the directory):
 - It lists the map: file id, domain, relative path, kind, metadata, and whether the blob is present, missing, a directory, a link, or refused (an id that is not 40 hex digits is never joined to a path). It is not the phone's file system. Cite relative path, domain, file id, Manifest.db row.
