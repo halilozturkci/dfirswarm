@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -62,6 +62,14 @@ before(async () => {
         res.writeHead(206, { "content-range": "bytes 0-0/9", "content-length": "1" });
         res.end("x");
       }
+    } else if (url === "/redir/tool-5.0.zip") {
+      res.writeHead(302, { location: "/rel/tool-1.2.3.zip" });
+      res.end();
+    } else if (url === "/loop/tool-6.0.zip") {
+      res.writeHead(302, { location: "/loop/tool-6.0.zip" });
+      res.end();
+    } else if (url === "/hang/tool-7.0.zip") {
+      // Never answers: the socket stays open until the test ends.
     } else {
       res.writeHead(404);
       res.end();
@@ -72,6 +80,7 @@ before(async () => {
 });
 
 after(() => {
+  server.closeAllConnections();
   server.close();
   rmSync(tmp, { recursive: true, force: true });
 });
@@ -187,4 +196,49 @@ test("the tree itself: every pinned URL of every pack is found, and the unversio
   assert.ok(pins.length >= 30, `only ${pins.length} pins found`);
   assert.match(out, /^fetch\s+windows-forensics\/RECmd download amd64 \S+download\.ericzimmermanstools\.com\/net\/RECmd\.zip/m);
   assert.match(out, /^head\s+memory-forensics\/avml download amd64 \S+github\.com\/microsoft\/avml\/releases\/download\/v0\.20\.0\/avml/m);
+});
+
+test("a redirect is followed; a redirect loop is an error, not a hang", async () => {
+  const ok = await run(tree("redir", [{ name: "r", version: "5.0", path: "/redir/tool-5.0.zip", bytes: GOOD }]));
+  assert.equal(ok.code, 0, ok.out);
+  assert.match(ok.out, /^ok\s+p\/r /m);
+  const t0 = Date.now();
+  const loop = await run(tree("loop", [{ name: "l", version: "6.0", path: "/loop/tool-6.0.zip", bytes: GOOD }]));
+  assert.equal(loop.code, 1, loop.out);
+  assert.match(loop.out, /^error\s+p\/l /m);
+  assert.ok(Date.now() - t0 < 30_000, "the loop was not cut");
+});
+
+test("a host that never answers is cut by the run's deadline, whatever the per-request timeout", async () => {
+  const root = tree("hang", [
+    { name: "h", version: "7.0", path: "/hang/tool-7.0.zip", bytes: GOOD },
+    { name: "tool", version: "1.2.3", path: "/rel/tool-1.2.3.zip", bytes: GOOD },
+  ]);
+  const t0 = Date.now();
+  // A per-request timeout of 50 s and three tries would be 150 s without the deadline.
+  const { code, out } = await run(root, ["--timeout", "50000", "--retries", "3", "--deadline", "1500"]);
+  assert.equal(code, 1, out);
+  assert.match(out, /^error\s+p\/h .*deadline/m);
+  assert.match(out, /^ok\s+p\/tool /m, "a pin answered before the deadline is still reported");
+  assert.match(out, /2 pins: 1 ok, 0 rotted, 0 changed, 1 in error/);
+  assert.ok(Date.now() - t0 < 20_000, `took ${Date.now() - t0} ms`);
+});
+
+test("Dependabot watches the images' inputs, no entry merges itself, and the weekly workflow reports through the failure reporter", () => {
+  const dep = readFileSync(join(ROOT, ".github/dependabot.yml"), "utf8");
+  const entries = dep.split(/^ {2}- package-ecosystem: /m).slice(1).map((e) => ({ eco: e.split("\n")[0]!.trim(), dir: /directory: (\S+)/.exec(e)?.[1], interval: /interval: (\S+)/.exec(e)?.[1] }));
+  const has = (eco: string, dir: string) => entries.some((e) => e.eco === eco && e.dir === dir && e.interval === "weekly");
+  assert.ok(has("npm", "/") && has("github-actions", "/"), "the existing entries are kept");
+  for (const [eco, dir] of [["docker", "/images"], ["docker", "/tests/linux"], ["pip", "/images"], ["npm", "/spikes/microvm-smoke"]] as const) assert.ok(has(eco, dir), `${eco} ${dir}`);
+  assert.match(dep, /dependency-name: "microsandbox"/, "the microsandbox hold is kept");
+  assert.doesNotMatch(dep, /auto-?merge/i);
+  const wf = readFileSync(join(ROOT, ".github/workflows/pins.yml"), "utf8");
+  assert.match(wf, /schedule:/);
+  assert.match(wf, /workflow_dispatch:/);
+  assert.match(wf, /report-failure:\s*\n(?:.*\n)*?\s+needs: \[check\]/);
+  assert.match(wf, /if: always\(\) && github\.event_name == 'schedule'/);
+  assert.match(wf, /issues: write/);
+  assert.match(wf, /run: bash scripts\/ci-report-failure\.sh/);
+  // The checking job itself keeps read-only rights.
+  assert.match(wf, /^permissions:\s*\n\s+contents: read/m);
 });
