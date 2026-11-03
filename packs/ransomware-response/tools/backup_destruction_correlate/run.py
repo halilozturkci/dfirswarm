@@ -39,7 +39,7 @@ PARSER = "backup_destruction_correlate/1"
 WORK = "correlation"
 TOOL = "backup_destruction_correlate"
 ACCEPTED = {"events": ("evtx_query/4",), "vss_inventories": ("vss_stores/5",), "service_keys": ("regkv/4",),
-            "backup_audits": ("backup_audit_normalise/2",), "chain_checks": ("snapshot_chain_check/2",),
+            "backup_audits": ("backup_audit_normalise/2", "backup_audit_normalise/3"), "chain_checks": ("snapshot_chain_check/2",),
             "shell_histories": ("shell_history/14",), "cloud_trails": ("cloudtrail_parse/6",)}
 KINDS = ("events", "vss_inventories", "service_keys", "backup_audits", "chain_checks", "shell_histories", "cloud_trails")
 CLASSES = ("command_seen", "action_attempted", "reported_outcome", "inventory_change_observed", "recovery_loss_verified")

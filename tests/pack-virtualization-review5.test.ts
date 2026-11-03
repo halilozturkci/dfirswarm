@@ -25,7 +25,7 @@ const N = Number(process.env.VIRT_REVIEW5_N ?? 1000);
 const ONE_STRING_CPU_SECONDS = 2;
 
 const HOST = String.raw`
-import importlib.util, json, random, sys, time, base64, string
+import importlib.util, json, random, sys, time, base64, string, zlib
 
 ${LADDER_PY}
 
@@ -80,6 +80,9 @@ def ids_time():
     for h in heads:
         for f in fillers:
             for form in (0, 1):
+                # a deterministic sample: 1 combination in stride (a hash of its head, filler and form); stride 1 is the whole sweep
+                if zlib.crc32(("%s|%s|%d" % (h, f, form)).encode()) % req.get("stride", 1) != 0:
+                    continue
                 unit = h + f * 3
                 texts = [h + (f * (n // len(f) + 1))[:n - len(h)] if form == 0 else (unit * (n // len(unit) + 1))[:n] for n in req["sizes"]]
                 for field in (None, "name", "file", "uid", "state_file", "section", "version", "suspect"):
@@ -276,7 +279,10 @@ const TOOLS: [string, string][] = [["snapshot_chain_check", CHAIN], ["virtualiza
 
 test("an id of every kind (t10., iqn., naa., eui., wwn-, vml., WIN-, DESKTOP-, LAPTOP-, a GUID) followed by 2,048, 8,192 or 32,768 characters of underscores, dashes, dots, colons or letters is judged in time proportional to its length (0.3 CPU s at 32,768 characters), in every field kind and in the second check; the median of three rounds, each step at most 8 times the one before", async () => {
   for (const [label, script] of TOOLS) {
-    const got = await host(script, { op: "ids_time", sizes: [2048, 8192, 32768] }) as { worst: Record<string, number>; bad: unknown[] };
+    // What this covers: every id kind (16 heads) on 12 fillers in two forms and 8 field kinds, at 2,048, 8,192 and 32,768 characters, the median of three rounds. The whole sweep
+    // (3,072 combinations per tool, about 8 minutes per tool on the unified text) does not fit the 240 s the host is given, so by default one combination in six is run, chosen by a
+    // hash of its head, filler and form (the same ones every run). VIRT_IDS_FULL=1 runs all of them with a two-hour limit.
+    const got = await host(script, { op: "ids_time", sizes: [2048, 8192, 32768], stride: process.env.VIRT_IDS_FULL === "1" ? 1 : 6 }, process.env.VIRT_IDS_FULL === "1" ? 7_200_000 : 240_000) as { worst: Record<string, number>; bad: unknown[] };
     assert.deepEqual(got.bad, [], `${label}: not linear (the median CPU seconds of three rounds at 2,048, 8,192 and 32,768 characters, each step four times the length)`);
     assert.ok(got.worst["8192"] < 0.5, `${label}: 8,192 characters took ${got.worst["8192"]} CPU s (the quadratic pattern took 3 at 4,096)`);
     assert.ok(got.worst["32768"] < ONE_STRING_CPU_SECONDS, `${label}: 32,768 characters took ${got.worst["32768"]} CPU s (limit ${ONE_STRING_CPU_SECONDS})`);

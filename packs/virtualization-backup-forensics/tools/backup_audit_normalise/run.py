@@ -3335,7 +3335,7 @@ def parse_json_array(fh, source, events, clock, max_line, stats, mapping, times,
     dec = json.JSONDecoder()
     inc = codecs.getincrementaldecoder("utf-8")("surrogateescape")
     ws = re.compile(r"[ \t\r\n]*")
-    state = {"buf": "", "pos": 0, "eof": False, "chunk": 1 << 16}
+    state = {"buf": "", "pos": 0, "eof": False, "chunk": 1 << 16, "base": 0}
 
     def fill():
         raw = fh.read(state["chunk"])
@@ -3345,6 +3345,7 @@ def parse_json_array(fh, source, events, clock, max_line, stats, mapping, times,
             tail = inc.decode(b"", True)
         else:
             tail = inc.decode(raw)
+        state["base"] += state["pos"]
         state["buf"] = state["buf"][state["pos"]:] + tail
         state["pos"] = 0
 
@@ -3370,6 +3371,9 @@ def parse_json_array(fh, source, events, clock, max_line, stats, mapping, times,
             continue
         pos = state["pos"]
         c = buf[pos]
+        if phase == "done":
+            stop("content after the closing ] (at character %d): the array is followed by more than white space, and none of it is read" % (state["base"] + pos))
+            return
         if phase == "open":
             if c == "﻿":
                 state["pos"] += 1
@@ -3386,11 +3390,15 @@ def parse_json_array(fh, source, events, clock, max_line, stats, mapping, times,
                 phase = "elem"
                 continue
             if c == "]":
-                return
+                state["pos"] += 1
+                phase = "done"
+                continue
             stop("expected , or ] after an element")
             return
         if phase == "first" and c == "]":
-            return
+            state["pos"] += 1
+            phase = "done"
+            continue
         if c == "]":
             stop("a ] after a comma: not valid JSON")
             return
@@ -3763,9 +3771,9 @@ def main():
     if preset is not None:
         if fmt not in ("auto", preset["format"]):
             fail("the preset %s reads format %s, not %s" % (preset["name"], preset["format"], fmt))
-        taken = [k for k in ("mapping", "category_map", "result_map", "time_format", "columns", "record_tag", "delimiter", "has_header") if k in args and k in preset]
+        taken = [k for k in ("mapping", "category_map", "result_map", "time_format", "columns", "record_tag", "delimiter", "has_header", "time_zone_offset_minutes") if k in args]
         if taken:
-            fail("the preset %s fixes %s: do not pass them (a preset and a mapping of your own are not mixed)" % (preset["name"], ", ".join(taken)))
+            fail("the preset %s fixes %s: do not pass them (a preset and a mapping of your own are not mixed, whether or not the preset sets the key)" % (preset["name"], ", ".join(taken)))
         fmt = preset["format"]
         args = dict(args, **{k: v for k, v in preset.items() if k in ("mapping", "category_map", "result_map", "time_format", "columns", "record_tag", "delimiter", "has_header")})
     if product and fmt == "auto" and product.lower() not in ("proxmox", "proxmox_ve", "proxmox_backup_server", "pve", "pbs"):

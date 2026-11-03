@@ -99,6 +99,14 @@ test("an unknown product is refused by name as before; a preset is not mixed wit
     const mixed = json(await tool(AUDIT, cwd, { path: "in/s.json", product: PRESET, mapping: { time: "backup-time", action: "backup-type" } }));
     assert.equal(mixed.status, "failed");
     assert.match(JSON.stringify(mixed), /fixes mapping/);
+    for (const extra of [{ result_map: { ok: "ok" } }, { time_format: "iso8601" }, { time_zone_offset_minutes: 60 }]) {
+      const beside = json(await tool(AUDIT, cwd, { path: "in/s.json", product: PRESET, ...extra }));
+      assert.equal(beside.status, "failed", JSON.stringify(extra));
+      assert.match(JSON.stringify(beside), /fixes /);
+    }
+    assert.equal(body(await tool(AUDIT, cwd, { path: "in/s.json", product: PRESET })).events[0].category, "backup_end");
+    await put(cwd, "in/u.json", JSON.stringify([snap(0, { "backup-type": "newkind" })]));
+    assert.equal(body(await tool(AUDIT, cwd, { path: "in/u.json", product: PRESET })).events[0].category, "other", "a backup type outside vm, ct and host is not labelled backup_end");
     const wrongFormat = json(await tool(AUDIT, cwd, { path: "in/s.json", product: PRESET, format: "declared_csv" }));
     assert.match(JSON.stringify(wrongFormat), /reads format declared_json/);
     const named = json(await tool(AUDIT, cwd, { path: "in/s.json", preset: "not_a_preset" }));
@@ -227,5 +235,26 @@ test("canaries in the backup id (a job or machine name), the owner and the comme
       for (let i = 0; i + 12 <= s.length; i += 3) assert.ok(!run.stdout.includes(s.slice(i, i + 12)), `a window of a canary is in the answer (${s.slice(0, 4)}...)`);
     }
     assert.equal(json(run).counts.events, 3);
+  });
+});
+
+test("anything after the closing ] is not read and not called complete: a second record, a second array, text; trailing white space is fine", async () => {
+  await withCwd(async (cwd) => {
+    const args = { format: "declared_json", mapping: { time: "t", action: "a", object: "o" } };
+    const r1 = '{"t":"2024-01-01T00:00:00Z","a":"backup","o":"x"}';
+    const r2 = '{"t":"2024-01-02T00:00:00Z","a":"delete","o":"y"}';
+    for (const [name, text] of [["rec.json", `[${r1}]\n${r2}\n`], ["arr.json", `[${r1}][${r2}]`], ["junk.json", `[${r1}] garbage`], ["emptyarr.json", `[] ${r1}`]] as const) {
+      const out = json(await list(cwd, name, text, args));
+      assert.equal(out.counts.unparsed, 1, name);
+      assert.equal(out.status, "partial", name);
+      assert.match(out.problem_lines[0].reason, /content after the closing \] \(at character \d+\)/, name);
+      assert.equal(out.counts.events, name === "emptyarr.json" ? 0 : 1, name);
+    }
+    for (const text of [`[${r1}]`, `[${r1}]\n`, `[${r1}] \t\r\n\n\n`, `[ ]\n`]) {
+      const out = body(await list(cwd, "ok.json", text, args));
+      assert.equal(out.status, "complete", JSON.stringify(text));
+    }
+    const at = json(await list(cwd, "at.json", `[${r1}] x`, args));
+    assert.match(at.problem_lines[0].reason, new RegExp(`at character ${r1.length + 3}\\)`), "the offset points at the first character after the white space");
   });
 });
