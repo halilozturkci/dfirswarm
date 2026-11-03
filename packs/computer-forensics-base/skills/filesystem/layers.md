@@ -3,7 +3,7 @@ id: filesystem/layers
 title: Layered storage and historical states
 when: A container, split set, volume manager, encryption layer or snapshot sits between you and the files.
 needs: []
-tools: [image_layout, file_type, layer_describe, byte_range_extract]
+tools: [image_layout, file_type, layer_describe, icat_extract, chunk_needles]
 requires_host: [mmls, fsstat, img_stat, img_cat, qemu-img]
 ---
 
@@ -20,7 +20,7 @@ An offset means something only inside one address space. Walk the layers in orde
     AD1                      FTK Imager's logical image: files, no volume (`evidence/ad1`)
     a directory or a zip     a collection, not an image (`evidence/collections`)
 
-Inventory every segment, descriptor, extent and backing file before parsing; record the state you read. A split E01 is one image: give the first segment. A split raw set is not: give the Sleuth Kit every segment in order (the first alone ends early); `image_layout` reads one path. `layer_describe` writes one immutable descriptor of the sources you declare (order, size, sha256, media size, volumes, `missing_dependencies`); it reads nothing you did not declare, and a backing file it lists as missing stops the programs. `byte_range_extract` copies declared ranges, across a split raw set through the descriptor, with a digest each; a byte range is not a file.
+Inventory every segment, descriptor, extent and backing file before parsing; record the state you read. A split E01 is one image: give the first segment. A split raw set is not: give the Sleuth Kit every segment in order (the first alone ends early); `image_layout` reads one path. `layer_describe` writes one immutable descriptor of the sources you declare (order, size, sha256, media size, volumes, `missing_dependencies`) and reads nothing you did not declare; `image_layout`, `icat_extract` and `chunk_needles` take it as `descriptor`, and a missing backing file it lists stops the programs.
 
 **Virtual disks.** `qemu-img info --backing-chain` shows the chain and the snapshots (plain `info` only the immediate backing file). When `mmls` and `fsstat` open the container, their offsets are sectors of the virtual disk. Convert (`qemu-img convert -O raw`) only when the next tool cannot open it, to a separate output, and record the state chosen, the options and the output's size and digest. `img_stat` prints size and format as the Sleuth Kit reads it, the bound for any scan over all of it; `img_cat -s <first> -e <last>` writes a decoded range.
 
