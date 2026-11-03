@@ -536,7 +536,7 @@ result.
 ## 7. The packs in this repository
 
 Thirteen, all under the same AGPL-3.0-or-later as the harness, in `packs/`:
-304 skills, 113 tools and 15 goal templates. Every one of them is sealed,
+304 skills, 118 tools and 15 goal templates. Every one of them is sealed,
 checksummed, and installs and verifies in the test suite.
 
 | Pack | Skills | Tools | Goals | What it is for |
@@ -544,7 +544,7 @@ checksummed, and installs and verifies in the test suite.
 | `computer-forensics-base` | 29 | 16 | — | the method true of any platform; everything else depends on it |
 | `windows-forensics` | 53 | 22 | 3 | ten artefact families, from `$MFT` to what anti-forensics leaves behind |
 | `linux-forensics` | 35 | 11 | 2 | auth logs, the journal, accounts, systemd and cron, ext4, containers |
-| `macos-forensics` | 18 | 4 | 1 | property lists, the unified log, FSEvents, KnowledgeC, APFS |
+| `macos-forensics` | 18 | 9 | 1 | property lists, the unified log, FSEvents, KnowledgeC, APFS |
 | `mobile-forensics` | 18 | 6 | 1 | iOS and Android extractions, app databases, protobuf |
 | `memory-forensics` | 28 | 8 | 1 | containers, what works with no framework, injection, credentials |
 | `network-forensics` | 17 | 7 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |

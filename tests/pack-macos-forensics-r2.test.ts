@@ -487,13 +487,15 @@ test("unified_log refuses a FIFO as path instead of handing it to a reader that 
 
 // ---- the goal template: P1-5 ------------------------------------------------------------------------------------------------------------------------
 
-test("the goal's question 4 does not promise TCC states that no tool or skill of the pack provides", async () => {
+test("the goal's question 4 names the one TCC tool the pack has and does not promise a TCC skill it does not have", async () => {
   const goal = await readFile(join(ROOT, "packs", "macos-forensics", "goals", "mac-compromise.md"), "utf8");
   const q4 = /\n4\. Privacy authorization[\s\S]*?\n5\. /.exec(goal)?.[0] ?? "";
   assert.ok(q4, "question 4 is there");
   assert.match(q4, /cannot answer\s+the question/, "it carries the clause question 7 carries");
-  assert.match(q4, /no TCC parser or skill/);
-  assert.ok((await readdir(join(ROOT, "packs", "macos-forensics", "tools"))).every((t) => !/tcc/i.test(t)), "and the pack has no TCC tool");
+  assert.match(q4, /macos_tcc/);
+  assert.match(q4, /no TCC skill/);
+  assert.deepEqual((await readdir(join(ROOT, "packs", "macos-forensics", "tools"))).filter((t) => /tcc/i.test(t)), ["macos_tcc"], "and the pack has exactly the one TCC tool");
+  assert.ok((await readdir(join(ROOT, "packs", "macos-forensics", "skills"), { recursive: true })).every((f) => !/tcc/i.test(String(f))), "and no TCC skill");
 });
 
 // ---- knowledgec_query: the private copies live in a directory only the tool makes; an unusable sidecar is named --------------------------------------
