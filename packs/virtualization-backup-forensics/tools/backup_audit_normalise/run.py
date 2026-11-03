@@ -58,7 +58,7 @@ import unicodedata
 from pathlib import Path
 
 TOOL = "backup_audit_normalise"
-PARSER = "backup_audit_normalise/2"
+PARSER = "backup_audit_normalise/3"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 50.0          # the manifest allows 60
 MAX_SECONDS = 50.0
@@ -2925,6 +2925,82 @@ def parse_vzdump_log(fh, source, events, clock, max_line, stats, times):
                            action_raw=level, result="warning" if level == "WARN" else "error", result_basis="the level of the line", message=rest)
 
 
+# ---- Proxmox Backup Server task log files -------------------------------------------------------------------------------
+# Built from the Proxmox Backup Server source that writes and reads task logs (proxmox-rest-server, worker_task.rs, as served by git.proxmox.com on
+# 2026-11-03) and the Proxmox Backup documentation (page "Backup Client Usage", whose title read "Proxmox Backup 4.2.8-1 documentation" that day):
+# the log of one task is the file tasks/<XX>/<UPID>, where XX is the low byte of the UPID's pstart in two hexadecimal digits; each line is
+# `<RFC 3339 time>: <message>`; the task's result is its last line, `TASK OK`, `TASK WARNINGS: <count>`, `TASK ERROR: <message>` or `TASK unknown`.
+# The documentation lists no message texts, so the category of a message below is this tool's keyword table and the event says so.
+PBS_LINE = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})?): (.*)$")
+PBS_TASK_END = re.compile(r"^TASK (OK|unknown|WARNINGS: ?[0-9]{1,9}|ERROR(?:: ?(.*))?)$")
+PBS_STORE = re.compile(r"^(?:starting garbage collection on store|Starting prune on (?:store|datastore)|starting new backup on datastore|Starting datastore sync job|Starting verify on datastore) '?([^' ]{1,200})")
+PBS_MESSAGE_WORDS = (
+    ("starting garbage collection", "retention_gc"), ("start gc phase", "retention_gc"), ("removed garbage", "retention_gc"), ("pending removals", "retention_gc"),
+    ("original data usage", "retention_gc"), ("on-disk usage", "retention_gc"), ("on-disk chunks", "retention_gc"), ("deduplication factor", "retention_gc"),
+    ("starting prune", "retention_prune"), ("pruning group", "retention_prune"), ("prune", "retention_prune"), ("keep ", "retention_prune"),
+    ("remove ", "retention_remove"), ("removing ", "retention_remove"), ("marked ", "retention_remove"),
+    ("verify", "verification"), ("starting datastore sync", "sync"), ("sync ", "sync"),
+    ("starting new backup", "backup_start"), ("backup finished", "backup_end"), ("add blob", "other"),
+)
+
+
+def pbs_category(message):
+    low = message[:64].lower()
+    for word, category in PBS_MESSAGE_WORDS:
+        if low.startswith(word):
+            return category, "keyword '%s' at the start of the message (this tool's table; Proxmox Backup documents no list of task-log messages)" % word.strip()
+    return "other", "the message matches none of this tool's keywords"
+
+
+def parse_pbs_task_log(fh, source, events, clock, max_line, stats, times):
+    closing = None          # the last parsed line was the task's result line
+    seen = 0
+    for n, off, length, raw in read_lines(fh, max_line):
+        clock.check()
+        if raw is None:
+            stats["over_limit"] += 1
+            stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": "line over max_line_bytes: located, not read"})
+            closing = False
+            continue
+        line = decode_line(raw)
+        if not line.strip():
+            stats["blank"] += 1
+            continue
+        loc = {"line": n, "byte_offset": off, "byte_length": length}
+        seen += 1
+        m = PBS_LINE.match(line)
+        stamp, rest = (m.group(1), m.group(2)) if m else (None, line)
+        end = PBS_TASK_END.match(rest.rstrip())
+        if not m and not end:
+            stats["unparsed"] += 1
+            closing = False
+            if len(stats["problem_lines"]) < 200:
+                stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": "not the documented `<RFC 3339 time>: <message>` line"})
+            continue
+        utc, basis = times.read(stamp) if stamp else (None, "the line carries no time")
+        if end:
+            word = end.group(1)
+            result = "ok" if word == "OK" else "unknown" if word == "unknown" else "warning" if word.startswith("WARNINGS") else "error"
+            stats["parsed"] += 1
+            closing = True
+            events.add(source, loc, "pbs_task_log", time_utc=utc, time_raw=stamp, time_basis=basis, category="task_end", category_basis="the task's result line (TASK ...)",
+                       action_raw="TASK " + word.split(":")[0], result=result, result_basis="the task's own result line", message=rest.strip())
+            continue
+        category, why = pbs_category(rest)
+        result = "error" if rest.startswith("ERROR") else "warning" if rest.startswith("WARN") else "unknown"
+        obj = PBS_STORE.match(rest)
+        stats["parsed"] += 1
+        closing = False
+        events.add(source, loc, "pbs_task_log", time_utc=utc, time_raw=stamp, time_basis=basis, category=category, category_basis=why, action_raw=None,
+                   object=obj.group(1) if obj else None, result=result, result_basis=("the level the line begins with" if result != "unknown" else "a message states no result"), message=rest)
+    if seen and not closing:
+        stats["no_closing"] += 1
+        stats["no_closing_files"].append(source["id"])
+    elif not seen:
+        stats["no_closing"] += 1
+        stats["no_closing_files"].append(source["id"])
+
+
 # ---- declared mappings -----------------------------------------------------------------------------------------------
 
 MISSING = object()   # a declared field the record does not have (a field that is there and null or empty is not missing)
@@ -3214,6 +3290,31 @@ def want_map(args, key, allowed):
         out[k.lower()] = v
     return out
 
+# What each format was built from, in every answer. None of them has been checked against a real export.
+PROVENANCE = {
+    "pbs_task_log": {"product": "proxmox_backup_server", "source_kind": "task log file (tasks/<XX>/<UPID>)", "schema_basis": "vendor_documentation",
+                     "validated_against_real_export": False,
+                     "documentation": "Proxmox Backup source, proxmox-rest-server worker_task.rs (git.proxmox.com, master), and the Proxmox Backup documentation page Backup Client Usage (its title read Proxmox Backup 4.2.8-1 documentation); retrieved 2026-11-03"},
+    "pve_task_index": {"product": "proxmox_ve_or_proxmox_backup_server", "source_kind": "task index file (UPID lines)", "schema_basis": "synthetic_fixtures",
+                       "validated_against_real_export": False,
+                       "documentation": "the UPID layouts as this tool's code describes them; tested on synthetic fixtures only"},
+    "pve_vzdump_log": {"product": "proxmox_ve", "source_kind": "vzdump task log (INFO, WARN, ERROR and TASK lines)", "schema_basis": "synthetic_fixtures",
+                       "validated_against_real_export": False, "documentation": "the line prefixes and messages as this tool's table has them; tested on synthetic fixtures only"},
+}
+
+
+def provenance_of(sources, fmt, product):
+    """One entry per format that was read: what the reader was built from, and that it is not validated against a real export."""
+    used = sorted({s.get("format") for s in sources if s.get("format")} | ({fmt} if fmt.startswith("declared_") else set()))
+    out = []
+    for name in used:
+        entry = PROVENANCE.get(name)
+        if entry is None:       # a declared mapping: the caller's own
+            entry = {"product": seal_text(product, "text") if product else None, "source_kind": "export read through a mapping the caller declared", "schema_basis": "caller_declared_mapping",
+                     "validated_against_real_export": False, "documentation": "none: the caller's mapping"}
+        out.append(dict(entry, format=name))
+    return out
+
 
 def main():
     args = read_args()
@@ -3224,8 +3325,8 @@ def main():
     if not paths:
         fail("name the exports: path is one file, paths a list of up to %d" % MAX_PATHS)
     fmt = args.get("format", "auto")
-    if fmt not in ("auto", "pve_task_index", "pve_vzdump_log", "declared_csv", "declared_jsonl", "declared_xml"):
-        fail("format must be auto, pve_task_index, pve_vzdump_log, declared_csv, declared_jsonl or declared_xml")
+    if fmt not in ("auto", "pve_task_index", "pve_vzdump_log", "pbs_task_log", "declared_csv", "declared_jsonl", "declared_xml"):
+        fail("format must be auto, pve_task_index, pve_vzdump_log, pbs_task_log, declared_csv, declared_jsonl or declared_xml")
     product = want_str(args, "product", maximum=200)
     if product and fmt == "auto" and product.lower() not in ("proxmox", "proxmox_ve", "proxmox_backup_server", "pve", "pbs"):
         known = product.lower() in KNOWN_UNSUPPORTED
@@ -3263,6 +3364,7 @@ def main():
         if fmt == "declared_xml":
             record_tag = want_str(args, "record_tag", "declared_xml needs record_tag: the element name of one record", maximum=200)
     times = TimeReader(time_format, offset)
+    pbs_times = TimeReader("iso8601", offset)      # a Backup Server log line carries RFC 3339 times whatever the caller declared for a mapping
     try:
         values = TextFile("audit-values.jsonl", write_text, "JSON Lines, mode 0600: record_type message (seq, source_id, locator, the free-text message of the "
                           "event) or original (where, field, value: the original of a string the answer shows withheld or shortened)")
@@ -3279,7 +3381,7 @@ def main():
     clock = Clock(seconds)
     sources, problems = [], []
     stats = {"parsed": 0, "unparsed": 0, "blank": 0, "over_limit": 0, "problem_lines": [], "mapping_errors": [], "read_errors": [], "unmapped_actions": collections.Counter(), "unmapped_actions_over": 0,
-             "fields_absent": collections.Counter(), "records_declared": 0}
+             "fields_absent": collections.Counter(), "records_declared": 0, "no_closing": 0, "no_closing_files": []}
     unrecognised = []
     partial = []
     for number, p in enumerate(paths, 1):
@@ -3315,8 +3417,10 @@ def main():
                 else:
                     shape = "XML" if first.lstrip().startswith("<") else "JSON" if first.lstrip()[:1] in "{[" else "delimited text" if first.count(",") + first.count("\t") + first.count(";") >= 2 else "text"
                     unrecognised.append({"source_id": rec["id"], "file": shown(p, rec["id"], "file"), "shape": shape,
-                                         "reason": "no layout this tool reads was recognised; the file was not parsed. A %s export can be read with format declared_%s and a mapping you declare" % (
-                                             shape, {"XML": "xml", "JSON": "jsonl", "delimited text": "csv"}.get(shape, "csv"))})
+                                         "reason": "no layout this tool reads was recognised; the file was not parsed. %s" % (
+                                             ("It begins like a Proxmox Backup Server task log (`<RFC 3339 time>: <message>`), which format auto does not recognise because a timestamped line is no unambiguous signature: name format pbs_task_log"
+                                              if PBS_LINE.match(first) else "A %s export can be read with format declared_%s and a mapping you declare" % (
+                                                  shape, {"XML": "xml", "JSON": "jsonl", "delimited text": "csv"}.get(shape, "csv"))))})
                     sources.append({"source_id": rec["id"], "file": shown(p, rec["id"], "file"), "size": rec["size"], "state": "unsupported", "shape": shape})
                     continue
             try:
@@ -3326,6 +3430,8 @@ def main():
                     parse_task_index(fh, rec, events, clock, max_line, stats)
                 elif kind == "pve_vzdump_log":
                     parse_vzdump_log(fh, rec, events, clock, max_line, stats, times)
+                elif kind == "pbs_task_log":
+                    parse_pbs_task_log(fh, rec, events, clock, max_line, stats, pbs_times)
                 elif kind == "declared_csv":
                     parse_csv(fh, rec, events, clock, max_line, stats, mapping, times, category_map, result_map, delimiter, has_header, columns)
                 elif kind == "declared_jsonl":
@@ -3359,6 +3465,9 @@ def main():
     values.close()
     page = events.page.finish()
     unmapped = sorted(stats["unmapped_actions"].items(), key=lambda kv: -kv[1])[:50]
+    if stats["no_closing"]:
+        partial.append("%d Proxmox Backup Server task log(s) (%s) do not end with a TASK result line: the task was running, was cut, or the file is not whole" % (
+            stats["no_closing"], ", ".join(stats["no_closing_files"][:20])))
     not_whole = [s for s in sources if s["state"] in ("partial", "failed", "unreadable", "not_opened")]
     complete = (not not_whole and not stats["unparsed"] and not stats["over_limit"] and not stats["mapping_errors"] and not stats["read_errors"] and not partial
                 and not unrecognised and not problems)
@@ -3371,6 +3480,7 @@ def main():
         "parser": PARSER, **outcome,
         "format_requested": fmt, "product_label": seal_text(product, "text") if product else None,
         "product_label_note": "the caller's label for a declared format; not verified" if product and fmt.startswith("declared_") else None,
+        "provenance": provenance_of(sources, fmt, product),
         "sources": sources, "unrecognised": unrecognised, "problems": problems,
         "events": events.page.page, "pages": {"events": page},
         "counts": {"events": events.n, "parsed": stats["parsed"], "unparsed": stats["unparsed"], "blank": stats["blank"], "over_line_limit": stats["over_limit"]},
