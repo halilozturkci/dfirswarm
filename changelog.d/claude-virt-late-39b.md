@@ -46,3 +46,16 @@ New: `tests/pack-virtualization-pbs-task-log.test.ts` (13 cases: a clean log, pr
 - The tool is at version 8 and the pack at 1.4.0; the parser stays `/3` (the shape is additive).
 
 New: `tests/pack-virtualization-pbs-config.test.ts` (9 cases: each file type, retention settings, unknown section and property, auto recognition, the password and a canary in every property of `remote.cfg` and `sync.cfg`, NUL bytes and invalid UTF-8, a 10 MB line, a million properties within `max_seconds`, SIGTERM). All 9 fail on the code before this change.
+
+### Added: virtualization-backup-forensics: `backup_audit_normalise` identifies Proxmox Backup Server data blobs (format `pbs_blob`), without decrypting or inflating them
+
+A data blob is an 8-byte magic, a 4-byte little-endian CRC32 of the bytes after the header, and the payload. The four magics (uncompressed, compressed, encrypted, encrypted and compressed), the header sizes (12 bytes, 44 for an encrypted blob), the CRC and the manifest's field names were read from the Proxmox Backup source (pbs-datastore: `file_formats.rs`, `data_blob.rs`, `manifest.rs`, as served by git.proxmox.com), retrieved 2026-11-03. The reader has not been checked against a real datastore; its fixtures are built from the layout.
+
+- `format: auto` recognises the four magics (no text file begins with them). A chunk index (`.fidx`, `.didx`) is not a data blob and stays unrecognised.
+- Each blob is an event with its kind, size, stored and computed CRC and what became of its payload. A CRC mismatch makes the answer `partial`. The CRC of an encrypted blob is `not_checked`: the source read shows the CRC taken over the bytes after the header, but not the header size the code uses for an encrypted blob.
+- An encrypted blob is identified and never decrypted. A compressed blob is identified, its payload is checked for a zstd frame start and counted, and not inflated (zstd is not in the standard library; a pinned dependency is the owner's decision). Both make the answer `partial`, with the reason.
+- An uncompressed `index.json.blob` of up to 16 MiB is read as the snapshot manifest: one event for the snapshot (type, id, `backup-time` as UTC) and one per file (name, size, checksum, crypt mode). An entry that is not `{filename, size, csum of 64 hexadecimal digits}`, JSON that is not a manifest, and a nesting bomb are `unparsed` and located. An unknown field is tolerated and counted. An uncompressed `client.log.blob` is read line by line as free text (its lines are not printed). A payload over 16 MiB has its CRC checked and is not read.
+- A truncated header, and a magic that is none of the four, are named and not read. The tool's table of field kinds takes `filename` as a path and `csum` as a digest (the table is the tool's own, outside the shared block).
+- The tool is at version 9 and the pack at 1.5.0. Nothing is written but the usual paging files.
+
+New: `tests/pack-virtualization-pbs-blob.test.ts` (9 cases: the four kinds, a CRC mismatch, an encrypted blob not decrypted, a compressed blob not inflated, a truncated header, an unknown magic and a chunk index, canaries in file names and log lines, hostile payloads, a 100,000-file manifest within `max_seconds`). All 9 fail on the code before this change.

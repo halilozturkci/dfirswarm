@@ -55,6 +55,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+import zlib
 from pathlib import Path
 
 TOOL = "backup_audit_normalise"
@@ -2540,7 +2541,7 @@ _FIELD_KINDS = (
     ("path", "name|display_name|displayName|snapshot name|parent snapshot name|current_parent_snapshot|snapshot_sections|snapshot|version"
              "|file|leaf_file|rel|root|links|special|unreadable|too_deep|lock directory|parent_hint|parentFileNameHint|parent name|parent_name|backing_file|backing_filename"
              "|external_data_file|parent_absolute_win32_path|parent_relative_path|parent_volume_path|disk_files|snapshot disk file|state_file|snapshot state file"
-             "|extent file name|configuration_path|vmxCfgPath|datastore_hint|datastore path|nvram|disk file|volume|vm_state_volume|vmstate|path|named|export|special_sections|section|disk source|source_name|object"),
+             "|filename|extent file name|configuration_path|vmxCfgPath|datastore_hint|datastore path|nvram|disk file|volume|vm_state_volume|vmstate|path|named|export|special_sections|section|disk source|source_name|object"),
     ("name", "domain_name|job|storage|storage name|networkName|ethernet#.networkName|disk key|domain name|datastore|pool|vgname|thinpool|key"
              "|create_type|createType|encoding|backing_format|backing format|native_snapshot|isNativeSnapshot|hardware_version|config_version|arch|bios|firmware|machine"
              "|os_type|virt_type|guest_os|guestOS|cores|vcpus|memory_mb|memory|device|device_type|deviceType|disk_format|mode|present|snapshot_mode|bus|backup|size|state|type"
@@ -2550,6 +2551,8 @@ _FIELD_KINDS = (
     ("id", "uid|snapshot uid|snapshot parent|snapshot id|parent_uid|uuid|bios_uuid|location_uuid|vcenter_instance_uuid|cid_raw|parent_cid_raw|CID|parentCID|entry_id|object_id|vmid"
            "|ddb.uuid|ddb.longContentID|current|lastuid|lastUID|numsnapshots|numSnapshots|source_id|own_id|leaf|base|child|ethernet#.address|ethernet#.generatedAddress|address"
            "|virtual_disk_id|unique_id|parent_unique_id|data_write_guid|file_write_guid|log_guid|parent_identity|parent_identity_2|recorded_by_child|carried_by_parent|descriptor_id"),
+    # a checksum (the 64 hexadecimal digits a snapshot manifest lists for a file)
+    ("digest", "csum"),
 )
 _FIELD_TABLE = {}
 for _kind, _names in _FIELD_KINDS:
@@ -3122,6 +3125,145 @@ def parse_pbs_config(fh, source, events, clock, max_line, stats):
         stats["config_empty"] += 1
 
 
+# ---- Proxmox Backup Server data blobs ---------------------------------------------------------------------------------------
+# Built from the Proxmox Backup source (pbs-datastore, file_formats.rs, data_blob.rs and manifest.rs, as served by git.proxmox.com on 2026-11-03):
+# a data blob is an 8-byte magic that says how its payload is stored, a 4-byte CRC32 (little-endian) of the bytes after the header, and the payload. The
+# header of an uncompressed or compressed blob is 12 bytes (magic and CRC); of an encrypted one 44 (magic, CRC, a 16-byte IV, a 16-byte tag). A compressed payload is
+# a zstd stream. The source of data_blob.rs shows the CRC taken over the bytes after the header, with the header's size given by code this reading did not
+# see (header_size): the CRC of an encrypted blob is therefore not checked here, and nothing says so more strongly than "not checked". Nothing is decrypted or inflated.
+PBS_BLOB_MAGICS = {
+    bytes((66, 171, 56, 7, 190, 131, 112, 161)): ("uncompressed", False),
+    bytes((49, 185, 88, 66, 111, 182, 163, 127)): ("compressed", False),
+    bytes((123, 103, 133, 190, 34, 45, 76, 240)): ("encrypted", True),
+    bytes((230, 89, 27, 191, 11, 191, 216, 11)): ("encrypted_compressed", True),
+}
+PBS_ZSTD_FRAME = bytes((0x28, 0xB5, 0x2F, 0xFD))
+MAX_BLOB_PAYLOAD = 16 << 20       # the payload of an uncompressed blob this tool reads; a larger one has its CRC checked and its payload counted, not read
+MAX_MANIFEST_FILES = 1000000
+PBS_CSUM = re.compile(r"^[0-9a-f]{64}$")
+
+
+def parse_pbs_blob(fh, source, events, clock, max_line, stats):
+    name = os.path.basename(source["path"])
+    size = source["size"]
+    head = fh.read(44)
+    magic = head[:8]
+    entry = PBS_BLOB_MAGICS.get(magic)
+    loc = {"byte_offset": 0, "byte_length": size}
+    if len(head) < 12:
+        raise ValueError("a truncated header: the file has %d byte(s) and a data blob header is 12" % size)
+    if entry is None:
+        raise ValueError("the first 8 bytes are none of the four data blob magics: not read")
+    kind, encrypted = entry
+    header = 44 if encrypted else 12
+    if size < header:
+        raise ValueError("a truncated header: a %s blob header is %d bytes and the file has %d" % (kind, header, size))
+    stored = int.from_bytes(head[8:12], "little")
+    # the CRC32 of everything after the header (uncompressed and compressed blobs), streamed under the clock; the payload is kept when it is one this tool reads
+    keep = kind == "uncompressed" and size - header <= MAX_BLOB_PAYLOAD and name in ("index.json.blob", "client.log.blob")
+    fh.seek(header)
+    crc, payload = 0, []
+    if not encrypted:
+        while True:
+            clock.check()
+            chunk = fh.read(1 << 20)
+            if not chunk:
+                break
+            crc = zlib.crc32(chunk, crc)
+            if keep:
+                payload.append(chunk)
+    elif kind in ("encrypted", "encrypted_compressed"):
+        pass
+    blob = {"kind": kind, "size": size, "header_bytes": header, "crc_stored": stored}
+    problems = []
+    if encrypted:
+        blob.update(crc_check="not_checked", crc_note="the bytes an encrypted blob's CRC covers are fixed by code this reading did not see", payload="not_read_encrypted")
+        problems.append("%s: an encrypted blob is identified and never decrypted: its payload was not read" % source["id"])
+    else:
+        blob["crc_computed"] = crc
+        blob["crc_check"] = "ok" if crc == stored else "mismatch"
+        if crc != stored:
+            problems.append("%s: the CRC32 of the payload does not match the one in the header: the file is damaged or was changed" % source["id"])
+        if kind == "compressed":
+            fh.seek(header)
+            blob["payload_is_zstd_frame"] = fh.read(4) == PBS_ZSTD_FRAME
+            blob["payload"] = "not_read_compressed"
+            problems.append("%s: a compressed blob is identified and counted, not inflated (zstd is not in the standard library): its payload was not read" % source["id"])
+        elif keep:
+            blob["payload"] = "read"
+        else:
+            blob["payload"] = "not_read_%s" % ("over_cap" if size - header > MAX_BLOB_PAYLOAD else "unknown_name")
+            problems.append("%s: the payload of this uncompressed blob was not read (%s)" % (source["id"], "over the %d byte cap" % MAX_BLOB_PAYLOAD if size - header > MAX_BLOB_PAYLOAD else "only index.json.blob and client.log.blob have a payload this tool knows"))
+    stats["blob_notes"].extend(problems)
+    stats["parsed"] += 1
+    events.add(source, loc, "pbs_blob", time_utc=None, time_raw=None, time_basis="a data blob header carries no time", category="other",
+               category_basis="the blob itself; the magic says how the payload is stored", action_raw="data blob", object=name, result="unknown",
+               result_basis="a blob states no result", blob=blob)
+    if not blob.get("payload") == "read":
+        return
+    data = b"".join(payload)
+    if name == "client.log.blob":
+        import io  # noqa
+        for n, off, length, raw in read_lines(io.BytesIO(data), max_line):
+            clock.check()
+            if raw is None:
+                stats["over_limit"] += 1
+                stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": header + off, "reason": "line over max_line_bytes: located, not read"})
+                continue
+            line = decode_line(raw)
+            if not line.strip():
+                stats["blank"] += 1
+                continue
+            stats["parsed"] += 1
+            events.add(source, {"line": n, "byte_offset": header + off, "byte_length": length}, "pbs_blob", time_utc=None, time_raw=None, time_basis="the log line's time, if any, is not read (the format of the client log is not documented)",
+                       category="other", category_basis="a line of the client log", action_raw="client log line", result="unknown", result_basis="a log line states no result", message=line)
+        return
+    # index.json.blob: the snapshot manifest
+    try:
+        doc = json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError, MemoryError) as exc:
+        stats["unparsed"] += 1
+        stats["problem_lines"].append({"source_id": source["id"], "line": 1, "byte_offset": header, "reason": "the payload is not JSON, or is nested too deeply (%s)" % type(exc).__name__})
+        return
+    if not isinstance(doc, dict) or not isinstance(doc.get("files"), list):
+        stats["unparsed"] += 1
+        stats["problem_lines"].append({"source_id": source["id"], "line": 1, "byte_offset": header, "reason": "the payload is JSON but not a snapshot manifest (an object with a files list)"})
+        return
+    known = {"backup-type", "backup-id", "backup-time", "files", "unprotected", "signature"}
+    stats["manifest_unknown_fields"] += sum(1 for k in doc if k not in known)
+    btype, bid, btime = doc.get("backup-type"), doc.get("backup-id"), doc.get("backup-time")
+    when = None
+    if isinstance(btime, int) and not isinstance(btime, bool) and 0 <= btime <= 253402300799:
+        when = iso_from_epoch(btime)
+    if isinstance(btype, str) and isinstance(bid, str) and len(btype) <= 64 and len(bid) <= 4096:
+        stats["parsed"] += 1
+        events.add(source, {"record": 0, "byte_offset": header}, "pbs_blob", time_utc=when, time_raw=str(btime) if when else None,
+                   time_basis="backup-time, epoch seconds, UTC by definition" if when else "no usable backup-time in the manifest", category="other",
+                   category_basis="the snapshot the manifest belongs to", action_raw="snapshot manifest", object="%s/%s" % (btype, bid), result="unknown",
+                   result_basis="a manifest states no result", setting={"signature_present": isinstance(doc.get("signature"), str), "files": len(doc["files"])})
+    else:
+        stats["unparsed"] += 1
+        stats["problem_lines"].append({"source_id": source["id"], "line": 1, "byte_offset": header, "reason": "backup-type and backup-id are not strings of a usable length"})
+    for i, f in enumerate(doc["files"][:MAX_MANIFEST_FILES]):
+        clock.check()
+        ok = (isinstance(f, dict) and isinstance(f.get("filename"), str) and 0 < len(f["filename"]) <= 4096 and isinstance(f.get("size"), int) and not isinstance(f.get("size"), bool)
+              and 0 <= f["size"] < 1 << 63 and isinstance(f.get("csum"), str) and PBS_CSUM.match(f["csum"]))
+        if not ok:
+            stats["unparsed"] += 1
+            if len(stats["problem_lines"]) < 200:
+                stats["problem_lines"].append({"source_id": source["id"], "line": i + 1, "byte_offset": header, "reason": "files[%d] is not {filename, size, csum (64 hexadecimal digits)}" % i})
+            continue
+        stats["manifest_unknown_fields"] += sum(1 for k in f if k not in ("filename", "size", "csum", "crypt-mode"))
+        mode = f.get("crypt-mode")
+        stats["parsed"] += 1
+        events.add(source, {"record": i + 1, "byte_offset": header}, "pbs_blob", time_utc=when, time_raw=str(btime) if when else None,
+                   time_basis="the manifest's backup-time: when the snapshot was taken, not when the file was written", category="other", category_basis="a file the snapshot lists",
+                   action_raw="manifest file", object=f["filename"], result="unknown", result_basis="a manifest entry states no result",
+                   setting={"filename": f["filename"], "size": f["size"], "csum": f["csum"], "crypt_mode": mode if isinstance(mode, str) and len(mode) <= 32 else None})
+    if len(doc["files"]) > MAX_MANIFEST_FILES:
+        stats["unparsed"] += len(doc["files"]) - MAX_MANIFEST_FILES
+
+
 # ---- declared mappings -----------------------------------------------------------------------------------------------
 
 MISSING = object()   # a declared field the record does not have (a field that is there and null or empty is not missing)
@@ -3419,6 +3561,9 @@ PROVENANCE = {
     "pbs_config": {"product": "proxmox_backup_server", "source_kind": "configuration file (datastore.cfg, prune.cfg, sync.cfg, verification.cfg, remote.cfg)", "schema_basis": "vendor_documentation",
                    "validated_against_real_export": False,
                    "documentation": "Proxmox Backup documentation page Configuration Files (its title read Proxmox Backup 4.2.8-1 documentation); retrieved 2026-11-03"},
+    "pbs_blob": {"product": "proxmox_backup_server", "source_kind": "data blob (index.json.blob, client.log.blob)", "schema_basis": "vendor_documentation",
+                 "validated_against_real_export": False,
+                 "documentation": "Proxmox Backup source, pbs-datastore file_formats.rs, data_blob.rs and manifest.rs (git.proxmox.com, master); retrieved 2026-11-03"},
     "pve_task_index": {"product": "proxmox_ve_or_proxmox_backup_server", "source_kind": "task index file (UPID lines)", "schema_basis": "synthetic_fixtures",
                        "validated_against_real_export": False,
                        "documentation": "the UPID layouts as this tool's code describes them; tested on synthetic fixtures only"},
@@ -3449,8 +3594,8 @@ def main():
     if not paths:
         fail("name the exports: path is one file, paths a list of up to %d" % MAX_PATHS)
     fmt = args.get("format", "auto")
-    if fmt not in ("auto", "pve_task_index", "pve_vzdump_log", "pbs_task_log", "pbs_config", "declared_csv", "declared_jsonl", "declared_xml"):
-        fail("format must be auto, pve_task_index, pve_vzdump_log, pbs_task_log, pbs_config, declared_csv, declared_jsonl or declared_xml")
+    if fmt not in ("auto", "pve_task_index", "pve_vzdump_log", "pbs_task_log", "pbs_config", "pbs_blob", "declared_csv", "declared_jsonl", "declared_xml"):
+        fail("format must be auto, pve_task_index, pve_vzdump_log, pbs_task_log, pbs_config, pbs_blob, declared_csv, declared_jsonl or declared_xml")
     product = want_str(args, "product", maximum=200)
     if product and fmt == "auto" and product.lower() not in ("proxmox", "proxmox_ve", "proxmox_backup_server", "pve", "pbs"):
         known = product.lower() in KNOWN_UNSUPPORTED
@@ -3505,7 +3650,7 @@ def main():
     clock = Clock(seconds)
     sources, problems = [], []
     stats = {"parsed": 0, "unparsed": 0, "blank": 0, "over_limit": 0, "problem_lines": [], "mapping_errors": [], "read_errors": [], "unmapped_actions": collections.Counter(), "unmapped_actions_over": 0,
-             "fields_absent": collections.Counter(), "records_declared": 0, "no_closing": 0, "no_closing_files": [], "config_missing": [], "config_sections": 0, "config_empty": 0}
+             "fields_absent": collections.Counter(), "records_declared": 0, "no_closing": 0, "no_closing_files": [], "config_missing": [], "config_sections": 0, "config_empty": 0, "blob_notes": [], "manifest_unknown_fields": 0}
     unrecognised = []
     partial = []
     for number, p in enumerate(paths, 1):
@@ -3536,7 +3681,9 @@ def main():
                 first = next((l for l in head.decode("utf-8", "replace").splitlines() if l.strip()), "")
                 first_cfg = next((l for l in head.decode("utf-8", "replace").splitlines() if l.strip() and not l.lstrip().startswith("#")), "")
                 cfg_m = PBS_CFG_HEADER.match(first_cfg.rstrip()) if first_cfg[:1] not in (" ", "\t") else None
-                if first.startswith("UPID:"):
+                if head[:8] in PBS_BLOB_MAGICS:
+                    kind = "pbs_blob"             # eight bytes that no text file begins with, and that the source gives for the four kinds of data blob
+                elif first.startswith("UPID:"):
                     kind = "pve_task_index"
                 elif cfg_m and PBS_CONFIG_FILES.get(os.path.basename(p)) == cfg_m.group(1):
                     kind = "pbs_config"           # the file name and its first section's type, together: the documented signature
@@ -3560,6 +3707,8 @@ def main():
                     parse_vzdump_log(fh, rec, events, clock, max_line, stats, times)
                 elif kind == "pbs_config":
                     parse_pbs_config(fh, rec, events, clock, max_line, stats)
+                elif kind == "pbs_blob":
+                    parse_pbs_blob(fh, rec, events, clock, max_line, stats)
                 elif kind == "pbs_task_log":
                     parse_pbs_task_log(fh, rec, events, clock, max_line, stats, pbs_times)
                 elif kind == "declared_csv":
@@ -3595,6 +3744,9 @@ def main():
     values.close()
     page = events.page.finish()
     unmapped = sorted(stats["unmapped_actions"].items(), key=lambda kv: -kv[1])[:50]
+    partial.extend(stats["blob_notes"][:20])
+    if len(stats["blob_notes"]) > 20:
+        partial.append("%d more data blob notes" % (len(stats["blob_notes"]) - 20))
     partial.extend(stats["config_missing"][:20])
     if len(stats["config_missing"]) > 20:
         partial.append("%d more sections lack a required property" % (len(stats["config_missing"]) - 20))
@@ -3628,6 +3780,7 @@ def main():
         "distinct": {k: {"listed": len(v), "over_cap": events.distinct_over[k], "top": [{"value": a, "count": b} for a, b in v.most_common(20)]} for k, v in events.distinct.items()},
         "unmapped_actions_top": [{"action": a, "count": c} for a, c in unmapped] if fmt.startswith("declared_") else None,
         "unmapped_actions_distinct_over_cap": stats["unmapped_actions_over"] if fmt.startswith("declared_") else None,
+        "blobs": ({"unknown_manifest_fields_tolerated": stats["manifest_unknown_fields"]} if any(x.get("format") == "pbs_blob" for x in sources) else None),
         "partial_reasons": partial, "text": values.summary(), "withheld": withheld_summary(shown),
         "truncated": page["truncated"],
         "limits": {"max_line_bytes": max_line, "max_file_bytes": max_file, "max_distinct_per_aggregate": MAX_DISTINCT, "xml_record_elements": MAX_XML_RECORD_ELEMENTS},
