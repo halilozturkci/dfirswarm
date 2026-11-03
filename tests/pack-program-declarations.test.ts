@@ -126,7 +126,6 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "memory-forensics/tools/mem_registry": { vol: "the tool starts `vol` itself and, when it is not on PATH, answers that as its own result (a blocked view, or a JSON refusal naming it) instead of the harness refusing the call first; requires/host.json declares vol as an optional program of the pack" },
   "memory-forensics/tools/vol_views": { vol: "the tool starts `vol` itself and, when it is not on PATH, answers that as its own result (a blocked view, or a JSON refusal naming it) instead of the harness refusing the call first; requires/host.json declares vol as an optional program of the pack" },
   "memory-forensics/tools/isf_intake": { vol: "the tool starts `vol` itself and, when it is not on PATH, answers that as its own result (a blocked view, or a JSON refusal naming it) instead of the harness refusing the call first; requires/host.json declares vol as an optional program of the pack" },
-  "macos-forensics/tools/fsevents_parse": w("log", "strings"),
   "virtualization-backup-forensics/tools/backup_audit_normalise": w("log", "strings"),
   "virtualization-backup-forensics/tools/virtualization_inventory": w("log", "strings"),
   "windows-forensics/tools/sigma_hunt": { hayabusa: "one of two engines, either of which is enough (the description says so, and tests/pack-windows-forensics.test.ts pins that it declares neither: declaring both would claim both are needed)", zircolite: "one of two engines, either of which is enough (see hayabusa)" },
