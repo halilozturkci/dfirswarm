@@ -103,6 +103,10 @@ MAX_KEY_SCAN = 1 << 16
 # answer is printed, and the answer says so. The first signal counts: later ones do nothing while the tool cleans up. STOP["hooks"] run first (a database connection's
 # interrupt, the kill of the reader process this tool started and of its descendants: its own, never a search by name). Until install_stop_handlers
 # runs (at the end of the module) _early_stop answers a signal with one document that says nothing was read.
+# Two limits are stated, not closed. (1) A signal that arrives before this block has run (the start of the interpreter, the compiling of the file, the
+# imports above the block: tens of milliseconds) is not caught, and ends the tool with no JSON at all. (2) hold_signals() trades one whole document for a
+# print that cannot be stopped: if whatever reads this tool's stdout stops reading a full pipe, only SIGKILL ends the tool (the harness ends a tool with a
+# SIGKILL of its group, so its own path is not affected).
 import signal
 
 STOP = {"signal": None, "hooks": []}
@@ -204,8 +208,11 @@ for _early in STOP_SIGNALS:
     signal.signal(_early, _early_stop)
 # END SHARED STOP
 
+SWEEP = {"began": False}      # set when the tool starts on the evidence; the last-resort text of a stop in main() says what was begun, not "nothing was read"
+
 
 def fail(message, **extra):
+    remove_temporaries()                   # (a refusal after the first spill leaves no half-written result file behind)
     print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error); nothing was read", **extra}))
     raise SystemExit(1)
 
@@ -625,6 +632,47 @@ def bound(args, name, default):
     return value
 
 
+PAGES = []                      # every pager this run made: the last-resort handler removes their temporary files
+PARTIAL = {"out_file": None}    # the out_file once it is made: an unexpected error names it as possibly partial
+
+
+class TrackedPage(LosslessPage):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.in_file = 0                  # the rows the result file holds: a row is counted after it is flushed, so a write the filesystem refuses is found at the row it fails on
+        PAGES.append(self)
+
+    def _write(self, row):
+        super()._write(row)
+        self._out.flush()
+        self.in_file += 1
+
+    def finish(self):
+        result = super().finish()
+        self._tmp = None                  # (made into the result file: nothing left to remove)
+        return result
+
+
+def removal_of(page):
+    """What a refused write to the result file removes (fail() removes it): the name of the half-made file and the rows it held when the write failed."""
+    name = str(page._tmp) if page._tmp is not None else None
+    return {"removed_result_file": name, "rows_in_removed_file": page.in_file}
+
+
+def remove_temporaries():
+    for page in PAGES:
+        try:
+            if page._out is not None:
+                page._out.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if page._tmp is not None:
+                os.unlink(page._tmp)
+        except OSError:
+            pass
+
+
 def main():
     started = time.monotonic()
     try:
@@ -693,7 +741,8 @@ def main():
                 values.close()
                 fail("out_file could not be created", out_file=named, reason=describe(exc))
             sink = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
-        paging = None if sink else LosslessPage("plist_read", [path, key], limit, inline_bytes)
+            PARTIAL["out_file"] = named
+        paging = None if sink else TrackedPage("plist_read", [path, key], limit, inline_bytes)
 
         counter = [0]
 
@@ -729,8 +778,16 @@ def main():
                     values.add(fid, {"file": row["file"], **locator}, value)
                 if sink:
                     line = json.dumps(row, default=str, sort_keys=True)
-                    sink.write(line + "\n")
-                    sink.flush()
+                    try:
+                        sink.write(line + "\n")
+                        sink.flush()
+                    except OSError as exc:
+                        try:
+                            sink.close()          # (quietly: what it still holds cannot be written, and the interpreter must not complain of it at exit)
+                        except OSError:
+                            pass
+                        fail("the rows could not be written to out_file (%s: %s): the run stopped there; the rows written before are in it" % (
+                             type(exc).__name__, exc.strerror or "error"), rows_written=rows_total[0] - 1)
                     if not inline_state["full"] and len(inline) < limit:
                         if inline_state["bytes"] + len(line) <= inline_bytes:
                             inline.append(row)
@@ -741,7 +798,12 @@ def main():
                     else:
                         inline_state["full"] = True
                 else:
-                    paging.add(row)
+                    try:
+                        paging.add(row)
+                    except OSError as exc:
+                        cut = removal_of(paging)
+                        fail("the rows could not be written to the result file (%s: %s): the run stopped there; the result file was not made, and its partial copy (%d rows, %s) was removed: "
+                             "nothing is left of it, and no row is cited from it" % (type(exc).__name__, exc.strerror or "error", cut["rows_in_removed_file"], cut["removed_result_file"] or "no file was made"), **cut)
 
         def out_of_time():
             return time.monotonic() - started > max_seconds
@@ -758,6 +820,8 @@ def main():
             current[0] = None
 
         matched = 0
+        SWEEP["began"] = True
+        swept = [False]            # the sweep ran to its end: a stop signal after this is not a stop of the sweep
         try:
             if os.path.isdir(path):
                 def on_error(exc):
@@ -765,22 +829,69 @@ def main():
                     if len(problems) < FIRST_FAILURES:
                         problems.append({"path": getattr(exc, "filename", None), "why": describe(exc)})
 
-                seen = 0
-                for dirpath, dirs, names in os.walk(path, onerror=on_error):
-                    dirs.sort()
-                    notes["links_not_followed"] += sum(1 for d in dirs if os.path.islink(os.path.join(dirpath, d)))
-                    for name in sorted(names):
-                        seen += 1
-                        if seen % 256 == 0 and time.monotonic() - started > max_seconds + WALK_GRACE_SECONDS:
-                            # a tree of millions of entries none of which matches is timed too: after max_seconds files are only
-                            # counted (not attempted); WALK_GRACE_SECONDS later the walk itself stops and says so
-                            notes["walk_stopped_by_time_limit"] = True
+                # The walk is listed here, not by os.walk: the clock is looked at for a directory as well as for a name (a tree of
+                # directories with no file in them was never timed), and a name whose type neither the listing nor an lstat can give is
+                # counted as unreadable, whatever it is called (os.walk files it as a file, and a directory behind it is never entered).
+                dir_steps = [0]
+                name_steps = [0]
+
+                def directory_clock():
+                    # once in 256 directories, against max_seconds itself: nothing is left to count in a directory that holds nothing
+                    dir_steps[0] += 1
+                    if dir_steps[0] % 256 == 0 and time.monotonic() - started > max_seconds:
+                        notes["walk_stopped_by_time_limit"] = True
+                    return notes["walk_stopped_by_time_limit"]
+
+                def name_clock():
+                    # once in 256 names; after max_seconds the files are only counted (not attempted), for WALK_GRACE_SECONDS more, then the walk itself stops
+                    name_steps[0] += 1
+                    if name_steps[0] % 256 == 0 and time.monotonic() - started > max_seconds + WALK_GRACE_SECONDS:
+                        notes["walk_stopped_by_time_limit"] = True
+                    return notes["walk_stopped_by_time_limit"]
+
+                pending_dirs = [path]
+                while pending_dirs and not notes["walk_stopped_by_time_limit"]:
+                    dirpath = pending_dirs.pop()
+                    if directory_clock():
+                        break
+                    entries = []
+                    try:
+                        with os.scandir(dirpath) as listing:
+                            for entry in listing:
+                                if name_clock():
+                                    break
+                                entries.append(entry)
+                    except OSError as exc:
+                        on_error(exc)
+                        continue
+                    if notes["walk_stopped_by_time_limit"]:
+                        break
+                    entries.sort(key=lambda e: e.name)
+                    files, subdirs = [], []
+                    for entry in entries:
+                        if name_clock():
                             break
-                        full = os.path.join(dirpath, name)
-                        if os.path.islink(full):
-                            notes["links_not_followed"] += 1
+                        try:
+                            if entry.is_symlink():
+                                notes["links_not_followed"] += 1
+                                continue
+                            is_directory = entry.is_dir(follow_symlinks=False)
+                        except OSError as exc:
+                            # the listing gave no type and an lstat cannot be made (a directory that can be listed but not searched, on a file
+                            # system that reports no entry type): the name is there, what it is cannot be said. It may be a directory with plists
+                            # in it, so it is a place this run could not look at, and the status says so
+                            notes["entries_unreadable"] += 1
+                            if len(problems) < FIRST_FAILURES:
+                                problems.append({"path": entry.path, "why": describe(exc)})
                             continue
-                        if not name.lower().endswith((".plist", ".btm")):
+                        (subdirs if is_directory else files).append(entry)
+                    if notes["walk_stopped_by_time_limit"]:
+                        break
+                    for entry in files:
+                        if name_clock():
+                            break
+                        full = entry.path
+                        if not entry.name.lower().endswith((".plist", ".btm")):
                             notes["files_not_matched"] += 1
                             continue
                         try:
@@ -797,13 +908,15 @@ def main():
                             continue
                         matched += 1
                         visit(full)
-                    if notes["walk_stopped_by_time_limit"]:
-                        break
+                    pending_dirs.extend(reversed([e.path for e in subdirs]))
             else:
                 matched = 1
                 visit(path)
+            swept[0] = True
+            hold_signals()      # the last statement of the sweep's try: a stop signal in the few bytecodes after the sweep lands in the except below
         except Interrupted as stop:
             interrupted = stop.signum
+            hold_signals()      # (a second signal does nothing: the first one counts)
     except Interrupted:
         # a signal before the sweep began (opening the values file or the out_file): nothing was read, what was opened is closed
         if values is not None:
@@ -831,8 +944,9 @@ def main():
     done = totals["parsed"]
     reasons = []
     if interrupted is not None:
-        reasons.append("the tool was stopped by %s while %s; the rows written before it are kept"
-                       % (signal_name(interrupted), ("reading " + current[0]) if current[0] else "between two files"))
+        reasons.append("the tool was stopped by %s %s; the rows written before it are kept"
+                       % (signal_name(interrupted), ("while reading " + current[0]) if current[0] else
+                          ("after the last file was read and before the answer was made" if swept[0] else "between two files")))
     if notes["walk_stopped_by_time_limit"]:
         reasons.append("max_seconds (%s) passed during the walk of the directory, which was not finished" % max_seconds)
     if totals["not_attempted"]:
@@ -845,7 +959,7 @@ def main():
         if notes["directories_unreadable"]:
             parts.append("%d director%s could not be listed" % (notes["directories_unreadable"], "y" if notes["directories_unreadable"] == 1 else "ies"))
         if notes["entries_unreadable"]:
-            parts.append("%d .plist/.btm-named entr%s could not be looked at (the directory cannot be searched)"
+            parts.append("%d entr%s could not be looked at (the directory cannot be searched, or the file system gave no type for the name)"
                          % (notes["entries_unreadable"], "y" if notes["entries_unreadable"] == 1 else "ies"))
         first_places = "; ".join("%s (%s)" % (p["path"], p["why"]) for p in problems[:3])
         reasons.append("%s, so files in or under them were not seen: %s%s" % (" and ".join(parts), first_places, " ... (more under walk.problems)" if len(problems) > 3 else ""))
@@ -924,10 +1038,16 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Interrupted as stop:
-        print(json.dumps({"error": "the tool was stopped by %s before it had read anything" % signal_name(stop.signum), "status": "failed",
-                          "status_basis": "stopped by %s during start-up: nothing was read" % signal_name(stop.signum), "interrupted": signal_name(stop.signum)}))
+        began = SWEEP["began"]
+        print(json.dumps({"error": "the tool was stopped by %s %s" % (signal_name(stop.signum), "after its sweep had begun and before its answer was made" if began else "before its sweep of the files began"),
+                          "status": "failed",
+                          "status_basis": ("stopped by %s after the sweep had begun: some files may have been read, and none of that is in this answer" if began else
+                                           "stopped by %s before the sweep began: no file had been read and no result was made") % signal_name(stop.signum),
+                          "interrupted": signal_name(stop.signum)}))
         sys.exit(128 + stop.signum)
     except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the file)
+        remove_temporaries()
         print(json.dumps({"error": "the tool stopped on an unexpected error", "type": type(exc).__name__, "status": "failed",
-                          "status_basis": "the tool stopped with an unexpected error: nothing is complete"}))
+                          "status_basis": "the tool stopped with an unexpected error: nothing is complete",
+                          **({"partial_out_file": PARTIAL["out_file"], "partial_out_file_note": "written before the error, rows whole up to the last newline; the last row may be cut"} if PARTIAL["out_file"] else {})}))
         sys.exit(1)

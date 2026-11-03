@@ -59,6 +59,7 @@ same way, with the staged copy of the database removed.
 """
 import base64
 import datetime
+import errno
 import hashlib
 import heapq
 import json
@@ -106,6 +107,10 @@ STANDARD = {"Z_PK", "ZSTREAMNAME", "ZVALUESTRING", "ZVALUEINTEGER", "ZVALUEDOUBL
 # answer is printed, and the answer says so. The first signal counts: later ones do nothing while the tool cleans up. STOP["hooks"] run first (a database connection's
 # interrupt, the kill of the reader process this tool started and of its descendants: its own, never a search by name). Until install_stop_handlers
 # runs (at the end of the module) _early_stop answers a signal with one document that says nothing was read.
+# Two limits are stated, not closed. (1) A signal that arrives before this block has run (the start of the interpreter, the compiling of the file, the
+# imports above the block: tens of milliseconds) is not caught, and ends the tool with no JSON at all. (2) hold_signals() trades one whole document for a
+# print that cannot be stopped: if whatever reads this tool's stdout stops reading a full pipe, only SIGKILL ends the tool (the harness ends a tool with a
+# SIGKILL of its group, so its own path is not affected).
 import signal
 
 STOP = {"signal": None, "hooks": []}
@@ -207,8 +212,11 @@ for _early in STOP_SIGNALS:
     signal.signal(_early, _early_stop)
 # END SHARED STOP
 
+SWEEP = {"began": False}      # set when the tool starts on the evidence; the last-resort text of a stop in main() says what was begun, not "nothing was read"
+
 
 def fail(message, **extra):
+    remove_temporaries()                   # (a refusal after the first spill leaves no half-written result file behind)
     close_values()
     emit({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error); nothing was read", **extra})
     raise SystemExit(1)
@@ -1915,7 +1923,7 @@ OWN_NAMES.update((
     "streams", "streams_total", "streams_pages", "note", "resume", "limits", "error", "type", "reason", "sql", "tables", "columns", "table", "column", "rowid",
     "source_table", "z_pk", "stream", "value_string", "value_integer", "value_double", "value_type_code", "start_raw", "end_raw", "created_raw", "start", "end",
     "created", "duration_seconds", "utc_offset_seconds", "uuid", "zobject_other", "metadata", "source", "joins", "fingerprint", "zobject_columns", "cap",
-    "truncated", "exported", "exported_bytes", "export_requested", "database", "staged", "sidecars", "bytes", "sha256", "open_mode", "database_sha256",
+    "truncated", "exported", "exported_bytes", "export_requested", "database", "staged", "sidecars", "sidecars_not_used", "rows_written", "removed_result_file", "rows_in_removed_file", "partial_out_file", "partial_out_file_note", "copies_in_work_dir_not_swept", "sweep_cut", "looked_at_in_part", "copies_without_lock_not_removed", "listed", "why", "copy_dir", "bytes", "sha256", "open_mode", "database_sha256",
     "database_bytes", "wal", "wal_checkpoint", "journal", "staged_copy", "count", "first_start_raw", "last_start_raw", "first_start", "last_start", "matched",
     "returned", "all_results", "all_results_format", "_text_head", "_text_bytes", "_truncated", "_where", "_blob_bytes", "_hex", "_whole_value_file",
     "_whole_value_bytes_written", "_export", "_float", "state", "frames_valid", "frames_committed", "frames_in_file", "page_size", "checkpoint_sequence",
@@ -1927,15 +1935,48 @@ FIELDS.update({
     "db": "path", "database": "path", "stream": "path", "value_string": "text", "start": "time", "end": "time", "created": "time",
     "first_start": "time", "last_start": "time", "resume_since": "time", "uuid": "hex", "_hex": "hex", "_text_head": "text", "_whole_value_file": "path",
     "complete_entries": "path", "all_results": "path", "database_sha256": "digest", "database_sha256_as_acquired": "digest",
-    "database_sha256_after_open": "digest", "sha256": "digest", "fingerprint": "digest", "values_file": "path",
+    "database_sha256_after_open": "digest", "sha256": "digest", "fingerprint": "digest", "values_file": "path", "removed_result_file": "path", "copy_dir": "path",
 })
+
+
+PAGES = []                      # every pager this run made: the last-resort handler removes their temporary files
+PARTIAL = {"out_file": None}    # the out_file once it is made: an unexpected error names it as possibly partial
+
+
+def remove_temporaries():
+    for page in PAGES:
+        try:
+            if page._out is not None:
+                page._out.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if page._tmp is not None:
+                os.unlink(page._tmp)
+        except OSError:
+            pass
+
+
+def removal_of(page):
+    """What a refused write to the result file removes (fail() removes it): the name of the half-made file and the rows it held when the write failed."""
+    name = str(page._tmp) if page._tmp is not None else None
+    if name:
+        OWN_NAMES.add(name)
+    return {"removed_result_file": name, "rows_in_removed_file": page.in_file}
 
 
 class SealedPage(LosslessPage):
     """A page whose rows are written through the boundary (the inline page is sealed with the answer)."""
 
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.in_file = 0                  # the rows the result file holds: a row is counted after it is flushed, so a write the filesystem refuses is found at the row it fails on
+        PAGES.append(self)
+
     def _write(self, row):
         super()._write(row_object(row))
+        self._out.flush()
+        self.in_file += 1
 
     def add(self, row):
         with held():                      # a row reaches the page and its file whole, or the signal waits for it
@@ -1947,6 +1988,7 @@ class SealedPage(LosslessPage):
         for name in ("all_results", "kept_earlier_larger_result"):
             if result.get(name):
                 OWN_NAMES.add(result[name])
+        self._tmp = None                  # (made into the result file: nothing left to remove)
         return result
 
 
@@ -2168,11 +2210,29 @@ class StageTimeUp(Exception):
     """The tool's own clock (max_seconds) ran out while the database was being copied into the private directory."""
 
 
-def sha256_copy(src, dst, deadline=None):
+def open_regular(path, follow=True):
+    """`path` opened for reading without waiting (a FIFO has no writer: O_NONBLOCK) and only if it is a regular file (checked on the descriptor, so a name
+    swapped for a FIFO or a device after it was looked at is refused). A sidecar is opened with follow=False: a link is never followed to its target."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | (0 if follow else getattr(os, "O_NOFOLLOW", 0)))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def sha256_copy(src, dst, deadline=None, follow=True):
     """Copy `src` to a new file `dst` (mode 0600: the copy is the evidence's bytes) and return the sha256 of what was copied; StageTimeUp past `deadline`."""
     digest = hashlib.sha256()
     fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with open(src, "rb") as read, os.fdopen(fd, "wb") as write:
+    try:
+        read = open_regular(src, follow)
+    except BaseException:
+        os.close(fd)
+        raise
+    with read, os.fdopen(fd, "wb") as write:
         for block in iter(lambda: read.read(1 << 20), b""):
             digest.update(block)
             write.write(block)
@@ -2181,7 +2241,33 @@ def sha256_copy(src, dst, deadline=None):
     return digest.hexdigest()
 
 
+MAX_STAGE_ENTRIES = 10000     # the most entries of a directory of private copies (or of one copy) that are looked at
+SWEEP_SECONDS = 5             # and the longest the look takes
+STORAGE_NAMES = ("SQLITE_IOERR", "SQLITE_FULL", "SQLITE_CANTOPEN", "SQLITE_READONLY", "SQLITE_PERM", "SQLITE_NOMEM", "SQLITE_PROTOCOL")
+STORAGE_WORDS = ("disk i/o error", "database or disk is full", "unable to open database file", "readonly database", "out of memory")
+
+
+def storage_error(exc):
+    """The name SQLite gives an error of the files it reads and writes (I/O, disk full, cannot open, read-only, out of memory), or None. With a private
+    copy that SQLite writes to (the -shm and the WAL index), such an error is a fact about the staging area, never about the database as evidence."""
+    name = getattr(exc, "sqlite_errorname", "") or ""
+    if name.startswith(STORAGE_NAMES):
+        return name
+    low = str(exc).lower()
+    if any(w in low for w in STORAGE_WORDS):
+        return name or "storage error"
+    return None
+
+
+def refuse_storage(exc, db, while_):
+    fail("SQLite could not read or write a file it needs %s (%s): this says nothing about whether the file is a SQLite or a knowledgeC database. The private copy "
+         "is written to the staging area (work/<your id>/.knowledgec-stage, or $OUT/knowledgec-stage in a job) and an in-place read needs the file readable: "
+         "free space or raise the file-size limit there, and run again" % (while_, storage_error(exc)), db=db, reason=storage_error(exc))
+
+
 STAGE_LOCK = ".lock"
+STAGE_DIR = ".knowledgec-stage"             # the directory outside a job that only this tool makes (in the agent's work directory)
+STAGE_MARK = ".made-by-knowledgec_query"   # written when the tool made it: the sweep runs only where this file is
 
 
 def lock_stage(stage):
@@ -2237,6 +2323,9 @@ def made_by_this_tool(entry):
         names = []
         with os.scandir(entry.path) as inside:
             for item in inside:
+                if len(names) >= MAX_STAGE_ENTRIES:
+                    CAPPED.add(entry.name)
+                    return False                      # (a directory of that many files is no copy this tool made: the sweep names it)
                 detail = item.stat(follow_symlinks=False)
                 if not stat.S_ISREG(detail.st_mode) or stat.S_IMODE(detail.st_mode) != 0o600:
                     return False
@@ -2247,21 +2336,107 @@ def made_by_this_tool(entry):
         return False
 
 
+SWEEP_CUT = [False]
+CAPPED = set()                # names of directories with more than MAX_STAGE_ENTRIES files: not removed, and named
+
+
+def old_location_copies(directory):
+    """The private copies an earlier version left directly in work/<id> (its own directory, which this tool does not sweep): a directory named for a run
+    that is over and shaped like a copy (mode 0700, files of mode 0600), listed with its size. Named in the answer, never removed. At most
+    MAX_STAGE_ENTRIES entries are looked at, for SWEEP_SECONDS."""
+    found = []
+    limit_t = time.monotonic() + SWEEP_SECONDS
+    cut = False
+    try:
+        with os.scandir(directory) as listing:
+            for number, entry in enumerate(listing):
+                if number >= MAX_STAGE_ENTRIES or (number % 64 == 0 and time.monotonic() > limit_t):
+                    cut = True
+                    break
+                if re.fullmatch(r"knowledgec-([0-9]+)-[A-Za-z0-9_]+", entry.name) is None or entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+                    continue
+                size = unlocked_copy_size(entry)
+                if size is None and made_by_this_tool(entry):
+                    size = sum(item.stat(follow_symlinks=False).st_size for item in os.scandir(entry.path))
+                if size is not None and not stage_is_live(entry):
+                    found.append({"copy_dir": os.path.join(str(directory), entry.name), "bytes": size})
+    except OSError:
+        pass
+    return found, cut
+
+
+def parent_is_ours(parent, in_job):
+    """Whether `parent` is a directory only this tool makes: a real directory of ours, mode 0700, and (outside a job, where the parent is a hidden
+    directory of the agent's own work directory) holding the marker file the tool wrote when it made it. The sweep runs only in such a directory: the
+    agent's own directory (work/<id>) is never swept, whatever it holds."""
+    try:
+        info = os.lstat(parent)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            return False
+        if in_job:
+            return True
+        return stat.S_ISREG(os.lstat(os.path.join(parent, STAGE_MARK)).st_mode)
+    except OSError:
+        return False
+
+
+def unlocked_copy_size(entry):
+    """The size of a private copy that has files but no lock file (an older tool made it, or lock_stage failed), or None: the shape of made_by_this_tool
+    without the marker. Such a copy is not removed (nothing proves it is the tool's), and the answer names it."""
+    try:
+        info = entry.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            return None
+        total, files = 0, 0
+        with os.scandir(entry.path) as inside:
+            for item in inside:
+                if files >= MAX_STAGE_ENTRIES:
+                    CAPPED.add(entry.name)
+                    return None
+                detail = item.stat(follow_symlinks=False)
+                if not stat.S_ISREG(detail.st_mode) or stat.S_IMODE(detail.st_mode) != 0o600 or item.name == STAGE_LOCK:
+                    return None
+                total += detail.st_size
+                files += 1
+        return total if files else None
+    except OSError:
+        return None
+
+
 def remove_dead_stages(parent):
     """Remove the private copies an earlier run of this tool left behind when it was killed without a chance to clean up (SIGKILL): a directory of
     `parent` named for a run that is over (its lock is free) and shaped like a copy this tool makes (made_by_this_tool). A live run's directory, a link,
-    anything an agent made itself and anything else are left alone."""
+    anything an agent made itself and anything else are left alone. Returns the copies it left that have files but no lock file and whose run is over
+    ({"copy_dir", "bytes"}): the answer names them, they are not silently kept."""
+    kept = []
+    SWEEP_CUT[0] = False
+    limit_t = time.monotonic() + SWEEP_SECONDS
+    entries = []
     try:
-        entries = list(os.scandir(parent))
+        with os.scandir(parent) as listing:
+            for number, entry in enumerate(listing):
+                if number >= MAX_STAGE_ENTRIES or (number % 64 == 0 and time.monotonic() > limit_t):
+                    SWEEP_CUT[0] = True               # (a directory of the tool's own that holds that many entries is looked at in part; the answer says so)
+                    break
+                entries.append(entry)
     except OSError:
-        return
-    for entry in entries:
+        return kept
+    for number, entry in enumerate(entries):
+        if number % 16 == 0 and time.monotonic() > limit_t:
+            SWEEP_CUT[0] = True
+            break
         if re.fullmatch(r"knowledgec-([0-9]+)-[A-Za-z0-9_]+", entry.name) is None or entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
             continue
         if not made_by_this_tool(entry):
+            size = unlocked_copy_size(entry)
+            if entry.name in CAPPED and size is None and not stage_is_live(entry):
+                kept.append({"copy_dir": os.path.join(str(parent), entry.name), "bytes": None, "files": "more than %d, not counted" % MAX_STAGE_ENTRIES})
+            elif size is not None and not stage_is_live(entry):
+                kept.append({"copy_dir": os.path.join(str(parent), entry.name), "bytes": size})
             continue
         if not stage_is_live(entry):
             shutil.rmtree(entry.path, ignore_errors=True)
+    return kept
 
 
 def sha256_file(path):
@@ -2272,7 +2447,7 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def wal_inventory(path):
+def wal_inventory(path, deadline=None):
     """What the WAL says about itself, from its header and its frame headers: the frames of its current
     generation (their salts match the header's) and the last commit among them. Checksums are not verified."""
     size = os.path.getsize(path)
@@ -2290,6 +2465,9 @@ def wal_inventory(path):
         total = (size - 32) // stride
         valid, committed = 0, 0
         for i in range(total):
+            if i % 4096 == 0 and deadline is not None and time.monotonic() > deadline:
+                info["counting_stopped_at_frame"] = i          # (the frames after it are not counted: the clock)
+                break
             fh.seek(32 + i * stride)
             frame = fh.read(24)
             if len(frame) < 24:
@@ -2369,7 +2547,23 @@ def stage_parent():
     if job and out:
         return Path(out) / "knowledgec-stage"
     agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
-    return Path("work") / agent
+    return Path("work") / agent / STAGE_DIR
+
+
+def make_stage_parent():
+    """(parent, swept): the directory the private copies go in, made if it is not there, and whether it is one only this tool makes (then, and only
+    then, the dead copies in it are swept)."""
+    parent = stage_parent()
+    in_job = bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
+    parent.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.mkdir(parent, 0o700)
+        os.chmod(parent, 0o700)
+        if not in_job:
+            os.close(os.open(os.path.join(parent, STAGE_MARK), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600))
+    except FileExistsError:
+        pass
+    return parent, parent_is_ours(parent, in_job)
 
 
 def secret_job():
@@ -2447,18 +2641,34 @@ def run_query(args):
     # The sidecars decide how the file is opened. A WAL holds committed rows the main file lacks; a hot rollback
     # journal holds the old pages of a transaction that did not commit and is rolled back when the copy is opened.
     sidecars = {}
+    odd_sidecars = {}
     for suffix in ("-wal", "-shm", "-journal"):
         beside = db + suffix
-        if os.path.isfile(beside):
-            sidecars[suffix] = {"bytes": os.path.getsize(beside)}
+        try:
+            info = os.lstat(beside)                      # (lstat: a link is a link, whatever it points at; it is never followed)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            odd_sidecars[suffix] = "a name that could not be examined (%s)" % type(exc).__name__
+            continue
+        if stat.S_ISREG(info.st_mode):
+            sidecars[suffix] = {"bytes": info.st_size}
+        else:
+            odd_sidecars[suffix] = ("a symbolic link" if stat.S_ISLNK(info.st_mode) else "a directory" if stat.S_ISDIR(info.st_mode) else "a FIFO" if stat.S_ISFIFO(info.st_mode)
+                                    else "a socket" if stat.S_ISSOCK(info.st_mode) else "a device")
     # Everything the reading finds goes into `st`, so that a stop at any point (the clock, a signal) still has a truthful answer to give.
     st = {"stage": None, "sink": None, "paging": None, "streams": None, "shaper": None, "connection": None, "tables": [], "zobject": [], "joins": {},
-          "fingerprint": None, "applied": [], "unapplied": [], "reasons": [], "problems": [], "count": 0, "unconverted": 0, "stopped": None,
+          "fingerprint": None, "applied": [], "unapplied": [], "reasons": [], "problems": [], "count": 0, "unconverted": 0, "stopped": None, "read_done": False,
           "interrupted": None, "last": {"z_pk": None, "start_raw": None}, "inline": [], "inline_state": {"bytes": 0, "full": False, "bounded_by_bytes": False},
           "source": {"database": db, "staged": False, "sidecars": sidecars}, "abort": None, "until": deadline, "schema_read": False, "opener": None,
           "inventory": None, "stream_blind": None, "streams_in_file": None, "streams_listed_from": 0, "tables_total": 0, "schema_unread": False}
     problems = st["problems"]
     source = st["source"]
+    if odd_sidecars:
+        source["sidecars_not_used"] = dict(odd_sidecars)
+        for suffix, what in odd_sidecars.items():
+            problems.append("the %s file beside the database is %s, not a regular file: it was not read and nothing it points at was followed, so what it holds "
+                            "(a WAL: committed rows; a rollback journal: a transaction to roll back) is not in this answer" % (suffix, what))
 
     def progress():
         if STOP["signal"] is not None:
@@ -2476,18 +2686,36 @@ def run_query(args):
                 fail("the database and its sidecars (%d bytes) are over max_stage_bytes (%d): nothing was read; raise it, or query the "
                      "files with a tool that applies the WAL" % (total, max_stage), db=db, sidecars=sidecars)
             try:
-                parent = stage_parent()
-                parent.mkdir(parents=True, exist_ok=True)
-                remove_dead_stages(parent)
+                parent, swept = make_stage_parent()
+                if not (os.environ.get("JOB_ID") and os.environ.get("OUT")):
+                    old, cut = old_location_copies(parent.parent)
+                    if cut:
+                        problems.append("work/<your id> holds more than %d entries or took more than %d s to look at: copies an earlier version may have left there were looked for in part" % (MAX_STAGE_ENTRIES, SWEEP_SECONDS))
+                    if old:
+                        source["copies_in_work_dir_not_swept"] = {
+                            "count": len(old), "listed": old[:20], "looked_at_in_part": cut, "why": "private copies that an earlier version of this tool left directly in work/<your id> are not removed (that "
+                                   "directory is yours, and nothing proves they are this tool's); each holds the bytes of a database"}
+                if swept:
+                    left = remove_dead_stages(parent)
+                    if SWEEP_CUT[0]:
+                        source["sweep_cut"] = "the directory of private copies holds more than %d entries or took more than %d s to look at: it was looked at in part" % (MAX_STAGE_ENTRIES, SWEEP_SECONDS)
+                        problems.append(source["sweep_cut"])
+                    if left:
+                        source["copies_without_lock_not_removed"] = {
+                            "count": len(left), "listed": left[:20],
+                            "why": "a private copy of an earlier run with files and no lock file (an older tool, or a run whose lock could not be made) is not removed: nothing proves "
+                                   "it is this tool's; it holds the bytes of a database and is named here"}
                 st["stage"] = stage = tempfile.mkdtemp(prefix="knowledgec-%d-" % os.getpid(), dir=str(parent))
                 st["stage_lock"] = lock_stage(stage)            # (an open file, held until the process ends)
                 staged_db = os.path.join(stage, os.path.basename(db))
                 source["database_sha256"] = sha256_copy(db, staged_db, deadline)
                 source["database_bytes"] = os.path.getsize(db)
                 for suffix in sidecars:
-                    sidecars[suffix]["sha256"] = sha256_copy(db + suffix, staged_db + suffix, deadline)
+                    sidecars[suffix]["sha256"] = sha256_copy(db + suffix, staged_db + suffix, deadline, follow=False)
                 if "-wal" in sidecars:
-                    source["wal"] = wal_inventory(db + "-wal")
+                    source["wal"] = wal_inventory(staged_db + "-wal", deadline)
+                    if "counting_stopped_at_frame" in source["wal"]:
+                        problems.append("the frames of the -wal were counted only up to frame %d: max_seconds passed (the WAL itself was applied by SQLite in full)" % source["wal"]["counting_stopped_at_frame"])      # (the staged copy: the name beside the database is not opened a second time)
                 source["staged"] = True
                 source["open_mode"] = "a private copy of the database and its sidecars, read-write so SQLite works on them, removed at the end"
                 connection = sqlite3.connect(staged_db)
@@ -2522,6 +2750,8 @@ def run_query(args):
         except sqlite3.Error as exc:
             check_stop()
             if st["abort"] is None:
+                if storage_error(exc):
+                    refuse_storage(exc, db, "while it opened the file")
                 fail("this file is not a SQLite database", db=db, reason=str(exc))
             st["stopped"] = st["abort"]       # the clock (or a signal) ended the read of the schema: nothing was listed, nothing was read
             st["schema_unread"] = True
@@ -2530,6 +2760,9 @@ def run_query(args):
             return
         st["tables"], st["tables_total"] = tables, tables_total
         if "ZOBJECT" not in own_present:
+            if odd_sidecars:
+                fail("there is no ZOBJECT table in the main file, and a sidecar beside it was not read (%s): this does not say the file is not a knowledgeC database, "
+                     "its tables may be in the -wal" % ", ".join("%s is %s" % kv for kv in sorted(odd_sidecars.items())), db=db, tables=tables, sidecars_not_used=dict(odd_sidecars))
             fail("this is not a knowledgeC database: there is no ZOBJECT table", db=db, tables=tables, **({"tables_not_listed": tables_total - len(tables)} if tables_total > len(tables) else {}))
         if source["staged"] and "-journal" in sidecars:
             after = sha256_file(os.path.join(st["stage"], os.path.basename(db)))
@@ -2575,6 +2808,8 @@ def run_query(args):
                     raise SchemaTimeUp()               # the clock ended the statement: that is a stop, not a schema that cannot be read
                 # (a schema error names a table, a column or a module of the file, never a cell value; a name that is not UTF-8 is only a class)
                 why = type(exc).__name__ if isinstance(exc, UnicodeError) else str(exc)
+                if storage_error(exc):
+                    refuse_storage(exc, db, "while it read the schema")
                 if required:
                     fail("the schema of %s could not be read" % table, db=db, table=table, reason=why)
                 problems.append("the schema of %s could not be read (%s): its rows are not joined" % (table, why))
@@ -2628,6 +2863,8 @@ def run_query(args):
                         check_stop()
                         if st["abort"] is not None:
                             raise                                  # (the clock ran out inside the statement: the caller says so)
+                        if storage_error(exc):
+                            refuse_storage(exc, db, "while it matched the stream pattern")
                         fail("stream is not a LIKE pattern SQLite will run", reason=type(exc).__name__)
                     if matched:
                         keep.add(stream_key(name))
@@ -2640,6 +2877,8 @@ def run_query(args):
                 except sqlite3.Error as exc:
                     check_stop()
                     if st["abort"] is None:
+                        if storage_error(exc):
+                            refuse_storage(exc, db, "while it listed the streams")
                         fail("the query failed", reason=type(exc).__name__)
                     st["stopped"] = st["abort"]
                     return
@@ -2693,6 +2932,7 @@ def run_query(args):
             except OSError as exc:
                 fail("out_file could not be created", out_file=out_name, reason="%s: %s" % (type(exc).__name__, exc.strerror or "error"))
             st["sink"] = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
+            PARTIAL["out_file"] = out_name
             OWN_NAMES.add(out_name)
         else:
             st["paging"] = SealedPage("knowledgec_query", [db, args.get("stream"), args.get("since"), args.get("until"), keyset], limit, inline_bytes)
@@ -2704,6 +2944,8 @@ def run_query(args):
         except sqlite3.Error as exc:
             check_stop()
             if st["abort"] is None:
+                if storage_error(exc):
+                    refuse_storage(exc, db, "while it ran the query")
                 fail("the query failed", reason=type(exc).__name__, sql=" ".join(sql.split())[:2000])
             st["stopped"] = st["abort"]
             return
@@ -2716,10 +2958,12 @@ def run_query(args):
                 raw = next(rows)
             except StopIteration:
                 break
-            except sqlite3.Error:
+            except sqlite3.Error as exc:
                 # the progress handler aborted the statement (sqlite swallows an exception raised in it, so the signal is looked for here)
                 check_stop()
                 if st["abort"] is None:
+                    if storage_error(exc):
+                        refuse_storage(exc, db, "while it read the rows")
                     raise
                 st["stopped"] = st["abort"]
                 break
@@ -2769,10 +3013,28 @@ def run_query(args):
                         entry[key] = got
             line = json.dumps(row_object(entry), default=str, sort_keys=True) if sink else None   # (judged before the signals are held: a signal waits for a write, not for a judging)
             with held():                    # a row is counted, written and kept whole, or not at all
+                try:
+                    if sink:
+                        sink.write(line + "\n")
+                        sink.flush()                  # every row: the write the filesystem refuses is found at this row, before the row is counted
+                    else:
+                        paging.add(entry)
+                except OSError as exc:
+                    if sink:
+                        try:
+                            sink.close()          # (quietly: what it still holds cannot be written, and the interpreter must not complain of it at exit)
+                        except OSError:
+                            pass
+                    why = "%s: %s" % (type(exc).__name__, exc.strerror or "error")
+                    if sink:
+                        fail("the rows could not be written to out_file (%s): the run stopped there; every row counted (rows_written) is in it, and the one that failed may be cut off at the end of it" % why,
+                             rows_written=st["count"])
+                    cut = removal_of(paging)
+                    fail("the rows could not be written to the result file (%s): the run stopped there; the result file was not made, and its partial copy (%d rows, %s) was removed: "
+                         "nothing is left of it, and no row is cited from it" % (why, cut["rows_in_removed_file"], cut["removed_result_file"] or "no file was made"), **cut)
                 st["count"] += 1
                 last["z_pk"], last["start_raw"] = o.get("Z_PK"), start_raw
                 if sink:
-                    sink.write(line + "\n")
                     if not inline_state["full"] and len(inline) < limit:
                         if inline_state["bytes"] + len(line) <= inline_bytes:
                             inline.append(entry)
@@ -2782,8 +3044,6 @@ def run_query(args):
                             inline_state["full"] = True
                     else:
                         inline_state["full"] = True
-                else:
-                    paging.add(entry)
             if time.monotonic() > deadline:        # (every row: a row of a few hundred cells of 4,000 characters takes a fifth of a second to judge, and 256 of them a minute)
                 st["stopped"] = "time"
                 break
@@ -2834,10 +3094,15 @@ def run_query(args):
 
     try:
         try:
+            SWEEP["began"] = True
             read()
+            st["read_done"] = True
+            hold_signals()      # the last statement of the sweep's try: a stop signal in the few bytecodes after the sweep lands in the except below
         except Interrupted as stop:
             st["interrupted"] = stop.signum
-            st["stopped"] = "signal"
+            if not st["read_done"]:
+                st["stopped"] = "signal"          # (after the read has finished the result is whole: the stop is named, no prefix is claimed)
+            hold_signals()
     finally:
         # From here the stop signals wait: the clean-up runs whole (an Interrupted raised from inside it used to escape the answer, which then said the
         # tool was stopped before it had read anything while the private copy stayed half removed). A signal that arrives meanwhile is found
@@ -3001,11 +3266,17 @@ if __name__ == "__main__":
         raise
     except Interrupted as stop:
         close_values()
-        emit({"error": "the tool was stopped by %s before it had read anything" % signal_name(stop.signum), "status": "failed",
-              "status_basis": "stopped by %s during start-up: nothing was read" % signal_name(stop.signum), "interrupted": signal_name(stop.signum)})
+        began = SWEEP["began"]
+        emit({"error": "the tool was stopped by %s %s" % (signal_name(stop.signum), "after its read of the database had begun and before its answer was made" if began else "before its read of the database began"),
+              "status": "failed",
+              "status_basis": ("stopped by %s after the read had begun: some rows may have been read, and none of that is in this answer" if began else
+                               "stopped by %s before the read began: no row had been read and no result was made") % signal_name(stop.signum),
+              "interrupted": signal_name(stop.signum)})
         sys.exit(128 + stop.signum)
     except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the evidence)
         close_values()
+        remove_temporaries()
         emit({"error": "the tool stopped on an unexpected error", "type": type(exc).__name__, "status": "failed",
-              "status_basis": "the tool stopped with an unexpected error: nothing is complete"})
+              "status_basis": "the tool stopped with an unexpected error: nothing is complete",
+              **({"partial_out_file": PARTIAL["out_file"], "partial_out_file_note": "written before the error, rows whole up to the last newline; the last row may be cut"} if PARTIAL["out_file"] else {})})
         sys.exit(1)

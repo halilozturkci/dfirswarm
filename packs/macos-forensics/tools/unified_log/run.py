@@ -20,6 +20,8 @@ the tool ends below the manifest's limit. The preview of entries passes the boun
 The whole output is read once, in a stream, so counts cover the whole of it and only
 the preview is held in memory.
 """
+import errno
+import functools
 import hashlib
 import json
 import os
@@ -40,6 +42,9 @@ DIGEST_SECONDS = 85           # the output's sha256 is given up past this long a
 SEAL_STOP_SECONDS = 1196.5     # no string is judged past this (the rest is withheld whole): the manifest allows 1200, less the 3.5 seconds the block asks for
 MIN_READER_SECONDS = 0.5      # a reader is not started with less time than this left of the budget
 INTERRUPT_COUNT_SECONDS = 5   # after a stop signal the output is counted for this long at most
+LINE_CAP = 8 << 20            # a line of the reader's output longer than this is counted with its length and not parsed (one line of 300 MB cost 1.2 GB of memory)
+GROUP_TABLE_SECONDS = 3       # the longest reading of the process table when the processes a reader left are looked for
+STAGE_NAME = ".logarchive-input"
 DEFAULT_MAX_STAGE_FILES = 1_000_000
 DEFAULT_MAX_STAGE_BYTES = 16 << 30
 # The fields of an entry that the preview shows, under both readers' names (Apple's ndjson, Mandiant's JSONL: `time`, `message`, `raw_message`,
@@ -67,6 +72,10 @@ UNREADABLE_KEPT = 10000       # unreadable directories kept to list the first FI
 # answer is printed, and the answer says so. The first signal counts: later ones do nothing while the tool cleans up. STOP["hooks"] run first (a database connection's
 # interrupt, the kill of the reader process this tool started and of its descendants: its own, never a search by name). Until install_stop_handlers
 # runs (at the end of the module) _early_stop answers a signal with one document that says nothing was read.
+# Two limits are stated, not closed. (1) A signal that arrives before this block has run (the start of the interpreter, the compiling of the file, the
+# imports above the block: tens of milliseconds) is not caught, and ends the tool with no JSON at all. (2) hold_signals() trades one whole document for a
+# print that cannot be stopped: if whatever reads this tool's stdout stops reading a full pipe, only SIGKILL ends the tool (the harness ends a tool with a
+# SIGKILL of its group, so its own path is not affected).
 import signal
 
 STOP = {"signal": None, "hooks": []}
@@ -167,6 +176,9 @@ def _early_stop(signum, _frame):
 for _early in STOP_SIGNALS:
     signal.signal(_early, _early_stop)
 # END SHARED STOP
+
+PARTIAL = {"out_file": None}    # the reader's output once its path is known: an unexpected error names it as possibly partial
+SWEEP = {"began": False}      # set when the tool starts on the evidence; the last-resort text of a stop in main() says what was begun, not "nothing was read"
 
 
 def fail(message, **extra):
@@ -1792,7 +1804,8 @@ OWN_NAMES.update((
     "stderr_bytes", "timeout_seconds_used", "timeout_clamped", "timeout_requested", "note", "error", "type", "reason", "lines", "json_records",
     "entry_records", "records_without_entry_fields", "array_delimiter_lines", "first_unparsed_lines", "first_records_without_entry_fields", "line", "keys",
     "support_files", "tracev3_files", "timesync_files", "uuidtext_files", "dsc_files", "other_files", "directories_unreadable", "first_directories_unreadable",
-    "directory", "stopped_at_files", "staged", "files", "bytes", "duplicates_identical", "sources", "counting_stopped_at_line", "reader_outcome",
+    "directory", "stopped_at_files", "staged", "files", "bytes", "lines_over_cap", "line_cap_bytes", "longest_line_bytes", "first_lines_over_cap", "reader_processes_left",
+    "ended", "staged_copy", "kind", "walk_complete", "stopped_by_time", "partial_out_file", "partial_out_file_note", "files_copied", "files_to_copy", "duplicates_identical", "sources", "counting_stopped_at_line", "reader_outcome",
     "budget", "seconds_used", "seconds_for_reader", "staging_seconds", "census_seconds", "boundary", "max_stage_files", "max_stage_bytes", "out_dir", "holds",
     "looked_for", "link", "found_as", "conflicts", "conflict_count", "directory", "files", "bytes", "predicate_names_message_text",
 ))
@@ -1815,28 +1828,65 @@ def digest(path, deadline=None):
     return value.hexdigest()
 
 
-def same_bytes(a, b):
+class StageOutOfTime(Exception):
+    pass
+
+
+def staging_time_up(copied=None, to_copy=None):
+    fail("staging used the whole time budget (timeout_seconds): the reader did not run and the staged copy was removed; raise "
+         "timeout_seconds (at most %d) or point the tool at a .logarchive" % MAX_TIMEOUT, **({"files_copied": copied, "files_to_copy": to_copy} if copied is not None else {}))
+
+
+def open_regular(path):
+    """`path` opened for reading without waiting (a FIFO has no writer) and without following a link, and only if it is a regular file (checked on the descriptor)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def copy_file(src, dst, deadline):
+    """Copy one file into the staging directory in blocks of 1 MiB under the clock (a single file of many GB was never looked at while it was copied)."""
+    reader = open_regular(src)
+    with reader, open(dst, "xb") as writer:
+        for block in iter(lambda: reader.read(1 << 20), b""):
+            writer.write(block)
+            if time.monotonic() > deadline:
+                raise StageOutOfTime()
+
+
+def same_bytes(a, b, deadline=None):
     if os.path.getsize(a) != os.path.getsize(b):
         return False
-    with open(a, "rb") as fa, open(b, "rb") as fb:
+    with open_regular(a) as fa, open_regular(b) as fb:
         while True:
             x, y = fa.read(1 << 20), fb.read(1 << 20)
             if x != y:
                 return False
             if not x:
                 return True
+            if deadline is not None and time.monotonic() > deadline:
+                staging_time_up()
 
 
-def walk_tree(root, rel_to, on_file):
+def walk_tree(root, rel_to, on_file, deadline=None):
     """Every entry under `root`, not followed through links: a link, a special file, or a directory or file
     that cannot be read is refused by name, and nothing is staged (a directory left out would be a silent gap)."""
     def unreadable(exc):
         fail("a directory in the tree to be staged could not be read, so nothing was staged: a tree with a part left out is not the evidence",
              directory=getattr(exc, "filename", None), reason="%s: %s" % (type(exc).__name__, exc))
 
+    steps = 0
     for dirpath, dirs, names in os.walk(root, followlinks=False, onerror=unreadable):
         dirs.sort()
         for name in sorted(dirs) + sorted(names):
+            steps += 1
+            if deadline is not None and steps % 256 == 0 and time.monotonic() > deadline:
+                staging_time_up()                          # (a tree of directories with nothing in them, or of millions of names, is under the clock)
             full = os.path.join(dirpath, name)
             rel = os.path.relpath(full, rel_to)
             try:
@@ -1854,7 +1904,7 @@ def walk_tree(root, rel_to, on_file):
             on_file(full, rel, st.st_size)
 
 
-def inventory(path, budget):
+def inventory(path, budget, deadline=None):
     """What the input holds, by name: a census, not a verdict on whether it is complete. A directory that
     cannot be read is counted and named, never left out silently."""
     census = {"tracev3_files": 0, "timesync_files": 0, "uuidtext_files": 0, "dsc_files": 0, "other_files": 0,
@@ -1873,10 +1923,18 @@ def inventory(path, budget):
         return census
 
     seen = 0
+    steps = 0
     for dirpath, _dirs, names in os.walk(path, followlinks=False, onerror=unreadable):
+        steps += 1
+        if deadline is not None and steps % 64 == 0 and time.monotonic() > deadline:
+            census["stopped_by_time"] = True
+            return listed()
         parts = os.path.relpath(dirpath, path).split(os.sep)
         for name in names:
             seen += 1
+            if deadline is not None and seen % 256 == 0 and time.monotonic() > deadline:
+                census["stopped_by_time"] = True
+                return listed()
             if seen > budget:
                 census["stopped_at_files"] = budget
                 return listed()
@@ -1918,16 +1976,16 @@ def stage(path, scratch, max_files, max_bytes, deadline):
             plan.append((tree, full, rel))
         return on_file
 
-    walk_tree(uuidtext, uuidtext, take("uuidtext"))
+    walk_tree(uuidtext, uuidtext, take("uuidtext"), deadline)
     for tree, full, rel in plan:
         held[rel] = full
     first = len(plan)
-    walk_tree(diagnostics, diagnostics, take("diagnostics"))
+    walk_tree(diagnostics, diagnostics, take("diagnostics"), deadline)
     conflicts, duplicates = [], set()
     for tree, full, rel in plan[first:]:
         if rel in held:
             try:
-                same = same_bytes(held[rel], full)
+                same = same_bytes(held[rel], full, deadline)
             except OSError as exc:
                 fail("a member in both trees could not be compared, so nothing was staged", path=full, reason="%s: %s" % (type(exc).__name__, exc))
             if same:
@@ -1951,9 +2009,12 @@ def stage(path, scratch, max_files, max_bytes, deadline):
                      "timeout_seconds (at most %d) or point the tool at a .logarchive" % MAX_TIMEOUT, files_copied=copied, files_to_copy=len(plan))
             target = os.path.join(scratch, rel)
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            shutil.copyfile(full, target)
+            copy_file(full, target, deadline)
             copied += 1
             size += os.path.getsize(full)
+    except StageOutOfTime:
+        shutil.rmtree(scratch, ignore_errors=True)
+        staging_time_up(copied, len(plan))
     except OSError as exc:
         shutil.rmtree(scratch, ignore_errors=True)
         fail("a file could not be copied into the staging directory, so nothing was staged and the reader did not run",
@@ -1963,6 +2024,42 @@ def stage(path, scratch, max_files, max_bytes, deadline):
         raise
     return {"staged": True, "files": copied, "bytes": size, "duplicates_identical": len(duplicates),
             "sources": [diagnostics, uuidtext]}
+
+
+def staged_copy_size(path, seconds=5):
+    """What an earlier run's staged copy holds, counted with lstat (links are not followed) for `seconds` at most:
+    {"kind": "directory", "files", "bytes", "walk_complete"}, or what the name is when it is not a directory."""
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        return {"kind": "unreadable", "reason": type(exc).__name__}
+    if not stat.S_ISDIR(info.st_mode):
+        return {"kind": "not a directory", "bytes": info.st_size}
+    files = total = steps = 0
+    complete = True
+    limit = time.monotonic() + seconds
+    stack = [path]
+    while stack and complete:
+        top = stack.pop()
+        try:
+            with os.scandir(top) as listing:
+                for entry in listing:
+                    steps += 1
+                    if steps % 256 == 0 and time.monotonic() > limit:
+                        complete = False
+                        break
+                    try:
+                        detail = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if stat.S_ISDIR(detail.st_mode):
+                        stack.append(entry.path)
+                    else:
+                        files += 1
+                        total += detail.st_size
+        except OSError:
+            complete = False
+    return {"kind": "directory", "files": files, "bytes": total, "walk_complete": complete}
 
 
 def reader_version(argv_first):
@@ -1983,14 +2080,40 @@ def count_output(path, limit, deadline, inline_bytes=DEFAULT_INLINE_BYTES):
     """Read the whole output once, in a stream. Only the preview is held, bounded by `limit` entries and by `inline_bytes`. Past `deadline` the counting stops,
     says at which line, and what was counted is a prefix."""
     cov = {"lines": 0, "json_records": 0, "entry_records": 0, "unparsed_lines": 0, "records_without_entry_fields": 0,
-           "array_delimiter_lines": 0, "preview_bounded_by_bytes": False}
-    entries, first_unparsed, first_without = [], [], []
+           "array_delimiter_lines": 0, "preview_bounded_by_bytes": False, "lines_over_cap": 0, "line_cap_bytes": LINE_CAP, "longest_line_bytes": 0}
+    entries, first_unparsed, first_without, first_over = [], [], [], []
     held_bytes = 0
     with open(path, "rb") as fh:
-        for number, raw in enumerate(fh, 1):
-            if number % 4096 == 0 and time.monotonic() > deadline:
-                cov["counting_stopped_at_line"] = number
+        number = 0
+        while True:
+            if time.monotonic() > deadline:                      # looked at for every bounded read, not once in 4,096 lines
+                cov["counting_stopped_at_line"] = number + 1
                 break
+            raw = fh.readline(LINE_CAP + 2)
+            if not raw:
+                break
+            number += 1
+            if len(raw) - (1 if raw.endswith(b"\n") else 0) > LINE_CAP:       # (the line without its newline: a line of exactly LINE_CAP bytes is read)
+                # a line longer than the cap is read on in pieces and only its length is kept: it is counted, listed by line number and length, and not parsed
+                # (it stays in the output file as the reader wrote it)
+                length, cut = len(raw), False
+                while not raw.endswith(b"\n"):
+                    if time.monotonic() > deadline:
+                        cut = True
+                        break
+                    raw = fh.readline(LINE_CAP)
+                    if not raw:
+                        break
+                    length += len(raw)
+                cov["lines"] += 1
+                cov["lines_over_cap"] += 1
+                cov["longest_line_bytes"] = max(cov["longest_line_bytes"], length)
+                if len(first_over) < FIRST:
+                    first_over.append({"line": number, "bytes": length})
+                if cut:
+                    cov["counting_stopped_at_line"] = number
+                    break
+                continue
             line = raw.strip()
             if not line:
                 continue
@@ -2000,7 +2123,7 @@ def count_output(path, limit, deadline, inline_bytes=DEFAULT_INLINE_BYTES):
                 continue
             try:
                 row = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):          # (a line nested a million levels deep is a line that did not parse, not an unexpected error)
                 row = None
             if not isinstance(row, dict):
                 cov["unparsed_lines"] += 1
@@ -2023,6 +2146,7 @@ def count_output(path, limit, deadline, inline_bytes=DEFAULT_INLINE_BYTES):
                 kept = {k: (guard_text(row[k], k) if isinstance(row.get(k), str) else row[k]) for k in KEEP if row.get(k) is not None}
                 entries.append(kept or {"keys": print_order_until(list(row), "name", until=deadline)[0][:20]})
     cov["first_unparsed_lines"] = first_unparsed
+    cov["first_lines_over_cap"] = first_over
     cov["first_records_without_entry_fields"] = first_without
     return cov, entries
 
@@ -2056,6 +2180,101 @@ def descendants(pid):
     return found
 
 
+def _die_with_parent(parent):  # runs in the child between fork and exec
+    try:
+        import ctypes
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)       # PR_SET_PDEATHSIG: the reader dies with this tool (Linux)
+    except Exception:  # noqa: BLE001
+        pass
+    if os.getppid() != parent:                           # the tool ended between the fork and the call above: the signal would never come
+        os._exit(1)
+
+
+def _proc_stat(pid):
+    """(start time, state, process group) of `pid` from /proc/<pid>/stat (Linux), or None."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            text = fh.read(4096).decode("ascii", "replace")
+        tail = text[text.rindex(")") + 2:].split()
+        return (tail[19], tail[0], tail[2]) if len(tail) > 19 else None
+    except (OSError, ValueError):
+        return None
+
+
+def group_members():
+    """{pid: (start time, state)} of the processes in this tool's process group, or None when the table cannot be read in GROUP_TABLE_SECONDS.
+    The start time is read from /proc on Linux; where ps is used it is None."""
+    group = str(os.getpgrp())
+    found = {}
+    limit = time.monotonic() + GROUP_TABLE_SECONDS
+    if os.path.isdir("/proc/self"):
+        try:
+            names = os.listdir("/proc")
+        except OSError:
+            return None
+        for number, name in enumerate(names):
+            if not name.isdigit():
+                continue
+            if number % 64 == 0 and time.monotonic() > limit:
+                return None
+            row = _proc_stat(int(name))
+            if row is not None and row[2] == group:
+                found[int(name)] = (row[0], row[1])
+        return found
+    for ps in (shutil.which("ps"), "/bin/ps", "/usr/bin/ps"):
+        if not ps:
+            continue
+        try:
+            table = subprocess.run([ps, "-A", "-o", "pid=,pgid=,state="], capture_output=True, text=True, timeout=GROUP_TABLE_SECONDS).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        for line in table.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[0].isdigit() and parts[1] == group:
+                found[int(parts[0])] = (None, parts[2][:1])
+        return found
+    return None
+
+
+def end_group_orphans(before):
+    """After a stop or a time-out, end the processes that are in this tool's own process group and were not there before the reader started: what the
+    reader forked and lost (a double fork leaves a process whose parent is gone, out of reach of a walk down the process tree). Only when this tool
+    leads its group (the harness starts a tool as the leader of one), so that every member that is new since the reader started was started below this
+    tool; a process that was there before is never touched, and a pid's identity (its start time) is read again just before the signal. Returns
+    {"ended": n, "note": a sentence or None}."""
+    if before is None:
+        return {"ended": 0, "note": "the process table could not be read before the reader started, so the processes it left in the tool's group were not searched for"}
+    if os.getpgrp() != os.getpid():
+        return {"ended": 0, "note": "the tool does not lead its process group (the harness starts a tool as the leader of one), so nothing outside the reader's own tree was searched for"}
+    ended = 0
+    note = None
+    for _round in range(3):
+        now = group_members()
+        if now is None:
+            note = "the process table could not be read after the reader ended, so the processes it left in the tool's group may not all have been ended"
+            break
+        victims = [(pid, start) for pid, (start, state) in now.items() if pid != os.getpid() and state != "Z" and before.get(pid, (object(), ""))[0] != start]
+        if not victims:
+            break
+        for pid, start in victims:
+            if start is not None:
+                again = _proc_stat(pid)
+                if again is None or again[0] != start or again[2] != str(os.getpgrp()):
+                    continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+                ended += 1
+            except OSError:
+                pass
+        time.sleep(0.05)
+    else:
+        note = "processes were still appearing in the tool's group after three rounds: they may not all have been ended"
+    return {"ended": ended, "note": note}
+
+
+READER_LEFT = {}       # what end_group_orphans found, once the reader was ended by a stop or a time-out
+
+
 def kill_reader(proc):
     """End the reader this tool started and what it started (its own child and that child's descendants, never a search by name): a reader that runs helpers
     leaves them behind when only its own pid is killed. The reader is stopped first so that it starts no more while its tree is read."""
@@ -2078,7 +2297,8 @@ def kill_reader(proc):
 
 def run_reader(argv, stdout, stderr, seconds):
     """(exit code, timed out): the reader runs for at most `seconds` and is killed when the time is up or a stop signal arrives."""
-    proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr)
+    before = group_members()
+    proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, preexec_fn=functools.partial(_die_with_parent, os.getpid()) if sys.platform.startswith("linux") else None)
     hook = lambda: kill_reader(proc)       # noqa: E731 (a stop signal ends the reader before the exception unwinds)
     STOP["hooks"].append(hook)
     try:
@@ -2087,6 +2307,7 @@ def run_reader(argv, stdout, stderr, seconds):
         except subprocess.TimeoutExpired:
             kill_reader(proc)
             proc.wait()
+            READER_LEFT.update(end_group_orphans(before))
             return None, True
     except BaseException:
         kill_reader(proc)
@@ -2094,6 +2315,11 @@ def run_reader(argv, stdout, stderr, seconds):
             proc.wait(timeout=10)
         except (subprocess.TimeoutExpired, OSError):
             pass
+        if not READER_LEFT:
+            try:
+                READER_LEFT.update(end_group_orphans(before))
+            except Exception:  # noqa: BLE001 (the stop that is being handled goes on)
+                pass
         raise
     finally:
         if hook in STOP["hooks"]:
@@ -2173,8 +2399,16 @@ def run_log(args):
         fail("out_dir could not be created", out_dir=out_dir, reason="%s: %s" % (type(exc).__name__, exc.strerror or "error"))
     held_names = [n for n in OUTPUT_NAMES if os.path.lexists(os.path.join(out_dir, n))]
     if held_names:
-        fail("out_dir already holds %s from an earlier run; the tool does not overwrite it: use a new directory" % ", ".join(held_names),
-             out_dir=out_dir, holds=held_names)
+        extra, more = {}, ""
+        if STAGE_NAME in held_names:
+            left = staged_copy_size(os.path.join(out_dir, STAGE_NAME))
+            extra["staged_copy"] = left
+            more = ("; %s is a copy of the evidence that an earlier run staged and was killed before it could remove it (%s): it is the tool's copy, the evidence itself "
+                    "was not changed, and nothing here removes it for you" % (STAGE_NAME, (
+                        "%d file(s), %s%d byte(s)" % (left["files"], "" if left["walk_complete"] else "at least ", left["bytes"])) if left.get("kind") == "directory"
+                    else "not a directory"))
+        fail("out_dir already holds %s from an earlier run; the tool does not overwrite it: use a new directory%s" % (", ".join(held_names), more),
+             out_dir=out_dir, holds=held_names, **extra)
     stderr_path = names["unifiedlog.stderr"]
     scratch = os.path.join(out_dir, ".logarchive-input")
     problems, warnings = [], []
@@ -2207,7 +2441,9 @@ def run_log(args):
         input_seen = path
         argv = [iterator, "--mode", "log-archive", "--input", input_seen, "--output", output_path, "--format", "jsonl"]
     OWN_NAMES.add(output_path)
+    PARTIAL["out_file"] = output_path
 
+    SWEEP["began"] = True
     try:
         try:
             if not apple and os.path.isdir(os.path.join(path, "diagnostics")) and os.path.isdir(os.path.join(path, "uuidtext")):
@@ -2217,9 +2453,11 @@ def run_log(args):
                 input_seen = scratch
                 argv = [iterator, "--mode", "log-archive", "--input", input_seen, "--output", output_path, "--format", "jsonl"]
             begun = time.monotonic()
-            census = inventory(input_seen, max_files) if os.path.isdir(input_seen) else None
+            census = inventory(input_seen, max_files, budget_end) if os.path.isdir(input_seen) else None
             marks["census"] = time.monotonic() - begun
             if census is not None:
+                if census.get("stopped_by_time"):
+                    warnings.append("the census of the input stopped at the end of the time budget: its counts are of the part of the tree it reached")
                 if census["directories_unreadable"]:
                     warnings.append("%d director%s under the input could not be read by this tool, so they are not in the census "
                                     "(the reader may not have read them either; the first: %s)" % (census["directories_unreadable"], "y" if census["directories_unreadable"] == 1 else "ies",
@@ -2243,11 +2481,13 @@ def run_log(args):
                         returncode, timed_out = run_reader(argv, out, err, reader_seconds)
                 else:
                     returncode, timed_out = run_reader(argv, subprocess.DEVNULL, err, reader_seconds)
+            hold_signals()      # the last statement of the sweep's try: a stop signal in the few bytecodes after the reader lands in the except below
         except OSError as exc:
             fail("the reader's output could not be created or started, and it did not run", out_dir=out_dir,
                  reason="%s: %s" % (type(exc).__name__, exc.strerror or "error"))
         except Interrupted as stop:
             interrupted = stop.signum
+            hold_signals()
     finally:
         # The staged copy (up to 16 GiB, a million files: seconds to tens of seconds to remove) is removed with the stop signals held. A signal that landed
         # in this removal used to escape every handler: the answer then said the tool was stopped before the reader had run, with no counts, and the
@@ -2272,7 +2512,8 @@ def run_log(args):
     if output_exists:
         coverage, entries = count_output(output_path, limit, count_deadline, inline_bytes)
     else:
-        coverage, entries = {"lines": 0, "json_records": 0, "entry_records": 0, "unparsed_lines": 0,
+        coverage, entries = {"lines": 0, "json_records": 0, "entry_records": 0, "unparsed_lines": 0, "lines_over_cap": 0, "line_cap_bytes": LINE_CAP, "longest_line_bytes": 0,
+                             "first_lines_over_cap": [],
                              "records_without_entry_fields": 0, "array_delimiter_lines": 0, "preview_bounded_by_bytes": False,
                              "first_unparsed_lines": [], "first_records_without_entry_fields": []}, []
     coverage["support_files"] = census
@@ -2300,7 +2541,7 @@ def run_log(args):
         outcome = "empty"
         problems.append("the output holds no entries (%d line(s), %d JSON record(s) without an entry's fields): this is not a negative "
                         "about the logs" % (coverage["lines"], coverage["records_without_entry_fields"]))
-    elif coverage["unparsed_lines"]:
+    elif coverage["unparsed_lines"] or coverage["lines_over_cap"]:
         status = "partial"
     else:
         status = "complete"
@@ -2310,12 +2551,20 @@ def run_log(args):
     if coverage["unparsed_lines"]:
         problems.append("%d line(s) of the output are not JSON records (the first at line %s)"
                         % (coverage["unparsed_lines"], ", ".join(str(n) for n in coverage["first_unparsed_lines"][:3])))
+    if coverage["lines_over_cap"]:
+        problems.append("%d line(s) of the output are longer than %d bytes and were not parsed (the longest is %d bytes, the first at line %s): they are in the output file "
+                        "as the reader wrote them, and they are in neither entry_count nor the preview"
+                        % (coverage["lines_over_cap"], LINE_CAP, coverage["longest_line_bytes"], ", ".join(str(l["line"]) for l in coverage["first_lines_over_cap"][:3])))
     if coverage["records_without_entry_fields"] and got:
         warnings.append("%d JSON record(s) have none of an entry's fields (timestamp, time, message, process, subsystem) and are not "
                         "counted as entries: read them before relying on entry_count" % coverage["records_without_entry_fields"])
     if stderr_bytes and not (timed_out or interrupted is not None or returncode != 0):
         warnings.append("the reader wrote %d byte(s) to its error stream (%s) although it exited 0: read it before relying on the output" % (stderr_bytes, stderr_path))
 
+    if READER_LEFT.get("ended"):
+        warnings.append("the reader left %d process(es) running in the tool's process group after it was ended; they were ended too (reader_processes_left)" % READER_LEFT["ended"])
+    if READER_LEFT.get("note"):
+        warnings.append(READER_LEFT["note"])
     digest_text = None
     if output_exists:
         digest_text = digest(output_path, (time.monotonic() + INTERRUPT_COUNT_SECONDS) if interrupted is not None else budget_end + DIGEST_SECONDS)
@@ -2360,6 +2609,7 @@ def run_log(args):
         "warnings": warnings,
         "stderr": stderr_path,
         "stderr_bytes": stderr_bytes,
+        **({"reader_processes_left": dict(READER_LEFT)} if READER_LEFT else {}),
         "timeout_seconds_used": timeout,
         "budget": {"seconds_for_reader": round(reader_seconds) if reader_seconds is not None else None, "staging_seconds": round(marks["staged"], 1),
                    "census_seconds": round(marks["census"], 1), "seconds_used": round(time.monotonic() - started, 1)},
@@ -2394,11 +2644,16 @@ if __name__ == "__main__":
         raise
     except Interrupted as stop:
         close_values()
-        emit({"error": "the tool was stopped by %s before the reader had run" % signal_name(stop.signum), "status": "failed",
-              "status_basis": "stopped by %s during start-up: nothing was decoded" % signal_name(stop.signum), "interrupted": signal_name(stop.signum)})
+        began = SWEEP["began"]
+        emit({"error": "the tool was stopped by %s %s" % (signal_name(stop.signum), "after staging or the reader had begun and before its answer was made" if began else "before staging or the reader began"),
+              "status": "failed",
+              "status_basis": ("stopped by %s after staging or the reader had begun: some of the log may have been decoded, and none of that is in this answer" if began else
+                               "stopped by %s before staging or the reader began: nothing was decoded and no result was made") % signal_name(stop.signum),
+              "interrupted": signal_name(stop.signum)})
         sys.exit(128 + stop.signum)
     except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the evidence)
         close_values()
         emit({"error": "the tool stopped on an unexpected error", "type": type(exc).__name__, "status": "failed",
-              "status_basis": "the tool stopped with an unexpected error: nothing is complete"})
+              "status_basis": "the tool stopped with an unexpected error: nothing is complete",
+              **({"partial_out_file": PARTIAL["out_file"], "partial_out_file_note": "the reader's output, as far as it wrote before the error"} if PARTIAL["out_file"] and os.path.exists(PARTIAL["out_file"]) else {})})
         sys.exit(1)

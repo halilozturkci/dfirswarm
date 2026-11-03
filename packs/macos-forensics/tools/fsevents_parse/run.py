@@ -107,6 +107,10 @@ UUID_TEXT = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f
 # answer is printed, and the answer says so. The first signal counts: later ones do nothing while the tool cleans up. STOP["hooks"] run first (a database connection's
 # interrupt, the kill of the reader process this tool started and of its descendants: its own, never a search by name). Until install_stop_handlers
 # runs (at the end of the module) _early_stop answers a signal with one document that says nothing was read.
+# Two limits are stated, not closed. (1) A signal that arrives before this block has run (the start of the interpreter, the compiling of the file, the
+# imports above the block: tens of milliseconds) is not caught, and ends the tool with no JSON at all. (2) hold_signals() trades one whole document for a
+# print that cannot be stopped: if whatever reads this tool's stdout stops reading a full pipe, only SIGKILL ends the tool (the harness ends a tool with a
+# SIGKILL of its group, so its own path is not affected).
 import signal
 
 STOP = {"signal": None, "hooks": []}
@@ -208,8 +212,11 @@ for _early in STOP_SIGNALS:
     signal.signal(_early, _early_stop)
 # END SHARED STOP
 
+SWEEP = {"began": False}      # set when the tool starts on the evidence; the last-resort text of a stop in main() says what was begun, not "nothing was read"
+
 
 def fail(message, **extra):
+    remove_temporaries()                   # (a refusal after the first spill leaves no half-written result file behind)
     close_values()
     emit({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error); nothing was read", **extra})
     raise SystemExit(1)
@@ -1916,7 +1923,7 @@ OWN_NAMES.update((
     "inline_byte_limit", "kept_earlier_larger_result", "coverage", "problems", "problems_total", "problem_occurrences", "problems_folded", "occurrences", "folded", "first_offset", "last_offset", "listed_per_kind_and_file", "listed_in_all", "files", "problems_pages", "filters", "limits", "directory", "note",
     "error", "type", "reason", "out_file", "compressed_bytes", "expanded_bytes", "members", "pages", "bytes_skipped", "padding_bytes", "bytes_not_decoded",
     "complete", "truncated", "failed", "parsed", "unsupported", "invalid_length", "decoded", "empty_path", "incomplete", "before_filter", "kept",
-    "contains", "flags", "flags_unknown", "max_expanded_bytes", "max_page_bytes", "max_inline_bytes", "max_seconds", "max_seconds_requested", "links_not_followed", "names_not_examined", "files_not_listed",
+    "contains", "flags", "flags_unknown", "flags_unknown_count", "partial_out_file", "partial_out_file_note", "flags_known", "max_expanded_bytes", "max_page_bytes", "max_inline_bytes", "max_seconds", "max_seconds_requested", "links_not_followed", "names_not_examined", "files_not_listed",
     "not_regular_files", "file", "state", "gzip", "problems", "magic_seen", "error", "kind", "why", "offset", "bytes", "compressed_offset", "member", "cap",
     "declared", "available", "magic", "first_bytes_hex", "uuid", "raw_hex", "bytes", "contains_blind_records", "contains_timeouts", "time_limit", "matched",
     "returned", "all_results", "all_results_format", "event_id", "flags_raw", "node_id", "version", "page_offset", "record_offset", "flags_undecoded",
@@ -1929,11 +1936,41 @@ FIELDS.update({
 })
 
 
+class SinkError(Exception):
+    """A record could not be written to out_file or to the result file: a fact about the output, not about the record file being read."""
+
+
+SINK_DEAD = [False]             # a write to out_file or the result file failed: nothing more is written (the half of a row it may hold is not completed by a later one)
+PAGES = []                      # every pager this run made: the last-resort handler removes their temporary files
+PARTIAL = {"out_file": None}    # the out_file once it is made: an unexpected error names it as possibly partial
+
+
+def remove_temporaries():
+    for page in PAGES:
+        try:
+            if page._out is not None:
+                page._out.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if page._tmp is not None:
+                os.unlink(page._tmp)
+        except OSError:
+            pass
+
+
 class SealedPage(LosslessPage):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.in_file = 0                  # the rows the result file holds: a row is counted after it is flushed, so a write the filesystem refuses is found at the row it fails on
+        PAGES.append(self)
+
     """A page whose rows are written through the boundary (the inline page is sealed with the answer)."""
 
     def _write(self, row):
         super()._write(row_object(row))
+        self._out.flush()
+        self.in_file += 1
 
     def add(self, row):
         with held():                      # a row reaches the page and its file whole, or the signal waits for it
@@ -1945,6 +1982,7 @@ class SealedPage(LosslessPage):
         for name in ("all_results", "kept_earlier_larger_result"):
             if result.get(name):
                 OWN_NAMES.add(result[name])
+        self._tmp = None                  # (made into the result file: nothing left to remove)
         return result
 
 
@@ -2047,12 +2085,7 @@ def inflate(fh, scan, cap):
         if index % MEMBER_CLOCK_EVERY == 0:
             check_time()                  # members that inflate to nothing never reach the page loop's clock
         if pending[:2] != b"\x1f\x8b":
-            rest = len(pending)
-            while True:
-                more = fh.read(CHUNK)
-                if not more:
-                    break
-                rest += len(more)
+            rest = max(scan.compressed_bytes - offset, len(pending))      # counted from the size fstat gave, not read: a tail of tens of GB took minutes
             scan.not_decoded_bytes += rest
             scan.problem("bytes after the last gzip member", "%d byte(s) at compressed offset %d are not a gzip member" % (rest, offset),
                          compressed_offset=offset, bytes=rest, first_bytes_hex=guard_hex(pending[:8].hex(), "first_bytes_hex"))
@@ -2064,6 +2097,7 @@ def inflate(fh, scan, cap):
         status, unused, why = None, b"", None
         try:
             while True:
+                check_time()                  # one look per chunk of input, also inside a member that inflates to nothing
                 out = engine.decompress(buf, CHUNK)
                 fed += len(buf) - len(engine.unconsumed_tail) - (len(engine.unused_data) if engine.eof else 0)
                 if out:
@@ -2112,18 +2146,14 @@ def inflate(fh, scan, cap):
             scan.members["failed"] += 1
             scan.problem("gzip member failed", "member %d, starting at compressed offset %d, does not decode (%s); "
                          "the rest of the file is not read" % (index, offset, why), member=index, compressed_offset=offset)
-        remaining = len(engine.unconsumed_tail)
-        while True:
-            more = fh.read(CHUNK)
-            if not more:
-                break
-            remaining += len(more)
+        remaining = len(engine.unconsumed_tail) + max(scan.compressed_bytes - fh.tell(), 0)      # the rest of the file is counted, not read
         scan.not_decoded_bytes += remaining
         return
 
 
 def raw(fh):
     while True:
+        check_time()                      # one look per block: a file with a long tail that is not a page was never under the clock
         block = fh.read(CHUNK)
         if not block:
             return
@@ -2133,8 +2163,9 @@ def raw(fh):
 class Source:
     """Decompressed bytes read forward with a lookahead; `offset` is the absolute position of the next byte."""
 
-    def __init__(self, chunks):
+    def __init__(self, chunks, rest=None):
         self.chunks = chunks
+        self.rest = rest                  # for a file that is not compressed: how many bytes of it are not read yet (from its size, no read)
         self.buf = bytearray()
         self.pos = 0
         self.base = 0                     # absolute offset of buf[0]
@@ -2173,6 +2204,7 @@ class Source:
         """Consume bytes up to the next supported page magic (or the end); how many."""
         skipped = 0
         while True:
+            check_time()
             window = self.peek(1 << 16)
             if not window:
                 return skipped
@@ -2189,8 +2221,14 @@ class Source:
             skipped += step
 
     def drain(self):
+        if self.rest is not None:
+            total = len(self.buf) - self.pos + self.rest()         # counted from the size, not read
+            self.pos = len(self.buf)
+            self.done = True
+            return total
         total = 0
         while True:
+            check_time()
             got = self.take(1 << 20)
             if not got:
                 return total
@@ -2341,6 +2379,7 @@ def scan_file(scan, emit, max_expanded, max_page):
         elif head in SUPPORTED or SHAPE.fullmatch(head or b""):
             scan.compressed = False
             chunks = raw(fh)
+            rest = lambda: max(size - fh.tell(), 0)      # noqa: E731
         else:
             scan.compressed = False
             scan.state = "unsupported"
@@ -2348,7 +2387,11 @@ def scan_file(scan, emit, max_expanded, max_page):
                          first_bytes_hex=guard_hex(head.hex(), "first_bytes_hex"))
             return scan
         try:
-            parse_pages(Source(chunks), scan, emit, max_page)
+            parse_pages(Source(chunks, rest if not scan.compressed else None), scan, emit, max_page)
+        except SinkError as exc:
+            scan.error = "the records could not be written: %s" % exc
+            scan.problem("could not write", "the records could not be written to %s (%s): this says nothing about the record file; every record counted is in the file, and the one that failed may be cut off at the end of it"
+                         % ("out_file" if PARTIAL["out_file"] else "the result file", exc))
         except OSError as exc:
             scan.error = "%s: %s" % (type(exc).__name__, exc.strerror or "error")
             scan.problem("read failed", scan.error)
@@ -2520,8 +2563,16 @@ def run_scan(args):
             pattern = re.compile(contains, re.I)
         except (re.error, RecursionError, OverflowError) as exc:
             fail("contains is not a valid regex", reason=type(exc).__name__)
-    wanted = {str(f) for f in (args.get("flags") or [])}
+    flags_arg = args.get("flags")
+    if flags_arg is not None and (not isinstance(flags_arg, list) or any(not isinstance(f, str) for f in flags_arg)):
+        fail("flags must be a list of flag names (strings)")
+    wanted = set(flags_arg or [])
     unknown_flags = sorted(wanted - FLAG_NAMES)
+    if unknown_flags:
+        # (a name that matches nothing gave a complete answer with no record: it is refused, like a bad `contains`, before anything is read; a hostile list
+        # is cut in the answer: the first names, each cut, and the count)
+        fail("flags names a flag this tool does not know, so the filter would match no record: nothing is read",
+             flags_unknown=[n[:80] for n in unknown_flags[:20]], flags_unknown_count=len(unknown_flags), flags_known=sorted(FLAG_NAMES))
 
     notes = {"links_not_followed": 0, "not_regular_files": 0}
     identity = None
@@ -2580,6 +2631,7 @@ def run_scan(args):
             except OSError as exc:
                 fail("out_file could not be created", out_file=out_name, reason="%s: %s" % (type(exc).__name__, exc.strerror or "error"))
             sink = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
+            PARTIAL["out_file"] = out_name
             OWN_NAMES.add(out_name)
         paging = None if sink else SealedPage("fsevents_parse", [path, contains, sorted(wanted)], limit, inline_bytes)
         inline = []
@@ -2618,12 +2670,22 @@ def run_scan(args):
                 return
             line = json.dumps(row_object(record), sort_keys=True) if sink else None       # (judged before the signals are held: a signal waits for a write, not for a judging)
             with held():
+                if SINK_DEAD[0]:
+                    raise SinkError("an earlier write failed, so no further record is written")
+                try:
+                    if sink:
+                        sink.write(line + "\n")
+                        sink.flush()                  # every row: the write the filesystem refuses is found at this row, before the row is counted
+                    else:
+                        paging.add(record)
+                except OSError as exc:
+                    SINK_DEAD[0] = True
+                    raise SinkError("%s: %s" % (type(exc).__name__, exc.strerror or "error"))   # (not counted: it is not in the file)
                 totals["kept"] += 1
                 if record["event_id"]:
                     ids[0] = record["event_id"] if ids[0] is None else min(ids[0], record["event_id"])
                     ids[1] = record["event_id"] if ids[1] is None else max(ids[1], record["event_id"])
                 if sink:
-                    sink.write(line + "\n")
                     if not inline_state["full"] and len(inline) < limit:
                         if inline_state["bytes"] + len(line) <= inline_bytes:
                             inline.append(record)
@@ -2633,8 +2695,6 @@ def run_scan(args):
                             inline_state["full"] = True
                     else:
                         inline_state["full"] = True
-                else:
-                    paging.add(record)
 
         states = {"parsed": 0, "partial": 0, "empty": 0, "unsupported": 0, "failed": 0, "not_attempted": 0}
         coverage = {"compressed_bytes": 0, "expanded_bytes": 0,
@@ -2681,6 +2741,7 @@ def run_scan(args):
                     gone["occurrences"] += p.get("occurrences", 1)
                     gone["files"] += 1
 
+        SWEEP["began"] = True
         try:
             for index, target in enumerate(targets):
                 scan = FileScan(target)
@@ -2708,8 +2769,10 @@ def run_scan(args):
                         stopped_in = scan.shown
                     not_attempted = targets[index + 1:]
                     break
+            hold_signals()      # the last statement of the sweep's try: a stop signal in the few bytecodes after the sweep lands in the except below
         except Interrupted as stop:
             interrupted = stop.signum
+            hold_signals()      # (a second signal does nothing: the first one counts)
     except Interrupted:
         # a signal before the sweep began: what was opened is closed and the caller's wrapper answers
         if sink is not None:
@@ -2723,9 +2786,15 @@ def run_scan(args):
             if number < NOT_ATTEMPTED_LISTED:                              # (a directory of a million files is counted, not listed a million times)
                 per_file.add({"file": guard_text(target, "file"), "state": "not_attempted", "gzip": None, "compressed_bytes": None, "expanded_bytes": 0})
         if sink:
-            sink.flush()
-            os.fsync(sink.fileno())
-            sink.close()
+            if SINK_DEAD[0]:
+                try:
+                    sink.close()                                       # (what it still holds cannot be written: the file ends where the last row counted ends, or in a cut row)
+                except OSError:
+                    pass
+            else:
+                sink.flush()
+                os.fsync(sink.fileno())
+                sink.close()
             shown, complete = inline, out_name
             limited = totals["kept"] > len(inline)
             page = {"inline_bounded_by_bytes": inline_state["bounded_by_bytes"]}
@@ -2803,7 +2872,7 @@ def run_scan(args):
                                         "first and last offset (kind, folded: true); coverage and per_file hold the exact counts"}}
            if problem_book["occurrences"] > problems_page["matched"] else {}),
         "problems_pages": problems_page,
-        "filters": {"contains": bool(contains), "flags": sorted(wanted), **({"flags_unknown": unknown_flags} if unknown_flags else {}),
+        "filters": {"contains": bool(contains), "flags": sorted(wanted),
                     **({"contains_blind_records": totals["contains_blind"], "contains_timeouts": totals["contains_timeouts"]} if pattern is not None else {})},
         "limits": {"max_expanded_bytes": max_expanded, "max_page_bytes": max_page, "max_inline_bytes": inline_bytes, "max_seconds": max_seconds,
                    **({"max_seconds_requested": requested_seconds} if requested_seconds != max_seconds else {}),
@@ -2848,11 +2917,17 @@ if __name__ == "__main__":
         raise
     except Interrupted as stop:
         close_values()
-        emit({"error": "the tool was stopped by %s before it had read anything" % signal_name(stop.signum), "status": "failed",
-              "status_basis": "stopped by %s during start-up: nothing was read" % signal_name(stop.signum), "interrupted": signal_name(stop.signum)})
+        began = SWEEP["began"]
+        emit({"error": "the tool was stopped by %s %s" % (signal_name(stop.signum), "after its sweep had begun and before its answer was made" if began else "before its sweep of the record files began"),
+              "status": "failed",
+              "status_basis": ("stopped by %s after the sweep had begun: some record files may have been read, and none of that is in this answer" if began else
+                               "stopped by %s before the sweep began: no record file had been read and no result was made") % signal_name(stop.signum),
+              "interrupted": signal_name(stop.signum)})
         sys.exit(128 + stop.signum)
     except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the evidence)
         close_values()
+        remove_temporaries()
         emit({"error": "the tool stopped on an unexpected error", "type": type(exc).__name__, "status": "failed",
-              "status_basis": "the tool stopped with an unexpected error: nothing is complete"})
+              "status_basis": "the tool stopped with an unexpected error: nothing is complete",
+              **({"partial_out_file": PARTIAL["out_file"], "partial_out_file_note": "written before the error, rows whole up to the last newline; the last row may be cut"} if PARTIAL["out_file"] else {})})
         sys.exit(1)
