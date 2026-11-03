@@ -12,12 +12,15 @@ Use when the index shows only this line and you need a mobile note. Not for rule
 
 Start
 `extractions/what-you-have` scope, authority, before any question
-`extractions/backup-detail` iOS backup, adb backup
+`extractions/backups` backup, cloud copy, derivative
+`extractions/protection-state` protected, unreadable data
+`extractions/backup-detail` backup tool fields
 
 iOS
 `ios/artifacts` sources by build
 `ios/containers-and-time` app container, iOS time
 `ios/biome-segb` Biome streams
+`ios/knowledgec-activity` KnowledgeC on iOS
 `ios/unified-logs` retained diagnostic logs
 
 Android
@@ -26,4 +29,8 @@ Android
 Apps and places
 `apps/databases` app SQLite, deleted content
 `apps/fragments` reading a free-space answer
+`apps/messaging` message stores
+`apps/identity-containers` app, user, restore
+`media/provenance` photo, original, preview
+`validation/parser-coverage` what a parser covered
 `location/sources` where a device or person was

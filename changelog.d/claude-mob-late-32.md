@@ -16,3 +16,9 @@
 ### Changed: mobile-forensics, android-backup-apps
 
 - The recipe is no longer declared unavailable. It detects an unencrypted `.ab` (header versions 1 to 5), lays the backup out as the `ab_layout` tool does (the logic is copied into the recipe) under `derivative/`, and runs ALEAPP over the layout with `-t fs` in the recipe's process group, with the `modules.tsv` receipt of `android-aleapp`, a `coverage.json` written before ALEAPP starts, and `ab-members.tsv` for every member of the backup. The result is a derivative of an adb backup and says so in `derivative/DERIVATIVE.json` and in `coverage.json`. An encrypted backup is refused as failed and no password is read; a stream that is not whole (a missing end block, a lone zero block, bytes after the end) or a member that is rejected or left out for a reason that is not by design makes the run partial. The recipe does not withhold recovery-password-shaped member names (the `ab_layout` tool does). The README and the leaf `extractions/what-you-have` no longer call the route unavailable.
+
+### Added: mobile-forensics, seven skills
+
+- `extractions/backups` (what a local or cloud backup covers, the derivative tools, no decryption provided), `extractions/protection-state` (a gap is not an absence; no bypass is prescribed), `apps/messaging`, `apps/identity-containers` (app, user and device identity, restore and migration), `ios/knowledgec-activity`, `media/provenance` (originals, derivatives and capture clocks, the HEIC route) and `validation/parser-coverage` (the matrix and the receipt outcomes of the LEAPP recipes).
+- The router and the index name them; `extractions/backup-detail` stays as the second-level leaf for reading a backup answer, and the restore sentence of `ios/containers-and-time` moved to `apps/identity-containers`. `heif-convert` and `pillow-heif` are no longer held only for a future skill.
+- The pack now has 18 skills; the pack version is 1.9.0.

@@ -9,13 +9,18 @@ needed for much of what an iPhone stores.
 
 ## What it carries
 
-**Eleven skills**: ten short decision leaves (800 tokens at most) that point to
-a second-level leaf only when the case needs it: `extractions/what-you-have` (start
-here) and `extractions/backup-detail`; `apps/databases` and `apps/fragments`;
-`ios/artifacts`, `ios/containers-and-time`, `ios/biome-segb` and `ios/unified-logs`;
-`android/artifacts`; `location/sources`; and the pack's router, `mobile/router` (at
-most 400 tokens), which names the ten by the question each answers, holds no rule, and
-is the one line a run shows for the pack when its skills index is over budget.
+**Eighteen skills**: seventeen short decision leaves (800 tokens at most) that point
+to a second-level leaf only when the case needs it: `extractions/what-you-have`
+(start here), `extractions/backups` (local and cloud backups, derivatives, encrypted
+backups) with `extractions/backup-detail` as the second-level leaf for reading a
+backup answer, and `extractions/protection-state`; `apps/databases`, `apps/fragments`,
+`apps/messaging` and `apps/identity-containers`; `ios/artifacts`,
+`ios/containers-and-time`, `ios/biome-segb`, `ios/unified-logs` and
+`ios/knowledgec-activity`; `android/artifacts`; `location/sources`;
+`media/provenance`; `validation/parser-coverage`; and the pack's router,
+`mobile/router` (at most 400 tokens), which names the seventeen by the question each
+answers, holds no rule, and is the one line a run shows for the pack when its skills
+index is over budget.
 
 **Six tools.** Each says in its manifest what it measures and what it does
 not, and each returns its whole result: an inline page and, when there is more,
