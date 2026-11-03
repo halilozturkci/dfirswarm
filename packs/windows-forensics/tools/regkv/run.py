@@ -444,11 +444,12 @@ class HiveBounds:
 
 # BEGIN SHARED BOUNDARY
 # BOUNDARY v2, the one text: the same text is in every tool that prints names, paths, event data, registry data, identifiers or table
-# cells from evidence (tests/pack-boundary-shared.test.ts finds every copy under packs/ and tool-library/ and holds them equal, but for the one
-# variant it declares until the three virtualization tools move onto this text). It is the owner-approved HYBRID design: an allow-list for
+# cells from evidence (tests/pack-boundary-shared.test.ts finds every copy under packs/ and tool-library/ and holds them equal: one variant, 16 carriers).
+# It is the owner-approved HYBRID design: an allow-list for
 # identifier-shaped fields, a deny-list for free text, and an independent backstop on the way out.
 #
-# THE CALLS A TOOL MAKES, and what the virtualization block called each (its tools move onto this text; the table is what they map to):
+# Names defined here start with _b_ or _B_ where another shared block of a tool could define the same name (the WITHHOLDING block has _withheld and _USERINFO).
+# THE CALLS A TOOL MAKES, and what the virtualization block called each (the three virtualization tools moved onto this text; the table is what they map to):
 #   FIELDS, KEY_KINDS, bind_fields(table, key_kinds)           the table of field kinds, which the CALLER passes in (this text holds no tool's table);
 #                                                              it was _FIELDS, _INHERIT and field_kind(); a digit run in a field name stands for any number
 #                                                              (`ethernet#.address`), and a field the table does not list has the kind of the field above it
@@ -612,7 +613,7 @@ _EVENTS = [None]               # while a string is judged only to see what the a
 _QUIET = [False]
 
 
-def _withheld(original, label, field=""):
+def _b_withheld(original, label, field=""):
     n = len(original)
     if _EVENTS[0] is not None:
         _EVENTS[0].append((original, label, field))
@@ -905,14 +906,14 @@ def _replace_spans(s, spans, label, field):
     out, last = [], 0
     for a, b in spans:
         out.append(s[last:a])
-        out.append(_withheld(s[a:b], label, field))
+        out.append(_b_withheld(s[a:b], label, field))
         last = b
     out.append(s[last:])
     return "".join(out)
 
 
 def _show_name(s, field):
-    return s if _plain_name(s) else _withheld(s, "not a plain name", field)
+    return s if _plain_name(s) else _b_withheld(s, "not a plain name", field)
 
 
 def _show_path(s, field, extra_ok=_PATH_EXTRA):
@@ -943,9 +944,9 @@ def _show_url(s, field):
     scheme, userinfo, host, path, query, frag = m.groups()
     out = scheme
     if userinfo is not None:
-        out += (userinfo if _MARK.fullmatch(userinfo) else _withheld(userinfo, "user-info", field)) + "@"
+        out += (userinfo if _MARK.fullmatch(userinfo) else _b_withheld(userinfo, "user-info", field)) + "@"
     hostname, colon, port = host.partition(":") if not host.startswith("[") else (host, "", "")
-    out += _show_host(hostname, field) + (colon + (port if port.isdigit() else _withheld(port, "not a port", field)) if colon else "")
+    out += _show_host(hostname, field) + (colon + (port if port.isdigit() else _b_withheld(port, "not a port", field)) if colon else "")
     out += _show_path(path, field)
     if query is not None:
         pairs = []
@@ -954,13 +955,13 @@ def _show_url(s, field):
             kk = _show_name(k, field) if k else k
             if eq:
                 sv = _show_value(v)
-                pairs.append(kk + "=" + (sv if sv is not None else _withheld(v, "query value", field)))
+                pairs.append(kk + "=" + (sv if sv is not None else _b_withheld(v, "query value", field)))
             else:
                 pairs.append(kk)
         out += "?" + "&".join(pairs)
     if frag is not None:
         sv = _show_value(frag)
-        out += "#" + (sv if sv is not None else _withheld(frag, "fragment", field))
+        out += "#" + (sv if sv is not None else _b_withheld(frag, "fragment", field))
     return out
 
 
@@ -1013,7 +1014,7 @@ def _field_entry(name):
 _URL_USERINFO_SLASH = re.compile(r"(?<=//)(?![^\s/@:<>\"'`]*:[0-9]{1,5}(?:[/?#@]|$))[^\s/@:<>\"'`]{1,64}:[^\s<>\"'`]{1,128}(?=@[^\s/@<>\"'`]*(?:[\s/<>\"'`?#]|$))")
 # a user the deny-list already replaced: `<withheld ...>:password@host`
 _MARK_USERINFO = re.compile(r"(?P<mark><withheld \d+ (?:characters|bytes)[^<>]{0,70}>|\[withheld: \d+ characters\]):(?P<pw>[^\s/<>\"'`]{1,128})(?=@[^\s/@<>\"'`]*(?:[\s/<>\"'`?#]|$))")
-_USERINFO = re.compile(r"(?<![A-Za-z0-9._%+-])(?!mailto:)[^\s/@:<>\"'`]{1,64}:[^\s/<>\"'`]{1,128}(?=@[^\s/@<>\"'`]*(?:[\s/<>\"'`?#]|$))")
+_B_USERINFO = re.compile(r"(?<![A-Za-z0-9._%+-])(?!mailto:)[^\s/@:<>\"'`]{1,64}:[^\s/<>\"'`]{1,128}(?=@[^\s/@<>\"'`]*(?:[\s/<>\"'`?#]|$))")
 _URL_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
 _NAMED = re.compile(r"(?i)(?:(?<![Bb]y)(?<![Cc]om)(?<![Oo]ver)(?<![Uu]nder)(?<![Tt]res)(?<![Ee]ncom)(?<![Ss]ur)(?<![Ii]m)pass(?:word|wd|phrase)?|pwd|secret|token|api[_-]?key|access[_-]?key|account[_-]?key|private[_-]?key|client[_-]?secret|credential|auth(?:orization)?)s?[\"']?[ \t]{0,3}[=:][ \t]{0,3}[\"']?(?P<value>(?:[^\s\"'<>;,&]|[;,&](?![A-Za-z0-9_. -]{1,40}=)){1,512})")
 _PEM = re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|$)", re.S)
@@ -1038,22 +1039,22 @@ _PREFIX_HINTS = ("akia", "asia", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github
 def _layer2_once(s, field):
     # each rule is tried only when the text holds what it needs (a character or a word it cannot match without): the same result, a lot less reading
     if "withheld" in s:
-        s = _MARK_USERINFO.sub(lambda m: m.group("mark") + ":" + _withheld(m.group("pw"), "user-info", field), s)
+        s = _MARK_USERINFO.sub(lambda m: m.group("mark") + ":" + _b_withheld(m.group("pw"), "user-info", field), s)
     if "-----" in s:
-        s = _outside(s, _MARK, lambda p: _PEM.sub(lambda m: _withheld(m.group(), "private key", field), p))
+        s = _outside(s, _MARK, lambda p: _PEM.sub(lambda m: _b_withheld(m.group(), "private key", field), p))
     if "@" in s:
-        s = _outside(s, _MARK, lambda p: _URL_USERINFO_SLASH.sub(lambda m: _withheld(m.group(), "user-info", field), p))
-        s = _outside(s, _MARK, lambda p: _URL_USERINFO.sub(lambda m: _withheld(m.group(), "user-info", field), p))
-        s = _outside(s, _MARK, lambda p: _USERINFO.sub(lambda m: _withheld(m.group(), "user-info", field), p))
+        s = _outside(s, _MARK, lambda p: _URL_USERINFO_SLASH.sub(lambda m: _b_withheld(m.group(), "user-info", field), p))
+        s = _outside(s, _MARK, lambda p: _URL_USERINFO.sub(lambda m: _b_withheld(m.group(), "user-info", field), p))
+        s = _outside(s, _MARK, lambda p: _B_USERINFO.sub(lambda m: _b_withheld(m.group(), "user-info", field), p))
     low = s.lower()
     if _has(_NAMED_WORDS, low):
-        s = _outside(s, _MARK, lambda p: _NAMED.sub(lambda m: m.group()[:m.start("value") - m.start()] + _withheld(m.group("value"), "secret value", field), p))
+        s = _outside(s, _MARK, lambda p: _NAMED.sub(lambda m: m.group()[:m.start("value") - m.start()] + _b_withheld(m.group("value"), "secret value", field), p))
     if "=" in s:
-        s = _outside(s, _MARK, lambda p: _BASE64_PADDED.sub(lambda m: _withheld(m.group(), "token-shaped text", field) if _b64_shape(m.group()) else m.group(), p))
-    s = _outside(s, _MARK, lambda p: _LONG_DIGITS.sub(lambda m: _withheld(m.group(), "long number", field), p))
+        s = _outside(s, _MARK, lambda p: _BASE64_PADDED.sub(lambda m: _b_withheld(m.group(), "token-shaped text", field) if _b64_shape(m.group()) else m.group(), p))
+    s = _outside(s, _MARK, lambda p: _LONG_DIGITS.sub(lambda m: _b_withheld(m.group(), "long number", field), p))
     low = s.lower()
     if _has(_PREFIX_HINTS, low):
-        s = _outside(s, _MARK, lambda p: _PREFIX.sub(lambda m: _withheld(m.group(), "token-shaped text", field), p))
+        s = _outside(s, _MARK, lambda p: _PREFIX.sub(lambda m: _b_withheld(m.group(), "token-shaped text", field), p))
     return s
 
 
@@ -1149,10 +1150,10 @@ def _show_hex(s, field):
     if not s or not re.fullmatch(r"(?:[0-9A-Fa-f]{2})+", s):
         return s if re.fullmatch(r"[0-9A-Fa-f]*", s) else _show_text(s, field)
     if len(s) > MAX_HEX_JUDGED:
-        return _withheld(s, "binary data over the judged size", field)
+        return _b_withheld(s, "binary data over the judged size", field)
     for v in _hex_views(s) or ():
         if _layer2(v, "") != v or _deny_text(v, "") != v or _suspect(v):
-            return _withheld(s, "binary data holding a secret-shaped text", field)
+            return _b_withheld(s, "binary data holding a secret-shaped text", field)
     return s
 
 
@@ -1168,18 +1169,18 @@ def _show(s, kind, field):
     if s in OWN_NAMES or _MARK.fullmatch(s):
         return s
     if len(s) > MAX_ONE_STRING:
-        return _show(s[:MAX_ONE_STRING], kind, field) + _withheld(s[MAX_ONE_STRING:], "rest of a long string", field)
+        return _show(s[:MAX_ONE_STRING], kind, field) + _b_withheld(s[MAX_ONE_STRING:], "rest of a long string", field)
     if kind in _TYPED:
         if len(s) <= 3 or (_TYPED[kind].fullmatch(s) and not (kind in _NAMING_IDS and s[:4] in ("t10.", "iqn.") and _bad_runs(s, _JOIN_NAME))):
             return s
-        return _withheld(s, "not a %s" % kind, field)
+        return _b_withheld(s, "not a %s" % kind, field)
     if kind == "hex":
         return _show_hex(s, field)
     flat = _flat(s)
     if flat != s:
         # an invisible character, or the escape of one: identifiers fail closed; free text is judged without it
         if kind in ("name", "path", "key", "url"):
-            return _withheld(s, "invisible characters in a name", field)
+            return _b_withheld(s, "invisible characters in a name", field)
         sealed = _show_text(flat, field)
         return sealed if sealed != flat else s
     if kind not in ("name", "path", "key", "url", "host"):
@@ -1212,7 +1213,7 @@ def show(s, kind="text", field=""):
             if pending and not quiet:
                 # judged earlier only to see what would be printed: it is withheld, counted and written to the values file now that it is printed (once)
                 for original, label, where in pending:
-                    _withheld(original, label, where)
+                    _b_withheld(original, label, where)
                 _MEMO[memo] = (out, None)
             return out
     events = _EVENTS[0] = [] if quiet and memo is not None else None
