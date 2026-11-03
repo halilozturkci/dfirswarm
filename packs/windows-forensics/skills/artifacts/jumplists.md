@@ -4,7 +4,7 @@ title: Jump Lists
 when: Recent and pinned items.
 needs: [artifacts/shell]
 tools: [jumplist, lnk_parse, lnk_jumplist]
-requires_host: [olecfexport, lnkinfo]
+requires_host: [olecfexport, lnkinfo, JLECmd, dotnet]
 ---
 
 Use when you read Jump List files. Not for the Recent folder's own links (`artifacts/links`) or for execution (`execution/overview`).
@@ -16,6 +16,7 @@ Use when you read Jump List files. Not for the Recent folder's own links (`artif
 - A stream too large to read is named, not read (`not_read`, a problem, status partial). A FIFO or device is never opened: `not_attempted` and `files_not_attempted` count them. Read `status` (complete, partial, failed) and `problems` first.
 - `olecfexport` takes the compound file apart as a second reader of the container; it does not check what a DestList field means.
 - `lnk_jumplist` reads a file or a directory of them in one call: rows for the file, the container (consistent or not, with its problems: a sector two chains hold, a FAT that does not mark its own sectors, a DestList entry that names a stream that is no link), each stream with its `extents` in the file, each DestList entry with the stream it names (a stream with no entry is `orphan`; at most 50,000 entries of a DestList are read, the rest is named as a problem, and an `orphan` then says its entry may be among those not read), and each link with the same extents and an `integrity` that includes a second read by `lnkinfo`. Cite offsets from its rows.
+- `JLECmd` (Eric Zimmerman's, through `dotnet`) is `lnk_jumplist`'s second reader of a DestList, where installed: each entry row has `integrity.jlecmd`, `agree`, `disagree` (field, both values) or `not_run` (why). It compares the count, each entry's path, access time and pin state, and the application id. A disagreement makes the status partial: report it, and check the bytes (`container_offset`) before choosing a reader. `not_run` is not agreement: say one reader read it.
 
 Shows: that an application or the shell listed that item (recent use, a pin, a destination or a task), with the entry's own last access. Does not show: an opening event, the target's timestamp, a person. Record: application id (the file name), source file, DestList version, entry and stream, the link written for it.
 

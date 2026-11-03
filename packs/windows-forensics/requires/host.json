@@ -240,7 +240,7 @@
       "name": "dotnet",
       "package": ".NET runtime",
       "optional": true,
-      "why": "The runtime Eric Zimmerman's MFTECmd, EvtxECmd and RECmd run on (their net builds, which target .NET 10): installed once, and each of them runs through it.",
+      "why": "The runtime Eric Zimmerman's MFTECmd, EvtxECmd, RECmd and JLECmd run on (their net builds, which target .NET 10): installed once, and each of them runs through it.",
       "install": {
         "brew": "brew install --cask dotnet",
         "apt": "pinned download 10.0.14 (install.download)",
@@ -337,6 +337,32 @@
             "url": "https://download.ericzimmermanstools.com/net/RECmd.zip",
             "sha256": "dcdf32f5b75733c5a7cd6d9fc97572c8466b11cdb9cfb4eaa7d56416c6e1dae9",
             "bin": "RECmd/RECmd.dll"
+          }
+        }
+      },
+      "licence": "MIT",
+      "redistributable": false
+    },
+    {
+      "name": "JLECmd",
+      "package": "Eric Zimmerman's tools",
+      "optional": true,
+      "why": "A second, independent reader of a Jump List's DestList, for lnk_jumplist to compare its own read against (entry count, path, access time, pin state, application id). Needs the .NET runtime; MIT licensed.",
+      "install": {
+        "brew": "https://ericzimmerman.github.io/",
+        "apt": "pinned download 2026.10.6 (install.download), run by the .NET runtime (dotnet)",
+        "download": {
+          "version": "2026.10.6",
+          "run": "dotnet",
+          "amd64": {
+            "url": "https://download.ericzimmermanstools.com/net/JLECmd.zip",
+            "sha256": "5867b9103e66ee160ce9e4e93b5b0cd15ae376683a89503cb3f95d2fdc2cd6e2",
+            "bin": "JLECmd.dll"
+          },
+          "arm64": {
+            "url": "https://download.ericzimmermanstools.com/net/JLECmd.zip",
+            "sha256": "5867b9103e66ee160ce9e4e93b5b0cd15ae376683a89503cb3f95d2fdc2cd6e2",
+            "bin": "JLECmd.dll"
           }
         }
       },
