@@ -216,6 +216,7 @@ SWEEP = {"began": False}      # set when the tool starts on the evidence; the la
 
 
 def fail(message, **extra):
+    remove_temporaries()                   # (a refusal after the first spill leaves no half-written result file behind)
     close_values()
     emit({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error); nothing was read", **extra})
     raise SystemExit(1)
@@ -1961,12 +1962,15 @@ def remove_temporaries():
 class SealedPage(LosslessPage):
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
+        self.in_file = 0                  # the rows the result file holds: a row is counted after it is flushed, so a write the filesystem refuses is found at the row it fails on
         PAGES.append(self)
 
     """A page whose rows are written through the boundary (the inline page is sealed with the answer)."""
 
     def _write(self, row):
         super()._write(row_object(row))
+        self._out.flush()
+        self.in_file += 1
 
     def add(self, row):
         with held():                      # a row reaches the page and its file whole, or the signal waits for it
@@ -1978,6 +1982,7 @@ class SealedPage(LosslessPage):
         for name in ("all_results", "kept_earlier_larger_result"):
             if result.get(name):
                 OWN_NAMES.add(result[name])
+        self._tmp = None                  # (made into the result file: nothing left to remove)
         return result
 
 

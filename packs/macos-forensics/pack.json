@@ -1,7 +1,7 @@
 {
   "id": "macos-forensics",
   "name": "macOS Forensics Pack",
-  "version": "1.5.13",
+  "version": "1.5.14",
   "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, accounts and the limits of attribution, and what APFS retains. TCC, Keychain, Gatekeeper and XProtect, Spotlight and Biome have no skill here yet.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -55,12 +55,12 @@
       "skills/persistence/mechanisms.md": "bb9b414728736035d90bbe875ff87d17a1b2211e816f3cde0eb1630c89883756",
       "skills/triage/clocks-hardware.md": "eb682191ae96e05cbfddcb047da966fa3192c0d475ea7ad0abc1889a15d921ac",
       "skills/triage/system-profile.md": "6771e67fea5bc88e0dcb72e1a1c61c3ff77606fec1d7128a010251acbf4bbf16",
-      "tools/fsevents_parse/manifest.json": "88fb5cf63b4237c2e7ea97bd1601af8c04242069a8200dc91232f692f2e7455c",
-      "tools/fsevents_parse/run.py": "bd1440846636c5d1cec2c3945f7432ca31d0e5351a0e7c261a1f2a03713ed75f",
-      "tools/knowledgec_query/manifest.json": "a274afeeb27eba7790b8632aef7185b00a89e60b79245377f241dc9b64f0566b",
-      "tools/knowledgec_query/run.py": "4d9833c7f72fd1a4f27387fd3f591a26456a8ffa361ca283f1b7f64ae31359dc",
-      "tools/plist_read/manifest.json": "fc44c285b0074d36c22ebfd2f76e0cb4c01afb83b61b91c428ef928c0ab28884",
-      "tools/plist_read/run.py": "4cb81725c51d6ff4b0109978fb8c71b3fafa136e5b901c35ceb60a046083cce1",
+      "tools/fsevents_parse/manifest.json": "968cf5eb31e090e6e19fa11e6ed69f3918e069ed112017089c7fc35887059c72",
+      "tools/fsevents_parse/run.py": "7704eb322b4c602e7ca8cb4adffafb32bda2b35395fb9acd947cc9e492811bdb",
+      "tools/knowledgec_query/manifest.json": "7aebe8821849fc0683e33778eb6bb2913d8af78de5e5441aa44c15af6234487c",
+      "tools/knowledgec_query/run.py": "6661c1691b87190753d249bc3df49545f96544850a23800a90712826aa5db213",
+      "tools/plist_read/manifest.json": "bcef242e9a359a91ad785558268582ef16b628cde9dc129f532e1a07e4e51ba8",
+      "tools/plist_read/run.py": "15fbae291e8c5cd71ac1403c9af8f8e2b7b8d52bde843c9b7a8020d3ee79ed29",
       "tools/unified_log/manifest.json": "f14f33f22c2f9a266e470570289e925b3c822d680ea36d0ff93dcc4518c043fe",
       "tools/unified_log/run.py": "9fe4b9af62034cc5d8fdc127913daa5be793b4d2cb6b40e52eb315c71c2269aa"
     }

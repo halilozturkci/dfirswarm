@@ -216,6 +216,7 @@ SWEEP = {"began": False}      # set when the tool starts on the evidence; the la
 
 
 def fail(message, **extra):
+    remove_temporaries()                   # (a refusal after the first spill leaves no half-written result file behind)
     close_values()
     emit({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error); nothing was read", **extra})
     raise SystemExit(1)
@@ -1922,7 +1923,7 @@ OWN_NAMES.update((
     "streams", "streams_total", "streams_pages", "note", "resume", "limits", "error", "type", "reason", "sql", "tables", "columns", "table", "column", "rowid",
     "source_table", "z_pk", "stream", "value_string", "value_integer", "value_double", "value_type_code", "start_raw", "end_raw", "created_raw", "start", "end",
     "created", "duration_seconds", "utc_offset_seconds", "uuid", "zobject_other", "metadata", "source", "joins", "fingerprint", "zobject_columns", "cap",
-    "truncated", "exported", "exported_bytes", "export_requested", "database", "staged", "sidecars", "sidecars_not_used", "rows_written", "partial_out_file", "partial_out_file_note", "copies_in_work_dir_not_swept", "sweep_cut", "looked_at_in_part", "copies_without_lock_not_removed", "listed", "why", "copy_dir", "bytes", "sha256", "open_mode", "database_sha256",
+    "truncated", "exported", "exported_bytes", "export_requested", "database", "staged", "sidecars", "sidecars_not_used", "rows_written", "removed_result_file", "rows_in_removed_file", "partial_out_file", "partial_out_file_note", "copies_in_work_dir_not_swept", "sweep_cut", "looked_at_in_part", "copies_without_lock_not_removed", "listed", "why", "copy_dir", "bytes", "sha256", "open_mode", "database_sha256",
     "database_bytes", "wal", "wal_checkpoint", "journal", "staged_copy", "count", "first_start_raw", "last_start_raw", "first_start", "last_start", "matched",
     "returned", "all_results", "all_results_format", "_text_head", "_text_bytes", "_truncated", "_where", "_blob_bytes", "_hex", "_whole_value_file",
     "_whole_value_bytes_written", "_export", "_float", "state", "frames_valid", "frames_committed", "frames_in_file", "page_size", "checkpoint_sequence",
@@ -1934,7 +1935,7 @@ FIELDS.update({
     "db": "path", "database": "path", "stream": "path", "value_string": "text", "start": "time", "end": "time", "created": "time",
     "first_start": "time", "last_start": "time", "resume_since": "time", "uuid": "hex", "_hex": "hex", "_text_head": "text", "_whole_value_file": "path",
     "complete_entries": "path", "all_results": "path", "database_sha256": "digest", "database_sha256_as_acquired": "digest",
-    "database_sha256_after_open": "digest", "sha256": "digest", "fingerprint": "digest", "values_file": "path", "copy_dir": "path",
+    "database_sha256_after_open": "digest", "sha256": "digest", "fingerprint": "digest", "values_file": "path", "removed_result_file": "path", "copy_dir": "path",
 })
 
 
@@ -1956,15 +1957,26 @@ def remove_temporaries():
             pass
 
 
+def removal_of(page):
+    """What a refused write to the result file removes (fail() removes it): the name of the half-made file and the rows it held when the write failed."""
+    name = str(page._tmp) if page._tmp is not None else None
+    if name:
+        OWN_NAMES.add(name)
+    return {"removed_result_file": name, "rows_in_removed_file": page.in_file}
+
+
 class SealedPage(LosslessPage):
     """A page whose rows are written through the boundary (the inline page is sealed with the answer)."""
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
+        self.in_file = 0                  # the rows the result file holds: a row is counted after it is flushed, so a write the filesystem refuses is found at the row it fails on
         PAGES.append(self)
 
     def _write(self, row):
         super()._write(row_object(row))
+        self._out.flush()
+        self.in_file += 1
 
     def add(self, row):
         with held():                      # a row reaches the page and its file whole, or the signal waits for it
@@ -1976,6 +1988,7 @@ class SealedPage(LosslessPage):
         for name in ("all_results", "kept_earlier_larger_result"):
             if result.get(name):
                 OWN_NAMES.add(result[name])
+        self._tmp = None                  # (made into the result file: nothing left to remove)
         return result
 
 
@@ -3012,8 +3025,13 @@ def run_query(args):
                             sink.close()          # (quietly: what it still holds cannot be written, and the interpreter must not complain of it at exit)
                         except OSError:
                             pass
-                    fail("the rows could not be written to %s (%s: %s): the run stopped there; every row counted (rows_written) is in it, and the one that failed may be cut off at the end of it" % (
-                         "out_file" if sink else "the result file", type(exc).__name__, exc.strerror or "error"), rows_written=st["count"])
+                    why = "%s: %s" % (type(exc).__name__, exc.strerror or "error")
+                    if sink:
+                        fail("the rows could not be written to out_file (%s): the run stopped there; every row counted (rows_written) is in it, and the one that failed may be cut off at the end of it" % why,
+                             rows_written=st["count"])
+                    cut = removal_of(paging)
+                    fail("the rows could not be written to the result file (%s): the run stopped there; the result file was not made, and its partial copy (%d rows, %s) was removed: "
+                         "nothing is left of it, and no row is cited from it" % (why, cut["rows_in_removed_file"], cut["removed_result_file"] or "no file was made"), **cut)
                 st["count"] += 1
                 last["z_pk"], last["start_raw"] = o.get("Z_PK"), start_raw
                 if sink:

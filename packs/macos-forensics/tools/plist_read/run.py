@@ -212,6 +212,7 @@ SWEEP = {"began": False}      # set when the tool starts on the evidence; the la
 
 
 def fail(message, **extra):
+    remove_temporaries()                   # (a refusal after the first spill leaves no half-written result file behind)
     print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error); nothing was read", **extra}))
     raise SystemExit(1)
 
@@ -638,7 +639,24 @@ PARTIAL = {"out_file": None}    # the out_file once it is made: an unexpected er
 class TrackedPage(LosslessPage):
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
+        self.in_file = 0                  # the rows the result file holds: a row is counted after it is flushed, so a write the filesystem refuses is found at the row it fails on
         PAGES.append(self)
+
+    def _write(self, row):
+        super()._write(row)
+        self._out.flush()
+        self.in_file += 1
+
+    def finish(self):
+        result = super().finish()
+        self._tmp = None                  # (made into the result file: nothing left to remove)
+        return result
+
+
+def removal_of(page):
+    """What a refused write to the result file removes (fail() removes it): the name of the half-made file and the rows it held when the write failed."""
+    name = str(page._tmp) if page._tmp is not None else None
+    return {"removed_result_file": name, "rows_in_removed_file": page.in_file}
 
 
 def remove_temporaries():
@@ -783,8 +801,9 @@ def main():
                     try:
                         paging.add(row)
                     except OSError as exc:
-                        fail("the rows could not be written to the result file (%s: %s): the run stopped there" % (type(exc).__name__, exc.strerror or "error"),
-                             rows_written=rows_total[0] - 1)
+                        cut = removal_of(paging)
+                        fail("the rows could not be written to the result file (%s: %s): the run stopped there; the result file was not made, and its partial copy (%d rows, %s) was removed: "
+                             "nothing is left of it, and no row is cited from it" % (type(exc).__name__, exc.strerror or "error", cut["rows_in_removed_file"], cut["removed_result_file"] or "no file was made"), **cut)
 
         def out_of_time():
             return time.monotonic() - started > max_seconds

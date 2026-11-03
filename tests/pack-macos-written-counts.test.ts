@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
@@ -94,3 +94,97 @@ for (const kind of KINDS) {
     }
   });
 }
+
+// ---- the result-file pager (no out_file): the page an agent is given and the file that holds the rest ----
+
+type PagedKind = "knowledgec_query" | "fsevents_parse" | "plist_read";
+const PAGED: PagedKind[] = ["knowledgec_query", "fsevents_parse", "plist_read"];
+
+/** The arguments of a run that has more rows than its inline page holds and names no out_file. */
+async function pagedSetup(kind: PagedKind, cwd: string): Promise<unknown> {
+  const { args } = await setup(kind, cwd, "unused");
+  const { out_file: _unused, ...rest } = args as Record<string, unknown>;
+  return rest;
+}
+
+/** Every file in the tool-output directory: the result files and the dot temporaries. */
+async function leftIn(cwd: string): Promise<string[]> {
+  return (await readdir(join(cwd, "work", "s1", "tool-output")).catch(() => [])).sort();
+}
+
+/** The count the answer gives of rows in the result file, and the lines the file holds: equal; and no temporary left. */
+async function checkPaged(kind: PagedKind, answer: Json, cwd: string, where: string): Promise<void> {
+  const left = await leftIn(cwd);
+  assert.deepEqual(left.filter((n) => n.startsWith(".")), [], `${where}: a dot temporary was left in tool-output: ${left.join(", ")}`);
+  const results = left.filter((n) => n.endsWith(".jsonl") && n.startsWith(kind));
+  if (answer.status === "failed") {
+    // a refused write: no result file is claimed, none is left behind, and nothing says rows are in a file that is not there
+    assert.deepEqual(results, [], `${where}: a failed run left a result file`);
+    assert.doesNotMatch(String(answer.error), /is in it/, `${where}: the error says the rows are in a file`);
+    return;
+  }
+  const named = answer.complete_entries ?? answer.complete_records ?? answer.entries?.all_results ?? answer.all_results ?? answer.records?.all_results ?? answer.page?.all_results;
+  if (named === undefined || named === null) return;                       // everything fitted the inline page
+  const file = await readFile(join(cwd, String(named)), "utf8");
+  const said = kind === "fsevents_parse" ? answer.record_count : kind === "plist_read" ? answer.file_count : answer.entry_count;
+  assert.equal(typeof said, "number", `${where}: no count in ${JSON.stringify(answer).slice(0, 300)}`);
+  assert.equal(wholeLines(file), said, `${where}: ${said} counted, ${wholeLines(file)} lines in the result file`);
+  if (kind === "fsevents_parse") assert.notEqual(answer.status, "complete", `${where}: complete with a cut result file`);
+}
+
+for (const kind of PAGED) {
+  test(`${kind}: the result file pager: the count equals the lines in the file and no temporary is left (tmpfs 4 KiB to 1 MiB, unshare -rm)`, async (t) => {
+    if (spawnSync("unshare", ["-rm", "true"]).status !== 0) return t.skip("no user and mount namespaces here");
+    for (const kb of [4, 16, 64, 256, 1024]) {
+      await withCwd(async (cwd) => {
+        const args = await pagedSetup(kind, cwd);
+        await mkdir(join(cwd, "work", "s1", "tool-output"), { recursive: true });
+        await writeFile(join(cwd, "work", "args.json"), JSON.stringify(args));
+        const run = spawnSync("/usr/bin/unshare", ["-rm", "/bin/sh", "-c",
+          `mount -t tmpfs -o size=${kb}k tmpfs work/s1/tool-output && "$1" "$2" < work/args.json > work/answer.json 2> work/stderr.txt; mkdir -p work/seen; cp -a work/s1/tool-output/. work/seen/ 2>/dev/null; true`,
+          "sh", PYTHON, SCRIPT[kind]], { cwd, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+        if (run.status !== 0) return t.skip(`cannot mount here: ${run.stderr.slice(0, 120)}`);
+        const answer = JSON.parse(await readFile(join(cwd, "work", "answer.json"), "utf8")) as Json;
+        // (the mount is gone with the namespace: the files are read from the copy made inside it, in the place the answer names)
+        await mkdir(join(cwd, "work", "s1", "tool-output"), { recursive: true });
+        for (const name of await readdir(join(cwd, "work", "seen"))) await writeFile(join(cwd, "work", "s1", "tool-output", name), await readFile(join(cwd, "work", "seen", name)));
+        await checkPaged(kind, answer, cwd, `tmpfs ${kb}k`);
+        if (kb === 4) assert.notEqual(answer.status, "complete", "a 4 KiB space was not enough: the run is not complete");
+      });
+    }
+  });
+
+  test(`${kind}: the result file pager: the count equals the lines in the file and no temporary is left (ulimit -f 2 to 2,048 blocks)`, async () => {
+    for (const blocks of [2, 8, 32, 128, 512, 2048]) {
+      await withCwd(async (cwd) => {
+        const args = await pagedSetup(kind, cwd);
+        await writeFile(join(cwd, "work", "args.json"), JSON.stringify(args));
+        const run = spawnSync("/bin/sh", ["-c", `ulimit -f ${blocks}; "$1" "$2" < work/args.json 2> work/stderr.txt; true`, "sh", PYTHON, SCRIPT[kind]],
+          { cwd, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+        assert.equal(run.status, 0, run.stderr);
+        const answer = JSON.parse(run.stdout) as Json;
+        await checkPaged(kind, answer, cwd, `ulimit -f ${blocks}`);
+        if (blocks === 2) assert.notEqual(answer.status, "complete", "a limit of 1 KiB was not enough: the run is not complete");
+      });
+    }
+  });
+}
+
+test("fsevents_parse: a result file that cannot be started is a write problem, not a read that failed", async (t) => {
+  if (process.getuid?.() === 0) return t.skip("root can write anywhere");
+  await withCwd(async (cwd) => {
+    const { args } = await setup("fsevents_parse", cwd, "unused");
+    const { out_file: _unused, ...rest } = args as Record<string, unknown>;
+    await mkdir(join(cwd, "work", "s1", "tool-output"), { recursive: true });
+    await chmod(join(cwd, "work", "s1", "tool-output"), 0o555);
+    try {
+      const run = spawnSync(PYTHON, [FS], { cwd, input: JSON.stringify(rest), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+      const answer = JSON.parse(run.stdout) as Json;
+      const kinds = (answer.problems ?? []).map((p: Json) => p.kind);
+      assert.ok(kinds.includes("could not write"), JSON.stringify(kinds));
+      assert.ok(!kinds.includes("read failed"), JSON.stringify(kinds));
+    } finally {
+      await chmod(join(cwd, "work", "s1", "tool-output"), 0o755);
+    }
+  });
+});

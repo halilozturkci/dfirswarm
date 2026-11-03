@@ -109,3 +109,16 @@
 - knowledgec_query: a storage error is also named when the `stream` pattern is run; a cut look
   at the directory of private copies or at `work/<id>` makes the answer partial and is named
   in `problems`; a dead copy with more than 10,000 files is named, not removed.
+
+- Fix round 3, the result-file pager (the default when no `out_file` is given), the same cause
+  as round 2 in the block the three paging tools share: its rows were buffered, so a refused
+  write was found rows after the count had passed it, and `fail()` left the half-written dot
+  temporary in `tool-output`. Now the pager of knowledgec_query, fsevents_parse and plist_read
+  flushes every row and counts it only then (`in_file`), so fsevents_parse's `record_count`
+  equals the lines of the result file it names; and `fail()` removes the temporaries of every
+  pager. A refused write to the result file in knowledgec_query and plist_read says the result
+  file was not made, names the partial copy it removed (`removed_result_file`) and the rows it
+  held (`rows_in_removed_file`), and no longer says the counted rows are in it. The tests in
+  `tests/pack-macos-written-counts.test.ts` run the pager path under a tmpfs of 4 KiB to 1 MiB
+  and `ulimit -f` of 2 to 2,048 blocks for the three tools: count equals lines, no dot
+  temporary left (they fail on the earlier code).
