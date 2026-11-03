@@ -78,3 +78,10 @@ trace's last line, and the trace holds one `run_ended` line, instead of a plain
 `stopped` that said someone stopped it. A second stop keeps the record; a run
 with anything alive still gets `stopped`. The console shows the run as over and
 says on its agents tab that it ended without a stop, cause unknown.
+
+`job_run` with a tool: the reply says why a place the agent gave is listed under
+`not_written` when it was an empty directory given for reading. Such a
+directory holds nothing to read, so it is taken as an output place
+(`{OUT}/<name>`), and the reply's new `not_written_cause` line says that. The
+comment on the mapping now states the rule the code keeps (a file of any size or
+a directory with entries is read; an empty directory is an output place).
