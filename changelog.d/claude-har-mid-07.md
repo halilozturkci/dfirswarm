@@ -126,3 +126,11 @@ formats it reads). They reach the image's spec, and `/etc/dfirswarm/tools.md`
 prints them on the program's line; a program two packs declare shows the union
 of their lists, and a value that is not a list of short strings is refused by
 name at build. An entry without them is listed exactly as before.
+
+### Changed: reverse-engineering
+
+`readelf` in the pack's `requires/host.json` now says which file format it
+reads (`formats: ["ELF"]`, from `readelf --help`), so `tools.md` prints it on
+its line. The other programs (r2, capa, floss, upx, olevba) carry no `isa` or
+`formats` yet: nothing is declared that the program's own documentation for
+the pinned version has not been read to state.

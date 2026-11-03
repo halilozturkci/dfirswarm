@@ -102,6 +102,7 @@
       "name": "readelf",
       "package": "binutils",
       "optional": true,
+      "formats": ["ELF"],
       "why": "Print an ELF file's headers, dynamic section, notes (including the GNU build ID) and symbol tables with GNU binutils, to cross-check pe_info's reading and to read what it does not.",
       "install": {
         "brew": "brew install binutils (keg-only: readelf is $(brew --prefix binutils)/bin/readelf and is not on PATH)",
