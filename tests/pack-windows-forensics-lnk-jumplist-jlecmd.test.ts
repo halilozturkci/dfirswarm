@@ -15,7 +15,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
-import { body, everyFileUnder, stub, tool } from "./windows-pack-harness.ts";
+import { WIN, body, everyFileUnder, stub, tool } from "./windows-pack-harness.ts";
 import { FILETIME_A, cfb, destList, lnk, pathWithOnlyPython } from "./windows-t1-fixtures.ts";
 
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -226,7 +226,7 @@ test("SIGTERM while JLECmd runs: no child is left, no directory of JLECmd's is l
     await writeFile(join(cwd, "work", NAME), AUTO());
     const pidFile = join(cwd, "jlecmd.pid");
     await stub(bin, "JLECmd", `echo $$ >> "${pidFile}"; (sleep 60 & echo $! >> "${pidFile}"; wait) & wait`);
-    const child = spawn("python3", [join(process.cwd(), "packs/windows-forensics/tools/lnk_jumplist/run.py")], { cwd, env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}` }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("python3", [join(WIN, "lnk_jumplist", "run.py")], { cwd, env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}` }, stdio: ["pipe", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => chunks.push(c));
     child.stdin.end(JSON.stringify({ path: `work/${NAME}`, max_seconds: 100 }));
