@@ -599,3 +599,19 @@ for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]
     });
   }
 }
+
+dual("a time limit that falls inside one key's values stops the value loop and counts what was not read", async (v) => {
+  await withCwd(async (cwd) => {
+    const env = await v.write(cwd, "work/NTUSER.DAT", ntuser(Array.from({ length: 30_000 }, (_, i) => ({ name: rot13(`C:\Apps\App${i}\run.exe`), type: "binary" as const, value: ua72(i, i, i, i, FT) }))));
+    const src = (await readFile(join(WIN, TOOL, "run.py"), "utf8")).replace(/DEADLINE_SECONDS = \d+ /, "DEADLINE_SECONDS = 1 ");
+    await mkdir(join(cwd, "copy", TOOL), { recursive: true });
+    await writeFile(join(cwd, "copy", TOOL, "run.py"), src);
+    const r = await runPy(join(cwd, "copy", TOOL, "run.py"), cwd, { hive: "work/NTUSER.DAT", limit: 5 }, undefined, { AGENT_ID: "s1", ...env });
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    const out = JSON.parse(r.stdout) as Answer;
+    assert.equal(out.status, "partial");
+    assert.equal(out.walk_stopped_by_time_limit, true);
+    assert.ok(out.record_count < 30_000, "the loop stopped");
+    assert.match(out.status_basis, /time limit \(1 seconds\)/);
+  });
+});
