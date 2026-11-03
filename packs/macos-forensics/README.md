@@ -21,7 +21,7 @@ second-level leaves a leaf points to ("only if") for the reference material, and
 | Accounts | `accounts/users`; `accounts/attribution-remote` |
 | File system | `filesystem/apfs`; `filesystem/apfs-recovery`; `filesystem/apfs-encryption` |
 
-**Four tools.** Each says what it read and what it did not, and none turns a failure
+**Nine tools.** Each says what it read and what it did not, and none turns a failure
 into an empty result. Every answer carries `status` (`complete`, `partial` or `failed`)
 and `status_basis`; each tool has a clock of its own below its time limit and, once its
 sweep has started, ends on SIGTERM, SIGINT or SIGHUP with one JSON answer
@@ -54,6 +54,24 @@ whatever reads a tool's stdout stops reading a full pipe, only SIGKILL ends the 
   elsewhere, keeps the reader's whole output, and counts all of it. Its `status` is
   about the run, not about whether the archive was fully decoded; the preview passes
   the shared boundary and the reader's own output file does not.
+- `macos_tcc` reads one `TCC.db` (the system one or a user's) through a private copy of it and its sidecars, with the
+  write-ahead log applied there and a read-only authorizer. It keeps the columns of the schema it finds raw, decodes only
+  the `auth_value` and `client_type` numbers that are written down (with the raw number beside), gives `last_modified` and
+  `last_reminder` as the row's last write and never as a grant time, keeps a managed row (`policy_id`) apart, and shows the
+  code-signing requirement by length only. A sidecar that is a link or a FIFO is named and not followed.
+- `macos_login_items` resolves a `backgrounditems.btm` or `BackgroundItems-v*.btm` keyed archive into items, with the
+  path of references behind each property, the archive's state fields raw, data (bookmark, alias) by presence and length
+  only, and a row with a reason for every reference it cannot resolve (dangling, cyclic, over the depth or node bound).
+  A registered item is not a running one.
+- `safari_history` reads Safari's `History.db` through a private copy (the WAL applied there): one entry per visit, the
+  raw Apple-absolute time beside its UTC reading, URL query values withheld by shape, and the whole URL written only with
+  `write_values` in a job run as secret output.
+- `segb_read` decodes the framing of Biome's SEGB1 and SEGB2 files (frames, offsets, state, the two container times) and
+  shows a payload only as protobuf tags. The layouts are from public notes and are not checked here against Apple's own or
+  against a sample file; the answer says so.
+- `apfs_inventory` runs `fsapfsinfo` on a container image, keeps its whole output on disk and reads it as container and
+  volume sections. It says in every answer that no snapshot is enumerated, no object is extracted and no password is
+  passed (the reader takes one only on its command line).
 
 The boundary is the windows-forensics pack's block, copied byte for byte (a test holds
 the copies equal): an allow-list per field type, a deny-list for free text and a second
@@ -64,10 +82,11 @@ a file whose secrets matter is read in a job run with `secret_output: true`.
 **One goal template**: `mac-compromise.md`.
 
 **Not in this pack.** A wrapper, recipe or skill for `mac_apt.py` (declared in
-`requires/host.json`, installed in the amd64 worker image only); TCC, Keychain,
-Gatekeeper and XProtect, Spotlight, Biome and recent-item skills; APFS snapshot content
-access. A macOS examination that needs them needs other tools, and the skills say where
-they stop.
+`requires/host.json`, installed in the amd64 worker image only); Keychain, Gatekeeper and
+XProtect, Spotlight, Biome and recent-item skills, and TCC and background-item skills
+(`macos_tcc` and `macos_login_items` have a naming edit in the persistence leaf, not a
+leaf of their own); APFS snapshot content access. A macOS examination that needs them
+needs other tools, and the skills say where they stop.
 
 ## Install and use
 
