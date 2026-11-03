@@ -19,4 +19,4 @@ Use when you must say which recovery points stand and whether any can be restore
 
 **Shows.** For each object, which copies the evidence says exist and what is known of their state. **Does not show.** That a point is clean, free of the damage, application-consistent, or restorable within a time.
 **Record.** Per object: copies, each of the five tests with source or "unverified", dependencies, the newest usable point, and the evidence that would settle the unknowns.
-**Sensitive output.** Run the three tools as jobs with `secret_output: true`; a key or credential a copy needs is cited by where it is held, never written. Names, paths and ids are shown only if plain, else `<withheld: N bytes, field F>`; free text has secrets withheld; a short password in plain text passes unseen.
+**Sensitive output.** Run the three tools as jobs with `secret_output: true`; a key or credential a copy needs is cited by where it is held, never written. Names, paths and ids are shown only if plain, else `<withheld N characters: reason>`; free text has secrets withheld; a short password in plain text passes unseen.

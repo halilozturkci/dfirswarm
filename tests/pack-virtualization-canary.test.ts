@@ -15,7 +15,7 @@
  * The backstop: the three tools seal every key and value at the way out and then check what they wrote. Two tests remove
  * the seal and the shape check on purpose (the tool is loaded in-process and its `seal` replaced by a function that lets
  * everything through): one shows that the check still catches a planted token in the answer and in a paging file,
- * replaces it by <withheld: N bytes> and makes the answer partial; the other plants every shape in every slot and finds
+ * replaces it by <withheld N bytes: backstop: ...> and makes the answer partial; the other plants every shape in every slot and finds
  * no canary anywhere. tests/pack-virtualization-review2.test.ts also removes the rules, to show the second check alone.
  */
 import assert from "node:assert/strict";
@@ -29,7 +29,7 @@ import type { Json } from "./pack-virtualization-harness.ts";
 registerCanary("snapshot_chain_check");
 registerCanary("virtualization_inventory");
 
-test("the backstop: with the seal and the shape check removed on purpose, the check on the way out still finds a planted token in the answer and in every paging file, replaces it by <withheld: N bytes> and makes the answer partial", async () => {
+test("the backstop: with the seal and the shape check removed on purpose, the check on the way out still finds a planted token in the answer and in every paging file, replaces it by <withheld N bytes: backstop: ...> and makes the answer partial", async () => {
   const token = ALL.github.value;
   for (const [label, script, files, args] of [
     ["snapshot_chain_check", CHAIN, { "vm/a.vmdk": `# Disk DescriptorFile\nCID=aabbccdd\nparentCID=11223344\nparentFileNameHint="${token}.vmdk"\nRW 8 FLAT "${token}"\n`, "vm/b.vmdk": `# Disk DescriptorFile\nCID=aabbccde\nparentCID=ffffffff\nRW 8 FLAT "${token}"\n` }, { root: "inputs" }],
@@ -47,10 +47,10 @@ test("the backstop: with the seal and the shape check removed on purpose, the ch
           assert.equal(run.stdout.includes(n), false, `${label}: the answer holds ${n}`);
           for (const [rel, bytes] of written) assert.equal(bytes.includes(n) || rel.includes(n), false, `${label}: ${rel} holds ${n}`);
         }
-        assert.ok(doc.boundary.strings_replaced_by_the_check > 0, `${label}: the check replaced nothing`);
-        assert.match(run.stdout + written.map(([, b]) => b).join("\n"), /<withheld: \d+ bytes>/);
+        assert.ok(doc.boundary.strings_replaced_by_the_backstop > 0, `${label}: the check replaced nothing`);
+        assert.match(run.stdout + written.map(([, b]) => b).join("\n"), /<withheld \d+ bytes: backstop: [a-z -]+>/);     // CHANGED: the placeholder of the one text
         assert.equal(doc.status, "partial", `${label} limit ${limit}: ${doc.status_basis}`);
-        assert.match(doc.status_basis, /replaced by <withheld: N bytes>/);
+        assert.match(doc.status_basis, /still held a secret-shaped text when the answer was checked on its way out and were replaced/);     // CHANGED: the wording of the one text
         assert.ok(doc.boundary.replaced_at.length > 0);
       });
     }
@@ -69,7 +69,7 @@ test("the way out is one block, the same text in the three tools", async () => {
   for (const p of [INVENTORY, AUDIT]) assert.equal(await blockOf(p), first);
   for (const p of [CHAIN, INVENTORY, AUDIT]) {
     const code = (await readFile(p, "utf8")).replace(/^\s*#.*$/gm, "");
-    assert.equal((code.match(/print\(/g) ?? []).length, 4, `${p}: one print for the answer, one for an error answer and two for the last word after a signal (the answer through answer_text, and a short JSON when that could not be made)`);
+    assert.equal((code.match(/print\(/g) ?? []).length, 4, `${p}: one print for the answer (in emit), one for an error answer and two for the last word after a signal (the answer through emit of the one text, an error answer and the first word of a signal through answer_text, and a short JSON when that could not be made)`);
     assert.match(code, /print\(answer_text\(\{"error"/);
     assert.match(code, /print\(answer_text\(\{"tool": TOOL, "parser": PARSER, "status": "partial"/);
     assert.doesNotMatch(code, /sys\.stdout\.write|sys\.stderr\.write/);

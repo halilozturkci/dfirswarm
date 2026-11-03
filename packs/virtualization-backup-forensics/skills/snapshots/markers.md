@@ -31,4 +31,4 @@ Each marker is a candidate with its observation beside it. Read the observation 
 
 **Shows.** A flag, bit or leftover file as written. **Does not show.** Who or what caused it, when, or whether data was lost.
 **Record.** Marker, source id, the observation verbatim, corroborating or contradicting records, and the alternatives.
-**Sensitive output.** Run `snapshot_chain_check` as a job with `secret_output: true`. A name, path or id is shown only if plain (no `=` or `@`, no token-like run; GUIDs, VMFS and `naa.` ids stay), else `<withheld: N bytes, field F>`; a short password used as a name passes unseen.
+**Sensitive output.** Run `snapshot_chain_check` as a job with `secret_output: true`. A name, path or id is shown only if plain (no `=` or `@`, no token-like run; GUIDs, VMFS and `naa.` ids stay), else `<withheld N characters: reason>`; a short password used as a name passes unseen.
