@@ -219,7 +219,7 @@ test("a Records file read as a stream gives every record its file, record number
     assert.deepEqual(out.records.map((r: Json) => [r.event_id, r.record, r.line]), [["s-1", 1, 3], ["s-2", 2, 4], ["s-3", 3, 5]]);
     assert.equal(out.records[2].time, "2026-02-14T09:00:00.1234567Z");
     assert.equal(out.records[2].time_utc, "2026-02-14T09:00:00.1234567Z", "the fractions are kept");
-    assert.equal(out.records[0].parser, "cloudtrail_parse/6");
+    assert.equal(out.records[0].parser, "cloudtrail_parse/7");
     assert.equal(out.first_event, "2026-02-14T09:00:00.1234567Z");
     assert.equal(out.last_event, "2026-02-14T09:00:02Z");
   });

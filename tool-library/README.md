@@ -148,7 +148,7 @@ or `tools/`.
 | `lnk_parse` | python3 | `s183902` | 8 | Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layo… |
 | `mam_pf_parse` | python3 | `s2f6600` | 1 | Decompress a MAM-wrapped Windows prefetch file and return executable name, version, run count, and non-zero l… |
 | `mam_scan` | python3 | `s183901` | 5 | Scan a raw dump or image region for MAM-compressed Prefetch records (the signature MAM\x04 and a declared siz… |
-| `marshal_inspect` | python3 | `sd29252` | 4 | Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and neve… |
+| `marshal_inspect` | python3 | `sd29252` | 5 | Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and neve… |
 | `master_icat` | bash | `s9a5f06` | 3 | Extract a file by inode from an E01 with icat. The HDFS master image and sector offset 2048 are the defaults;… |
 | `nested_vdi` | python3 | `sae6e7d` | 1 | Read a VirtualBox VDI that lies inside an E01 or raw image, in place: found by its NTFS data runs (a deleted … |
 | `prefetch_mam` | python3 | `sbe1803` | 5 | Read a Windows Prefetch file, MAM-compressed (MAM\x04) or plain (SCCA), field by field by the layout of its S… |
@@ -158,7 +158,7 @@ or `tools/`.
 | `regkv` | python3 | `s9f2005` | 13 | Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole:… |
 | `sig_carve` | python3 | `s183906` | 15 | A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, an… |
 | `sigscan_e01` | python3 | `s5d1001` | 3 | Scan an E01/raw image for a byte signature via TSK img_cat (logical media, not the EWF wrapper). Returns offs… |
-| `sqlite_query` | python3 | `s881002` | 17 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
+| `sqlite_query` | python3 | `s881002` | 18 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
 | `usn_journal` | python3 | `maintainer` | 7 | Parse an NTFS change journal ($UsnJrnl:$J) into records from v2, v3 and v4 entries: name, USN, timestamp (ISO… |
 | `utf16_urls` | python3 | `s5d1003` | 6 | String candidates for URLs, file: and Visited: entries and 192.168.x.x addresses in a file; not a browser par… |
 | `volrun` | python3 | `s69d306` | 2 | Run a Volatility 3 plugin against a memory image with typed arguments. Returns stdout/stderr. |

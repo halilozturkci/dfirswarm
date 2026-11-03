@@ -63,7 +63,7 @@ test("a native audit event keeps its operation, user, id, time and every propert
     assert.equal(first.audit_data.Folders[0].FolderItems.length, 2);
     assert.equal(first.items_accessed, 2);
     assert.equal(first.operation_count, 3);
-    assert.deepEqual([first.source_file.endsWith("native.json"), first.record, first.parser], [true, 1, "ual_parse/6"]);
+    assert.deepEqual([first.source_file.endsWith("native.json"), first.record, first.parser], [true, 1, "ual_parse/7"]);
     assert.deepEqual(out.assumptions ?? [], [], "ual_parse names its assumptions in time_status, per record");
   });
 });

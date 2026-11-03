@@ -184,7 +184,7 @@ const sha = (text: string): string => createHash("sha256").update(text).digest("
 // with the poll() guard in kill_tree, the seen set in the walk, the libproc route on macOS, the bounded pipe read (communicate_bounded) and the
 // signal path that also ends everything below the tool (tests/pack-shared-process.test.ts holds those cases).
 const NETWORK_PROCESS_SHA = "318081f44222ce78d9fc6da2b1e1727401eb1a00fbc2c1702f7103b4d844def1";
-const NETWORK_WITHHOLDING_SHA = "fdd1ae506f0e017a7fb011e552ba9ac5dd015728d8eeadc534fbc88e3f72c0a5";
+const NETWORK_ZEEK = join(RE, "..", "network-forensics", "tools", "zeek_run", "run.py"); // the network pack's text is read, not pinned by a digest, so that a sweep of the block does not leave this test behind
 
 test("the tool and the recipes that start programs carry one process block, the network pack's text, and nothing in the pack starts a program in a session or a group of its own", async () => {
   const files = [join(TOOLS, "fuzzy_hash", "run.py"), join(TOOLS, "unpack_safe", "run.py"), RECIPE, CAPA_FLOSS];
@@ -209,7 +209,7 @@ test("the tool and the recipes that start programs carry one process block, the 
 });
 
 test("the withholding blocks of doc_probe, doc_structure, pe_directories, pe_info and the capa-floss recipe are the network pack's text", async () => {
-  for (const path of [DOC_PROBE, DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, PE_INFO, CAPA_FLOSS]) assert.equal(sha(await block(path, "WITHHOLDING")), NETWORK_WITHHOLDING_SHA, path);
+  for (const path of [DOC_PROBE, DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, PE_INFO, CAPA_FLOSS]) assert.equal(sha(await block(path, "WITHHOLDING")), sha(await block(NETWORK_ZEEK, "WITHHOLDING")), path);
 });
 
 test("doc_structure, pe_directories and the capa-floss recipe carry one ONE WAY OUT block (the sanitiser and the backstop), after the withholding block", async () => {

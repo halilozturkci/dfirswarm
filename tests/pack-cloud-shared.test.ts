@@ -819,11 +819,11 @@ test("every problem of a gzip file is kept, in order: a CRC failure and then a l
   }
 });
 
-test("the PARSER labels move with what a record says: cloudtrail_parse, signin_analyse and ual_parse are at 6 (5 for the foreign-record, long-integer and isolation changes; 6 for the records after a record over max_record_bytes, which are read now)", async () => {
+test("the PARSER labels move with what a record says: cloudtrail_parse, signin_analyse and ual_parse are at 7 (5 for the foreign-record, long-integer and isolation changes; 6 for the records after a record over max_record_bytes, which are read now; 7 for the credential rules of the shared block)", async () => {
   for (const s of SHAPES) {
     const text = await readFile(s.script, "utf8");
     const m = /^PARSER = "([a-z_]+)\/(\d+)"$/m.exec(text);
     assert.ok(m, `${s.name} has a PARSER label`);
-    assert.deepEqual([m[1], Number(m[2])], [s.name, 6], `${s.name}: change the label, and this pin, in the commit that changes what a record says`);
+    assert.deepEqual([m[1], Number(m[2])], [s.name, 7], `${s.name}: change the label, and this pin, in the commit that changes what a record says`);
   }
 });

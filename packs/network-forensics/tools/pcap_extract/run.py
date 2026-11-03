@@ -58,7 +58,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "pcap_extract", "version": 9}
+TOOL = {"name": "pcap_extract", "version": 10}
 PARSER = "pcap_extract/5"
 
 
@@ -125,11 +125,16 @@ COLUMNS = ["protocol", "name", "path", "bytes", "sha256", "sha256_withheld", "as
            "frame", "frames", "stream", "time_epoch", "time_utc", "src", "dst", "host", "request_uri", "pass_status"]
 
 # BEGIN SHARED WITHHOLDING
-# The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
-# reverse-engineering packs), so that they withhold the same strings; the tests that hold the copies equal are
-# tests/pack-network-withholding.test.ts, tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts and
-# tests/pack-re-process.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a
-# path component, a URL, a message that quotes either.
+# The same text is in every tool that withholds identifier-shaped strings and credentials (the network, base, encrypted-containers,
+# memory, virtualization, ransomware and reverse-engineering packs, and the three tools of the cloud pack), so that they withhold the
+# same strings; the tests that hold the copies equal are tests/shared-blocks-census.test.ts (how many carry it),
+# tests/pack-re-delta10.test.ts (every copy equal, found by the marker), tests/pack-network-withholding.test.ts,
+# tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts, tests/pack-re-process.test.ts and
+# tests/pack-cloud-shared.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a path
+# component, a URL, a message that quotes either; and a credential (a value given to a password, a token, a cookie, a pair, a
+# switch) by the name it is given under. A carrier may set two names above this block: WITHHOLD_LIMIT, the length past which a text is
+# withheld whole (65536 when it sets none), and WITHHOLD_TICK, a hook that long scans call and that may raise to end them at the
+# carrier's deadline (none when it sets none). Nothing else in the block is a carrier's to change.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
 # A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
 # `/` joins pieces of a base64 token and is handled apart, below.
@@ -193,7 +198,7 @@ _SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
 # long, and the answer says how long the text was. Every rule below reads a text of this length in well under a second whatever its
 # characters are, so that no call of `scrub` or `token_spans` can run for long on a text a file chose; the limit is the backstop for
 # a shape of text that no rule was tried on, and the rules themselves are linear.
-TEXT_LIMIT = 65536
+TEXT_LIMIT = globals().get("WITHHOLD_LIMIT", 65536)
 
 
 def _prefixed_spans(text, tail=None):
@@ -350,10 +355,342 @@ def token_shaped(text):
     return bool(token_spans(text))
 
 
+# ---- credentials: a value is withheld by the name it is given under and by the text around it ----------------------------------
+# The rules above find strings that are shaped like an identifier. These find a secret that has no shape, because of what it is
+# assigned to (`password=`, a `Name`/`Value` pair, a `-Password` switch, `curl -u user:pass`, `mysql -pSECRET`), and the common
+# token families, private key blocks and hashes of an account database. A name decides whether a value is a secret, a value
+# decides nothing. Every rule runs in time linear in the text (a bounded stretch after each anchor, no nested repeat), and a
+# carrier whose texts are long (a cloud log: a megabyte) sets WITHHOLD_TICK to a hook that ends the work at its deadline.
+_CRED_CHECKSUM_NAME = re.compile(r"(?i)checksum|digest|sha[0-9]|md5|etag|crc[0-9]")
+_CRED_REDACTED = re.compile(r"^\W*(?:hidden_due_to_security_reasons|redacted|masked|removed|\*+|x{3,}|\[\])\W*$", re.I)
+_CRED_NOT_A_VALUE = frozenset(("true", "false", "null", "none", "nil", "undefined", "required", "optional", "enabled", "disabled"))
+_CRED_EXACT = {
+    "password", "newpassword", "oldpassword", "currentpassword", "passwd", "pwd", "passphrase", "passcode", "pin", "otp",
+    "pass", "dbpass", "userpass", "adminpass", "rootpass", "plaintext",
+    "secret", "clientsecret", "secretkey", "secretaccesskey", "awssecretaccesskey", "awssecretkey", "secretstring",
+    "secretbinary", "secrettext", "secretvalue", "accesskeysecret",
+    "sessiontoken", "securitytoken", "accesstoken", "refreshtoken", "idtoken", "bearertoken", "authtoken", "token",
+    "tokencode", "mfacode", "verificationcode", "authorizationcode",
+    "authorization", "proxyauthorization", "cookie", "setcookie", "apikey", "privatekey", "privatekeypem",
+    "sharedaccesskey", "sharedaccesssignature", "accountkey", "primarykey", "secondarykey", "keyvalue", "masterkey",
+    "storagekey", "subscriptionkey", "ocpapimsubscriptionkey",
+    "connectionstring", "credential", "credentials", "assertion", "samlresponse", "mfasecret",
+    "sastoken", "sassignature", "signature", "sig",
+    "passwordhash", "nthash", "ntlmhash", "lmhash",
+}
+_CRED_SUFFIX = ("password", "passwd", "passphrase", "secret", "apikey", "privatekey", "sessiontoken", "securitytoken",
+                "accesstoken", "refreshtoken", "clientsecret", "token", "secrettext", "secretkey", "secretaccesskey",
+                "primarykey", "secondarykey", "accountkey", "sharedaccesskey", "subscriptionkey", "passwordhash",
+                "ntlmhash", "nthash", "passcode", "signature", "cookie")
+# a position or an idempotency key under a name that ends in `token`
+_CRED_NOT_SECRET = ("nexttoken", "pagetoken", "continuationtoken", "paginationtoken", "nextpagetoken", "pagingtoken",
+                    "startingtoken", "nextmarkertoken", "clienttoken", "clientrequesttoken", "idempotencytoken",
+                    "nextforwardtoken", "nextbackwardtoken", "requesttoken")
+_CRED_CONTAINERS = ("credential", "credentials")
+_CRED_NAME_CACHE = {}
+_CRED_NAME_KEYS = ("Name", "name", "Key", "key")
+_CRED_VALUE_KEYS = ("Value", "NewValue", "OldValue", "value", "newValue", "oldValue")
+
+
+def is_container_name(name):
+    """`credentials` names a group of fields (an access key id, an expiry, a token): each is judged by its own name."""
+    return re.sub(r"[^a-z0-9]", "", str(name).lower()) in _CRED_CONTAINERS
+
+
+def name_is_sensitive(name):
+    """Does a field or a parameter of this name hold a secret? (`Password`, `client_secret`, `x-api-key`; not `nextToken`.)"""
+    hit = _CRED_NAME_CACHE.get(name)
+    if hit is None:
+        flat = re.sub(r"[^a-z0-9]", "", str(name).lower())
+        hit = flat in _CRED_EXACT or (len(flat) > 6 and flat.endswith(_CRED_SUFFIX) and not flat.endswith(_CRED_NOT_SECRET))
+        if len(_CRED_NAME_CACHE) < 20000:
+            _CRED_NAME_CACHE[name] = hit
+    return hit
+
+
+_CRED_B64 = "A-Za-z0-9+/_-"
+_CRED_B64_RUN = re.compile(r"(?<![%s])[%s]{128,}={0,2}(?![%s])" % (_CRED_B64, _CRED_B64, _CRED_B64))
+_CRED_B64_EDGE = "(?<![A-Za-z0-9+/=_-])"
+_CRED_B64_END = "(?![A-Za-z0-9+/=_-])"
+# The names an assignment is recognised by. A long compound name may carry any prefix (dbPassword=, apiToken=, adminSecret:);
+# a short one needs the edge of a word (sig= is not design=).
+_CRED_STRONG = (r"password|passwd|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|"
+                r"security[_-]?token|auth[_-]?token|bearer[_-]?token|account[_-]?key|shared[_-]?access[_-]?key|primary[_-]?key|"
+                r"secondary[_-]?key|private[_-]?key|subscription[_-]?key|sas[_-]?token|password[_-]?hash|nt[_-]?hash|ntlm[_-]?hash|"
+                r"lm[_-]?hash|client[_-]?secret|secret[_-]?access[_-]?key|secret[_-]?key|secret[_-]?text|secret[_-]?value|token|signature|plaintext")
+_CRED_SHORT = r"(?<![A-Za-z0-9])(?:pwd|pass|sig|pin|otp|sas)"
+_CRED_SEP = r"""(?:\\*["']|["'])?\s*(?:[:=]|%3[dD]|%3[aA])\s*"""
+# a short name is a name only as `pwd=value` or `pass:value`: "pass: 3 attempts" is prose
+_CRED_SEPS = r"""(?:\\*["']|["'])?(?:\s*(?:=|%3[dD])\s*|:(?=\S))"""
+_CRED_NAME = r"(?:(?:%s)%s|%s%s)" % (_CRED_STRONG, _CRED_SEP, _CRED_SHORT, _CRED_SEPS)
+_CRED_ARN_TAIL = re.compile(r"arn:[A-Za-z0-9-]+:[A-Za-z0-9-]+:[A-Za-z0-9-]*:[0-9]*:$")
+_CRED_PAIR_WHY = "a value paired with a credential name"
+_CRED_RULES = [
+    # anchored at the start of a run and possessive, so that a megabyte of `eyJ` is read once, not once per `eyJ`
+    ("a JSON Web Token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+\.[A-Za-z0-9_-]{2,}+(?:\.[A-Za-z0-9_-]*+)?"), 0),
+    ("a JSON Web Encryption token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+(?:\.[A-Za-z0-9_-]*+){4}"), 0),
+    ("a password in a URL", re.compile(r"(?i)(?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,20}://[^\s:/@\"'<>\\]{0,256}:([^\s/\"'<>\\]{1,1024})@(?=[^\s/@\"'<>]{1,255})"), 1),
+    ("an Azure Functions key", re.compile(r"""(?i)(?:x-functions-key["']?\s*[:=]\s*(?:\\*["'])?|[?&;]code=)([A-Za-z0-9_/+=-]{16,512})"""), 1),
+    ("a private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|[\s\S]*)"), 0),
+    ("a base64 block of key lines", re.compile(r"(?:[A-Za-z0-9+/]{60,80}={0,2}\r?\n){2,}[A-Za-z0-9+/]{2,80}={0,2}"), 0),
+    ("an authorization header value", re.compile(
+        r"""(?i)authorization["']?\s*[:=]\s*(?:\\*["'])?(?:(?:bearer|basic|digest|negotiate|ntlm|token)\s+)?([^\s"'&,;\\]{1,4096})"""), 1),
+    ("a cookie header value", re.compile(r"""(?i)cookie["']?\s*[:=]\s*(?:\\*["'])?([^\r\n"'\\]{1,4096})"""), 1),
+    ("a scheme and its credential", re.compile(r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{3,4096})|\b(?:negotiate|ntlm|digest)\s+([A-Za-z0-9._~+/=-]{24,4096})"), -2),
+    ("a value assigned to a credential name (quoted)", re.compile(
+        r"""(?i)%s\\*(["'])(.{1,4096}?)(?=\\*\1)""" % _CRED_NAME), 2),
+    ("a value assigned to a credential name", re.compile(
+        r"""(?i)%s((?:(?!%%26)[^\s"'&<>\\]){1,4096})""" % _CRED_NAME), 1),
+    ("a value given to a credential switch", re.compile(
+        r"""(?i)(?<![A-Za-z0-9_])-(?:password|pass|pwd|passphrase|secret|clientsecret|apikey|accesstoken|token)\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    ("a secret given to ConvertTo-SecureString", re.compile(
+        r"""(?i)ConvertTo-SecureString\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    # `mysql -u<user> -p<password>`: with `-p` glued to its value, and only as an option of a MySQL or MariaDB client (`ssh -p 22`,
+    # `nc -p 80` and `mysql -p` alone, which asks for the password, name a port or nothing). The options are read up to the next
+    # command of the kind, so that a text of many of them is read once, not once for each
+    ("a password given to a MySQL client", re.compile(
+        r"""(?i:(?<![\w.-])(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mysqlshow|mariadb|mariadb-dump|mariadb-admin)(?:\.exe)?(?=\s))(?:(?!(?i:mysql|mariadb)\b)[^\n]){0,512}?(?<=\s)-p(?=[^\s`,;)])(?:"([^"\n]{1,256})"|'([^'\n]{1,256})'|([^\s"']{1,256}))"""), -3),
+    # `curl -u user:password`: the part after the colon, and only when there is one (`curl -u user` asks for it)
+    ("a password given to curl", re.compile(
+        r"""(?i:(?<![\w.-])curl(?:\.exe)?(?=\s))(?:(?!(?i:curl)\b)[^\n]){0,512}?(?<=\s)(?:-u|-U|--user|--proxy-user)(?:\s+|=)(?:"[^":\n]*:([^"\n]{1,256})"|'[^':\n]*:([^'\n]{1,256})'|[^\s:"']*:([^\s"']{1,256}))"""), -3),
+    ("a hash pair of an account database", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}:([0-9a-fA-F]{32})(?![0-9a-fA-F])"), 1),
+    ("a bcrypt hash", re.compile(r"(?<![A-Za-z0-9$])\$2[abxy]?\$[0-9]{2}\$[./A-Za-z0-9]{53}(?![./A-Za-z0-9])"), 0),
+    ("a token of a known family", re.compile(
+        r"(?:GOCSPX-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])|"
+        r"ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{30,}|(?:IQoJb3JpZ2lu|FQoGZXIvYXdz|FwoGZXIvYXdz)[A-Za-z0-9+/=]{40,}|"
+        r"[A-Za-z0-9_.~-]{3}[0-9]Q~[A-Za-z0-9_.~-]{30,}|[01]\.A[A-Za-z0-9_-]{50,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})"), 0),
+]
+_CRED_GROUPS = {-1: (1, 2, 3), -2: (1, 2), -3: (1, 2, 3)}
+# A random-looking run of an exact length that keys have: 32, 40 (an AWS secret access key), 43 + "=" and 86 + "==" (a base64 key).
+_CRED_SHAPES = [
+    ("a key-length base64 string", re.compile(_CRED_B64_EDGE + r"(?:[A-Za-z0-9+/]{32}|[A-Za-z0-9+/]{40}|[A-Za-z0-9+/]{43}=|[A-Za-z0-9+/]{86}==)" + _CRED_B64_END), True),
+]
+# A Name/Value pair written as JSON text inside a string (an AuditData in a column of another name, a parameter list in a cell): the
+# structure rule (clean_value) cannot see it, so the text rule reads the head of the pair, and the name decides as it does there. The
+# value is read by hand, not by an expression: a string up to its first quote (the backslashes before the quote are not part of it), a
+# number, a flat array of up to 4,096 characters, or a literal; and the next value of the same pair (`OldValue`, then `NewValue`).
+_CRED_PAIR_HEAD = re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})\\*"\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_NEXT_VALUE = re.compile(r"""(?i)\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_QUOTE = re.compile(r'\\*"')
+# a format directive (`%s`, `%d`), a template field (`{0}`, `{name}`) or a `%VAR%` is where a value goes, not a value
+_CRED_PLACEHOLDER = re.compile(r"%[-+ #0-9.]*[sdiuxXfeEgGcr](?![A-Za-z0-9])|\{\w*\}|%\w+%$|\.{2,}|\u2026")
+_CRED_BARE = re.compile(r"-?[0-9][0-9.eE+-]{0,39}|\[[^\[\]]{0,4096}\]|(?:null|true|false)\b")
+# What a text must hold for a rule to match it: a literal (lower case) of which one must be in the text, checked before the rule runs, so
+# that a text with none of them (most names, addresses and ids) costs a few substring tests and no expression. An assignment rule also
+# needs a separator in the text. Each is a necessary condition of its rule.
+_CRED_ASSIGN = ("pass", "pwd", "secret", "key", "token", "signature", "plaintext", "sig", "pin", "otp", "sas", "hash")
+_CRED_NEEDLES = {
+    "a JSON Web Token": ("eyj",), "a JSON Web Encryption token": ("eyj",), "a password in a URL": ("://",),
+    "an Azure Functions key": ("x-functions-key", "code="), "a private key block": ("-----begin",), "a base64 block of key lines": ("\n",),
+    "an authorization header value": ("authorization",), "a cookie header value": ("cookie",),
+    "a scheme and its credential": ("bearer", "basic", "negotiate", "ntlm", "digest"),
+    "a value assigned to a credential name (quoted)": _CRED_ASSIGN, "a value assigned to a credential name": _CRED_ASSIGN,
+    "a value given to a credential switch": ("password", "pass", "pwd", "secret", "apikey", "accesstoken", "token"),
+    "a secret given to ConvertTo-SecureString": ("securestring",), "a password given to a MySQL client": ("mysql", "mariadb"),
+    "a password given to curl": ("curl",), "a hash pair of an account database": (":",), "a bcrypt hash": ("$2",),
+    "a token of a known family": ("gocspx-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xoxa-", "xoxb-", "xoxp-", "xoxr-", "xoxs-",
+                                  "aiza", "ya29.", "1//0", "iqojb3", "fqogzx", "fwogzx", "q~", "0.a", "1.a", "sk_", "rk_"),
+}
+_CRED_CLEAN = set()               # short texts already judged to hold nothing (names, addresses and ids repeat)
+_CRED_GATE = 4096                 # a text longer than this is scanned with the carrier's hook in view, rule by rule
+# The carrier's hook for long scans: called with the work done so far (1 per stretch found, 4096 between rules over a long text); it may
+# raise to end the scan at the carrier's deadline. Most carriers set none and the calls do nothing.
+_tick = globals().get("WITHHOLD_TICK") or (lambda units=1: None)
+
+
+def _cred_json_value(text, at):
+    """(start, end, after) of the JSON value whose text starts at `at`: `end` is where what is withheld ends, `after` where the next
+    token of the pair begins. None when no value starts there."""
+    q = _CRED_QUOTE.match(text, at)
+    if q:
+        start = q.end()
+        close = text.find('"', start)
+        if close < 0:
+            return start, len(text), len(text)      # a value that is cut off: the rest of the text is the value
+        return start, start + len(text[start:close].rstrip("\\")), close + 1
+    m = _CRED_BARE.match(text, at)
+    if m is None:
+        return None
+    if m.group()[0] in "nft":
+        return at, at, m.end()                     # null, true and false are not secrets
+    return m.start(), m.end(), m.end()
+
+
+def _cred_pair_spans(text, spans):
+    for head in _CRED_PAIR_HEAD.finditer(text):
+        if not name_is_sensitive(head.group(1)):
+            continue
+        at = head.end()
+        for _ in range(3):
+            got = _cred_json_value(text, at)
+            if got is None:
+                break
+            start, end, after = got
+            if end > start:
+                value = text[start:end]
+                if not (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    spans.append((start, end, _CRED_PAIR_WHY))
+            more = _CRED_NEXT_VALUE.match(text, after)
+            if more is None:
+                break
+            at = more.end()
+
+
+def _cred_random_like(run):
+    """A run that looks like random base64 and not like a path, a name or a hash: mixed case and digits in the proportions
+    random text has (a long path is mostly lower case with few capitals; a hex digest has no case to mix)."""
+    n = len(run)
+    upper = sum(1 for ch in run if "A" <= ch <= "Z")
+    lower = sum(1 for ch in run if "a" <= ch <= "z")
+    digit = sum(1 for ch in run if "0" <= ch <= "9")
+    return upper * 100 >= 15 * n and lower * 100 >= 15 * n and digit * 100 >= 5 * n
+
+
+def _cred_name_before(text, at):
+    """The letters and digits of the name an assigned value follows (`nextToken=` gives `nexttoken`)."""
+    return re.sub(r"[^a-z0-9]", "", text[max(0, at - 64):at].lower())
+
+
+def _cred_spans(text, shapes, skip=()):
+    spans = []
+    big = len(text) > _CRED_GATE
+    low = text.lower()
+    sep = "=" in text or ":" in text or "%3" in low
+    if "value" in low:
+        _cred_pair_spans(text, spans)
+    for why, rx, group in _CRED_RULES:
+        if why in skip:
+            continue
+        need = _CRED_NEEDLES[why]
+        if need is _CRED_ASSIGN and not sep:
+            continue
+        for n in need:
+            if n in low:
+                break
+        else:
+            continue
+        if big:
+            _tick(4096)
+        for m in rx.finditer(text):
+            if big:
+                _tick(1)
+            if "assigned to a credential name" in why:
+                if _CRED_ARN_TAIL.search(text[max(0, m.start() - 120):m.start()]):
+                    continue                              # arn:aws:secretsmanager:...:secret:NAME is a name, not a value
+                if _cred_name_before(text, m.start(m.lastindex or 0)).endswith(_CRED_NOT_SECRET):
+                    continue                              # nextToken=, pageToken=, clientToken=: a position or an idempotency key
+            for g in _CRED_GROUPS.get(group, (group,)):
+                if g and m.group(g) is None:
+                    continue
+                start, end = m.span(g)
+                value = text[start:end]
+                if g and (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    continue
+                if why == "a scheme and its credential" and g == 1 and not (re.search(r"[0-9+/=_.~-]", value) or len(value) >= 16):
+                    continue                              # "basic authentication" is prose, "Basic dXNlcjpwYXNz" is not
+                if g == 1 and group == -1 and len(m.groups()) >= 2 and m.group(1) in ("'", '"'):
+                    continue                              # group 1 of the switch rules is the quote
+                spans.append((start, end, why))
+    if big:
+        _tick(4096)
+    for m in (_CRED_B64_RUN.finditer(text) if len(text) >= 128 and "a long unbroken base64-like run" not in skip else ()):
+        if _cred_random_like(m.group(0)):
+            spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
+    if shapes and len(text) >= 32 and "a key-length base64 string" not in skip:
+        for why, rx, check in _CRED_SHAPES:
+            for m in rx.finditer(text):
+                if not check or _cred_random_like(m.group(0)):
+                    spans.append((m.start(), m.end(), why))
+    spans.sort()
+    merged = []
+    for s in spans:
+        if merged and s[0] < merged[-1][1]:
+            if s[1] > merged[-1][1]:
+                merged[-1] = (merged[-1][0], s[1], merged[-1][2])
+            continue
+        merged.append(s)
+    return merged
+
+
+def credential_spans(text, shapes=True, skip=()):
+    """(start, end, why) of each stretch of `text` that is a credential by the name it is given under or by its text, in order and
+    not overlapping. `shapes` False leaves out the rules that recognise a key by its length alone (a value that is named a checksum or
+    a digest is not scanned for them). This is not `token_spans`: an identifier (a GUID, a hex digest, an access key id, an ARN) is
+    not a credential here, and a tool that prints identifiers on purpose asks only for these."""
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text), "text longer than %d characters" % TEXT_LIMIT)]
+    if shapes and not skip and text in _CRED_CLEAN:
+        return []
+    spans = _cred_spans(text, shapes, skip)
+    if shapes and not skip and not spans and len(text) <= 256 and len(_CRED_CLEAN) < 100000:
+        _CRED_CLEAN.add(text)
+    return spans
+
+
+def clean_value(value, leaf, note, key=None, pointer="", depth=0, shapes=True, max_depth=200):
+    """The structure rule: `value` (what a JSON document decoded to) with every credential in it replaced. A string goes to
+    `leaf(text, pointer, shapes)`, which returns what is printed for it. A field whose name says it holds a secret (or a `Value` whose
+    `Name` does), at any depth, is not read at all: `note(pointer, why, original)` returns what is printed for it (a number under such
+    a name is withheld too: 0 and 1 are not nothing). A key goes through `key(text)` when one is given. A value nested deeper than
+    `max_depth` is replaced the same way."""
+    if isinstance(value, str):
+        return leaf(value, pointer, shapes)
+    _tick(1)
+    if depth > max_depth and isinstance(value, (dict, list)):
+        return note(pointer, "nested deeper than %d levels" % max_depth, value)
+    if isinstance(value, dict):
+        named = None
+        for k in _CRED_NAME_KEYS:
+            if isinstance(value.get(k), str):
+                named = value[k]
+                break
+        pair_secret = named is not None and name_is_sensitive(named)
+        out = {}
+        for k, v in value.items():
+            ks = str(k)
+            point = "%s/%s" % (pointer, ks.replace("~", "~0").replace("/", "~1"))
+            safe_key = key(ks) if key is not None else ks
+            if safe_key in out:
+                safe_key = "%s#%d" % (safe_key, len(out))
+            sensitive = name_is_sensitive(ks) or (pair_secret and ks in _CRED_VALUE_KEYS)
+            if sensitive and is_container_name(ks) and isinstance(v, (dict, list)):
+                sensitive = False
+            if sensitive and not (v is None or isinstance(v, bool) or v == "") and not (isinstance(v, str) and (_CRED_REDACTED.match(v) or v.lower() in _CRED_NOT_A_VALUE)):
+                out[safe_key] = note(point, "credential-named field", v)
+            else:
+                out[safe_key] = clean_value(v, leaf, note, key, point, depth + 1, shapes and not _CRED_CHECKSUM_NAME.search(ks), max_depth)
+        return out
+    if isinstance(value, list):
+        return [clean_value(v, leaf, note, key, "%s/%d" % (pointer, i), depth + 1, shapes, max_depth) for i, v in enumerate(value)]
+    return value
+
+
+# what the rules of the block above already withhold whole, with their own markers: the first pass leaves these to them
+_CRED_OLD_COVERS = frozenset(("a JSON Web Token", "a password in a URL", "an authorization header value", "a scheme and its credential",
+                              "a long unbroken base64-like run", "a key-length base64 string"))
+
+
+def _credentials_withheld(text, kind, skip=()):
+    """`text` with each credential in it withheld. It runs after the rules above, on text that may hold their markers: a stretch that
+    begins at a marker is theirs already."""
+    out, last = [], 0
+    for start, end, why in credential_spans(text, True, skip):
+        if text.startswith("<", start):
+            continue
+        out.append(text[last:start])
+        out.append(_withheld(why, end - start, kind))
+        last = end
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
+
+
 def scrub(text, kind="text"):
-    """The text with every token-shaped run and every user-info withheld."""
+    """The text with every token-shaped run, every user-info and every credential withheld."""
     if len(text) > TEXT_LIMIT:
         return _withheld("over-long text", len(text), kind)
+    text = _credentials_withheld(text, kind, _CRED_OLD_COVERS)     # first: the rules above cut a secret into pieces that no rule for a whole one can match
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
@@ -362,7 +699,7 @@ def scrub(text, kind="text"):
         out.append(_withheld("token-shaped text", end - start, kind))
         last = end
     out.append(text[last:])
-    return "".join(out)
+    return _credentials_withheld("".join(out), kind)
 
 
 def redact_url(url):

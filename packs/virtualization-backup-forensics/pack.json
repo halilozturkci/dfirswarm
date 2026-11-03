@@ -1,7 +1,7 @@
 {
   "id": "virtualization-backup-forensics",
   "name": "Virtualization and Backup Forensics Pack",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "Method and tooling for the control plane of virtualization and backup: what hypervisor management records and VM configuration files say, whether a snapshot or disk chain is complete and which markers a consolidation or an unclean close may leave, what a backup catalogue, job record and retention setting show, and which recovery points survive. It reads exports and configuration files offline; it never runs hypervisor or backup software, reads no guest content, and supports only the products its tools list.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -36,13 +36,13 @@
       "skills/snapshots/header-markers.md": "c01e00e7fb425ce9db276791f1a2ea7558cf5549b80de4a871e8b0f74bda52f7",
       "skills/snapshots/markers.md": "bf91f21590cc5f2afb6379b740fc491cd7a7c199398dbf9ba20cfd83240b017e",
       "tests/pack.test.sh": "35f4ae3f6e7e8ad51e0bc57a3904852dc550a7b23756951a21285a3497c213f4",
-      "tools/backup_audit_normalise/manifest.json": "190f150a60b5aab454b89d9bcbc07a18daec3b83b610342d041de55c900b82ce",
+      "tools/backup_audit_normalise/manifest.json": "39c37e97aae9f7aff9c80bed231459e717a33245a85a1edd5efbfe20594734ad",
       "tools/backup_audit_normalise/presets/proxmox-backup-client-snapshot-list.json": "09357c591462951708819c1f5c70ba255764d54583f9f1eaa0067029ad9e88de",
-      "tools/backup_audit_normalise/run.py": "f9d7aeca450ad036be82d121f394945e29e83e3892293fc0798f65635c999852",
-      "tools/snapshot_chain_check/manifest.json": "4cde80a19a7acb4494e1526e6a8afd6fc3421bfee9d87dbe04a9918e80935a32",
-      "tools/snapshot_chain_check/run.py": "081abeab99be581cbf3d6488d14b49c0a66881d69bcdbc354fcb0df0b143abc6",
-      "tools/virtualization_inventory/manifest.json": "2d3de1cf1d494442324d1bf9e738bb462ee661efcb9059a74ce5a2a0e1732829",
-      "tools/virtualization_inventory/run.py": "2f2382fa80dfb4deb2885770f8e7c715a73d55ac983dfe0fc70ea9c148d36d04"
+      "tools/backup_audit_normalise/run.py": "44af7c8baa8faedd5d332eeb3d6bc49d3e9aa6de231aadfbee2da58c2c42cb2a",
+      "tools/snapshot_chain_check/manifest.json": "df05fc82450dc7d96ce170a9e4cd83b8e94aeb6879dfa007d9512f43de75cada",
+      "tools/snapshot_chain_check/run.py": "423bbbbd2d015f33eb45fe7c47ee3f16e8f2d5ec2131fe2b236f51288fbd8fc7",
+      "tools/virtualization_inventory/manifest.json": "c6f5850acfb6bfe8cde565edf9fd30184710fb383988a004e13790f6c64a0b33",
+      "tools/virtualization_inventory/run.py": "848b96ad600704fa7c8bd30aa54274be800ea0407012e3a924f50a8678cd147d"
     }
   },
   "tools": [

@@ -1,6 +1,6 @@
 {
   "id": "capa-floss",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Run capa (capability rule matches) and FLOSS (recovered strings) over one PE or ELF file, if the programs are installed, and keep what each said: the whole JSON of each, its stderr, its argv and what its --version printed, and the rules that matched (matches.tsv: name, namespace, ATT&CK ids, count; no feature and no string). An engine that is not installed, fails, is stopped at its time limit or writes JSON of a shape this recipe does not read is a named status of that engine and the recipe is partial or failed, never complete. A FLOSS string kind whose own analysis flag (enable_*) is false was not run, and makes the floss result partial. The receipt, the index and matches.tsv pass the same sanitiser and backstop as the pack's tools (withholding by shape only: a secret of another shape is printed). An engine's JSON over 32 MiB is kept whole and not read, and that engine is partial. Every answer, a refusal included, and coverage.json carry `status` and a one-sentence `status_basis` that names the engine, or the stop of the recipe, that decided the status. Not run automatically: it is requested for a sample whose capabilities or obfuscated strings are in question. The output directory (--out) reached through a symbolic link, directly or by a directory above it inside the run directory, is refused as JSON and nothing is written through it. A stop signal (SIGTERM, SIGINT or SIGHUP) ends the programs it started and answers once, with the exit code 128 plus the signal, from the moment the module has run as far as its stop handlers (installed at module level); the receipt says the recipe was stopped, and no hidden temporary file is left.",
   "object": "executable file",
   "order": 45,
@@ -42,5 +42,5 @@
   ],
   "purpose": "inventory",
   "covers": "What capa and FLOSS each wrote about a PE or ELF file, as the program said it (coverage.json: per-engine status, argv, version output, exit code, bytes; limits_hit, warnings, errors). A rule match is a hypothesis about what the code could do and a recovered string is derived; neither is behaviour, reachability or intent. It does not run the sample, does not run an engine that is not installed, and a status other than complete names what is missing. capa.json and floss.json can hold credentials: coverage.json, index.tsv and matches.tsv copy none.",
-  "sha256": "f25b8103111e91cd888b7ed8dd95a841724494bd963d4a43a56b0a4f57d7b7c8"
+  "sha256": "8ae49d24221e35f26ae4a88fa5b308cb08b58b15c9c6716c4dbee140780717ac"
 }
