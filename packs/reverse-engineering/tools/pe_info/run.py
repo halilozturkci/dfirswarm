@@ -109,7 +109,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "pe_info", "version": 7}
+TOOL = {"name": "pe_info", "version": 8}
 PARSER = "pe_info/3"
 
 NOTE = ("Static structural inventory only. Size differences, entropy and imports are triage features, not proof "

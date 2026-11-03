@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.11.2",
+  "version": "1.11.3",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -89,18 +89,18 @@
       "skills/scope/phase-timeline.md": "c076da1b61c8657850b8dfe356a87cf3eeba2a2e68c6fd0572d4d971d16623dd",
       "skills/scope/triage-tools-names.md": "184d73620b040296206fccb56827cb13e3fa834bc035e6f0b91b8a49a2f0299a",
       "skills/scope/triage-tools.md": "2d8ca3366f1b39ea7ff0bde4984076550edf302336794a5d554a0d66a386a148",
-      "tools/backup_destruction_correlate/manifest.json": "515fac53456517f6fc2f111a29b0976e2e2c103fad734636dac3bb5732c11aa7",
-      "tools/backup_destruction_correlate/run.py": "f7a4dde4aabfd5e1580f73d7865bc8b5fd8108ed72cae91ddbc345fc38df9404",
-      "tools/encrypted_survey/manifest.json": "917db356a29abdf6d3ed44e9b94f3d771f31f12f577b0a65c1160ece3251260e",
-      "tools/encrypted_survey/run.py": "68db06040a957cbe96c1f74cb1fee0f8976198f4a46532570436347504caf51f",
-      "tools/encryption_extent/manifest.json": "517ba17b3f1fa30a654e887cdff170378ae7ac516bc51b68424aa18d1084d6fd",
-      "tools/encryption_extent/run.py": "7aefe2059c6d02b9b7b3af814903d09cf7b0bd628fca271775d905b1cd613dc5",
-      "tools/ransom_note_scan/manifest.json": "bb29415d9327f995fee1e2de79798d04fa25cd0d6ea07f2ba301e18aa78adaa9",
-      "tools/ransom_note_scan/run.py": "5c3dd8f70178ed537cd5b43c328ec8b0cf4c7035167f2a2034be5242eba2cf86",
-      "tools/ransomware_scope_report/manifest.json": "30be2b61ba0e21c8598744be35cea39b0c3a432025af9057f279d79abad3c38d",
-      "tools/ransomware_scope_report/run.py": "e51980253dbd671429acd072bdea15dce447d5fda70be0e6c81c57cc23d822f1",
-      "tools/recovery_validate/manifest.json": "638ec359df8f0556438fcb5749451b993c9e3d7239319b8f7ceaa60f42c2c684",
-      "tools/recovery_validate/run.py": "6795c42c121fc79b915194c16067db610ecfc69a35a051544d4bdefdbce84a0d"
+      "tools/backup_destruction_correlate/manifest.json": "eafddd89840be0478ee5565f77d51766e165ec2ac67b7d0be61cf5d761c7b088",
+      "tools/backup_destruction_correlate/run.py": "857944ac4a2b96b4afcb522959b228c048f2f3d7ce16e4991ed4b4505529d47c",
+      "tools/encrypted_survey/manifest.json": "400ec30782498af0c2a11fd5830474567357ea19288fc8e4f59b8c5d1b052726",
+      "tools/encrypted_survey/run.py": "edbf431c5e41cf6bd171b4d1b1c8a7defafb2ee98dac1521ebc1027921a5a614",
+      "tools/encryption_extent/manifest.json": "ebc1fdd1df5ad00186acf79e89bca0c86fb2677a9341a87a6372893e80029d19",
+      "tools/encryption_extent/run.py": "e50b80e2041a9c91a5d2177c340468d5b012bc694f8746818b63a77dce181584",
+      "tools/ransom_note_scan/manifest.json": "b9a3d39960c2bf3b92adc7e3510bf7777370a61f76708254427e8090324988ff",
+      "tools/ransom_note_scan/run.py": "67cb60d4a00257c6c203a0df99fab8eb71093e0a83dd1a6395fa5e12fac8db77",
+      "tools/ransomware_scope_report/manifest.json": "333fba7d96020dd060185ead2248a3266620f3e98896b9cdbea5641046020e76",
+      "tools/ransomware_scope_report/run.py": "340b0db461f2453c42588174c9ea9017effd3274abdb2ae5df5b7774465499a0",
+      "tools/recovery_validate/manifest.json": "9fdb3f3f030883ea8cc0b9776f0e5e6510b6b1861cb43824a58da77499106e38",
+      "tools/recovery_validate/run.py": "99d711f9d20bf692051f896520f956a6292abc897c10372c3774fa7c6589ed69"
     }
   },
   "tools": [

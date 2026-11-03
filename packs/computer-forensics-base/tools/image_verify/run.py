@@ -51,7 +51,7 @@ import time
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "image_verify", "version": 1}
+TOOL = {"name": "image_verify", "version": 2}
 STARTED = time.monotonic()               # the run's clock starts with the tool
 CHUNK = 1 << 20
 MAX_SECONDS_DEFAULT = 3000

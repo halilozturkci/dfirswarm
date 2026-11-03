@@ -35,7 +35,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-TOOL = {"name": "elf_directories", "version": 2}
+TOOL = {"name": "elf_directories", "version": 3}
 PARSER = "elf_directories/1"
 NOTE = ("Static structure only. A dynamic tag, a symbol or a note shows what the file declares to its loader and tools, not what the code does: a "
         "NEEDED entry, an RPATH or an undefined symbol is a declaration, and a build ID is a claim. Read `status`, `problems` and `coverage` first: "

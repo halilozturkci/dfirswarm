@@ -46,7 +46,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "suricata_run", "version": 12}
+TOOL = {"name": "suricata_run", "version": 13}
 PARSER = "suricata_run/5"
 
 

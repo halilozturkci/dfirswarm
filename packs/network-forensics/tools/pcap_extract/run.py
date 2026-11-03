@@ -58,7 +58,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "pcap_extract", "version": 9}
+TOOL = {"name": "pcap_extract", "version": 10}
 PARSER = "pcap_extract/5"
 
 

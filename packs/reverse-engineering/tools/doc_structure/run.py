@@ -48,7 +48,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-TOOL = {"name": "doc_structure", "version": 6}
+TOOL = {"name": "doc_structure", "version": 7}
 PARSER = "doc_structure/1"
 NOTE = ("Static structure only. A structure shows what the file holds, not what an application would do with it: an action, a macro, "
         "a field or an external target does not show that anything ran or was fetched. Record what was read and what was not before "

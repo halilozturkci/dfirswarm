@@ -118,7 +118,7 @@ def print_answer(answer, **dumps_kwargs):
 install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
-TOOL = {"name": "doc_probe", "version": 11}
+TOOL = {"name": "doc_probe", "version": 12}
 PARSER = "doc_probe/4"
 NOTE = ("Static container triage only. Markers, procedure names and external relationships do not prove execution or "
         "retrieval. Record parser coverage before drawing an absence conclusion.")

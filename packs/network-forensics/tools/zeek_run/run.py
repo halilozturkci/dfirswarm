@@ -50,7 +50,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "zeek_run", "version": 13}
+TOOL = {"name": "zeek_run", "version": 14}
 PARSER = "zeek_run/5"
 
 

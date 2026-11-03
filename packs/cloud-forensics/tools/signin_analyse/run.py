@@ -2590,8 +2590,9 @@ def cell(value):
 TOOL = "signin_analyse"
 # The label moves when what a record says changes (docs/packs.md, 'A tool's version and its PARSER label'). 4: until the
 # foreign-record, long-integer and per-record-isolation changes; 5: those; 6: a record over max_record_bytes is skipped and the
-# records after it are read (they were never read before).
-PARSER = "signin_analyse/6"
+# records after it are read (they were never read before); 7: the credential
+# rules are the shared block's (a number or an array under a credential's name, mysql -p, curl -u and a bcrypt hash are withheld now).
+PARSER = "signin_analyse/7"
 VALUES_NAME = "signin-values.jsonl"
 ENVELOPE_KEYS = ("value", "items", "Records")
 SINGLE = "singlefactorauthentication"

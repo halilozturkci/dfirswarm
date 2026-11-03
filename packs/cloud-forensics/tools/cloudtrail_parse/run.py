@@ -2584,8 +2584,9 @@ import bisect
 TOOL = "cloudtrail_parse"
 # The label moves when what a record says changes (docs/packs.md, 'A tool's version and its PARSER label'). 4: until the
 # foreign-record, long-integer and per-record-isolation changes; 5: those; 6: a record over max_record_bytes is skipped and the
-# records after it are read (they were never read before).
-PARSER = "cloudtrail_parse/6"
+# records after it are read (they were never read before); 7: the credential
+# rules are the shared block's (a number or an array under a credential's name, mysql -p, curl -u and a bcrypt hash are withheld now).
+PARSER = "cloudtrail_parse/7"
 VALUES_NAME = "cloudtrail-values.jsonl"
 RECORDS_NAME = "cloudtrail-records.jsonl"
 ENVELOPE_KEYS = ("Records", "Events")

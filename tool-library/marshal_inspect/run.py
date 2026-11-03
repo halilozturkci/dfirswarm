@@ -57,7 +57,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "marshal_inspect", "version": 4}
+TOOL = {"name": "marshal_inspect", "version": 5}
 PARSER = "marshal_inspect/2"
 SCHEMA_VERSION = 2
 NOTE = ("A marshal stream is data until something runs it, and this tool runs none of it. A constant, a name or a file name is what the file says, "

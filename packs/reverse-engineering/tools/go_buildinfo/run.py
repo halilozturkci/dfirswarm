@@ -32,7 +32,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-TOOL = {"name": "go_buildinfo", "version": 3}
+TOOL = {"name": "go_buildinfo", "version": 4}
 PARSER = "go_buildinfo/1"
 SCHEMA_VERSION = 1
 NOTE = ("A Go binary's build information is what the go command wrote into the file: the toolchain version, the module graph and the build settings. "

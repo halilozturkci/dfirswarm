@@ -52,7 +52,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "pcap_summary", "version": 11}
+TOOL = {"name": "pcap_summary", "version": 12}
 PARSER = "pcap_summary/6"
 
 

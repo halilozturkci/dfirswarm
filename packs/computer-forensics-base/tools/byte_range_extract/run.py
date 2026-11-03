@@ -39,7 +39,7 @@ import time
 from bisect import bisect_right
 from pathlib import Path
 
-TOOL = {"name": "byte_range_extract", "version": 1}
+TOOL = {"name": "byte_range_extract", "version": 2}
 STARTED = time.monotonic()
 CHUNK = 1 << 20
 RANGES_MAX = 10000

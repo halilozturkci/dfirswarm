@@ -49,7 +49,7 @@ import time
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "layer_describe", "version": 1}
+TOOL = {"name": "layer_describe", "version": 2}
 STARTED = time.monotonic()
 CHUNK = 1 << 20
 MAX_SECONDS_DEFAULT = 1500
