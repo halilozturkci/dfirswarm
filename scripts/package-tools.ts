@@ -51,7 +51,9 @@ import { REVIEW_ACTIONS } from "./review.ts";
 import { packageLayout, verifyReleases } from "./release-record.ts";
 import { outputWords, sensitiveEntries, sensitiveIndex, withheldPaths } from "./output-hygiene.ts";
 import { MultiMatch } from "./multi-match.ts";
-import { accessCounts, accessRecord } from "./sensitive-access.ts";
+import { accessCounts, accessRecord, type AccessRecord } from "./sensitive-access.ts";
+import { createReadStream } from "node:fs";
+import { jsonlLines } from "../extensions/jsonl-lines.ts";
 
 const sha256 = (b: string | Buffer) => createHash("sha256").update(b).digest("hex");
 
@@ -509,6 +511,48 @@ function byteAt(buf: Buffer, start: number, unit: 1 | 2): (k: number) => number 
  * every file is scanned for what should have been taken out: `leaks: fail`
  * (the default) refuses the package on a hit, `list` records the hits.
  */
+/** A trace row as the access record names it: the seat, its session, its sequence number and the tool. */
+const rowMark = (agent: unknown, sid: unknown, seq: unknown, tool: unknown): string => `${String(agent)}\0${typeof sid === "string" ? sid : ""}\0${typeof seq === "number" ? seq : ""}\0${String(tool)}`;
+
+/**
+ * What the access record marks in a package's trace and tool-output (the
+ * second predicate of --redact, docs/adr/0018 decision 9): the seats' own
+ * tool-result rows that reached a sensitive output, by `{agent, sid, seq,
+ * tool}` from the record's `tool_row`, the possible reaches and the commands
+ * that name it included, and the whole copy each was kept as
+ * (`kept_as`, under tool-output/). The rows the hub wrote itself carry
+ * a job id and a path, never a value, and are not marked. A run with no
+ * sensitive output has none.
+ */
+export function accessMarks(rec: AccessRecord | null): { rows: Set<string>; kept: Set<string> } {
+  const rows = new Set<string>();
+  const kept = new Set<string>();
+  for (const e of rec?.events ?? []) {
+    if (e.source !== "trace") continue;
+    if (e.tool_row) rows.add(rowMark(e.tool_row.agent, e.tool_row.sid, e.tool_row.seq, e.tool_row.tool));
+    if (e.kept_as) kept.add(e.kept_as);
+  }
+  return { rows, kept };
+}
+
+/** The trace lines of a file the marks name, counted (a regular file, streamed: a trace can be gigabytes). */
+async function countMarkedLines(file: string, marks: Set<string>): Promise<number> {
+  if (!marks.size) return 0;
+  const st = lstatSync(file, { throwIfNoEntry: false });
+  if (!st?.isFile()) return 0;
+  let n = 0;
+  for await (const line of jsonlLines(createReadStream(file))) {
+    if (!line.includes('"agent"')) continue;
+    try {
+      const o = JSON.parse(line) as Record<string, unknown>;
+      if (marks.has(rowMark(o.agent, o.sid, o.seq, o.tool))) n += 1;
+    } catch {
+      // not a line of the trace's shape: not counted
+    }
+  }
+  return n;
+}
+
 export async function redactPackage(sandbox: string, dir: string, opts: { leaks?: "fail" | "list" } = {}): Promise<{ entries: number; files: number; lines: number; leaks: LeakHit[]; scanned: number; withheld: Withheld[] }> {
   // An entry citing a sensitive output is sensitive whether or not it was
   // recorded so (an entry from before the harness marked such entries):
@@ -518,6 +562,8 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
   const entries = raw.map((e) => (derived.has(e.seq) && !e.sensitive ? { ...e, sensitive: true } : e));
   const index = await sensitiveIndex(sandbox);
   const words = await outputWords(sandbox);
+  // The access record's marks on the trace (a second predicate beside the words): what a seat's tool result returned of a sensitive output.
+  const marks = accessMarks(await accessRecord(sandbox, { derive: true }).catch(() => null));
   const sensitiveSeqs = new Set(entries.filter((e) => e.sensitive).map((e) => e.seq));
   const unmarked = raw.filter((e) => !e.sensitive && derived.has(e.seq)).map((e) => e.seq);
   const sensitiveHashes = new Set(entries.filter((e) => e.sensitive && e.hash).map((e) => e.hash as string));
@@ -656,6 +702,11 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
     "line",
     "store sweep(s) of a sensitive record, or holding a sensitive word or a sensitive output's ref, replaced keeping seq, target, state, prev and hash",
   );
+  // The trace: a line that holds a sensitive entry's words, or that is a seat's tool-result row the access record marks, replaced by its own sha256 (the chain still verifies).
+  const traceJudge = (o: Record<string, unknown>, l: string) => byWords(l) ?? (marks.rows.has(rowMark(o.agent, o.sid, o.seq, o.tool)) ? { seq: null, why: "a seat's tool-result row that the access record marks as reaching a sensitive output" } : null);
+  const traceKeep = (_o: Record<string, unknown>, l: string) => ({ redacted: true, line_sha256: sha256(l) });
+  const traceWhy = "line(s) holding a sensitive entry's words, or a seat's tool result the access record marks as reaching a sensitive output, replaced by their own sha256";
+  if (!tokens.length && marks.rows.size) chained("trace/events.jsonl", traceJudge, traceKeep, "line", traceWhy);
   if (tokens.length) {
     // The finish register: an event that repeats a sensitive entry's words (an ack's why, a resolution), kept by what chains it.
     chained("finish.jsonl", (_o, l) => byWords(l), (o, l) => ({ v: o.v, seq: o.seq, ev: o.ev, redacted: true, line_sha256: sha256(l), prev: o.prev, hash: o.hash }), "line", "finish event(s) holding a sensitive entry's words replaced, keeping seq, ev, prev and hash");
@@ -675,7 +726,7 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
       handled.add("leads.md");
       if (hit) change("leads.md", before, `${REDACTED}: the rendered lead register repeats a sensitive entry's words; leads.jsonl carries every event (those redacted by their hashes); its sha256 before redaction is ${sha256(before)}\n`, "the rendered register holds a sensitive entry's words, replaced whole", [{ what: "file", entry: hit.seq, sha256_of_original: sha256(before), why: "repeats a sensitive entry's words" }]);
     }
-    chained("trace/events.jsonl", (_o, l) => byWords(l), (_o, l) => ({ redacted: true, line_sha256: sha256(l) }), "line", "line(s) holding a sensitive entry's words replaced by their own sha256");
+    chained("trace/events.jsonl", traceJudge, traceKeep, "line", traceWhy);
     chained("store/journal.jsonl", (_o, l) => byWords(l), (o, l) => ({ v: o.v, seq: o.seq, type: o.type, ...(o.job ? { job: o.job } : {}), redacted: true, line_sha256: sha256(l), prev: o.prev ?? null }), "line", "journal line(s) holding a sensitive entry's words replaced, keeping seq, prev and their own sha256");
     chained("review.jsonl", (_o, l) => byWords(l), (o, l) => ({ v: o.v, seq: o.seq, action: o.action, redacted: true, line_sha256: sha256(l), prev: o.prev ?? null }), "line", "review line(s) holding a sensitive entry's words replaced, keeping seq, action, prev and their own sha256");
   }
@@ -760,6 +811,17 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
     const id = hideDigest(sha256(before), `cited by a sensitive entry (E-${c.seq})`, c.path);
     handled.add(c.path);
     change(c.path, before, `${REDACTED}: cited by a sensitive ledger entry (E-${c.seq}); matched ${id} (its bytes and digest are in the run owner's private sidecar)\n`, "cited by a sensitive entry, replaced whole", [{ what: "file", entry: c.seq, sha256_of_original: id, why: "cited by a sensitive entry" }]);
+  }
+  // The whole copy a hub line says a read was kept as (tool-output/<seat>/…): withheld whole, by a keyed id.
+  for (const rel of [...marks.kept].sort()) {
+    if (handled.has(rel) || sealedAsIs(rel) || rel.startsWith("/") || rel.split("/").includes("..")) continue;
+    const abs = join(dir, rel);
+    const st = lstatSync(abs, { throwIfNoEntry: false });
+    if (!st?.isFile()) continue;
+    const before = readFileSync(abs);
+    const id = hideDigest(sha256(before), "a whole output kept from a read the access record marks", rel);
+    handled.add(rel);
+    change(rel, before, `${REDACTED}: a whole output kept from a seat's read of a sensitive output (the access record marks it); matched ${id} (its bytes and digest are in the run owner's private sidecar)\n`, "kept from a read the access record marks, replaced whole", [{ what: "file", entry: null, sha256_of_original: id, why: "kept from a read the access record marks" }]);
   }
   // Every occurrence of a sensitive digest in a text file (a manifest, a
   // job record, the store journal, a revision index) is the content's name:
@@ -898,8 +960,13 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
  * under the manifest. A package to hand over is made with --redact.
  */
 export async function hygieneReport(sandbox: string, dir: string): Promise<{ entries: number; outputs: number; carried: number; hits: LeakHit[]; scanned: number }> {
-  // Who reached a sensitive output, as whole counts (scripts/sensitive-access.ts): no seat, job or path is named here.
-  const accessRec = await accessRecord(sandbox).catch(() => null);
+  // Who reached a sensitive output, as whole counts (scripts/sensitive-access.ts): no seat, job or path is named here. The counts are of what the
+  // chains record; the marks (what --redact would replace) are of what the rules read now, a run from before the hub's lines included.
+  const accessAll = await accessRecord(sandbox, { derive: true }).catch(() => null);
+  const accessRec = accessAll ? { ...accessAll, events: accessAll.events.filter((e) => e.recorded) } : null;
+  const marks = accessMarks(accessAll);
+  const markedLines = await countMarkedLines(join(dir, "trace", "events.jsonl"), marks.rows).catch(() => 0);
+  const markedKept = [...marks.kept].filter((rel) => !rel.startsWith("/") && !rel.split("/").includes("..") && lstatSync(join(dir, rel), { throwIfNoEntry: false })?.isFile()).length;
   const raw = await readLedger(sandbox, { raw: true });
   const derived = await sensitiveEntries(sandbox, raw);
   const entries = raw.map((e) => (derived.has(e.seq) && !e.sensitive ? { ...e, sensitive: true } : e));
@@ -941,7 +1008,16 @@ export async function hygieneReport(sandbox: string, dir: string): Promise<{ ent
           entries: [...derived.entries()].map(([seq, why]) => ({ seq, why })),
           sensitive_outputs: [...index.jobs.values()].map((j) => ({ job: j.id, why: j.sensitivity.why, from: j.sensitivity.from, status: j.status, files: j.files.length, carried: carriedPaths.filter((c) => c.startsWith(`store/jobs/${j.id}/`)).length })),
           carried: carriedPaths.length,
-          access: accessRec ? accessCounts(accessRec) : null,
+          access: accessRec
+            ? {
+                ...accessCounts(accessRec),
+                marked_trace_lines: markedLines,
+                marked_kept_copies: markedKept,
+                ...(markedLines || markedKept
+                  ? { advice: `${markedLines} trace line(s) of seats' tool results and ${markedKept} kept whole output(s) in this package reach a sensitive output (the access record marks them) and are in it as they were; a package made with --redact replaces them` }
+                  : {}),
+              }
+            : null,
           scan: { files: scan.files, words: tokens.length, hits: scan.hits },
         },
         null,

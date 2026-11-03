@@ -109,6 +109,12 @@ page is the decision they rest on.
    says to hand the package over with `--redact`. A line the record marks as
    "maybe" or "text" is replaced as well: redacting too much costs a line,
    and redacting too little costs a value.
+   The directories `tool-output/<seat>/` and `.pi-sessions/` in the run's
+   working directory hold plaintext: what a seat's tool returned and what its
+   session recorded. This decision builds nothing for them and changes
+   neither in the run; a package replaces the kept copy the record names
+   (`kept_as`) when it carries it, and `--with-sessions` replaces the
+   recorded sensitive values by keyed ids.
 10. **The record is a lower bound, and the report says so in a fixed
     sentence.** What the harness sees is what an agent's own tool call names:
     a path the read tools are given, a path or sensitive job id in a command
