@@ -61,7 +61,8 @@ MAX_WALK_ENTRIES = 2_000_000
 RUN_SECONDS = 3300                  # recipe.json allows 3600; no call is started past this
 PER_CALL_CAP = 600
 NOT_COVERED = ("Plaso (not run by this recipe), PowerShell block reassembly / WMI repository / $LogFile (no reader in this pack), the semantic joins of "
-               "UserAssist / BAM / ShimCache / SRUM (only dissect.target's own output, when it is installed), deleted and unallocated data, volume shadow copies, memory")
+               "SRUM (only dissect.target's own output, when it is installed), UserAssist / BAM / ShimCache (read by the userassist_bam_shimcache tool, which this recipe does not run; dissect.target's own output of the same functions is kept beside it as a second reading, when it is installed), "
+               "deleted and unallocated data, volume shadow copies, memory")
 
 HIVE_NAMES = {"system", "software", "sam", "security", "default", "ntuser.dat", "usrclass.dat", "amcache.hve", "components", "drivers", "bbi", "elam"}
 ESE_NAMES = {"srudb.dat", "webcachev01.dat"}
@@ -959,7 +960,7 @@ EXTRA_CALLS = {
 }
 
 FAMILIES = ["registry-hives", "amcache", "shellbags", "prefetch", "shortcuts-jumplists", "event-logs", "recycle-bin", "mft", "usn-journal", "esedb", "browser-history"]
-DISSECT_FUNCTIONS = ["userassist", "bam", "shimcache", "srum", "services", "runkeys", "tasks"]   # what no tool of this pack reads
+DISSECT_FUNCTIONS = ["userassist", "bam", "shimcache", "srum", "services", "runkeys", "tasks"]   # srum, services, runkeys and tasks: no tool of this pack reads them; userassist, bam and shimcache: dissect.target's own output, a second reading beside userassist_bam_shimcache (this recipe does not run that tool)
 DISSECT_FUNCTION_SECONDS = 900
 NOT_RUN = {
     "plaso": "Plaso is not run by this recipe: the disk-timeline recipe of the base pack runs it over a disk image, and a directory of extracted artefacts is not a source it takes",

@@ -27,7 +27,7 @@ one-line index once and fetches a body only when it reaches that artefact family
 | Memory | `memory/windows` (`memory/hibernation-pagefile`) |
 | Anti-forensics | `antiforensics/traces` (`antiforensics/wiping`, `antiforensics/log-clearing`, `antiforensics/timestamps-clock`, `antiforensics/controls`) |
 
-**Twenty-two tools.** The parsers that carry most cases: `mft_records` (both time
+**Twenty-three tools.** The parsers that carry most cases: `mft_records` (both time
 sets, resident data, every named stream), `evtx_query` and `evtx_carve` (records
 from a log, and records from a log that was cleared), `regkv`, `prefetch_mam`
 and `mam_scan`, `amcache_apps`, `usn_journal`, `shellbags`, `jumplist`,
@@ -35,7 +35,9 @@ and `mam_scan`, `amcache_apps`, `usn_journal`, `shellbags`, `jumplist`,
 `esedb_query`, `extract_stream`, `utf16_urls`, `yara_scan`, `registry_recover` (replays a hive's
 transaction logs on a copy, never on the original, and says what it could not apply) and
 `lnk_jumplist` (shell links and Jump Lists as rows with the place of every structure in the file,
-the container's consistency, and a second read by `lnkinfo`).
+the container's consistency, and a second read by `lnkinfo`), and `userassist_bam_shimcache` (UserAssist, BAM, DAM and ShimCache records with the raw bytes beside the decoded
+fields, the layout and its basis, and `unsupported` for a layout it does not know; its offsets are from published notes, not checked
+against real hives, and no second reader cross-checks it).
 
 **One recipe**, `windows-artefacts`, run on request over an extracted collection: it reads each
 family of artefact it finds with the tool above that reads it (and runs a fixed list of
