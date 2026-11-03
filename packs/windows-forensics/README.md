@@ -38,8 +38,9 @@ transaction logs on a copy, never on the original, and says what it could not ap
 the container's consistency, and a second read by `lnkinfo`), and `userassist_bam_shimcache` (UserAssist, BAM, DAM and ShimCache records with the raw bytes beside the decoded
 fields, the layout and its basis, and `unsupported` for a layout it does not know; its offsets are from published notes, not checked
 against real hives, and no second reader cross-checks it) and
-`persistence_normalise` (scheduled tasks: the task XML files, the TaskCache and the events of an `evtx_query` result file linked as items with
-observations that are not verdicts; the WMI repository is not examined).
+`persistence_normalise` (scheduled tasks, services and autorun keys: the task XML files, the TaskCache, the service keys, the Run, Winlogon, AppInit,
+IFEO and Active Setup entries and the events of an `evtx_query` result file as items with observations that are not verdicts; the WMI repository is not
+examined and no second reader is started).
 
 **One recipe**, `windows-artefacts`, run on request over an extracted collection: it reads each
 family of artefact it finds with the tool above that reads it (and runs a fixed list of

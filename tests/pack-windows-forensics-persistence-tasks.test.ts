@@ -428,7 +428,7 @@ dual("wrong arguments are refused as JSON before any read", async (v) => {
       assert.ok(typeof r.error === "string" && r.error.length > 0, JSON.stringify(bad));
     }
     const noCache = await v.write(cwd, "work/EMPTY", { name: "ROOT", children: [{ name: "Other" }] });
-    assert.match(failed(await tool(TOOL, cwd, { software: "work/EMPTY" }, noCache)).error, /no TaskCache key/);
+    assert.match(failed(await tool(TOOL, cwd, { software: "work/EMPTY" }, noCache)).error, /no source key was found/);
   });
 });
 

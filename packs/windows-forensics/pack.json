@@ -1,7 +1,7 @@
 {
   "id": "windows-forensics",
   "name": "Windows Forensics Pack",
-  "version": "1.7.22",
+  "version": "1.7.23",
   "description": "Artefact-by-artefact method and tooling for a Windows examination: the file system and its journals, the hives, execution evidence, the event logs and the records inside a cleared one, accounts and remote access, persistence, PowerShell, browsers, shadow copies, memory, and the traces anti-forensics leaves.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -42,7 +42,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "617dec43b30845a8c7d062db3f6d892400d96796b91f363586beacfbdffd1721",
-      "README.md": "03b2fc8861f806a0809854b55177c7999fd17f7f14ac0d8340ecc7e43908bc01",
+      "README.md": "c4d526e98aff3b787c5c7acc264b6a7ea0c3a9b4f83d06c4084f63397b2a230a",
       "goals/data-left-the-building.md": "34c94782b1a636d54eac5d6d2397a482059374909b7f93ee96433f9c3668b68e",
       "goals/hidden-data.md": "14ee963bede22cf69b96033e483fad57ead72abd20e04ae7ccc1153de265fb78",
       "goals/intrusion-triage.md": "837d339c1f027f540d1f1fd1444a4d454c8736299767d30d8a45c450d86f073d",
@@ -95,7 +95,7 @@
       "skills/logs/security.md": "9cbc5a9d48a394a96e098fbf1d39a0a232a929e6e8a800e857950a76ba146d2b",
       "skills/memory/hibernation-pagefile.md": "eca539ff2713b1a4950c8f5e4670f76f60653836b665a2469150fc6497310387",
       "skills/memory/windows.md": "4bfa31db913edcdd03f21258ffd4c60c96713183e32ad8fd5f00c9ef31a267e9",
-      "skills/persistence/mechanisms.md": "bc9d850b66c5a818e9c7c3da0160e5cbd7be93b2e777c2f94ca35f94b3c5c059",
+      "skills/persistence/mechanisms.md": "fbfaa4769f61e5256eb1bdcbc340e83ece6501afcfbe5d0a6aba7d95fef11451",
       "skills/persistence/tasks-com-wmi.md": "232e6613b2913599e11dc297efb12229f7dbc4403f9ecee5f999e7aa0eb68087",
       "skills/registry/clock.md": "64fcc3d69e3517ab777f2976d028a3be57e44a6f2d5a3d0222ddd3c551e29005",
       "skills/registry/devices-dates.md": "83fc816f2ca505298b2ff220241eeec0d2ff0db80342ec56e9f3a266806df6bb",
@@ -128,8 +128,8 @@
       "tools/mam_scan/run.py": "7e02194a99d397c3bd9e8419d917ffb1255fb5f3149554c23653a505fe76746f",
       "tools/mft_records/manifest.json": "2277a2dd338f5ab37773569951215bc70b807614384dc4da4783f512203efa04",
       "tools/mft_records/run.py": "a1b8c0e90b641bf7fb06f3e6ed9dad4c1c09499332dcad2c4a5b589894001369",
-      "tools/persistence_normalise/manifest.json": "68ce2b54458b722a1caa68162141182e26663dfb4ca1fd6cb6935da754d5de26",
-      "tools/persistence_normalise/run.py": "edab0c65410b6dcb444384c0d65e0103e4b32bf6bd54bb4eb3b65befc57536ec",
+      "tools/persistence_normalise/manifest.json": "a4960cad680d84685470330941c7206b87b2dce6ca668c976d04dcdf12aa18e7",
+      "tools/persistence_normalise/run.py": "ac0c4ef0f00cc699df113ad620fe1491d273760f3268dcacbf42e375379bc6b0",
       "tools/prefetch_mam/manifest.json": "c24fd307f818f924f82ef500c40f53131423460894e3064da4ea998f4be9ead4",
       "tools/prefetch_mam/run.py": "086f0ed60862e6e69b4390bb856cf88a1643feabaf98ae3afc9f23eabd50977f",
       "tools/recyclebin_i/manifest.json": "a4f431dc107970309c6998927151e8410b1ddf031f4653fdd2d84079805f3679",

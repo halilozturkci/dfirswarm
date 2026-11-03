@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-r"""Scheduled tasks linked to their registration and execution evidence, without a persistence verdict.
+r"""Scheduled tasks, services and autorun keys linked to their registration and execution evidence, without a persistence verdict.
 
-What this is: a normaliser. It reads three inputs, any of which may be given (at least the first or the second):
+What this is: a normaliser. It reads these inputs, any of which may be given (at least one hive or tasks_dir):
 
-  software       the SOFTWARE hive: SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\{Tree,Tasks,Plain,Boot,Logon,Maintenance}
+  software       the SOFTWARE hive: the TaskCache (Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\{Tree,Tasks,Plain,Boot,Logon,Maintenance}) and the autorun
+                 keys (Run, RunOnce, Winlogon Shell and Userinit, AppInit_DLLs, Image File Execution Options Debugger, Active Setup StubPath)
                  (Tree: the task path, its Id and whether an SD value is there; Tasks\{GUID}: Path, Actions, Triggers and DynamicInfo).
+  system         the SYSTEM hive: every ControlSetNNN\Services key (ImagePath, Start, Type, Parameters\ServiceDll, FailureActions).
+  ntuser         an NTUSER.DAT: that user's Run and RunOnce keys.
   tasks_dir      a directory of Task Scheduler XML files (Windows\System32\Tasks): UTF-16 with a byte order mark, read without following links;
                  a DOCTYPE or ENTITY declaration is refused before any parse, so no entity is ever expanded.
   evtx_results   an evtx_query result file (JSON Lines): Security 4698 to 4702 and TaskScheduler/Operational 106, 140, 141, 200 and 201 fill the
                  execution-evidence slots of the task they name. Nothing else is imported.
 
-One item per task path: the definition's fields with their locators, the registration evidence (xml, tree, tasks_key: present, absent or not_provided),
+One item per task path (mechanism scheduled_task), per service and control set (service) and per autorun value (autorun): the definition's fields with their locators, the registration evidence (xml, tree, tasks_key: present, absent or not_provided),
 the observations the inputs show (a task file with no TaskCache entry, a TaskCache entry with no file, a Tree entry with no SD value), the TaskCache
 DynamicInfo decoded by its length with the layout and its basis, and the events found. An observation is a fact about the inputs read, not a
 judgement. The WMI repository is not examined, and the answer says so. No second reader (RECmd, RegRipper, Dissect) is started. The hive is read as it is on disk:
@@ -2184,7 +2187,9 @@ OWN_NAMES.update((
     "result", "returned", "run_level", "signal", "software", "source", "state", "status", "status_basis", "taskcache", "tasks_dir", "tasks_key", "transaction_logs_beside_hive",
     "transaction_logs_replayed", "tree", "tree_sd", "triggers", "triggers_length", "actions_length", "truncated", "unsupported", "user_id", "walk_stopped_by_time_limit", "what", "where",
     "wmi_repository", "working_directory", "xml", "xml_file", "xml_rejected", "created", "created_filetime", "uri", "record_id", "event_id", "channel", "time", "time_utc",
-    "actions_hex", "triggers_hex", "dynamic_info_hex", "date", "description", "xml_refused", "task_state", "last_success", "last_success_filetime", "trigger_kinds", "trigger_count", "id",
+    "actions_hex", "triggers_hex", "dynamic_info_hex", "autorun", "autorun_kind", "control_set", "cross_check", "current_control_set", "display_name", "failure_actions_hex",
+    "failure_actions_length", "hives", "image_path", "items_by_mechanism", "mechanism", "ntuser", "not_run", "object_name", "scheduled_task", "service", "service_dll",
+    "sources", "service_name", "value_bytes_hex", "start", "start_label", "system", "type", "type_label", "value_name", "value_type", "taskcache_found", "hive", "date", "description", "xml_refused", "task_state", "last_success", "last_success_filetime", "trigger_kinds", "trigger_count", "id",
 ))
 
 
@@ -2195,7 +2200,9 @@ FIELDS.update({
     "created": "time", "last_run": "time", "last_success": "time", "time_utc": "time", "date": "time", "created_filetime": "number", "last_run_filetime": "number",
     "last_success_filetime": "number", "last_result": "number", "task_state": "number", "raw_length": "number", "record_id": "number", "event_id": "number", "channel": "key",
     "actions_length": "number", "triggers_length": "number", "trigger_count": "number", "user_id": "name", "group_id": "name", "run_level": "name", "logon_type": "name",
-    "author": "name", "bom": "name", "trigger_kinds": "name",
+    "author": "name", "bom": "name", "trigger_kinds": "name", "system": "path", "ntuser": "path", "value_name": "path", "control_set": "name", "mechanism": "name",
+    "autorun_kind": "name", "service_name": "name", "start": "number", "type": "number", "start_label": "name", "type_label": "name", "failure_actions_length": "number", "value_type": "name", "hive": "name",
+    "service_dll": "path", "image_path": "text",
 })
 
 LIMITS = (
@@ -2203,12 +2210,78 @@ LIMITS = (
     "An observation (a task with an XML file and no TaskCache entry, a TaskCache entry with no XML file, a Tree entry with no SD value) is stated as a fact about the inputs read, not as a judgement: a collection that holds one side only shows the other as not provided.",
     "Execution evidence is filled only from the evtx_query result file named in evtx_results; without it the slots are not_provided, and the absence of an event is not evidence that a task did not run.",
     "WMI repository: not examined. Permanent WMI event subscriptions are not read by this tool.",
+    "A service or an autorun entry is read as the registry holds it: whether the program is there, whether it ran and who put the entry there are separate questions. FailureActions is kept as bytes and not decoded. The start and type labels are the documented values; a number outside them is labelled unknown.",
     "The TaskCache DynamicInfo layouts are chosen from the value's length and its first number as the published notes describe, and are not verified against a real hive; the Actions and Triggers values are kept as bytes and not decoded here, and the XML is the readable definition.",
     "The hive is read as it is on disk: transaction logs are not replayed, so a dirty hive may hold newer state in its logs.",
 )
 OWN_NAMES.update(LIMITS)
 
 TC_PATH = ("Microsoft", "Windows NT", "CurrentVersion", "Schedule", "TaskCache")
+OWN_NAMES.add("no_imagepath_and_no_servicedll_value")
+CONTROL_SET = re.compile(r"^ControlSet[0-9]{3}$", re.I)
+START_LABELS = {0: "boot", 1: "system", 2: "automatic", 3: "manual", 4: "disabled"}
+TYPE_LABELS = {1: "kernel driver", 2: "file system driver", 4: "adapter", 8: "recognizer driver", 16: "own process", 32: "share process", 80: "own process (user)", 96: "share process (user)",
+               256: "interactive", 272: "own process, interactive", 288: "share process, interactive"}
+# (hive, key path, the kind it is called, how it is read): "values" every value of the key is one entry; "named" the listed values; "subkeys" the named value of each subkey
+AUTORUNS = (
+    ("software", ("Microsoft", "Windows", "CurrentVersion", "Run"), "run", "values", ()),
+    ("software", ("Microsoft", "Windows", "CurrentVersion", "RunOnce"), "runonce", "values", ()),
+    ("software", ("Wow6432Node", "Microsoft", "Windows", "CurrentVersion", "Run"), "run", "values", ()),
+    ("software", ("Wow6432Node", "Microsoft", "Windows", "CurrentVersion", "RunOnce"), "runonce", "values", ()),
+    ("ntuser", ("Software", "Microsoft", "Windows", "CurrentVersion", "Run"), "run", "values", ()),
+    ("ntuser", ("Software", "Microsoft", "Windows", "CurrentVersion", "RunOnce"), "runonce", "values", ()),
+    ("software", ("Microsoft", "Windows NT", "CurrentVersion", "Winlogon"), "winlogon", "named", ("shell", "userinit")),
+    ("software", ("Microsoft", "Windows NT", "CurrentVersion", "Windows"), "appinit", "named", ("appinit_dlls", "loadappinit_dlls")),
+    ("software", ("Microsoft", "Windows NT", "CurrentVersion", "Image File Execution Options"), "ifeo", "subkeys", ("debugger",)),
+    ("software", ("Microsoft", "Active Setup", "Installed Components"), "active_setup", "subkeys", ("stubpath",)),
+)
+
+
+class NoKey:
+    """A key that is not in the hive, for the code that walks below it."""
+    subkey_count = 0
+
+    def iter_subkeys(self):
+        return []
+
+
+class Reader:
+    """One hive of the run: opened, read through the bounds of its size, each list of subkeys read once (the bounds count every element read over the whole walk)."""
+
+    def __init__(self, path, problems):
+        self.path, self.problems = path, problems
+        self.h = RegistryHive(path)
+        self.bounds = HiveBounds(path)
+        self.listed = {}
+
+    def _list(self, node, label):
+        hit = self.listed.get(id(node))
+        if hit is None:
+            raw = list(self.bounds.subkeys(node, label, self.problems))
+            hit = self.listed[id(node)] = (node, raw, {str(getattr(sub, "name", "")).lower(): sub for sub in raw})
+        return hit
+
+    def kids(self, node, label):
+        return self._list(node, label)[1]
+
+    def child(self, node, name, label):
+        return self._list(node, label)[2].get(name.lower())
+
+    def descend(self, node, parts, label=""):
+        for part in parts:
+            node = self.child(node, part, label)
+            label += "\\" + part
+            if node is None:
+                return None
+        return node
+
+    def values(self, node, where):
+        return list(self.bounds.values(node, where, self.problems, trim_values=False))
+
+    def info(self):
+        hdr = self.h.header
+        return {"hive_dirty": hdr.primary_sequence_num != hdr.secondary_sequence_num, "hive_sequence_numbers": [hdr.primary_sequence_num, hdr.secondary_sequence_num],
+                "transaction_logs_beside_hive": [self.path + sfx for sfx in (".LOG1", ".LOG2", ".LOG") if os.path.isfile(self.path + sfx)], "transaction_logs_replayed": False}
 GROUPS = ("Plain", "Boot", "Logon", "Maintenance")
 MAX_XML_BYTES = 8 << 20
 MAX_ACTIONS = 50
@@ -2216,7 +2289,7 @@ MAX_EVENTS_PER_TASK = 200
 EVENTS = {"security": (4698, 4699, 4700, 4701, 4702), "microsoft-windows-taskscheduler/operational": (106, 140, 141, 200, 201)}
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 DEADLINE_SECONDS = 294            # the manifest allows 300; the seal stop (296.5) is 2.5 seconds later
-PARSER = "persistence_normalise/1"
+PARSER = "persistence_normalise/2"
 INLINE_PROBLEMS = 40
 DOCTYPE = re.compile(r"<!\s*(?:DOCTYPE|ENTITY)", re.I)
 XML_DECL = re.compile(r"^\s*<\?xml[^>]*\?>")
@@ -2387,13 +2460,13 @@ def main():
     if not isinstance(args, dict):
         fail("the arguments are one JSON object")
     paths = {}
-    for name in ("software", "tasks_dir", "evtx_results"):
+    for name in ("software", "system", "ntuser", "tasks_dir", "evtx_results"):
         value = args.get(name)
         if value is not None and (not isinstance(value, str) or not value):
             fail("%s must be a path" % name)
         paths[name] = value
-    if not paths["software"] and not paths["tasks_dir"]:
-        fail("software (the SOFTWARE hive) or tasks_dir (Windows\\System32\\Tasks) is required")
+    if not any(paths[k] for k in ("software", "system", "ntuser", "tasks_dir")):
+        fail("software, system or ntuser (hives) or tasks_dir (Windows\\System32\\Tasks) is required")
     limit = args.get("limit", 500)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
@@ -2404,7 +2477,7 @@ def main():
     write_values = args.get("write_values", False)
     if not isinstance(write_values, bool):
         fail("write_values must be true or false")
-    for name, want_dir in (("software", False), ("evtx_results", False), ("tasks_dir", True)):
+    for name, want_dir in (("software", False), ("system", False), ("ntuser", False), ("evtx_results", False), ("tasks_dir", True)):
         if not paths[name]:
             continue
         try:
@@ -2425,14 +2498,17 @@ def main():
             OWN_NAMES.add(v)
 
     # The names of the whole results are made from what was asked about and never from `contains`: a needle can be a secret.
-    records = SealedPage("persistence_normalise", [paths["software"], paths["tasks_dir"], paths["evtx_results"], bool(contains)], limit)
-    problem_page = SealedPage("persistence_normalise-problems", [paths["software"], paths["tasks_dir"], paths["evtx_results"]], INLINE_PROBLEMS)
+    records = SealedPage("persistence_normalise", [paths["software"], paths["system"], paths["ntuser"], paths["tasks_dir"], paths["evtx_results"], bool(contains)], limit)
+    problem_page = SealedPage("persistence_normalise-problems", [paths["software"], paths["system"], paths["ntuser"], paths["tasks_dir"], paths["evtx_results"]], INLINE_PROBLEMS)
     n = {"unsupported": 0, "filtered_out": 0, "blind": 0, "failed": 0, "refused": 0, "not_read_for_time": 0, "events_not_listed": 0, "evtx_bad_lines": 0, "evtx_rows": 0,
-         "evtx_ignored": 0, "skipped_special": 0, "skipped_links": 0, "actions_cut": 0}
+         "evtx_ignored": 0, "skipped_special": 0, "skipped_links": 0, "actions_cut": 0, "bad_number": 0}
     obs = collections.Counter()
     by_registration = collections.Counter()
     stopped = [None]
     items = {}                                   # lower-case task path -> item
+    others = []                                  # the services and autorun entries: {"path", "row", "texts"}
+    hives = {}                                   # role -> the state of the hive read
+    sources = {}                                 # what was looked for and found
 
     class Problems:
         def append(self, item):
@@ -2505,32 +2581,134 @@ def main():
                         it["xml_refused"] = own("the file could not be read")
                         n["refused"] += 1
 
+    def number_of(v):
+        value = getattr(v, "value", None)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def read_services(rd):
+        sources["services"] = {"present": False}
+        root = rd.h.root
+        current = None
+        sel = rd.child(root, "Select", "")
+        if sel is not None:
+            for v in rd.values(sel, "Select"):
+                if str(getattr(v, "name", "")).lower() == "current" and number_of(v) is not None:
+                    current = number_of(v)
+        for cs in [c for c in rd.kids(root, "") if CONTROL_SET.match(str(getattr(c, "name", "")))]:
+            csn = str(cs.name)
+            svc = rd.child(cs, "Services", csn)
+            if svc is None:
+                continue
+            sources["services"]["present"] = True
+            is_current = None if current is None else csn.lower() == "controlset%03d" % current
+            for s_ in rd.kids(svc, csn + "\\Services"):
+                if time_is_up("the services"):
+                    n["not_read_for_time"] += 1
+                    return
+                name = str(getattr(s_, "name", ""))
+                where = csn + "\\Services\\" + name
+                try:
+                    vals = {str(v.name).lower(): v for v in rd.values(s_, where)}
+                    row = {"mechanism": "service", "path": csn + "\\" + name, "service_name": name, "control_set": csn, "current_control_set": is_current, "key": T("key", where), "hive": "system"}
+                    obs_ = []
+                    texts = [("path", name)]
+                    for field, key in (("image_path", "imagepath"), ("display_name", "displayname"), ("object_name", "objectname")):
+                        v = vals.get(key)
+                        if v is not None and isinstance(v.value, str):
+                            row[field] = T("text", v.value)
+                            texts.append(("text", v.value))
+                    for field, key, labels in (("start", "start", START_LABELS), ("type", "type", TYPE_LABELS)):
+                        v = vals.get(key)
+                        if v is None:
+                            continue
+                        num = number_of(v)
+                        if num is None:
+                            n["bad_number"] += 1
+                            row[field], row[field + "_label"] = None, own("not a number")
+                        else:
+                            row[field], row[field + "_label"] = str(num), own(labels.get(num, "unknown"))
+                    params = rd.child(s_, "Parameters", where)
+                    if params is not None:
+                        for v in rd.values(params, where + "\\Parameters"):
+                            if str(getattr(v, "name", "")).lower() == "servicedll" and isinstance(v.value, str):
+                                row["service_dll"] = T("text", v.value)
+                                texts.append(("text", v.value))
+                    fa = vals.get("failureactions")
+                    if fa is not None and isinstance(fa.value, (bytes, bytearray)):
+                        row["failure_actions_length"] = str(len(fa.value))
+                        row["failure_actions_hex"] = T("hex", bytes(fa.value).hex())
+                    if "image_path" not in row and "service_dll" not in row:
+                        obs_.append("no_imagepath_and_no_servicedll_value")
+                    row["observations"] = obs_
+                    for c in obs_:
+                        obs[c] += 1
+                    others.append({"path": csn + "\\" + name, "row": row, "texts": texts})
+                except Exception as exc:
+                    note(where, exc)
+
+    def read_autoruns(role, rd):
+        sources.setdefault("autoruns", {"present": False})
+        root = rd.h.root
+        for hive_role, parts, kind, mode, wanted in AUTORUNS:
+            if hive_role != role:
+                continue
+            node = rd.descend(root, parts)
+            if node is None:
+                continue
+            sources["autoruns"]["present"] = True
+            base = "\\".join(parts)
+            targets = []
+            if mode == "subkeys":
+                for sub in rd.kids(node, base):
+                    if time_is_up("the autorun keys"):
+                        n["not_read_for_time"] += 1
+                        return
+                    targets.append((str(getattr(sub, "name", "")), sub, base + "\\" + str(getattr(sub, "name", ""))))
+            else:
+                targets.append((None, node, base))
+            for sub_name, tnode, where in targets:
+                for v in rd.values(tnode, where):
+                    if time_is_up("the autorun keys"):
+                        n["not_read_for_time"] += 1
+                        return
+                    vname = str(getattr(v, "name", ""))
+                    if mode != "values" and vname.lower() not in wanted:
+                        continue
+                    try:
+                        data = v.value
+                        row = {"mechanism": "autorun", "autorun_kind": kind, "path": where + "\\" + vname, "hive": role, "key": T("key", where), "value_name": vname,
+                               "value_type": str(v.value_type)}
+                        if isinstance(data, str):
+                            row["command"] = T("text", data)
+                        elif isinstance(data, list):
+                            row["command"] = T("text", "\n".join(str(x) for x in data))
+                        elif isinstance(data, (bytes, bytearray)):
+                            row["value_bytes_hex"] = T("hex", bytes(data).hex())
+                            row["unsupported"] = own("a %s value of %d bytes, not text" % (kind, len(data)))
+                            n["unsupported"] += 1
+                        else:
+                            row["command"] = T("text", str(data))
+                        row["observations"] = []
+                        others.append({"path": row["path"], "row": row, "texts": [("path", row["path"]), ("text", row.get("command"))]})
+                    except Exception as exc:
+                        note(where, exc)
+
     # ---- the TaskCache
     hive_info = {}
     if paths["software"] and stopped[0] is None:
         try:
-            h = RegistryHive(paths["software"])
+            rd = Reader(paths["software"], bound_problems)
         except Exception as exc:
             fail("could not open the hive", software=paths["software"], reason=str(exc))
-        bounds = HiveBounds(paths["software"])
-        listings = {}
-
-        listed = {}                             # id(node) -> (node, {lower-case name: subkey}): a list is read once (the bounds count every element read over the whole walk)
-
-        def child(node, name, label):
-            hit = listed.get(id(node))
-            if hit is None:
-                hit = listed[id(node)] = (node, {str(getattr(sub, "name", "")).lower(): sub for sub in bounds.subkeys(node, label, bound_problems)})
-            return hit[1].get(name.lower())
+        h, bounds, child = rd.h, rd.bounds, rd.child
 
         node = h.root
         label = ""
         for part in ("Microsoft", "Windows NT", "CurrentVersion", "Schedule", "TaskCache"):
             node = child(node, part, label) if node is not None else None
             label += "\\" + part
-        if node is None:
-            fail("the SOFTWARE hive holds no TaskCache key", software=paths["software"], looked_for=["\\" + "\\".join(TC_PATH)])
-        cache = node
+        sources["tasks"] = {"present": node is not None}
+        cache = node if node is not None else NoKey()
         tree, tasks = child(cache, "Tree", "TaskCache"), child(cache, "Tasks", "TaskCache")
         group_ids = {}
         for g in GROUPS:
@@ -2602,11 +2780,22 @@ def main():
                         di["unsupported"] = own(unsupported)
                         n["unsupported"] += 1
                     it["dynamic_info"] = di
-        if LibraryLog.messages:
-            problem_page.add("regipy logged %d message(s) (%d of them errors) while reading; its text can hold bytes of a value or a name and is not shown" % (LibraryLog.messages, LibraryLog.errors))
-        hdr = h.header
-        hive_info = {"hive_dirty": hdr.primary_sequence_num != hdr.secondary_sequence_num, "hive_sequence_numbers": [hdr.primary_sequence_num, hdr.secondary_sequence_num],
-                     "transaction_logs_beside_hive": [paths["software"] + s for s in (".LOG1", ".LOG2", ".LOG") if os.path.isfile(paths["software"] + s)], "transaction_logs_replayed": False}
+        if stopped[0] is None:
+            read_autoruns("software", rd)
+        hives["software"] = rd.info()
+
+    for role in ("system", "ntuser"):
+        if not paths[role] or stopped[0] is not None:
+            continue
+        try:
+            rd2 = Reader(paths[role], bound_problems)
+        except Exception as exc:
+            fail("could not open the hive", **{role: paths[role]}, reason=str(exc))
+        if role == "system":
+            read_services(rd2)
+        else:
+            read_autoruns("ntuser", rd2)
+        hives[role] = rd2.info()
 
     # ---- the execution evidence (an evtx_query result file, when one is named)
     evidence_source = "not_provided"
@@ -2703,7 +2892,7 @@ def main():
             n["not_read_for_time"] += 1
             continue
         it = items[path.lower()]
-        row = {"path": it["path"], "guid": it.get("guid"), "source": "persistence_normalise",
+        row = {"mechanism": "scheduled_task", "path": it["path"], "guid": it.get("guid"), "source": "persistence_normalise",
                "registration": {"xml": it["xml"], "taskcache": it["taskcache"], "tree": it["tree"], "tree_sd": it["tree_sd"], "tasks_key": it["tasks_key"], "groups": it.get("groups")},
                "observations": it["observations"], "execution_evidence": {"source": evidence_source, "events": it["events"]}}
         if it.get("xml_file"):
@@ -2724,6 +2913,35 @@ def main():
             written += 1
             records.add(row)
 
+    def passes_texts(texts):
+        if not contains:
+            return True
+        hit = blind = False
+        for kind, text in texts:
+            if text:
+                found, b = contains_check(contains, text, kind, kind)
+                hit, blind = hit or found, blind or b
+        if not hit:
+            n["filtered_out"] += 1
+            n["blind"] += 1 if blind else 0
+        return hit
+
+    for i in print_order(list(range(len(others))), "path", lambda i: others[i]["path"]):
+        if time_is_up("writing the items"):
+            n["not_read_for_time"] += 1
+            continue
+        if passes_texts(others[i]["texts"]):
+            written += 1
+            records.add(others[i]["row"])
+    by_mechanism = collections.Counter(["scheduled_task"] * len(items) + ["service" if o["row"]["mechanism"] == "service" else "autorun:" + o["row"]["autorun_kind"] for o in others])
+
+    if LibraryLog.messages:
+        problem_page.add("regipy logged %d message(s) (%d of them errors) while reading; its text can hold bytes of a value or a name and is not shown" % (LibraryLog.messages, LibraryLog.errors))
+    if paths["tasks_dir"]:
+        sources["tasks"] = dict(sources.get("tasks", {}), xml_files=len([1 for it in items.values() if it["xml"] == "present"]))
+    if not items and not others and not paths["tasks_dir"] and not any(v.get("present") for v in sources.values()):
+        fail("no source key was found in the hive(s) given", looked_for=["TaskCache", "Services", "Run, RunOnce, Winlogon, Windows (AppInit_DLLs), Image File Execution Options, Active Setup"],
+             hint="the TaskCache, the autorun keys and Active Setup are in SOFTWARE, services in SYSTEM, the user's Run keys in NTUSER.DAT", problems=problem_page.page)
     page = records.finish()
     problem_result = problem_page.finish()
     reasons = []
@@ -2741,6 +2959,8 @@ def main():
         reasons.append("%s (%d entr(ies) were not read or written)" % (stopped[0], n["not_read_for_time"]))
     if n["skipped_links"] or n["skipped_special"]:
         reasons.append("%d link(s) and %d other non-regular entr(ies) in the tasks directory were not read" % (n["skipped_links"], n["skipped_special"]))
+    if n["bad_number"]:
+        reasons.append("%d service Start or Type value(s) are not numbers and carry no label" % n["bad_number"])
     if n["actions_cut"]:
         reasons.append("%d task(s) hold more than %d actions: the rest are counted (actions_not_listed), not listed" % (n["actions_cut"], MAX_ACTIONS))
     if n["blind"]:
@@ -2750,7 +2970,7 @@ def main():
     out = {
         "parser": PARSER,
         "status": "partial" if reasons else "complete",
-        "status_basis": "; ".join(reasons) if reasons else "every task file, TaskCache key and result line named was read to its end",
+        "status_basis": "; ".join(reasons) if reasons else "every task file, hive key and result line named was read to its end",
         "software": paths["software"], "tasks_dir": paths["tasks_dir"], "evtx_results": paths["evtx_results"],
         "wmi_repository": {"result": "not_examined", "note": "WMI repository: not examined"},
         "observations_note": "observations state what the inputs read show or lack; none is a persistence verdict",
@@ -2768,7 +2988,10 @@ def main():
         "problems_not_listed": problem_result["matched"] - len(problem_page.page),
         "walk_stopped_by_time_limit": stopped[0] is not None,
         "library_messages_withheld": LibraryLog.messages,
-        **hive_info,
+        "hives": hives,
+        "sources": sources,
+        "items_by_mechanism": dict(by_mechanism),
+        "cross_check": {"result": "not_run", "reason": own("no independent second reader (RECmd, RegRipper, Dissect) is started by this tool: the items are the reading of one reader")},
         **page,
     }
     if problem_result.get("all_results"):
@@ -2776,6 +2999,7 @@ def main():
     OWN_NAMES.add(out["status_basis"])
     OWN_NAMES.add(out["observations_note"])
     OWN_NAMES.add(out["wmi_repository"]["note"])
+    OWN_NAMES.add(out["cross_check"]["reason"])
     emit(out, indent=2)
     close_values()
 
