@@ -561,7 +561,7 @@ fetch every week (Volatility's symbol bundle) is checked by the size it answers
 with. The run fails when a pin rotted (404), changed (other bytes, other size) or
 did not answer, and names it in the job summary; `node
 --experimental-strip-types scripts/check-pins.ts --list` prints the pins and
-`--head-only` skips the fetches. Nothing re-pins by itself.
+`--head-only` skips the fetches. The whole run has a deadline (`--deadline`, 20 minutes), and a scheduled run that fails opens (or comments on) one `ci-failure` issue. Dependabot is set to watch the base image digests and the Python requirement file (it holds lower bounds only, so what Dependabot proposes for it is not checked here); the pinned downloads are not a Dependabot ecosystem. Nothing re-pins by itself.
 
 To re-pin **an Eric Zimmerman tool** (MFTECmd, EvtxECmd, RECmd in
 `packs/windows-forensics/requires/host.json`): upstream replaced the zip at the

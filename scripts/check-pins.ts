@@ -2,7 +2,7 @@
  * Does every download a pack pins still answer, with the bytes it pinned?
  *
  *   node --experimental-strip-types scripts/check-pins.ts [--root DIR] [--head-only] [--list]
- *                                                         [--retries N] [--retry-delay MS] [--timeout MS]
+ *                                                         [--retries N] [--retry-delay MS] [--timeout MS] [--deadline MS]
  *
  * It reads every `packs/<id>/requires/host.json` under the root and takes each
  * pinned artefact (`install.download`, `source`, `build` and `data`, and the
@@ -17,6 +17,12 @@
  *     `net/<tool>.zip` is replaced at the same address), the bytes are fetched
  *     and their sha256 compared: another digest is a changed pin. `--head-only`
  *     skips that fetch and says so (`unchecked`).
+ *
+ * Every request has its own timeout (`--timeout`, default 120 s) and the whole
+ * run has a deadline (`--deadline`, default 20 min, under the workflow's 30):
+ * a pin the deadline reached before it was answered is an error that says so,
+ * so a host that never answers cannot hold the run past it. A redirect is
+ * followed (at most 20 hops; a loop is an error).
  *
  * One line per pin: `<state> <pack>/<program> <kind> <arch> <url> [detail]`, then
  * a summary. The exit status is 1 when any pin is rotted, changed or in error,
@@ -101,14 +107,19 @@ export function collectPins(root: string): Pin[] {
   });
 }
 
-export type Options = { headOnly: boolean; retries: number; retryDelayMs: number; timeoutMs: number };
+export type Options = { headOnly: boolean; retries: number; retryDelayMs: number; timeoutMs: number; deadlineAt?: number };
 
 /** A pinned artefact above this many bytes is checked by its size, not fetched. */
 const BIG = 64 * 1024 * 1024;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function request(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  return await fetch(url, { ...init, redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+const DEADLINE = "the run's deadline passed before this pin was answered";
+
+/** One request, bounded by the smaller of its own timeout and what is left of the run's deadline. */
+async function request(url: string, init: RequestInit, opt: Options): Promise<Response> {
+  const left = opt.deadlineAt === undefined ? Infinity : opt.deadlineAt - Date.now();
+  if (left <= 0) throw new Error(DEADLINE);
+  return await fetch(url, { ...init, redirect: "follow", signal: AbortSignal.timeout(Math.max(1, Math.min(opt.timeoutMs, left))) });
 }
 
 async function sha256Of(res: Response): Promise<string> {
@@ -122,11 +133,15 @@ async function sha256Of(res: Response): Promise<string> {
 export async function checkPin(pin: Pin, opt: Options): Promise<Result> {
   let lastError = "";
   for (let attempt = 0; attempt <= opt.retries; attempt++) {
-    if (attempt > 0) await sleep(opt.retryDelayMs * attempt);
+    if (attempt > 0) {
+      const left = opt.deadlineAt === undefined ? Infinity : opt.deadlineAt - Date.now();
+      if (left <= 0) break;
+      await sleep(Math.min(opt.retryDelayMs * attempt, left));
+    }
     try {
-      let res = await request(pin.url, { method: "HEAD" }, opt.timeoutMs);
+      let res = await request(pin.url, { method: "HEAD" }, opt);
       if ([403, 405, 501].includes(res.status)) {
-        res = await request(pin.url, { method: "GET", headers: { range: "bytes=0-0" } }, opt.timeoutMs);
+        res = await request(pin.url, { method: "GET", headers: { range: "bytes=0-0" } }, opt);
         await res.body?.cancel();
       }
       if (res.status === 404 || res.status === 410) return { pin, state: "rotted", detail: `HTTP ${res.status}` };
@@ -145,7 +160,7 @@ export async function checkPin(pin: Pin, opt: Options): Promise<Result> {
           : { pin, state: "changed", detail: `size is now ${len}, pinned ${pin.bytes}` };
       }
       if (opt.headOnly) return { pin, state: "unchecked", detail: `HTTP ${res.status}; the URL names no version, so its bytes were not fetched (--head-only)` };
-      const body = await request(pin.url, { method: "GET" }, opt.timeoutMs);
+      const body = await request(pin.url, { method: "GET" }, opt);
       if (body.status === 404 || body.status === 410) return { pin, state: "rotted", detail: `HTTP ${body.status}` };
       if (body.status >= 500) {
         await body.body?.cancel();
@@ -158,6 +173,10 @@ export async function checkPin(pin: Pin, opt: Options): Promise<Result> {
         ? { pin, state: "ok", detail: "same bytes" }
         : { pin, state: "changed", detail: `sha256 is now ${got}, pinned ${pin.sha256}` };
     } catch (e) {
+      if ((e instanceof Error && e.message === DEADLINE) || (opt.deadlineAt !== undefined && Date.now() >= opt.deadlineAt)) {
+        lastError = DEADLINE;
+        break;
+      }
       lastError = e instanceof Error ? (e.cause instanceof Error ? `${e.message}: ${e.cause.message}` : e.message) : String(e);
     }
   }
@@ -199,7 +218,13 @@ export async function main(argv: string[]): Promise<number> {
     retries: Number(arg(argv, "--retries", "3")),
     retryDelayMs: Number(arg(argv, "--retry-delay", "2000")),
     timeoutMs: Number(arg(argv, "--timeout", "120000")),
+    deadlineAt: Date.now() + Number(arg(argv, "--deadline", "1200000")),
   };
+  const deadlineMs = Number(arg(argv, "--deadline", "1200000"));
+  if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) {
+    console.error(`check-pins: --deadline wants a number of milliseconds above zero, got ${JSON.stringify(arg(argv, "--deadline", ""))}`);
+    return 2;
+  }
   const pins = collectPins(root);
   if (pins.length === 0) {
     console.error(`check-pins: no pinned URL under ${root}/packs/*/requires/host.json`);

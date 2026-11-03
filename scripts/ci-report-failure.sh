@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # A failed scheduled or main run opens (or comments on) one tracking issue,
 # and the next such run that is green closes it. Run by a last job of
-# .github/workflows/ci.yml and .github/workflows/image-boot.yml, which are
-# not required checks: this only reports.
+# .github/workflows/ci.yml, .github/workflows/image-boot.yml and
+# .github/workflows/pins.yml, which are not required checks: this only reports.
 #
 #   NEEDS_JSON         the jobs' results (toJSON(needs)): {"job": {"result": "success|failure|cancelled|skipped"}, ...}
 #   EVENT_NAME         github.event_name
