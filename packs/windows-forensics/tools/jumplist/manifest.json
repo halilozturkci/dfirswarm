@@ -26,8 +26,8 @@
   "example": "{\"path\": \"work/extracted/AutomaticDestinations\", \"out_dir\": \"work/<your id>/jumplinks\", \"write_links\": true}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 7,
-  "sha256": "8385bb7a4c1079168fc616a249193832bd9b17304261440c88557e1fdbb6977c",
+  "version": 8,
+  "sha256": "88aee9ee7135e16ab240ad784c41aaa5c73b15d2f73940aad657666f446a4117",
   "use": {
     "extensions": [
       ".automaticdestinations-ms",

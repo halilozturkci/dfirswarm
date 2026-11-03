@@ -2161,8 +2161,8 @@ def emit_answer(doc, interrupted=None, **dumps_kwargs):
 # END SHARED GUARD
 
 # BEGIN SHARED PROCESS
-# The same text is in esedb_query, extract_stream, sigma_hunt, vss_stores and yara_scan; tests/pack-windows-forensics-process.test.ts
-# holds the copies equal. A program a tool runs is started in THIS tool's process group, never in a session of its own: the
+# The same text is in every windows-forensics tool and recipe that starts a program (and in any other pack's tool that copies it);
+# tests/pack-windows-forensics-process.test.ts holds the copies equal. A program a tool runs is started in THIS tool's process group, never in a session of its own: the
 # harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid, SIGKILL)), and a
 # program in a group of its own goes on writing after the tool is gone. On Linux the kernel is also asked to kill it if the
 # tool dies. The tool's own deadline kills the program and what it started by walking the process tree, and SIGTERM, SIGINT

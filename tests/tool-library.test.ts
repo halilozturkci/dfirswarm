@@ -1458,8 +1458,11 @@ test("a paging library tool runs from a copy of its own directory, as a run seed
   // directory, a full disk) and escapes a lone surrogate. The Windows pack's tools carry the second, and so do their library
   // copies (tests/tool-library-twins.test.ts holds them byte-identical); the other library tools take it when they are next
   // changed. No third generation may appear.
+  // The Windows pack's pager also removes its hidden temporary file before it answers (the clean-up block); a library tool that still
+  // carries the older _cannot_write without it is the same generation, so the block is not part of the comparison.
+  const CLEAN_UP = /        # The hidden temp file goes first[^\n]*\n(?:.*\n)*?        except OSError:\n            pass\n/;
   const generations = new Map<string, string[]>();
-  for (const pager of pagers) generations.set(pager, [...(generations.get(pager) ?? []), pager]);
+  for (const pager of pagers) generations.set(pager.replace(CLEAN_UP, ""), [...(generations.get(pager.replace(CLEAN_UP, "")) ?? []), pager]);
   assert.ok(generations.size <= 2, "every tool carries one of the two pagers");
   assert.ok([...generations.keys()].filter((pager) => pager.includes("_cannot_write")).length <= 1, "only one generation is the newer one");
   await withCwd(async (cwd) => {

@@ -30,8 +30,8 @@
   "example": "{\"image\": \"inputs/disk.E01\", \"inode\": \"168-128-4\", \"offset\": 2048, \"output\": \"work/<your id>/168-128-4.bin\"}",
   "by": "sfcc303",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 8,
-  "sha256": "0db633a267d21aed1c9ff8aad8447f8f2125b0b8da4c435a33c08ab8668d0f3d",
+  "version": 9,
+  "sha256": "6df775decd01b0e53d1d4b8f7de37ee990239bc95ce1a9c07bd2fb781f35ad0f",
   "requires": [
     "icat"
   ],
