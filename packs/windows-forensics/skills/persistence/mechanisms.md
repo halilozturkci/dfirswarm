@@ -3,11 +3,11 @@ id: persistence/mechanisms
 title: Services, run keys, startup
 when: Configured or fired.
 needs: []
-tools: [regkv, icat_extract, file_type]
+tools: [regkv, icat_extract, file_type, persistence_normalise]
 requires_host: [fls]
 ---
 
-Use when you sweep services, drivers, Run keys and startup folders. Not for tasks, COM, WMI or replaced binaries (`persistence/tasks-com-wmi`: read it only if those families are in scope).
+Use when you sweep services, drivers, Run keys and startup folders. Not for tasks, COM, WMI or replaced binaries (`persistence/tasks-com-wmi`: read it only if those families are in scope; `persistence_normalise` reads tasks, not services or run keys).
 
 Sweep by family and record what you examined; a configured mechanism and one that fired are separate findings. Read hives by `registry/overview`.
 

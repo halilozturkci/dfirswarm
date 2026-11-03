@@ -5,3 +5,11 @@ One tool reads UserAssist (NTUSER.DAT), BAM and DAM (SYSTEM) and ShimCache / App
 ### Changed: the windows-forensics skills and the recipe no longer say the pack has no UserAssist, BAM, DAM or ShimCache reader
 
 `execution/userassist`, `execution/shimcache` and `registry/readers` name `userassist_bam_shimcache` (and say its offsets are unverified and that nothing cross-checks it). The `windows-artefacts` recipe does not run the new tool; it keeps dissect.target's output of the `userassist`, `bam` and `shimcache` functions as a second reading, and its `not_covered` list and `recipe.json` exclusions say so.
+
+### Added: windows-forensics links scheduled tasks to their registration and execution evidence (`persistence_normalise`, tasks)
+
+A new tool reads Task Scheduler XML files (UTF-16, UTF-8 or UTF-16BE by byte order mark; a DOCTYPE or ENTITY declaration is refused before any parse, so nothing is expanded; a pipe, a link or a file over 8 MiB is never read), the TaskCache of a SOFTWARE hive (Tree, Tasks and the Plain, Boot, Logon and Maintenance groups; DynamicInfo decoded by its length with the layout and its basis, `unsupported` with the bytes kept when it fits neither; Actions and Triggers kept as bytes) and an `evtx_query` result file (Security 4698 to 4702 and TaskScheduler/Operational 106, 140, 141, 200 and 201), into one item per task. Mismatches (an XML file with no TaskCache entry, a TaskCache entry with no file, a Tree entry with no SD value) are observations about the inputs, not verdicts, and are stated only when both sides were given. Command and Arguments are withheld by shape and written whole only in a `secret_output` job. The answer says "WMI repository: not examined". No second reader (RECmd, RegRipper, Dissect) is started; the manifest says so. `tests/pack-windows-forensics-persistence-tasks.test.ts` is the new suite (a TaskCache of 100,000 tasks among its cases).
+
+### Changed: `persistence/tasks-com-wmi` and `persistence/mechanisms` name `persistence_normalise`
+
+The task leaf now says the tool links the XML, the TaskCache and the events, that its observations are not verdicts, and that the WMI repository is reported as not examined.

@@ -960,7 +960,7 @@ EXTRA_CALLS = {
 }
 
 FAMILIES = ["registry-hives", "amcache", "shellbags", "prefetch", "shortcuts-jumplists", "event-logs", "recycle-bin", "mft", "usn-journal", "esedb", "browser-history"]
-DISSECT_FUNCTIONS = ["userassist", "bam", "shimcache", "srum", "services", "runkeys", "tasks"]   # srum, services, runkeys and tasks: no tool of this pack reads them; userassist, bam and shimcache: dissect.target's own output, a second reading beside userassist_bam_shimcache (this recipe does not run that tool)
+DISSECT_FUNCTIONS = ["userassist", "bam", "shimcache", "srum", "services", "runkeys", "tasks"]   # srum, services and runkeys: no tool of this pack reads them (persistence_normalise reads tasks, and this recipe does not run it); userassist, bam and shimcache: dissect.target's own output, a second reading beside userassist_bam_shimcache (this recipe does not run that tool)
 DISSECT_FUNCTION_SECONDS = 900
 NOT_RUN = {
     "plaso": "Plaso is not run by this recipe: the disk-timeline recipe of the base pack runs it over a disk image, and a directory of extracted artefacts is not a source it takes",

@@ -119,6 +119,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "windows-forensics/tools/evtx_query": w("log", "strings"),
   "windows-forensics/tools/lnk_jumplist": w("strings"),
   "windows-forensics/tools/lnk_parse": w("java", "pwsh", "strings"),
+  "windows-forensics/tools/persistence_normalise": w("log", "strings"),
   "windows-forensics/tools/regkv": w("log", "strings"),
   "windows-forensics/tools/registry_recover": w("log"),
   "virtualization-backup-forensics/tools/snapshot_chain_check": { ...w("log", "strings"), "qemu-img": "run only when it is installed, to read a disk format header; the pack pins that the tool declares no requires (tests/pack-virtualization-shared.test.ts), as nothing in it needs the program to answer" },
