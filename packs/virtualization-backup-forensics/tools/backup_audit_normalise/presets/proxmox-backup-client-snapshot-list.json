@@ -1,0 +1,22 @@
+{
+  "category_map": {
+    "ct": "backup_end",
+    "host": "backup_end",
+    "vm": "backup_end"
+  },
+  "documentation": "Proxmox Backup documentation page Backup Client Usage (its title read Proxmox Backup 4.2.8-1 documentation) for the command and its --output-format option, which that page does not show for this command; the fields of an item from the Proxmox Backup source, pbs-api-types SnapshotListItem (git.proxmox.com, master), whose BackupDir part is flattened and is taken to carry backup-type, backup-id and backup-time as the snapshot manifest names them; retrieved 2026-11-03",
+  "export": "proxmox-backup-client snapshot list --output-format json: a JSON array with one object per snapshot",
+  "format": "declared_json",
+  "mapping": {
+    "action": "backup-type",
+    "actor": "owner",
+    "message": "comment",
+    "object": "backup-id",
+    "time": "backup-time"
+  },
+  "name": "proxmox_backup_client_snapshot_list",
+  "note": "A snapshot the datastore lists is a backup it holds: the event is labelled backup_end by this preset, and says nothing of whether the backup can be restored. The listing has no per-snapshot action or result, so the backup type stands for the action and the result stays unknown.",
+  "product": "proxmox_backup_client",
+  "revision": 1,
+  "time_format": "epoch_seconds"
+}

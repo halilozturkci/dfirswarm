@@ -42,6 +42,7 @@ import collections
 import csv
 import datetime
 import errno
+import hashlib
 import itertools
 import json
 import math
@@ -71,6 +72,7 @@ MAX_XML_RECORD_BYTES = 4 << 20   # text and attributes one declared XML record m
 MAX_XML_TOKEN = 16 << 20         # bytes the XML reader may take in without one element or text callback (a giant tag or comment)
 MAX_XML_DEPTH = 64
 MAX_PATHS = 100
+MAX_PRESET_BYTES = 65536
 CATEGORIES = ("backup_job", "backup_start", "backup_end", "backup_error", "archive_created", "restore", "snapshot_create", "snapshot_delete",
               "snapshot_rollback", "retention_prune", "retention_gc", "retention_remove", "verification", "sync", "vm_create", "vm_delete",
               "vm_power", "vm_start", "clone", "migrate", "disk_delete", "config_change", "repository_change", "login", "task_end", "other")
@@ -3264,6 +3266,160 @@ def parse_pbs_blob(fh, source, events, clock, max_line, stats):
         stats["unparsed"] += len(doc["files"]) - MAX_MANIFEST_FILES
 
 
+# ---- presets: a named set of the declared-mapping parameters, held as a reviewed file under presets/ --------------------------
+# A preset is data over the engine below, not code. The tool reads presets from its own presets/ directory only, by the names listed here, and only a file whose
+# sha256 is the one listed: a changed preset is refused by name. (The job service checks only this file's hash, so the presets' hashes are held here.)
+PRESET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
+PRESET_SHA256 = {            # file name -> (sha256 of the reviewed file, the product it serves, its name)
+    "proxmox-backup-client-snapshot-list.json": ("09357c591462951708819c1f5c70ba255764d54583f9f1eaa0067029ad9e88de", "proxmox_backup_client", "proxmox_backup_client_snapshot_list"),
+}
+PRESET_KEYS = ("name", "revision", "product", "format", "export", "documentation", "mapping", "category_map", "result_map", "time_format", "columns", "record_tag", "delimiter", "has_header", "note")
+
+
+def read_preset_file(filename):
+    """(bytes, None) of a listed preset file, or (None, why). Regular file only, not followed through a link, at most MAX_PRESET_BYTES."""
+    path = os.path.join(PRESET_DIR, filename)
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode):
+            return None, "not a regular file"
+        if st.st_size > MAX_PRESET_BYTES:
+            return None, "over %d bytes" % MAX_PRESET_BYTES
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as fh:
+            return fh.read(MAX_PRESET_BYTES + 1), None
+    except OSError as exc:
+        return None, describe(exc)
+
+
+def select_preset(product, preset_name):
+    """The preset the caller's product (and, where a product has several, preset name) selects; None when no listed preset has that product or name. A listed
+    preset whose file is missing, is not the one listed by hash, or does not hold what a preset holds is refused by its file name."""
+    if not product and not preset_name:
+        return None
+    want_product = (product or "").strip().lower()
+    want_name = (preset_name or "").strip().lower()
+    found = []
+    for filename, (digest, listed_product, listed_name) in sorted(PRESET_SHA256.items()):
+        if want_name:
+            if want_name != listed_name:
+                continue
+            if want_product and want_product not in (listed_product, listed_name):
+                continue
+        elif want_product not in (listed_product, listed_name):
+            continue
+        data, why = read_preset_file(filename)
+        if data is None:
+            fail("the preset file %s cannot be read (%s): it is not used" % (filename, why), status_note="preset_refused", preset_file=filename)
+        if hashlib.sha256(data).hexdigest() != digest:
+            fail("the preset file %s was changed: its sha256 is not the one this tool lists, so it is not used" % filename, status_note="preset_refused", preset_file=filename)
+        try:
+            doc = json.loads(data.decode("utf-8"))
+        except (ValueError, RecursionError):
+            doc = None
+        if not isinstance(doc, dict) or any(k not in PRESET_KEYS for k in doc) or doc.get("product") != listed_product or doc.get("name") != listed_name                 or not isinstance(doc.get("revision"), int) or not isinstance(doc.get("format"), str):
+            fail("the preset file %s does not hold what the listed preset holds: it is not used" % filename, status_note="preset_refused", preset_file=filename)
+        found.append(doc)
+    if not found:
+        return None
+    if len(found) > 1:
+        fail("product %s has %d presets; name one with preset: %s" % (seal_text(product or "", "text"), len(found), ", ".join(sorted(d["name"] for d in found))), status_note="preset_ambiguous")
+    return found[0]
+
+
+def parse_json_array(fh, source, events, clock, max_line, stats, mapping, times, category_map, result_map):
+    """A JSON array export, `[ {...}, {...} ]`, read element by element: the buffer holds one element and the next read, never the file, and an element over
+    max_line_bytes is located and ends the read (an array cannot be skipped over without being read). A syntax error ends the read at that element, which is
+    counted unparsed and located; the rest of the array is not guessed at."""
+    import codecs
+    dec = json.JSONDecoder()
+    inc = codecs.getincrementaldecoder("utf-8")("surrogateescape")
+    ws = re.compile(r"[ \t\r\n]*")
+    state = {"buf": "", "pos": 0, "eof": False, "chunk": 1 << 16}
+
+    def fill():
+        raw = fh.read(state["chunk"])
+        state["chunk"] = min(state["chunk"] * 2, 8 << 20)
+        if not raw:
+            state["eof"] = True
+            tail = inc.decode(b"", True)
+        else:
+            tail = inc.decode(raw)
+        state["buf"] = state["buf"][state["pos"]:] + tail
+        state["pos"] = 0
+
+    def stop(reason, over=False):
+        if over:
+            stats["over_limit"] += 1
+        else:
+            stats["unparsed"] += 1
+        if len(stats["problem_lines"]) < 200:
+            stats["problem_lines"].append({"source_id": source["id"], "record": record + 1, "reason": reason})
+
+    record, phase = 0, "open"
+    while True:
+        clock.check()
+        buf = state["buf"]
+        state["pos"] = ws.match(buf, state["pos"]).end()
+        if state["pos"] >= len(state["buf"]):
+            if state["eof"]:
+                if phase != "done":
+                    stop("the array has no closing ]: the file is cut" if phase != "open" else "an empty file is no JSON array")
+                return
+            fill()
+            continue
+        pos = state["pos"]
+        c = buf[pos]
+        if phase == "open":
+            if c == "﻿":
+                state["pos"] += 1
+                continue
+            if c != "[":
+                stop("a JSON array export begins with [")
+                return
+            state["pos"] += 1
+            phase = "first"
+            continue
+        if phase == "sep":
+            if c == ",":
+                state["pos"] += 1
+                phase = "elem"
+                continue
+            if c == "]":
+                return
+            stop("expected , or ] after an element")
+            return
+        if phase == "first" and c == "]":
+            return
+        if c == "]":
+            stop("a ] after a comma: not valid JSON")
+            return
+        # an element
+        try:
+            obj, end = dec.raw_decode(buf, pos)
+            if end >= len(buf) and not state["eof"]:
+                raise ValueError("the element may go on in the next read")
+        except (ValueError, RecursionError):
+            pending = len(buf) - pos
+            if not state["eof"] and pending <= max_line:
+                fill()
+                continue
+            if not state["eof"] or pending > max_line:
+                stop("element over max_line_bytes: located, not read; the rest of the array is not read", over=True)
+            else:
+                stop("not valid JSON (or nested too deeply): the rest of the array is not read")
+            return
+        record += 1
+        state["pos"] = end
+        phase = "sep"
+        if not isinstance(obj, dict):
+            stats["unparsed"] += 1
+            if len(stats["problem_lines"]) < 200:
+                stats["problem_lines"].append({"source_id": source["id"], "record": record, "reason": "an array element that is not an object"})
+            continue
+        declared_event(events, source, {"record": record}, "declared_json", lambda p, o=obj: get_path(o, p), mapping, times, category_map, result_map, stats)
+
+
 # ---- declared mappings -----------------------------------------------------------------------------------------------
 
 MISSING = object()   # a declared field the record does not have (a field that is there and null or empty is not missing)
@@ -3572,12 +3728,15 @@ PROVENANCE = {
 }
 
 
-def provenance_of(sources, fmt, product):
+def provenance_of(sources, fmt, product, preset=None):
     """One entry per format that was read: what the reader was built from, and that it is not validated against a real export."""
     used = sorted({s.get("format") for s in sources if s.get("format")} | ({fmt} if fmt.startswith("declared_") else set()))
     out = []
     for name in used:
         entry = PROVENANCE.get(name)
+        if entry is None and preset is not None:
+            entry = {"product": preset["product"], "source_kind": preset.get("export", "an export read through a preset"), "schema_basis": "vendor_documentation",
+                     "validated_against_real_export": False, "documentation": preset.get("documentation", ""), "preset": "%s@%d" % (preset["name"], preset["revision"])}
         if entry is None:       # a declared mapping: the caller's own
             entry = {"product": seal_text(product, "text") if product else None, "source_kind": "export read through a mapping the caller declared", "schema_basis": "caller_declared_mapping",
                      "validated_against_real_export": False, "documentation": "none: the caller's mapping"}
@@ -3594,9 +3753,21 @@ def main():
     if not paths:
         fail("name the exports: path is one file, paths a list of up to %d" % MAX_PATHS)
     fmt = args.get("format", "auto")
-    if fmt not in ("auto", "pve_task_index", "pve_vzdump_log", "pbs_task_log", "pbs_config", "pbs_blob", "declared_csv", "declared_jsonl", "declared_xml"):
-        fail("format must be auto, pve_task_index, pve_vzdump_log, pbs_task_log, pbs_config, pbs_blob, declared_csv, declared_jsonl or declared_xml")
+    if fmt not in ("auto", "pve_task_index", "pve_vzdump_log", "pbs_task_log", "pbs_config", "pbs_blob", "declared_csv", "declared_jsonl", "declared_json", "declared_xml"):
+        fail("format must be auto, pve_task_index, pve_vzdump_log, pbs_task_log, pbs_config, pbs_blob, declared_csv, declared_jsonl, declared_json or declared_xml")
     product = want_str(args, "product", maximum=200)
+    preset_name = want_str(args, "preset", maximum=200)
+    preset = select_preset(product, preset_name)
+    if preset_name and preset is None:
+        fail("preset %s is none of this tool's presets" % seal_text(preset_name, "text"), status_note="preset_unknown")
+    if preset is not None:
+        if fmt not in ("auto", preset["format"]):
+            fail("the preset %s reads format %s, not %s" % (preset["name"], preset["format"], fmt))
+        taken = [k for k in ("mapping", "category_map", "result_map", "time_format", "columns", "record_tag", "delimiter", "has_header") if k in args and k in preset]
+        if taken:
+            fail("the preset %s fixes %s: do not pass them (a preset and a mapping of your own are not mixed)" % (preset["name"], ", ".join(taken)))
+        fmt = preset["format"]
+        args = dict(args, **{k: v for k, v in preset.items() if k in ("mapping", "category_map", "result_map", "time_format", "columns", "record_tag", "delimiter", "has_header")})
     if product and fmt == "auto" and product.lower() not in ("proxmox", "proxmox_ve", "proxmox_backup_server", "pve", "pbs"):
         known = product.lower() in KNOWN_UNSUPPORTED
         fail("product %s is unsupported: no fixture of its format exists, so none is read (%s). Use format declared_csv, declared_jsonl or declared_xml with a mapping you declare." % (
@@ -3713,6 +3884,8 @@ def main():
                     parse_pbs_task_log(fh, rec, events, clock, max_line, stats, pbs_times)
                 elif kind == "declared_csv":
                     parse_csv(fh, rec, events, clock, max_line, stats, mapping, times, category_map, result_map, delimiter, has_header, columns)
+                elif kind == "declared_json":
+                    parse_json_array(fh, rec, events, clock, max_line, stats, mapping, times, category_map, result_map)
                 elif kind == "declared_jsonl":
                     parse_jsonl(fh, rec, events, clock, max_line, stats, mapping, times, category_map, result_map)
                 else:
@@ -3765,7 +3938,8 @@ def main():
         "parser": PARSER, **outcome,
         "format_requested": fmt, "product_label": seal_text(product, "text") if product else None,
         "product_label_note": "the caller's label for a declared format; not verified" if product and fmt.startswith("declared_") else None,
-        "provenance": provenance_of(sources, fmt, product),
+        "preset": ("%s@%d" % (preset["name"], preset["revision"])) if preset else None,
+        "provenance": provenance_of(sources, fmt, product, preset),
         "sources": sources, "unrecognised": unrecognised, "problems": problems,
         "events": events.page.page, "pages": {"events": page},
         "counts": {"events": events.n, "parsed": stats["parsed"], "unparsed": stats["unparsed"], "blank": stats["blank"], "over_line_limit": stats["over_limit"]},
