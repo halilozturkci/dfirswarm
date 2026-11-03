@@ -20,6 +20,8 @@ import sys
 import time
 from pathlib import Path
 
+STARTED = time.monotonic()
+
 
 # BEGIN SHARED STOP
 # The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
@@ -649,6 +651,9 @@ for _name, _value in (("output", output), ("image", d.get("image")), ("inode", i
 given_offset = d.get("offset")
 if given_offset is not None and (isinstance(given_offset, bool) or not isinstance(given_offset, int) or not 0 <= given_offset <= OFFSET_MAX):
     fail("offset is a volume offset in sectors: a whole number from 0 to %d" % OFFSET_MAX, given=type(given_offset).__name__ + " " + str(given_offset)[:40])
+max_seconds = d.get("max_seconds", MAX_SECONDS_DEFAULT)
+if not isinstance(max_seconds, int) or isinstance(max_seconds, bool) or not 1 <= max_seconds <= MAX_SECONDS_CEILING:
+    fail("max_seconds is a whole number from 1 to %d" % MAX_SECONDS_CEILING, max_seconds=max_seconds)
 descriptor = None
 if d.get("descriptor") is not None:
     for _key in ("image", "sector_size"):
@@ -657,7 +662,7 @@ if d.get("descriptor") is not None:
     if d.get("verify_sources") is not None and not isinstance(d.get("verify_sources"), bool):
         fail("verify_sources is true or false")
     try:
-        descriptor = load_descriptor(d["descriptor"], d.get("descriptor_sha256"), d.get("verify_sources") is True, time.monotonic() + DESCRIPTOR_VERIFY_SECONDS)
+        descriptor = load_descriptor(d["descriptor"], d.get("descriptor_sha256"), d.get("verify_sources") is True, min(STARTED + max_seconds, time.monotonic() + DESCRIPTOR_VERIFY_SECONDS))
     except DescriptorError as exc:
         fail(str(exc))
 elif d.get("verify_sources") is not None or d.get("descriptor_sha256") is not None:
@@ -681,9 +686,6 @@ if descriptor is not None and descriptor["sector_size"] != 512:
 max_bytes = d.get("max_bytes", MAX_BYTES_DEFAULT)
 if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or not 1 <= max_bytes <= MAX_BYTES_CEILING:
     fail("max_bytes is a whole number from 1 to %d" % MAX_BYTES_CEILING, max_bytes=max_bytes)
-max_seconds = d.get("max_seconds", MAX_SECONDS_DEFAULT)
-if not isinstance(max_seconds, int) or isinstance(max_seconds, bool) or not 1 <= max_seconds <= MAX_SECONDS_CEILING:
-    fail("max_seconds is a whole number from 1 to %d" % MAX_SECONDS_CEILING, max_seconds=max_seconds)
 dest = resolve_output(output)
 if not os.path.isfile(image):
     fail(f"image not found: {image}")
@@ -738,7 +740,7 @@ while err_fd is None:
 digest = hashlib.sha256()
 size = 0
 status, why = "complete", None
-started = time.monotonic()
+started = STARTED        # the time budget is counted from the start of the process: a verify of the descriptor's sources is inside it
 try:
     out_fd = os.open(str(part), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
 except OSError as exc:

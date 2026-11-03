@@ -106,6 +106,16 @@ class ImageVerify(Case):
         a = self.run_it({"segments": paths}).json
         self.assertEqual(a["status"], "complete", a["status_basis"])
 
+    def test_a_version_that_cannot_be_read_makes_the_receipt_partial_and_names_it(self):
+        paths = self.build()
+        for body in ('if [ "$1" = "-V" ]; then exit 0; fi' + chr(10), 'if [ "$1" = "-V" ]; then exec sleep 120; fi' + chr(10)):
+            d = self.tools(verify_body=body + program(verify_text()))
+            res = self.run_it(dict(self.first(paths), out_dir=self.path("out", "v%d" % len(body))), path_dirs=[d])
+            a = res.json
+            self.assertEqual((res.code, a["status"], a["verification"]), (0, "partial", "digests_agree"), a["status_basis"])
+            self.assertIn("version of ewfverify is not recorded", a["status_basis"])
+            self.assertIsNone(a["ewfverify"]["version"])
+
     def test_a_stored_digest_that_differs_from_the_recomputed_one_is_failed(self):
         paths = self.build()
         d = self.tools(verify=program(verify_text(calc=OTHER, last="ewfverify: FAILURE"), 1))

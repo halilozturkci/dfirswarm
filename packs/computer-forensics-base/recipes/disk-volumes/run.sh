@@ -75,7 +75,7 @@ PY
 # It writes one JSON document on stdout: the descriptor's file, sha256, layer, sector_size, images (the paths the Sleuth Kit is given, in order) and
 # checked; or {"error": ...}. The message never quotes a path from the descriptor.
 descriptor_load() {
-  python3 - "$1" "$2" "$3" <<'PY'
+  python3 - "$1" "$2" "$3" "${4:-}" <<'PY'
 import json, os, sys, time
 # ---- the descriptor (layer_describe's file), read the same way in image_layout, icat_extract, chunk_needles and byte_range_extract -----
 DESCRIPTOR_MAX = 16 * 1024 * 1024
@@ -217,7 +217,7 @@ def descriptor_offset(desc, given):
                           ((": " + ", ".join(str(s) for s in starts)) if starts else ""))
 
 try:
-    d = load_descriptor(sys.argv[1], sys.argv[2] or None, sys.argv[3] == "true", time.monotonic() + DESCRIPTOR_VERIFY_SECONDS)
+    d = load_descriptor(sys.argv[1], sys.argv[2] or None, sys.argv[3] == "true", time.monotonic() + min(DESCRIPTOR_VERIFY_SECONDS, int(sys.argv[4]) if sys.argv[4].isdigit() else DESCRIPTOR_VERIFY_SECONDS))
     print(json.dumps({"file": d["file"], "sha256": d["sha256"], "layer": d["layer"], "sector_size": d["sector_size"], "images": d["images"], "checked": d["checked"]}))
 except DescriptorError as exc:
     print(json.dumps({"error": str(exc)}))
@@ -705,7 +705,7 @@ descriptor_ref="$(target_field "$target" descriptor)"
 if [[ -n "$descriptor_ref" ]]; then
   # A layer descriptor stands for the image: its sources are the image, and its sector size is the sector size. It is checked whole before anything runs.
   DESC_TMP="$(mktemp 2>/dev/null)" || { final; echo '{"applies": "unknown", "why": "no temporary file could be made to read the descriptor", "ok": false, "error": "no temporary file"}'; exit 2; }
-  descriptor_load "$descriptor_ref" "$(target_field "$target" descriptor_sha256)" "$(target_field "$target" verify_sources)" > "$DESC_TMP" 2>/dev/null
+  descriptor_load "$descriptor_ref" "$(target_field "$target" descriptor_sha256)" "$(target_field "$target" verify_sources)" "$(( DEADLINE - SECONDS > 1 ? DEADLINE - SECONDS : 1 ))" > "$DESC_TMP" 2>/dev/null
   derr="$(desc_get "$DESC_TMP" error 2>/dev/null)"
   if [[ -n "$derr" || ! -s "$DESC_TMP" ]]; then
     rm -f "$DESC_TMP"; DESC_TMP=""

@@ -7,7 +7,7 @@ segments of a raw split set) and a list of ranges, each an `offset` and a `lengt
   * Each source file is opened without waiting and without following a link and must be a regular file; a link, FIFO, directory or device
     is refused. Only a raw file or a raw split set is read: the decoded media of an E01, VMDK or QCOW is not these bytes, and a descriptor
     with such a layer is refused as unsupported. Its sources are looked at again at the end, and a source that changed makes the run a failure.
-  * Every range is written to a file of its own in a new directory, created with O_EXCL and O_NOFOLLOW, mode 0600 in a 0700 directory, as
+  * Every range is written to a file of its own in the output directory, created with O_EXCL and O_NOFOLLOW, mode 0600 in a 0700 directory, as
     range-NNNNNN.bin.partial and renamed to range-NNNNNN.bin only when it holds all the bytes asked for. A name that is taken gets a new
     one and the kept name is in the row; nothing is replaced. A range that ends past the end of the source, or starts beyond it, is short:
     it stays .partial, and the row says how many bytes were asked for (`requested`) and how many were read (`actual`). A sparse file
@@ -51,10 +51,6 @@ MAX_SECONDS_CEILING = 550               # inside the manifest's 600
 SHORT_RANGE = 128                       # a range of fewer bytes has no digest written
 LIMIT_DEFAULT = 200
 LIMIT_CEILING = 5000
-try:                                    # seconds to wait after each block: a hook for the tests, which need a copy that lasts long enough to be stopped
-    PACE = min(max(float(os.environ.get("TOOL_TEST_BLOCK_SLEEP") or 0), 0.0), 1.0)
-except ValueError:
-    PACE = 0.0
 
 
 # BEGIN SHARED STOP
@@ -1131,8 +1127,6 @@ def main():
                     actual += len(data)
                     written_total += len(data)
                     PROGRESS["bytes"] = written_total
-                    if PACE:
-                        time.sleep(PACE)
                 out.flush()
         except OSError as exc:
             why = "a read or a write failed: %s" % describe(exc)

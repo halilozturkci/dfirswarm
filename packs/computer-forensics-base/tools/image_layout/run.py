@@ -331,7 +331,8 @@ PAGES.append(HELD)
 
 TOOL = {"name": "image_layout", "version": 13}
 CHILD_TIMEOUT = 120
-TOTAL_BUDGET = 270          # seconds, under the manifest's 300
+TOTAL_BUDGET = 270          # seconds, under the manifest's 300; counted from the start of the process (a verify of the descriptor's sources is inside it)
+STARTED = time.monotonic()
 SECTOR_MAX = 65536
 VIRTUAL_DISKS = ("vhd", "vhdx", "vmdk", "qcow", "aff")
 # The image type img_stat prints for what the Sleuth Kit has a reader for; a container with none is read as "raw" if at all.
@@ -737,7 +738,7 @@ def main():
         if args.get("verify_sources") is not None and not isinstance(args.get("verify_sources"), bool):
             fail("verify_sources is true or false")
         try:
-            descriptor = load_descriptor(args["descriptor"], args.get("descriptor_sha256"), args.get("verify_sources") is True, time.monotonic() + DESCRIPTOR_VERIFY_SECONDS)
+            descriptor = load_descriptor(args["descriptor"], args.get("descriptor_sha256"), args.get("verify_sources") is True, min(STARTED + TOTAL_BUDGET, time.monotonic() + DESCRIPTOR_VERIFY_SECONDS))
         except DescriptorError as exc:
             fail(str(exc))
     elif args.get("verify_sources") is not None or args.get("descriptor_sha256") is not None:
@@ -763,7 +764,7 @@ def main():
     # A name that begins with "-" would be read by every Sleuth Kit program as an option: "./" makes it a path.
     arg = ["./" + p if p.startswith("-") else p for p in images]
     IMAGES[:] = arg
-    deadline = Deadline(TOTAL_BUDGET)
+    deadline = Deadline(max(TOTAL_BUDGET - (time.monotonic() - STARTED), 0))
     keep = Keep(image)
     container, basis = container_of(image)
     out = {

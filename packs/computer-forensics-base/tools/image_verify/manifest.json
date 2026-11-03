@@ -16,7 +16,7 @@
     },
     "max_seconds": {
       "type": "integer",
-      "description": "Time budget in seconds, 60 to 3300 (default 3000), inside the manifest's 3600. At most 40 percent goes to the sha256 of the segments; ewfverify gets what is left less a reserve, and is ended, with what it started, when that runs out."
+      "description": "Time budget in seconds, 5 to 3300 (default 3000), inside the manifest's 3600. At most 40 percent goes to the sha256 of the segments; ewfverify gets what is left less a reserve, and is ended, with what it started, when that runs out."
     },
     "limit": {
       "type": "integer",

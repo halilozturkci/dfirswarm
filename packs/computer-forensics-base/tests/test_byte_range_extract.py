@@ -211,13 +211,13 @@ class ByteRangeExtract(Case):
 
     # ---- stops and writes
     def test_a_stop_signal_mid_copy_leaves_a_named_partial_and_one_partial_document(self):
-        big = self.source(os.urandom(4 << 20), name="evidence/big.dd")
-        env = dict(os.environ, TOOL_TEST_BLOCK_SLEEP="0.3")
+        big = self.sparse(4 << 30)
+        env = dict(os.environ)
         for k in ("JOB_ID", "OUT", "AGENT_ID", "SECRET_OUTPUT"):
             env.pop(k, None)
         for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             out = self.path("out", "stop%d" % signum)
-            spec = self.write("spec%d.json" % signum, json.dumps({"source": big, "ranges": [{"offset": 0, "length": 4 << 20}], "out_dir": out}))
+            spec = self.write("spec%d.json" % signum, json.dumps({"source": big, "ranges": [{"offset": 0, "length": 4 << 30}], "out_dir": out}))
             stdin = open(spec, "rb")
             self.addCleanup(stdin.close)
             proc = subprocess.Popen([sys.executable, tool_path("byte_range_extract")], stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.dir, env=env, start_new_session=True)
@@ -235,9 +235,66 @@ class ByteRangeExtract(Case):
             self.assertEqual(proc.returncode, 128 + signum)
             doc = json.loads(stdout)
             self.assertEqual((doc["status"], doc["interrupted"], doc["signal"], doc["current_range_file"]), ("partial", True, signum, "range-000001.bin.partial"))
-            self.assertTrue(0 < os.path.getsize(os.path.join(out, "range-000001.bin.partial")) < (4 << 20))
+            self.assertTrue(0 < os.path.getsize(os.path.join(out, "range-000001.bin.partial")) < (4 << 30))
             self.assertFalse(os.path.exists(os.path.join(out, "range-000001.bin")))
             self.assertEqual([n for n in os.listdir(out) if n.startswith(".") or ".tmp." in n], [])
+
+    # ---- a copy that is held still while the world changes under it (SIGSTOP at the first bytes; nothing else in the tool is touched)
+    def sparse(self, size, name="evidence/sparse.dd"):
+        path = self.path(name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.truncate(size)
+        return path
+
+    def held_run(self, spec, out, between):
+        """Start the tool, stop it when range 1 has its first bytes, call `between()`, let it go on, and return (code, document)."""
+        env = dict(os.environ)
+        for k in ("JOB_ID", "OUT", "AGENT_ID", "SECRET_OUTPUT"):
+            env.pop(k, None)
+        spec_path = self.write("spec-held.json", json.dumps(spec))
+        stdin = open(spec_path, "rb")
+        self.addCleanup(stdin.close)
+        proc = subprocess.Popen([sys.executable, tool_path("byte_range_extract")], stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.dir, env=env, start_new_session=True)
+        try:
+            partial = os.path.join(out, "range-000001.bin.partial")
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline and not (os.path.exists(partial) and os.path.getsize(partial) > 0):
+                time.sleep(0.002)
+            os.kill(proc.pid, signal.SIGSTOP)
+            self.assertLess(os.path.getsize(partial), 1 << 30, "the copy was over before it could be held")
+            between()
+            os.kill(proc.pid, signal.SIGCONT)
+            stdout, _ = proc.communicate(timeout=120)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+        return proc.returncode, json.loads(stdout)
+
+    def test_a_source_that_changes_while_it_is_copied_makes_the_run_failed(self):
+        big = self.sparse(2 << 30)
+        out = self.path("out", "changed")
+        code, doc = self.held_run({"source": big, "ranges": [{"offset": 0, "length": 1 << 30}], "out_dir": out}, out, lambda: open(big, "ab").close() or os.truncate(big, (2 << 30) + 1))
+        self.assertEqual((code, doc["status"]), (0, "failed"), doc)
+        self.assertIn("changed", doc["status_basis"])
+        self.assertFalse(doc.get("complete"))
+
+    def test_a_final_name_taken_after_it_was_chosen_is_not_replaced(self):
+        big = self.sparse(2 << 30)
+        out = self.path("out", "taken")
+        final = os.path.join(out, "range-000001.bin")
+
+        def take():
+            with open(final, "wb") as fh:
+                fh.write(b"someone else's file")
+        code, doc = self.held_run({"source": big, "ranges": [{"offset": 0, "length": 1 << 30}], "out_dir": out}, out, take)
+        self.assertEqual(self.read(final, "rb"), b"someone else's file")
+        self.assertNotEqual(doc["status"], "complete", doc)
+        row = doc["ranges"][0]
+        self.assertEqual(row["status"], "whole_but_not_renamed")
+        self.assertEqual(row["file"], "range-000001.bin.partial")
+        self.assertEqual(os.path.getsize(os.path.join(out, row["file"])), 1 << 30)
 
     def test_a_file_size_limit_never_gives_a_wrong_complete_and_the_counts_are_what_the_files_hold(self):
         path = self.source(os.urandom(6000))

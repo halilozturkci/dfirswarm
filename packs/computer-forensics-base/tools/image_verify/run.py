@@ -1778,6 +1778,8 @@ def main():
             ver_text = out_b.decode("utf-8", "replace")
             first_line = next((ln.strip() for ln in ver_text.splitlines() if ln.strip()), "")
             version_line = scrub(first_line[:120]) if first_line else None
+            if timed or version_line is None:
+                partial_reasons.append("ewfverify -V %s: the version of ewfverify is not recorded" % ("did not finish in %d seconds" % VERSION_SECONDS if timed else "printed nothing"))
             argv = ["ewfverify", "-d", "sha1"] + segment_args
             seconds = time_left() - PROGRESS["reserve"]
             began = time.monotonic()

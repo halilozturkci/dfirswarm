@@ -1181,7 +1181,7 @@ else:
         if args.get("verify_sources") is not None and not isinstance(args.get("verify_sources"), bool):
             fail("verify_sources is true or false")
         try:
-            descriptor = load_descriptor(args["descriptor"], args.get("descriptor_sha256"), args.get("verify_sources") is True, time.monotonic() + DESCRIPTOR_VERIFY_SECONDS)
+            descriptor = load_descriptor(args["descriptor"], args.get("descriptor_sha256"), args.get("verify_sources") is True, min(STARTED + max_seconds, time.monotonic() + DESCRIPTOR_VERIFY_SECONDS))
         except DescriptorError as exc:
             fail(str(exc))
     elif args.get("verify_sources") is not None or args.get("descriptor_sha256") is not None:
