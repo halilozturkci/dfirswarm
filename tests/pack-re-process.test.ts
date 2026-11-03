@@ -231,7 +231,7 @@ test("the timeouts the pack sets itself are below the manifest's and the recipe'
   const total = Number(/^TOTAL_BUDGET = (\d+)/m.exec(fuzzy)![1]);
   const manifest = JSON.parse(await readFile(join(TOOLS, "fuzzy_hash", "manifest.json"), "utf8")) as Json;
   assert.ok(total < manifest.timeout_seconds, `fuzzy_hash budgets ${total} s of ${manifest.timeout_seconds}`);
-  for (const [tool, name] of [["doc_probe", "DEFAULT_SECONDS"], ["doc_structure", "DEFAULT_SECONDS"], ["pe_directories", "DEFAULT_SECONDS"], ["elf_directories", "DEFAULT_SECONDS"], ["pe_info", "DEFAULT_SECONDS"], ["entropy_map", "DEFAULT_SECONDS"]] as const) {
+  for (const [tool, name] of [["doc_probe", "DEFAULT_SECONDS"], ["doc_structure", "DEFAULT_SECONDS"], ["pe_directories", "DEFAULT_SECONDS"], ["elf_directories", "DEFAULT_SECONDS"], ["macho_directories", "DEFAULT_SECONDS"], ["pe_info", "DEFAULT_SECONDS"], ["entropy_map", "DEFAULT_SECONDS"]] as const) {
     const text = await readFile(join(TOOLS, tool, "run.py"), "utf8");
     const own = Number(new RegExp(`^MAX_SECONDS = (\\d+)`, "m").exec(text)![1]);
     const dflt = Number(new RegExp(`^${name} = (\\d+)`, "m").exec(text)![1]);

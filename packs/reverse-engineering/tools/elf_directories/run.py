@@ -35,7 +35,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-TOOL = {"name": "elf_directories", "version": 1}
+TOOL = {"name": "elf_directories", "version": 2}
 PARSER = "elf_directories/1"
 NOTE = ("Static structure only. A dynamic tag, a symbol or a note shows what the file declares to its loader and tools, not what the code does: a "
         "NEEDED entry, an RPATH or an undefined symbol is a declaration, and a build ID is a claim. Read `status`, `problems` and `coverage` first: "
@@ -1144,6 +1144,7 @@ class LosslessPage:
                 except FileExistsError:
                     continue
                 self.shown = made(self.prefix + name)
+                self._path = str(self.dir / name)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", buffering=1)
                 for kept in self.page:
                     self._write(kept)
@@ -1179,7 +1180,21 @@ class LosslessPage:
                 self._write(row)
             except OSError as exc:
                 self.not_written = "writing the file failed (%s)" % describe(exc)
-                self._out = None
+                self._drop()
+
+    def _drop(self):
+        """A file that could not be written whole is removed and not named: a partial table must not look like the whole one."""
+        out, self._out = self._out, None
+        self.shown = None
+        try:
+            if out is not None:
+                out.close()
+        except OSError:
+            pass
+        try:
+            os.unlink(self._path)
+        except (OSError, AttributeError):
+            pass
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
@@ -1190,6 +1205,7 @@ class LosslessPage:
                 self._out.close()
             except OSError as exc:
                 self.not_written = "writing the file failed (%s)" % describe(exc)
+                self._drop()
             else:
                 result["all_results"] = self.shown
                 result["all_results_format"] = "JSON Lines, one complete row per line"
@@ -1478,11 +1494,17 @@ def shown_at(ctx, text, at, utf16=False, kind="names"):
 NAME_KINDS = {"needed", "soname", "rpath", "runpath", "filter", "auxiliary", "interpreter", "symbol_name", "note_owner", "section_name"}
 
 
-def show(ctx, what, text, at, finding=None):
+def show(ctx, what, text, at, finding=None, complete=True):
     """A string out of the file as it may be printed (shown_at); the whole goes to the values file when it was asked for. A name longer than
     NAME_SHOWN is given by its length only (no linker writes one that long, and a file that holds thousands of them must not cost the
     sanitiser a pass over each)."""
-    if what in NAME_KINDS and len(text) > NAME_SHOWN:
+    limit = NAME_SHOWN if what in NAME_KINDS else SHOWN_TARGET
+    if not complete and text:
+        # the string was cut where it was read (no terminator within its table or NAME_CAP bytes): what was seen is a lower bound, and the answer is partial
+        ctx.problem("a %s at file offset %s has no terminator within its table or %d bytes: it was cut there, and the length shown is a lower bound" % (what.replace("_", " "), at if at is not None else "unknown", NAME_CAP))
+    if not complete and len(text) > limit:
+        shown = "<a string of at least %d characters, cut where it was read: longer than the %d shown, so not shown>" % (len(text), limit)
+    elif what in NAME_KINDS and len(text) > NAME_SHOWN:
         shown = "<a name of %d characters: longer than the %d shown, so not shown>" % (len(text), NAME_SHOWN)
     else:
         shown = shown_at(ctx, text, at)
@@ -1713,7 +1735,7 @@ def read_program_headers(img, elf, ctx, out):
         if p["type"] == 3 and interp is None:
             raw, complete = img.cstr(p["offset"], min(img.size, p["offset"] + p["filesz"]) if p["filesz"] else None)
             if raw is not None:
-                interp = show(ctx, "interpreter", raw.decode("utf-8", "replace"), p["offset"])
+                interp = show(ctx, "interpreter", raw.decode("utf-8", "replace"), p["offset"], complete=complete)
                 if not complete:
                     ctx.problem("the interpreter path has no terminator within its segment")
         if p["type"] == 0x6474e551:
@@ -1807,7 +1829,7 @@ def read_dynamic(img, elf, ctx, out):
                     if not complete:
                         ctx.problem("dynamic entry %d (%s): the string has no terminator within the string table or %d bytes" % (index, DT.get(tag), NAME_CAP))
                     finding = ctx.next_finding("D")
-                    row["string"] = show(ctx, kind, raw.decode("utf-8", "replace"), str_base + val, finding)
+                    row["string"] = show(ctx, kind, raw.decode("utf-8", "replace"), str_base + val, finding, complete=complete)
                     row["finding_id"] = finding
                     strings[kind].append(row["string"])
         elif tag == 30:
@@ -1958,7 +1980,7 @@ def read_symbols(img, elf, ctx, out, dyn):
                 else:
                     raw, complete = img.cstr(sbase + st_name, send)
                     if raw is not None:
-                        row["name"] = show(ctx, "symbol_name", raw.decode("utf-8", "replace"), sbase + st_name)
+                        row["name"] = show(ctx, "symbol_name", raw.decode("utf-8", "replace"), sbase + st_name, complete=complete)
                         if not complete:
                             row["name_unterminated"] = True
                     else:

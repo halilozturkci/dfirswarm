@@ -14,8 +14,10 @@ bytes there, and a field is read only from bytes the structure that contains it 
                    information (the fixed file version and the string table, a few well-known keys by value, the rest
                    by name) and the manifest's requested execution level
     CLR header     the runtime header's version, flags, entry point token and directories, and the metadata root: its
-                   version string and the names and sizes of its streams. The metadata tables are not read, so there
-                   is no assembly name here
+                   version string and the names and sizes of its streams. The metadata tables are read only when the
+                   caller asks for clr_tables (then the #~ stream's heap sizes, valid mask and row counts, the rows of Module,
+                   TypeRef, TypeDef, Field, MethodDef, Param, MemberRef, ImplMap, Assembly, AssemblyRef and ManifestResource
+                   with their file offsets, and the #GUID and #US heaps); without it there is no assembly name here
     debug          the debug directory: each entry's type and time, and for a CodeView entry the PDB identity and path
     Rich header    the decoded entries of the Rich header, if there is one: raw product ids, build numbers and counts
 
@@ -41,7 +43,7 @@ import xml.parsers.expat
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "pe_directories", "version": 4}
+TOOL = {"name": "pe_directories", "version": 6}
 PARSER = "pe_directories/1"
 NOTE = ("Static structure only. A directory shows what the file declares to its loader and tools, not what the code does: an export, a delay-load "
         "import, a TLS callback or a resource is a declaration, and a strong-name flag or a PDB path is a claim. Read `status`, `problems` and `coverage` "
@@ -936,7 +938,7 @@ def shown_name(text):
 # Strings the tool made itself and registered (a page file's path, the names file's path, a CodeView GUID that is not text): only these, and
 # only under one of these keys, leave unchanged. Anything else, under any key, is withheld like any string out of the file: a key here
 # is never a way round the withholding for a string built from the file's bytes.
-SAFE_KEYS = {"guid", "all_results", "withheld_names_file"}
+SAFE_KEYS = {"guid", "mvid", "enc_id", "enc_base_id", "all_results", "withheld_names_file"}
 MADE = set()
 
 
@@ -1165,6 +1167,7 @@ class LosslessPage:
                 except FileExistsError:
                     continue
                 self.shown = made(self.prefix + name)
+                self._path = str(self.dir / name)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", buffering=1)
                 for kept in self.page:
                     self._write(kept)
@@ -1200,7 +1203,21 @@ class LosslessPage:
                 self._write(row)
             except OSError as exc:
                 self.not_written = "writing the file failed (%s)" % describe(exc)
-                self._out = None
+                self._drop()
+
+    def _drop(self):
+        """A file that could not be written whole is removed and not named: a partial table must not look like the whole one."""
+        out, self._out = self._out, None
+        self.shown = None
+        try:
+            if out is not None:
+                out.close()
+        except OSError:
+            pass
+        try:
+            os.unlink(self._path)
+        except (OSError, AttributeError):
+            pass
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
@@ -1211,6 +1228,7 @@ class LosslessPage:
                 self._out.close()
             except OSError as exc:
                 self.not_written = "writing the file failed (%s)" % describe(exc)
+                self._drop()
             else:
                 result["all_results"] = self.shown
                 result["all_results_format"] = "JSON Lines, one complete row per line"
@@ -1488,14 +1506,20 @@ def shown_at(ctx, text, at, utf16=False, kind="names"):
 
 
 NAME_SHOWN = 512                    # characters of an export, forwarder or delay-load name the answer shows; a longer one is given by its length
-NAME_KINDS = {"export_image_name", "export_forwarder", "export_name", "delay_import_library", "delay_import_function"}
+NAME_KINDS = {"export_image_name", "export_forwarder", "export_name", "delay_import_library", "delay_import_function", "clr_name"}
 
 
-def show(ctx, what, text, at, finding=None):
+def show(ctx, what, text, at, finding=None, complete=True):
     """A string out of the file as it may be printed (shown_at); the whole goes to the values file when it was asked for. A name of the
     export and delay-load tables longer than NAME_SHOWN is given by its length only (no linker writes one that long, and a file that
     holds thousands of them must not cost the sanitiser a pass over each)."""
-    if what in NAME_KINDS and len(text) > NAME_SHOWN:
+    limit = NAME_SHOWN if what in NAME_KINDS else SHOWN_TARGET
+    if not complete and text:
+        # the string was cut where it was read (no terminator within its table or NAME_CAP bytes): what was seen is a lower bound, and the answer is partial
+        ctx.problem("a %s at file offset %s has no terminator within its table or %d bytes: it was cut there, and the length shown is a lower bound" % (what.replace("_", " "), at if at is not None else "unknown", NAME_CAP))
+    if not complete and len(text) > limit:
+        shown = "<a string of at least %d characters, cut where it was read: longer than the %d shown, so not shown>" % (len(text), limit)
+    elif what in NAME_KINDS and len(text) > NAME_SHOWN:
         shown = "<a name of %d characters: longer than the %d shown, so not shown>" % (len(text), NAME_SHOWN)
     else:
         shown = shown_at(ctx, text, at)
@@ -1653,6 +1677,11 @@ NOT_READ = ["resource contents beyond the version information and the manifest (
             "anything about the code: what an export, a callback or an entry point does"]
 
 
+CLR_TABLES_READ = ("with clr_tables: the #~ stream's heap sizes, valid mask and row counts, and the rows of the Module, TypeRef, TypeDef, Field, MethodDef, Param, MemberRef, ImplMap, "
+                   "Assembly, AssemblyRef and ManifestResource tables with their file offsets (strings from #Strings, blobs by offset and size, GUIDs from #GUID), and the #US user strings")
+CLR_TABLES_NOT_READ = "the other CLR metadata tables' rows (counts only), blob contents, method bodies, custom attributes, and so what any method does"
+
+
 def when(stamp):
     if not stamp:
         return None
@@ -1789,7 +1818,7 @@ def read_exports(img, pe, ctx, out):
     info = {"ordinal_base": base, "functions_declared": nfunc, "names_declared": nnames, "time_date_stamp_raw": stamp, "time_date_stamp_utc": when(stamp)}
     raw, complete, at = read_rva_cstr(img, pe, name_rva)
     if raw is not None:
-        info["image_name"] = show(ctx, "export_image_name", raw.decode("utf-8", "replace"), at)
+        info["image_name"] = show(ctx, "export_image_name", raw.decode("utf-8", "replace"), at, complete=complete)
     table = ctx.page("exports")
     if nfunc > MAX_EXPORTS or nnames > MAX_EXPORTS:
         ctx.limit_hit("the export directory declares %d functions and %d names: over the limit of %d, so none were listed" % (nfunc, nnames, MAX_EXPORTS))
@@ -1831,7 +1860,7 @@ def read_exports(img, pe, ctx, out):
             raw, complete, at = read_rva_cstr(img, pe, frva)
             if raw is not None:
                 finding = ctx.next_finding("X")
-                row["forwarder"] = show(ctx, "export_forwarder", raw.decode("utf-8", "replace"), at, finding)
+                row["forwarder"] = show(ctx, "export_forwarder", raw.decode("utf-8", "replace"), at, finding, complete=complete)
                 row["finding_id"] = finding
                 forwarders += 1
         else:
@@ -1882,7 +1911,7 @@ def read_delay_imports(img, pe, ctx, out):
         va_form = not (attrs & 1)
         fix = (lambda v: v - base) if va_form else (lambda v: v)
         raw, complete, nat = read_rva_cstr(img, pe, fix(name_rva))
-        lib = {"index": d, "library": show(ctx, "delay_import_library", raw.decode("utf-8", "replace"), nat) if raw is not None else None, "functions": 0, "address_form": "VA" if va_form else "RVA"}
+        lib = {"index": d, "library": show(ctx, "delay_import_library", raw.decode("utf-8", "replace"), nat, complete=complete) if raw is not None else None, "functions": 0, "address_form": "VA" if va_form else "RVA"}
         if raw is None:
             ctx.problem("delay-load descriptor %d: its library name (0x%x) is not backed by file bytes" % (d, name_rva))
         thunks = pe["to_range"](fix(int_rva)) if int_rva else None
@@ -1927,7 +1956,7 @@ def read_delay_imports(img, pe, ctx, out):
                         continue
                     raw, complete, nat = read_rva_cstr(img, pe, fix(entry & 0x7FFFFFFF) + 2)
                     table.add({"library_index": d, "hint": struct.unpack_from("<H", img.mm, hint_at[0])[0] if hint_at[0] + 2 <= img.size else None,
-                               "function": show(ctx, "delay_import_function", raw.decode("utf-8", "replace"), nat) if raw is not None else None})
+                               "function": show(ctx, "delay_import_function", raw.decode("utf-8", "replace"), nat, complete=complete) if raw is not None else None})
                 functions += 1
                 lib["functions"] += 1
                 if ctx.expired("the delay-load names"):
@@ -2265,7 +2294,8 @@ def read_clr(img, pe, ctx, out):
             info["managed_native_header"]["first_four_bytes"] = bytes(img.mm[r[0]:r[0] + 4]).hex()
     info["notes"] = ["a strong-name signature field is a declaration of a signature, not a verified one, and not the publisher's trust",
                      "a managed-native header is native-code metadata that is present alongside the IL; what it holds is named by the runtime's own documentation, not here",
-                     "the metadata tables are not read: this answer has no assembly name, version, type or method"]
+                     ("the metadata tables are read only as far as `clr_tables` lists them: nothing else of the assembly (method bodies, custom attributes, blob contents) is here"
+                      if ctx.cfg.get("clr_tables") else "the metadata tables are not read: this answer has no assembly name, version, type or method (clr_tables reads them)")]
     md = pe["to_range"](md_rva) if md_rva else None
     if md is None:
         ctx.problem("the CLR metadata root (RVA 0x%x) is not backed by file bytes" % md_rva)
@@ -2296,6 +2326,8 @@ def read_clr(img, pe, ctx, out):
     _flags, nstreams = struct.unpack_from("<HH", img.mm, p)
     p += 4
     streams = []
+    raw_streams = []
+    pe["clr_streams"] = {"end": end, "streams": raw_streams}
     if nstreams > MAX_STREAM_HEADERS:
         ctx.limit_hit("the CLR metadata declares %d stream headers: the first %d are read" % (nstreams, MAX_STREAM_HEADERS))
     for i in range(min(nstreams, MAX_STREAM_HEADERS)):
@@ -2310,11 +2342,327 @@ def read_clr(img, pe, ctx, out):
             break
         name = bytes(img.mm[q:nul]).decode("ascii", "replace")
         streams.append({"name": shown_at(ctx, name, q), "offset": off, "size": ssize, "within_root": off + ssize <= (md_size or end - md[0])})
+        raw_streams.append((name, md[0] + off, ssize))
         p = q + ((nul - q + 1 + 3) & ~3)
     meta["streams"] = streams
     meta["streams_declared"] = nstreams
     info["metadata"] = meta
     out["clr"] = info
+
+
+# --- CLR metadata tables (ECMA-335 II.22 and II.24.2.6) ---------------------------------------------------------------------------
+
+MAX_CLR_ROWS = 4_000_000            # rows of one metadata table read; a longer table is a limit
+MAX_USER_STRINGS = 1_000_000        # entries of the #US heap listed
+MAX_GUIDS = 1_000_000               # entries of the #GUID heap listed
+CLR_TABLE_NAMES = {0x00: "Module", 0x01: "TypeRef", 0x02: "TypeDef", 0x03: "FieldPtr", 0x04: "Field", 0x05: "MethodPtr", 0x06: "MethodDef", 0x07: "ParamPtr", 0x08: "Param",
+                   0x09: "InterfaceImpl", 0x0A: "MemberRef", 0x0B: "Constant", 0x0C: "CustomAttribute", 0x0D: "FieldMarshal", 0x0E: "DeclSecurity", 0x0F: "ClassLayout",
+                   0x10: "FieldLayout", 0x11: "StandAloneSig", 0x12: "EventMap", 0x13: "EventPtr", 0x14: "Event", 0x15: "PropertyMap", 0x16: "PropertyPtr", 0x17: "Property",
+                   0x18: "MethodSemantics", 0x19: "MethodImpl", 0x1A: "ModuleRef", 0x1B: "TypeSpec", 0x1C: "ImplMap", 0x1D: "FieldRVA", 0x1E: "EncLog", 0x1F: "EncMap",
+                   0x20: "Assembly", 0x21: "AssemblyProcessor", 0x22: "AssemblyOS", 0x23: "AssemblyRef", 0x24: "AssemblyRefProcessor", 0x25: "AssemblyRefOS", 0x26: "File",
+                   0x27: "ExportedType", 0x28: "ManifestResource", 0x29: "NestedClass", 0x2A: "GenericParam", 0x2B: "MethodSpec", 0x2C: "GenericParamConstraint"}
+# EnC pointer tables and the EnC log and map: they exist only in an uncompressed (#-) or edit-and-continue stream, which this reader does not read
+CLR_ENC_TABLES = (0x03, 0x05, 0x07, 0x13, 0x16, 0x1E, 0x1F)
+# coded indexes: (tag bits, the tables a tag selects, in tag order; None for a tag the standard leaves unused)
+CLR_CODED = {
+    "TypeDefOrRef": (2, (0x02, 0x01, 0x1B)),
+    "HasConstant": (2, (0x04, 0x08, 0x17)),
+    "HasCustomAttribute": (5, (0x06, 0x04, 0x01, 0x02, 0x08, 0x09, 0x0A, 0x00, 0x0E, 0x17, 0x14, 0x11, 0x1A, 0x1B, 0x20, 0x23, 0x26, 0x27, 0x28, 0x2A, 0x2C, 0x2B)),
+    "HasFieldMarshal": (1, (0x04, 0x08)),
+    "HasDeclSecurity": (2, (0x02, 0x06, 0x20)),
+    "MemberRefParent": (3, (0x02, 0x01, 0x1A, 0x06, 0x1B)),
+    "HasSemantics": (1, (0x14, 0x17)),
+    "MethodDefOrRef": (1, (0x06, 0x0A)),
+    "MemberForwarded": (1, (0x04, 0x06)),
+    "Implementation": (2, (0x26, 0x23, 0x27)),
+    "CustomAttributeType": (3, (None, None, 0x06, 0x0A, None)),
+    "ResolutionScope": (2, (0x00, 0x1A, 0x23, 0x01)),
+    "TypeOrMethodDef": (1, (0x02, 0x06)),
+}
+# column kinds: "1", "2", "4" (a fixed width), "S" (#Strings index), "G" (#GUID index), "B" (#Blob index), "T<id>" (a row index into one table), "C<name>" (a coded index)
+CLR_SCHEMA = {
+    0x00: ["2", "S", "G", "G", "G"], 0x01: ["CResolutionScope", "S", "S"], 0x02: ["4", "S", "S", "CTypeDefOrRef", "T04", "T06"], 0x04: ["2", "S", "B"],
+    0x06: ["4", "2", "2", "S", "B", "T08"], 0x08: ["2", "2", "S"], 0x09: ["T02", "CTypeDefOrRef"], 0x0A: ["CMemberRefParent", "S", "B"],
+    0x0B: ["1", "1", "CHasConstant", "B"], 0x0C: ["CHasCustomAttribute", "CCustomAttributeType", "B"], 0x0D: ["CHasFieldMarshal", "B"],
+    0x0E: ["2", "CHasDeclSecurity", "B"], 0x0F: ["2", "4", "T02"], 0x10: ["4", "T04"], 0x11: ["B"], 0x12: ["T02", "T14"], 0x14: ["2", "S", "CTypeDefOrRef"],
+    0x15: ["T02", "T17"], 0x17: ["2", "S", "B"], 0x18: ["2", "T06", "CHasSemantics"], 0x19: ["T02", "CMethodDefOrRef", "CMethodDefOrRef"], 0x1A: ["S"], 0x1B: ["B"],
+    0x1C: ["2", "CMemberForwarded", "S", "T1A"], 0x1D: ["4", "T04"], 0x20: ["4", "2", "2", "2", "2", "4", "B", "S", "S"], 0x21: ["4"], 0x22: ["4", "4", "4"],
+    0x23: ["2", "2", "2", "2", "4", "B", "S", "S", "B"], 0x24: ["4", "T23"], 0x25: ["4", "4", "4", "T23"], 0x26: ["4", "S", "B"],
+    0x27: ["4", "4", "S", "S", "CImplementation"], 0x28: ["4", "4", "S", "CImplementation"], 0x29: ["T02", "T02"], 0x2A: ["2", "2", "CTypeOrMethodDef", "S"],
+    0x2B: ["CMethodDefOrRef", "B"], 0x2C: ["T2A", "CTypeDefOrRef"],
+}
+# the tables whose rows are listed, with the column names and how each is shown
+CLR_LISTED = {
+    0x00: ("module", ["generation", "name", "mvid", "enc_id", "enc_base_id"]),
+    0x01: ("typeref", ["resolution_scope", "name", "namespace"]),
+    0x02: ("typedef", ["flags", "name", "namespace", "extends", "field_list", "method_list"]),
+    0x04: ("field", ["flags", "name", "signature"]),
+    0x06: ("methoddef", ["rva", "impl_flags", "flags", "name", "signature", "param_list"]),
+    0x08: ("param", ["flags", "sequence", "name"]),
+    0x0A: ("memberref", ["class", "name", "signature"]),
+    0x1C: ("implmap", ["mapping_flags", "member_forwarded", "import_name", "import_scope"]),
+    0x20: ("assembly", ["hash_algorithm", "major", "minor", "build", "revision", "flags", "public_key", "name", "culture"]),
+    0x23: ("assemblyref", ["major", "minor", "build", "revision", "flags", "public_key_or_token", "name", "culture", "hash_value"]),
+    0x28: ("manifestresource", ["offset", "flags", "name", "implementation"]),
+}
+CLR_HEX = {"flags", "impl_flags", "mapping_flags", "hash_algorithm", "rva", "offset"}
+CLR_STRING_COLUMNS = {"name", "namespace", "import_name", "culture"}
+
+
+def clr_popcount(value):
+    return bin(value).count("1")
+
+
+def clr_unsupported(ctx, info, reason):
+    info["status"] = "unsupported"
+    info["reason"] = reason
+    ctx.problem("CLR tables: " + reason)
+
+
+def clr_heap_text(img, ctx, heap, index, kind="clr_name"):
+    """The string at `index` of the #Strings heap (start, size as absolute bounds), as it may be printed; None when the index is outside it."""
+    start, size = heap
+    if index == 0:
+        return ""
+    if index >= size:
+        return None
+    raw, complete = img.cstr(start + index, start + size)
+    if raw is None:
+        return None
+    return show(ctx, kind, raw.decode("utf-8", "replace"), start + index, complete=complete)
+
+
+def clr_blob_ref(img, heap, index):
+    """{"offset", "size"} of the blob at `index` of the #Blob heap, or None when the index or its length prefix is outside the heap. The bytes are not read."""
+    start, size = heap
+    if index == 0:
+        return {"offset": None, "size": 0}
+    if index >= size:
+        return None
+    first = img.mm[start + index]
+    if first & 0x80 == 0:
+        n, head = first, 1
+    elif first & 0xC0 == 0x80:
+        if index + 2 > size:
+            return None
+        n, head = ((first & 0x3F) << 8) | img.mm[start + index + 1], 2
+    elif first & 0xE0 == 0xC0:
+        if index + 4 > size:
+            return None
+        n, head = ((first & 0x1F) << 24) | (img.mm[start + index + 1] << 16) | (img.mm[start + index + 2] << 8) | img.mm[start + index + 3], 4
+    else:
+        return None
+    return {"offset": start + index + head, "size": n, "in_heap": index + head + n <= size}
+
+
+def clr_guid(img, heap, index):
+    start, size = heap
+    if index == 0:
+        return None
+    at = (index - 1) * 16
+    if at + 16 > size:
+        return None
+    g = bytes(img.mm[start + at:start + at + 16])
+    d1, d2, d3 = struct.unpack("<IHH", g[:8])
+    return made("%08X-%04X-%04X-%s-%s" % (d1, d2, d3, g[8:10].hex().upper(), g[10:16].hex().upper()))
+
+
+def read_clr_tables(img, pe, ctx, out):
+    """The #~ metadata table stream, read from the stream directory read_clr found: heap sizes, the valid mask, row counts, the coded-index widths, and the
+    rows of Module, TypeRef, TypeDef, Field, MethodDef, Param, MemberRef, ImplMap, Assembly, AssemblyRef and ManifestResource with their file offsets, names
+    from #Strings, blobs by offset and size only, GUIDs from #GUID; and the #US user strings. A #- (uncompressed or edit-and-continue) stream is refused."""
+    info = {"requested": True}
+    out["clr_tables"] = info
+    cs = pe.get("clr_streams")
+    if cs is None:
+        info["status"] = "unavailable"
+        info["reason"] = "the CLR metadata root was not read (see problems), so no stream was located"
+        ctx.problem("CLR tables: the metadata root was not read, so the table stream was not located")
+        return
+    streams, root_end = {}, cs["end"]
+    for name, start, size in cs["streams"]:
+        if name in streams:
+            ctx.problem("CLR tables: the stream %s is declared more than once: the first is read" % text_of(name, "names"))
+            continue
+        streams[name] = (start, size)
+    heaps = {}
+    for name in ("#Strings", "#Blob", "#GUID", "#US"):
+        if name in streams:
+            start, size = streams[name]
+            ok = start + size <= root_end
+            heaps[name] = (start, size if ok else max(0, root_end - start))
+            if not ok:
+                ctx.problem("CLR tables: the %s heap [%d, %d) runs past the end of the metadata root: the part inside it is read" % (name, start, start + size))
+    info["heaps"] = {name: {"file_offset": s, "size": n} for name, (s, n) in heaps.items()}
+    table_name = "#~" if "#~" in streams else None
+    if "#-" in streams:
+        clr_unsupported(ctx, info, "the metadata uses the #- stream (the uncompressed, edit-and-continue form), whose pointer tables and indirections this tool does not read")
+        return
+    if table_name is None:
+        clr_unsupported(ctx, info, "the metadata has no #~ table stream")
+        return
+    tstart, tsize = streams["#~"]
+    if tstart + tsize > root_end:
+        ctx.problem("CLR tables: the #~ stream [%d, %d) runs past the end of the metadata root: the part inside it is read" % (tstart, tstart + tsize))
+        tsize = max(0, root_end - tstart)
+    if tsize < 24:
+        ctx.problem("CLR tables: the #~ stream is %d bytes, shorter than its 24-byte header" % tsize)
+        info["status"] = "unreadable"
+        return
+    _res, major, minor, heap_sizes, _res2, valid, sorted_mask = struct.unpack_from("<IBBBBQQ", img.mm, tstart)
+    info.update({"stream": "#~", "file_offset": tstart, "size": tsize, "version": "%d.%d" % (major, minor), "heap_sizes": hex(heap_sizes),
+                 "string_index_bytes": 4 if heap_sizes & 1 else 2, "guid_index_bytes": 4 if heap_sizes & 2 else 2, "blob_index_bytes": 4 if heap_sizes & 4 else 2,
+                 "valid_mask": hex(valid), "sorted_mask": hex(sorted_mask)})
+    if heap_sizes & 0x20:
+        clr_unsupported(ctx, info, "the heap-sizes byte has the edit-and-continue delta bit (0x20) set: a delta stream is not read")
+        return
+    ids = [i for i in range(64) if valid >> i & 1]
+    too_high = [i for i in ids if i not in CLR_TABLE_NAMES]
+    if too_high:
+        clr_unsupported(ctx, info, "the valid mask names table 0x%02x, which is not a table of an assembly's #~ stream (a portable-PDB table or an unknown one): row sizes after it cannot be known" % too_high[0])
+        return
+    enc = [i for i in ids if i in CLR_ENC_TABLES]
+    if enc:
+        clr_unsupported(ctx, info, "the valid mask names the %s table, which exists only in an edit-and-continue stream" % CLR_TABLE_NAMES[enc[0]])
+        return
+    rows_at = tstart + 24
+    if rows_at + 4 * len(ids) > tstart + tsize:
+        ctx.problem("CLR tables: the valid mask names %d tables and the #~ stream is too short for their row counts" % len(ids))
+        info["status"] = "unreadable"
+        return
+    rows = {t: struct.unpack_from("<I", img.mm, rows_at + 4 * i)[0] for i, t in enumerate(ids)}
+    data_at = rows_at + 4 * len(ids) + (4 if heap_sizes & 0x40 else 0)
+    info["row_counts"] = {CLR_TABLE_NAMES[t]: n for t, n in rows.items()}
+
+    def width(kind):
+        if kind in ("1", "2", "4"):
+            return int(kind)
+        if kind == "S":
+            return 4 if heap_sizes & 1 else 2
+        if kind == "G":
+            return 4 if heap_sizes & 2 else 2
+        if kind == "B":
+            return 4 if heap_sizes & 4 else 2
+        if kind[0] == "T":
+            return 4 if rows.get(int(kind[1:], 16), 0) >= 1 << 16 else 2
+        bits, tables = CLR_CODED[kind[1:]]
+        return 4 if max([rows.get(t, 0) for t in tables if t is not None] + [0]) >= 1 << (16 - bits) else 2
+
+    sizes = {t: [width(k) for k in CLR_SCHEMA[t]] for t in CLR_SCHEMA}
+    info["coded_index_bytes"] = {name: width("C" + name) for name in CLR_CODED}
+    info["table_index_bytes"] = {CLR_TABLE_NAMES[t]: width("T%02x" % t) for t in (0x02, 0x04, 0x06, 0x08, 0x14, 0x17, 0x1A, 0x23, 0x2A)}
+    # locate every table: they follow one another in table-id order
+    at = data_at
+    where = {}
+    for t in ids:
+        rsize = sum(sizes[t])
+        where[t] = (at, rsize)
+        at += rows[t] * rsize
+    if at > tstart + tsize:
+        ctx.problem("CLR tables: the row counts and row sizes need %d bytes of table data and the #~ stream holds %d: the tables that run past it are read as far as they fit" % (at - data_at, tstart + tsize - data_at))
+    summary = {}
+    for t, (label, columns) in CLR_LISTED.items():
+        if t not in rows or ctx.expired("the CLR tables"):
+            continue
+        start, rsize = where[t]
+        fit = max(0, (tstart + tsize - start) // rsize)
+        n = min(rows[t], fit)
+        if rows[t] > fit:
+            ctx.problem("CLR tables: the %s table declares %d rows of %d bytes at offset %d and the stream holds room for %d" % (CLR_TABLE_NAMES[t], rows[t], rsize, start, fit))
+        if n > MAX_CLR_ROWS:
+            ctx.limit_hit("CLR tables: the %s table has %d rows: the first %d are listed" % (CLR_TABLE_NAMES[t], n, MAX_CLR_ROWS))
+            n = MAX_CLR_ROWS
+        page = ctx.page("clr_" + label)
+        kinds = CLR_SCHEMA[t]
+        widths = sizes[t]
+        listed = bad = 0
+        for r in range(n):
+            if r % 256 == 0 and ctx.expired("the " + CLR_TABLE_NAMES[t] + " table"):
+                break
+            pos = start + r * rsize
+            row = {"row": r + 1, "file_offset": pos}
+            p = pos
+            for col, kind, w in zip(columns, kinds, widths):
+                value = int.from_bytes(img.mm[p:p + w], "little")
+                p += w
+                if kind == "S":
+                    text = "" if value == 0 else (clr_heap_text(img, ctx, heaps["#Strings"], value) if "#Strings" in heaps else None)
+                    if text is None:
+                        bad += 1
+                    row[col] = text
+                elif kind == "B":
+                    ref = {"offset": None, "size": 0} if value == 0 else (clr_blob_ref(img, heaps["#Blob"], value) if "#Blob" in heaps else None)
+                    row[col] = ref
+                    if ref is None:
+                        bad += 1
+                    elif ref.get("in_heap") is False:
+                        bad += 1
+                elif kind == "G":
+                    row[col] = clr_guid(img, heaps["#GUID"], value) if "#GUID" in heaps else None
+                    if value and row[col] is None:
+                        bad += 1
+                elif kind[0] == "C":
+                    bits, tables = CLR_CODED[kind[1:]]
+                    tag, index = value & ((1 << bits) - 1), value >> bits
+                    target = tables[tag] if tag < len(tables) else None
+                    row[col] = None if index == 0 and target is not None else ("%s:%d" % (CLR_TABLE_NAMES[target], index) if target is not None else "tag %d:%d" % (tag, index))
+                elif col in CLR_HEX:
+                    row[col] = hex(value)
+                else:
+                    row[col] = value
+            page.add(row)
+            listed += 1
+        if bad:
+            ctx.problem("CLR tables: %d string, blob or GUID index(es) of the %s table point outside their heap" % (bad, CLR_TABLE_NAMES[t]))
+        summary[CLR_TABLE_NAMES[t]] = {"table": "clr_" + label, "declared": rows[t], "listed": listed}
+    info["tables"] = summary
+    if "#GUID" in heaps:
+        gstart, gsize = heaps["#GUID"]
+        page = ctx.page("clr_guids")
+        count = gsize // 16
+        if gsize % 16:
+            ctx.problem("CLR tables: the #GUID heap is %d bytes, not a multiple of 16" % gsize)
+        for i in range(min(count, MAX_GUIDS)):
+            if i % 256 == 0 and ctx.expired("the #GUID heap"):
+                break
+            page.add({"index": i + 1, "file_offset": gstart + 16 * i, "guid": clr_guid(img, heaps["#GUID"], i + 1)})
+        info["guids"] = {"table": "clr_guids", "entries": count}
+    if "#US" in heaps:
+        ustart, usize = heaps["#US"]
+        page = ctx.page("clr_user_strings")
+        pos, listed = 1, 0
+        while pos < usize:
+            if ctx.expired("the #US heap"):
+                break
+            if listed >= MAX_USER_STRINGS:
+                ctx.limit_hit("CLR tables: the #US heap holds more than %d strings: the first %d are listed" % (MAX_USER_STRINGS, MAX_USER_STRINGS))
+                break
+            first = img.mm[ustart + pos]
+            if first == 0:
+                pos += 1
+                continue
+            if first & 0x80 == 0:
+                n, head = first, 1
+            elif first & 0xC0 == 0x80 and pos + 2 <= usize:
+                n, head = ((first & 0x3F) << 8) | img.mm[ustart + pos + 1], 2
+            elif first & 0xE0 == 0xC0 and pos + 4 <= usize:
+                n, head = ((first & 0x1F) << 24) | (img.mm[ustart + pos + 1] << 16) | (img.mm[ustart + pos + 2] << 8) | img.mm[ustart + pos + 3], 4
+            else:
+                ctx.problem("CLR tables: the #US heap holds a length prefix at offset %d that is not valid: the rest of the heap is not listed" % pos)
+                break
+            if pos + head + n > usize:
+                ctx.problem("CLR tables: the #US entry at offset %d declares %d bytes and the heap ends: the rest of the heap is not listed" % (pos, n))
+                break
+            chars = (n - 1) // 2 if n else 0
+            text = bytes(img.mm[ustart + pos + head:ustart + pos + head + chars * 2]).decode("utf-16-le", "replace") if chars <= SHOWN_TARGET else ""
+            finding = ctx.next_finding("U")
+            shown = ("<a string of %d characters: longer than the %d shown, so not shown>" % (chars, SHOWN_TARGET)) if chars > SHOWN_TARGET else show(ctx, "clr_user_string", text, None, finding)
+            page.add({"heap_offset": pos, "file_offset": ustart + pos, "characters": chars, "string": shown, "finding_id": finding})
+            listed += 1
+            pos += head + n
+        info["user_strings"] = {"table": "clr_user_strings", "listed": listed}
+    info["status"] = "read"
+    info["not_read"] = "blob contents (signatures, public keys, hash values), the other metadata tables' rows, method bodies and custom attributes: row counts only"
 
 
 # --- debug --------------------------------------------------------------------------------------------------------------------
@@ -2357,8 +2705,8 @@ def read_debug(img, pe, ctx, out):
                 if raw is not None:
                     finding = ctx.next_finding("D")
                     path_text = raw.decode("utf-8", "replace")
-                    row["codeview"]["pdb_path"] = show(ctx, "pdb_path", path_text, ptr + 24, finding)
-                    row["codeview"]["pdb_path_length"] = len(raw)
+                    row["codeview"]["pdb_path"] = show(ctx, "pdb_path", path_text, ptr + 24, finding, complete=complete)
+                    row["codeview"]["pdb_path_length"] = len(raw) if complete else None
                     row["codeview"]["finding_id"] = finding
                     row["codeview"]["note"] = "a path the build wrote: a claim about the build machine, not evidence of where the file was made or by whom"
             else:
@@ -2575,8 +2923,11 @@ def main():
     write_values = args.get("write_values", False)
     if not isinstance(write_values, bool):
         fail("write_values must be true or false")
+    clr_tables = args.get("clr_tables", False)
+    if not isinstance(clr_tables, bool):
+        fail("clr_tables must be true or false")
     cfg = {"max_stream_bytes": positive_int(args, "max_stream_bytes", DEFAULT_STREAM), "max_total_bytes": positive_int(args, "max_total_bytes", DEFAULT_TOTAL),
-           "limit": positive_int(args, "limit", DEFAULT_LIMIT, MAX_LIMIT)}
+           "limit": positive_int(args, "limit", DEFAULT_LIMIT, MAX_LIMIT), "clr_tables": clr_tables}
     seconds = positive_int(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS)
     try:
         values = SecretValues(write_values)
@@ -2627,10 +2978,16 @@ def main():
                         ctx.problem("extract: no resource directory is declared")
                     if "clr_runtime_header" in d:
                         guarded(ctx, "CLR header", read_clr, img, pe, ctx, body)
+                        if clr_tables:
+                            guarded(ctx, "CLR tables", read_clr_tables, img, pe, ctx, body)
+                    elif clr_tables:
+                        ctx.problem("clr_tables: no CLR runtime header is declared, so there are no metadata tables")
+                        body["clr_tables"] = {"requested": True, "status": "no_clr_header"}
                     if "debug" in d:
                         guarded(ctx, "debug directory", read_debug, img, pe, ctx, body)
                     guarded(ctx, "Rich header", read_rich, img, pe, ctx, body)
-                    body["coverage"] = {"structures_read": READ, "structures_not_read": NOT_READ}
+                    body["coverage"] = {"structures_read": READ + ([CLR_TABLES_READ] if clr_tables else []),
+                                        "structures_not_read": [CLR_TABLES_NOT_READ if x.startswith("the CLR metadata tables") else x for x in NOT_READ] if clr_tables else NOT_READ}
             finally:
                 ctx.img = None
                 mm.close()

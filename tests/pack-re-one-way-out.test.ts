@@ -17,13 +17,13 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_STRUCTURE, ELF_DIRECTORIES, PE_DIRECTORIES, RE, body, buildElf, buildZip, filesUnder, put, tool, withCwd } from "./pack-re-harness.ts";
+import { DOC_STRUCTURE, ELF_DIRECTORIES, MACHO_DIRECTORIES, PE_DIRECTORIES, RE, body, buildElf, buildMacho, buildZip, filesUnder, put, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 import { buildPdf, buildPeDirs } from "./pack-re-doc-fixtures.ts";
 import { SHAPES, canaries, needles, prng } from "./pack-re-canary-shapes.ts";
 
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
-const COPIES = [DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, CAPA_FLOSS];
+const COPIES = [DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, MACHO_DIRECTORIES, CAPA_FLOSS];
 const GO_BUILDINFO = join(RE, "tools", "go_buildinfo", "run.py");
 /** The copies whose sanitiser (shown_path) and backstop (final_check) the cases below test: go_buildinfo too, which has no tables of the document tools. */
 const SANITISER = [...COPIES, GO_BUILDINFO];
@@ -150,6 +150,7 @@ for (const [label, script, name, make] of [
   ["doc_structure (a PDF)", DOC_STRUCTURE, "p.pdf", () => buildPdf([{ num: 1, body: "<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /URI /URI (http://h.example/) >> >>" }, { num: 2, body: "<< /Type /Pages /Kids [] /Count 0 >>" }], "/Root 1 0 R").file],
   ["pe_directories", PE_DIRECTORIES, "p.dll", () => buildPeDirs({ exports: { imageName: "a.dll", functions: [{ name: "f" }, { name: "g" }] } }).file],
   ["elf_directories", ELF_DIRECTORIES, "e.so", () => buildElf({ cls: 64, needed: ["liba.so", "libb.so"], soname: "libe.so" })],
+  ["macho_directories", MACHO_DIRECTORIES, "m.dylib", () => buildMacho({ commands: [{ dylib: "liba.dylib", cmd: 0xc }, { dylib: "libb.dylib", cmd: 0xc }] })],
 ] as const) {
   test(`the backstop holds with the sanitiser removed: ${label}, unsanitised strings injected into the answer and every table row`, async () => {
     await withCwd(async (cwd) => {

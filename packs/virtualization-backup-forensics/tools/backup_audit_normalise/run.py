@@ -42,6 +42,7 @@ import collections
 import csv
 import datetime
 import errno
+import hashlib
 import itertools
 import json
 import math
@@ -55,10 +56,11 @@ import sys
 import tempfile
 import time
 import unicodedata
+import zlib
 from pathlib import Path
 
 TOOL = "backup_audit_normalise"
-PARSER = "backup_audit_normalise/2"
+PARSER = "backup_audit_normalise/3"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 50.0          # the manifest allows 60
 MAX_SECONDS = 50.0
@@ -70,6 +72,7 @@ MAX_XML_RECORD_BYTES = 4 << 20   # text and attributes one declared XML record m
 MAX_XML_TOKEN = 16 << 20         # bytes the XML reader may take in without one element or text callback (a giant tag or comment)
 MAX_XML_DEPTH = 64
 MAX_PATHS = 100
+MAX_PRESET_BYTES = 65536
 CATEGORIES = ("backup_job", "backup_start", "backup_end", "backup_error", "archive_created", "restore", "snapshot_create", "snapshot_delete",
               "snapshot_rollback", "retention_prune", "retention_gc", "retention_remove", "verification", "sync", "vm_create", "vm_delete",
               "vm_power", "vm_start", "clone", "migrate", "disk_delete", "config_change", "repository_change", "login", "task_end", "other")
@@ -2540,7 +2543,7 @@ _FIELD_KINDS = (
     ("path", "name|display_name|displayName|snapshot name|parent snapshot name|current_parent_snapshot|snapshot_sections|snapshot|version"
              "|file|leaf_file|rel|root|links|special|unreadable|too_deep|lock directory|parent_hint|parentFileNameHint|parent name|parent_name|backing_file|backing_filename"
              "|external_data_file|parent_absolute_win32_path|parent_relative_path|parent_volume_path|disk_files|snapshot disk file|state_file|snapshot state file"
-             "|extent file name|configuration_path|vmxCfgPath|datastore_hint|datastore path|nvram|disk file|volume|vm_state_volume|vmstate|path|named|export|special_sections|section|disk source|source_name|object"),
+             "|filename|extent file name|configuration_path|vmxCfgPath|datastore_hint|datastore path|nvram|disk file|volume|vm_state_volume|vmstate|path|named|export|special_sections|section|disk source|source_name|object"),
     ("name", "domain_name|job|storage|storage name|networkName|ethernet#.networkName|disk key|domain name|datastore|pool|vgname|thinpool|key"
              "|create_type|createType|encoding|backing_format|backing format|native_snapshot|isNativeSnapshot|hardware_version|config_version|arch|bios|firmware|machine"
              "|os_type|virt_type|guest_os|guestOS|cores|vcpus|memory_mb|memory|device|device_type|deviceType|disk_format|mode|present|snapshot_mode|bus|backup|size|state|type"
@@ -2550,6 +2553,8 @@ _FIELD_KINDS = (
     ("id", "uid|snapshot uid|snapshot parent|snapshot id|parent_uid|uuid|bios_uuid|location_uuid|vcenter_instance_uuid|cid_raw|parent_cid_raw|CID|parentCID|entry_id|object_id|vmid"
            "|ddb.uuid|ddb.longContentID|current|lastuid|lastUID|numsnapshots|numSnapshots|source_id|own_id|leaf|base|child|ethernet#.address|ethernet#.generatedAddress|address"
            "|virtual_disk_id|unique_id|parent_unique_id|data_write_guid|file_write_guid|log_guid|parent_identity|parent_identity_2|recorded_by_child|carried_by_parent|descriptor_id"),
+    # a checksum (the 64 hexadecimal digits a snapshot manifest lists for a file)
+    ("digest", "csum"),
 )
 _FIELD_TABLE = {}
 for _kind, _names in _FIELD_KINDS:
@@ -2925,6 +2930,504 @@ def parse_vzdump_log(fh, source, events, clock, max_line, stats, times):
                            action_raw=level, result="warning" if level == "WARN" else "error", result_basis="the level of the line", message=rest)
 
 
+# ---- Proxmox Backup Server task log files -------------------------------------------------------------------------------
+# Built from the Proxmox Backup Server source that writes and reads task logs (proxmox-rest-server, worker_task.rs, as served by git.proxmox.com on
+# 2026-11-03) and the Proxmox Backup documentation (page "Backup Client Usage", whose title read "Proxmox Backup 4.2.8-1 documentation" that day):
+# the log of one task is the file tasks/<XX>/<UPID>, where XX is the low byte of the UPID's pstart in two hexadecimal digits; each line is
+# `<RFC 3339 time>: <message>`; the task's result is its last line, `TASK OK`, `TASK WARNINGS: <count>`, `TASK ERROR: <message>` or `TASK unknown`.
+# The documentation lists no message texts, so the category of a message below is this tool's keyword table and the event says so.
+PBS_LINE = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})?): (.*)$")
+PBS_TASK_END = re.compile(r"^TASK (OK|unknown|WARNINGS: ?[0-9]{1,9}|ERROR(?:: ?(.*))?)$")
+PBS_STORE = re.compile(r"^(?:starting garbage collection on store|Starting prune on (?:store|datastore)|starting new backup on datastore|Starting datastore sync job|Starting verify on datastore) '?([^' ]{1,200})")
+PBS_MESSAGE_WORDS = (
+    ("starting garbage collection", "retention_gc"), ("start gc phase", "retention_gc"), ("removed garbage", "retention_gc"), ("pending removals", "retention_gc"),
+    ("original data usage", "retention_gc"), ("on-disk usage", "retention_gc"), ("on-disk chunks", "retention_gc"), ("deduplication factor", "retention_gc"),
+    ("starting prune", "retention_prune"), ("pruning group", "retention_prune"), ("prune", "retention_prune"), ("keep ", "retention_prune"),
+    ("remove ", "retention_remove"), ("removing ", "retention_remove"), ("marked ", "retention_remove"),
+    ("verify", "verification"), ("starting datastore sync", "sync"), ("sync ", "sync"),
+    ("starting new backup", "backup_start"), ("backup finished", "backup_end"), ("add blob", "other"),
+)
+
+
+def pbs_category(message):
+    low = message[:64].lower()
+    for word, category in PBS_MESSAGE_WORDS:
+        if low.startswith(word):
+            return category, "keyword '%s' at the start of the message (this tool's table; Proxmox Backup documents no list of task-log messages)" % word.strip()
+    return "other", "the message matches none of this tool's keywords"
+
+
+def parse_pbs_task_log(fh, source, events, clock, max_line, stats, times):
+    closing = None          # the last parsed line was the task's result line
+    seen = 0
+    for n, off, length, raw in read_lines(fh, max_line):
+        clock.check()
+        if raw is None:
+            stats["over_limit"] += 1
+            stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": "line over max_line_bytes: located, not read"})
+            closing = False
+            continue
+        line = decode_line(raw)
+        if not line.strip():
+            stats["blank"] += 1
+            continue
+        loc = {"line": n, "byte_offset": off, "byte_length": length}
+        seen += 1
+        m = PBS_LINE.match(line)
+        stamp, rest = (m.group(1), m.group(2)) if m else (None, line)
+        end = PBS_TASK_END.match(rest.rstrip())
+        if not m and not end:
+            stats["unparsed"] += 1
+            closing = False
+            if len(stats["problem_lines"]) < 200:
+                stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": "not the documented `<RFC 3339 time>: <message>` line"})
+            continue
+        utc, basis = times.read(stamp) if stamp else (None, "the line carries no time")
+        if end:
+            word = end.group(1)
+            result = "ok" if word == "OK" else "unknown" if word == "unknown" else "warning" if word.startswith("WARNINGS") else "error"
+            stats["parsed"] += 1
+            closing = True
+            events.add(source, loc, "pbs_task_log", time_utc=utc, time_raw=stamp, time_basis=basis, category="task_end", category_basis="the task's result line (TASK ...)",
+                       action_raw="TASK " + word.split(":")[0], result=result, result_basis="the task's own result line", message=rest.strip())
+            continue
+        category, why = pbs_category(rest)
+        result = "error" if rest.startswith("ERROR") else "warning" if rest.startswith("WARN") else "unknown"
+        obj = PBS_STORE.match(rest)
+        stats["parsed"] += 1
+        closing = False
+        events.add(source, loc, "pbs_task_log", time_utc=utc, time_raw=stamp, time_basis=basis, category=category, category_basis=why, action_raw=None,
+                   object=obj.group(1) if obj else None, result=result, result_basis=("the level the line begins with" if result != "unknown" else "a message states no result"), message=rest)
+    if seen and not closing:
+        stats["no_closing"] += 1
+        stats["no_closing_files"].append(source["id"])
+    elif not seen:
+        stats["no_closing"] += 1
+        stats["no_closing_files"].append(source["id"])
+
+
+# ---- Proxmox Backup Server configuration files ----------------------------------------------------------------------------
+# Built from the Proxmox Backup documentation page "Configuration Files" (its title read "Proxmox Backup 4.2.8-1 documentation", retrieved 2026-11-03):
+# datastore.cfg, prune.cfg, sync.cfg, verification.cfg and remote.cfg are section-per-object text files: a header `<type>: <id>` at column 0, then the
+# object's properties, indented, one `<name> <value>` per line. The page's examples indent with spaces and does not say whether a tab is allowed; both are read.
+# The property names below are the ones the page lists for each type; any other property, or a type the page does not list, is unparsed and located.
+PBS_KEEP = ("keep-hourly", "keep-daily", "keep-weekly", "keep-monthly", "keep-yearly", "keep-last")
+PBS_CONFIG_TYPES = {
+    "datastore": {"required": ("path",), "optional": ("backend", "backing-device", "comment", "counter-reset-schedule", "gc-on-unmount", "gc-schedule", "maintenance-mode",
+                                                        "notification-mode", "notification-thresholds", "notify", "notify-user", "prune-schedule", "tuning", "verify-new") + PBS_KEEP},
+    "prune": {"required": ("schedule", "store"), "optional": ("comment", "disable", "max-depth", "ns") + PBS_KEEP},
+    "sync": {"required": ("remote-store", "store"), "optional": ("active-encryption-key", "associated-key", "comment", "encrypted-only", "group-filter", "max-depth", "ns", "owner", "remote",
+                                                                 "remote-ns", "remove-vanished", "resync-corrupt", "run-on-mount", "schedule", "sync-direction", "transfer-last",
+                                                                 "unmount-on-done", "verified-only", "worker-threads", "burst-in", "burst-out", "rate-in", "rate-out")},
+    "verification": {"required": ("store",), "optional": ("comment", "ignore-verified", "max-depth", "ns", "outdated-after", "read-threads", "schedule", "verify-threads")},
+    "remote": {"required": ("password", "auth-id", "host"), "optional": ("comment", "fingerprint", "port", "use-node-proxy")},
+}
+PBS_CONFIG_FILES = {"datastore.cfg": "datastore", "prune.cfg": "prune", "sync.cfg": "sync", "verification.cfg": "verification", "remote.cfg": "remote"}
+PBS_CFG_HEADER = re.compile(r"^([A-Za-z][A-Za-z0-9_-]{0,63}): ?(.{1,512})$")
+PBS_CFG_PROPERTY = re.compile(r"^[ \t]+([A-Za-z][A-Za-z0-9_-]{0,63})(?:[ \t]+(.*))?$")
+PBS_NOTIFY = re.compile(r"^(?:gc|prune|sync|verify)=(?:never|always|error)(?:,(?:gc|prune|sync|verify)=(?:never|always|error))*$")
+PBS_SECRET_WORDS = ("password", "passwd", "secret", "token", "key", "credential", "passphrase")
+
+
+def pbs_secret_property(name):
+    low = name.lower()
+    return any(w in low for w in PBS_SECRET_WORDS)
+
+
+def parse_pbs_config(fh, source, events, clock, max_line, stats):
+    section = None          # (type, id, seen property names, line of the header)
+    unknown_section = False
+    props_total = 0
+
+    def close():
+        if section is None:
+            return
+        kind, ident, seen, hline = section
+        missing = [r for r in PBS_CONFIG_TYPES[kind]["required"] if r not in seen]
+        if missing:
+            stats["config_missing"].append("%s line %d: section %s lacks the property the documentation requires: %s" % (source["id"], hline, kind, ", ".join(missing)))
+
+    for n, off, length, raw in read_lines(fh, max_line):
+        clock.check()
+        if raw is None:
+            stats["over_limit"] += 1
+            stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": "line over max_line_bytes: located, not read"})
+            continue
+        line = decode_line(raw)
+        if not line.strip() or line.lstrip().startswith("#"):
+            stats["blank"] += 1
+            continue
+        loc = {"line": n, "byte_offset": off, "byte_length": length}
+
+        def bad(reason):
+            stats["unparsed"] += 1
+            if len(stats["problem_lines"]) < 200:
+                stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": reason})
+
+        if line[0] not in " \t":
+            close()
+            section = None
+            unknown_section = False
+            m = PBS_CFG_HEADER.match(line.rstrip())
+            if not m:
+                bad("not a `<type>: <id>` section header of the documented files")
+                unknown_section = True
+                continue
+            if m.group(1) not in PBS_CONFIG_TYPES:
+                bad("a section type the documentation does not list for these files")
+                unknown_section = True
+                continue
+            section = (m.group(1), m.group(2).strip(), set(), n)
+            stats["parsed"] += 1
+            stats["config_sections"] += 1
+            continue
+        if unknown_section:
+            bad("a property of a section that was not read")
+            continue
+        if section is None:
+            bad("a property line before any section header")
+            continue
+        m = PBS_CFG_PROPERTY.match(line.rstrip())
+        if not m:
+            bad("not a `<name> <value>` property line")
+            continue
+        kind, ident, seen, hline = section
+        name, value = m.group(1), (m.group(2) or "").strip()
+        table = PBS_CONFIG_TYPES[kind]
+        if name not in table["required"] and name not in table["optional"]:
+            bad("a property the documentation does not list for a %s section" % kind)
+            continue
+        if name in PBS_KEEP and not (value.isdigit() and len(value) <= 9):
+            bad("%s takes a whole number" % name)
+            continue
+        if name == "notify" and not PBS_NOTIFY.match(value):
+            bad("notify takes gc, prune, sync and verify set to never, always or error")
+            continue
+        seen.add(name)
+        props_total += 1
+        stats["parsed"] += 1
+        setting = {"section_type": kind, "property": name}
+        extra = {}
+        if name == "comment" or pbs_secret_property(name):
+            # a comment is free text and a credential is a secret: neither is printed; both go to the text file of a secret_output job
+            setting["value"] = None
+            setting["value_withheld"] = "a comment (free text)" if name == "comment" else "a property that holds a secret or a key"
+            setting["value_chars"] = len(value)
+            extra["message"] = "%s %s: %s %s" % (kind, ident, name, value)
+        else:
+            setting["value"] = value
+            if name in PBS_KEEP:
+                setting["value_number"] = int(value)
+        retention = name in PBS_KEEP or name in ("gc-schedule", "prune-schedule", "notify", "schedule")
+        events.add(source, loc, "pbs_config", time_utc=None, time_raw=None, time_basis="a configuration file carries no time", category="other",
+                   category_basis="a setting as configured; the file says nothing of when it was set or changed", action_raw=name, object=ident, result="unknown",
+                   result_basis="a setting states no result", setting=setting, retention_setting=retention, **extra)
+    close()
+    if props_total == 0 and stats["config_sections"] == 0:
+        stats["config_empty"] += 1
+
+
+# ---- Proxmox Backup Server data blobs ---------------------------------------------------------------------------------------
+# Built from the Proxmox Backup source (pbs-datastore, file_formats.rs, data_blob.rs and manifest.rs, as served by git.proxmox.com on 2026-11-03):
+# a data blob is an 8-byte magic that says how its payload is stored, a 4-byte CRC32 (little-endian) of the bytes after the header, and the payload. The
+# header of an uncompressed or compressed blob is 12 bytes (magic and CRC); of an encrypted one 44 (magic, CRC, a 16-byte IV, a 16-byte tag). A compressed payload is
+# a zstd stream. The source of data_blob.rs shows the CRC taken over the bytes after the header, with the header's size given by code this reading did not
+# see (header_size): the CRC of an encrypted blob is therefore not checked here, and nothing says so more strongly than "not checked". Nothing is decrypted or inflated.
+PBS_BLOB_MAGICS = {
+    bytes((66, 171, 56, 7, 190, 131, 112, 161)): ("uncompressed", False),
+    bytes((49, 185, 88, 66, 111, 182, 163, 127)): ("compressed", False),
+    bytes((123, 103, 133, 190, 34, 45, 76, 240)): ("encrypted", True),
+    bytes((230, 89, 27, 191, 11, 191, 216, 11)): ("encrypted_compressed", True),
+}
+PBS_ZSTD_FRAME = bytes((0x28, 0xB5, 0x2F, 0xFD))
+MAX_BLOB_PAYLOAD = 16 << 20       # the payload of an uncompressed blob this tool reads; a larger one has its CRC checked and its payload counted, not read
+MAX_MANIFEST_FILES = 1000000
+PBS_CSUM = re.compile(r"^[0-9a-f]{64}$")
+
+
+def parse_pbs_blob(fh, source, events, clock, max_line, stats):
+    name = os.path.basename(source["path"])
+    size = source["size"]
+    head = fh.read(44)
+    magic = head[:8]
+    entry = PBS_BLOB_MAGICS.get(magic)
+    loc = {"byte_offset": 0, "byte_length": size}
+    if len(head) < 12:
+        raise ValueError("a truncated header: the file has %d byte(s) and a data blob header is 12" % size)
+    if entry is None:
+        raise ValueError("the first 8 bytes are none of the four data blob magics: not read")
+    kind, encrypted = entry
+    header = 44 if encrypted else 12
+    if size < header:
+        raise ValueError("a truncated header: a %s blob header is %d bytes and the file has %d" % (kind, header, size))
+    stored = int.from_bytes(head[8:12], "little")
+    # the CRC32 of everything after the header (uncompressed and compressed blobs), streamed under the clock; the payload is kept when it is one this tool reads
+    keep = kind == "uncompressed" and size - header <= MAX_BLOB_PAYLOAD and name in ("index.json.blob", "client.log.blob")
+    fh.seek(header)
+    crc, payload = 0, []
+    if not encrypted:
+        while True:
+            clock.check()
+            chunk = fh.read(1 << 20)
+            if not chunk:
+                break
+            crc = zlib.crc32(chunk, crc)
+            if keep:
+                payload.append(chunk)
+    elif kind in ("encrypted", "encrypted_compressed"):
+        pass
+    blob = {"kind": kind, "size": size, "header_bytes": header, "crc_stored": stored}
+    problems = []
+    if encrypted:
+        blob.update(crc_check="not_checked", crc_note="the bytes an encrypted blob's CRC covers are fixed by code this reading did not see", payload="not_read_encrypted")
+        problems.append("%s: an encrypted blob is identified and never decrypted: its payload was not read" % source["id"])
+    else:
+        blob["crc_computed"] = crc
+        blob["crc_check"] = "ok" if crc == stored else "mismatch"
+        if crc != stored:
+            problems.append("%s: the CRC32 of the payload does not match the one in the header: the file is damaged or was changed" % source["id"])
+        if kind == "compressed":
+            fh.seek(header)
+            blob["payload_is_zstd_frame"] = fh.read(4) == PBS_ZSTD_FRAME
+            blob["payload"] = "not_read_compressed"
+            problems.append("%s: a compressed blob is identified and counted, not inflated (zstd is not in the standard library): its payload was not read" % source["id"])
+        elif keep:
+            blob["payload"] = "read"
+        else:
+            blob["payload"] = "not_read_%s" % ("over_cap" if size - header > MAX_BLOB_PAYLOAD else "unknown_name")
+            problems.append("%s: the payload of this uncompressed blob was not read (%s)" % (source["id"], "over the %d byte cap" % MAX_BLOB_PAYLOAD if size - header > MAX_BLOB_PAYLOAD else "only index.json.blob and client.log.blob have a payload this tool knows"))
+    stats["blob_notes"].extend(problems)
+    stats["parsed"] += 1
+    events.add(source, loc, "pbs_blob", time_utc=None, time_raw=None, time_basis="a data blob header carries no time", category="other",
+               category_basis="the blob itself; the magic says how the payload is stored", action_raw="data blob", object=name, result="unknown",
+               result_basis="a blob states no result", blob=blob)
+    if not blob.get("payload") == "read":
+        return
+    data = b"".join(payload)
+    if name == "client.log.blob":
+        import io  # noqa
+        for n, off, length, raw in read_lines(io.BytesIO(data), max_line):
+            clock.check()
+            if raw is None:
+                stats["over_limit"] += 1
+                stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": header + off, "reason": "line over max_line_bytes: located, not read"})
+                continue
+            line = decode_line(raw)
+            if not line.strip():
+                stats["blank"] += 1
+                continue
+            stats["parsed"] += 1
+            events.add(source, {"line": n, "byte_offset": header + off, "byte_length": length}, "pbs_blob", time_utc=None, time_raw=None, time_basis="the log line's time, if any, is not read (the format of the client log is not documented)",
+                       category="other", category_basis="a line of the client log", action_raw="client log line", result="unknown", result_basis="a log line states no result", message=line)
+        return
+    # index.json.blob: the snapshot manifest
+    try:
+        doc = json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError, MemoryError) as exc:
+        stats["unparsed"] += 1
+        stats["problem_lines"].append({"source_id": source["id"], "line": 1, "byte_offset": header, "reason": "the payload is not JSON, or is nested too deeply (%s)" % type(exc).__name__})
+        return
+    if not isinstance(doc, dict) or not isinstance(doc.get("files"), list):
+        stats["unparsed"] += 1
+        stats["problem_lines"].append({"source_id": source["id"], "line": 1, "byte_offset": header, "reason": "the payload is JSON but not a snapshot manifest (an object with a files list)"})
+        return
+    known = {"backup-type", "backup-id", "backup-time", "files", "unprotected", "signature"}
+    stats["manifest_unknown_fields"] += sum(1 for k in doc if k not in known)
+    btype, bid, btime = doc.get("backup-type"), doc.get("backup-id"), doc.get("backup-time")
+    when = None
+    if isinstance(btime, int) and not isinstance(btime, bool) and 0 <= btime <= 253402300799:
+        when = iso_from_epoch(btime)
+    if isinstance(btype, str) and isinstance(bid, str) and len(btype) <= 64 and len(bid) <= 4096:
+        stats["parsed"] += 1
+        events.add(source, {"record": 0, "byte_offset": header}, "pbs_blob", time_utc=when, time_raw=str(btime) if when else None,
+                   time_basis="backup-time, epoch seconds, UTC by definition" if when else "no usable backup-time in the manifest", category="other",
+                   category_basis="the snapshot the manifest belongs to", action_raw="snapshot manifest", object="%s/%s" % (btype, bid), result="unknown",
+                   result_basis="a manifest states no result", setting={"signature_present": isinstance(doc.get("signature"), str), "files": len(doc["files"])})
+    else:
+        stats["unparsed"] += 1
+        stats["problem_lines"].append({"source_id": source["id"], "line": 1, "byte_offset": header, "reason": "backup-type and backup-id are not strings of a usable length"})
+    for i, f in enumerate(doc["files"][:MAX_MANIFEST_FILES]):
+        clock.check()
+        ok = (isinstance(f, dict) and isinstance(f.get("filename"), str) and 0 < len(f["filename"]) <= 4096 and isinstance(f.get("size"), int) and not isinstance(f.get("size"), bool)
+              and 0 <= f["size"] < 1 << 63 and isinstance(f.get("csum"), str) and PBS_CSUM.match(f["csum"]))
+        if not ok:
+            stats["unparsed"] += 1
+            if len(stats["problem_lines"]) < 200:
+                stats["problem_lines"].append({"source_id": source["id"], "line": i + 1, "byte_offset": header, "reason": "files[%d] is not {filename, size, csum (64 hexadecimal digits)}" % i})
+            continue
+        stats["manifest_unknown_fields"] += sum(1 for k in f if k not in ("filename", "size", "csum", "crypt-mode"))
+        mode = f.get("crypt-mode")
+        stats["parsed"] += 1
+        events.add(source, {"record": i + 1, "byte_offset": header}, "pbs_blob", time_utc=when, time_raw=str(btime) if when else None,
+                   time_basis="the manifest's backup-time: when the snapshot was taken, not when the file was written", category="other", category_basis="a file the snapshot lists",
+                   action_raw="manifest file", object=f["filename"], result="unknown", result_basis="a manifest entry states no result",
+                   setting={"filename": f["filename"], "size": f["size"], "csum": f["csum"], "crypt_mode": mode if isinstance(mode, str) and len(mode) <= 32 else None})
+    if len(doc["files"]) > MAX_MANIFEST_FILES:
+        stats["unparsed"] += len(doc["files"]) - MAX_MANIFEST_FILES
+
+
+# ---- presets: a named set of the declared-mapping parameters, held as a reviewed file under presets/ --------------------------
+# A preset is data over the engine below, not code. The tool reads presets from its own presets/ directory only, by the names listed here, and only a file whose
+# sha256 is the one listed: a changed preset is refused by name. (The job service checks only this file's hash, so the presets' hashes are held here.)
+PRESET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
+PRESET_SHA256 = {            # file name -> (sha256 of the reviewed file, the product it serves, its name)
+    "proxmox-backup-client-snapshot-list.json": ("09357c591462951708819c1f5c70ba255764d54583f9f1eaa0067029ad9e88de", "proxmox_backup_client", "proxmox_backup_client_snapshot_list"),
+}
+PRESET_KEYS = ("name", "revision", "product", "format", "export", "documentation", "mapping", "category_map", "result_map", "time_format", "columns", "record_tag", "delimiter", "has_header", "note")
+
+
+def read_preset_file(filename):
+    """(bytes, None) of a listed preset file, or (None, why). Regular file only, not followed through a link, at most MAX_PRESET_BYTES."""
+    path = os.path.join(PRESET_DIR, filename)
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode):
+            return None, "not a regular file"
+        if st.st_size > MAX_PRESET_BYTES:
+            return None, "over %d bytes" % MAX_PRESET_BYTES
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as fh:
+            return fh.read(MAX_PRESET_BYTES + 1), None
+    except OSError as exc:
+        return None, describe(exc)
+
+
+def select_preset(product, preset_name):
+    """The preset the caller's product (and, where a product has several, preset name) selects; None when no listed preset has that product or name. A listed
+    preset whose file is missing, is not the one listed by hash, or does not hold what a preset holds is refused by its file name."""
+    if not product and not preset_name:
+        return None
+    want_product = (product or "").strip().lower()
+    want_name = (preset_name or "").strip().lower()
+    found = []
+    for filename, (digest, listed_product, listed_name) in sorted(PRESET_SHA256.items()):
+        if want_name:
+            if want_name != listed_name:
+                continue
+            if want_product and want_product not in (listed_product, listed_name):
+                continue
+        elif want_product not in (listed_product, listed_name):
+            continue
+        data, why = read_preset_file(filename)
+        if data is None:
+            fail("the preset file %s cannot be read (%s): it is not used" % (filename, why), status_note="preset_refused", preset_file=filename)
+        if hashlib.sha256(data).hexdigest() != digest:
+            fail("the preset file %s was changed: its sha256 is not the one this tool lists, so it is not used" % filename, status_note="preset_refused", preset_file=filename)
+        try:
+            doc = json.loads(data.decode("utf-8"))
+        except (ValueError, RecursionError):
+            doc = None
+        if not isinstance(doc, dict) or any(k not in PRESET_KEYS for k in doc) or doc.get("product") != listed_product or doc.get("name") != listed_name                 or not isinstance(doc.get("revision"), int) or not isinstance(doc.get("format"), str):
+            fail("the preset file %s does not hold what the listed preset holds: it is not used" % filename, status_note="preset_refused", preset_file=filename)
+        found.append(doc)
+    if not found:
+        return None
+    if len(found) > 1:
+        fail("product %s has %d presets; name one with preset: %s" % (seal_text(product or "", "text"), len(found), ", ".join(sorted(d["name"] for d in found))), status_note="preset_ambiguous")
+    return found[0]
+
+
+def parse_json_array(fh, source, events, clock, max_line, stats, mapping, times, category_map, result_map):
+    """A JSON array export, `[ {...}, {...} ]`, read element by element: the buffer holds one element and the next read, never the file, and an element over
+    max_line_bytes is located and ends the read (an array cannot be skipped over without being read). A syntax error ends the read at that element, which is
+    counted unparsed and located; the rest of the array is not guessed at."""
+    import codecs
+    dec = json.JSONDecoder()
+    inc = codecs.getincrementaldecoder("utf-8")("surrogateescape")
+    ws = re.compile(r"[ \t\r\n]*")
+    state = {"buf": "", "pos": 0, "eof": False, "chunk": 1 << 16, "base": 0}
+
+    def fill():
+        raw = fh.read(state["chunk"])
+        state["chunk"] = min(state["chunk"] * 2, 8 << 20)
+        if not raw:
+            state["eof"] = True
+            tail = inc.decode(b"", True)
+        else:
+            tail = inc.decode(raw)
+        state["base"] += state["pos"]
+        state["buf"] = state["buf"][state["pos"]:] + tail
+        state["pos"] = 0
+
+    def stop(reason, over=False):
+        if over:
+            stats["over_limit"] += 1
+        else:
+            stats["unparsed"] += 1
+        if len(stats["problem_lines"]) < 200:
+            stats["problem_lines"].append({"source_id": source["id"], "record": record + 1, "reason": reason})
+
+    record, phase = 0, "open"
+    while True:
+        clock.check()
+        buf = state["buf"]
+        state["pos"] = ws.match(buf, state["pos"]).end()
+        if state["pos"] >= len(state["buf"]):
+            if state["eof"]:
+                if phase != "done":
+                    stop("the array has no closing ]: the file is cut" if phase != "open" else "an empty file is no JSON array")
+                return
+            fill()
+            continue
+        pos = state["pos"]
+        c = buf[pos]
+        if phase == "done":
+            stop("content after the closing ] (at character %d): the array is followed by more than white space, and none of it is read" % (state["base"] + pos))
+            return
+        if phase == "open":
+            if c == "﻿":
+                state["pos"] += 1
+                continue
+            if c != "[":
+                stop("a JSON array export begins with [")
+                return
+            state["pos"] += 1
+            phase = "first"
+            continue
+        if phase == "sep":
+            if c == ",":
+                state["pos"] += 1
+                phase = "elem"
+                continue
+            if c == "]":
+                state["pos"] += 1
+                phase = "done"
+                continue
+            stop("expected , or ] after an element")
+            return
+        if phase == "first" and c == "]":
+            state["pos"] += 1
+            phase = "done"
+            continue
+        if c == "]":
+            stop("a ] after a comma: not valid JSON")
+            return
+        # an element
+        try:
+            obj, end = dec.raw_decode(buf, pos)
+            if end >= len(buf) and not state["eof"]:
+                raise ValueError("the element may go on in the next read")
+        except (ValueError, RecursionError):
+            pending = len(buf) - pos
+            if not state["eof"] and pending <= max_line:
+                fill()
+                continue
+            if not state["eof"] or pending > max_line:
+                stop("element over max_line_bytes: located, not read; the rest of the array is not read", over=True)
+            else:
+                stop("not valid JSON (or nested too deeply): the rest of the array is not read")
+            return
+        record += 1
+        state["pos"] = end
+        phase = "sep"
+        if not isinstance(obj, dict):
+            stats["unparsed"] += 1
+            if len(stats["problem_lines"]) < 200:
+                stats["problem_lines"].append({"source_id": source["id"], "record": record, "reason": "an array element that is not an object"})
+            continue
+        declared_event(events, source, {"record": record}, "declared_json", lambda p, o=obj: get_path(o, p), mapping, times, category_map, result_map, stats)
+
+
 # ---- declared mappings -----------------------------------------------------------------------------------------------
 
 MISSING = object()   # a declared field the record does not have (a field that is there and null or empty is not missing)
@@ -3214,6 +3717,40 @@ def want_map(args, key, allowed):
         out[k.lower()] = v
     return out
 
+# What each format was built from, in every answer. None of them has been checked against a real export.
+PROVENANCE = {
+    "pbs_task_log": {"product": "proxmox_backup_server", "source_kind": "task log file (tasks/<XX>/<UPID>)", "schema_basis": "vendor_documentation",
+                     "validated_against_real_export": False,
+                     "documentation": "Proxmox Backup source, proxmox-rest-server worker_task.rs (git.proxmox.com, master), and the Proxmox Backup documentation page Backup Client Usage (its title read Proxmox Backup 4.2.8-1 documentation); retrieved 2026-11-03"},
+    "pbs_config": {"product": "proxmox_backup_server", "source_kind": "configuration file (datastore.cfg, prune.cfg, sync.cfg, verification.cfg, remote.cfg)", "schema_basis": "vendor_documentation",
+                   "validated_against_real_export": False,
+                   "documentation": "Proxmox Backup documentation page Configuration Files (its title read Proxmox Backup 4.2.8-1 documentation); retrieved 2026-11-03"},
+    "pbs_blob": {"product": "proxmox_backup_server", "source_kind": "data blob (index.json.blob, client.log.blob)", "schema_basis": "vendor_documentation",
+                 "validated_against_real_export": False,
+                 "documentation": "Proxmox Backup source, pbs-datastore file_formats.rs, data_blob.rs and manifest.rs (git.proxmox.com, master); retrieved 2026-11-03"},
+    "pve_task_index": {"product": "proxmox_ve_or_proxmox_backup_server", "source_kind": "task index file (UPID lines)", "schema_basis": "synthetic_fixtures",
+                       "validated_against_real_export": False,
+                       "documentation": "the UPID layouts as this tool's code describes them; tested on synthetic fixtures only"},
+    "pve_vzdump_log": {"product": "proxmox_ve", "source_kind": "vzdump task log (INFO, WARN, ERROR and TASK lines)", "schema_basis": "synthetic_fixtures",
+                       "validated_against_real_export": False, "documentation": "the line prefixes and messages as this tool's table has them; tested on synthetic fixtures only"},
+}
+
+
+def provenance_of(sources, fmt, product, preset=None):
+    """One entry per format that was read: what the reader was built from, and that it is not validated against a real export."""
+    used = sorted({s.get("format") for s in sources if s.get("format")} | ({fmt} if fmt.startswith("declared_") else set()))
+    out = []
+    for name in used:
+        entry = PROVENANCE.get(name)
+        if entry is None and preset is not None:
+            entry = {"product": preset["product"], "source_kind": preset.get("export", "an export read through a preset"), "schema_basis": "vendor_documentation",
+                     "validated_against_real_export": False, "documentation": preset.get("documentation", ""), "preset": "%s@%d" % (preset["name"], preset["revision"])}
+        if entry is None:       # a declared mapping: the caller's own
+            entry = {"product": seal_text(product, "text") if product else None, "source_kind": "export read through a mapping the caller declared", "schema_basis": "caller_declared_mapping",
+                     "validated_against_real_export": False, "documentation": "none: the caller's mapping"}
+        out.append(dict(entry, format=name))
+    return out
+
 
 def main():
     args = read_args()
@@ -3224,9 +3761,21 @@ def main():
     if not paths:
         fail("name the exports: path is one file, paths a list of up to %d" % MAX_PATHS)
     fmt = args.get("format", "auto")
-    if fmt not in ("auto", "pve_task_index", "pve_vzdump_log", "declared_csv", "declared_jsonl", "declared_xml"):
-        fail("format must be auto, pve_task_index, pve_vzdump_log, declared_csv, declared_jsonl or declared_xml")
+    if fmt not in ("auto", "pve_task_index", "pve_vzdump_log", "pbs_task_log", "pbs_config", "pbs_blob", "declared_csv", "declared_jsonl", "declared_json", "declared_xml"):
+        fail("format must be auto, pve_task_index, pve_vzdump_log, pbs_task_log, pbs_config, pbs_blob, declared_csv, declared_jsonl, declared_json or declared_xml")
     product = want_str(args, "product", maximum=200)
+    preset_name = want_str(args, "preset", maximum=200)
+    preset = select_preset(product, preset_name)
+    if preset_name and preset is None:
+        fail("preset %s is none of this tool's presets" % seal_text(preset_name, "text"), status_note="preset_unknown")
+    if preset is not None:
+        if fmt not in ("auto", preset["format"]):
+            fail("the preset %s reads format %s, not %s" % (preset["name"], preset["format"], fmt))
+        taken = [k for k in ("mapping", "category_map", "result_map", "time_format", "columns", "record_tag", "delimiter", "has_header", "time_zone_offset_minutes") if k in args]
+        if taken:
+            fail("the preset %s fixes %s: do not pass them (a preset and a mapping of your own are not mixed, whether or not the preset sets the key)" % (preset["name"], ", ".join(taken)))
+        fmt = preset["format"]
+        args = dict(args, **{k: v for k, v in preset.items() if k in ("mapping", "category_map", "result_map", "time_format", "columns", "record_tag", "delimiter", "has_header")})
     if product and fmt == "auto" and product.lower() not in ("proxmox", "proxmox_ve", "proxmox_backup_server", "pve", "pbs"):
         known = product.lower() in KNOWN_UNSUPPORTED
         fail("product %s is unsupported: no fixture of its format exists, so none is read (%s). Use format declared_csv, declared_jsonl or declared_xml with a mapping you declare." % (
@@ -3263,6 +3812,7 @@ def main():
         if fmt == "declared_xml":
             record_tag = want_str(args, "record_tag", "declared_xml needs record_tag: the element name of one record", maximum=200)
     times = TimeReader(time_format, offset)
+    pbs_times = TimeReader("iso8601", offset)      # a Backup Server log line carries RFC 3339 times whatever the caller declared for a mapping
     try:
         values = TextFile("audit-values.jsonl", write_text, "JSON Lines, mode 0600: record_type message (seq, source_id, locator, the free-text message of the "
                           "event) or original (where, field, value: the original of a string the answer shows withheld or shortened)")
@@ -3279,7 +3829,7 @@ def main():
     clock = Clock(seconds)
     sources, problems = [], []
     stats = {"parsed": 0, "unparsed": 0, "blank": 0, "over_limit": 0, "problem_lines": [], "mapping_errors": [], "read_errors": [], "unmapped_actions": collections.Counter(), "unmapped_actions_over": 0,
-             "fields_absent": collections.Counter(), "records_declared": 0}
+             "fields_absent": collections.Counter(), "records_declared": 0, "no_closing": 0, "no_closing_files": [], "config_missing": [], "config_sections": 0, "config_empty": 0, "blob_notes": [], "manifest_unknown_fields": 0}
     unrecognised = []
     partial = []
     for number, p in enumerate(paths, 1):
@@ -3308,15 +3858,23 @@ def main():
                 head = fh.read(4096)
                 fh.seek(0)
                 first = next((l for l in head.decode("utf-8", "replace").splitlines() if l.strip()), "")
-                if first.startswith("UPID:"):
+                first_cfg = next((l for l in head.decode("utf-8", "replace").splitlines() if l.strip() and not l.lstrip().startswith("#")), "")
+                cfg_m = PBS_CFG_HEADER.match(first_cfg.rstrip()) if first_cfg[:1] not in (" ", "\t") else None
+                if head[:8] in PBS_BLOB_MAGICS:
+                    kind = "pbs_blob"             # eight bytes that no text file begins with, and that the source gives for the four kinds of data blob
+                elif first.startswith("UPID:"):
                     kind = "pve_task_index"
+                elif cfg_m and PBS_CONFIG_FILES.get(os.path.basename(p)) == cfg_m.group(1):
+                    kind = "pbs_config"           # the file name and its first section's type, together: the documented signature
                 elif LOG_PREFIX.match(first):
                     kind = "pve_vzdump_log"
                 else:
                     shape = "XML" if first.lstrip().startswith("<") else "JSON" if first.lstrip()[:1] in "{[" else "delimited text" if first.count(",") + first.count("\t") + first.count(";") >= 2 else "text"
                     unrecognised.append({"source_id": rec["id"], "file": shown(p, rec["id"], "file"), "shape": shape,
-                                         "reason": "no layout this tool reads was recognised; the file was not parsed. A %s export can be read with format declared_%s and a mapping you declare" % (
-                                             shape, {"XML": "xml", "JSON": "jsonl", "delimited text": "csv"}.get(shape, "csv"))})
+                                         "reason": "no layout this tool reads was recognised; the file was not parsed. %s" % (
+                                             ("It begins like a Proxmox Backup Server task log (`<RFC 3339 time>: <message>`), which format auto does not recognise because a timestamped line is no unambiguous signature: name format pbs_task_log"
+                                              if PBS_LINE.match(first) else "A %s export can be read with format declared_%s and a mapping you declare" % (
+                                                  shape, {"XML": "xml", "JSON": "jsonl", "delimited text": "csv"}.get(shape, "csv"))))})
                     sources.append({"source_id": rec["id"], "file": shown(p, rec["id"], "file"), "size": rec["size"], "state": "unsupported", "shape": shape})
                     continue
             try:
@@ -3326,8 +3884,16 @@ def main():
                     parse_task_index(fh, rec, events, clock, max_line, stats)
                 elif kind == "pve_vzdump_log":
                     parse_vzdump_log(fh, rec, events, clock, max_line, stats, times)
+                elif kind == "pbs_config":
+                    parse_pbs_config(fh, rec, events, clock, max_line, stats)
+                elif kind == "pbs_blob":
+                    parse_pbs_blob(fh, rec, events, clock, max_line, stats)
+                elif kind == "pbs_task_log":
+                    parse_pbs_task_log(fh, rec, events, clock, max_line, stats, pbs_times)
                 elif kind == "declared_csv":
                     parse_csv(fh, rec, events, clock, max_line, stats, mapping, times, category_map, result_map, delimiter, has_header, columns)
+                elif kind == "declared_json":
+                    parse_json_array(fh, rec, events, clock, max_line, stats, mapping, times, category_map, result_map)
                 elif kind == "declared_jsonl":
                     parse_jsonl(fh, rec, events, clock, max_line, stats, mapping, times, category_map, result_map)
                 else:
@@ -3359,6 +3925,15 @@ def main():
     values.close()
     page = events.page.finish()
     unmapped = sorted(stats["unmapped_actions"].items(), key=lambda kv: -kv[1])[:50]
+    partial.extend(stats["blob_notes"][:20])
+    if len(stats["blob_notes"]) > 20:
+        partial.append("%d more data blob notes" % (len(stats["blob_notes"]) - 20))
+    partial.extend(stats["config_missing"][:20])
+    if len(stats["config_missing"]) > 20:
+        partial.append("%d more sections lack a required property" % (len(stats["config_missing"]) - 20))
+    if stats["no_closing"]:
+        partial.append("%d Proxmox Backup Server task log(s) (%s) do not end with a TASK result line: the task was running, was cut, or the file is not whole" % (
+            stats["no_closing"], ", ".join(stats["no_closing_files"][:20])))
     not_whole = [s for s in sources if s["state"] in ("partial", "failed", "unreadable", "not_opened")]
     complete = (not not_whole and not stats["unparsed"] and not stats["over_limit"] and not stats["mapping_errors"] and not stats["read_errors"] and not partial
                 and not unrecognised and not problems)
@@ -3371,6 +3946,8 @@ def main():
         "parser": PARSER, **outcome,
         "format_requested": fmt, "product_label": seal_text(product, "text") if product else None,
         "product_label_note": "the caller's label for a declared format; not verified" if product and fmt.startswith("declared_") else None,
+        "preset": ("%s@%d" % (preset["name"], preset["revision"])) if preset else None,
+        "provenance": provenance_of(sources, fmt, product, preset),
         "sources": sources, "unrecognised": unrecognised, "problems": problems,
         "events": events.page.page, "pages": {"events": page},
         "counts": {"events": events.n, "parsed": stats["parsed"], "unparsed": stats["unparsed"], "blank": stats["blank"], "over_line_limit": stats["over_limit"]},
@@ -3385,6 +3962,7 @@ def main():
         "distinct": {k: {"listed": len(v), "over_cap": events.distinct_over[k], "top": [{"value": a, "count": b} for a, b in v.most_common(20)]} for k, v in events.distinct.items()},
         "unmapped_actions_top": [{"action": a, "count": c} for a, c in unmapped] if fmt.startswith("declared_") else None,
         "unmapped_actions_distinct_over_cap": stats["unmapped_actions_over"] if fmt.startswith("declared_") else None,
+        "blobs": ({"unknown_manifest_fields_tolerated": stats["manifest_unknown_fields"]} if any(x.get("format") == "pbs_blob" for x in sources) else None),
         "partial_reasons": partial, "text": values.summary(), "withheld": withheld_summary(shown),
         "truncated": page["truncated"],
         "limits": {"max_line_bytes": max_line, "max_file_bytes": max_file, "max_distinct_per_aggregate": MAX_DISTINCT, "xml_record_elements": MAX_XML_RECORD_ELEMENTS},

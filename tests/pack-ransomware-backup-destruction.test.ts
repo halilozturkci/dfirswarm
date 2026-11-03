@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { PACK, exists, filesUnder, tool } from "./ransomware-pack-harness.ts";
+import { AUDIT, tool as virtTool } from "./pack-virtualization-harness.ts";
 
 const CORRELATE = join(PACK, "backup_destruction_correlate", "run.py");
 const MANIFEST = join(PACK, "backup_destruction_correlate", "manifest.json");
@@ -187,7 +188,7 @@ test("an unknown producer version is refused by name, for every kind of input", 
       ["events", { parser: "evtx_query/3", status: "complete", events: [] }, "evtx_query/3"],
       ["vss_inventories", { parser: "vss_stores/4", status: "complete", stores: [] }, "vss_stores/4"],
       ["service_keys", { parser: "regkv/3", status: "complete" }, "regkv/3"],
-      ["backup_audits", { parser: "backup_audit_normalise/3", status: "complete", events: [] }, "backup_audit_normalise/3"],
+      ["backup_audits", { parser: "backup_audit_normalise/4", status: "complete", events: [] }, "backup_audit_normalise/4"],
       ["chain_checks", { parser: "snapshot_chain_check/9", status: "complete", chains: [] }, "snapshot_chain_check/9"],
       ["cloud_trails", { parser: "cloudtrail_parse/5", status: "complete", records: [] }, "cloudtrail_parse/5"],
     ];
@@ -642,4 +643,30 @@ test("the forms that fire as command_seen without being run, and the bounds of t
   assert.match(manifest.params.shell_histories!.description, /answer/);
   const source = await readFile(CORRELATE, "utf8");
   assert.match(source, /POST_GRACE = 20/);
+});
+
+// The one place this suite runs another tool: backup_audit_normalise is run at test time, so that what the correlate reads is what the tool really writes today
+// (parser /3: provenance, preset and format fields beside the event rows), not a hand-written document.
+test("a real backup_audit_normalise/3 answer (pve_task_index and pbs_task_log) is read: its category and result rows become observations", async () => {
+  await withCwd(async (cwd) => {
+    const hex = (n: number): string => n.toString(16).toUpperCase().padStart(8, "0");
+    const upid = (start: number, type: string, id: string, end: number): string => `UPID:pve1:00000B73:0000D2F0:${hex(start)}:${type}:${id}:root@pam: ${hex(end)} OK`;
+    const T = 1_790_000_000;
+    await put(cwd, "index", [upid(T, "qmdelsnapshot", "100", T + 5), upid(T + 60, "prunejob", "", T + 90), upid(T + 120, "vzdump", "", T + 300)].join("\n") + "\n");
+    await put(cwd, "pbs.log", ["2026-10-01T10:00:00Z: Starting prune on datastore 'store1'", "2026-10-01T10:00:01Z: remove vm/100/2026-09-01T00:00:00Z", "2026-10-01T10:00:02Z: TASK OK"].join("\n") + "\n");
+    const idx = await virtTool(AUDIT, cwd, { path: "work/index", format: "pve_task_index" });
+    const pbs = await virtTool(AUDIT, cwd, { path: "work/pbs.log", format: "pbs_task_log" });
+    assert.equal(idx.code, 0, idx.stderr);
+    assert.equal(pbs.code, 0, pbs.stderr);
+    for (const out of [idx, pbs]) assert.equal(JSON.parse(out.stdout).parser, "backup_audit_normalise/3");
+    const a1 = await put(cwd, "a1.json", idx.stdout);
+    const a2 = await put(cwd, "a2.json", pbs.stdout);
+    const { a, code } = await run(cwd, { backup_audits: [{ host: "pve1", file: a1 }, { host: "pbs1", file: a2 }] });
+    assert.notEqual(a.status, "failed", JSON.stringify(a).slice(0, 400));
+    assert.notEqual(code, 1);
+    assert.doesNotMatch(JSON.stringify(a), /parser this tool does not read/);
+    const obs = a.observations as J[];
+    assert.ok(obs.some((o) => o.class === "action_attempted" && o.source?.kind === "backup_audit_normalise"), "an action from the real answer");
+    assert.ok(obs.some((o) => o.class === "reported_outcome"), "an outcome from the real answer");
+  });
 });

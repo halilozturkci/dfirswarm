@@ -14,7 +14,7 @@
       { "carriers": 9, "example": "packs/encrypted-containers/tools/archive_probe/run.py" },
       { "carriers": 6, "example": "packs/ransomware-response/tools/encrypted_survey/run.py", "why": "ransomware-response's own names text, not the encrypted-containers one" }
     ] },
-    "ONE WAY OUT": { "variants": [ { "carriers": 7, "example": "packs/reverse-engineering/recipes/capa-floss/run.py" } ] },
+    "ONE WAY OUT": { "variants": [ { "carriers": 8, "example": "packs/reverse-engineering/recipes/capa-floss/run.py" } ] },
     "PAGE": { "variants": [
       { "carriers": 38, "example": "packs/windows-forensics/tools/regkv/run.py" },
       { "carriers": 8, "example": "packs/memory-forensics/tools/mem_carve/run.py", "why": "the memory pack's own pager text" }
@@ -37,6 +37,6 @@
       { "carriers": 9, "example": "packs/encrypted-containers/tools/archive_probe/run.py", "why": "the encrypted-containers lineage" },
       { "carriers": 9, "example": "packs/macos-forensics/tools/fsevents_parse/run.py", "why": "the macOS lineage" }
     ] },
-    "WITHHOLDING": { "variants": [ { "carriers": 46, "example": "packs/computer-forensics-base/tools/archive_extract/run.py" } ] }
+    "WITHHOLDING": { "variants": [ { "carriers": 47, "example": "packs/computer-forensics-base/tools/archive_extract/run.py" } ] }
   }
 }
