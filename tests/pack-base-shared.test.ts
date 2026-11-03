@@ -28,14 +28,16 @@ async function block(path: string, name: string): Promise<string> {
 test("archive_extract, sqlite_snapshot and sqlite_query withhold what the network pack's tools withhold: the block is the same text", async () => {
   const network = await block(NETWORK, "WITHHOLDING");
   assert.ok(network.length > 5000);
-  for (const tool of ["archive_extract", "sqlite_snapshot", "sqlite_query"]) assert.equal(await block(BASE(tool), "WITHHOLDING"), network, `${tool} carries the network pack's withholding block`);
+  for (const tool of ["archive_extract", "sqlite_snapshot", "sqlite_query", "image_verify", "layer_describe", "byte_range_extract"]) assert.equal(await block(BASE(tool), "WITHHOLDING"), network, `${tool} carries the network pack's withholding block`);
 });
 
 test("archive_extract ends a program the way the network pack's engine tools do: the process block is the same text and nothing starts a session", async () => {
   const network = await block(NETWORK, "PROCESS");
   assert.equal(await block(BASE("archive_extract"), "PROCESS"), network);
   assert.equal(await block(BASE("timeline_super"), "PROCESS"), network, "timeline_super carries the same process block");
-  for (const tool of ["archive_extract", "sqlite_snapshot"]) {
+  assert.equal(await block(BASE("image_verify"), "PROCESS"), network, "image_verify carries the same process block");
+  assert.equal(await block(BASE("layer_describe"), "PROCESS"), network, "layer_describe carries the same process block");
+  for (const tool of ["archive_extract", "sqlite_snapshot", "image_verify", "layer_describe"]) {
     const text = await readFile(BASE(tool), "utf8");
     const code = text.replace(/^\s*#.*$/gm, "").replace(/"""[\s\S]*?"""/g, "");
     assert.doesNotMatch(code, /start_new_session|setsid|process_group/, `${tool} starts a program outside the tool's process group`);

@@ -15,7 +15,7 @@
  ["filesystem/layers", "inventory every segment, descriptor, extent and backing file before parsing; record the state you read."],
  ["filesystem/layers", "a split e01 is one image: give the first segment."],
  ["filesystem/layers", "a split raw set is not: give the sleuth kit every segment in order (the first alone ends early);"],
- ["filesystem/layers", "image_layout reads one path."],
+ ["filesystem/layers", "image_layout reads one path, or the descriptor."],
  ["filesystem/layers", "virtual disks. qemu-img info --backing-chain shows the chain and the snapshots (plain info only the immediate backing file)."],
  ["filesystem/layers", "when mmls and fsstat open the container, their offsets are sectors of the virtual disk."],
  ["filesystem/layers", "convert (qemu-img convert -o raw) only when the next tool cannot open it, to a separate output, and record the state chosen, the options and the output's size and digest."],

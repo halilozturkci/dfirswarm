@@ -1,0 +1,54 @@
+{
+  "name": "image_verify",
+  "description": "A verification receipt for an EWF image set (E01 and S01 sets; an EWF2 .Ex01 set is read but never reported complete). Give the first segment (path) or the ordered list (segments). It reads the naming run (.E01 to .E99, .EAA on; .S01; .Ex01), names a missing segment, refuses a list that is out of order, refuses a symbolic link, FIFO, directory or device as a segment, and takes each segment's size and sha256 (a custody fact about the file, not a secret). For an E01 or S01 segment it reads the file header and the chain of sections itself, independently of libewf: the segment number against its place, the checksum of every section descriptor, and whether the segment ends with next or done, so a truncated last segment or a missing later segment is found. It runs ewfinfo over the set (bytes per sector, sectors, media size, the stored MD5 and SHA-1) and ewfverify -d sha1 in the tool's own process group under a time budget below the tool's deadline, with the argv, the ewfverify -V version, the exit code and the standard output and error kept as files, and compares the digests ewfverify stored with the ones it recomputed over the media stream and with the ones ewfinfo read. status is complete only when every segment is present and in order, the set ends with done, every segment was hashed, ewfverify ran to its end with exit 0 and its SUCCESS line, at least one stored digest was compared and every one agrees, and ewfinfo and ewfverify agree on the media size; a digest that differs, a missing or out-of-order segment, a damaged section chain and a segment that changed while the receipt was made are failed; a missing program, a budget hit, an answer this tool cannot read, a container that stores no digest and an unhashed segment are partial. The output wording of ewfverify and ewfinfo was read on libewf 20140814; another build's wording is not verified here, and a line that is not recognised makes the answer partial. A SIGTERM, SIGINT or SIGHUP ends the program it was running and gives one JSON answer (partial, interrupted). Not measured, and the receipt says so: that the image matches the source it was taken from (agreeing digests show the container is internally consistent, nothing more; the words authentic and genuine are never used), who acquired it or when, the chunk table against ewfinfo's (ewfverify checks every chunk's own checksum), the section chain of an EWF2 segment, a logical evidence file (.L01 is refused as unsupported), or the contents of the media. Segment names are printed through the shared withholding: a name shaped like a token is not printed, and its real path goes to withheld-names.jsonl (0600). The programs' whole output is kept in files under a new out_dir.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The first segment of the set (.E01, .S01 or .Ex01). The run is probed by name from it; a run of up to fifteen absent names is looked across. Give this or segments."
+    },
+    "segments": {
+      "type": "array",
+      "description": "The segments of the set as an ordered list of paths (1 to 10000), the first one .E01, .S01 or .Ex01. A list that is out of naming order, or that skips a number, is a failed receipt and ewfverify is not run on it. Give this or path."
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "A new directory for the receipt and the programs' output files (default: a new image_verify directory beside the tool's other output). It must be empty or absent. In a job it must lie under $OUT: give {OUT}/<name>."
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "Time budget in seconds, 5 to 3300 (default 3000), inside the manifest's 3600. At most 40 percent goes to the sha256 of the segments; ewfverify gets what is left less a reserve, and is ended, with what it started, when that runs out."
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Segment rows in the inline answer, 1 to 5000 (default 200). segments_file holds every row."
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 3600,
+  "example": "{\"path\":\"inputs/disk.E01\",\"out_dir\":\"{OUT}/verify\"}",
+  "requires": [
+    "ewfverify",
+    "ewfinfo"
+  ],
+  "use": {
+    "extensions": [
+      ".e01",
+      ".ex01"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "455646090d0aff00"
+      },
+      {
+        "offset": 0,
+        "hex": "455646320d0a8100"
+      }
+    ]
+  },
+  "by": "maintainer",
+  "at": "2026-11-03T09:00:00.000Z",
+  "version": 1,
+  "sha256": "7975734b0b6c78e3fc464994e564f3dc2d5bbc61813b328ca032b0ac431d1b9e"
+}

@@ -255,7 +255,7 @@ PAGES = []                 # objects with a hidden temporary file (_tmp) that a 
 CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
 PROGRESS = {"scanned": 0}
 
-TOOL = {"name": "chunk_needles", "version": 18}
+TOOL = {"name": "chunk_needles", "version": 19}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -808,6 +808,146 @@ def fail(message, **extra):
     sys.exit(1)
 
 
+# ---- the descriptor (layer_describe's file), read the same way in image_layout, icat_extract, chunk_needles and byte_range_extract -----
+DESCRIPTOR_MAX = 16 * 1024 * 1024
+DESCRIPTOR_VERIFY_SECONDS = 120          # the clock for verify_sources (a descriptor is checked before the program runs)
+DESCRIPTOR_LAYERS = ("raw", "split_raw", "ewf", "vmdk", "vhd", "vhdx", "qcow", "aff")
+
+
+class DescriptorError(Exception):
+    """The descriptor cannot be used. The message never quotes a path or text from the descriptor."""
+
+
+def load_descriptor(ref, pin=None, verify_sources=False, deadline=None):
+    """Read a layer descriptor and check it before anything is run on what it names. A dict: file, sha256, sector_size, unit, layer, images
+    (the paths a Sleuth Kit program is given, in order), sources, media_bytes, volumes (the allocated slots fsstat read: offset_sectors,
+    offset_bytes, fs_type) and checked ("sizes" or "sha256"). It is refused when its bytes do not hash to the name it carries (layer-<sha256>.json),
+    when it is not the shape layer_describe writes, when it lists a dependency that is not declared, when a source is no longer a regular file of
+    the size it records, or when a volume's offset is not inside the media. A source swapped for another of the same size is NOT found unless
+    verify_sources is true, which reads every source again and compares its sha256."""
+    import hashlib as _hashlib
+    import re as _re
+    import stat as _stat
+    if not isinstance(ref, str) or not ref or "\0" in ref:
+        raise DescriptorError("descriptor is a path to a layer descriptor file")
+    if pin is not None and (not isinstance(pin, str) or not _re.fullmatch(r"[0-9a-f]{64}", pin)):
+        raise DescriptorError("descriptor_sha256 is 64 lower-case hexadecimal digits")
+    try:
+        fd = os.open(ref, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise DescriptorError("the descriptor cannot be opened: %s" % (exc.strerror or exc.__class__.__name__))
+    try:
+        st = os.fstat(fd)
+        if not _stat.S_ISREG(st.st_mode):
+            raise DescriptorError("the descriptor is not a regular file")
+        if st.st_size > DESCRIPTOR_MAX:
+            raise DescriptorError("the descriptor is larger than %d bytes" % DESCRIPTOR_MAX)
+        data = b""
+        while len(data) <= DESCRIPTOR_MAX:
+            block = os.read(fd, 1 << 20)
+            if not block:
+                break
+            data += block
+    except OSError as exc:
+        raise DescriptorError("the descriptor cannot be read: %s" % (exc.strerror or exc.__class__.__name__))
+    finally:
+        os.close(fd)
+    if len(data) > DESCRIPTOR_MAX:
+        raise DescriptorError("the descriptor is larger than %d bytes" % DESCRIPTOR_MAX)
+    sha = _hashlib.sha256(data).hexdigest()
+    name = os.path.basename(ref)
+    if name != "layer-%s.json" % sha:
+        raise DescriptorError("the descriptor's bytes do not hash to the name it carries (layer-<sha256>.json): it was changed, renamed, or is not a descriptor layer_describe wrote")
+    if pin is not None and pin != sha:
+        raise DescriptorError("the descriptor's sha256 is not the one descriptor_sha256 pins")
+    try:
+        doc = json.loads(data.decode("ascii"))
+    except (ValueError, RecursionError):
+        raise DescriptorError("the descriptor is not JSON")
+    if not isinstance(doc, dict) or doc.get("kind") != "layer_descriptor" or doc.get("descriptor_version") != 1:
+        raise DescriptorError("the descriptor is not a layer descriptor of version 1")
+    if doc.get("status") not in ("complete", "partial"):
+        raise DescriptorError("the descriptor's status is not complete or partial")
+    size = doc.get("sector_size")
+    if not isinstance(size, int) or isinstance(size, bool) or size < 512 or size > 65536 or size % 512:
+        raise DescriptorError("the descriptor's sector_size is not a multiple of 512 from 512 to 65536")
+    if doc.get("missing_dependencies"):
+        raise DescriptorError("the descriptor lists a dependency that is not declared (missing_dependencies): the set is not whole")
+    layer = (doc.get("container") or {}).get("layer") if isinstance(doc.get("container"), dict) else None
+    if layer not in DESCRIPTOR_LAYERS:
+        raise DescriptorError("the descriptor's container layer is not one this tool knows")
+    sources = doc.get("sources")
+    if not isinstance(sources, list) or not 1 <= len(sources) <= 10000:
+        raise DescriptorError("the descriptor lists no sources, or too many")
+    for i, s in enumerate(sources):
+        if not isinstance(s, dict) or s.get("index") != i or not isinstance(s.get("path"), str) or not s["path"] or "\0" in s["path"]:
+            raise DescriptorError("source %d of the descriptor is malformed" % i)
+        if not isinstance(s.get("bytes"), int) or isinstance(s.get("bytes"), bool) or s["bytes"] < 0:
+            raise DescriptorError("source %d of the descriptor has no size" % i)
+        if s.get("sha256") is not None and not (isinstance(s["sha256"], str) and _re.fullmatch(r"[0-9a-f]{64}", s["sha256"])):
+            raise DescriptorError("source %d of the descriptor has a malformed sha256" % i)
+    used = sources if layer in ("raw", "split_raw", "ewf") else sources[:1]
+    checked = "sizes"
+    for s in used:
+        try:
+            fd = os.open(s["path"], os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+        except OSError as exc:
+            raise DescriptorError("source %d can no longer be opened: %s" % (s["index"], exc.strerror or exc.__class__.__name__))
+        try:
+            st = os.fstat(fd)
+            if not _stat.S_ISREG(st.st_mode):
+                raise DescriptorError("source %d is no longer a regular file" % s["index"])
+            if st.st_size != s["bytes"]:
+                raise DescriptorError("source %d is %d bytes, the descriptor says %d: it changed after the descriptor was made" % (s["index"], st.st_size, s["bytes"]))
+            if verify_sources:
+                if s.get("sha256") is None:
+                    raise DescriptorError("source %d has no sha256 in the descriptor, so verify_sources cannot check it" % s["index"])
+                h = _hashlib.sha256()
+                while True:
+                    block = os.read(fd, 1 << 20)
+                    if not block:
+                        break
+                    h.update(block)
+                    if deadline is not None and time.monotonic() > deadline:
+                        raise DescriptorError("the time budget ran out while source %d was being verified" % s["index"])
+                if h.hexdigest() != s["sha256"]:
+                    raise DescriptorError("source %d no longer hashes to the sha256 the descriptor records" % s["index"])
+                checked = "sha256"
+        except OSError as exc:
+            raise DescriptorError("source %d cannot be read: %s" % (s["index"], exc.strerror or exc.__class__.__name__))
+        finally:
+            os.close(fd)
+    media = doc.get("media") if isinstance(doc.get("media"), dict) else {}
+    media_bytes = media.get("bytes") if isinstance(media.get("bytes"), int) and not isinstance(media.get("bytes"), bool) else None
+    unit = doc.get("partition_unit") if isinstance(doc.get("partition_unit"), int) and not isinstance(doc.get("partition_unit"), bool) else size
+    volumes = []
+    for p in doc.get("partitions") if isinstance(doc.get("partitions"), list) else []:
+        fs = p.get("filesystem") if isinstance(p, dict) else None
+        if not isinstance(fs, dict) or fs.get("readable") is not True:
+            continue
+        sectors, byte_offset = p.get("offset_sectors"), p.get("offset_bytes")
+        if not isinstance(sectors, int) or isinstance(sectors, bool) or sectors < 0 or not isinstance(byte_offset, int) or byte_offset != sectors * unit:
+            raise DescriptorError("a volume of the descriptor has an offset that is not its sector offset times the sector size")
+        if media_bytes is not None and byte_offset >= media_bytes:
+            raise DescriptorError("a volume of the descriptor starts at byte %d, past the end of the %d-byte media" % (byte_offset, media_bytes))
+        volumes.append({"offset_sectors": sectors, "offset_bytes": byte_offset, "fs_type": fs.get("fs_type") if isinstance(fs.get("fs_type"), str) else None})
+    return {"file": name, "sha256": sha, "sector_size": size, "unit": unit, "layer": layer, "images": [s["path"] for s in used], "sources": sources,
+            "media_bytes": media_bytes, "volumes": volumes, "checked": checked, "status": doc["status"]}
+
+
+def descriptor_offset(desc, given):
+    """The volume offset in sectors a tool uses with a descriptor: the one the caller names, which must be a volume of the descriptor; else the only volume."""
+    starts = [v["offset_sectors"] for v in desc["volumes"]]
+    if given is not None:
+        if given not in starts:
+            raise DescriptorError("offset %s is not a volume of the descriptor (its volumes start at sectors %s)" % (given, ", ".join(str(s) for s in starts) or "none"))
+        return given
+    if len(starts) == 1:
+        return starts[0]
+    raise DescriptorError(("the descriptor has no volume fsstat read" if not starts else "the descriptor has several volumes; pass offset= (a start sector)") +
+                          ((": " + ", ".join(str(s) for s in starts)) if starts else ""))
+
+
 def unexpected(kind, value, _tb):
     """An error nobody expected is an answer too: its class only, since its message can quote what was read."""
     print(json.dumps({"error": "internal error: %s" % kind.__name__, "tool": TOOL, "status": "failed", "status_basis": FAILED_BASIS}))
@@ -1015,6 +1155,8 @@ def scan_fh(fh, source, total=None):
 
 
 if path:
+    if args.get("descriptor") is not None:
+        fail("descriptor goes with inode (an image), not with path")
     if not os.path.isfile(path):
         fail(f"path not found: {path}")
     source = {"kind": "file", "path": path, "bytes": os.path.getsize(path)}
@@ -1031,7 +1173,27 @@ else:
         fail("inode is a Sleuth Kit address: a number, or number-type-id for an NTFS stream (168-128-4)", inode=inode)
     if args.get("image") is not None and (not isinstance(args.get("image"), str) or "\0" in args.get("image")):
         fail("image is a string without a NUL byte")
-    image = on_stdout(_resolve_image, args.get("image"))
+    descriptor = None
+    if args.get("descriptor") is not None:
+        for _key in ("image", "sector_size"):
+            if args.get(_key) is not None:
+                fail("a descriptor replaces image and sector_size: give %s or the descriptor, not both" % _key)
+        if args.get("verify_sources") is not None and not isinstance(args.get("verify_sources"), bool):
+            fail("verify_sources is true or false")
+        try:
+            descriptor = load_descriptor(args["descriptor"], args.get("descriptor_sha256"), args.get("verify_sources") is True, min(STARTED + max_seconds, time.monotonic() + DESCRIPTOR_VERIFY_SECONDS))
+        except DescriptorError as exc:
+            fail(str(exc))
+    elif args.get("verify_sources") is not None or args.get("descriptor_sha256") is not None:
+        fail("verify_sources and descriptor_sha256 belong with descriptor")
+    if descriptor is not None:
+        images = descriptor["images"]
+        image = images[0]
+        if descriptor["sector_size"] != 512:
+            sector_size = descriptor["sector_size"]
+    else:
+        image = on_stdout(_resolve_image, args.get("image"))
+        images = [image]
     if not os.path.isfile(image):
         fail(f"image not found: {image}")
     given_offset = args.get("offset")
@@ -1039,18 +1201,28 @@ else:
         fail("offset is a volume offset in sectors, a whole number", offset=given_offset)
     if not shutil.which("icat"):
         fail("icat is not on PATH", install="brew install sleuthkit, or apt-get install -y sleuthkit")
-    offset = on_stdout(_resolve_offset, image, given_offset)
+    if descriptor is not None:
+        try:
+            offset = descriptor_offset(descriptor, given_offset)
+        except DescriptorError as exc:
+            fail(str(exc))
+    else:
+        offset = on_stdout(_resolve_offset, image, given_offset)
     inode = "-".join(str(int(p)) for p in str(inode).split("-"))      # 084284 is address 84284
-    cmd = ["icat"] + (["-b", str(sector_size)] if sector_size else []) + ["-o", str(offset), image, str(inode)]
+    cmd = ["icat"] + (["-b", str(sector_size)] if sector_size else []) + ["-o", str(offset)] + images + [str(inode)]
     source = {"kind": "icat", "image": image, "volume_offset_sectors": offset, "inode": str(inode),
               "sector_size": sector_size, "command": " ".join(cmd)}
     source["label"] = f"icat:{inode}@{offset}"
+    if descriptor is not None:
+        source["descriptor"] = {"file": descriptor["file"], "sha256": descriptor["sha256"], "layer": descriptor["layer"], "sources_checked": descriptor["checked"]}
+        source["images"] = len(images)
     # Streamed, never held whole: capture_output kept a pagefile's gigabytes
     # in memory until the VM's kernel killed the tool, with no word said
     # (sixth CTF round, twice). stderr goes to a file so a chatty icat
     # cannot stall the pipe being read.
     try:
-        open_regular(image).close()       # the image was checked a moment ago: a FIFO or device put in its place is refused, not handed to icat
+        for _image in images:
+            open_regular(_image).close()  # the image was checked a moment ago: a FIFO or device put in its place is refused, not handed to icat
     except (OSError, ValueError) as exc:
         fail("the image is not a regular file that can be read: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__), image=image)
     with tempfile.TemporaryFile() as errf:
