@@ -21,7 +21,7 @@
     ] },
     "PLACE": { "variants": [ { "carriers": 51, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "PROCESS": { "variants": [
-      { "carriers": 36, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
+      { "carriers": 37, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
       { "carriers": 14, "example": "packs/windows-forensics/recipes/windows-artefacts/run.py", "why": "the windows lineage: its stop and process handling differs from the general text" }
     ] },
     "RECORDS BLOCK": { "variants": [ { "carriers": 7, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },

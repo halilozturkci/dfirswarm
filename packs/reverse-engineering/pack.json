@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -41,7 +41,7 @@
     },
     {
       "name": "qpdf",
-      "why": "declared for the second reading of a PDF that a later change to doc_structure will add; no skill names it yet"
+      "why": "run by doc_structure's optional second reading of a PDF encryption variant (second_reading: true), found on PATH and never required; no skill names it, because the tool names what it ran in its answer"
     },
     {
       "name": "lief",
@@ -49,14 +49,14 @@
     },
     {
       "name": "msoffcrypto-tool",
-      "why": "a Python library for protected Office files, declared ahead of the second reading doc_structure will gain; no tool of this pack imports it yet"
+      "why": "run by doc_structure's optional second reading of an Office encryption record (second_reading: true) as a program, found on PATH and never required; no tool of this pack imports it and no skill names it"
     }
   ],
   "secrets": [],
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "98d6ee39a73f4673ac4dadc155dcf437682d04cce90a707762cfb68ebd04b0b4",
+      "README.md": "807fe0b309d4f160d4a1ba37768a628b536734fce685d6193af1df8268017027",
       "goals/sample-triage.md": "0f6798ec18204b277c9430d5a74359cf7c5142131ccfc5071293b3dd1bd0ad12",
       "recipes/capa-floss/recipe.json": "48547ec179a3f92f54450eef692464fa520713f3fd029602d8144c0dca4500d8",
       "recipes/capa-floss/run.py": "8ae49d24221e35f26ae4a88fa5b308cb08b58b15c9c6716c4dbee140780717ac",
@@ -93,8 +93,8 @@
       "tools/authenticode_verify/run.py": "7052badf642493ab377a010dddaef8a9f643e4d41dd0bee28b2bd9b3e6186fc4",
       "tools/doc_probe/manifest.json": "1a2729fd097622b1af1204f7b346b8e995de0cb5e9b47842d6dc6d71721f17db",
       "tools/doc_probe/run.py": "56d2037b7c7787d6828e73d9d58815e3bcd13b8845a449cc3d04793152ad9184",
-      "tools/doc_structure/manifest.json": "6bd5e271e961478a86bb19cbc8fc77399c08b87705d5dee053b8004da0252b1a",
-      "tools/doc_structure/run.py": "0bcee844a1ae13075054336850054d2eecd30b2c2765e6db541b2c447f88c4ee",
+      "tools/doc_structure/manifest.json": "068b89b95264620f6b5f0c397761fe6401e0faa889bb2e0779c85b91c48cbd8d",
+      "tools/doc_structure/run.py": "ab9bca4fa9b96ae557a222af11a7e8201e03dfe7ecf3e1bf93a23343da6d7c9d",
       "tools/elf_directories/manifest.json": "97c725d5f770967d8e89b71fc843492ebf0079df7eed7fc29b8add662be70ec7",
       "tools/elf_directories/run.py": "09ccb1b2016c63b02542b5604f23df2ca737b0d3897286fd2275a32d7cc5e704",
       "tools/entropy_map/manifest.json": "d515dee2c1de13b44a8160e62585b15358274b9c9507222cc0859be25c3d3695",

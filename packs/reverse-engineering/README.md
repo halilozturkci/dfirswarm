@@ -59,7 +59,12 @@ embedded VBA projects; a PDF's cross-reference chain, object streams, the
 encryption dictionary of the current trailer, its actions with the key that
 reaches each, and its embedded files; an RTF's groups, objects and fields. A
 verifier, salt or hash a structure holds is reported by length, never as bytes,
-and no key is tried. `pe_directories` reads the PE directories `pe_info` only
+and this reader tries no key. With `second_reading: true`, an encryption variant
+it leaves unsupported (a PDF handler other than Standard, a version or revision
+outside the Standard handler's, an Office scheme it does not read) also gets a
+reading by qpdf or msoffcrypto-tool, given beside the first and never in place
+of it; no password or key is passed to either, but qpdf opens a file with the
+empty password on its own and the answer says whether that opened it. `pe_directories` reads the PE directories `pe_info` only
 declares: exports, delay-load imports, TLS callbacks, the resource tree with the
 version information and manifest, the CLR header and metadata root (and, with
 `clr_tables`, the rows of the main metadata tables), the debug
