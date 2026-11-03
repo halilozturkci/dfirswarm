@@ -409,3 +409,15 @@ test("agreement with a C# compiler's own output where one exists", { skip: haveC
     assert.equal(rows(a, "clr_module")[0].name, "p.exe");
   });
 });
+
+test("a #Strings entry longer than the 4,096 bytes read, and one with no terminator, are problems and the answer is partial, with no length stated that was not seen", async () => {
+  await withCwd(async (cwd) => {
+    const a = await answer(cwd, "longname.dll", assembly({ names: { assembly: "N".repeat(9000) } }).file);
+    assert.equal(a.status, "partial");
+    assert.ok(a.problems.some((p: string) => /clr name at file offset \d+ has no terminator within its table or 4096 bytes/.test(p)), JSON.stringify(a.problems));
+    assert.match(rows(a, "clr_assembly")[0].name, /^<a string of at least 4096 characters, cut where it was read: longer than the 512 shown, so not shown>$/);
+    const b = await answer(cwd, "ok600.dll", assembly({ names: { assembly: "word_".repeat(120) } }).file);
+    assert.equal(b.status, "complete", JSON.stringify(b.problems));
+    assert.equal(rows(b, "clr_assembly")[0].name, "<a name of 600 characters: longer than the 512 shown, so not shown>");
+  });
+});

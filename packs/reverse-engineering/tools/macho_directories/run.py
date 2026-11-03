@@ -32,7 +32,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-TOOL = {"name": "macho_directories", "version": 1}
+TOOL = {"name": "macho_directories", "version": 2}
 PARSER = "macho_directories/1"
 NOTE = ("Static structure only. A symbol, a bind opcode, a build version or a signature blob shows what the file declares to its loader and tools, not what the code does: "
         "a linked library, an rpath or an undefined symbol is a declaration, and a signature blob is a claim that nothing here verifies. Read `status`, `problems` and "
@@ -1136,6 +1136,7 @@ class LosslessPage:
                 except FileExistsError:
                     continue
                 self.shown = made(self.prefix + name)
+                self._path = str(self.dir / name)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", buffering=1)
                 for kept in self.page:
                     self._write(kept)
@@ -1171,7 +1172,21 @@ class LosslessPage:
                 self._write(row)
             except OSError as exc:
                 self.not_written = "writing the file failed (%s)" % describe(exc)
-                self._out = None
+                self._drop()
+
+    def _drop(self):
+        """A file that could not be written whole is removed and not named: a partial table must not look like the whole one."""
+        out, self._out = self._out, None
+        self.shown = None
+        try:
+            if out is not None:
+                out.close()
+        except OSError:
+            pass
+        try:
+            os.unlink(self._path)
+        except (OSError, AttributeError):
+            pass
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
@@ -1182,6 +1197,7 @@ class LosslessPage:
                 self._out.close()
             except OSError as exc:
                 self.not_written = "writing the file failed (%s)" % describe(exc)
+                self._drop()
             else:
                 result["all_results"] = self.shown
                 result["all_results_format"] = "JSON Lines, one complete row per line"
@@ -1473,11 +1489,17 @@ def shown_at(ctx, text, at, utf16=False, kind="names"):
 NAME_KINDS = {"install_name", "rpath", "dylinker", "symbol_name", "bind_symbol", "export_name", "reexport_name", "import_name", "identifier", "team_id"}
 
 
-def show(ctx, what, text, at, finding=None):
+def show(ctx, what, text, at, finding=None, complete=True):
     """A string out of the file as it may be printed (shown_at); the whole goes to the values file when it was asked for. A name longer than
     NAME_SHOWN is given by its length only (no linker writes one that long, and a file that holds thousands of them must not cost the
     sanitiser a pass over each)."""
-    if what in NAME_KINDS and len(text) > NAME_SHOWN:
+    limit = NAME_SHOWN if what in NAME_KINDS else SHOWN_TARGET
+    if not complete and text:
+        # the string was cut where it was read (no terminator within its table or NAME_CAP bytes): what was seen is a lower bound, and the answer is partial
+        ctx.problem("a %s at file offset %s has no terminator within its table or %d bytes: it was cut there, and the length shown is a lower bound" % (what.replace("_", " "), at if at is not None else "unknown", NAME_CAP))
+    if not complete and len(text) > limit:
+        shown = "<a string of at least %d characters, cut where it was read: longer than the %d shown, so not shown>" % (len(text), limit)
+    elif what in NAME_KINDS and len(text) > NAME_SHOWN:
         shown = "<a name of %d characters: longer than the %d shown, so not shown>" % (len(text), NAME_SHOWN)
     else:
         shown = shown_at(ctx, text, at)
@@ -1744,7 +1766,7 @@ def read_slice(img, ctx, base, size, index, entry=None):
                 else:
                     raw, complete = m.cstr(pos + name_off, pos + cmdsize)
                     finding = ctx.next_finding("L")
-                    row["name"] = show(ctx, "rpath" if cmd == LC_RPATH else "dylinker" if not is_dylib else "install_name", (raw or b"").decode("utf-8", "replace"), m.base + pos + name_off, finding)
+                    row["name"] = show(ctx, "rpath" if cmd == LC_RPATH else "dylinker" if not is_dylib else "install_name", (raw or b"").decode("utf-8", "replace"), m.base + pos + name_off, finding, complete=complete)
                     row["finding_id"] = finding
                     if not complete:
                         ctx.problem("slice %d: the name in %s (load command %d) has no terminator inside its command" % (index, name, i))
@@ -1821,7 +1843,7 @@ def read_symbols(m, ctx, out, found):
                 ctx.problem("slice %d: the string table [%d, %d) runs past the end of the slice (%d bytes)" % (m.index, stroff, stroff + strsize, m.size))
         n = min(nsyms, fit)
         if n > MAX_SYMBOLS:
-            ctx.limit_hit("slice %d: %d symbols: the first %d are listed" % (m.index, n, MAX_SYMBOLS))
+            ctx.limit_hit("slice %d: %d symbols: at most the first %d are listed (the clock can stop the listing earlier: `listed` says how many were)" % (m.index, n, MAX_SYMBOLS))
             n = MAX_SYMBOLS
         page = ctx.page("symbols")
         listed = bad_name = 0
@@ -1850,7 +1872,7 @@ def read_symbols(m, ctx, out, found):
                 else:
                     raw, complete = m.cstr(sbase + n_strx, send)
                     if raw is not None:
-                        row["name"] = show(ctx, "symbol_name", raw.decode("utf-8", "replace"), m.base + sbase + n_strx)
+                        row["name"] = show(ctx, "symbol_name", raw.decode("utf-8", "replace"), m.base + sbase + n_strx, complete=complete)
                         if not complete:
                             row["name_unterminated"] = True
                     else:
@@ -1946,7 +1968,7 @@ def read_bind_stream(m, ctx, stream, off, size):
                 if not complete:
                     ctx.problem("slice %d: a symbol name in the %s stream at offset %d has no terminator within the stream or %d bytes" % (m.index, stream, pos, NAME_CAP))
                 finding = ctx.next_finding("B")
-                state["symbol"] = show(ctx, "bind_symbol", raw.decode("utf-8", "replace"), m.base + pos, finding)
+                state["symbol"] = show(ctx, "bind_symbol", raw.decode("utf-8", "replace"), m.base + pos, finding, complete=complete)
                 state["flags"] = imm
                 pos += len(raw) + (1 if complete else 0)
             elif op == 0x50:
@@ -2003,6 +2025,7 @@ def read_export_trie(m, ctx, source, off, size):
         return info
     end = off + size
     stack = [(off, b"")]
+    queued = {off}                      # every node pushed so far: an edge to one of them, or outside the trie, is a problem and is not pushed
     pending = 0
     seen = set()
     too_long = broken = 0
@@ -2014,12 +2037,6 @@ def read_export_trie(m, ctx, source, off, size):
             break
         node, prefix = stack.pop()
         pending -= len(prefix)
-        if node in seen:
-            ctx.problem("slice %d: the %s reaches the node at offset %d twice (a loop or a shared node): it is not followed again" % (m.index, source, node - off))
-            continue
-        if node < off or node >= end:
-            ctx.problem("slice %d: the %s points to a node at offset %d, outside the %d bytes of the trie" % (m.index, source, node - off, size))
-            continue
         seen.add(node)
         try:
             terminal, pos = uleb(m, node, end)
@@ -2038,10 +2055,10 @@ def read_export_trie(m, ctx, source, off, size):
                 row["finding_id"] = finding
                 if flags & 0x8:
                     ordinal, p = uleb(m, p, child_at)
-                    raw, _complete = m.cstr(p, child_at)
+                    raw, complete = m.cstr(p, child_at)
                     row["kind"] = "re-export"
                     row["dylib_ordinal"] = ordinal
-                    row["import_name"] = None if raw is None else show(ctx, "reexport_name", raw.decode("utf-8", "replace"), m.base + p)
+                    row["import_name"] = None if raw is None else show(ctx, "reexport_name", raw.decode("utf-8", "replace"), m.base + p, complete=complete)
                 else:
                     row["kind"] = EXPORT_KINDS.get(flags & 0x3, hex(flags & 0x3))
                     address, p = uleb(m, p, child_at)
@@ -2073,7 +2090,20 @@ def read_export_trie(m, ctx, source, off, size):
                     stack.clear()
                     pending = 0
                     break
-                stack.append((off + child, label))
+                target = off + child
+                if target in queued:
+                    ctx.problem("slice %d: the %s reaches the node at offset %d twice (a loop or a shared node): it is not followed again" % (m.index, source, child))
+                    continue
+                if target >= end:
+                    ctx.problem("slice %d: the %s points to a node at offset %d, outside the %d bytes of the trie" % (m.index, source, child, size))
+                    continue
+                if len(queued) >= MAX_TRIE_NODES:
+                    ctx.limit_hit("slice %d: the %s holds more than %d nodes: the first %d are walked" % (m.index, source, MAX_TRIE_NODES, MAX_TRIE_NODES))
+                    stack.clear()
+                    pending = 0
+                    break
+                queued.add(target)
+                stack.append((target, label))
                 pending += len(label)
         except (Short, ValueError) as exc:
             broken += 1
@@ -2146,7 +2176,7 @@ def read_chained_fixups(m, ctx, off, size):
                     row["name"] = None
                 else:
                     finding = ctx.next_finding("C")
-                    row["name"] = show(ctx, "import_name", raw.decode("utf-8", "replace"), m.base + off + sat, finding)
+                    row["name"] = show(ctx, "import_name", raw.decode("utf-8", "replace"), m.base + off + sat, finding, complete=complete)
                     row["finding_id"] = finding
                     if not complete:
                         row["name_unterminated"] = True
@@ -2223,7 +2253,7 @@ def read_code_directory(m, ctx, at, length, index, row):
     if ident_off and ident_off < length:
         raw, complete = m.cstr(at + ident_off, at + length)
         finding = ctx.next_finding("I")
-        cd["identifier"] = show(ctx, "identifier", (raw or b"").decode("utf-8", "replace"), m.base + at + ident_off, finding)
+        cd["identifier"] = show(ctx, "identifier", (raw or b"").decode("utf-8", "replace"), m.base + at + ident_off, finding, complete=complete)
         cd["identifier_finding_id"] = finding
         if not complete:
             ctx.problem("slice %d: the CodeDirectory identifier (blob %d) has no terminator inside its blob" % (m.index, index))
@@ -2234,7 +2264,7 @@ def read_code_directory(m, ctx, at, length, index, row):
         if team_off and team_off < length:
             raw, complete = m.cstr(at + team_off, at + length)
             finding = ctx.next_finding("T")
-            cd["team_identifier"] = show(ctx, "team_id", (raw or b"").decode("utf-8", "replace"), m.base + at + team_off, finding)
+            cd["team_identifier"] = show(ctx, "team_id", (raw or b"").decode("utf-8", "replace"), m.base + at + team_off, finding, complete=complete)
             cd["team_identifier_finding_id"] = finding
         elif team_off:
             ctx.problem("slice %d: the CodeDirectory (blob %d) puts its team identifier at offset %d of a %d-byte blob" % (m.index, index, team_off, length))

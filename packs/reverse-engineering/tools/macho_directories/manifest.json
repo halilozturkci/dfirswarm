@@ -64,6 +64,6 @@
   "example": "{\"path\": \"work/extracted/sample.macho\"}",
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
-  "version": 1,
-  "sha256": "e08583528ca92dad9d7c3f15e6b139294c6ed36a1b63e0a2032ca67032be42a8"
+  "version": 2,
+  "sha256": "27a46b97f9810456e6dfa0a065d52335b2a782c9566c168a0a5fd087d24f42cf"
 }

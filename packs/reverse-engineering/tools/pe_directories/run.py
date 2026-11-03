@@ -43,7 +43,7 @@ import xml.parsers.expat
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "pe_directories", "version": 5}
+TOOL = {"name": "pe_directories", "version": 6}
 PARSER = "pe_directories/1"
 NOTE = ("Static structure only. A directory shows what the file declares to its loader and tools, not what the code does: an export, a delay-load "
         "import, a TLS callback or a resource is a declaration, and a strong-name flag or a PDB path is a claim. Read `status`, `problems` and `coverage` "
@@ -1167,6 +1167,7 @@ class LosslessPage:
                 except FileExistsError:
                     continue
                 self.shown = made(self.prefix + name)
+                self._path = str(self.dir / name)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", buffering=1)
                 for kept in self.page:
                     self._write(kept)
@@ -1202,7 +1203,21 @@ class LosslessPage:
                 self._write(row)
             except OSError as exc:
                 self.not_written = "writing the file failed (%s)" % describe(exc)
-                self._out = None
+                self._drop()
+
+    def _drop(self):
+        """A file that could not be written whole is removed and not named: a partial table must not look like the whole one."""
+        out, self._out = self._out, None
+        self.shown = None
+        try:
+            if out is not None:
+                out.close()
+        except OSError:
+            pass
+        try:
+            os.unlink(self._path)
+        except (OSError, AttributeError):
+            pass
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
@@ -1213,6 +1228,7 @@ class LosslessPage:
                 self._out.close()
             except OSError as exc:
                 self.not_written = "writing the file failed (%s)" % describe(exc)
+                self._drop()
             else:
                 result["all_results"] = self.shown
                 result["all_results_format"] = "JSON Lines, one complete row per line"
@@ -1493,11 +1509,17 @@ NAME_SHOWN = 512                    # characters of an export, forwarder or dela
 NAME_KINDS = {"export_image_name", "export_forwarder", "export_name", "delay_import_library", "delay_import_function", "clr_name"}
 
 
-def show(ctx, what, text, at, finding=None):
+def show(ctx, what, text, at, finding=None, complete=True):
     """A string out of the file as it may be printed (shown_at); the whole goes to the values file when it was asked for. A name of the
     export and delay-load tables longer than NAME_SHOWN is given by its length only (no linker writes one that long, and a file that
     holds thousands of them must not cost the sanitiser a pass over each)."""
-    if what in NAME_KINDS and len(text) > NAME_SHOWN:
+    limit = NAME_SHOWN if what in NAME_KINDS else SHOWN_TARGET
+    if not complete and text:
+        # the string was cut where it was read (no terminator within its table or NAME_CAP bytes): what was seen is a lower bound, and the answer is partial
+        ctx.problem("a %s at file offset %s has no terminator within its table or %d bytes: it was cut there, and the length shown is a lower bound" % (what.replace("_", " "), at if at is not None else "unknown", NAME_CAP))
+    if not complete and len(text) > limit:
+        shown = "<a string of at least %d characters, cut where it was read: longer than the %d shown, so not shown>" % (len(text), limit)
+    elif what in NAME_KINDS and len(text) > NAME_SHOWN:
         shown = "<a name of %d characters: longer than the %d shown, so not shown>" % (len(text), NAME_SHOWN)
     else:
         shown = shown_at(ctx, text, at)
@@ -1796,7 +1818,7 @@ def read_exports(img, pe, ctx, out):
     info = {"ordinal_base": base, "functions_declared": nfunc, "names_declared": nnames, "time_date_stamp_raw": stamp, "time_date_stamp_utc": when(stamp)}
     raw, complete, at = read_rva_cstr(img, pe, name_rva)
     if raw is not None:
-        info["image_name"] = show(ctx, "export_image_name", raw.decode("utf-8", "replace"), at)
+        info["image_name"] = show(ctx, "export_image_name", raw.decode("utf-8", "replace"), at, complete=complete)
     table = ctx.page("exports")
     if nfunc > MAX_EXPORTS or nnames > MAX_EXPORTS:
         ctx.limit_hit("the export directory declares %d functions and %d names: over the limit of %d, so none were listed" % (nfunc, nnames, MAX_EXPORTS))
@@ -1838,7 +1860,7 @@ def read_exports(img, pe, ctx, out):
             raw, complete, at = read_rva_cstr(img, pe, frva)
             if raw is not None:
                 finding = ctx.next_finding("X")
-                row["forwarder"] = show(ctx, "export_forwarder", raw.decode("utf-8", "replace"), at, finding)
+                row["forwarder"] = show(ctx, "export_forwarder", raw.decode("utf-8", "replace"), at, finding, complete=complete)
                 row["finding_id"] = finding
                 forwarders += 1
         else:
@@ -1889,7 +1911,7 @@ def read_delay_imports(img, pe, ctx, out):
         va_form = not (attrs & 1)
         fix = (lambda v: v - base) if va_form else (lambda v: v)
         raw, complete, nat = read_rva_cstr(img, pe, fix(name_rva))
-        lib = {"index": d, "library": show(ctx, "delay_import_library", raw.decode("utf-8", "replace"), nat) if raw is not None else None, "functions": 0, "address_form": "VA" if va_form else "RVA"}
+        lib = {"index": d, "library": show(ctx, "delay_import_library", raw.decode("utf-8", "replace"), nat, complete=complete) if raw is not None else None, "functions": 0, "address_form": "VA" if va_form else "RVA"}
         if raw is None:
             ctx.problem("delay-load descriptor %d: its library name (0x%x) is not backed by file bytes" % (d, name_rva))
         thunks = pe["to_range"](fix(int_rva)) if int_rva else None
@@ -1934,7 +1956,7 @@ def read_delay_imports(img, pe, ctx, out):
                         continue
                     raw, complete, nat = read_rva_cstr(img, pe, fix(entry & 0x7FFFFFFF) + 2)
                     table.add({"library_index": d, "hint": struct.unpack_from("<H", img.mm, hint_at[0])[0] if hint_at[0] + 2 <= img.size else None,
-                               "function": show(ctx, "delay_import_function", raw.decode("utf-8", "replace"), nat) if raw is not None else None})
+                               "function": show(ctx, "delay_import_function", raw.decode("utf-8", "replace"), nat, complete=complete) if raw is not None else None})
                 functions += 1
                 lib["functions"] += 1
                 if ctx.expired("the delay-load names"):
@@ -2407,7 +2429,7 @@ def clr_heap_text(img, ctx, heap, index, kind="clr_name"):
     raw, complete = img.cstr(start + index, start + size)
     if raw is None:
         return None
-    return show(ctx, kind, raw.decode("utf-8", "replace"), start + index)
+    return show(ctx, kind, raw.decode("utf-8", "replace"), start + index, complete=complete)
 
 
 def clr_blob_ref(img, heap, index):
@@ -2683,8 +2705,8 @@ def read_debug(img, pe, ctx, out):
                 if raw is not None:
                     finding = ctx.next_finding("D")
                     path_text = raw.decode("utf-8", "replace")
-                    row["codeview"]["pdb_path"] = show(ctx, "pdb_path", path_text, ptr + 24, finding)
-                    row["codeview"]["pdb_path_length"] = len(raw)
+                    row["codeview"]["pdb_path"] = show(ctx, "pdb_path", path_text, ptr + 24, finding, complete=complete)
+                    row["codeview"]["pdb_path_length"] = len(raw) if complete else None
                     row["codeview"]["finding_id"] = finding
                     row["codeview"]["note"] = "a path the build wrote: a claim about the build machine, not evidence of where the file was made or by whom"
             else:

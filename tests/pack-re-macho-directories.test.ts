@@ -852,3 +852,75 @@ test("agreement with otool -l and otool -L on binaries present on this machine (
     }
   });
 });
+
+// --- a cut string is partial, a long name is given as such, memory and a full disk ---------------------------------------------------------
+
+test("a name longer than the 4,096 bytes read is a problem and the answer is partial, in a symbol and in a chained-fixups import, and the text states no length it did not see", async () => {
+  await withCwd(async (cwd) => {
+    const long = "A".repeat(9000);
+    const a = body(await run(cwd, "longsym.macho", withSymbols([{ name: long }, { name: "_ok" }])));
+    assert.equal(a.status, "partial");
+    assert.ok(a.problems.some((p: string) => /symbol name at file offset \d+ has no terminator within its table or 4096 bytes/.test(p)), JSON.stringify(a.problems));
+    const row = rowsOf(a, "symbols")[0];
+    assert.equal(row.name_unterminated, true);
+    assert.match(row.name, /^<a string of at least 4096 characters, cut where it was read: longer than the 512 shown, so not shown>$/);
+    assert.equal(rowsOf(a, "symbols")[1].name, "_ok");
+    const cf = chained(1, [{ name: long, ordinal: 1 }, { name: "_free", ordinal: 1 }]);
+    const b = body(await run(cwd, "longimp.macho", macho({ commands: (c, alloc) => [c.linkedit(LC_CHAINED_FIXUPS, alloc(cf, 8), cf.length)] })));
+    assert.equal(b.status, "partial");
+    assert.ok(b.problems.some((p: string) => /import name at file offset \d+ has no terminator/.test(p)), JSON.stringify(b.problems));
+    assert.match(rowsOf(b, "chained_imports")[0].name, /^<a string of at least 4096 characters/);
+    // a team identifier and a re-export import name are cut the same way
+    const exp = trie([{ name: "_viaother", reexport: { ordinal: 1, import: long } }]);
+    const c = body(await run(cwd, "longre.macho", dyldFile({ exp })));
+    assert.equal(c.status, "partial");
+    assert.ok(c.problems.some((p: string) => /reexport name at file offset \d+ has no terminator/.test(p)), JSON.stringify(c.problems));
+  });
+});
+
+test("a terminated name over 512 characters is given by its length, one of 512 is shown, and the kind decides", async () => {
+  await withCwd(async (cwd) => {
+    const name600 = "word_".repeat(120), name500 = "word_".repeat(100);
+    const a = body(await run(cwd, "n600.macho", withSymbols([{ name: name600 }, { name: name500 }])));
+    assert.equal(a.status, "complete", JSON.stringify(a.problems));
+    assert.equal(rowsOf(a, "symbols")[0].name, "<a name of 600 characters: longer than the 512 shown, so not shown>");
+    assert.equal(rowsOf(a, "symbols")[1].name, name500);
+    const lib = body(await run(cwd, "lib600.macho", macho({ commands: (c) => [c.dylib(LC_LOAD_DYLIB, "/usr/lib/" + "dir_".repeat(150) + ".dylib")] })));
+    assert.match(rowsOf(lib, "libraries")[0].name, /^<a name of \d+ characters: longer than the 512 shown, so not shown>$/);
+  });
+});
+
+test("an export trie whose every node has 255 edges with empty names to the next node stays inside a memory ceiling (ulimit -v) and answers", async () => {
+  await withCwd(async (cwd) => {
+    const K = 16000;
+    const uleb4 = (v: number) => Buffer.from([(v & 0x7f) | 0x80, ((v >> 7) & 0x7f) | 0x80, ((v >> 14) & 0x7f) | 0x80, (v >> 21) & 0x7f]);
+    const nodeLen = 2 + 255 * 5;
+    const nodes: Buffer[] = [];
+    for (let k = 0; k < K; k++) {
+      if (k === K - 1) { nodes.push(Buffer.from([0, 0])); continue; }
+      const edge = Buffer.concat([Buffer.from([0]), uleb4((k + 1) * nodeLen)]);
+      nodes.push(Buffer.concat([Buffer.from([0, 255]), ...Array.from({ length: 255 }, () => edge)]));
+    }
+    await put(cwd, "work/deep.macho", dyldFile({ exp: Buffer.concat(nodes) }));
+    const r = spawnSync("bash", ["-c", `ulimit -v 300000; exec python3 "${MACHO_DIRECTORIES}"`], { cwd, input: JSON.stringify({ path: "work/deep.macho", max_seconds: 60 }), env: { ...process.env, AGENT_ID: "s1" }, encoding: "utf8", maxBuffer: 1 << 26 });
+    assert.doesNotMatch(r.stderr, /Traceback|MemoryError/);
+    const a = JSON.parse(r.stdout) as Json;
+    assert.ok(["partial", "complete"].includes(a.status), r.stdout.slice(0, 300));
+    assert.equal(a.slices[0].dyld_info.export.decoded.nodes, K, "every node is walked once");
+  });
+});
+
+test("a disk that fills while a table file is written leaves no partial table file behind and names none", async () => {
+  await withCwd(async (cwd) => {
+    const syms = Array.from({ length: 3000 }, (_, i) => ({ name: `symbol_name_${i}` }));
+    await put(cwd, "work/full.macho", withSymbols(syms));
+    const r = spawnSync("bash", ["-c", `ulimit -f 8; exec python3 "${MACHO_DIRECTORIES}"`], { cwd, input: JSON.stringify({ path: "work/full.macho", limit: 5 }), env: { ...process.env, AGENT_ID: "s1" }, encoding: "utf8", maxBuffer: 1 << 26 });
+    assert.doesNotMatch(r.stderr, /Traceback/);
+    const a = JSON.parse(r.stdout) as Json;
+    assert.equal(a.status, "partial");
+    assert.ok(a.tables.symbols.not_written, JSON.stringify(a.tables.symbols));
+    assert.equal(a.tables.symbols.all_results, undefined);
+    const files = await filesUnder(join(cwd, "work/s1/tool-output")).catch(() => [] as string[]);
+    assert.deepEqual(files.filter((f) => f.includes("symbols")), [], files.join());
+  });
+});

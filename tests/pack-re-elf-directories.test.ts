@@ -402,3 +402,15 @@ test("agreement with readelf on files gcc makes: no-PIE with no exports, PIE, st
     }
   });
 });
+
+test("a symbol name longer than the 4,096 bytes read is a problem and the answer is partial, and the text states no length it did not see", async () => {
+  await withCwd(async (cwd) => {
+    const out = body(await run(cwd, "longname.so", elf({ cls: 64, needed: [], dynsyms: [{ name: "A".repeat(9000) }, { name: "ok" }] })));
+    assert.equal(out.status, "partial");
+    assert.ok(out.problems.some((p: string) => /symbol name at file offset \d+ has no terminator within its table or 4096 bytes/.test(p)), JSON.stringify(out.problems));
+    assert.match(out.tables.dynsym.rows[1].name, /^<a string of at least 4096 characters, cut where it was read: longer than the 512 shown, so not shown>$/);
+    const fine = body(await run(cwd, "name600.so", elf({ cls: 64, needed: [], dynsyms: [{ name: "word_".repeat(120) }] })));
+    assert.equal(fine.status, "complete", JSON.stringify(fine.problems));
+    assert.equal(fine.tables.dynsym.rows[1].name, "<a name of 600 characters: longer than the 512 shown, so not shown>");
+  });
+});
