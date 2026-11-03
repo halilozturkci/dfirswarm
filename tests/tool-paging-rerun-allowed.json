@@ -58,6 +58,7 @@
     { "tool": "windows-forensics/lnk_jumplist", "item": "PKG-WIN-02", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "windows-forensics/mam_scan", "item": "PKG-WIN-02", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "windows-forensics/mft_records", "item": "PKG-WIN-02", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
+    { "tool": "windows-forensics/powershell_blocks", "item": "PKG-WIN-17", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "windows-forensics/registry_recover", "item": "PKG-WIN-02", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "windows-forensics/regkv", "item": "PKG-WIN-02", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "windows-forensics/shellbags", "item": "PKG-WIN-02", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },

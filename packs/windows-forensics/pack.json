@@ -1,7 +1,7 @@
 {
   "id": "windows-forensics",
   "name": "Windows Forensics Pack",
-  "version": "1.7.20",
+  "version": "1.7.21",
   "description": "Artefact-by-artefact method and tooling for a Windows examination: the file system and its journals, the hives, execution evidence, the event logs and the records inside a cleared one, accounts and remote access, persistence, PowerShell, browsers, shadow copies, memory, and the traces anti-forensics leaves.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -42,7 +42,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "617dec43b30845a8c7d062db3f6d892400d96796b91f363586beacfbdffd1721",
-      "README.md": "d266fe7b5c39a04072e967f11301bc921faeeb82fd0dc069bf598b11270eb3da",
+      "README.md": "4b742e906cb20d299ed360a73978d6b87d9f68344218f6408bef41c4df063e8f",
       "goals/data-left-the-building.md": "34c94782b1a636d54eac5d6d2397a482059374909b7f93ee96433f9c3668b68e",
       "goals/hidden-data.md": "14ee963bede22cf69b96033e483fad57ead72abd20e04ae7ccc1153de265fb78",
       "goals/intrusion-triage.md": "837d339c1f027f540d1f1fd1444a4d454c8736299767d30d8a45c450d86f073d",
@@ -89,7 +89,7 @@
       "skills/logs/hunting.md": "236535814bdf93ef4a7bc44b6ba6815753e6e836b95bb96ffd44440b128ed47e",
       "skills/logs/lateral.md": "7d43b9a5fa6cf97b6f6f965a6e628696776168ccc121410b389fd723be36f6b6",
       "skills/logs/powershell-history.md": "ac9d823742216016a775c47026e7e6e235d1f09987bbecbe97b2ce93d5ec4c33",
-      "skills/logs/powershell.md": "70adbe40b4985d24138122451efc5e8cd3d6f39a2398830e976b15269825971f",
+      "skills/logs/powershell.md": "f2e8e9a4ce51740746a2a9a31ca5c0c66a0a960b9980dc727c7fc90ee1bfebcc",
       "skills/logs/recovery.md": "61e5e42d7c04fe0e29ca553ec893dbe68ea934ab5ac1e4e7ec022e6fc59f19f4",
       "skills/logs/remote-access.md": "8ad9cd06981225d6d561998b6173305129adf6a7e5d8ef90cb8fe421c467a12f",
       "skills/logs/security.md": "9cbc5a9d48a394a96e098fbf1d39a0a232a929e6e8a800e857950a76ba146d2b",
@@ -128,6 +128,8 @@
       "tools/mam_scan/run.py": "7e02194a99d397c3bd9e8419d917ffb1255fb5f3149554c23653a505fe76746f",
       "tools/mft_records/manifest.json": "2277a2dd338f5ab37773569951215bc70b807614384dc4da4783f512203efa04",
       "tools/mft_records/run.py": "a1b8c0e90b641bf7fb06f3e6ed9dad4c1c09499332dcad2c4a5b589894001369",
+      "tools/powershell_blocks/manifest.json": "51e54e5bc0b2f0f97fe6fe8ab185cec4edef0ce5561f2f4883fd76525387b2b0",
+      "tools/powershell_blocks/run.py": "824e9f0ef1fdb9289b704abc776062d0e1664e30f8d65091c22ee45e3d963a15",
       "tools/prefetch_mam/manifest.json": "c24fd307f818f924f82ef500c40f53131423460894e3064da4ea998f4be9ead4",
       "tools/prefetch_mam/run.py": "086f0ed60862e6e69b4390bb856cf88a1643feabaf98ae3afc9f23eabd50977f",
       "tools/recyclebin_i/manifest.json": "a4f431dc107970309c6998927151e8410b1ddf031f4653fdd2d84079805f3679",
@@ -163,6 +165,7 @@
     "lnk_parse",
     "mam_scan",
     "mft_records",
+    "powershell_blocks",
     "prefetch_mam",
     "recyclebin_i",
     "registry_recover",
