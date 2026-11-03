@@ -1,0 +1,68 @@
+{
+  "name": "cloud_timeline_export",
+  "description": "Turn normalised cloud log streams (the output of cloud_normalise, normalised.jsonl, or any JSON Lines or JSON array of rows with the canonical field names) into one timeline, offline: an externally sorted JSONL and a spreadsheet-safe CSV. `path` is a file, a directory (only files named normalised*.jsonl* are taken from a directory; its rejected.jsonl and coverage.json are not rows) or, with `paths`, several in the order that is the source order. Outputs, under out_dir (default: cloud-timeline under $OUT in a job, work/<agent>/cloud-timeline otherwise): timeline.jsonl holds every row with a usable time in UTC order, ties broken by source order (the order of paths, then the file, then the record), each row the input row with a `timeline` object added (a row that is not cloud_normalise's also has its credential-shaped values withheld; sequence number, the time it was sorted by and how that time was read, and its file, record and line); timeline.csv holds the same rows with a fixed set of columns (UTF-8 with a byte order mark); timeline-unknown-time.jsonl and .csv hold the rows with no usable time (no time, a time with no zone, an ambiguous or unparseable one), in source order with the reason, and are never sorted as if they were at the epoch; rejected.jsonl lists what could not be read as a row; coverage.json counts rows read, dated, unknown, rejected, trusted and cleaned, the time range, the runs and merge passes. A CSV cell that begins with =, +, -, @, a tab or a carriage return, also after leading white space or an invisible character (a no-break space, a zero-width character), has a single quote put in front (the documented neutralisation); the raw value stays in the JSONL. Nothing is deduplicated: a row repeated in the input is repeated in the output, with the annotation its producer gave it (coverage counts the rows the producer marked). A time is read from time_utc when it is an ISO 8601 UTC time, otherwise from time_raw by the shared decoder, which refuses a time with no zone and a day/month/year string whose order is not proved: nothing is assumed, and mixed zones are put in one order by their instants to the nanosecond. The sort is external and its memory is bounded by chunk_rows (default 250000) and chunk_bytes (default 64 MiB), not by the size of the input: sorted runs are written under the output directory, merged in passes of at most 64 runs, and the final names are put in place only when the whole merge is done, so a half file is never under a final name. `status` and `status_basis` say whether every row of the supplied streams was read, sorted and written; a run that reached its clock, rejected a record, replaced bytes or skipped an entry is partial and publishes name.partial.ext (rows merged so far are a correct prefix of the order); an output is never replaced by a smaller one, or by any other: a name already taken by an earlier run is kept (the new output is kept beside it as name.2.ext). Complete says nothing about whether the streams hold every event, and the order is that of the times the rows carry: this tool does not synchronise two providers' clocks. NOT measured: whether a stream holds every event, whether two providers' clocks agree, or whether a time is the event's or the log's. One clock: time_limit_seconds (default 420, at most 480, the call allows 600) covers the reading, the sort, the merge and the writing; the read and the sorting of its runs are given the first half of it so that the merge has time. A termination signal removes every temporary file and run, leaves coverage.partial.json, prints one line of JSON and exits 128 plus the signal. SENSITIVE: principal names, addresses and user agents are in the rows. A row whose parser label is cloud_normalise/N was cleaned by that tool and is copied as it is (the label is read from the row: a stream that forges it is not cleaned here); every other row goes through the shared withholding rules, with a 1 MiB gate here: identifiers are printed as they are, every other string goes through the credential rules only, a field named like a secret goes through the name layer. A field named or shaped like a credential is withheld and its original written only with write_values, in a job, to a mode 0600 file under $OUT: run as a job with secret_output: true when the case treats the streams as sensitive. Known gaps: a secret with neither a credential name nor a token shape is printed in a row that is not cloud_normalise's; the CSV carries a fixed set of columns and a field outside them is in the JSONL only; a CSV or an archive input is named and not read.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A normalised stream (JSON Lines, gzip of it, or a JSON array of rows) or a directory (only normalised*.jsonl* files are taken from it)"
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Several streams or directories; the order given is the source order that breaks ties"
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "Directory for the outputs, under the run directory (in a job, under $OUT: name it work/<your agent id>/..., which becomes $OUT). Default: cloud-timeline under $OUT in a job, work/<agent>/cloud-timeline otherwise. A file already at an output name is kept and the new one is named beside it"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows returned inline (default 500, an inline page size); the whole timeline is always in the files the answer names"
+    },
+    "chunk_rows": {
+      "type": "integer",
+      "description": "Rows sorted in memory at once before a run is written (default 250000, at least 2); with chunk_bytes this bounds the memory of the sort"
+    },
+    "chunk_bytes": {
+      "type": "integer",
+      "description": "Bytes of rows sorted in memory at once (default 64 MiB, at least 4096)"
+    },
+    "max_expanded_bytes": {
+      "type": "integer",
+      "description": "Most bytes read from one file after decompression (default 4 GiB); a file that reaches it is partial and says so"
+    },
+    "max_record_bytes": {
+      "type": "integer",
+      "description": "Most text held while one row is read (default 16 MiB); a larger row is rejected, located and listed, never cut"
+    },
+    "time_limit_seconds": {
+      "type": "number",
+      "description": "Stop after this many seconds (default 420, at most 480, so the answer is written well inside the 600 seconds a call has); the read has the first half of it; a run that reaches it is partial and publishes name.partial.ext"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the originals of the values withheld from the answer to a mode 0600 file under $OUT. The manifest declares secret output for it: a job with write_values runs as secret output whether or not the agent set the flag, and its values file is sealed sensitive. Honoured only in a job whose SECRET_OUTPUT is 1; outside a job, or in a job that is not secret output, it is refused as JSON and nothing is written"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 600,
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  },
+  "example": "{\"path\": \"inputs/normalised.jsonl\"}",
+  "by": "maintainer",
+  "at": "2026-11-04T12:00:00.000Z",
+  "version": 1,
+  "use": {
+    "names": [
+      "*normalised*.jsonl*",
+      "*normalized*.jsonl*"
+    ]
+  },
+  "sha256": "049f0585ca8e819e3144780700db9e3db4957b772fc99d18c0865623d342093d"
+}
