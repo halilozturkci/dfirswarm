@@ -50,7 +50,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "zeek_run", "version": 12}
+TOOL = {"name": "zeek_run", "version": 13}
 PARSER = "zeek_run/5"
 
 
@@ -1772,7 +1772,8 @@ def dry_run_receipt(c):
         },
         "script_load_status": {"requested": requested, "first_failures": failures, "failure_lines_total": failure_total,
                                "failures_note": "lines of Zeek's own output that name an error or a failure, the first %d, each cut to %d characters and passed through the block; every line is "
-                                                "in the files named under effective_configuration" % (DRY_FAILURES, DRY_FAILURE_CHARS),
+                                                "in the files named under effective_configuration%s" % (DRY_FAILURES, DRY_FAILURE_CHARS,
+                                                    "; Zeek exited 0, so these are its messages and not a failed load" if code == 0 and failure_total else ""),
                                "note": "a policy is loaded when Zeek listed a script of that name (the .zeek file or its __load__.zeek); null means Zeek listed nothing, so nothing is shown either way"},
         "log_outputs": {"directory": out_dir, "logs_written_by_the_dry_run": log_files,
                         "format": "Zeek's own default writer (tab-separated ASCII) unless a loaded script changes it; this mode does not read it from the scripts",

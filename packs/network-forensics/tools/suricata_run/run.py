@@ -46,7 +46,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "suricata_run", "version": 11}
+TOOL = {"name": "suricata_run", "version": 12}
 PARSER = "suricata_run/5"
 
 
@@ -1674,6 +1674,11 @@ def dry_run_receipt(c):
         problems.append("Suricata reported %d rule(s) that failed to load" % loads["failed"])
     if loads and c["rule_lines"] and not loads["loaded"]:
         problems.append("Suricata reported 0 rules loaded though the rules file has %d rule lines" % c["rule_lines"])
+    if loads and loads["skipped"]:
+        problems.append("Suricata reported %d rule(s) skipped (%d loaded): a skipped rule is not loaded" % (loads["skipped"], loads["loaded"]))
+    if loads and analysis is not None and loads["loaded"] and not loads["failed"] and not loads["skipped"] and loads["loaded"] != analysis["rules_active"]:
+        problems.append("Suricata loaded %d rule(s) but the rules file has %d active rule(s) read as text: the numbers differ, so not every rule is shown to have loaded"
+                        % (loads["loaded"], analysis["rules_active"]))
     if loads is None and c["test_code"] == 0:
         problems.append("the engine printed no rule-load numbers, so nothing here shows that any rule loaded (rule_load.known is false)")
     if c["version_line"] is None:

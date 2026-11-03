@@ -809,6 +809,24 @@ test("dry_run: a refused write of the sid-range file is named and the file is no
   });
 });
 
+test("dry_run: skipped rules, or fewer rules loaded than the file has, are a partial receipt that names both numbers; an exact match is complete", async () => {
+  await withCwd(async (cwd, bin) => {
+    const rules = await dryInputs(cwd);
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(3, 0, 4) });
+    const skipped = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/a" }, env(cwd), bin));
+    assert.equal(skipped.status, "partial");
+    assert.match(skipped.status_basis, /4 rule\(s\) skipped \(3 loaded\)/);
+    assert.deepEqual(skipped.rule_load.configuration_test, { loaded: 3, failed: 0, skipped: 4, from: "suricata-test.stderr" });
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(1) });
+    const short = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/b" }, env(cwd), bin));
+    assert.equal(short.status, "partial");
+    assert.match(short.status_basis, /loaded 1 rule\(s\) but the rules file has 8 active rule\(s\)/);
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(8) });
+    const exact = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/c" }, env(cwd), bin));
+    assert.equal(exact.status, "complete", exact.status_basis);
+  });
+});
+
 test("dry_run: a stop signal gives one JSON answer with the stage, exit 128 + signal, and kills the engine and what it started", async () => {
   for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]] as const) {
     await withCwd(async (cwd, bin) => {

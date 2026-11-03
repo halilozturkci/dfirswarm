@@ -28,7 +28,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "capture_transform", "version": 1}
+TOOL = {"name": "capture_transform", "version": 2}
 PARSER = "capture_transform/1"
 
 # BEGIN SHARED STOP
@@ -1474,7 +1474,10 @@ def transform(p, started, deadline, out_dir, work, binaries, inputs, input_paths
             size, sha = digest_of(full, deadline)
         except (OSError, TimeoutError) as exc:
             fail("an output could not be read for its digest (%s)" % (describe(exc) if isinstance(exc, OSError) else exc))
-        final_name = ("%s-%05d%s" % (stem, index, ext)) if operation == "split" else (stem + ext)
+        # the name follows what capinfos says the file is: mergecap and text2pcap write pcapng unless told otherwise, whatever the inputs were
+        ftype = (c["file_type"] if c else None) or ""
+        own_ext = ".pcapng" if "pcapng" in ftype.lower() else (".pcap" if ftype else ext)
+        final_name = ("%s-%05d%s" % (stem, index, own_ext)) if operation == "split" else (stem + own_ext)
         row = {"kind": "derivative", "operation": operation, "name": final_name, "bytes": size, "sha256": sha,
                "packets": c["packets"] if c else None, "file_type": c["file_type"] if c else None,
                "encapsulation": c["encapsulation"] if c else None, "interfaces": c["interfaces"] if c else None,
