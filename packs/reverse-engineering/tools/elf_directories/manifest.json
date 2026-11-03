@@ -39,6 +39,6 @@
   "example": "{\"path\": \"work/extracted/sample.elf\"}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 1,
-  "sha256": "22f3802fb5720d2b6595a5e1fe381817430cc3cd825b8f20078c80bff5945703"
+  "version": 2,
+  "sha256": "1f635d53cb6af06f80aced41ff5e3f81504abb77b888037b73d1f0b8e10228c8"
 }

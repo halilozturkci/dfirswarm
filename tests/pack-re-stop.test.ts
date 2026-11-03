@@ -20,7 +20,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, truncate, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_PROBE, DOC_STRUCTURE, ELF_DIRECTORIES, ENTROPY, FUZZY, PE_DIRECTORIES, PE_INFO, RE, RECIPE, TOOLS, buildElf, buildPe, buildZip, put, stub, withCwd } from "./pack-re-harness.ts";
+import { DOC_PROBE, DOC_STRUCTURE, ELF_DIRECTORIES, ENTROPY, FUZZY, MACHO_DIRECTORIES, PE_DIRECTORIES, PE_INFO, RE, RECIPE, TOOLS, buildElf, buildPe, buildZip, put, stub, withCwd } from "./pack-re-harness.ts";
 import type { Json, ZipEntry } from "./pack-re-harness.ts";
 import { buildPeDirs } from "./pack-re-doc-fixtures.ts";
 
@@ -120,6 +120,28 @@ sleep 60`);
     work: async (cwd) => {
       await put(cwd, "inputs/syms.so", buildElf({ cls: 64, needed: Array.from({ length: 150_000 }, (_, i) => `lib${i}Name${i * 7}.so`) }));
       return { argv: [], stdin: JSON.stringify({ path: "inputs/syms.so" }) };
+    },
+  },
+  {
+    name: "macho_directories", script: MACHO_DIRECTORIES, marker: MODULE_LEVEL,
+    work: async (cwd) => {
+      const names = Array.from({ length: 150_000 }, (_, i) => `_symbol${i}Name${i * 7}`);
+      const table = Buffer.concat(names.map((n, i) => { const b = Buffer.alloc(16); b.writeUInt32LE(1 + i * 24, 0); b[4] = 0x0f; b[5] = 1; return b; }));
+      const strings = Buffer.concat([Buffer.from([0]), ...names.map((n) => Buffer.from(n + "\0"))]);
+      const header = Buffer.alloc(32 + 24);
+      header.set([0xcf, 0xfa, 0xed, 0xfe], 0);
+      header.writeUInt32LE(0x01000007, 4);
+      header.writeUInt32LE(2, 12);
+      header.writeUInt32LE(1, 16);
+      header.writeUInt32LE(24, 20);
+      header.writeUInt32LE(2, 32);
+      header.writeUInt32LE(24, 36);
+      header.writeUInt32LE(4096, 40);
+      header.writeUInt32LE(names.length, 44);
+      header.writeUInt32LE(4096 + table.length, 48);
+      header.writeUInt32LE(strings.length, 52);
+      await put(cwd, "inputs/syms.macho", Buffer.concat([header, Buffer.alloc(4096 - header.length), table, strings]));
+      return { argv: [], stdin: JSON.stringify({ path: "inputs/syms.macho" }) };
     },
   },
   {
