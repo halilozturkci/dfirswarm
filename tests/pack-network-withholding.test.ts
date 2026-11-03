@@ -119,7 +119,7 @@ test("the block withholds tokens, keys and user-info and leaves names, dates and
   assert.equal(got.scrub[text[2]], "<token-shaped text withheld 20 characters> was used");
   // A base64 token holds `/`: none of its head is printed (the standard allows four characters at most), and an AWS-style secret with two `/` is caught whole.
   assert.equal(got.scrub[text[3]], "key <token-shaped text withheld 44 characters>");
-  assert.equal(got.scrub[text[4]], "secret=<token-shaped text withheld 40 characters> end");
+  assert.equal(got.scrub[text[4]], "secret=<a value assigned to a credential name withheld 40 characters> end");
   assert.equal(got.scrub[text[11]], "<token-shaped text withheld 50 characters>");
   // User-info without a scheme, and credentials in a header.
   assert.equal(got.scrub[text[5]], "//<userinfo withheld 16 characters>@host/x");

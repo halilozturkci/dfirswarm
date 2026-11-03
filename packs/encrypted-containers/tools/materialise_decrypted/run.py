@@ -796,7 +796,7 @@ _CRED_RULES = [
     # `nc -p 80` and `mysql -p` alone, which asks for the password, name a port or nothing). The options are read up to the next
     # command of the kind, so that a text of many of them is read once, not once for each
     ("a password given to a MySQL client", re.compile(
-        r"""(?i:(?<![\w.-])(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mysqlshow|mariadb|mariadb-dump|mariadb-admin)(?:\.exe)?(?=\s))(?:(?!(?i:mysql|mariadb)\b)[^\n]){0,512}?(?<=\s)-p(?=\S)(?:"([^"\n]{1,256})"|'([^'\n]{1,256})'|([^\s"']{1,256}))"""), -3),
+        r"""(?i:(?<![\w.-])(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mysqlshow|mariadb|mariadb-dump|mariadb-admin)(?:\.exe)?(?=\s))(?:(?!(?i:mysql|mariadb)\b)[^\n]){0,512}?(?<=\s)-p(?=[^\s`,;)])(?:"([^"\n]{1,256})"|'([^'\n]{1,256})'|([^\s"']{1,256}))"""), -3),
     # `curl -u user:password`: the part after the colon, and only when there is one (`curl -u user` asks for it)
     ("a password given to curl", re.compile(
         r"""(?i:(?<![\w.-])curl(?:\.exe)?(?=\s))(?:(?!(?i:curl)\b)[^\n]){0,512}?(?<=\s)(?:-u|-U|--user|--proxy-user)(?:\s+|=)(?:"[^":\n]*:([^"\n]{1,256})"|'[^':\n]*:([^'\n]{1,256})'|[^\s:"']*:([^\s"']{1,256}))"""), -3),
@@ -820,7 +820,7 @@ _CRED_PAIR_HEAD = re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})
 _CRED_NEXT_VALUE = re.compile(r"""(?i)\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
 _CRED_QUOTE = re.compile(r'\\*"')
 # a format directive (`%s`, `%d`), a template field (`{0}`, `{name}`) or a `%VAR%` is where a value goes, not a value
-_CRED_PLACEHOLDER = re.compile(r"%[-+ #0-9.]*[sdiuxXfeEgGcr](?![A-Za-z0-9])|\{\w*\}|%\w+%$")
+_CRED_PLACEHOLDER = re.compile(r"%[-+ #0-9.]*[sdiuxXfeEgGcr](?![A-Za-z0-9])|\{\w*\}|%\w+%$|\.{2,}|\u2026")
 _CRED_BARE = re.compile(r"-?[0-9][0-9.eE+-]{0,39}|\[[^\[\]]{0,4096}\]|(?:null|true|false)\b")
 # What a text must hold for a rule to match it: a literal (lower case) of which one must be in the text, checked before the rule runs, so
 # that a text with none of them (most names, addresses and ids) costs a few substring tests and no expression. An assignment rule also
@@ -898,7 +898,7 @@ def _cred_name_before(text, at):
     return re.sub(r"[^a-z0-9]", "", text[max(0, at - 64):at].lower())
 
 
-def _cred_spans(text, shapes):
+def _cred_spans(text, shapes, skip=()):
     spans = []
     big = len(text) > _CRED_GATE
     low = text.lower()
@@ -906,6 +906,8 @@ def _cred_spans(text, shapes):
     if "value" in low:
         _cred_pair_spans(text, spans)
     for why, rx, group in _CRED_RULES:
+        if why in skip:
+            continue
         need = _CRED_NEEDLES[why]
         if need is _CRED_ASSIGN and not sep:
             continue
@@ -938,10 +940,10 @@ def _cred_spans(text, shapes):
                 spans.append((start, end, why))
     if big:
         _tick(4096)
-    for m in (_CRED_B64_RUN.finditer(text) if len(text) >= 128 else ()):
+    for m in (_CRED_B64_RUN.finditer(text) if len(text) >= 128 and "a long unbroken base64-like run" not in skip else ()):
         if _cred_random_like(m.group(0)):
             spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
-    if shapes and len(text) >= 32:
+    if shapes and len(text) >= 32 and "a key-length base64 string" not in skip:
         for why, rx, check in _CRED_SHAPES:
             for m in rx.finditer(text):
                 if not check or _cred_random_like(m.group(0)):
@@ -957,17 +959,17 @@ def _cred_spans(text, shapes):
     return merged
 
 
-def credential_spans(text, shapes=True):
+def credential_spans(text, shapes=True, skip=()):
     """(start, end, why) of each stretch of `text` that is a credential by the name it is given under or by its text, in order and
     not overlapping. `shapes` False leaves out the rules that recognise a key by its length alone (a value that is named a checksum or
     a digest is not scanned for them). This is not `token_spans`: an identifier (a GUID, a hex digest, an access key id, an ARN) is
     not a credential here, and a tool that prints identifiers on purpose asks only for these."""
     if len(text) > TEXT_LIMIT:
         return [(0, len(text), "text longer than %d characters" % TEXT_LIMIT)]
-    if shapes and text in _CRED_CLEAN:
+    if shapes and not skip and text in _CRED_CLEAN:
         return []
-    spans = _cred_spans(text, shapes)
-    if shapes and not spans and len(text) <= 256 and len(_CRED_CLEAN) < 100000:
+    spans = _cred_spans(text, shapes, skip)
+    if shapes and not skip and not spans and len(text) <= 256 and len(_CRED_CLEAN) < 100000:
         _CRED_CLEAN.add(text)
     return spans
 
@@ -1010,11 +1012,16 @@ def clean_value(value, leaf, note, key=None, pointer="", depth=0, shapes=True, m
     return value
 
 
-def _credentials_withheld(text, kind):
+# what the rules of the block above already withhold whole, with their own markers: the first pass leaves these to them
+_CRED_OLD_COVERS = frozenset(("a JSON Web Token", "a password in a URL", "an authorization header value", "a scheme and its credential",
+                              "a long unbroken base64-like run", "a key-length base64 string"))
+
+
+def _credentials_withheld(text, kind, skip=()):
     """`text` with each credential in it withheld. It runs after the rules above, on text that may hold their markers: a stretch that
     begins at a marker is theirs already."""
     out, last = [], 0
-    for start, end, why in credential_spans(text):
+    for start, end, why in credential_spans(text, True, skip):
         if text.startswith("<", start):
             continue
         out.append(text[last:start])
@@ -1030,6 +1037,7 @@ def scrub(text, kind="text"):
     """The text with every token-shaped run, every user-info and every credential withheld."""
     if len(text) > TEXT_LIMIT:
         return _withheld("over-long text", len(text), kind)
+    text = _credentials_withheld(text, kind, _CRED_OLD_COVERS)     # first: the rules above cut a secret into pieces that no rule for a whole one can match
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
