@@ -19,4 +19,4 @@ Use when a store listed by `vss_stores` has to be read. Not for deciding whether
 - A snapshot is rebuilt from the volume plus the old blocks it kept. A file unchanged since is read from the same clusters: the same bytes, not a surviving second copy. An unavailable or incomplete store cannot support a claim that something was absent.
 
 Shows: what the volume held at the snapshot's creation. Does not show: what happened between two states, who changed or deleted anything, or the first or only change. Record: store identifier and creation time, how it was exposed (or that the mount was unavailable), extraction path, sealed import, the artefact's own times.
-Sensitive output: hives, logs and files from a snapshot can hold secrets, and `regkv` withholds by name or place only; read them in a job with `secret_output: true` where they may.
+Sensitive output: hives, logs and files from a snapshot can hold secrets, and `regkv` withholds by name or place only; read them in a job with `secret_output: true` where they may. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

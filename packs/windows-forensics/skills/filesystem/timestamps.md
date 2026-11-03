@@ -16,6 +16,6 @@ Use when you compare or quote NTFS times. Not for reading the record (`filesyste
 - Times are UTC FILETIMEs at 100 ns; convert to a local zone only with the rules of that date (`registry/clock`). Last-access updates can be disabled or delayed by configuration, so an access time is not evidence of an access.
 - A record with `structural_errors`, or an unresolved attribute list, is not compared as if it were whole.
 
-Sensitive output: only time fields are read here; `mft_records` `with_resident` returns file content, so leave it off or run it as a job with `secret_output: true` (`filesystem/mft`).
+Sensitive output: only time fields are read here; `mft_records` `with_resident` returns file content, so leave it off or run it as a job with `secret_output: true` (`filesystem/mft`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 
 Shows: both sets as stored, and which flags fired. Does not show: manipulation, which set is true, or when a value was changed. Record: raw FILETIMEs of both sets, the flags, the benign explanation considered, and the corroboration you looked for and what it returned.

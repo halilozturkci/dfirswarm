@@ -14,5 +14,5 @@ Use when you need device dates. Not for identity or mounts (`registry/devices`).
 - The key's last-write time is key-level (`registry/overview`) and no substitute for any of these. A device or hive without the properties gives no first or last date: say so, do not estimate one.
 - `Windows/INF/setupapi.dev.log` is text (extract it with `icat_extract`) and records installation in the machine's local clock: convert by `registry/clock`. An absent entry means a log that rotated or was never written, not a device never installed.
 
-Sensitive output: `regkv` withholds by name and place only (`registry/readers`).
+Sensitive output: `regkv` withholds by name and place only (`registry/readers`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 Shows: the dates the properties and the log carry, each for its own event. Does not show: the connection window, continuous attachment, or any date for a device without these properties. Record: key path, value name, raw hex and integer, decoded time and the clock rule.

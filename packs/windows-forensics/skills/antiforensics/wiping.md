@@ -17,4 +17,4 @@ Use when files or records look overwritten or a deletion utility appears in exec
 
 Shows: that a wiping utility, or the traces of overwriting, are consistent with an attempt. Does not show: which files were overwritten, that a particular file's bytes are gone, or who ran the utility. Record: the artefact and its source, the utility's identification by content, the extents and content examined, the routes tried.
 
-Sensitive output: `mft_records` with `with_resident` returns small files' content; run it as a job (`secret_output: true`).
+Sensitive output: `mft_records` with `with_resident` returns small files' content; run it as a job (`secret_output: true`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

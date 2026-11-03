@@ -16,6 +16,6 @@ Use when you ask whether deleted content exists and can be read back. Not for th
 - Before you write "not recovered", name each route and its result: the record and extents (`istat`), the extraction and its validation, `tsk_recover`, a signature scan of unallocated space (`sig_carve`), a cut of a hit (`file_carver`: offset, size and hash, no name or times, so the image offset is its only provenance; `filesystem/carving`), the bin's $R, and the shadow copies and backups acquired (`filesystem/shadowcopies`). Record a secondary source that was not acquired or would not open.
 
 Shows: content is, or is not, readable from these sources by these routes. Does not show: who deleted the file, why or whether on purpose, that it was copied elsewhere, that what came back is what the file held, or that it cannot be recovered from sources not supplied. Record: record number and sequence, the three sizes, each route with its result and validation.
-Sensitive output: recovered content can hold secrets; extract in a job with `secret_output: true`.
+Sensitive output: recovered content can hold secrets; extract in a job with `secret_output: true`. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 
 Open `filesystem/recycle-bin` only if the file went through the Recycle Bin or a `$I` file is in play. For tools that wipe, `antiforensics/wiping`.
