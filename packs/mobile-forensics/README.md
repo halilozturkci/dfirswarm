@@ -17,7 +17,7 @@ here) and `extractions/backup-detail`; `apps/databases` and `apps/fragments`;
 most 400 tokens), which names the ten by the question each answers, holds no rule, and
 is the one line a run shows for the pack when its skills index is over budget.
 
-**Three tools.** Each says in its manifest what it measures and what it does
+**Four tools.** Each says in its manifest what it measures and what it does
 not, and each returns its whole result: an inline page and, when there is more,
 a file the answer names. None of them decrypts anything or reads a password.
 `sqlite_freespace` and `protobuf_peek` read no `-wal` or `-journal`; `manifest_db`
@@ -51,6 +51,20 @@ opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
   rows gets a tenth of the time, and an answer without it says so); a name column
   is read to its first 8,193 characters, and a row whose metadata is not in the
   answer for any reason makes the status partial.
+- `backup_materialise` lays an unencrypted (or already decrypted) iOS backup out as
+  a derivative under `$OUT/derivative/files/<domain>/<relativePath>`, for a selection
+  (domains, paths, or `all: true`; never the whole map by default), each file tied to
+  its Manifest row: the file id, the domain and path as printed and as base64 of
+  their bytes, the row number, the Size the Manifest records, the SHA-256 of the blob,
+  and the state of the blob (copied, missing, a directory, a link it does not follow,
+  a FIFO, refused). The whole account is a result file, one line per row. A hostile
+  `relativePath` (`..`, an absolute path, a NUL, a component over 255 bytes) is
+  rejected and listed; two rows on one name (duplicate, case-folded, a file and a
+  directory) each get their own name and say so; a second run never replaces a file.
+  It does not decrypt and is not an acquisition: the derivative is not the phone.
+  `copy_content` (false by default, a plan) writes content and is a secret-output
+  mode: a job run as secret output only; a name shaped like a recovery password is
+  the placeholder everywhere and its real name is only in the 0600 values file.
 - `sqlite_freespace` reads the free space of a SQLite database's main file
   (freelist pages, the unallocated gap of a page, the freeblock chain) and returns
   where each text fragment is: page, kind of region, byte offset (read back from
