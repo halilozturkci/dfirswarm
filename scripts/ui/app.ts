@@ -34,7 +34,7 @@ import { readReviews } from "./reviews.ts";
 import { readNetwork } from "./network.ts";
 import { readRequests, requestArgv, RequestActionError } from "./requests.ts";
 import { createSigning, SigningError } from "./signing.ts";
-import { readStoreJob, readStoreJobLog, readStoreJobs, storeJobLogFile } from "./store-jobs.ts";
+import { consoleAccess, isSensitiveJob, readStoreJob, readStoreJobLog, readStoreJobs, storeJobLogFile } from "./store-jobs.ts";
 import { userInfo } from "node:os";
 import { hashArtifacts } from "../artifacts.ts";
 import { hashRegularFile, openRegular } from "../regular-file.ts";
@@ -1148,19 +1148,29 @@ export function createUiApp(options: UiAppOptions): UiApp {
         if (method !== "GET") throw new HttpError(405, "the job record is read-only here");
         const offset = Number(url.searchParams.get("offset")) || 0;
         const limit = Number(url.searchParams.get("limit")) || undefined;
+        // The access record, once for this request (kept while its files are as they were): the badge, the readers, and which jobs' views are recorded.
+        const access = await consoleAccess(sandbox, runsDir, id);
         if (!rest.length) {
-          json(res, 200, await readStoreJobs(sandbox, { offset, limit }));
+          json(res, 200, await readStoreJobs(sandbox, { offset, limit }, access));
           return;
         }
         const job = rest[0];
         if (rest.length === 1) {
-          const detail = await readStoreJob(sandbox, job, { tree: url.searchParams.get("tree") ?? undefined, offset, limit });
+          const detail = await readStoreJob(sandbox, job, { tree: url.searchParams.get("tree") ?? undefined, offset, limit }, access);
           if ("error" in detail) throw new HttpError(detail.error, detail.message);
           json(res, 200, detail);
           return;
         }
         if (rest.length === 3 && rest[1] === "log") {
           const name = decodeURIComponent(rest[2]);
+          // A sensitive job's log is shown to the operator: the view is recorded on the operator's audit first (docs/adr/0018 decision 3), and not served unrecorded.
+          if (isSensitiveJob(access, job)) {
+            const log = await storeJobLogFile(sandbox, job, name);
+            if (typeof log === "string") {
+              const recorded = await runner.viewed(id, job, `store/jobs/${job}/${name}`);
+              if (!recorded.ok) throw new HttpError(503, `not served: the view of ${job}'s ${name} could not be recorded on the operator's audit (${recorded.why})`);
+            }
+          }
           if (url.searchParams.get("raw") === "1") {
             // Whole, as plain text whatever the job printed, with the same
             // headers as a tool's kept output.

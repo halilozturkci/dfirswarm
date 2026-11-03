@@ -19,6 +19,7 @@ import { lstat, readdir, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { sha256Hex, verifyJournalText, type Anchor, type Manifest } from "../evidence-store.ts";
 import { openRegular, readRegularText } from "../regular-file.ts";
+import { LOWER_BOUND_SENTENCE, accessRecord, type AccessEvent, type AccessRecord } from "../sensitive-access.ts";
 
 export const STORE_JOURNAL = "store/journal.jsonl";
 export const STORE_JOB_ID = /^j\d{6}$/;
@@ -33,6 +34,24 @@ const RECORD_MAX_BYTES = 64 * 1024 * 1024;
 export type StoreError = { error: 400 | 404 | 409; message: string };
 
 export type StoreJobOutputs = { files: number; bytes: number; rejected: number; path: string; manifest_sha256: string };
+
+/** What the row shows of a sensitive job: the badge "sensitive · N seats read · M jobs used", from the access record. */
+export type StoreSensitive = { why: "secret_output" | "derived"; seats_read: number; jobs_used: number; badge: string };
+
+/** A sensitive job's page: who read it, who took it as an input, which entries cite it, how often the console showed it. From the access record, a lower bound. */
+export type StoreAccess = {
+  why: "secret_output" | "derived";
+  badge: string;
+  /** Seats the harness observed reading it (a possible reach is not a read). */
+  readers: Array<{ seat: string; reads: number; first: string | null; last: string | null; certainty: string }>;
+  /** Jobs that took it as an input (a link the harness verified). */
+  dependents: Array<{ job: string; seat: string | null; how: string | null }>;
+  /** Ledger entries that cite it: an agent's claim. */
+  cited_by: number[];
+  /** The console's views of its output or logs, from the operator's audit. */
+  console_views: number;
+  lower_bound: string;
+};
 
 export type StoreJobRow = {
   id: string;
@@ -92,6 +111,8 @@ export type StoreJobRow = {
   note: string | null;
   /** A program its image did not hold (exit 127, or "command not found"): the program, and the profile and image it ran in, for the images' upkeep. */
   program_missing: { program: string | null; profile: string | null; image: string | null } | null;
+  /** The badge of a sensitive job (from the access record); null for any other, and while the record is not given. */
+  sensitive: StoreSensitive | null;
 };
 
 export type StoreJournalState = {
@@ -174,6 +195,8 @@ export type StoreJobDetail = {
     page: { offset: number; limit: number; total: number; next: number | null };
   } | null;
   logs: Array<{ name: string; path: string; bytes: number | null; sha256: string | null; present: boolean; why: string | null }>;
+  /** Who reached this job's output, when it is sensitive; null otherwise. */
+  access: StoreAccess | null;
 };
 
 export type StoreLogPage = { name: string; path: string; offset: number; bytes: number; total: number; text: string; next: number | null };
@@ -355,6 +378,7 @@ function fold(lines: Array<Record<string, unknown>>): { rows: Map<string, StoreJ
         generation: null,
         generation_status: null,
         program_missing: null,
+        sensitive: null,
         notified: [],
         deduplicated: 0,
         independent: spec.independent === true,
@@ -461,12 +485,80 @@ async function custodyLine(sandbox: string): Promise<StoreCustodyLine | null> {
   return { at: str(c.at), line, journal_lines: num(store?.journal?.lines), journal_head: str(store?.journal?.head) };
 }
 
+// --- who reached a sensitive output (docs/adr/0018) ---------------------------------------------
+
+/** The files whose size and time say the access record may have changed: the trace, the journal, the ledger and the operator's audit. */
+async function signature(files: string[]): Promise<string> {
+  const parts: string[] = [];
+  for (const f of files) {
+    const st = await lstat(f).catch(() => null);
+    parts.push(st ? `${st.size}:${Math.round(st.mtimeMs)}` : "-");
+  }
+  return parts.join("|");
+}
+
+const accessCache = new Map<string, { sig: string; rec: AccessRecord | null }>();
+
+/**
+ * The run's access record for a request: read from the chains once, kept
+ * while the four files it reads are as they were (a console polls its jobs
+ * list, and the trace can be gigabytes). Null when it cannot be read: the
+ * console then shows no badge and records no view as sensitive, and says so
+ * in the job's page by having no access section.
+ */
+export async function consoleAccess(sandbox: string, runsDir: string, runId: string): Promise<AccessRecord | null> {
+  const sig = await signature([join(sandbox, "traces", "events.jsonl"), join(sandbox, STORE_JOURNAL), join(sandbox, "ledger", "entries.jsonl"), join(runsDir, "operator-audit.jsonl")]);
+  const key = `${sandbox}\0${runsDir}\0${runId}`;
+  const hit = accessCache.get(key);
+  if (hit && hit.sig === sig) return hit.rec;
+  const rec = await accessRecord(sandbox, { runsDir, runId }).catch(() => null);
+  if (accessCache.size >= 16) accessCache.delete(accessCache.keys().next().value as string);
+  accessCache.set(key, { sig, rec });
+  return rec;
+}
+
+/** Whether the job's output is sensitive in this record: its views are then recorded. */
+export function isSensitiveJob(rec: AccessRecord | null, job: string): boolean {
+  return Boolean(rec?.jobs.some((j) => j.id === job));
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** The seats the harness observed reading one job's output, and the jobs that took it as an input, from the record's events. */
+function accessOf(rec: AccessRecord, id: string): StoreAccess | null {
+  const info = rec.jobs.find((j) => j.id === id);
+  if (!info) return null;
+  const mine = rec.events.filter((e: AccessEvent) => e.job === id);
+  const readers = new Map<string, { seat: string; reads: number; first: string | null; last: string | null; certainty: string }>();
+  for (const e of mine) {
+    if (e.evidence !== "harness_observed_read" || e.source !== "trace" || !e.seat || e.certainty === "maybe") continue;
+    const r = readers.get(e.seat) ?? readers.set(e.seat, { seat: e.seat, reads: 0, first: null, last: null, certainty: e.certainty }).get(e.seat)!;
+    if (!e.burst) r.reads += 1;
+    if (e.at && (!r.first || e.at < r.first)) r.first = e.at;
+    if (e.at && (!r.last || e.at > r.last)) r.last = e.at;
+  }
+  const dependents = new Map<string, { job: string; seat: string | null; how: string | null }>();
+  for (const e of mine) if (e.evidence === "harness_verified_link" && e.by_job && !dependents.has(e.by_job)) dependents.set(e.by_job, { job: e.by_job, seat: e.seat, how: e.how ?? null });
+  const cited = [...new Set(mine.filter((e) => e.evidence === "agent_claim" && typeof e.entry === "number").map((e) => e.entry as number))].sort((a, b) => a - b);
+  const views = mine.filter((e) => e.source === "operator_audit").length;
+  const badge = `sensitive · ${plural(readers.size, "seat")} read · ${plural(dependents.size, "job")} used`;
+  return {
+    why: info.why,
+    badge,
+    readers: [...readers.values()].sort((a, b) => (a.first ?? "") < (b.first ?? "") ? -1 : 1),
+    dependents: [...dependents.values()],
+    cited_by: cited,
+    console_views: views,
+    lower_bound: LOWER_BOUND_SENTENCE,
+  };
+}
+
 function emptyTotals(): StoreJobsTotals {
   return fold([]).totals;
 }
 
 /** The run's jobs: a page of them, the totals over all of them, the run's own lines and custody's store line. */
-export async function readStoreJobs(sandbox: string, q: { offset?: number; limit?: number } = {}): Promise<StoreJobsView> {
+export async function readStoreJobs(sandbox: string, q: { offset?: number; limit?: number } = {}, access: AccessRecord | null = null): Promise<StoreJobsView> {
   const { offset, limit } = bounds(q.offset, q.limit, 200, 1000);
   const custody = await custodyLine(sandbox);
   const nothing = (service: boolean, note: string): StoreJobsView => ({ service, note, journal: null, totals: emptyTotals(), jobs: [], page: { offset, limit, total: 0, next: null, whole: STORE_JOURNAL }, events: [], custody });
@@ -479,6 +571,12 @@ export async function readStoreJobs(sandbox: string, q: { offset?: number; limit
   const { rows, events, totals } = fold(journal.lines);
   const all = [...rows.values()];
   const jobs = all.slice(offset, offset + limit);
+  if (access) {
+    for (const j of jobs) {
+      const a = accessOf(access, j.id);
+      if (a) j.sensitive = { why: a.why, seats_read: a.readers.length, jobs_used: a.dependents.length, badge: a.badge };
+    }
+  }
   const partial = journal.state.partial_tail_bytes ? `the last ${journal.state.partial_tail_bytes} bytes of the journal are a line still being written, read on the next change` : null;
   const unparsed = journal.state.unparsed.length ? `${journal.state.unparsed.length} line(s) of the journal are not JSON (line ${journal.state.unparsed.join(", ")}): named here, in the file whole` : null;
   return {
@@ -494,7 +592,7 @@ export async function readStoreJobs(sandbox: string, q: { offset?: number; limit
 }
 
 /** One job: its row, its record, every journal line about it, a page of one sealed tree's manifest, and its logs. */
-export async function readStoreJob(sandbox: string, id: string, q: { tree?: string; offset?: number; limit?: number } = {}): Promise<StoreJobDetail | StoreError> {
+export async function readStoreJob(sandbox: string, id: string, q: { tree?: string; offset?: number; limit?: number } = {}, access: AccessRecord | null = null): Promise<StoreJobDetail | StoreError> {
   if (!STORE_JOB_ID.test(id)) return { error: 400, message: "not a job id" };
   const journal = await readJournal(sandbox);
   if ("why" in journal) return { error: 404, message: journal.why === "missing" ? "this run has no job service" : `${STORE_JOURNAL} was not read: ${journal.why}` };
@@ -574,7 +672,9 @@ export async function readStoreJob(sandbox: string, id: string, q: { tree?: stri
     logs.push({ name, path: `${dir}/${name}`, bytes: why ? null : st!.size, sha256: recordedLogs.get(name) ?? null, present: !why, why });
   }
 
-  return { id, row, record, record_error: recordError, lines, trees, manifest, logs };
+  const sensitive = access ? accessOf(access, id) : null;
+  if (sensitive) row.sensitive = { why: sensitive.why, seats_read: sensitive.readers.length, jobs_used: sensitive.dependents.length, badge: sensitive.badge };
+  return { id, row, record, record_error: recordError, lines, trees, manifest, logs, access: sensitive };
 }
 
 /** The path of one of a job's logs, for serving whole; refused when it is not one of the names the service writes, or not a regular file inside the store. */

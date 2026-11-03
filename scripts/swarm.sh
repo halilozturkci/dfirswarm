@@ -9579,6 +9579,24 @@ cmd_summary() {
   node --experimental-strip-types "$ROOT/scripts/summary.ts" "$sandbox"
 }
 
+# The console is about to serve a sensitive job's output or log (docs/adr/0018,
+# decision 3): one `console_view` line on the operator's audit, written by the
+# one writer above, under its lock and its `prev` chain, with the run id in
+# argv and `detail: {job, path}`, which is the shape the access record's
+# reader takes. Not a command of the operator's: the console calls it, and it
+# says by its exit status whether the line landed, so a view is never served
+# unrecorded.
+cmd_console_view() {
+  local id="${1:-}" job="${2:-}" rel="${3:-}" since file
+  [[ "$#" -eq 3 && "$id" =~ ^[A-Za-z0-9._-]{1,128}$ && "$job" =~ ^[a-z0-9-]{1,64}$ && -n "$rel" && "$rel" != *$'\n'* && ${#rel} -le 1024 ]] || { echo "console-view needs <id> <job> <path>" >&2; exit 2; }
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  OPERATOR_AUDIT_DETAIL="$(jq -cn --arg job "$job" --arg path "$rel" '{job: $job, path: $path}')" operator_audit console_view "$id"
+  file="$RUNS_DIR/operator-audit.jsonl"
+  [[ -f "$file" && ! -L "$file" ]] && tail -n 200 "$file" | jq -e --arg id "$id" --arg job "$job" --arg path "$rel" --arg since "$since" \
+    'select(.command == "console_view" and .argv[0] == $id and .detail.job == $job and .detail.path == $path and .at >= $since)' >/dev/null 2>&1 \
+    || { echo "the view of $job could not be written to runs/operator-audit.jsonl" >&2; exit 1; }
+}
+
 # Who reached a sensitive output (docs/adr/0018): the access record's reader
 # (scripts/sensitive-access.ts) called with this run's sandbox, runs directory
 # and id, and nothing else. It reads the run's chains and writes nothing.
@@ -12362,6 +12380,7 @@ main() {
     reap) cmd_reap "$@" ;;
     summary) cmd_summary "$@" ;;
     access) cmd_access "$@" ;;
+    console-view) cmd_console_view "$@" ;;
     context) cmd_context "$@" ;;
     metrics) cmd_metrics "$@" ;;
     replay) cmd_replay "$@" ;;
