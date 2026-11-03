@@ -34,6 +34,8 @@ export type SwarmRow = {
   metered: boolean;
   /** Why a team is unmetered: `local` (served from this machine or network) or `subscription` (an OAuth login; Pi's dollars are an estimate); absent in a run from before it was recorded. */
   unmetered_why?: "local" | "subscription" | null;
+  /** A run stop found with nothing alive: it ended without a stop, cause unknown. */
+  ended?: { by: "unknown"; last_trace_at: string | null } | null;
   cap_tokens: number;
   /** guarded · hosts · open · local for a host run; vm (each VM denies by default) · vm-open for a microVM run. */
   net: string;

@@ -71,3 +71,10 @@ budget and run records. A subscription team is shown as "subscription · not
 billed per token", with Pi's dollars marked as an estimate; a local team keeps
 "no metered cost · local models"; a run whose record does not say why shows
 "unmetered (reason not recorded)", never "free".
+
+`stop` of a run found with nothing alive records what is known and no more:
+the registry state is `ended` with `ended_by: "unknown"` and the time of the
+trace's last line, and the trace holds one `run_ended` line, instead of a plain
+`stopped` that said someone stopped it. A second stop keeps the record; a run
+with anything alive still gets `stopped`. The console shows the run as over and
+says on its agents tab that it ended without a stop, cause unknown.

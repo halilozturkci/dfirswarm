@@ -719,8 +719,14 @@ export function AgentsPanel({
 
   if (!view.agents.length) return <EmptyState icon={<Users />} title="No agents in team.json" hint="The spawner writes team.json at kickoff; an empty team means the sandbox was never prepared." />;
 
+  const ended = view.summary.ended;
   return (
     <div className="space-y-3">
+      {ended ? (
+        <div className="card rounded-[10px] p-3 text-[12.5px] text-ink-2" role="status">
+          This run ended without a stop, and the cause is unknown: stop found nothing of it alive{ended.last_trace_at ? `; its last trace line is from ${ended.last_trace_at}` : ""}. The seats below are as that last line left them.
+        </div>
+      ) : null}
       {recent.length ? (
         <div className="card rounded-[10px] p-3">
         <div className="mb-1.5 flex items-baseline justify-between gap-2">

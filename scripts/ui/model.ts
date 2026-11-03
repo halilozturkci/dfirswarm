@@ -87,6 +87,9 @@ export type RegistryRun = {
   write_guard_measured?: string;
   metered?: boolean;
   unmetered_why?: string | null;
+  /** `ended` runs: who ended it (always "unknown") and the time of the trace's last line, as stop recorded them. */
+  ended_by?: string | null;
+  last_trace_at?: string | null;
   cap_tokens?: number | null;
   local_models?: string[];
   workspace_id?: string;
@@ -156,6 +159,8 @@ export type SwarmRow = SwarmSummary & {
   metered: boolean;
   /** Why a team is unmetered (local or subscription), as the kickoff recorded it; null when it did not. */
   unmetered_why: "local" | "subscription" | null;
+  /** A run stop found with nothing alive: it ended without a stop, and nobody knows why (registry state `ended`). */
+  ended: { by: "unknown"; last_trace_at: string | null } | null;
   cap_tokens: number;
   net: string;
   agents_total: number;
@@ -798,7 +803,9 @@ export function derivePhase(state: string, done: boolean): SwarmPhase {
   if (state === "running") return "running";
   // `finished`: the hub put a VM run away after its sentinel; without the
   // sentinel it is a run that ended, which the console calls stopped.
-  if (state === "stopped" || state === "finished") return "stopped";
+  // `ended`: stop found the run with nothing alive; no one stopped it. It is over
+  // like a stopped run (the row carries `ended` to say how).
+  if (state === "stopped" || state === "finished" || state === "ended") return "stopped";
   if (state === "prepared") return "prepared";
   // A kickoff that did not get its agents running: said, not "unknown".
   if (state === "failed") return "failed";
@@ -948,6 +955,7 @@ async function enrichSummary(
     wall_clock_minutes: wall,
     metered,
     unmetered_why: !metered && (unmeteredWhy === "local" || unmeteredWhy === "subscription") ? unmeteredWhy : null,
+    ended: summary.state === "ended" ? { by: "unknown", last_trace_at: typeof run?.last_trace_at === "string" ? run.last_trace_at : null } : null,
     cap_tokens: capTokens,
     net,
     agents_total: ids.length || summary.n,
@@ -999,7 +1007,7 @@ export async function liveHubDirs(runsDir: string): Promise<Array<{ id: string; 
     if (!isRecord(run) || typeof run.id !== "string" || typeof run.sandbox !== "string") continue;
     const iso = isRecord(run.isolation) ? run.isolation : null;
     if (iso?.mode !== "microvm") continue;
-    if (["stopped", "done", "purged", "failed", "finish_failed", "stop_incomplete"].includes(String(run.state ?? ""))) continue;
+    if (["stopped", "ended", "done", "purged", "failed", "finish_failed", "stop_incomplete"].includes(String(run.state ?? ""))) continue;
     const dir = await ownHubDir(run.sandbox);
     if (dir) out.push({ id: run.id, dir });
   }

@@ -9394,7 +9394,7 @@ last_trace_ts() { # <sandbox>
 
 cmd_stop() {
   local stop_args=("$@")
-  local id="${1:-}" no_custody=0 custody_timeout="" after_hub=0 vms_left=0
+  local id="${1:-}" no_custody=0 custody_timeout="" after_hub=0 vms_left=0 found_dead=0 dead_last_trace=""
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -9445,9 +9445,19 @@ cmd_stop() {
   fi
   # A run recorded as running whose every process is gone did not end by
   # itself: the host restarted, or the run crashed. Said, with the last line
-  # the trace has, before this stop records it as stopped.
-  if [[ -n "$sandbox" && "$(jq -r '.state // empty' <<<"$rec")" == "running" ]] && ! run_has_live_process "$sandbox" "$rec"; then
-    echo "NOTE:         nothing of run $id was alive (no hub, collector, watchdog or VM): the host restarted or the run crashed$(last_trace_ts "$sandbox" | sed 's/^/; its last trace line is from /')."
+  # the trace has, and recorded as what it is: ended, by nobody known (the
+  # registry's `ended` with `ended_by: "unknown"` and the last trace time),
+  # not as a stop that someone made. A run already recorded as ended keeps
+  # what was recorded then.
+  if [[ -n "$sandbox" ]] && [[ "$(jq -r '.state // empty' <<<"$rec")" =~ ^(running|ended)$ ]] && ! run_has_live_process "$sandbox" "$rec"; then
+    found_dead=1
+    if [[ "$(jq -r '.state // empty' <<<"$rec")" == ended ]]; then
+      dead_last_trace="$(jq -r '.last_trace_at // empty' <<<"$rec")"
+      echo "NOTE:         run $id is recorded as ended without a stop (cause unknown)$(printf '%s' "$dead_last_trace" | sed 's/^/; its last trace line is from /') and still has nothing alive."
+    else
+      dead_last_trace="$(last_trace_ts "$sandbox")"
+      echo "NOTE:         nothing of run $id was alive (no hub, collector, watchdog or VM): the host restarted or the run crashed$(printf '%s' "$dead_last_trace" | sed 's/^/; its last trace line is from /'). It is recorded as ended, cause unknown."
+    fi
   fi
   # The VMs before the daemons: an agent's last lines reach the trace through
   # the hub and the collector, so those stay up until the VMs are down.
@@ -9481,8 +9491,12 @@ cmd_stop() {
     node --experimental-strip-types --no-warnings "$ROOT/scripts/stop-policy.ts" stopped "$sandbox" --by operator --why "swarm.sh stop" >/dev/null 2>&1 || true
   fi
   local final_state="stopped"
+  [[ "$found_dead" -eq 1 ]] && final_state="ended"
   [[ -n "$sandbox" && -f "$sandbox/done/SWARM_DONE" ]] && final_state="done"
   registry_update_state "$id" "$final_state"
+  if [[ "$final_state" == ended ]]; then
+    registry_merge "$id" "$(jq -cn --arg lt "$dead_last_trace" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson prior "$(jq -c '{at: (.ended_at // null)}' <<<"$rec")"       '{ended_by: "unknown", last_trace_at: (if $lt == "" then null else $lt end), ended_at: ($prior.at // $at)}')" || true
+  fi
   # What the host can say about the run once nothing is running any more:
   # the evidence re-hashed, the sessions sealed, every kept output checked.
   # Before the evidence image is detached (custody of an empty mount point
@@ -9538,8 +9552,17 @@ cmd_stop() {
     registry_update_state "$id" "done"
     echo "Stopped $id (the sentinel was present; recorded as done)"
     notify_run "$sandbox" finished '{"state":"done","by":"stop"}'
+  elif [[ "$final_state" == ended ]]; then
+    registry_update_state "$id" "ended"
+    echo "Ended $id: it was found with nothing alive, so it ended without a stop and the cause is unknown (recorded as ended$([[ -n "$dead_last_trace" ]] && printf ', last trace %s' "$dead_last_trace"))"
+    # The same words in the trace, once: a second stop finds the line there.
+    if ! grep -qs '"tool":"run_ended"' "$sandbox/traces/events.jsonl" "$sandbox/traces/system-spill.jsonl"; then
+      system_trace "$sandbox" run_ended "$(jq -cn --arg lt "$dead_last_trace" '{via: "swarm.sh stop", by: "unknown", reason: "found with nothing alive; the cause is not known", last_trace_at: (if $lt == "" then null else $lt end)}')"
+    fi
+    [[ "$after_hub" -eq 1 ]] || notify_run "$sandbox" finished '{"state":"ended","by":"unknown"}'
   else
     registry_update_state "$id" "stopped"
+    [[ "$(jq -r '.state // empty' <<<"$rec")" != ended ]] || registry_merge "$id" '{"ended_by":null,"last_trace_at":null,"ended_at":null}' || true
     echo "Stopped $id"
     [[ "$after_hub" -eq 1 ]] || notify_run "$sandbox" finished '{"state":"stopped","by":"stop"}'
   fi

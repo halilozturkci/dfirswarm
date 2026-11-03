@@ -101,7 +101,7 @@ set -e
 out="$(bash "$ROOT/scripts/swarm.sh" stop "$id" --no-custody 2>&1)" || fail "stop failed: $out"
 [[ "$(jq -r '.outcome' "$sb/done/STOPPED")" == stopped ]] || fail "the operator's stop did not record stopped"
 [[ "$(node --experimental-strip-types --no-warnings "$ROOT/scripts/stop-policy.ts" outcome "$sb" | jq -r '.outcome')" == stopped ]] || fail "the outcome is not stopped"
-[[ "$(jq -r --arg id "$id" '.runs[] | select(.id == $id) | .state' "$TMP/runs/registry.json")" == stopped ]] || fail "the registry does not say stopped"
+[[ "$(jq -r --arg id "$id" '.runs[] | select(.id == $id) | .state' "$TMP/runs/registry.json")" == ended ]] || fail "the registry does not say ended (a run with nothing alive is ended, cause unknown, not stopped)"
 pass "extend: refused while still over, the pause lifted with room, on the record and the board; stop: stopped, never completed"
 
 echo "# the watchdog"

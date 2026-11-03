@@ -190,6 +190,6 @@ out="$(bash "$ROOT/scripts/swarm.sh" stop "$I2" --no-custody 2>&1)" || fail "sto
 set +e
 out="$(bash "$ROOT/scripts/swarm.sh" unpause "$I2" 2>&1)"; rc=$?
 set -e
-[[ $rc -eq 2 ]] && grep -q "is stopped; only a going run is paused. A run that ended is continued with swarm.sh resume" <<<"$out" || fail "an unpause of a stopped run was not refused (rc $rc): $out"
+[[ $rc -eq 2 ]] && grep -q "is ended; only a going run is paused. A run that ended is continued with swarm.sh resume" <<<"$out" || fail "an unpause of a stopped run was not refused (rc $rc): $out"
 jq -e '.paused.reason == "provider_limit"' "$S2/budget.json" >/dev/null || fail "a refused unpause of a stopped run changed its pause"
 pass "pause refuses a run that is not going, and unpause a stopped one, pointing to resume"

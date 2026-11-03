@@ -92,7 +92,8 @@ printf 'cat >> %q\n' "$TMP/events.jsonl" > "$RUNS/notify/snt1.cmd"
 chmod 600 "$RUNS/notify/snt1.cmd"
 out="$(bash "$ROOT/scripts/swarm.sh" stop snt1 --no-custody 2>&1)" || fail "stop failed: $out"
 wait_for "$TMP/events.jsonl" 10 || fail "stop did not notify"
-jq -e 'select(.event == "finished" and .detail.state == "stopped")' "$TMP/events.jsonl" >/dev/null || fail "stop's notification is not finished/stopped: $(cat "$TMP/events.jsonl")"
+# The run here has nothing alive, so stop records it as ended (cause unknown), and says so.
+jq -e 'select(.event == "finished" and .detail.state == "ended" and .detail.by == "unknown")' "$TMP/events.jsonl" >/dev/null || fail "stop's notification is not finished/ended: $(cat "$TMP/events.jsonl")"
 # A VM left up: stop_incomplete, and the command hears it.
 : > "$TMP/events.jsonl"
 cat > "$TMP/msb" <<'EOF'
