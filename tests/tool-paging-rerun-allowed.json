@@ -63,6 +63,7 @@
     { "tool": "windows-forensics/regkv", "item": "PKG-WIN-02", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "windows-forensics/shellbags", "item": "PKG-WIN-02", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "windows-forensics/usn_journal", "item": "PKG-WIN-02", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
+    { "tool": "windows-forensics/vss_materialise", "item": "PKG-WIN-20", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" },
     { "tool": "windows-forensics/yara_scan", "item": "PKG-WIN-02", "why": "no input builder in the driver yet, so no uniform rerun check of this tool; a builder is added to tests/tool-paging-rerun.test.ts" }
   ],
   "failing": []

@@ -1,7 +1,7 @@
 {
   "id": "windows-forensics",
   "name": "Windows Forensics Pack",
-  "version": "1.7.21",
+  "version": "1.7.22",
   "description": "Artefact-by-artefact method and tooling for a Windows examination: the file system and its journals, the hives, execution evidence, the event logs and the records inside a cleared one, accounts and remote access, persistence, PowerShell, browsers, shadow copies, memory, and the traces anti-forensics leaves.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -42,7 +42,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "617dec43b30845a8c7d062db3f6d892400d96796b91f363586beacfbdffd1721",
-      "README.md": "4b742e906cb20d299ed360a73978d6b87d9f68344218f6408bef41c4df063e8f",
+      "README.md": "8cfcf60ef22ab0f8c90fb4d043f745a48b20d8512ce085d9dfff074bae220589",
       "goals/data-left-the-building.md": "34c94782b1a636d54eac5d6d2397a482059374909b7f93ee96433f9c3668b68e",
       "goals/hidden-data.md": "14ee963bede22cf69b96033e483fad57ead72abd20e04ae7ccc1153de265fb78",
       "goals/intrusion-triage.md": "837d339c1f027f540d1f1fd1444a4d454c8736299767d30d8a45c450d86f073d",
@@ -80,8 +80,8 @@
       "skills/filesystem/journals.md": "f9b7b229c2662b42570041a7b45a68dae952f7b522edcef5a4f92d512f0623fd",
       "skills/filesystem/mft.md": "37c8196894d5abb610baa3fa477d9efaabfdd085d6a3d873745bfee24d5626a1",
       "skills/filesystem/recycle-bin.md": "031421bb35264b2dd680995abe96da6d1d9d80d7f7f7e34ba98fbc9eaafeb436",
-      "skills/filesystem/shadowcopies-open.md": "04433b8704d252c8b8315c887a462c9948f317b1503972829f742112407211ee",
-      "skills/filesystem/shadowcopies.md": "f64d832967e2ee23461e17efd91e46d88cac0743d7bff62f6d1ea1ccb29229b5",
+      "skills/filesystem/shadowcopies-open.md": "6d5f551294e2382e5f6c5177bfeffc38c069bc382e6a9e14c8250b5e4ed7c3cd",
+      "skills/filesystem/shadowcopies.md": "fc3773a4b67d925b31669b96c44641942a74c2ec2a67df438254f881da5c9972",
       "skills/filesystem/timestamps.md": "d747e28bc445568e2a3fd800cf472ec9ead54d44714738695cdd5ef5c5793bc4",
       "skills/logs/carving.md": "025ed97aeda06fd18c322ebd5a447fdc73ae1f3508873bc9861082c058cd82f4",
       "skills/logs/coverage.md": "dd6d514f30ee9a57aa8bced90924c09b3258e05692f336764b8a12240e7f9cc4",
@@ -146,6 +146,8 @@
       "tools/usn_journal/run.py": "b837c2166856323964db06a7766b91983ba0aa16e5cc2599fe116ab0a9fea44e",
       "tools/utf16_urls/manifest.json": "2b5efa016469113290a63dcac0c4f4db9a52d0093b65c79a4f7fed6ad6e4d8ee",
       "tools/utf16_urls/run.py": "ea024e04d1988dfa70be7a8a551b2e331de35c30dbbf1c009d2ca247dcaa9579",
+      "tools/vss_materialise/manifest.json": "bb5783f78d56bdb3a3bfdd318a2b8562b4b7e2f88f95929cfe48e624e6033945",
+      "tools/vss_materialise/run.py": "1b913c325c7216da018d2ebd50d59bd2fa64d17c7ec4f837834fa3cce8083d29",
       "tools/vss_stores/manifest.json": "c8ebb89687d0edc1b31cf5ffb6bad1f3900202ebf92863f64c8ae424f3f5cfec",
       "tools/vss_stores/run.py": "10fc1ba7e2e05449c48850ba32fad0aeb5528b4c7d81fec74ccc5b1923d82e6c",
       "tools/yara_scan/manifest.json": "0be21f1ee9e35898ea9e2253a3974d46b46a86a3677fa981ae51a5dc42738a84",
@@ -174,6 +176,7 @@
     "sigma_hunt",
     "usn_journal",
     "utf16_urls",
+    "vss_materialise",
     "vss_stores",
     "yara_scan"
   ],
