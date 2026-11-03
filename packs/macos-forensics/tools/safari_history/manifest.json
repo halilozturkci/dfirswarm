@@ -1,0 +1,68 @@
+{
+  "name": "safari_history",
+  "description": "Read Safari's History.db (~/Library/Safari/History.db: history_visits joined to history_items) through a private copy and return one entry per visit. The database and its -wal, -shm and -journal are copied into a private directory (the evidence directory is never written to), SQLite applies the write-ahead log there (Safari's newest visits are often only in the -wal), and the copy is read through an authorizer that allows only reading; the copy is removed. A sidecar that is a link, a FIFO or any other thing than a regular file is named and not read, never followed, and the answer is partial. Every column of the visit and of its page is shown raw under `visit` and `item` (the columns are the file's own, read with PRAGMA table_info). visit_time_raw is the REAL number Safari stored: seconds since 2001-01-01 00:00:00 UTC (Apple absolute; read as Unix time it lands in 1970); visit_time is its UTC reading with the fraction. The time is the time Safari recorded for the visit; the tables do not say what the visit was, so redirect_source, redirect_destination, synthesized and origin stay raw. A visit whose page row does not exist has item null and is counted. SENSITIVE: a URL can carry a token, a session id or a search term. The URL and the title pass the shared boundary: the scheme, host and path are shown when plain, a query or fragment value only when it is a number, a truth value or a short plain word, every other value as <withheld N characters: query value>, user-info is withheld; a secret of another shape (a plain word, a pronounceable passphrase) is printed, so read a History.db whose URLs matter as a job with secret_output: true. write_values: true (refused outside a job and in a job the harness does not run as secret output: the manifest declares secret_output for it, and the tool checks SECRET_OUTPUT=1 before it opens anything) creates $OUT/safari_history-values.jsonl, mode 0600, before it reads anything (a file or link already there is refused) and writes there the whole URL of each visit (row: id, field, label, length, visit_id, value), the originals of everything the boundary withheld, and streams each oversize text or binary cell, whole, to a file under $OUT/tool-output/safari-values/ and names it; the answer never carries a value. The tool has no filter over a withheld value (since and until select by the visit time, which is not withheld). The whole result is written as each entry is read (out_file, or the paging file the answer names), flushed per row, so entry_count equals the lines in it. It has a clock of its own (max_seconds, default 80, at most 90): the read stops there with status partial and resume.after_visit_id; SIGTERM, SIGINT and SIGHUP end it the same way (exit 128 plus the signal, the staged copy removed); a signal in the first tens of milliseconds, before the module has run, ends it with no JSON (stated, not closed). A file that is not SQLite, or has no history_visits table, is a failed answer, never an empty result; a private copy that could not be written (disk full, a file-size limit) is a failed answer that says it is a fact about the staging area, not about the database. Every answer carries status and status_basis; status is complete only when every selected visit was read and nothing is listed under problems.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A Safari History.db; any -wal, -shm or -journal beside it is used (in a private copy), so copy them out together"
+    },
+    "since": {
+      "type": "string",
+      "description": "Only visits at or after this ISO 8601 UTC time (needs a visit_time column; otherwise it is named in problems)"
+    },
+    "until": {
+      "type": "string",
+      "description": "Only visits at or before this ISO 8601 UTC time (same)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Entries shown inline (default 500, and at most max_inline_bytes of them). All are counted; the whole result is in out_file, or, when that is omitted, in a file under work/<your id>/tool-output/ (in a job, $OUT/tool-output/) that the answer names"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "JSONL path for every entry (each row judged by the boundary), written as each is read, mode 0600. The tool does not overwrite: an existing file or link at that name is refused"
+    },
+    "after_visit_id": {
+      "type": "integer",
+      "description": "Go on after the visit with this rowid (resume.after_visit_id of a stopped run); the visits are read in rowid order"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the whole URL of each visit and the originals of what the boundary withheld to $OUT/safari_history-values.jsonl (mode 0600, created first, never replaced), and each oversize cell whole to $OUT/tool-output/safari-values/: only in a job the harness runs as secret output (the manifest declares it); refused as JSON, with nothing written, anywhere else (default false)"
+    },
+    "max_export_bytes": {
+      "type": "integer",
+      "description": "write_values writes at most this many bytes of oversize cells in all (default 1073741824); a cell that would pass it is not written and the answer says so"
+    },
+    "max_stage_bytes": {
+      "type": "integer",
+      "description": "The database and its sidecars are copied only up to this many bytes in all (default 2147483648); over it nothing is read and the answer says so"
+    },
+    "max_inline_bytes": {
+      "type": "integer",
+      "description": "The inline entries are cut at this many bytes as well as at `limit` entries (default 1048576); the whole is in out_file or the file the answer names"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The tool's own clock (default 80, at most 90): read at every row and while the database is copied; when it passes the read stops, status is partial and resume says where to go on"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/Users/alice/Library/Safari/History.db\", \"out_file\": \"work/<your id>/safari.jsonl\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T12:00:00.000Z",
+  "version": 1,
+  "sha256": "1889d623088a84b26af1e7325c6867603d491f032c488e1c75405853da381ee6",
+  "use": {
+    "names": [
+      "History.db"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  }
+}
