@@ -17,7 +17,11 @@ cleanup phase, and the mount may then remain). Three modes:
     list     names, kinds and sizes of a directory (or one file): metadata, no content
     text     one file that is UTF-8 text, written to a file under $OUT/mem_fs
     export   the named virtual files, copied byte for byte to $OUT/mem_fs, with their
-             sizes and sha256 in a sealed manifest beside them
+             sizes and sha256 in a sealed manifest beside them, and for each file a ranges
+             file under $OUT/mem_fs/%ranges: the ranges read, the ranges the mount did not give,
+             the ranges not copied (a stop or a bound) and the zero-filled pages (whole aligned
+             4096-byte pages of zeros: MemProcFS fills a page it cannot read with zeros, and real
+             zeros read the same, so they are not proof that data is missing)
 
 THE SECRET-SAFE OUTPUT PATTERN (docs/packs.md, "Secrets and sensitive output"),
 copied from recovery_key_scan, the reference implementation, with one change: the
@@ -25,8 +29,8 @@ value here is a file. A memory file can hold anything the machine held (a comman
 line, an environment block, a key, a page of a process), so:
 
   1. The answer is a locator: virtual path, output file, size, status. It carries
-     no content, no characters of it and no digest of it. A digest is in the
-     manifest file only. A name the engine lists, and a line it prints, come from the
+     no content, no characters of it and no digest of it. A digest of content is in the
+     manifest file only (the digest the answer names is that of a ranges file, which holds offsets and lengths, never content). A name the engine lists, and a line it prints, come from the
      capture too: they are judged before they are shown (the SHOWN block), and the
      originals of what was withheld go to a names file only on write_values.
   2. Content is written only when the caller asks (`write_values: true`), only when
@@ -121,6 +125,10 @@ MAX_PAGE = 5000
 CLEANUP_WAIT = 20
 OUT_DIR = "mem_fs"
 MANIFEST = "export-manifest.jsonl"
+RANGES_DIR = "%ranges"     # output_name never writes a bare % before a non-hex pair, so no export can be named inside this directory
+ZERO_PAGE = 4096
+ZERO_MEANING = ("zero_filled lists whole aligned 4096-byte pages in which every copied byte is 0. MemProcFS fills a page it cannot read with zeros, "
+                "and a page of real zeros reads the same, so a zero-filled range is not proof that data is missing and not proof that it is present.")
 ENGINE_LINES = 20
 LOG_CAP = 1 << 20          # bytes of each engine stream kept in its log file; the rest is counted and discarded
 ENGINE_LINE_CHARS = 200
@@ -1048,6 +1056,165 @@ def make_private_dirs(path):
             pass
 
 
+class ZeroPages:
+    """Finds the zero-filled pages of a byte stream fed in order: whole, aligned ZERO_PAGE-byte pages in which every byte is 0, joined into
+    runs. Memory is one run and one partial page, whatever the stream; a run is handed to `emit(offset, length)` when it ends. A last page
+    shorter than ZERO_PAGE is not a whole page and is not judged (`tail` says how many bytes it holds)."""
+
+    def __init__(self, emit):
+        self.emit = emit
+        self.start = None
+        self.length = 0
+        self.part_n = 0
+        self.part_zero = True
+        self.part_at = 0
+
+    def _page(self, offset, zero):
+        if zero:
+            if self.start is not None and self.start + self.length == offset:
+                self.length += ZERO_PAGE
+            else:
+                self._close()
+                self.start, self.length = offset, ZERO_PAGE
+        else:
+            self._close()
+
+    def _close(self):
+        if self.start is not None:
+            start, length, self.start, self.length = self.start, self.length, None, 0
+            self.emit(start, length)
+
+    def feed(self, offset, data):
+        """`data` begins at `offset`, the byte after the last one fed."""
+        n, i = len(data), 0
+        if self.part_n:
+            take = min(ZERO_PAGE - self.part_n, n)
+            if self.part_zero and data.count(0, 0, take) != take:
+                self.part_zero = False
+            self.part_n += take
+            i = take
+            if self.part_n == ZERO_PAGE:
+                self._page(self.part_at, self.part_zero)
+                self.part_n = 0
+        view = memoryview(data)
+        while n - i >= ZERO_PAGE:
+            # Pages before the first zero byte are not zero pages: they are jumped, not looked at one by one.
+            first = data.find(b"\0", i)
+            if first < 0:
+                self._close()
+                i += ((n - i) // ZERO_PAGE) * ZERO_PAGE
+                break
+            skip = (first - i) // ZERO_PAGE
+            if skip:
+                self._close()
+                i += skip * ZERO_PAGE
+                continue
+            self._page(offset + i, view[i:i + ZERO_PAGE] == ZERO_BYTES)
+            i += ZERO_PAGE
+        view.release()
+        if n - i:
+            self.part_at, self.part_n = offset + i, n - i
+            self.part_zero = data.count(0, i) == n - i
+
+    def finish(self):
+        """Ends the last run and returns the number of bytes in the last, partial page (not judged)."""
+        self._close()
+        return self.part_n
+
+
+ZERO_BYTES = bytes(ZERO_PAGE)
+
+
+class RangesFile:
+    """The ranges sidecar of one export: JSON Lines under $OUT/mem_fs/%ranges/<output name>.json, one row per range as it is found (so a hostile
+    file with many zero holes costs no memory), then the rows of the read and unavailable ranges and a last row of kind `summary`. A file that
+    does not end in that row was cut (a stop, a full disk). Its size and sha256 are of the bytes the system accepted. A refused write is the
+    file system's trouble: it is named as a problem of the sidecar, never as a fact about the memory."""
+
+    def __init__(self, secret, rel, virtual, reported):
+        self.rel = "%s/%s.json" % (RANGES_DIR, rel)
+        self.fd, self.problem = None, None
+        self.digest, self.size, self.buf, self.pending = hashlib.sha256(), 0, [], 0
+        self.counts = {"read": 0, "unavailable": 0, "not_copied": 0, "zero_filled": 0}
+        self.zero_bytes = 0
+        try:
+            self.fd = secret.open_value(self.rel, count=False)
+        except OSError as exc:
+            self.problem = "the ranges file could not be created: %s" % _describe(exc)
+            return
+        self._put({"kind": "ranges", "version": 1, "virtual_path": virtual, "output": rel, "mount_reported_size": reported,
+                   "page_size": ZERO_PAGE, "meaning": ZERO_MEANING})
+
+    def _put(self, row):
+        if self.fd is None:
+            return
+        line = (json.dumps(row) + "\n").encode("ascii")
+        self.buf.append(line)
+        self.pending += len(line)
+        if self.pending >= 1 << 16:
+            self._flush()
+
+    def _flush(self):
+        data, self.buf, self.pending = b"".join(self.buf), [], 0
+        if self.fd is None or not data:
+            return
+        view = memoryview(data)
+        try:
+            while len(view):
+                taken = os.write(self.fd, view)
+                if not taken:
+                    raise OSError(errno.EIO, "a write took no bytes")
+                self.digest.update(view[:taken])
+                self.size += taken
+                view = view[taken:]
+        except OSError as exc:
+            self.problem = "the ranges file could not be written whole: %s; it is cut" % _describe(exc)
+            self._close_fd()
+        finally:
+            view.release()
+
+    def _close_fd(self):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+
+    def add(self, kind, offset, length, why=None):
+        self.counts[kind] += 1
+        if kind == "zero_filled":
+            self.zero_bytes += length
+        row = {"kind": kind, "offset": offset, "length": length}
+        if why:
+            row["why"] = why
+        self._put(row)
+
+    def finish(self, summary):
+        """Writes the summary row and closes; the info the answer carries."""
+        self._put(dict(summary, kind="summary", **{k + "_ranges": v for k, v in self.counts.items()}, zero_filled_bytes=self.zero_bytes))
+        self._flush()
+        if self.fd is not None:
+            try:
+                os.fsync(self.fd)
+            except OSError as exc:
+                self.problem = "the ranges file could not be flushed to disk: %s" % _describe(exc)
+            self._close_fd()
+        return self.info()
+
+    def info(self):
+        wrote = self.size > 0
+        return {"bytes": self.size if wrote else None, "sha256": self.digest.hexdigest() if wrote else None,
+                "read_ranges": self.counts["read"], "unavailable_ranges": self.counts["unavailable"], "not_copied_ranges": self.counts["not_copied"],
+                "zero_filled_ranges": self.counts["zero_filled"], "zero_filled_bytes": self.zero_bytes,
+                "file_complete": self.problem is None, "problem": self.problem}
+
+
+def _describe(exc):
+    code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
+    return "%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc))
+
+
 class SecretValues:
     """Where content read from memory goes when, and only when, the caller asked for it.
 
@@ -1086,8 +1253,9 @@ class SecretValues:
     def shown_path(self, rel: str) -> str:
         return "%s/%s" % (self.shown, rel)
 
-    def open_value(self, rel: str) -> int:
-        """A file descriptor for $OUT/mem_fs/<rel>, created exclusively, never through a link, mode 0600. The file is counted the moment it exists."""
+    def open_value(self, rel: str, count: bool = True) -> int:
+        """A file descriptor for $OUT/mem_fs/<rel>, created exclusively, never through a link, mode 0600. The file is counted the moment it exists
+        (a ranges file, which holds no value, is not: count=False)."""
         assert self.root is not None
         target = self.root / rel
         make_private_dirs(target.parent)
@@ -1096,7 +1264,8 @@ class SecretValues:
             raise OSError(errno.EPERM, "the output directory is not inside $OUT/%s" % OUT_DIR)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(str(target), flags, 0o600)
-        self.written += 1
+        if count:
+            self.written += 1
         return fd
 
     def open_unique(self, rel: str):
@@ -1150,7 +1319,8 @@ class SecretValues:
             "manifest": ("%s/%s" % (self.shown, MANIFEST)) if present and self.values_root is not None and (self.values_root / MANIFEST).exists() else None,
             "contains_secret_values": present,
             "earlier_calls_in_this_job_wrote_values": self.earlier,
-            "format": "files byte for byte, mode 0600; the manifest is JSON Lines, appended to by every call of the job: item_id, virtual_path, output, bytes, sha256, status" if present else None,
+            "format": ("files byte for byte, mode 0600; the manifest is JSON Lines, appended to by every call of the job: item_id, virtual_path, output, bytes, sha256, status, "
+                       "ranges_file (+ its bytes and sha256); each export's ranges file is under %s/" % RANGES_DIR) if present else None,
         }
         if present and not self.enabled:
             answer["note"] = ("this call asked for no values and wrote none, but the job's output holds values written by earlier calls of this job: "
@@ -1757,6 +1927,8 @@ def main():
     counts = {"requested": len(targets), "exported": 0, "failed": 0, "refused": 0, "not_exported": 0, "partial": 0,
               "not_attempted": 0}
     names_info = {"withheld": 0, "file": None, "errors": 0}
+    ranges_total = {"files": 0, "problems": 0, "bytes": 0, "read_ranges": 0, "unavailable_ranges": 0, "not_copied_ranges": 0,
+                    "zero_filled_ranges": 0, "zero_filled_bytes": 0}
 
     def describe(exc):
         code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
@@ -1812,30 +1984,63 @@ def main():
             return "failed"
         # `size` and the digest count the bytes the operating system accepted (an unbuffered writer, short writes followed), so a disk that
         # fills leaves a count, a digest and a file that agree; what is on disk is read back at the end and said.
-        digest, size, partial, error = hashlib.sha256(), 0, None, None
+        # The ranges of the file are found as it is copied: what was read, what the mount could not give (a read error, a file that ends before
+        # the size the mount reported), what was not copied (a stop, a bound, a full disk) and the zero-filled pages.
+        reported = st.st_size
+        ranges = RangesFile(secret, rel, virtual, reported)
+        zeros = ZeroPages(lambda start, length: ranges.add("zero_filled", start, length))
+        digest, size, partial, error, error_side, short = hashlib.sha256(), 0, None, None, None, None
         try:
-            with os.fdopen(fd, "wb", buffering=0) as out, os.fdopen(source_fd, "rb") as src:
+            with os.fdopen(fd, "wb", buffering=0) as out, os.fdopen(source_fd, "rb", buffering=0) as src:
                 while True:
                     if state["abandon"]:
                         partial = "the call was stopped or its deadline was reached"
                         break
-                    chunk = src.read(CHUNK)
+                    try:
+                        chunk = src.read(CHUNK)
+                    except OSError as exc:
+                        error, error_side = exc, "read"
+                        break
                     if not chunk:
                         break
                     if size + len(chunk) > max_bytes:
                         partial = "max_bytes_per_path (%d) was reached while reading" % max_bytes
                         break
                     view = memoryview(chunk)
-                    while len(view):
-                        taken = out.write(view)
-                        if not taken:
-                            raise OSError(errno.EIO, "a write took no bytes")
-                        digest.update(view[:taken])
-                        size += taken
-                        view = view[taken:]
-                os.fsync(out.fileno())
+                    try:
+                        while len(view):
+                            taken = out.write(view)
+                            if not taken:
+                                raise OSError(errno.EIO, "a write took no bytes")
+                            digest.update(view[:taken])
+                            zeros.feed(size, chunk if taken == len(chunk) else bytes(view[:taken]))
+                            size += taken
+                            view = view[taken:]
+                    except OSError as exc:
+                        error, error_side = exc, "write"
+                        break
+                if error is None:
+                    os.fsync(out.fileno())
         except OSError as exc:
-            error = exc
+            if error is None:
+                error, error_side = exc, "write"
+        tail = zeros.finish()
+        if error is None and partial is None and size < reported:
+            short = "the file ended at %d bytes and the mount reports %d" % (size, reported)
+        gap = max(reported - size, 0)
+        if error is not None and error_side == "read":
+            ranges.add("unavailable", size, gap, judged("the read failed at offset %d: %s" % (size, describe(error))))
+        elif error is not None:
+            ranges.add("not_copied", size, gap, judged("the output could not be written: %s" % describe(error)))
+        elif partial:
+            ranges.add("not_copied", size, gap, partial)
+        elif short:
+            ranges.add("unavailable", size, gap, short)
+        if size:
+            ranges.add("read", 0, size)
+        range_info = ranges.finish({"bytes_copied": size, "mount_reported_size": reported, "unjudged_tail_bytes": tail,
+                                    "grew_beyond_reported": max(size - reported, 0)})
+        range_info["file"] = shown(secret.shown_path(ranges.rel), "path")
         try:
             on_disk = os.lstat(secret.root / rel).st_size
         except OSError:
@@ -1851,12 +2056,23 @@ def main():
         elif partial:
             item["status"] = "partial: %s; %s" % (partial, kept)
             category = "partial"
+        elif short:
+            item["status"] = "partial: %s; %s" % (short, kept)
+            category = "partial"
         else:
             item["status"] = "exported"
             category = "exported"
+        if range_info["problem"]:
+            range_info["problem"] = judged(range_info["problem"])
+            ranges_total["problems"] += 1
+        ranges_total["files"] += 1
+        for key in ("bytes", "read_ranges", "unavailable_ranges", "not_copied_ranges", "zero_filled_ranges", "zero_filled_bytes"):
+            ranges_total[key] += range_info[key] or 0
+        item["ranges"] = range_info
         try:
             row = {"item_id": item["item_id"], "virtual_path": virtual, "output": rel, "bytes": size,
-                   "sha256": digest.hexdigest(), "status": str(item["status"])}
+                   "sha256": digest.hexdigest(), "status": str(item["status"]), "ranges_file": ranges.rel,
+                   "ranges_file_bytes": range_info["bytes"], "ranges_file_sha256": range_info["sha256"]}
             if on_disk is not None and on_disk != size:
                 row["bytes_on_disk"] = on_disk
             secret.note(row)
@@ -2162,7 +2378,7 @@ def main():
     kept = {"partial_results": paged["all_results"], "partial_results_format": paged["all_results_format"]} if paged.get("all_results") else {}
     if interrupted is not None:
         interrupted_answer(interrupted, mode=mode, mount=str(mount), logs=logs, phases=timings,
-                           counts=counts if mode == "export" else None, secret_values=secret.summary(), **kept, **items,
+                           counts=counts if mode == "export" else None, ranges=ranges_total if mode == "export" else None, secret_values=secret.summary(), **kept, **items,
                            **({"cleanup_problems": cleanup_notes} if cleanup_notes else {}), **({"clean_up": clean_up_record} if clean_up_record else {}))
         raise SystemExit(128 + interrupted)
 
@@ -2174,6 +2390,7 @@ def main():
              engine_exit_status=proc.returncode, blocked_by=blocked, **(no_fuse_answer(blocked) if blocked and any("fuse" in b for b in blocked) else {}),
              prerequisites=prerequisites(), phases=timings,
              counts=counts if mode == "export" else None,
+             ranges=ranges_total if mode == "export" else None,
              secret_values=secret.summary(),
              **kept,
              **({"cleanup_problems": cleanup_notes} if cleanup_notes else {}), **({"clean_up": clean_up_record} if clean_up_record else {}),
@@ -2215,9 +2432,16 @@ def main():
     else:
         answer["items"] = page.page
         answer["counts"] = counts
-        complete = counts["exported"] == counts["requested"]
+        answer["ranges"] = dict(ranges_total, format="one JSON Lines file per export under the values_dir's %s directory, named in each item's ranges: "
+                                "rows of kind read, unavailable (the mount gave no bytes there), not_copied (stopped or bounded before) and zero_filled, then a summary row; "
+                                "a file with no summary row was cut" % RANGES_DIR, zero_filled_means=ZERO_MEANING)
+        complete = counts["exported"] == counts["requested"] and ranges_total["problems"] == 0
         basis = ("%d of %d requested files were exported whole%s" % (counts["exported"], counts["requested"], "" if complete else
                  "; the others are refused, failed, partial, not exported or not attempted (each item's status says which)"))
+        if ranges_total["problems"]:
+            basis += "; %d ranges file(s) were not written whole (each item's ranges.problem says why), so the ranges of those files are not all on disk" % ranges_total["problems"]
+        if ranges_total["unavailable_ranges"] or ranges_total["not_copied_ranges"]:
+            basis += "; %d unavailable and %d not copied range(s) are named in the ranges files" % (ranges_total["unavailable_ranges"], ranges_total["not_copied_ranges"])
     if paged.get("all_results"):
         answer["complete_results"] = paged["all_results"]
         answer["complete_results_format"] = paged["all_results_format"]
@@ -2237,6 +2461,8 @@ def main():
                       "The answer carries no file content and no digest of one: the manifest named in "
                       "secret_values has each export's size and sha256. A file that was not exported, or only in part, "
                       "is named in items with its status: an export that is not complete says so in complete. "
+                      "In mode export each file also has a ranges file (items[].ranges: its path, size and sha256, and a count of each class): "
+                      "what was read, what the mount did not give, what was not copied and the zero-filled pages; " + ZERO_MEANING + " "
                       "Names are shown by shape: see boundary.")
     answer = sealed(answer)
     answer["boundary"] = boundary_summary()
