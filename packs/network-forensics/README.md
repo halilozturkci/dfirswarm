@@ -8,14 +8,15 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Thirteen skills**: the pack's router, `network/router` (at most 400 tokens: it names the other twelve by the
+**Seventeen skills**: the pack's router, `network/router` (at most 400 tokens: it names the other sixteen by the
 question each answers, holds no rule, and is the one line a run shows for the pack when its skills index is over
-budget), and, as eight leaves of decision rules and four second-level
+budget), and, as twelve leaves of decision rules and four second-level
 leaves they point to when needed: `capture/what-you-have` (and
 `capture/derivatives`), `capture/carve-from-images`, `sessions/reconstruct` (and
 `sessions/objects`), `metadata/dns-tls` (and `metadata/fingerprints`),
-`beacons/periodicity`, `exfil/volume` (and `exfil/counters`),
-`logs/web-proxy-firewall`, `correlate/host`.
+`metadata/encrypted-dns`, `beacons/periodicity`, `exfil/volume` (and `exfil/counters`),
+`logs/web-proxy-firewall`, `correlate/host`, `evidence/captured-secrets`, `flows/interpret`,
+`analysis/engines-and-coverage`.
 
 **Six tools.** `pcap_summary` reads classic pcap and pcapng with **no external
 dependency**: it returns a census of the capture (an interface table with link
@@ -48,9 +49,9 @@ of the script, before the script's first line has run: a stop there gives no
 answer. Measured on 2026-11-01 (SIGTERM at a random offset of 0-250 ms after the
 start, 80 runs of each script, one CPU, no network), 6 to 19 of 80 runs gave no
 JSON, all but one of them within 55 ms of the start, on a quiet host; a busy host sees more (misses up to about 80 ms were seen). No flow
-export (NetFlow, IPFIX) is read by anything here: `skills/capture/what-you-have.md`
-says to identify the producer, the sampling and what its byte counters mean
-first, and that no flow reader is bundled; it gives no method for reading one.
+export (NetFlow, IPFIX, sFlow) is read by any tool here: `flows/interpret` says what to
+settle first (the exporter, the sampling, the timeouts, what its counters mean) and that
+no flow reader is provided, and `capture/what-you-have` says the same of a capture case.
 
 **One catalogue recipe.** `network-capture` detects pcap and pcapng by magic,
 then writes capture metadata and complete listings of the selected fields of
