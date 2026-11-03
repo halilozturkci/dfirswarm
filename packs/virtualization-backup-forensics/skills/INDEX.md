@@ -6,6 +6,7 @@ Router: `router/start`
 
 - `backup/catalogues-and-retention` Catalogue, repository and retention: A backup system's catalogue, job records, repository or retention setting is evidence.
 - `backup/deletion-vs-loss` Deletion attempted, reported, observed, verified: A backup, snapshot or restore point may have been deleted, pruned, expired or overwritten.
+- `backup/product-presets` Backup formats and presets the tool reads: Say which backup export backup_audit_normalise can read, and how far to trust it.
 - `control-plane/chronology` Clocks across hypervisor, backup and guest: Events from a hypervisor, a management server, a backup system and a guest must be ordered.
 - `evidence/boundaries` Planes of virtualization evidence, and handling: You are about to open VM images, hypervisor or backup exports and must scope and protect them.
 - `hypervisor/activity` What to ask of hypervisor management records: A VM was powered off, deleted, unregistered, snapshotted, reconfigured or its datastore changed.
