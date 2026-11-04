@@ -25,7 +25,7 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 | `evidence/catalog` | read the catalogue with its coverage and revision before you spend a token |
 | `evidence/coverage` | what a search did and did not cover: no hit, not searched, unsupported, failed, no trace expected; the `kind=coverage` record |
 | `evidence/collections` | the evidence is a zip, a directory tree or an AD1, not a disk: what it contains and what it cannot show |
-| `evidence/archives` | a zip, tar, 7z or compressed file: list it, extract it under budgets, never recreate a link, keep every name |
+| `evidence/archives` | a zip, tar, 7z, RAR or compressed file: list it, extract it under budgets, never recreate a link, keep every name |
 | `evidence/ad1` | an FTK Imager logical image: list, extract and corroborate it |
 | `evidence/tool-validation` | validate a parser before you trust it: version, status counts, the decisive field against the bytes, independence, a positive control |
 | `data/sqlite` | a SQLite database is a set of files: snapshot it, apply its WAL in a copy, query the state you name |
@@ -54,7 +54,7 @@ with the packs that depend on this one: a tool every pack would have carried
 belongs here once, not in each of them. `ad1_extract` writes an AccessData
 AD1 logical image's files out, checked against the digests the image
 records; run as a job, what it writes is catalogued in turn. `archive_extract`
-writes the members of a zip, tar (gzip, bzip2, xz, zstd), 7z or single compressed
+writes the members of a zip, tar (gzip, bzip2, xz, zstd), 7z, RAR (through 7zz) or single compressed
 file into a private directory under byte, ratio, member, depth and time budgets, and never
 recreates a link or a device. `image_verify` gives a receipt for an EWF set: each
 segment's sha256, missing and misordered segments, the section chain of each
