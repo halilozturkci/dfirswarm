@@ -57,7 +57,7 @@ async function copies(): Promise<Copy[]> {
 }
 
 /** The variants that exist, and how many carriers each has. Declared, not discovered: a second variant or another count is a failure. */
-const VARIANTS = [{ name: "the one text", carriers: 25, owns: (_f: string) => true }];
+const VARIANTS = [{ name: "the one text", carriers: 26, owns: (_f: string) => true }];
 
 test("every copy of the BOUNDARY block is one of the declared variants, with the declared number of carriers", async () => {
   const all = await copies();
@@ -74,7 +74,7 @@ test("every copy of the BOUNDARY block is one of the declared variants, with the
   }
   assert.equal(all.length, VARIANTS.reduce((n, v) => n + v.carriers, 0));
   const windows = groups.find((g) => g.some((c) => c.file === "packs/windows-forensics/tools/regkv/run.py"));
-  assert.ok(windows && windows.length === 25 && windows[0].lines > 1300, "the one text is the windows text, which the virtualization tools moved onto");
+  assert.ok(windows && windows.length === 26 && windows[0].lines > 1300, "the one text is the windows text, which the virtualization tools moved onto");
 });
 
 // ---- the one text, driven from a windows carrier ------------------------------------------------------------------------------------------------

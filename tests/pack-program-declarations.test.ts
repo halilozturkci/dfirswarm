@@ -97,6 +97,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "macos-forensics/tools/apfs_inventory": w("log", "strings"),
   "macos-forensics/tools/macos_login_items": w("log", "strings"),
   "macos-forensics/tools/macos_tcc": w("log", "strings"),
+  "macos-forensics/tools/macos_triage": w("log", "strings"),
   "macos-forensics/tools/safari_history": w("log", "strings"),
   "macos-forensics/tools/segb_read": w("log", "strings"),
   "macos-forensics/tools/fsevents_parse": w("log", "strings"),
