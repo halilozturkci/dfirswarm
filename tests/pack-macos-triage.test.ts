@@ -712,3 +712,60 @@ test("the recipe and the tool carry one copy of the log reader, and the recipe's
   assert.ok(r.exclusions.length >= 4);
   assert.equal((await stat(RECIPE)).mode & 0o777, 0o755);
 });
+
+// ---- the error vocabulary does not rest on an uppercase level word that was never observed; the recipe's files are exclusive ---------------------
+
+test("a lowercase error line or a failure sentence inside a plugin's run is failed, in the tool and the recipe, whatever the line's prefix", async () => {
+  await withCwd(async (cwd, bin) => {
+    const path = await e01(cwd);
+    let n = 0;
+    for (const sentence of ["error: could not open database", "Failed to parse database", "unable to read the file", "Exception while reading", "cannot decode record"]) {
+      for (const format of ["%.0s%s", "2026-11-04 12:00:00,000 - MAIN - %s - %s"]) {
+        await stand(bin, `start()\nplugin("TCC", ["Processed 3 rows"])\nplugin("SAFARI", [${JSON.stringify(sentence)}])\nfinish()\n`, format);
+        const a = ok(await run(cwd, bin, { path, input_type: "E01", plugins: ["TCC", "SAFARI"] }));
+        assert.equal(status(a, "SAFARI"), "failed", sentence);
+        assert.equal(status(a, "TCC"), "parsed");
+        assert.notEqual(a.status, "complete", sentence);
+        const dir = `v${n++}`;
+        await recipe(cwd, bin, ["run", "--target", tgt(path, ["TCC", "SAFARI"]), "--out", dir]);
+        const c = await coverage(join(cwd, dir));
+        assert.notEqual(c.status, "complete", sentence);
+        assert.match(await readFile(join(cwd, dir, "plugins.tsv"), "utf8"), /\nSAFARI\tfailed\t/);
+      }
+    }
+    // the hint of the source's own finish lines names ERRORs and EXCEPTIONS and is not an error line; a parsed plugin says what its status rests on
+    await stand(bin, OK_TWO);
+    const good = ok(await run(cwd, bin, { path, input_type: "E01", plugins: ["TCC", "BASHSESSIONS"] }));
+    assert.equal(good.status, "complete");
+    assert.match(good.plugins[0].reason, /rests on a log format never observed/);
+    assert.match(good.status_basis, /never observed/);
+  });
+});
+
+test("the recipe creates its files exclusively: any name it writes that already exists refuses the run (exit 2) with nothing touched, and a planted link is not followed", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stand(bin, OK_TWO);
+    const path = await e01(cwd);
+    for (const name of ["plugins.tsv", "index.tsv", "mac_apt.stdout", "mac_apt.stderr", "coverage.json.tmp"]) {
+      const out = join(cwd, `x-${name}`);
+      await mkdir(out, { recursive: true });
+      await writeFile(join(out, name), Buffer.alloc(5000, 0x41));
+      const r = await recipe(cwd, bin, ["run", "--target", tgt(path, ["TCC", "BASHSESSIONS"]), "--out", out]);
+      assert.equal(r.code, 2, name);
+      assert.deepEqual((await readdir(out)).sort(), [name]);
+      assert.equal((await stat(join(out, name))).size, 5000, `${name} is untouched`);
+      const link = join(cwd, `y-${name}`);
+      await mkdir(link, { recursive: true });
+      await writeFile(join(cwd, `victim-${name}`), "keep");
+      await symlink(join(cwd, `victim-${name}`), join(link, name));
+      assert.equal((await recipe(cwd, bin, ["run", "--target", tgt(path, ["TCC", "BASHSESSIONS"]), "--out", link])).code, 2);
+      assert.equal(await readFile(join(cwd, `victim-${name}`), "utf8"), "keep", `a link at ${name} is not followed`);
+      assert.deepEqual((await readdir(link)).sort(), [name]);
+    }
+    const fresh = await recipe(cwd, bin, ["run", "--target", tgt(path, ["TCC", "BASHSESSIONS"]), "--out", "fresh"]);
+    assert.equal(fresh.code, 0);
+    const c = await coverage(join(cwd, "fresh"));
+    for (const name of ["plugins.tsv", "index.tsv", "coverage.json", "mac_apt.stdout", "mac_apt.stderr"]) assert.ok(name in c.secret_bearing, name);
+    assert.equal(((await stat(join(cwd, "fresh", "plugins.tsv"))).mode & 0o777).toString(8), "600");
+  });
+});

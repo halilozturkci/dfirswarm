@@ -673,7 +673,9 @@ MA_EXCEPTION = re.compile(r"An exception occurred while running plugin - (?P<n>[
 MA_FINISHED = re.compile(r"Finished in time = (?P<t>[0-9]{2,}:[0-9]{2}:[0-9]{2})\s*$")
 MA_NO_MACOS = re.compile(r"Could not find OSX/macOS installation!|Could not find a partition having a macOS installation on it")
 MA_TRACEBACK = re.compile(r"Traceback \(most recent call last\)")
-MA_LEVEL_BAD = re.compile(r"(?<![A-Za-z])(?:ERROR|CRITICAL)(?![A-Za-z])")
+MA_LEVEL_BAD = re.compile(r"(?<![A-Za-z])(?:ERROR|CRITICAL)(?![A-Za-z])|\b(?:errors?|exceptions?|tracebacks?|fail(?:ed|s|ure|ures)?|cannot|can't|could not|couldn't|unable|corrupt(?:ed)?|malformed|invalid)\b", re.I)
+# (the level word of the prefix was never observed, so a line is a failure line when it holds the uppercase level word OR any word of the broader vocabulary above, in any case)
+MA_REVIEW = re.compile(r"Review the Log file and report any")                 # the finish-time hint of the source, which names ERRORs and EXCEPTIONS without one having happened
 MA_LEVEL_WARN = re.compile(r"(?<![A-Za-z])WARNING(?![A-Za-z])")
 MA_SEPARATOR = re.compile(r"-{20,}\s*$")
 MA_UNSUPPORTED = re.compile(r"\b(?:not supported|unsupported)\b", re.I)                                                  # ASSUMED wording
@@ -743,7 +745,7 @@ def ma_read_log(paths):
                     else:
                         target["exception"] += 1
                     continue
-                bad = bool(MA_LEVEL_BAD.search(line))
+                bad = bool(MA_LEVEL_BAD.search(line)) and not MA_REVIEW.search(line)
                 trace = bool(MA_TRACEBACK.search(line))
                 if current is None:
                     if bad or trace:
@@ -776,7 +778,7 @@ def ma_plugin_status(window):
         return "unsupported", "a line inside this plugin's run says it does not support something (assumed wording; read it in the kept log)"
     if window["empty"] and not window["other"]:
         return "empty", "the plugin ran to its end and the only lines inside its run say nothing was found (assumed wording; read it in the kept log)"
-    return "parsed", "the plugin ran to its end with no exception, error line or traceback inside its run (this is not a count of its records)"
+    return "parsed", "the plugin ran to its end and no line inside its run holds an error word (error, exception, traceback, failed, cannot, could not, unable, corrupt, malformed, invalid); that rests on a log format never observed, and it is not a count of its records"
 
 
 def ma_plugins(read):
@@ -926,11 +928,17 @@ def tsv_escape(value):
     return "".join(out)
 
 
+def excl(path, mode="w"):
+    """A new file of this run's own: created exclusively, a link at the name is never followed, mode 0600."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    return os.fdopen(fd, mode, encoding="utf-8") if "b" not in mode else os.fdopen(fd, mode)
+
+
 def write_coverage(out, status, covered, errors, basis, limits=(), **more):
     # written to a temporary name and renamed: a stop never leaves half a file, and the first account (partial) is replaced whole
     final = os.path.join(out, "coverage.json")
     temp = final + ".tmp"
-    with open(temp, "w", encoding="utf-8") as handle:
+    with excl(temp, "w") as handle:
         json.dump({"recipe": "macos-artefacts", "status": status, "status_basis": basis, "covered": covered, "not_covered": NOT_COVERED,
                    "limits_hit": list(limits), "errors": list(errors), **more}, handle, indent=2, sort_keys=True)
         handle.write("\n")
@@ -963,8 +971,8 @@ def run_program(argv, out_path, err_path, cwd, env, seconds):
     """(exit code, timed out, pipes held) of mac_apt: in this recipe's own process group (the shared PROCESS block), its stdout and stderr written whole to two files."""
     STATE["last_word"] = last_word
     install_signal_handlers()
-    fo = open(out_path, "wb")
-    fe = open(err_path, "wb")
+    fo = excl(out_path, "wb")
+    fe = excl(err_path, "wb")
     files = {"stdout": fo, "stderr": fe}
     proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=env)
     ACTIVE.append(proc)
@@ -1029,10 +1037,11 @@ def run_program(argv, out_path, err_path, cwd, env, seconds):
 def run(path, kind, requested, out, seconds=MACAPT_SECONDS):
     out = os.path.abspath(out)
     report = os.path.join(out, "mac_apt")
-    if os.path.lexists(report) or os.path.lexists(os.path.join(out, "coverage.json")):
+    names = ("mac_apt", "coverage.json", "coverage.json.tmp", "plugins.tsv", "index.tsv", "mac_apt.stdout", "mac_apt.stderr", "mac_apt-cwd", "mac_apt-tmp", "mac_apt-home")
+    if any(os.path.lexists(os.path.join(out, n)) for n in names):
         # Before anything is written: an earlier run's coverage and output stay as they are, and nothing is replaced.
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "the output directory already holds the files of an earlier run, and this recipe never writes over one: nothing was run",
-                          "why": "the output directory already holds mac_apt/ or coverage.json"}))
+                          "why": "the output directory already holds one of the names this recipe writes (mac_apt/, coverage.json, plugins.tsv, index.tsv, mac_apt.stdout, mac_apt.stderr, mac_apt-cwd, mac_apt-tmp, mac_apt-home)"}))
         return 2
     os.makedirs(out, exist_ok=True)
     path = os.path.abspath(path)
@@ -1069,7 +1078,7 @@ def run(path, kind, requested, out, seconds=MACAPT_SECONDS):
                              "reason": ("mac_apt logged that it found no macOS installation, so no plugin ran" if read["no_macos"] else
                                         "requested, and the log shows no start line for it (it did not run, or the log is cut)"), "log_line": "", "warnings": 0, "starts": 0})
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in MA_STATUSES}
-    with open(os.path.join(out, "plugins.tsv"), "w", encoding="utf-8") as fh:
+    with excl(os.path.join(out, "plugins.tsv")) as fh:
         fh.write("plugin\tstatus\tlog_line\twarnings\treason\n")
         for r in rows:
             fh.write("\t".join(tsv_escape(x) for x in (r["plugin"], r["status"], r["log_line"], r["warnings"], r["reason"])) + "\n")
@@ -1077,7 +1086,7 @@ def run(path, kind, requested, out, seconds=MACAPT_SECONDS):
     for sub in ("mac_apt-cwd", "mac_apt-tmp", "mac_apt-home"):
         files += [(os.path.join(sub, rel), size) for rel, size in walk(os.path.join(out, sub))]
     files += [(n, os.path.getsize(os.path.join(out, n))) for n in ("mac_apt.stdout", "mac_apt.stderr")]
-    with open(os.path.join(out, "index.tsv"), "w", encoding="utf-8") as fh:
+    with excl(os.path.join(out, "index.tsv")) as fh:
         fh.write("file\tbytes\twhat\n")
         fh.write("plugins.tsv\t%d\tone row per plugin: status from the log, the log line it started on, the reason\n" % os.path.getsize(os.path.join(out, "plugins.tsv")))
         for rel, size in sorted(files):
@@ -1113,6 +1122,8 @@ def run(path, kind, requested, out, seconds=MACAPT_SECONDS):
         problems.append("the plugin set is %s: the plugins mac_apt expands it to are not listed by anything read here, so a plugin that never started cannot be told from one that was not meant to; "
                         "a target that names its plugins (\"plugins\": [...]) can be complete" % "/".join(sets))
     secret = {out_rel: "evidence-derived: mac_apt's output of the examined system" for out_rel, _size in sorted(files)}
+    secret.update({"plugins.tsv": "the plugin names the log showed and the log lines they started on", "index.tsv": "the names and sizes of the files mac_apt wrote",
+                   "coverage.json": "this receipt: plugin names, counts and reasons derived from the examined system's log"})
     receipt = {"log_format_recognised": read["started"], "log_source": "Log.<time>.txt in mac_apt/" if logs else "the console output (mac_apt.stdout, then mac_apt.stderr)",
                "lines": read["lines"], "long_lines": read["long_lines"], "counts": counts, "plugins_not_started": missing, "plugins_listed_in": "plugins.tsv",
                "error_lines_outside_plugins": len(read["run_errors"]), "read_from_source": READ_FROM_SOURCE, "not_observed": NOT_OBSERVED}
@@ -1120,7 +1131,7 @@ def run(path, kind, requested, out, seconds=MACAPT_SECONDS):
     extra = dict(more, plugins=receipt, secret_bearing=secret, sensitive_output="the files under mac_apt/ and the kept log hold the examined system's own content; a recipe cannot declare secret_output, so this receipt marks them")
     if read["started"] and ran_any and not problems:
         write_coverage(out, "complete", "mac_apt exited 0 and its log accounts for %d plugin(s): %d parsed, %d empty (by the log; not a count of records)" % (len(rows), counts["parsed"], counts["empty"]),
-                       [], "mac_apt exited 0, its log was recognised from the start line to the finish line, and each of the %d requested plugin(s) is parsed or empty by the log; the wording behind `empty` was never observed" % len(rows), **extra)
+                       [], "mac_apt exited 0, its log was recognised from the start line to the finish line, and each of the %d requested plugin(s) is parsed or empty by the log (parsed means no line of its run holds an error word, which rests on a log format never observed); the wording behind `empty` was never observed" % len(rows), **extra)
     elif read["started"] and ran_any:
         write_coverage(out, "partial", "%d plugin(s) in the log: %d parsed, %d empty, %d unsupported, %d failed" % (len(rows), counts["parsed"], counts["empty"], counts["unsupported"], counts["failed"]),
                        problems, basis_of("partial because ", problems), **extra)

@@ -2735,7 +2735,9 @@ MA_EXCEPTION = re.compile(r"An exception occurred while running plugin - (?P<n>[
 MA_FINISHED = re.compile(r"Finished in time = (?P<t>[0-9]{2,}:[0-9]{2}:[0-9]{2})\s*$")
 MA_NO_MACOS = re.compile(r"Could not find OSX/macOS installation!|Could not find a partition having a macOS installation on it")
 MA_TRACEBACK = re.compile(r"Traceback \(most recent call last\)")
-MA_LEVEL_BAD = re.compile(r"(?<![A-Za-z])(?:ERROR|CRITICAL)(?![A-Za-z])")
+MA_LEVEL_BAD = re.compile(r"(?<![A-Za-z])(?:ERROR|CRITICAL)(?![A-Za-z])|\b(?:errors?|exceptions?|tracebacks?|fail(?:ed|s|ure|ures)?|cannot|can't|could not|couldn't|unable|corrupt(?:ed)?|malformed|invalid)\b", re.I)
+# (the level word of the prefix was never observed, so a line is a failure line when it holds the uppercase level word OR any word of the broader vocabulary above, in any case)
+MA_REVIEW = re.compile(r"Review the Log file and report any")                 # the finish-time hint of the source, which names ERRORs and EXCEPTIONS without one having happened
 MA_LEVEL_WARN = re.compile(r"(?<![A-Za-z])WARNING(?![A-Za-z])")
 MA_SEPARATOR = re.compile(r"-{20,}\s*$")
 MA_UNSUPPORTED = re.compile(r"\b(?:not supported|unsupported)\b", re.I)                                                  # ASSUMED wording
@@ -2805,7 +2807,7 @@ def ma_read_log(paths):
                     else:
                         target["exception"] += 1
                     continue
-                bad = bool(MA_LEVEL_BAD.search(line))
+                bad = bool(MA_LEVEL_BAD.search(line)) and not MA_REVIEW.search(line)
                 trace = bool(MA_TRACEBACK.search(line))
                 if current is None:
                     if bad or trace:
@@ -2838,7 +2840,7 @@ def ma_plugin_status(window):
         return "unsupported", "a line inside this plugin's run says it does not support something (assumed wording; read it in the kept log)"
     if window["empty"] and not window["other"]:
         return "empty", "the plugin ran to its end and the only lines inside its run say nothing was found (assumed wording; read it in the kept log)"
-    return "parsed", "the plugin ran to its end with no exception, error line or traceback inside its run (this is not a count of its records)"
+    return "parsed", "the plugin ran to its end and no line inside its run holds an error word (error, exception, traceback, failed, cannot, could not, unable, corrupt, malformed, invalid); that rests on a log format never observed, and it is not a count of its records"
 
 
 def ma_plugins(read):
@@ -3363,7 +3365,7 @@ def run_triage(args):
                 result["status_basis"] = "%d problem(s) are named under problems; plugins holds what the log showed" % len(problems)
             else:
                 result["status"] = "complete"
-                result["status_basis"] = ("mac_apt exited 0, its log was recognised from start to finish line, and each of the %d requested plugin(s) is parsed or empty by the log; "
+                result["status_basis"] = ("mac_apt exited 0, its log was recognised from the start line to the finish line, and each of the %d requested plugin(s) is parsed or empty by the log (parsed means no line of its run holds an error word, which rests on a log format never observed); "
                                           "that is the log's account, not a count of records, and the wording behind `empty` and `unsupported` was never observed" % len(plugin_rows))
     if st["storage"]:
         result["status"] = "failed"
