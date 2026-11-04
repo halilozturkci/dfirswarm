@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.14.2",
+  "version": "1.14.3",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. Flow records in an nfcapd file (NetFlow v5, v9, IPFIX) are read with nfdump.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,7 +18,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "d7257a832960dce91fec6d3e8feb45dfa118d1ee766b49c7cbdff8b58cda31b5",
+      "README.md": "b006426fbb07b267f02c63b3c0413e64ef4e5df270b55fb7e1983f4641e167ee",
       "goals/what-left-the-network.md": "8e6dd6ae10d2bd8380b567e8bffb3bc644ac90602eed83edbd3773fd8ebdc811",
       "recipes/network-capture/recipe.json": "1482cf3a27b265327ef9234754f9d4dd02f0306f2b4ddf594edaae8925fc5c07",
       "recipes/network-capture/run.py": "9f65fef58d95cfedd0b3d248faa1d964dbb6030a2687fe8eb4f047e5d8db5c21",
@@ -41,7 +41,7 @@
       "skills/metadata/fingerprints.md": "7fc9786942def4a443011873fd2a9e7b2b9b58cee512db22af110aae51cdeda9",
       "skills/network/router.md": "c636e7d72305b9821a864c829ad7a963916e5f3d5ca2f43a102a0de810df43f5",
       "skills/sessions/objects.md": "22b63e82da1ecc6eda1ddf41b2e7e9d4ac801b3d9d154f5bd76e29b635265f36",
-      "skills/sessions/quic-http3.md": "8eb112841c0cbc55a68ab0600a7d9689f438df3daa61af04a358a66c0a64596c",
+      "skills/sessions/quic-http3.md": "ba9537d9308ae41ea1ee5afbe0c3fb3e6491d9428b9f8e9a829d3cf5d41f12d0",
       "skills/sessions/reconstruct.md": "d52275cea747ec09e9dc2155fffa2f814f330abaef6273cea22bfb635e2f9da6",
       "skills/sessions/tls-keylogs.md": "55e7e4c3a75b933db4551bc076e3f3197977b898594fb29b1eca80381063ed90",
       "tests/pack.test.sh": "f83730891c6dc137fa0aa1ddd26b6d1d3ba9bc9609ff6a277ffb7ed9a3d7d372",
@@ -59,7 +59,7 @@
       "tools/pcap_extract/run.py": "1e092d7288f183b1d932e676cce76ffa728d07dbab14054f3c86cc268a2f9dbe",
       "tools/pcap_summary/manifest.json": "7152763e8488b35e90e5efaea6c28828a7bea59922b7b9c9ea242b9ba31f482a",
       "tools/pcap_summary/run.py": "c30625988f32371935e592784ba91f395653292609513e26df3b2cdc26c40ea4",
-      "tools/quic_inspect/manifest.json": "50773a5b0d51be947cca89cbd2244ef5a9294ecf75eb8abc58e9f14a18041949",
+      "tools/quic_inspect/manifest.json": "46fda0f11deda613644d3d93e851875102eb0ddd75ec2b2c2943614c1b49c23c",
       "tools/quic_inspect/run.py": "f33e4295fc8ee3378b06eb6529cb7ee8c471e855a332e4e4f6e964a46c262a70",
       "tools/suricata_run/manifest.json": "2f0f76382baba21894a51089889752bcb5ef7a6fc4c67ff34e9bd3b921053ee0",
       "tools/suricata_run/run.py": "ea4c9a03c2ec472fbb32e8d8b2d8951ece8bc9197c4274ab78d13dcae7be9970",
