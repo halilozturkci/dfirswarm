@@ -40,9 +40,10 @@ THE OUTCOMES, told apart in `outcome` (and in `status`, complete / partial / fai
 Manifest records no digest of a file's content. The tool does not print or write a key bag, a class key or a manifest key; the answer says
 whether Manifest.plist holds them and how long they are, and nothing more.
 
-The backend selects a file by its relative path and domain, and a name can be matched by more than one row (two rows whose domains differ
-only in case, or in a character a SQL LIKE pattern takes for any: `_` or `%`). Such a row is not decrypted and is listed as
-ambiguous_selection. The library's own naming of its output files is not used: it writes each file to a name this tool chose in a
+The backend selects a file by `relativePath = ? AND domain LIKE ? AND flags = 1 ORDER BY domain, relativePath LIMIT 1`, so a row can be
+decrypted from another row's blob (two domains equal up to case, a `_` or `%` in a domain, a collation that equates two paths, a pattern
+over SQLite's length limit). Before every file the child runs that query, with LIMIT 2, on a copy of the decrypted map; a row it does not
+return alone (or whose query fails) is not decrypted and is listed as ambiguous_selection. The library's own naming of its output files is not used: it writes each file to a name this tool chose in a
 private directory, and the tool then links it under the file id without replacing anything.
 """
 import base64
@@ -1353,10 +1354,9 @@ CELL_CHARS = JUDGE_CHARS + 1
 FILE_CELL_BYTES = 1 << 20
 LOOK_EVERY = 1000
 EVENT_LINE_BYTES = 4096
-MAX_DOMAIN_PAIRS = 5000000
 ARGUMENTS = ("backup", "password_ref", "max_files", "max_bytes", "max_seconds", "limit")
 KINDS = {1: "file", 2: "directory", 4: "symlink"}
-OUTCOMES_NOT_DECRYPTED = ("blob_missing", "backend_error", "ambiguous_selection", "ambiguity_unchecked", "refused_id", "duplicate_id",
+OUTCOMES_NOT_DECRYPTED = ("blob_missing", "backend_error", "ambiguous_selection", "refused_id", "duplicate_id",
                           "not_copied_max_bytes", "not_attempted_max_files", "not_attempted", "write_failed")
 BANNER = {"kind": "ios-backup-decrypted-copy", "tool": TOOL, "parser": PARSER,
           "layout": "Manifest.db, decrypted, and one decrypted file per Manifest row of a file at <first two digits of its id>/<id>",
@@ -1541,34 +1541,17 @@ def read_secret(path, ident):
         return None, "not_utf8"
 
 
-def ambiguous_rows(conn, until):
-    """(rowids the backend could not select with certainty, whether the look was cut short). A row is ambiguous when another row has the same
-    domain and relative path up to case, or when its domain, taken as a SQL LIKE pattern (`_` any one character, `%` any), also matches another
-    row's domain that holds the same relative path."""
-    found = set()
-    conn.execute("PRAGMA temp_store = FILE")
-    for (rowid,) in conn.execute(
-            "SELECT rowid FROM Files WHERE flags = 1 AND (lower(domain), lower(relativePath)) IN "
-            "(SELECT lower(domain), lower(relativePath) FROM Files WHERE flags = 1 GROUP BY 1, 2 HAVING count(*) > 1)"):
-        found.add(rowid)
-    domains = [d for (d,) in conn.execute("SELECT DISTINCT domain FROM Files WHERE flags = 1") if isinstance(d, str)]
-    pairs, cut = 0, False
-    for domain in domains:
-        if "_" not in domain and "%" not in domain:
-            continue
-        if time.time() > until:
-            return found, True
-        pairs += len(domains)
-        if pairs > MAX_DOMAIN_PAIRS:
-            cut = True
-            break
-        per_path = {}
-        for rowid, rel in conn.execute("SELECT rowid, lower(relativePath) FROM Files WHERE flags = 1 AND domain LIKE ?", (domain,)):
-            per_path.setdefault(rel, []).append(rowid)
-        for rows in per_path.values():
-            if len(rows) > 1:
-                found.update(rows)
-    return found, cut
+def selects_only(lookup, rowid, file_id, domain, rel):
+    """Whether the backend's own query, run on the decrypted map, returns exactly this row. The backend selects a file by
+    `relativePath = ? AND domain LIKE ? AND flags = 1 ORDER BY domain, relativePath LIMIT 1` (iphone_backup_decrypt 0.11.2), so a row
+    whose query returns another row too, or none, or raises (a LIKE pattern over SQLite's length limit, a collation that equates two
+    paths) would be decrypted from some other row's blob: it is not decrypted."""
+    try:
+        rows = lookup.execute("SELECT rowid, fileID FROM Files WHERE relativePath = ? AND domain LIKE ? AND flags = 1 ORDER BY domain, relativePath LIMIT 2",
+                              (rel, domain)).fetchall()
+    except Exception:  # noqa: BLE001  a lookup that fails is not a lookup that found this row alone
+        return False
+    return len(rows) == 1 and rows[0][0] == rowid and rows[0][1] == file_id
 
 
 def source_size(backup, file_id):
@@ -1636,11 +1619,21 @@ def child_main():
     except OSError as exc:
         child_event(events, e="manifest_unusable", c=class_word(exc))
         return 0
+    # The lookup is a copy of the decrypted map (with an index on relativePath, which changes no result): the backend's own query is run on it
+    # before every file, so that no row is decrypted from another row's blob.
     try:
-        ambiguous, unchecked = ambiguous_rows(conn, until)
-    except Exception as exc:  # noqa: BLE001  the look was cut: nothing is decrypted that could not be told apart
-        ambiguous, unchecked = set(), True
-        child_event(events, e="ambiguity_look_failed", c=class_word(exc))
+        lookup_path = os.path.join(work, "lookup.db")
+        shutil.copyfile(manifest, lookup_path)
+        lookup = sqlite3.connect(lookup_path)
+        lookup.set_progress_handler(lambda: 1 if time.time() > until else 0, 20000)
+        lookup.text_factory = lambda b: b.decode("utf-8", "surrogateescape")
+        try:
+            lookup.execute("CREATE INDEX IF NOT EXISTS bd_rel ON Files(relativePath)")
+        except Exception:  # noqa: BLE001  slower, not different
+            pass
+    except Exception as exc:  # noqa: BLE001
+        child_event(events, e="manifest_unusable", c=class_word(exc))
+        return 0
     done_files, done_bytes, stage_n = 0, 0, 0
     max_files, max_bytes = config["max_files"], config["max_bytes"]
     cursor = conn.execute("SELECT rowid, fileID, domain, relativePath FROM Files WHERE flags = 1 ORDER BY rowid")
@@ -1653,11 +1646,8 @@ def child_main():
             if not isinstance(file_id, str) or not FILE_ID.fullmatch(file_id):
                 child_event(events, e="row", r=rowid, o="refused_id")
                 continue
-            if rowid in ambiguous:
+            if not selects_only(lookup, rowid, file_id, domain, rel):
                 child_event(events, e="row", r=rowid, o="ambiguous_selection")
-                continue
-            if unchecked and isinstance(domain, str) and ("_" in domain or "%" in domain):
-                child_event(events, e="row", r=rowid, o="ambiguity_unchecked")
                 continue
             if done_files >= max_files:
                 child_event(events, e="row", r=rowid, o="not_attempted_max_files")
@@ -1743,7 +1733,9 @@ def format_check(backup):
     """(ok, why, facts): whether the backup is one this tool opens. facts carry presence and lengths of the key material, never a byte of it."""
     status, plist, reason = read_plist(os.path.join(backup, "Manifest.plist"))
     facts = {"manifest_plist": status}
-    if status != "ok" or not isinstance(plist, dict):
+    if status == "ok" and not isinstance(plist, dict):
+        return False, "Manifest.plist is not a dictionary", facts
+    if status != "ok":
         return False, "Manifest.plist is %s%s" % (status, ": " + reason if reason else ""), facts
     flag = plist.get("IsEncrypted", "absent")
     facts["is_encrypted"] = flag if isinstance(flag, bool) else str(type(flag).__name__) if flag != "absent" else "absent"
@@ -1908,7 +1900,23 @@ def capped(column):
     return "substr(CAST(%s AS TEXT), 1, %d)" % (column, CELL_CHARS)
 
 
+RUN = {}
+
+
 def main():
+    try:
+        main_inner()
+    except Interrupted as stop:
+        if "shown" not in RUN:
+            raise
+        name = signal.Signals(stop.signum).name
+        emit(dumps(wrap_up({"error": "the tool was stopped by %s before it finished: this is not an answer to the question" % name, "status": "failed",
+                            "status_basis": "stopped by %s before the answer was complete; files the child had written are in the output directory named here, without a DECRYPTED.json" % name,
+                            "interrupted": name, "output_directory": RUN["shown"]})))
+        raise SystemExit(128 + stop.signum)
+
+
+def main_inner():
     started = time.monotonic()
     args = read_args()
     unknown = sorted(str(k) for k in args if k not in ARGUMENTS)
@@ -1959,6 +1967,7 @@ def main():
         fail("the output directory could not be made: %s" % describe(exc), written=False)
     CLEANUP.append(lambda: remove_tree(str(work)))
     shown_run = "%s/%s" % (shown_base, run_dir.name)
+    RUN["shown"] = shown_run
     child_until = started + max_seconds * CHILD_SHARE
     config = {"work": str(work), "dest": str(dest), "backup": os.path.abspath(backup), "password_ref": os.path.abspath(secret_ref), "password_ident": ident,
               "until": time.time() + (child_until - time.monotonic()), "max_files": max_files, "max_bytes": max_bytes}
@@ -1981,9 +1990,12 @@ def main():
                   password_file={"usable": False, "why": marks["secret_unavailable"].get("why")})
     if "backend_unavailable" in marks:
         stop_with("backend_unavailable", "the backend (iphone_backup_decrypt) is not installed in this image: %s" % marks["backend_unavailable"].get("c"))
+    if "unlock_failed" in marks and marks["unlock_failed"].get("c") != "IncorrectPassphraseError":
+        stop_with("failed", "the backend failed at the %s step with %s, which is not its wrong-password error: the tool does not read it as a wrong password"
+                  % (marks["unlock_failed"].get("stage"), marks["unlock_failed"].get("c")),
+                  unlock={"stage": marks["unlock_failed"].get("stage"), "exception_class": marks["unlock_failed"].get("c")})
     if "unlock_failed" in marks:
-        stop_with("wrong_secret", "the backend did not unlock the backup with this password (the backend does not say whether the password is wrong or the key bag is of a kind it does not read); "
-                  "its exception class, at the %s step, is %s" % (marks["unlock_failed"].get("stage"), marks["unlock_failed"].get("c")),
+        stop_with("wrong_secret", "the backend raised IncorrectPassphraseError at the %s step: the password is not the backup's (%s)" % (marks["unlock_failed"].get("stage"), marks["unlock_failed"].get("c")),
                   unlock={"stage": marks["unlock_failed"].get("stage"), "exception_class": marks["unlock_failed"].get("c")})
     if "manifest_unusable" in marks or "manifest" not in marks:
         basis = ("the decrypted Manifest.db could not be used (%s)" % marks["manifest_unusable"].get("c")) if "manifest_unusable" in marks else (

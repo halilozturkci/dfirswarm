@@ -4,4 +4,4 @@
 # The image installs the line below from requires/python.lock (the sha256 of each file PyPI
 # publishes, with Pillow, which it needs); the line is the note.
 pillow-heif==1.8.0     # BSD-3-Clause, with libheif (LGPL-3.0) inside. An iPhone's HEIC photo opened from Pillow in a script.
-iphone-backup-decrypt==0.11.2     # MIT (the owner's decision; PyPI carries no licence field and GitHub's detector does not recognise its LICENSE.txt). Decrypts an iOS 13+ encrypted local backup; needs pycryptodome (BSD-2-Clause and public domain), which the lock holds at the version the other mobile locks use.
+iphone-backup-decrypt==0.11.2     # MIT (the owner's label; PyPI carries no licence field and GitHub's detector says NOASSERTION; its LICENSE.txt at v0.11.2 is MIT with a BSD-3-Clause section for google_iphone_dataprotection.py, as a verifier read it). Decrypts an iOS 13+ encrypted local backup; needs pycryptodome (BSD-2-Clause and public domain), which the lock holds at the version the other mobile locks use.

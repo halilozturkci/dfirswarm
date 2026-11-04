@@ -80,12 +80,13 @@ opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
   `$OUT/backup_decrypt-<id>/decrypted/<xx>/<file id>` (mode 0600, never replaced), with a
   result file of one line per Manifest row. `verified` means the decrypted `Manifest.db`
   opens and every file row has the length the Manifest records as its Size; it does not
-  say the content is what the phone held. `wrong_secret`, `secret_unavailable`,
-  `unsupported_format`, `backend_unavailable` and `partial` are told apart; a row the
-  backend could not select with certainty (a domain that differs only in case or in a
-  `_` or `%`) is `ambiguous_selection` and not decrypted. The library was exercised here
+  say the content is what the phone held. `wrong_secret` (only the library's IncorrectPassphraseError), `secret_unavailable`,
+  `unsupported_format`, `backend_unavailable`, `failed` (any other library error while
+  opening) and `partial` are told apart; before each file the tool runs the library's own
+  row query on a copy of the map, and a row it does not return alone is
+  `ambiguous_selection` and not decrypted. The library was exercised here
   only through a stand-in for its three documented calls; it has not been run on a real
-  backup. Its licence label (MIT) is the owner's: PyPI carries none and the file was not read.
+  backup. Its licence label (MIT) is the owner's: PyPI carries none; its LICENSE.txt at v0.11.2 is MIT with a BSD-3-Clause section for google_iphone_dataprotection.py (as a verifier read it; the author did not).
 - `heic_inspect` makes a JPEG or PNG preview of a HEIC or HEIF original under
   `$OUT/heic_inspect` and ties it back to the original: the size and SHA-256 of
   both, the dimensions, the image count, which item is primary, and the backend's

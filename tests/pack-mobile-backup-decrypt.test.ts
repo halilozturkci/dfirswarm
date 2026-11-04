@@ -36,18 +36,22 @@ const STANDIN = String.raw`
 import hashlib, json, os, sqlite3, tempfile, time
 def _x(b):
     return bytes(c ^ 0x5A for c in b)
+class IncorrectPassphraseError(ValueError):
+    pass
 class EncryptedBackup:
     def __init__(self, backup_directory=None, passphrase=None):
         self.dir = backup_directory
         self.pw = passphrase
         meta = json.load(open(os.path.join(backup_directory, "standin.json")))
         if hashlib.sha256(passphrase.encode()).hexdigest() != meta["sha"]:
-            raise ValueError("Incorrect passphrase: " + passphrase)
+            raise (RuntimeError if os.environ.get("STANDIN_OPEN_FAIL") else IncorrectPassphraseError)("Incorrect passphrase: " + passphrase)
         time.sleep(float(os.environ.get("STANDIN_OPEN_SLEEP", "0")))
         self.tmp = tempfile.NamedTemporaryFile(dir=tempfile.gettempdir(), delete=False)
         self.tmp.write(_x(open(os.path.join(self.dir, "Manifest.db"), "rb").read()))
         self.tmp.close()
     def save_manifest_file(self, output_filename="manifest.db"):
+        if os.environ.get("STANDIN_MANIFEST_FAIL"):
+            raise ValueError("Manifest.db is truncated")
         with open(output_filename, "wb") as fh:
             fh.write(_x(open(os.path.join(self.dir, "Manifest.db"), "rb").read()))
     def extract_file(self, *, relative_path=None, domain_like=None, output_filename):
@@ -55,7 +59,7 @@ class EncryptedBackup:
         if "boom" in relative_path:
             raise RuntimeError("cannot decrypt, passphrase was " + self.pw)
         con = sqlite3.connect(self.tmp.name)
-        row = con.execute("SELECT fileID FROM Files WHERE relativePath = ? AND domain LIKE ? AND flags = 1 LIMIT 1", (relative_path, domain_like)).fetchone()
+        row = con.execute("SELECT fileID FROM Files WHERE relativePath = ? AND domain LIKE ? AND flags=1 ORDER BY domain, relativePath LIMIT 1", (relative_path, domain_like)).fetchone()
         if row is None:
             raise KeyError("no such row")
         blob = open(os.path.join(self.dir, row[0][:2], row[0]), "rb").read()
@@ -75,7 +79,7 @@ def archive(size):
         "$objects": ["$null", {"Size": size, "Mode": 0o100644, "$class": plistlib.UID(2)}, {"$classname": "MBFile", "$classes": ["MBFile", "NSObject"]}]}, fmt=plistlib.FMT_BINARY)
 plain = os.path.join(dest, "Manifest.plain")
 con = sqlite3.connect(plain)
-con.execute("CREATE TABLE Files (fileID TEXT PRIMARY KEY, domain TEXT, relativePath TEXT, flags INTEGER, file BLOB)")
+con.execute("CREATE TABLE Files (fileID TEXT PRIMARY KEY, domain TEXT, relativePath TEXT%s, flags INTEGER, file BLOB)" % (" COLLATE RTRIM" if spec.get("rtrim") else ""))
 for e in spec["entries"]:
     data = e["data"].encode() if "data" in e else bytes((i * 7 + 3) % 256 for i in range(e.get("size", 10)))
     con.execute("INSERT INTO Files VALUES (?,?,?,?,?)", (e["id"], e.get("domain", "HomeDomain"), e["path"], e.get("flags", 1), archive(e.get("msize", len(data)))))
@@ -86,6 +90,10 @@ con.commit(); con.close()
 raw = open(plain, "rb").read(); os.unlink(plain)
 open(os.path.join(dest, "Manifest.db"), "wb").write(raw if spec.get("plain_manifest") else x(raw))
 body = {"Version": "10.0", "IsEncrypted": spec.get("encrypted", True)}
+if spec.get("array_plist"):
+    plistlib.dump([1, 2], open(os.path.join(dest, "Manifest.plist"), "wb"))
+    json.dump({"sha": hashlib.sha256(spec["password"].encode()).hexdigest()}, open(os.path.join(dest, "standin.json"), "w"))
+    sys.exit(0)
 if not spec.get("no_keys"): body["BackupKeyBag"] = b"KB" * 40; body["ManifestKey"] = b"MK" * 20
 with open(os.path.join(dest, "Manifest.plist"), "wb") as fh: plistlib.dump(body, fh)
 json.dump({"sha": hashlib.sha256(spec["password"].encode()).hexdigest()}, open(os.path.join(dest, "standin.json"), "w"))
@@ -273,7 +281,7 @@ test("a wrong password, a missing or unfit password file, an unsupported backup 
     const bad = answer(await job(cwd, { backup: dir, password_ref: await secretFile(cwd, "wrong.txt", wrong) }, "o1"), false);
     assert.equal(bad.outcome, "wrong_secret");
     assert.equal(bad.status, "failed");
-    assert.equal(bad.unlock?.exception_class, "ValueError");
+    assert.equal(bad.unlock?.exception_class, "IncorrectPassphraseError");
     assert.equal(JSON.stringify(bad).includes(wrong), false, "the library quotes the password; the answer does not");
     assert.deepEqual(await walk(join(cwd, "o1")), []);
     // The password file: each fault is secret_unavailable, before any child is started or after its own look.
@@ -373,7 +381,7 @@ test("rows that are not decrypted and verified make the run partial and are told
     assert.equal(by("same.txt", "AppDomain-Test").outcome, "ambiguous_selection");
     assert.equal(by("same.txt", "appdomain-test").outcome, "ambiguous_selection");
     assert.equal(by("wild.txt", "AppDomain-a_c").outcome, "ambiguous_selection");
-    assert.equal(by("wild.txt", "AppDomain-abc").outcome, "ambiguous_selection");
+    assert.equal(by("wild.txt", "AppDomain-abc").outcome, "decrypted_verified", "its own LIKE pattern selects only itself");
     assert.equal(by("../../escape.txt").outcome, "decrypted_verified");
     assert.equal(a.rows.find((r) => r.relative_path === "badid.txt")!.outcome, "refused_id");
     // The hostile name wrote nowhere but under its id; nothing escaped the output directory.
@@ -457,5 +465,100 @@ test("a second run in the same output directory writes a directory of its own an
     //
     const target = join(cwd, "out", first.decrypted.root.split("/out/")[1], fid(1).slice(0, 2), fid(1));
     assert.equal((await stat(target)).mode & 0o777, 0o600);
+  });
+});
+
+test("a row whose lookup by the library's own query returns another row is not decrypted: a collation that equates two paths, a duplicate pair beside a pattern over SQLite's length limit", async () => {
+  await withCwd(async (cwd) => {
+    await setup(cwd);
+    const password = canaryText();
+    const ref = await secretFile(cwd, "pw.txt", password);
+    // A: relativePath is declared COLLATE RTRIM, so 'p.txt' = 'p.txt ' and the library's query returns the first row for the second.
+    const a = await backup(cwd, "rtrim", { password, rtrim: true, entries: [
+      { id: fid(1), path: "p.txt", data: "AAAA-first" },
+      { id: fid(2), path: "p.txt ", data: "BBBB-other" },
+    ] });
+    const ra = answer(await job(cwd, { backup: a, password_ref: ref }, "oa"));
+    assert.equal(ra.status, "partial", ra.status_basis);
+    assert.deepEqual(ra.counts, { ambiguous_selection: 2 });
+    for (const p of await walk(join(cwd, "oa"))) if ((await lstat(p)).isFile()) assert.equal((await readFile(p)).includes("AAAA-first"), false, `${p} holds a decrypted file`);
+    // B: two rows that differ only in the case of the domain, and a third whose domain is a LIKE pattern over the 50,000-byte limit:
+    // the lookup of that one raises, which must not make the pair look unique.
+    const b = await backup(cwd, "long", { password, entries: [
+      { id: fid(1), path: "p.txt", data: "FIRST", domain: "HomeDomain" },
+      { id: fid(2), path: "p.txt", data: "OTHER", domain: "homedomain" },
+      { id: fid(3), path: "q.txt", data: "THIRD", domain: "%" + "a".repeat(60000) },
+    ] });
+    const rb = answer(await job(cwd, { backup: b, password_ref: ref }, "ob"));
+    assert.equal(rb.status, "partial", rb.status_basis);
+    assert.deepEqual(rb.counts, { ambiguous_selection: 3 });
+    assert.equal((await walk(join(cwd, "ob"))).some((p) => p.endsWith(fid(2))), false);
+  });
+});
+
+test("only the library's IncorrectPassphraseError is a wrong secret; any other failure while opening is failed with its class", async () => {
+  await withCwd(async (cwd) => {
+    await setup(cwd);
+    const password = canaryText();
+    const dir = await backup(cwd, "b", SPEC(password));
+    const ref = await secretFile(cwd, "pw.txt", password);
+    const wrong = await secretFile(cwd, "wrong.txt", canaryText());
+    const other = answer(await job(cwd, { backup: dir, password_ref: wrong }, "o1", { STANDIN_OPEN_FAIL: "1" }), false);
+    assert.equal(other.outcome, "failed");
+    assert.equal(other.unlock?.exception_class, "RuntimeError");
+    const trunc = answer(await job(cwd, { backup: dir, password_ref: ref }, "o2", { STANDIN_MANIFEST_FAIL: "1" }), false);
+    assert.equal(trunc.outcome, "failed");
+    assert.equal(trunc.unlock?.stage, "manifest");
+    assert.equal(trunc.unlock?.exception_class, "ValueError");
+    const arr = await backup(cwd, "arr", { password, array_plist: true, entries: [] });
+    const r = answer(await job(cwd, { backup: arr, password_ref: ref }, "o3"), false);
+    assert.equal(r.outcome, "unsupported_format");
+    assert.match(r.status_basis, /Manifest\.plist is not a dictionary/);
+  });
+});
+
+test("a file id met twice is duplicate_id and the first file is kept (os.link, not os.replace); a stop names the output directory", async () => {
+  await withCwd(async (cwd) => {
+    await setup(cwd);
+    const password = canaryText();
+    const ref = await secretFile(cwd, "pw.txt", password);
+    const upper = fid(5).replace("aa", "AA");
+    const dir = await backup(cwd, "dup", { password, entries: [
+      { id: fid(5), path: "one.txt", data: "first-AAAA" },
+      { id: upper, path: "two.txt", data: "other-BBBB" },
+    ] });
+    const run = async (script: string, out: string): Promise<Answer> => {
+      await mkdir(join(cwd, out), { recursive: true });
+      return answer(await runPy(script, cwd, { backup: dir, password_ref: ref }, undefined, env(cwd, join(cwd, out))), true);
+    };
+    const a = await run(TOOL, "od");
+    assert.equal(a.status, "partial");
+    assert.deepEqual(a.counts, { decrypted_verified: 1, duplicate_id: 1 });
+    const root = join(cwd, "od", a.decrypted.root.split("/out/")[1]);
+    assert.equal(await readFile(join(root, fid(5).slice(0, 2), fid(5)), "utf8"), "first-AAAA");
+    // The same assertions fail on a copy of the tool that replaces instead of linking.
+    const mutant = join(cwd, "mutant.py");
+    const source = await readFile(TOOL, "utf8");
+    const patched = source.replace("os.link(stage, os.path.join(shard, file_id))", "os.replace(stage, os.path.join(shard, file_id))");
+    assert.notEqual(patched, source);
+    await writeFile(mutant, patched, { mode: 0o755 });
+    const m = await run(mutant, "om");
+    assert.notDeepEqual(m.counts, { decrypted_verified: 1, duplicate_id: 1 }, "the mutation is seen");
+    // A stop leaves the directory named in the answer.
+    await mkdir(join(cwd, "os"), { recursive: true });
+    const child = spawn("python3", [TOOL], { cwd, env: { ...process.env, ...env(cwd, join(cwd, "os"), { STANDIN_FILE_SLEEP: "30" }) } });
+    const out: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    const exit = new Promise<number | null>((resolve) => child.on("close", (code, signal) => resolve(code ?? (signal ? 128 + 99 : null))));
+    child.stdin.end(JSON.stringify({ backup: dir, password_ref: ref }));
+    for (let i = 0; i < 100; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      if ((await walk(join(cwd, "os"))).some((p) => p.endsWith("Manifest.db") && p.includes("/decrypted/"))) break;
+    }
+    child.kill("SIGTERM");
+    assert.equal(await exit, 143);
+    const last = JSON.parse(Buffer.concat(out).toString("utf8")) as Answer & { output_directory?: string };
+    assert.equal(last.interrupted, "SIGTERM");
+    assert.match(last.output_directory ?? "", /\/backup_decrypt-[0-9a-f]{8}$/);
   });
 });
