@@ -5,15 +5,19 @@ Fetch a body with `skill("<id>")`. A body may name others; fetch those the same 
 Router: `reverse-engineering/router`
 
 - `capabilities/mapping` Static capabilities and the evidence behind them: You must assess what a sample could do without claiming it ran.
+- `code/second-readers` Ghidra's headless route, DIE and LIEF as second readings: A second reader of code, signatures or structure is wanted beside the pack's tools.
 - `code/static-inspection` Reading native code with its analysis limits stated: You must read a native binary's code: functions, control flow, references.
 - `documents/external-and-active-content` External targets, PDF actions and RTF objects: A document has an external relationship, a PDF action marker or an RTF object.
 - `documents/macros` Office document inventory: OLE, OOXML and VBA: The sample is an Office document, OLE file or OOXML package.
 - `documents/pdf-rtf` PDF and RTF structure: objects, actions, embedded content: A PDF or RTF must be read for objects, actions or embedded content.
+- `documents/second-reading` Second readings of encryption by qpdf and msoffcrypto-tool: doc_structure left an encryption variant unsupported.
 - `elf/packing-and-identity` ELF packing, linking and build identity: You must say whether an ELF is packed, how it links or which build it is.
 - `elf/structure` An ELF file and the loader's view: The sample is a Linux or BSD executable, shared object or core file.
 - `macho/structure` Mach-O files and universal binaries: The sample is a Mach-O executable, library, bundle or universal binary.
 - `managed/clr` Managed .NET assemblies and application bundles: A PE declares a CLR header, or a native PE looks like a .NET launcher.
+- `managed/decompiled` clr_inspect's labelled C# reconstruction: clr_inspect decompiled an assembly, or its file is to be read.
 - `packing/static-recovery` Identifying packing from structure, and where static recovery stops: Packing, compression or encryption of an executable is in question.
+- `pe/authenticode` Reading authenticode_verify and what a verified signature supports: A PE signature must be checked, or authenticode_verify's answer must be read.
 - `pe/signature-and-resources` PE exports, certificate table and resources: You need export names, signing state or version information.
 - `pe/structure` A PE file and what its structure shows: The sample is a Windows-format executable, DLL or driver.
 - `reverse-engineering/router` Reverse engineering notes by question: Pick a reverse engineering note when none is listed, or you cannot choose.

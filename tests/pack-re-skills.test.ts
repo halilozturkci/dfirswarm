@@ -49,7 +49,7 @@ async function load(root: string): Promise<Map<string, Skill>> {
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, 21);
+  assert.equal(skills.size, 25);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? 400 : 800), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
@@ -232,8 +232,13 @@ test("every backticked field or parameter a skill attributes to a tool is one it
   const seen = await observed();
   const known = new Set<string>();
   for (const t of ["pe_info", "doc_probe", "doc_structure", "pe_directories", "fuzzy_hash"]) for (const n of seen[t]!) known.add(n);
-  for (const t of ["pe_info", "doc_probe", "doc_structure", "pe_directories", "entropy_map", "fuzzy_hash", "authenticode_verify"]) {
+  for (const t of ["pe_info", "doc_probe", "doc_structure", "pe_directories", "entropy_map", "fuzzy_hash", "authenticode_verify", "clr_inspect", "elf_directories", "macho_directories", "unpack_safe"]) {
     for (const n of Object.keys((JSON.parse(await readFile(join(TOOLS, t, "manifest.json"), "utf8")) as { params: Record<string, unknown> }).params)) known.add(n);
+  }
+  // Names that only a run with a real or stand-in program writes (the second reading, the decompiler, the signature check): a string the tool's own source writes.
+  for (const tool of ["doc_structure", "clr_inspect", "authenticode_verify", "elf_directories", "macho_directories"]) {
+    const text = await readFile(join(TOOLS, tool, "run.py"), "utf8");
+    for (const m of text.matchAll(/["']([a-z][a-z0-9]*(?:_[a-z0-9]+)+)["']/g)) known.add(m[1]!);
   }
   const elsewhere = new Set(["secret_output", ...(await readdir(join(RE, "..", "computer-forensics-base", "tools"))), ...(await readdir(TOOLS))]);   // the harness's own job flag and tool names
   for (const s of skills.values()) {
@@ -382,7 +387,7 @@ test("the review's wording fixes are in the leaves and the goal, and the goal's 
   // The counts outside the pack follow the pack.
   for (const file of ["docs/packs.md", "README.md"]) {
     const doc = await readFile(join(RE, "..", "..", file), "utf8");
-    assert.match(doc, /^\| `reverse-engineering` \| 21 \| 13 \| 1 \|/m, `${file} counts 21 skills (the router is counted, as pack.json counts it), thirteen tools and one goal template`);
+    assert.match(doc, /^\| `reverse-engineering` \| 25 \| 13 \| 1 \|/m, `${file} counts 25 skills (the router is counted, as pack.json counts it), thirteen tools and one goal template`);
   }
 });
 
@@ -408,13 +413,46 @@ test("the new leaves name no program this pack does not declare, and say a reade
   const skills = await load(SKILLS);
   for (const id of NEW_LEAVES) {
     const text = skills.get(id)!.body;
-    // Programs the pack does not declare: naming one would imply it is installed.
-    assert.doesNotMatch(text, /\b(Ghidra|IDA Pro|x64dbg|OllyDbg|WinDbg|ILSpy|dnSpy|dotPeek|pyinstxtractor|uncompyle6?|decompyle3|pycdc|diec|Detect It Easy|PEiD|qpdf|pdfid|pdf-parser|osslsigncode|LIEF|angr|Unicorn|Qiling|Frida)\b/i, `${id} names a program the pack does not declare`);
+    // Programs the pack does not declare: naming one would imply it is installed. (Ghidra, Detect It Easy, ILSpy, qpdf, osslsigncode and LIEF are declared now: the leaves that name them are checked below.)
+    assert.doesNotMatch(text, /\b(IDA Pro|x64dbg|OllyDbg|WinDbg|dnSpy|dotPeek|pyinstxtractor|uncompyle6?|decompyle3|pycdc|PEiD|pdfid|pdf-parser|angr|Unicorn|Qiling|Frida)\b/i, `${id} names a program the pack does not declare`);
   }
-  assert.match(skills.get("managed/clr")!.body, /`clr_inspect` with `decompile` \(a `secret_output` job\) writes an `ilspycmd` reconstruction file, never inline; never run for real yet/);   // the decompiler is declared now, and the leaf says it was never run for real
+  assert.match(skills.get("managed/clr")!.body, /with `decompile` writes a reconstruction file \(`managed\/decompiled`\)/);   // the decompiler is declared now; the second-level leaf says it was never run for real
+  assert.match(skills.get("managed/decompiled")!.body, /`ilspycmd` was never run for real when the tool was written/);
   assert.match(skills.get("runtimes/python-packaged")!.body, /No extractor or bytecode disassembler is declared/);
-  assert.match(skills.get("code/static-inspection")!.body, /declares one decompiler, for \.NET assemblies only and optional; for any other binary it declares none/);
+  assert.match(skills.get("code/static-inspection")!.body, /declares a decompiler for \.NET assemblies \(`managed\/decompiled`\) and, for native code, Ghidra's headless analyzer \(`code\/second-readers`[^)]*\); both are optional and neither has been run on a real sample for this pack/);
   assert.match(skills.get("scripts/static-analysis")!.body, /No parse-only tooling is declared/);
+});
+
+test("the leaves that name the adopted programs say what was never observed, keep the evidence out of Ghidra, and put every program in its leaf", async () => {
+  const skills = await load(SKILLS);
+  const sr = skills.get("code/second-readers")!.body;
+  assert.match(sr, /no tool of this pack runs any of them/);
+  assert.match(sr, /None was observed on a real sample when it was declared/);
+  assert.match(sr, /not a script the pack ships/);
+  assert.match(sr, /project kept under `\$OUT`/);
+  assert.match(sr, /Install no extension, and load no script, plugin or rule file that the sample, its container or its directory supplies/);
+  assert.match(sr, /Take the option names from the release's documentation, not from this leaf/);
+  for (const name of ["analyzeHeadless", "diec", "lief"]) assert.ok(sr.includes(`\`${name}\``), `code/second-readers names ${name}`);
+  assert.doesNotMatch(sr, /-postScript|-scriptPath|-import\b|--help/, "the leaf gives no command line it did not read");
+  assert.match(skills.get("packing/static-recovery")!.body, /\(`diec`, where installed: `code\/second-readers`\)/);
+  assert.doesNotMatch(skills.get("packing/static-recovery")!.body, /none is declared in this pack/);
+  const dec = skills.get("managed/decompiled")!.body;
+  for (const re of [/refused as JSON outside a job run with `secret_output: true`/, /never printed inline/, /does not mean the C# is faithful, compiles or is the author's/, /Whether the program makes any request of its own, and what shared libraries the amd64 Native AOT build needs, were not measured/, /keep appending to the file after `complete`/]) assert.match(dec, re);
+  const sig = skills.get("pe/authenticode")!.body;
+  assert.match(sig, /Whether `osslsigncode` follows a CRL distribution point in a certificate by itself was not measured/);
+  assert.match(sig, /osslsigncode 2\.5 only; another release is `unsupported`/);
+  assert.match(sig, /does not show a key was stolen or misused/);
+  assert.match(skills.get("pe/signature-and-resources")!.body, /`pe\/authenticode` holds the rest/);
+  const second = skills.get("documents/second-reading")!.body;
+  assert.match(second, /`qpdf` does open a file with the empty password on its own/);
+  assert.match(second, /`msoffcrypto-tool` is asked only whether the file is encrypted/);
+  assert.match(second, /neither is taken as right/);
+  assert.match(skills.get("documents/macros")!.body, /adds `msoffcrypto-tool`'s reading: `documents\/second-reading`/);
+  assert.doesNotMatch(skills.get("documents/macros")!.body, /may try the empty password/, "msoffcrypto-tool is passed no password");
+  assert.match(skills.get("documents/pdf-rtf")!.body, /tries the empty password: `documents\/second-reading`/);
+  // The programs these leaves name are the ones the pack's unreferenced_ok no longer excuses.
+  const pack = JSON.parse(await readFile(join(RE, "pack.json"), "utf8")) as { unreferenced_ok: { name: string }[] };
+  for (const n of ["analyzeHeadless", "java", "diec", "qpdf", "lief", "msoffcrypto-tool"]) assert.ok(!pack.unreferenced_ok.some((e) => e.name === n), `${n} is named by a skill now`);
 });
 
 test("the stopping rules hold: no leaf gives steps to run, debug, patch or emulate a sample, and the packing leaf says where static recovery ends", async () => {
@@ -478,6 +516,7 @@ routerChecks({
     "elf/packing-and-identity", "elf/structure", "macho/structure", "managed/clr", "packing/static-recovery", "pe/signature-and-resources",
     "pe/structure", "rules/authoring", "rules/yara", "runtimes/go-rust", "runtimes/python-packaged", "scripts/static-analysis",
     "strings/decoding-and-similarity", "strings/obfuscated", "triage/quarantine",
+    "code/second-readers", "documents/second-reading", "managed/decompiled", "pe/authenticode",
   ],
   profiles: ["re", "full"],
 });
