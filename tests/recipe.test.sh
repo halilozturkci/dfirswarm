@@ -1415,10 +1415,10 @@ for pack, only in PINNED.items():
                 check_lock(f"{pack}/{b['name']} (source)", src["pip_lock"], pdir.parent)
             elif only is None and (src.get("pip") or src.get("pip_after")):
                 bad.append(f"{pack}/{b['name']} (source): pip arguments without a pip_lock")
-            # what pip installs outside the lock is == or a commit: an option, `.`, name==x, or a URL of a 40-hex commit
+            # what pip installs outside the lock is == or a commit: an option, `.`, name==x, or a URL of a 40-hex commit (an archive URL may carry #sha256=<64 hex>, which pip checks)
             for key in ("pip", "pip_after"):
                 for e in src.get(key) or []:
-                    if not (e.startswith("-") or e == "." or "==" in e or re.search(r"@[0-9a-f]{40}$|/archive/[0-9a-f]{40}\.tar\.gz$", e)):
+                    if not (e.startswith("-") or e == "." or "==" in e or re.search(r"@[0-9a-f]{40}$|/archive/[0-9a-f]{40}\.tar\.gz(#sha256=[0-9a-f]{64})?$", e)):
                         bad.append(f"{pack}/{b['name']} (source): {key} {e} is not == or a commit")
     txt, lockf = pdir / "python.txt", pdir / "python.lock"
     wants = [l.split("#")[0].strip() for l in txt.read_text(encoding="utf-8").splitlines() if l.split("#")[0].strip()] if txt.exists() else []

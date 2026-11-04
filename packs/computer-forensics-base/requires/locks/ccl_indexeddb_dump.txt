@@ -1,4 +1,5 @@
 # Hash lock for ccl_indexeddb_dump's own venv: Brotli 1.2.1 and zstd 1.5.7.2, which ccl_chromium_reader 0.3.18 imports (the reader itself is the pinned source, installed with --no-deps).
+# ccl_simplesnappy 0.4 (pure Python, not on PyPI) is the one dependency this file does not hold: the lock format takes name==version lines only, so its archive is hashed in requires/host.json, by the sha256 after the # sign of the archive URL that pip checks.
 # every line is name==version with the sha256 of each file PyPI publishes for it that CPython 3.11 on Linux glibc (x86_64 or aarch64) can use, plus the
 # sdist (an architecture with no wheel builds from it), except that the x86_64 manylinux_2_4 wheel of zstd 1.5.7.2 is not hashed here: amd64 builds zstd from its sdist
 # (the compiler is present). Resolved from PyPI's JSON metadata for exactly that environment; pip installs it with --require-hashes, so a file whose hash
