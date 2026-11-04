@@ -240,7 +240,7 @@
       "name": "dotnet",
       "package": ".NET runtime",
       "optional": true,
-      "why": "The runtime Eric Zimmerman's MFTECmd, EvtxECmd, RECmd and JLECmd run on (their net builds, which target .NET 10): installed once, and each of them runs through it.",
+      "why": "The runtime Eric Zimmerman's MFTECmd, EvtxECmd, RECmd, JLECmd and SrumECmd run on (their net builds, which target .NET 10): installed once, and each of them runs through it.",
       "install": {
         "brew": "brew install --cask dotnet",
         "apt": "pinned download 10.0.14 (install.download)",
@@ -363,6 +363,32 @@
             "url": "https://download.ericzimmermanstools.com/net/JLECmd.zip",
             "sha256": "5867b9103e66ee160ce9e4e93b5b0cd15ae376683a89503cb3f95d2fdc2cd6e2",
             "bin": "JLECmd.dll"
+          }
+        }
+      },
+      "licence": "MIT",
+      "redistributable": false
+    },
+    {
+      "name": "SrumECmd",
+      "package": "Eric Zimmerman's tools",
+      "optional": true,
+      "why": "A reader of SRUDB.dat for srum_reader (the rows of each SRUM table as CSV, with application and user ids resolved and, with the SOFTWARE hive, network profile names). Needs the .NET runtime; MIT licensed. The pinned build (2026.10.1) refuses to run on a non-Windows host, because it needs Windows' own ESE libraries and esentutl.exe: in a Linux image it reads nothing, and srum_reader says unsupported_platform for it; it gives rows only where it can run.",
+      "install": {
+        "brew": "https://ericzimmerman.github.io/",
+        "apt": "pinned download 2026.10.1 (install.download), run by the .NET runtime (dotnet)",
+        "download": {
+          "version": "2026.10.1",
+          "run": "dotnet",
+          "amd64": {
+            "url": "https://download.ericzimmermanstools.com/net/SrumECmd.zip",
+            "sha256": "10c36aae45e5be856070e192453ffcb7a38f75cacb8a74a2a77085b91927181e",
+            "bin": "SrumECmd.dll"
+          },
+          "arm64": {
+            "url": "https://download.ericzimmermanstools.com/net/SrumECmd.zip",
+            "sha256": "10c36aae45e5be856070e192453ffcb7a38f75cacb8a74a2a77085b91927181e",
+            "bin": "SrumECmd.dll"
           }
         }
       },
