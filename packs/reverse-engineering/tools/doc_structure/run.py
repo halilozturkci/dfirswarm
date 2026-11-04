@@ -35,8 +35,10 @@ import mmap
 import os
 import posixpath
 import re
+import select
 import signal
 import struct
+import subprocess
 import sys
 import time
 import unicodedata
@@ -48,7 +50,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-TOOL = {"name": "doc_structure", "version": 7}
+TOOL = {"name": "doc_structure", "version": 8}
 PARSER = "doc_structure/1"
 NOTE = ("Static structure only. A structure shows what the file holds, not what an application would do with it: an action, a macro, "
         "a field or an external target does not show that anything ran or was fetched. Record what was read and what was not before "
@@ -1275,6 +1277,638 @@ def final_check(value, safe=None, key=""):
         return [final_check(v, safe) for v in value]
     return _final_withheld("a value of type %s" % type(value).__name__)
 # END SHARED ONE WAY OUT
+
+
+# BEGIN SHARED PROCESS
+# The same text is in pcap_extract, zeek_run, suricata_run, the network-capture recipe and computer-forensics-base's
+# archive_extract; tests/pack-network-withholding.test.ts holds the four network copies equal and tests/pack-base-shared.test.ts
+# holds archive_extract's to them. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
+# SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
+# Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word. Only what is
+# below a program this tool started and has not yet waited for is ever signalled: the walk starts at that program's pid
+# and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
+# walk is bounded (MAX_ROUNDS and WALK_SECONDS, below). A stop signal is the one case that reaches further: it also
+# ends everything below the tool itself (a program that was forked a moment before it was entered in ACTIVE is among it) and what
+# the tool started and lost (reap_orphans): a process that was seen below the tool, in the tool's own group, and whose parent has since
+# ended. Nothing else is ever ended: a process the tool never saw in its tree (the next stage of a pipeline the tool heads, a process a
+# launcher put in the group) is left alone, whoever leads the group. A program that has ended while something it started still
+# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds and goes on without them.
+# The walk below a program is bounded: MAX_ROUNDS rounds and WALK_SECONDS seconds. Each process is stopped (SIGSTOP) as the walk finds it,
+# so one that forks fast cannot outrun the walk; the walk is repeated for what the stopped ones had already forked, and the stopped set is
+# then killed. A tree that is still growing at the bound is left, and process_notes() says so.
+# Before a pid other than the program itself is signalled, its identity is read again (same_process(pid, ident)): the start time, from
+# /proc/<pid>/stat (field 22, counted after the last ")") on Linux, from libproc's PROC_PIDTBSDINFO (pbi_start_tvsec, pbi_start_tvusec;
+# written from <sys/proc_info.h>, not run on macOS in this repository's tests) on macOS, and from `ps -o lstart=` (to the second: coarse)
+# where neither answers. The parent is no part of it: a child is re-parented when its parent ends, and is still the process that was
+# listed. A pid that is gone, or whose start time is not the listed one, is left alone; a pid whose start time could not be read when it
+# was listed is signalled only if it can be read now and is in the tool's own group; a ps listing that gave no start time (a minimal ps) is
+# checked only for the pid still being there.
+# A tree that cannot be listed (ps fails, lists nothing or needs more than PS_WAIT seconds, /proc cannot be read or takes more than
+# TABLE_SECONDS) is never taken as an empty one: list_descendants raises TreeNotListed, the program itself is still ended, and a sentence
+# in process_notes() says that the tree could not be listed (communicate_bounded also appends it to the stderr bytes it returns when it
+# ended the program at its deadline). descendants() is list_descendants for a caller that cannot take an exception (a signal handler): its
+# list is empty and has not_listed = True when the tree could not be listed.
+# Open: a pid that ends and is reused between the identity check and the signal (two calls) is signalled; the Linux rule that a member of
+# the tool's own group that holds the tool's pipe is ended; on macOS a daemon that holds the pipes of a finished program is not found (no
+# /proc/<pid>/fd); a tool SIGKILLed between the stop and the kill leaves the program and the stopped set stopped (the harness ends the
+# tool's group, and with it the stopped ones that are in it); a carrier's answer says what process_notes() holds only where that carrier's
+# own code reads it; the start of the interpreter, before any handler is in, is a window a signal can land in.
+import time
+
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
+STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
+ACTIVE = []                    # the programs running now
+SEEN = set()                   # the pids seen below a program this tool started: the only ones reap_orphans may end once their parent is gone
+SEEN_IDENT = {}                # what each pid in SEEN was (its start time) when it was seen below the tool: a pid that ended and was reused does not match
+NOTES = []                     # what this block could not do, as sentences for an answer (process_notes())
+MAX_ROUNDS, WALK_SECONDS = 8, 15   # the bound of the walk below a program: rounds, and seconds
+TABLE_SECONDS = 10             # the longest reading of /proc (or of a process table) is given
+SEEN_MAX = 1 << 16             # the most pids SEEN holds
+
+def _die_with_parent():  # runs in the child between fork and exec
+    try:
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def spawn(argv, **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    if sys.platform.startswith("linux") and ctypes is not None:
+        kwargs["preexec_fn"] = _die_with_parent
+    proc = subprocess.Popen(argv, **kwargs)
+    SEEN.add(proc.pid)
+    started = _read_ident(proc.pid, "proc" if os.path.isdir("/proc/self") else "libproc")
+    if started is not None:
+        SEEN_IDENT[proc.pid] = started
+    return proc
+
+
+class TreeNotListed(Exception):
+    """The processes could not be listed: ps failed, listed nothing or needed more than PS_WAIT seconds, /proc could not be read, or reading
+    it took more than TABLE_SECONDS. It is never to be read as a tree with nothing below it."""
+
+
+class _Listing(list):
+    """The pids below a process, as a list; .ident holds each pid's identity from the same reading, .not_listed says the tree could not be listed."""
+    ident = None
+    not_listed = False
+
+
+class _Table(dict):
+    """{pid: (parent pid, process group)}; .ident holds each pid's identity from the same reading."""
+    ident = None
+
+
+def _note(text):
+    """Record a sentence about what this block could not do (once, at most 20) and return it."""
+    if text not in NOTES and len(NOTES) < 20:
+        NOTES.append(text)
+    return text
+
+
+def process_notes():
+    """What this block could not do so far, as sentences (a tree that could not be listed, a walk that was cut), for an answer."""
+    return list(NOTES)
+
+
+def _libproc_start(pid):
+    """(seconds, microseconds) of the start of `pid` from libproc's PROC_PIDTBSDINFO (macOS), or None. Written from <sys/proc_info.h>
+    (struct proc_bsdinfo, 136 bytes, flavor 3); not run on macOS in this repository's tests."""
+    try:
+        import ctypes.util
+
+        class BsdInfo(ctypes.Structure):
+            _fields_ = [("pbi_flags", ctypes.c_uint32), ("pbi_status", ctypes.c_uint32), ("pbi_xstatus", ctypes.c_uint32),
+                        ("pbi_pid", ctypes.c_uint32), ("pbi_ppid", ctypes.c_uint32), ("pbi_uid", ctypes.c_uint32),
+                        ("pbi_gid", ctypes.c_uint32), ("pbi_ruid", ctypes.c_uint32), ("pbi_rgid", ctypes.c_uint32),
+                        ("pbi_svuid", ctypes.c_uint32), ("pbi_svgid", ctypes.c_uint32), ("rfu_1", ctypes.c_uint32),
+                        ("pbi_comm", ctypes.c_char * 16), ("pbi_name", ctypes.c_char * 32), ("pbi_nfiles", ctypes.c_uint32),
+                        ("pbi_pgid", ctypes.c_uint32), ("pbi_pjobc", ctypes.c_uint32), ("e_tdev", ctypes.c_uint32),
+                        ("e_tpgid", ctypes.c_uint32), ("pbi_nice", ctypes.c_int32), ("pbi_start_tvsec", ctypes.c_uint64),
+                        ("pbi_start_tvusec", ctypes.c_uint64)]
+
+        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+        lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_pidinfo.restype = ctypes.c_int
+        info = BsdInfo()
+        if lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
+            return None
+        return (int(info.pbi_start_tvsec), int(info.pbi_start_tvusec))
+    except Exception:  # noqa: BLE001 - no library, no symbol, a sandbox: the caller falls back
+        return None
+
+
+def _ps_start(pid):
+    """The start time `ps -o lstart= -p <pid>` prints, to the second (coarse), or None when ps fails, takes more than PS_WAIT seconds or prints none."""
+    try:
+        done = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=PS_WAIT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = " ".join(done.stdout.split())
+    return text if done.returncode == 0 and text else None
+
+
+def _read_ident(pid, kind):
+    """The identity of `pid` read the way `kind` ("proc", "libproc" or "ps") says, or None when the process is gone or the way fails."""
+    if kind == "proc":
+        try:
+            with open("/proc/%d/stat" % pid, "rb") as fh:
+                data = fh.read()
+            return ("proc", int(data[data.rindex(b")") + 2:].split()[19]))   # field 22, counted after the last ")": the name may hold one
+        except (OSError, ValueError, IndexError):
+            return None
+    if kind == "libproc":
+        started = _libproc_start(pid)
+        return None if started is None else ("libproc", started)
+    started = _ps_start(pid)
+    return None if started is None else ("ps", started)
+
+
+def process_ident(pid):
+    """What tells the process that has `pid` now from a later one that gets the same pid: its start time. Linux: field 22 of /proc/<pid>/stat;
+    macOS: libproc's pbi_start_tvsec and pbi_start_tvusec; where neither answers, the start time ps prints (to the second). The parent is no
+    part of it: a child is re-parented when its parent ends, and is still the process that was listed. None where the process is gone or
+    cannot be read."""
+    if os.path.isdir("/proc/self"):
+        return _read_ident(pid, "proc")
+    return _read_ident(pid, "libproc") or _read_ident(pid, "ps")
+
+
+def same_process(pid, ident):
+    """Whether `pid` is still the process `ident` was read from (process_ident, or the listing a walk made): a pid that is gone, or that
+    another process has taken since (another start time), is not. An `ident` of None (it could not be read when the process was listed) is
+    not vouched for either: the pid is signalled only if it can be read now and is in this process's own group. A listing by plain ps that
+    gave no start time ("listed") can only be checked for the pid still being there."""
+    if ident is None:
+        try:
+            return process_ident(pid) is not None and os.getpgid(pid) == os.getpgrp()
+        except OSError:
+            return False
+    if ident[0] == "listed":
+        try:
+            os.kill(pid, 0)
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+    return _read_ident(pid, ident[0]) == ident
+
+
+def _seen_below(pids, ident):
+    """Enter pids seen below the tool in SEEN, with the identity the listing that showed them gave."""
+    for pid in pids:
+        if pid in SEEN or len(SEEN) < SEEN_MAX:
+            SEEN.add(pid)
+            if ident.get(pid) is not None:
+                SEEN_IDENT[pid] = ident[pid]
+
+
+def _ps_rows(columns):
+    """The rows of `ps -A -o <columns>` as lists of fields. Raises TreeNotListed when ps cannot be run, fails, takes more than PS_WAIT seconds
+    or lists nothing."""
+    try:
+        done = subprocess.run(["ps", "-A", "-o", columns], capture_output=True, text=True, timeout=PS_WAIT)
+    except subprocess.TimeoutExpired as exc:
+        raise TreeNotListed("ps took more than %d seconds" % PS_WAIT) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise TreeNotListed("ps could not be run: %s" % type(exc).__name__) from exc
+    rows = [line.split() for line in done.stdout.splitlines() if line.split()]
+    if done.returncode != 0 or not rows:
+        raise TreeNotListed("ps %s" % ("exited %d" % done.returncode if done.returncode != 0 else "listed nothing"))
+    return rows
+
+
+def _children_libproc(pid):
+    """The direct children of `pid` on macOS, from libproc (macOS only: proc_listchildpids is not a symbol of the other
+    BSDs; a library call, so no program is started and nothing can be slow); None when the library, the symbol or the
+    call is not there."""
+    try:
+        import ctypes.util
+        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+        lib.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_listchildpids.restype = ctypes.c_int
+        size = 256
+        while size <= 1 << 16:
+            buf = (ctypes.c_int * size)()
+            if lib.proc_listchildpids(pid, buf, ctypes.sizeof(buf)) < 0:
+                return None
+            found = []
+            for value in buf:
+                if value <= 0:
+                    break
+                found.append(int(value))
+            if len(found) < size:
+                return found
+            size *= 4
+        return found
+    except Exception:  # noqa: BLE001 - no library, no symbol: the caller falls back
+        return None
+
+
+PS_WAIT = 10    # seconds the ps fallback is given: ps is slow on a heavily loaded host, and a tree that is not found is a program left running
+
+
+def _below(kids, pid):
+    """Every process below `pid` in `kids` ({parent: [children]}), a parent before its children."""
+    found, seen, queue = [], {pid}, [pid]
+    for parent in queue:
+        for child in kids.get(parent, []):
+            if child not in seen:
+                seen.add(child)
+                found.append(child)
+                queue.append(child)
+    return found
+
+
+def _libproc_works(pid):
+    """Whether an empty libproc answer for `pid` can be believed: libproc has just listed `pid` as this tool's own child, or, when `pid`
+    is the tool itself, has just listed the tool as its parent's child. A library that lists nothing for a live process is not working
+    (as in a sandbox that denies it)."""
+    if pid in (_children_libproc(os.getpid()) or []):
+        return True
+    return pid == os.getpid() and os.getpid() in (_children_libproc(os.getppid()) or [])
+
+
+def list_descendants(pid):
+    """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps (given PS_WAIT
+    seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has just listed this tool's own child
+    `pid` (a library that answers nothing for a live child is not working, as in a sandbox that denies it), and otherwise ps is asked. The
+    list carries .ident, the identity of each pid from the same reading. Raises TreeNotListed when the processes cannot be listed: that is
+    never an empty list."""
+    kids, ident = {}, {}
+    try:
+        if os.path.isdir("/proc/self"):
+            started = time.monotonic()
+            for entry in os.listdir("/proc"):
+                if time.monotonic() - started > TABLE_SECONDS:
+                    raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        kids.setdefault(int(fields[1]), []).append(int(entry))
+                        ident[int(entry)] = ("proc", int(fields[19]))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            first = _children_libproc(pid)
+            if first:
+                found, seen, stack = list(first), {pid, *first}, list(first)
+                while stack:
+                    for child in _children_libproc(stack.pop()) or []:
+                        if child not in seen:
+                            seen.add(child)
+                            found.append(child)
+                            stack.append(child)
+                listing = _Listing(found)
+                listing.ident = {}
+                for child in found:
+                    started = _libproc_start(child)
+                    if started is not None:
+                        listing.ident[child] = ("libproc", started)
+                return listing
+            if first is not None and _libproc_works(pid):
+                listing = _Listing()
+                listing.ident = {}
+                return listing
+            for row in _ps_rows("pid=,ppid=,lstart="):
+                if len(row) >= 2 and row[0].isdigit() and row[1].isdigit():
+                    kids.setdefault(int(row[1]), []).append(int(row[0]))
+                    ident[int(row[0])] = ("ps", " ".join(row[2:])) if len(row) >= 6 else ("listed", None)
+    except OSError as exc:
+        raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    listing = _Listing(_below(kids, pid))
+    listing.ident = {child: ident[child] for child in listing if child in ident}
+    return listing
+
+
+def descendants(pid):
+    """list_descendants for a caller that cannot take an exception (a signal handler): the same list, but when the tree cannot be listed the
+    list is empty, has not_listed = True, and process_notes() says so."""
+    try:
+        return list_descendants(pid)
+    except TreeNotListed as exc:
+        _note("the processes below pid %d could not be listed (%s)" % (pid, exc))
+        listing = _Listing()
+        listing.ident = {}
+        listing.not_listed = True
+        return listing
+
+
+def _process_table():
+    """{pid: (parent pid, process group)} for every process, from /proc where there is one, else from ps (given PS_WAIT seconds); .ident holds
+    each pid's identity from the same reading. Raises TreeNotListed when neither answers."""
+    table, ident = _Table(), {}
+    try:
+        if os.path.isdir("/proc/self"):
+            started = time.monotonic()
+            for entry in os.listdir("/proc"):
+                if time.monotonic() - started > TABLE_SECONDS:
+                    raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        table[int(entry)] = (int(fields[1]), int(fields[2]))
+                        ident[int(entry)] = ("proc", int(fields[19]))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            for row in _ps_rows("pid=,ppid=,pgid=,lstart="):
+                if len(row) >= 3 and all(part.isdigit() for part in row[:3]):
+                    table[int(row[0])] = (int(row[1]), int(row[2]))
+                    ident[int(row[0])] = ("ps", " ".join(row[3:])) if len(row) >= 8 else ("listed", None)
+    except OSError as exc:
+        raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    table.ident = ident
+    return table
+
+
+def _sample(pid):
+    """Remember what is below `pid` now, by the cheap routes only (/proc, or libproc on macOS; never a program): a process that is seen
+    here and later loses its parent is the tool's to end, and one that was never seen is not."""
+    try:
+        if os.path.isdir("/proc/self"):
+            table = _process_table()
+            kids = {}
+            for child, (parent, _group) in table.items():
+                kids.setdefault(parent, []).append(child)
+            _seen_below(_below(kids, pid), table.ident)
+        else:
+            seen, stack = {pid}, [pid]
+            while stack:
+                for child in _children_libproc(stack.pop()) or []:
+                    if child not in seen:
+                        seen.add(child)
+                        stack.append(child)
+            idents = {child: ("libproc", started) for child in seen - {pid} for started in [_libproc_start(child)] if started is not None}
+            _seen_below(seen - {pid}, idents)
+    except Exception:  # noqa: BLE001 - a sample is best effort
+        pass
+
+
+def _pipe_inodes(proc):
+    """The inodes of the pipes the tool holds with `proc` (Linux: /proc names a pipe by it; elsewhere the answer is not used)."""
+    found = set()
+    for handle in (proc.stdin, proc.stdout, proc.stderr):
+        try:
+            if handle is not None:
+                found.add(os.fstat(handle.fileno()).st_ino)
+        except (OSError, ValueError):
+            pass
+    return found
+
+
+def _holds_pipe(pid, inodes):
+    """Whether `pid` holds one of the pipes (Linux only, from /proc/<pid>/fd): the pipes are private to the tool and what it started."""
+    try:
+        for name in os.listdir("/proc/%d/fd" % pid):
+            try:
+                link = os.readlink("/proc/%d/fd/%s" % (pid, name))
+            except OSError:
+                continue
+            if link.startswith("pipe:[") and link.endswith("]") and int(link[6:-1]) in inodes:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def reap_orphans(inodes=None):
+    """Kill what this tool started and lost: a process of the tool's own group that is no longer below the tool (its parent ended and
+    init adopted it, so the walk from a program's pid cannot find it) and that the tool knows to be its own: it was seen below the tool
+    (SEEN: the programs it started, the trees it listed, the samples taken while it waited), or, on Linux, it holds one of `inodes`,
+    the pipes the tool made. A process the tool never saw in its tree is not touched, whoever leads the group: the next stage of a
+    pipeline the tool heads, or a process a launcher put in the group, is not the tool's. A process outside the group is never looked
+    at, and a pid is checked against the group, and against the identity it had when it was seen (same_process), at the moment it is
+    signalled. Returns the pids signalled; when the processes cannot be listed it signals none and process_notes() says so."""
+    me = os.getpid()
+    try:
+        if os.getpgrp() != me:
+            return []
+    except OSError:
+        return []
+    try:
+        table = _process_table()
+    except TreeNotListed as exc:
+        _note("what the tool started and lost could not be looked for: the processes could not be listed (%s)" % exc)
+        return []
+    kids = {}
+    for pid, (parent, _group) in table.items():
+        kids.setdefault(parent, []).append(pid)
+    below = set(_below(kids, me))
+    on_linux = os.path.isdir("/proc/self")
+    killed = []
+    started = time.monotonic()
+    for pid, (_parent, group) in table.items():
+        if time.monotonic() - started > TABLE_SECONDS:
+            _note("the look for what the tool started and lost was cut after %d seconds" % TABLE_SECONDS)
+            break
+        if group != me or pid == me or pid in below:
+            continue
+        listed = table.ident.get(pid)
+        holder = False
+        if pid in SEEN:
+            before = SEEN_IDENT.get(pid)
+            if before is not None and listed is not None and before != listed:
+                continue                           # the pid is another process's now: one the tool never saw
+        elif inodes and on_linux and _holds_pipe(pid, inodes):
+            holder = True
+        else:
+            continue
+        try:
+            if os.getpgid(pid) != me:
+                continue
+            if not same_process(pid, listed) or (holder and not _holds_pipe(pid, inodes)):
+                continue
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except OSError:
+            pass
+    return killed
+
+
+def _stop_below(root, stopped):
+    """Stop (SIGSTOP) every process below `root` as the walk finds it, so one that forks fast cannot outrun the walk, and repeat the walk
+    for what the stopped ones had already forked, for at most MAX_ROUNDS rounds and WALK_SECONDS seconds. `stopped` gets {pid: identity}.
+    Returns None, or the sentence that says the tree could not be listed or that the walk was cut."""
+    began = time.monotonic()
+    for _round in range(MAX_ROUNDS):
+        try:
+            found = list_descendants(root)
+        except TreeNotListed as exc:
+            return _note("the processes below pid %d could not be listed (%s): the program itself was ended, nothing below it" % (root, exc))
+        listed = getattr(found, "ident", None) or {}
+        _seen_below(found, listed)
+        fresh = [pid for pid in found if pid not in stopped]
+        if not fresh:
+            return None
+        for pid in fresh:
+            if not same_process(pid, listed.get(pid)):
+                continue
+            try:
+                os.kill(pid, signal.SIGSTOP)
+                stopped[pid] = listed.get(pid)
+            except OSError:
+                pass
+        if time.monotonic() - began > WALK_SECONDS:
+            break
+    return _note("the walk below pid %d was cut at %d rounds or %d seconds: a process started after it may be running" % (root, MAX_ROUNDS, WALK_SECONDS))
+
+
+def _end(stopped):
+    """Kill the stopped set, each pid only if it is still the process that was stopped."""
+    for pid, ident in list(stopped.items()):
+        if same_process(pid, ident):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+
+def kill_tree(proc):
+    """Kill the program and everything it started. The program is stopped first and then each process below it as the walk finds it
+    (_stop_below), so the tree does not grow while it is listed; the stopped set is killed after the program. A pid is killed only if it
+    is still the process that was listed (same_process). A program already waited for is not touched: its pid is free to be another
+    process's, and the walk below it would be that process's children. Returns None, or a sentence when the tree could not be listed or
+    the walk was cut."""
+    if proc.poll() is not None:
+        return None
+    try:
+        proc.send_signal(signal.SIGSTOP)    # a program that is stopped forks nothing more while its tree is listed
+    except OSError:
+        pass
+    stopped, note = {}, None
+    try:
+        note = _stop_below(proc.pid, stopped)
+    finally:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        _end(stopped)
+    return note
+
+
+PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
+
+
+def communicate_bounded(proc, seconds, input=None):
+    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
+    are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
+    inherited them) does not hold the tool: the pipes are given PIPE_GRACE seconds, what the program wrote is kept, what the tool
+    lost is killed (reap_orphans), and the pipes are let go. The pipes are read here and by nothing else, so letting them go is safe."""
+    deadline = time.monotonic() + max(0.1, seconds)
+    out = err = b""
+    started, timed_out, note = False, False, None
+    while proc.poll() is None:
+        now = time.monotonic()
+        if now >= deadline:
+            timed_out = True
+            note = kill_tree(proc)
+            break
+        _sample(proc.pid)
+        try:
+            out, err = proc.communicate(None if started else input, timeout=max(0.01, min(0.2, deadline - now)))
+            return out or b"", err or b"", False
+        except subprocess.TimeoutExpired as exc:
+            started = True
+            out, err = exc.stdout or b"", exc.stderr or b""
+    try:
+        out, err = proc.communicate(None if started else input, timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired as exc:
+        out, err = exc.stdout or b"", exc.stderr or b""
+        reap_orphans(_pipe_inodes(proc))
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except (OSError, ValueError):
+                pass
+    try:
+        proc.wait(timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    err = err or b""
+    if note:
+        err = err + (b"\n" if err else b"") + note.encode("utf-8", "replace")
+    return out or b"", err, timed_out
+
+
+def kill_all():
+    """End every program the tool has running, with what each started. Then everything below the tool itself, which is the tool's own: a
+    program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans).
+    Returns the sentences for what could not be done (also in process_notes())."""
+    notes = []
+    for proc in list(ACTIVE):
+        note = kill_tree(proc)
+        if note:
+            notes.append(note)
+    stopped = {}
+    try:
+        note = _stop_below(os.getpid(), stopped)
+        if note:
+            notes.append(note)
+    finally:
+        _end(stopped)
+    reap_orphans()
+    return notes
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)     # the first signal counts: a second one starts no second answer
+    kill_all()
+    last_word = STATE.get("last_word")
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def preflight(argv, seconds):
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
+    try:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        return None, b"", describe(exc).encode("utf-8", "replace"), False
+    ACTIVE.append(proc)
+    try:
+        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds))
+        return (None if timed_out else proc.returncode), out, err, timed_out
+    finally:
+        ACTIVE.remove(proc)
+
+
+def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
+    """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
+    with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+        proc = spawn(argv, stdout=stdout, stderr=stderr, cwd=cwd)
+        ACTIVE.append(proc)
+        try:
+            return proc.wait(timeout=max(0.1, seconds)), False
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            proc.wait()
+            return None, True
+        finally:
+            ACTIVE.remove(proc)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+# END SHARED PROCESS
 
 
 def long_text(text, what="text"):
@@ -3936,7 +4570,7 @@ PDF_READ = ["the header line, the cross-reference chain (tables, streams, hybrid
             "actions (OpenAction, additional-actions, link and widget annotations, form fields, outlines, the JavaScript name tree) and the way each is reached",
             "embedded files named by file specifications, and the page tree's counts"]
 PDF_NOT_READ = ["page content streams, fonts, images and metadata", "the content of JavaScript, embedded files and object streams unless extract asks for it",
-                "the plaintext of an encrypted file: no key is tried (not even the empty password), so objects inside encrypted object streams are not parsed, and a string of a plain object (an action's target) is ciphertext, marked so and given by length",
+                "the plaintext of an encrypted file: this reader tries no key (not even the empty password; the optional second reading of a PDF is made by qpdf, which tries the empty password itself), so objects inside encrypted object streams are not parsed, and a string of a plain object (an action's target) is ciphertext, marked so and given by length",
                 "filters other than FlateDecode, ASCIIHexDecode, ASCII85Decode and RunLengthDecode (LZW, JBIG2, JPX, DCT and CCITT streams are listed with their filter, not decoded)",
                 "whether an action would run: that depends on the reader, its version and its settings"]
 WS_BYTES = b"\x00\t\n\x0c\r "
@@ -5098,7 +5732,7 @@ def pdf_encryption(pdf, ctx):
         out["crypt_filters"] = filters
     out["verifier_fields_present"] = [{"name": k, "length": len(d[k])} for k in ("O", "U", "OE", "UE", "Perms") if isinstance(d.get(k), PStr)]
     out["not_reported"] = "the owner and user password verifiers (/O, /U, /OE, /UE) and /Perms are in the dictionary and are reported by length only"
-    out["not_determined"] = "whether an opening password is needed: no password, empty or otherwise, was tried"
+    out["not_determined"] = "whether an opening password is needed: no password, empty or otherwise, was tried by this reader (the optional second reading by qpdf opens a file with the empty password on its own)"
     entry["dictionary"] = out
     return entry
 
@@ -6430,6 +7064,332 @@ def file_problem(path):
     return "not a regular file (%s)" % next((n for t, n in kinds if t(mode)), "a special file")
 
 
+# --- the second reading: qpdf and msoffcrypto-tool, only where this reader leaves an encryption variant unsupported ---------------------
+
+SECOND_SECONDS = 20                 # the most the second reading may take, and (with the reading clock) never past HARD_SECONDS less SECOND_MARGIN
+SECOND_MARGIN = 25                  # seconds before HARD_SECONDS by which the second reading is over, so that the answer can still be built
+SECOND_OUTPUT_BYTES = 1 << 20       # what is read of a program's output; more ends the program
+SECOND_POLL = 0.05
+PDF_HANDLER_NOT_STANDARD, PDF_VERSION_NOT_READ, PDF_REVISION_NOT_READ = "handler_not_standard", "version_not_read", "revision_not_read"
+OFFICE_SCHEME_STARTS = ("version ", "extensible", "encryption type ", "encryption header version ", "RC4 variant ")
+OFFICE_SCHEME_WORDS = ("unreadable", "too short to hold a version")
+
+
+def shutil_which(name):
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = os.path.join(directory, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def unsupported_variants(container, body, encryption_items):
+    """The encryption variants this reader records as structure and does not interpret, as [{where, codes}] (fixed words): a PDF whose
+    encryption dictionary names a handler that is not the Standard one, or a version or revision outside the ones the standard handler
+    defines (V 1, 2, 4, 5; R 2 to 6), and an Office encryption record whose scheme the reader says it does not read."""
+    found = []
+    if container == "PDF":
+        enc = body.get("encryption") or {}
+        d = enc.get("dictionary") if enc.get("in_current_trailer") else None
+        if d == "unreadable":
+            found.append({"where": "the trailer's /Encrypt", "codes": ["dictionary_unreadable"]})
+        elif isinstance(d, dict):
+            codes = []
+            if d.get("filter") != "Standard":
+                codes.append(PDF_HANDLER_NOT_STANDARD)
+            if d.get("v") not in (1, 2, 4, 5):
+                codes.append(PDF_VERSION_NOT_READ)
+            if d.get("r") not in (2, 3, 4, 5, 6):
+                codes.append(PDF_REVISION_NOT_READ)
+            if codes:
+                found.append({"where": "the PDF encryption dictionary", "codes": codes})
+    elif container == "OLE compound file":
+        for item in encryption_items or []:
+            scheme = item.get("scheme") if isinstance(item, dict) else None
+            if isinstance(scheme, str) and (scheme.startswith(OFFICE_SCHEME_STARTS) or scheme in OFFICE_SCHEME_WORDS):
+                found.append({"where": item.get("where") if isinstance(item.get("where"), str) else "an Office encryption record", "codes": ["scheme_not_read"]})
+    return found
+
+
+def run_program(argv, seconds, cap):
+    """One program, its output (stdout and stderr) read through a pipe up to `cap` bytes; at `seconds` or past the cap it and what it started
+    are ended. The record: exit_code, timed_out, capped, seconds, output (bytes), launch_failed."""
+    rec = {"exit_code": None, "timed_out": False, "capped": False, "seconds": 0.0, "output": b"", "launch_failed": None}
+    started = time.monotonic()
+    limit = max(0.5, seconds)
+    try:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except OSError as exc:
+        rec["launch_failed"] = "the program could not be started: %s" % describe(exc)
+        return rec
+    ACTIVE.append(proc)
+    chunks, total, ended = [], 0, None
+    try:
+        fd = proc.stdout.fileno()
+        while True:
+            now = time.monotonic()
+            if now - started >= limit:
+                rec["timed_out"] = True
+                kill_tree(proc)
+                break
+            ready, _w, _x = select.select([fd], [], [], SECOND_POLL)
+            if ready:
+                data = os.read(fd, 1 << 16)
+                if not data:
+                    break
+                total += len(data)
+                if total > cap:
+                    rec["capped"] = True
+                    kill_tree(proc)
+                    break
+                chunks.append(data)
+                continue
+            if proc.poll() is not None:
+                ended = ended if ended is not None else now
+                if now - ended > PIPE_GRACE:
+                    reap_orphans(_pipe_inodes(proc))
+                    break
+        try:
+            proc.wait(timeout=max(0.2, limit - (time.monotonic() - started)))
+        except subprocess.TimeoutExpired:
+            rec["timed_out"] = True
+            kill_tree(proc)
+            proc.wait()
+    finally:
+        try:
+            proc.stdout.close()
+        except (OSError, ValueError):
+            pass
+        ACTIVE.remove(proc)
+    rec["exit_code"] = proc.returncode
+    rec["seconds"] = round(time.monotonic() - started, 3)
+    rec["output"] = b"".join(chunks)
+    return rec
+
+
+QPDF_PERMISSIONS = ("extract for accessibility", "extract for any purpose", "print low resolution", "print high resolution", "modify document assembly",
+                    "modify forms", "modify annotations", "modify other", "modify anything")
+QPDF_METHOD = re.compile(r"(stream|string|file) encryption method: ([A-Za-z0-9]{1,12})")
+
+
+def read_qpdf(text, path):
+    """What `qpdf --show-encryption` printed, as fixed fields. Every value is a number or a word from a fixed set; no text of the file, and not
+    the `User password =` line (qpdf prints a user password it recovered from an empty owner password there), reaches the result. A line printed
+    twice is an anomaly (the file name is in some of qpdf's lines)."""
+    res = {"r": None, "p": None, "methods": {}, "permissions": {}, "opened_with": None, "program_says": None, "unrecognised_lines": 0, "anomalies": 0}
+    seen = set()
+
+    def once(key):
+        if key in seen:
+            res["anomalies"] += 1
+        seen.add(key)
+    for line in text.split("\n"):
+        line = line.rstrip("\r").rstrip(" ")
+        if not line:
+            continue
+        m = re.fullmatch(r"R = (\d{1,3})", line)
+        if m:
+            once("r")
+            res["r"] = int(m.group(1))
+            continue
+        m = re.fullmatch(r"P = (-?\d{1,12})", line)
+        if m:
+            once("p")
+            res["p"] = int(m.group(1))
+            continue
+        if line.startswith("User password = ") or line == "User password =":
+            once("user")
+            continue
+        outcome = {"Incorrect password supplied": "incorrect", "Supplied password is user password": "user", "Supplied password is owner password": "owner"}.get(line)
+        if outcome:
+            # qpdf prints the user line and the owner line each when its password matched: an empty user and owner password print both
+            once("opened " + outcome)
+            if outcome == "incorrect" or res["opened_with"] in (None, outcome):
+                res["opened_with"] = outcome
+            elif res["opened_with"] != "incorrect":
+                res["opened_with"] = "user_and_owner"
+            else:
+                res["anomalies"] += 1
+            continue
+        m = re.fullmatch(r"(%s): (allowed|not allowed)" % "|".join(QPDF_PERMISSIONS), line)
+        if m:
+            once("perm " + m.group(1))
+            res["permissions"][m.group(1)] = m.group(2) == "allowed"
+            continue
+        m = QPDF_METHOD.fullmatch(line)
+        if m:
+            once("method " + m.group(1))
+            res["methods"][m.group(1)] = m.group(2)
+            continue
+        if line == "File is not encrypted":
+            once("not_encrypted")
+            res["program_says"] = "not_encrypted"
+            continue
+        head = "qpdf: %s (encryption dictionary, offset " % path
+        if line.startswith(head):
+            tail = line[len(head):]
+            m = re.fullmatch(r"\d{1,12}\): unsupported encryption filter", tail)
+            if m:
+                once("unsupported")
+                res["program_says"] = "unsupported_encryption_filter"
+                continue
+            m = re.fullmatch(r"\d{1,12}\): Unsupported /R or /V in encryption dictionary; R = (\d{1,6}) \(max (\d{1,3})\), V = (\d{1,6}) \(max (\d{1,3})\)", tail)
+            if m:
+                once("unsupported")
+                res["program_says"] = "unsupported_revision_or_version"
+                res["unsupported_values"] = {"r": int(m.group(1)), "r_max": int(m.group(2)), "v": int(m.group(3)), "v_max": int(m.group(4))}
+                continue
+        res["unrecognised_lines"] += 1
+    return res
+
+
+def read_msoffcrypto(text, path):
+    """What `msoffcrypto-tool -t -v` printed: whether it found the file encrypted, the format type it names, its version, and, when it raised,
+    a fixed word for the exception. Nothing else of its output is kept (it can print parsed records, and the file name)."""
+    res = {"encrypted": None, "type": None, "program_version": None, "error": None, "unrecognised_lines": 0, "anomalies": 0}
+    seen = set()
+
+    def once(key):
+        if key in seen:
+            res["anomalies"] += 1
+        seen.add(key)
+    last_error = None
+    in_trace = False
+    for line in text.split("\n"):
+        line = line.rstrip("\r").rstrip(" ")
+        if not line:
+            continue
+        m = re.fullmatch(r"Version: (\d{1,3}\.\d{1,3}\.\d{1,3})", line)
+        if m:
+            once("version")
+            res["program_version"] = m.group(1)
+            continue
+        m = re.fullmatch(r"(?:OOXMLFile|Doc97File|Xls97File|Ppt97File)\.type: ([A-Za-z0-9_]{1,24})", line)
+        if m:
+            once("type")
+            res["type"] = m.group(1) if m.group(1) in ("agile", "standard", "extensible", "rc4", "rc4_cryptoapi", "xor") else "other"
+            continue
+        if line == path + ": encrypted":
+            once("encrypted")
+            res["encrypted"] = True
+            continue
+        if line == path + ": not encrypted":
+            once("encrypted")
+            res["encrypted"] = False
+            continue
+        if line.startswith("Traceback (most recent call last):"):
+            in_trace = True
+            continue
+        if in_trace:
+            if not line.startswith(" "):
+                last_error = line
+            continue
+        res["unrecognised_lines"] += 1
+    if last_error is not None:
+        if last_error.startswith("msoffcrypto.exceptions."):
+            tail = last_error.split(":", 1)[1].strip() if ":" in last_error else ""
+            if tail == "Unsupported EncryptionInfo version (Extensible Encryption)":
+                res["error"] = "unsupported_extensible_encryption"
+            elif re.fullmatch(r"Unsupported EncryptionInfo version \(\d{1,5}:\d{1,5}\)", tail):
+                res["error"] = "unsupported_encryption_info_version"
+            elif last_error.startswith("msoffcrypto.exceptions.FileFormatError"):
+                res["error"] = "file_format_not_recognised"
+            else:
+                res["error"] = "program_exception"
+        else:
+            res["error"] = "program_exception"
+    return res
+
+
+def second_reading(path, container, variants, hard_end):
+    """The optional second reading, beside the first and never in place of it: qpdf for a PDF encryption dictionary, msoffcrypto-tool for an Office
+    encryption record, run only where `variants` names something this reader leaves unsupported. It tries no key of its own: no password is
+    passed and no stream is read. (qpdf, like every reader of a PDF, opens a file with the empty password by itself when that is the user or the owner
+    password; the result says which, as `opened_with`.) Returns (the dict for the answer, problems, limits)."""
+    out = {"requested": True, "applicable": bool(variants), "variants": variants, "replaces_nothing": True,
+           "independence": "a reading by a program that does not share this tool's parser, given beside the first; where the two differ, neither is taken as right"}
+    problems, limits = [], []
+    if not variants:
+        out["basis"] = "this reader left no encryption variant unsupported (or the file has none it records), so no second reading was made"
+        return out, problems, limits
+    if "\n" in path or "\r" in path:
+        out["status"] = "not_attempted"
+        out["basis"] = "the file name holds a line break and the programs print the name they are given: a name with a line break could imitate their lines"
+        problems.append("the second reading was not made: the file name holds a line break")
+        return out, problems, limits
+    absolute = os.path.abspath(path)
+    pdf = container == "PDF"
+    name = "qpdf" if pdf else "msoffcrypto-tool"
+    exe = shutil_which(name)
+    out["program"] = name
+    out["keys"] = ("no password or key is passed and no stream is read; qpdf opens a file with the empty password on its own (that is how it tells a file that needs a password from one that does not), "
+                   "and `opened_with` says whether that opened it as the user or the owner, or failed" if pdf else
+                   "msoffcrypto-tool is asked only whether the file is encrypted (-t); no password or key is passed or tried")
+    if exe is None:
+        out["status"] = "not_installed"
+        out["basis"] = "%s is not installed: no second reading was made" % name
+        problems.append("the second reading was asked for and %s is not installed" % name)
+        return out, problems, limits
+    left = hard_end - time.monotonic()
+    if left < 3:
+        out["status"] = "not_attempted"
+        out["basis"] = "the call's time was spent before the second reading"
+        limits.append("time: the second reading was not made, the call's time was spent")
+        return out, problems, limits
+    version_argv = [exe, "--version"] if pdf else None
+    out["argv"] = [exe, "--show-encryption", absolute] if pdf else [exe, "-t", "-v", absolute]
+    if pdf:
+        v = run_program(version_argv, min(5, left), 1 << 16)
+        first = next((l for l in v["output"].decode("utf-8", "replace").splitlines() if l.strip()), "")
+        out["version_command"] = version_argv
+        out["version_output"] = first[:80] if re.fullmatch(r"qpdf version [0-9A-Za-z.+~-]{1,24}", first) else None
+        left = hard_end - time.monotonic()
+        if left < 3:
+            out["status"] = "not_attempted"
+            out["basis"] = "the call's time was spent before the second reading"
+            limits.append("time: the second reading was not made, the call's time was spent")
+            return out, problems, limits
+    ran = run_program(out["argv"], min(SECOND_SECONDS, left), SECOND_OUTPUT_BYTES)
+    out["exit_code"], out["seconds"] = ran["exit_code"], ran["seconds"]
+    if ran["launch_failed"]:
+        out["status"], out["basis"] = "failed", ran["launch_failed"]
+        problems.append("the second reading failed: %s was not started" % name)
+        return out, problems, limits
+    if ran["timed_out"] or ran["capped"]:
+        out["status"] = "not_finished"
+        out["basis"] = "%s was ended: %s" % (name, "it ran past its time" if ran["timed_out"] else "it printed more than %d bytes" % SECOND_OUTPUT_BYTES)
+        (limits if ran["timed_out"] else problems).append("%s: the second reading by %s was ended" % ("time" if ran["timed_out"] else "output", name))
+        return out, problems, limits
+    text = ran["output"].decode("utf-8", "replace")
+    if pdf:
+        res = read_qpdf(text, absolute)
+        if res["program_says"] in ("unsupported_encryption_filter", "unsupported_revision_or_version"):
+            status = "unsupported_by_the_program"
+        elif res["r"] is not None and ran["exit_code"] == 0:
+            status = "read"
+        else:
+            status = "failed"
+    else:
+        res = read_msoffcrypto(text, absolute)
+        if res["error"] in ("unsupported_extensible_encryption", "unsupported_encryption_info_version"):
+            status = "unsupported_by_the_program"
+        elif res["encrypted"] is not None and res["error"] is None:
+            status = "read"
+        else:
+            status = "failed"
+    if res["anomalies"]:
+        status = "ambiguous"
+        problems.append("the second reading's output is ambiguous (a line printed twice): not taken as a reading")
+    elif res["unrecognised_lines"] and status == "read":
+        problems.append("%d line(s) of %s's output matched no rule of this reading; the fields it did match are given" % (res["unrecognised_lines"], name))
+    out["status"] = status
+    if status != "ambiguous":
+        out["result"] = {k: v for k, v in res.items() if k not in ("anomalies",)}
+    out["basis"] = {"read": "%s read the encryption parameters" % name, "unsupported_by_the_program": "%s also does not support this variant" % name,
+                    "failed": "%s did not give a reading (exit %s)" % (name, ran["exit_code"]), "ambiguous": "the output could not be read unambiguously"}[status]
+    return out, problems, limits
+
+
 HARD_SECONDS = 105                  # the manifest's 120 s less 15: the answer is built and printed after the reading clock, and past this the tool answers that it did not finish
 PRINTING = [False]                  # the answer has begun to be written: a signal after that must not write a second one
 
@@ -6442,6 +7402,12 @@ def _stopped_by_signal(signum, frame):
     """SIGINT, SIGTERM and SIGHUP end the call with one JSON answer and the exit code 128 + the signal, not a traceback and not silence. A signal
     while the partial answer of the hard limit is being built (not yet being written) is answered by a minimal failed document; one while a
     document is being written leaves that document, which is cut (the reader of a half-written answer has to expect that)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)     # the first signal counts: a second one starts no second answer
+    try:
+        kill_all()                               # the program of the second reading, if one is running, and what it started
+    except Exception:  # noqa: BLE001 - ending the programs must not stop the answer
+        pass
     if not PRINTING[0] or (PARTIAL_BUILDING[0] and not PARTIAL_WRITING[0]):
         PRINTING[0] = True
         PARTIAL_BUILDING[0] = False
@@ -6468,6 +7434,10 @@ HARD_GRACE = 5                      # seconds the partial answer of the hard lim
 def _hard_limit_last(signum, frame):
     """The partial answer was not finished in HARD_GRACE seconds. One document only: when its writing had begun (a reader that does not read
     the pipe) nothing is appended to it, and the call ends with what the reader took; else the failed one is the document."""
+    try:
+        kill_all()
+    except Exception:  # noqa: BLE001
+        pass
     if not PARTIAL_WRITING[0]:
         sys.stdout.write(json.dumps({"tool": TOOL, "status": "failed", "error": "the answer was not finished within %d seconds (the manifest's limit is 120) and the partial answer of what "
                                      "had been read was not finished either; a file the call wrote can be incomplete; read with a smaller limit or max_seconds" % HARD_SECONDS}) + "\n")
@@ -6486,6 +7456,10 @@ def _hard_limit(signum, frame):
         return
     PRINTING[0] = True
     PARTIAL_BUILDING[0] = True
+    try:
+        kill_all()                      # a program of the second reading still running is ended before the partial answer
+    except Exception:  # noqa: BLE001
+        pass
     # should the partial answer itself not be finished in HARD_GRACE seconds, the failed one ends the call
     signal.signal(signal.SIGALRM, _hard_limit_last)
     signal.setitimer(signal.ITIMER_REAL, HARD_GRACE)
@@ -6529,6 +7503,7 @@ def install_signal_handlers():
 
 def main():
     install_signal_handlers()
+    started = time.monotonic()
     if sys.version_info[:2] < MIN_PYTHON:
         fail("doc_structure needs Python %d.%d or later (its PDF lexer uses possessive quantifiers, which Python has from 3.11): this is Python %d.%d; "
              "nothing was read" % (MIN_PYTHON + tuple(sys.version_info[:2])), python="%d.%d.%d" % tuple(sys.version_info[:3]))
@@ -6561,6 +7536,9 @@ def main():
     write_values = args.get("write_values", False)
     if not isinstance(write_values, bool):
         fail("write_values must be true or false")
+    second_requested = args.get("second_reading", False)
+    if not isinstance(second_requested, bool):
+        fail("second_reading must be true or false")
     cfg = {
         "max_stream_bytes": positive_int(args, "max_stream_bytes", DEFAULT_STREAM),
         "max_total_bytes": positive_int(args, "max_total_bytes", DEFAULT_TOTAL),
@@ -6652,6 +7630,14 @@ def main():
     # One normalised block for what the structures say about encryption and protection.
     encryption_items = body.pop("encryption_items", None)
     protection_items = body.pop("protection_items", None)
+    second_out = None
+    if second_requested and stop is None:
+        found = unsupported_variants(body.get("container"), body, encryption_items)
+        second_out, second_problems, second_limits = second_reading(path, body.get("container"), found, started + HARD_SECONDS - SECOND_MARGIN)
+        for text in second_problems:
+            ctx.problem(text)
+        for text in second_limits:
+            ctx.limit_hit(text)
     spill = Spill(ctx, max(cfg["limit"], SPILL_FLOOR))
     if stop is not None:
         emit({**head_out, **body, "status": "failed", "status_basis": stop.message, "error": stop.message,
@@ -6688,6 +7674,8 @@ def main():
               "budgets": {"max_stream_bytes": cfg["max_stream_bytes"], "max_total_bytes": cfg["max_total_bytes"], "max_entries": cfg["max_entries"], "max_objects": cfg["max_objects"],
                           "max_depth": cfg["max_depth"], "max_ratio": cfg["max_ratio"], "max_seconds": seconds, "stream_bytes_read": ctx.budget.used},
               "withheld": COUNTS, "secret_values": values.summary(), "note": NOTE}
+    if second_out is not None:
+        result["second_reading"] = second_out
     if ctx.names.shown:
         result["withheld_names_file"] = ctx.names.shown
         result["withheld_names_note"] = ("The real name behind every name withheld here is in this file (mode 0600, always written when a name is withheld): "

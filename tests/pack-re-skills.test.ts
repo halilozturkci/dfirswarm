@@ -232,7 +232,7 @@ test("every backticked field or parameter a skill attributes to a tool is one it
   const seen = await observed();
   const known = new Set<string>();
   for (const t of ["pe_info", "doc_probe", "doc_structure", "pe_directories", "fuzzy_hash"]) for (const n of seen[t]!) known.add(n);
-  for (const t of ["pe_info", "doc_probe", "doc_structure", "pe_directories", "entropy_map", "fuzzy_hash"]) {
+  for (const t of ["pe_info", "doc_probe", "doc_structure", "pe_directories", "entropy_map", "fuzzy_hash", "authenticode_verify"]) {
     for (const n of Object.keys((JSON.parse(await readFile(join(TOOLS, t, "manifest.json"), "utf8")) as { params: Record<string, unknown> }).params)) known.add(n);
   }
   const elsewhere = new Set(["secret_output", ...(await readdir(join(RE, "..", "computer-forensics-base", "tools"))), ...(await readdir(TOOLS))]);   // the harness's own job flag and tool names
@@ -382,7 +382,7 @@ test("the review's wording fixes are in the leaves and the goal, and the goal's 
   // The counts outside the pack follow the pack.
   for (const file of ["docs/packs.md", "README.md"]) {
     const doc = await readFile(join(RE, "..", "..", file), "utf8");
-    assert.match(doc, /^\| `reverse-engineering` \| 21 \| 11 \| 1 \|/m, `${file} counts 21 skills (the router is counted, as pack.json counts it), eleven tools and one goal template`);
+    assert.match(doc, /^\| `reverse-engineering` \| 21 \| 12 \| 1 \|/m, `${file} counts 21 skills (the router is counted, as pack.json counts it), twelve tools and one goal template`);
   }
 });
 

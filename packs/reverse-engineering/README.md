@@ -30,10 +30,10 @@ opened only when the leaf above points to them.
 Not provided, and the skills say so where it matters: a .NET decompiler (`pe_directories` reads the
 metadata tables only when asked, with `clr_tables`), a Python archive extractor, a bytecode disassembler or
 decompiler, a packer-signature detector, parse-only script tooling,
-a decompiler for native code, and a trust-aware Authenticode verifier. The new skills
+and a decompiler for native code. The new skills
 name only programs the pack declares.
 
-**Eleven tools of its own, and `file_type` from the base pack.** `file_type` reads
+**Twelve tools of its own, and `file_type` from the base pack.** `file_type` reads
 what a file is from its bytes and says when the extension disagrees.
 `entropy_map` measures how evenly byte values are spread, window by window, and
 writes the whole profile to a file; it reports a measurement and does not
@@ -44,7 +44,7 @@ program headers, every slice of a universal binary) and says for each answer wha
 it read and what it did not; it verifies no signature. `fuzzy_hash` computes
 SHA-256, ssdeep and TLSH together, and can give the TLSH distance between two
 samples without executing either one. `elf_directories` reads an ELF file's program headers, every dynamic tag, `.dynsym` and `.symtab`, and the notes (the GNU build ID among
-them), through the program headers when the section headers are stripped. `macho_directories` reads, per slice of a Mach-O or a universal binary, the symbol table, the dyld bind and export names, the chained-fixups imports, the build version and the code-signature blob structure (no signature is verified). `unpack_safe` unpacks a UPX-packed file
+them), through the program headers when the section headers are stripped. `macho_directories` reads, per slice of a Mach-O or a universal binary, the symbol table, the dyld bind and export names, the chained-fixups imports, the build version and the code-signature blob structure (no signature is verified). `authenticode_verify` verifies a PE file's Authenticode signatures by running `osslsigncode verify` (never its own cryptography) against the roots, timestamp-authority roots and revocation list the call supplies, reads the program's words back per signature (the file's digest against the signed one, the signature, the signer's names, the signing time, a timestamp counter-signature) and says `not_checked` for every part it was given no material for; it uses no default CA store and no network, and reads its words only for the release it was checked against (2.5). `unpack_safe` unpacks a UPX-packed file
 into a derivative under the output budget (UPX only; both SHA-256 values and the
 UPX version recorded; the original never changed). `doc_probe` opens a document as a container:
 the member list, the External targets of its relationships, the members whose
@@ -59,7 +59,12 @@ embedded VBA projects; a PDF's cross-reference chain, object streams, the
 encryption dictionary of the current trailer, its actions with the key that
 reaches each, and its embedded files; an RTF's groups, objects and fields. A
 verifier, salt or hash a structure holds is reported by length, never as bytes,
-and no key is tried. `pe_directories` reads the PE directories `pe_info` only
+and this reader tries no key. With `second_reading: true`, an encryption variant
+it leaves unsupported (a PDF handler other than Standard, a version or revision
+outside the Standard handler's, an Office scheme it does not read) also gets a
+reading by qpdf or msoffcrypto-tool, given beside the first and never in place
+of it; no password or key is passed to either, but qpdf opens a file with the
+empty password on its own and the answer says whether that opened it. `pe_directories` reads the PE directories `pe_info` only
 declares: exports, delay-load imports, TLS callbacks, the resource tree with the
 version information and manifest, the CLR header and metadata root (and, with
 `clr_tables`, the rows of the main metadata tables), the debug

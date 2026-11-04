@@ -1,0 +1,59 @@
+{
+  "name": "authenticode_verify",
+  "description": "Verify the Authenticode signatures of a PE file with `osslsigncode verify` (OpenSSL), from trust material the call supplies, and report per signature what the program said: whether the file's digest is the one the signature signed, whether the signature verified against the trust material, the signer's and the other certificates' names and validity times, the signing time, a timestamp counter-signature and whether it verified against timestamp-authority material, and the result of a revocation check when a list was supplied. The cryptography is the program's, never this tool's. Trust comes only from the call: `trust_ca` (a PEM file of the roots the signer's chain must reach), `tsa_ca` (the roots of the timestamp authority) and `crl` (a revocation list); the program is always given an explicit -CAfile and -TSA-CAfile, so it never reads its default CA store, and this tool makes no network request itself (whether osslsigncode follows a CRL distribution point in a certificate was not measured). A part that was not checked is `not_checked`, never `verified`: with no `trust_ca` a signature is `not_checked` (only the file's digest is compared with the signed one), with no `tsa_ca` a timestamp is `not_checked` (its presence and time are still reported), with no `crl` revocation is `not_checked` (OCSP is never consulted). `verification` is `verified` only if every signature is `verified`, `failed` if any is `failed` (a changed file, a chain that does not reach the supplied roots, a certificate expired or revoked at the verification time, a timestamp the supplied authority material does not verify, a damaged certificate table), `unsigned` if the PE declares no certificate table and the program found no signature, else `not_checked`. A verified signature says the program accepted it against the material the call supplied; it does not say the file is safe, who the publisher is, or that the signed content is what its author meant. `verify_time` (seconds since the epoch) is passed as `-time`: by default the program verifies at the timestamp's time when one verifies, else now. The PE headers are read as structure: the certificate table's offset and size, whether it lies inside the file and at its end, and the WIN_CERTIFICATE headers in it (length, revision, type); a table that is cut, runs past the end of the file, is misaligned, is not at the end or holds an entry shorter than its header is a problem, and the verification is `failed`. A CLR header is named, and a .NET strong-name signature is not Authenticode and is not read. Serial numbers and digests are not printed, and neither is a signature's description or URL attribute (free text the program prints raw, which a file can use to make it print a line that looks like its own: a line printed twice or out of place makes the signature `not_checked` and the answer partial, and a path with a line break is refused). Every string out of a certificate (a name) passes the shared sanitiser and then the backstop before it is printed, by shape only: a token, a key id, user-info, a value given to a password or token name is withheld, a string of another shape is printed; one longer than 2,048 characters is given by its length. The program's own output is not kept anywhere, and nothing is written. The program is checked by its version: the reading of its words was checked against osslsigncode 2.5 (Debian 12's package) only, and another release is refused as `unsupported` (a newer release changes the layout and may consult the network). `complete` means the program ran to its end, its output was read whole (every line matched a rule, each signature has its result, the closing word agrees with its exit status, the trust files echoed are the ones passed) and the headers agree with it; a program that is ended at its time limit or after 16 MiB of output, or whose words do not fit, makes the answer `partial` with `limits_hit` and nothing verified. At most 64 signatures and 64 certificates per signature are listed (the rest are counted). Every record carries its source (the program and this reading's label) and the program's version, argv and exit status are in the answer. Requires osslsigncode (declared optional). A stop signal (SIGTERM, SIGINT or SIGHUP) ends the program and what it started and answers with one JSON document (status `failed`, `interrupted` true), exit 128 plus the signal, from the moment the module has run as far as its handlers, which are installed at module level and not when main() starts; a second signal does nothing while the first is answered. Not read: the certificate and signature bytes, catalog signatures, signatures of CAB, MSI or script files, the system's or any default CA store, the network, and anything about what the signed code does.",
+  "use": {
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "4d5a"
+      }
+    ],
+    "extensions": [
+      ".exe",
+      ".dll",
+      ".sys",
+      ".scr",
+      ".ocx",
+      ".efi",
+      ".cpl",
+      ".drv"
+    ]
+  },
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The PE file to verify (a regular file of at most 1 GiB; read, never changed; a name with a line break is refused)"
+    },
+    "trust_ca": {
+      "type": "string",
+      "description": "A PEM file of the root certificates the signer's chain must reach (at most 8 MiB); without it no signature is verified (the file's digest is still compared)"
+    },
+    "tsa_ca": {
+      "type": "string",
+      "description": "A PEM file of the root certificates of the timestamp authority (at most 8 MiB); without it a timestamp is reported and not verified"
+    },
+    "crl": {
+      "type": "string",
+      "description": "A PEM certificate revocation list for the signer's chain (at most 8 MiB); without it revocation is not checked"
+    },
+    "verify_time": {
+      "type": "integer",
+      "description": "Verify as of this time, seconds since 1970-01-01 UTC, from 0 to 4102444800 (default: the program's own rule)"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "Time for the whole call, from 5 to 80 (default 60); a program not finished by then is ended and the answer is partial"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "requires": [
+    "osslsigncode"
+  ],
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/sample.exe\", \"trust_ca\": \"inputs/roots.pem\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T22:00:00.000Z",
+  "version": 1,
+  "sha256": "fbcc20934442d5f9edb45b992b92176dc00ca55cdfaebe0f6cad95e8851532d8"
+}
