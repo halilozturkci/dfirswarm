@@ -145,7 +145,7 @@ test("a snapshot or an entry past its freshness date is stale and the answer is 
       assert.deepEqual(Object.fromEntries(rowsOf(out).map((r) => [r.entry, r.stale])), { "akira-avast": true, "rhysida-avast": false });
       assert.equal((await run(cwd, { hypotheses: ["rhysida"], as_of: "2027-01-10" }, {}, join(copy, "run.py"))).a.status, "complete");
     } finally {
-      await rm(copy, { recursive: true, force: true });
+      await rm(join(copy, ".."), { recursive: true, force: true });
     }
     assert.equal((await run(cwd, { hypotheses: ["akira"], as_of: "tomorrow" })).code, 1);
   });
@@ -171,7 +171,7 @@ test("a tampered snapshot, an unlisted file, a missing file and a changed manife
         assert.equal(out.a.reference_set_used, false, name);
         assert.match(out.a.error, /reference|manifest/, name);
       } finally {
-        await rm(copy, { recursive: true, force: true });
+        await rm(join(copy, ".."), { recursive: true, force: true });
       }
     }
     // a set that redistributes, and one whose entry cites a source that is not listed, are malformed even when the manifest agrees
@@ -186,7 +186,7 @@ test("a tampered snapshot, an unlisted file, a missing file and a changed manife
         assert.equal(out.a.status, "failed");
         assert.match(out.a.error, /malformed/);
       } finally {
-        await rm(copy, { recursive: true, force: true });
+        await rm(join(copy, ".."), { recursive: true, force: true });
       }
     }
   });

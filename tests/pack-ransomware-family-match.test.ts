@@ -149,7 +149,7 @@ test("a set or an entry past its freshness date is reported as stale and the ans
       const clean = (await run(cwd, { extensions: [".rhysida"], as_of: "2027-01-10" }, {}, join(copy, "run.py"))).a;
       assert.equal(clean.status, "complete", clean.status_basis);
     } finally {
-      await rm(copy, { recursive: true, force: true });
+      await rm(join(copy, ".."), { recursive: true, force: true });
     }
   });
 });
@@ -195,7 +195,7 @@ test("a tampered reference file, an unlisted file and a missing file are refused
         assert.match(out.a.error, /reference|manifest/, name);
         assert.equal(out.a.reference_set_used, false, name);
       } finally {
-        await rm(copy, { recursive: true, force: true });
+        await rm(join(copy, ".."), { recursive: true, force: true });
       }
     }
     // a set whose entries and manifest agree but whose rule version disagrees with rules.yar is malformed
@@ -208,7 +208,7 @@ test("a tampered reference file, an unlisted file and a missing file are refused
       assert.equal(out.a.status, "failed");
       assert.match(out.a.error, /rule version/);
     } finally {
-      await rm(copy, { recursive: true, force: true });
+      await rm(join(copy, ".."), { recursive: true, force: true });
     }
   });
 });
