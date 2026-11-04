@@ -18,7 +18,7 @@ leaves they point to when needed: `capture/what-you-have` (and
 `logs/web-proxy-firewall`, `correlate/host`, `evidence/captured-secrets`, `flows/interpret`,
 `analysis/engines-and-coverage`.
 
-**Eight tools.** `pcap_summary` reads classic pcap and pcapng with **no external
+**Nine tools.** `pcap_summary` reads classic pcap and pcapng with **no external
 dependency**: it returns a census of the capture (an interface table with link
 type and snap length per interface, pcapng drop counters, the time range, packets
 truncated and how much payload survived, and tuple or endpoint aggregates with
@@ -42,22 +42,26 @@ output "derivative, not evidence", and says how many packets went in, came out a
 the times in UTC beside the collector's receive time, sampled counters apart from the others (a sampled record's counters are
 never exact), the direction and translated fields nfdump names, and what an nfcapd file does not keep (templates, timeouts).
 It refuses a capture and sFlow by name; nfdump exits 0 on a file it cannot read, so the file's messages and its own flow count
-decide the status. The tools that print text from the evidence (`pcap_extract`, `zeek_run`,
-`suricata_run`, `network_log_summary`, and the capture's own option text in
+decide the status. `tls_decrypt` is a `secret_output` tool over `tshark`: it takes a capture, a key log as a FILE
+reference (never its text) and/or a pcapng's own Decryption Secrets Blocks, and says for every TCP flow whether the secrets
+decrypted it (`decrypted`, `partially`, `unsupported`, `no_secret_for_session`, `not_tls`) and why, in counts and locators only;
+the decrypted bytes go to owner-only files under its output directory. It relies on tshark's TLS fields and `-z follow`, which
+this build of the pack checks by name (`tshark -G fields`) but did not verify against a real capture. The tools that print text from the evidence (`pcap_extract`, `zeek_run`,
+`suricata_run`, `network_log_summary`, `tls_decrypt`, and the capture's own option text in
 `pcap_summary`) keep their output in a private directory and withhold what
 looks like a credential from their answers, column by column (by shape: a short
 secret that does not look like a token is not recognised; a hash, GUID or UUID
 is withheld too and recoverable in a job): run them as jobs with
-`secret_output: true`. Every answer of the eight carries `status` (`complete`,
+`secret_output: true`. Every answer of the nine carries `status` (`complete`,
 `partial` or `failed`) and `status_basis`, exit 0 means the engine ran, and
 SIGTERM, SIGINT and SIGHUP end a tool with partial JSON, from the first lines of
 its script on (six of the tools and the recipe install a minimal handler before
 their other imports, which answers "stopped before any work" and exits 128 plus
-the signal; `capture_transform` and `flow_reader` install the handler of their stop block after four
+the signal; `capture_transform`, `flow_reader` and `tls_decrypt` install the handler of their stop block after four
 imports, which answers status `failed` with `interrupted` true and exits 128 plus the signal). The one window left is the interpreter's own start and its compile
 of the script, before the script's first line has run: a stop there gives no
 answer. Measured on 2026-11-01 (SIGTERM at a random offset of 0-250 ms after the
-start, 80 runs of each of those scripts, one CPU, no network; `capture_transform` and `flow_reader` were not measured), 6 to 19 of 80 runs gave no
+start, 80 runs of each of those scripts, one CPU, no network; `capture_transform`, `flow_reader` and `tls_decrypt` were not measured), 6 to 19 of 80 runs gave no
 JSON, all but one of them within 55 ms of the start, on a quiet host; a busy host sees more (misses up to about 80 ms were seen). Flow
 export is read by `flow_reader` from an nfcapd file only (NetFlow v5, v9, IPFIX; not sFlow, and not export packets inside a capture):
 `flows/interpret` says what to settle first (the exporter, the sampling, the timeouts, what its counters mean).
