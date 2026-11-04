@@ -12,9 +12,9 @@ import { TOOLS } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 
 const MAGIC = ["d4c3b2a1", "a1b2c3d4", "4d3cb2a1", "a1b23c4d", "0a0d0d0a"];
-const NAMES = ["pcap_summary", "beacon_score", "pcap_extract", "zeek_run", "suricata_run", "network_log_summary", "tls_decrypt", "quic_inspect"];
+const NAMES = ["pcap_summary", "beacon_score", "pcap_extract", "zeek_run", "suricata_run", "network_log_summary", "tls_decrypt", "quic_inspect", "conn_series"];
 // Tools added since the first six: their manifest starts at version 1, and their example is run by their own suite (it needs a tshark that lists the preferences and fields the tool checks).
-const NEW = ["tls_decrypt", "quic_inspect"];
+const NEW = ["tls_decrypt", "quic_inspect", "conn_series"];
 // Names a script still accepts for a parameter that was renamed; the manifest names the new one only.
 const ALIASES: Record<string, string[]> = { pcap_summary: ["with_starts", "max_packets"] };
 
@@ -25,7 +25,7 @@ test("every manifest has a use, a version above 1, and the sha256 of its script"
     assert.ok(manifest.version >= (NEW.includes(name) ? 1 : 2), `${name} version raised`);
     assert.equal(manifest.sha256, createHash("sha256").update(await readFile(join(TOOLS, name, "run.py"))).digest("hex"), `${name} sha256`);
     assert.ok(manifest.timeout_seconds > 0);
-    if (["pcap_summary", "pcap_extract", "zeek_run", "suricata_run", "tls_decrypt", "quic_inspect"].includes(name)) {
+    if (["pcap_summary", "pcap_extract", "zeek_run", "suricata_run", "tls_decrypt", "quic_inspect", "conn_series"].includes(name)) {
       assert.deepEqual(manifest.use.magic.map((m: Json) => m.hex), MAGIC, `${name} magic`);
       assert.deepEqual([...manifest.use.extensions].sort(), [".cap", ".pcap", ".pcapng"]);
     }
@@ -35,9 +35,10 @@ test("every manifest has a use, a version above 1, and the sha256 of its script"
   for (const [name, programs] of Object.entries(requires)) {
     assert.deepEqual(JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8")).requires, programs);
   }
-  for (const name of ["pcap_summary", "beacon_score", "network_log_summary"]) {
+  for (const name of ["pcap_summary", "beacon_score", "network_log_summary", "conn_series"]) {
     assert.equal(JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8")).requires, undefined, `${name} needs no program`);
   }
+  assert.deepEqual(JSON.parse(await readFile(join(TOOLS, "conn_series", "manifest.json"), "utf8")).requires_optional, ["tshark"], "conn_series uses tshark for a capture only");
 });
 
 test("every network script's TOOL version equals its manifest's version, and a PARSER label names its tool", async () => {
@@ -116,7 +117,7 @@ test("every manifest example is written as the agent gives it (work/<your id>/..
 // --- the manifest declares secret output (docs/packs.md, "Secrets and sensitive output") -----------------------------------
 
 test("the five tools whose output is the evidence's text declare secret_output: required; the two that print addresses, ports and counts do not", async () => {
-  for (const name of ["pcap_extract", "zeek_run", "suricata_run", "network_log_summary", "tls_decrypt", "quic_inspect"]) {
+  for (const name of ["pcap_extract", "zeek_run", "suricata_run", "network_log_summary", "tls_decrypt", "quic_inspect", "conn_series"]) {
     const manifest: Json = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
     assert.equal(manifest.secret_output, "required", name);
     assert.match(manifest.description, /secret_output: "required"/);

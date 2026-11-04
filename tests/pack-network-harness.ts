@@ -26,6 +26,7 @@ export const TRANSFORM = join(TOOLS, "capture_transform", "run.py");
 export const FLOW = join(TOOLS, "flow_reader", "run.py");
 export const TLSD = join(TOOLS, "tls_decrypt", "run.py");
 export const QUICI = join(TOOLS, "quic_inspect", "run.py");
+export const CONNS = join(TOOLS, "conn_series", "run.py");
 export const LOGS = join(TOOLS, "network_log_summary", "run.py");
 export const RECIPE = join(NET, "recipes", "network-capture", "run.py");
 export const AGENT = { AGENT_ID: "s1" };
