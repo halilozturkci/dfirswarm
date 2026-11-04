@@ -637,3 +637,40 @@ if [[ -n "$SEVEN" ]]; then
 else
   echo "skip - no 7z or 7zz on this host"
 fi
+
+# macos-artefacts, the macOS pack's broad extraction over mac_apt (stand-ins only: mac_apt was never run here). Its recipe.json is a broad
+# extraction with its exclusions and no trigger; detect answers by signature; the status comes from the program's log and never from its exit code
+# (a stand-in that logs a traceback in a plugin and exits 0 is partial); the full suite is tests/pack-macos-triage.test.ts.
+MA="$ROOT/packs/macos-forensics/recipes/macos-artefacts"
+jq -e '.purpose == "broad_extraction" and .capability == "macos-artifacts" and (.auto | length == 0) and (.exclusions | length >= 4) and .requires == ["mac_apt.py"]' "$MA/recipe.json" >/dev/null || fail "macos-artefacts is a broad extraction with exclusions and no trigger"
+MAW="$WORK/macapt"; mkdir -p "$MAW/bin" "$MAW/work"
+python3 - "$MAW" <<'PYEOF'
+import os, sys
+w = sys.argv[1]
+open(os.path.join(w, "work", "mac.E01"), "wb").write(bytes([0x45, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00]) + bytes(4096))
+open(os.path.join(w, "work", "plain.txt"), "w").write("text")
+open(os.path.join(w, "bin", "mac_apt.py"), "w").write('''#!/usr/bin/env python3
+import os, sys
+argv = sys.argv[1:]
+out = argv[argv.index("-o") + 1]
+log = open(os.path.join(out, "Log.20261104-120000.txt"), "a")
+def line(s):
+    log.write("x - " + s + "\\n")
+line("Started macOS Artifact Parsing Tool, version 1.33.2")
+line("Running plugin TCC")
+line("Traceback (most recent call last):")
+line("TCC plugin ran for 00:00:01")
+line("Finished in time = 00:00:02")
+''')
+os.chmod(os.path.join(w, "bin", "mac_apt.py"), 0o755)
+PYEOF
+if [[ "$(uname -m)" == x86_64 ]]; then
+  PATH="$MAW/bin:$PATH" python3 "$MA/run.py" detect --target "{\"paths\": [\"$MAW/work/mac.E01\"]}" >"$MAW/d.json"; [[ $? -eq 0 ]] || fail "an E01 applies: $(cat "$MAW/d.json")"
+  PATH="$MAW/bin:$PATH" python3 "$MA/run.py" detect --target "{\"paths\": [\"$MAW/work/plain.txt\"]}" >"$MAW/d2.json"; [[ $? -eq 1 ]] || fail "a text file does not apply: $(cat "$MAW/d2.json")"
+  PATH="$MAW/bin:$PATH" python3 "$MA/run.py" run --target "{\"paths\": [\"$MAW/work/mac.E01\"], \"plugins\": [\"TCC\"]}" --out "$MAW/out" >"$MAW/r.json" || true
+  jq -e '.status == "partial"' "$MAW/out/coverage.json" >/dev/null || fail "a traceback behind an exit 0 is never complete: $(cat "$MAW/out/coverage.json")"
+  jq -e '.secret_bearing["mac_apt.stdout"] != null' "$MAW/out/coverage.json" >/dev/null || fail "the files it wrote are marked secret_bearing"
+  pass "macos-artefacts: a broad extraction with exclusions, detect by signature, and a status from the log (a stand-in that exits 0 after a traceback is partial)"
+else
+  echo "skip - macos-artefacts runs on amd64 only (mac_apt is not in the arm64 image): $(uname -m)"
+fi
