@@ -2677,7 +2677,7 @@ OWN_NAMES.update((
 
 FIELDS.update({
     "path": "path", "database": "path", "software": "path", "rows_file": "path", "source_file": "path", "csv_files": "path", "logs": "path", "directory": "path",
-    "app_path": "path", "time": "time", "time_raw": "time", "first_time": "time", "last_time": "time", "earliest": "time", "latest": "time",
+    "app_path": "path", "time": "time", "time_raw": "text", "first_time": "time", "last_time": "time", "earliest": "time", "latest": "time",
     "user_sid": "sid", "table": "name", "backend": "name", "state": "name",
 })
 KEY_KINDS.update({"counters": "name", "other": "name", "tables": "name", "retained_interval": "name", "unresolved": "name", "columns": "name"})
@@ -3205,6 +3205,7 @@ class Reading:
 
 def walk_csv(path, table, visit, reading):
     import csv
+    csv.field_size_limit(MAX_LINE)                 # a cell is read whole up to the line bound; a longer one ends the table with its problem named
     try:
         fh = open(path, "r", encoding="utf-8-sig", errors="replace", newline="")
     except OSError as exc:
@@ -3329,7 +3330,7 @@ def compare(counts):
         both = len(entry) == len(counts)
         entry["result"] = ("agree" if len(set(entry.values())) == 1 else "disagree") if both else "disagree"
         if not both:
-            entry["why"] = own("only %s names this table" % "/".join(sorted(entry)))
+            entry["why"] = own("only %s names this table" % "/".join(sorted(b for b in entry if b != "result")))
         if entry["result"] == "disagree":
             differ = True
         per[key] = entry
@@ -3540,7 +3541,9 @@ def main():
         replaced = sum(s.replaced_bytes for per in stats.values() for s in per.values())
         if replaced:
             reasons.append("%d row(s) held bytes that are not UTF-8: they were read with U+FFFD in their place" % replaced)
-        if not header["clean"]:
+        if not header["clean"] and not header["dirty"]:
+            reasons.append("the database is in state '%s', which is neither a clean shutdown nor a dirty one the logs can bring up to date: rows may be missing or not whole" % header["state"])
+        elif header["dirty"]:
             replayed = any(b["facts"].get("logs_replayed") for b in ran)
             if not logs:
                 reasons.append("the database is in state '%s' (not a clean shutdown) and no log or checkpoint file is beside it: rows that only the logs hold are missing" % header["state"])
