@@ -5,7 +5,7 @@ when: You rely on a collector's own copy, skip, upload or log records.
 needs: []
 tools: [collection_manifest_parse, collection_manifest_verify]
 requires_host: []
-mentions: [CyLR]
+mentions: [CyLR, KAPE]
 ---
 
 Use when you read what a collector says it did. Not for naming the collector from a layout (`identify/collector`, `identify/collector-clues`).

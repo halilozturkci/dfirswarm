@@ -444,13 +444,20 @@ if os.path.isfile(hj):
                         errors.append("%s needs a version" % where)
                         continue
                     pinned(where, data, "")
+                    # An entry whose `into` is an absolute directory under /opt/dfir/data/
+                    # (definitions a tool reads by a path) belongs to no Python package.
+                    _abs = isinstance(data.get("into"), str) and data["into"].startswith("/opt/dfir/data/") and ".." not in data["into"].split("/") and "//" not in data["into"]
                     for key in ("package", "licence", "why"):
+                        if key == "package" and _abs:
+                            continue
                         if not (isinstance(data.get(key), str) and data[key].strip()):
                             errors.append("%s needs %s" % (where, key))
                     for key in ("into", "file"):
                         v = data.get(key, "")
+                        if key == "into" and _abs:
+                            continue
                         if not isinstance(v, str) or v.startswith("/") or ".." in v.split("/"):
-                            errors.append("%s: %s must be a path inside the package" % (where, key))
+                            errors.append("%s: %s must be a path inside the package (or, for `into`, an absolute directory under /opt/dfir/data/)" % (where, key))
                     # Its size, pinned: a download stops past it.
                     if not (isinstance(data.get("bytes"), int) and data["bytes"] > 0):
                         errors.append("%s needs bytes: the size of what the url serves" % where)

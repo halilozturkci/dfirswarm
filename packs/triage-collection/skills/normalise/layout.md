@@ -5,6 +5,7 @@ when: Before you cite a delivered file by path.
 needs: [identify/collector]
 tools: [collection_index, collection_path_map]
 requires_host: []
+mentions: [KAPE]
 ---
 
 Use when you cite or interpret a path from a delivery. Not for deciding whether the census is complete or which parser fits.

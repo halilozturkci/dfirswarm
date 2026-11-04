@@ -5,7 +5,7 @@ when: Evidence arrives as copied files, an archive or an AD1 logical image.
 needs: []
 tools: [check_inputs, file_type]
 requires_host: [target-query]
-mentions: [mft_records, evtx_query, regkv, CyLR, mac_apt.py]
+mentions: [mft_records, evtx_query, regkv, CyLR, KAPE, mac_apt.py]
 ---
 
 Use when evidence arrives as copied files, an archive or an AD1. Not for a disk image (`evidence/imaging`).

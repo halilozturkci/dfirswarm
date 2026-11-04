@@ -5,7 +5,7 @@ when: You describe a family's layout, or collection_id names none.
 needs: []
 tools: [collection_id]
 requires_host: []
-mentions: [CyLR]
+mentions: [CyLR, KAPE]
 ---
 
 Use when you describe a family's usual layout or `collection_id` names no collector (its `layout_clues` hold only a top-level `C`, `C$` or `Windows` directory). Not for attribution: a layout is a clue, never a signature, and the delivery's own records decide.

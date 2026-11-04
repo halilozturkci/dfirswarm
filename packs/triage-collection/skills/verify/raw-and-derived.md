@@ -5,6 +5,7 @@ when: A delivery mixes collected artefacts with parsed output.
 needs: []
 tools: [collection_path_map, collection_manifest_verify]
 requires_host: []
+mentions: [KAPE]
 ---
 
 Use when you must say whether a delivered file is collected bytes or something produced from them. Not for choosing a parser (`normalise/parsers`).

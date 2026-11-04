@@ -3923,12 +3923,15 @@ def open_regular(path, **kw):
 
 
 # The corpora this tool reads, by the sha256 of the archive. A corpus whose hash is not here is refused (or read as `unknown` with allow_unpinned).
-# UAC's release is the tarball requires/host.json pins for the program; the other two lists are filled when their archives are pinned (PKG-TRI-11).
+# Each is the archive requires/host.json pins as data (the images install them under DEFAULT_DEFINITIONS, one directory per corpus).
 PINNED = {
     "uac": [{"version": "3.4.0", "sha256": "d333b72990c25d48b93200648a58084f8b79ff917d1e609dd92ac6ba9fb387db", "name": "uac-3.4.0.tar.gz"}],
-    "velociraptor": [],
-    "kape": [],
+    "velociraptor": [{"version": "0.77.2", "sha256": "6070f075f4e97b81c3bec07808a6db04b2e0f62941519116cfb2be76d0ce8fcc", "name": "velociraptor-0.77.2-source.tar.gz"}],
+    "kape": [{"version": "b235d571d361db87fdf0d6528a5aa44bd800f15a", "sha256": "bad6689edb8024c6b736ae4c862caab23a137f417adbc4e5384ccdb0df199509",
+              "name": "KapeFiles-b235d571d361db87fdf0d6528a5aa44bd800f15a.zip"}],
 }
+# Where the images put the three corpora, one directory per corpus (<name>-<version>/), used when `definitions` is not given and the directory exists.
+DEFAULT_DEFINITIONS = os.environ.get("DFIRSWARM_TRIAGE_DEFINITIONS", "/opt/dfir/data/triage-definitions")
 CORPUS_PREFIX = {"uac": "uac", "velociraptor": "velociraptor", "kape": "kapefiles"}
 CORPUS_SUFFIXES = (".tar.gz", ".tgz", ".tar", ".tar.bz2", ".tar.xz", ".zip")
 MAX_CORPUS_BYTES = 1 << 29
@@ -4075,7 +4078,20 @@ class Corpora:
             self.unavailable = {k: "the definitions directory could not be listed (%s)" % describe(exc) for k in PINNED}
             return
         self.unavailable = {k: "no archive of this corpus is in the definitions directory" for k in PINNED}
+        # A corpus directory (<name>-<version>/, as the images install them) is read one level down; a link or a file is never entered.
+        expanded = []
         for name in names[:200]:
+            path = os.path.join(directory, name)
+            if name.lower().startswith(tuple(CORPUS_PREFIX.values())) and not name.lower().endswith(CORPUS_SUFFIXES):
+                try:
+                    inside = sorted(os.listdir(path), key=os.fsencode) if stat.S_ISDIR(os.lstat(path).st_mode) else None
+                except OSError:
+                    inside = None
+                if inside is not None:
+                    expanded += [(os.path.join(path, s), s) for s in inside[:50]]
+                    continue
+            expanded.append((path, name))
+        for path, name in expanded[:200]:
             low = name.lower()
             kind = next((k for k, p in CORPUS_PREFIX.items() if low.startswith(p)), None)
             if kind is None or not low.endswith(CORPUS_SUFFIXES):
@@ -4083,7 +4099,6 @@ class Corpora:
             if out_of_time():
                 self.unavailable = {k: "the time limit ended the check of the definitions" for k in PINNED}
                 return
-            path = os.path.join(directory, name)
             entry = {"corpus": kind, "name": shown(name, "definitions file")}
             self.report.append(entry)
             try:
@@ -4828,6 +4843,8 @@ def main():
     found = discover(census)
     src = DirSource(root)
     corpus = Corpora()
+    if definitions is None and os.path.isdir(DEFAULT_DEFINITIONS):
+        definitions = DEFAULT_DEFINITIONS
     if definitions is not None:
         corpus.load(definitions, allow_unpinned)
     needs = [n.lower() for n in (args.get("needs") or [])]

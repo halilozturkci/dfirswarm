@@ -5,6 +5,7 @@ when: A skip, error or result log exists.
 needs: []
 tools: [collection_id, collection_profile_compare]
 requires_host: []
+mentions: [KAPE]
 ---
 
 Use when you read a collector's own account of its targets. Not for choosing what to ask for (`plan/what-to-collect`).

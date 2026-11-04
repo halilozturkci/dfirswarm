@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet } from "./tool-library-harness.ts";
@@ -55,9 +55,9 @@ mod.PINNED[sys.argv[2]].append({"version": sys.argv[3], "sha256": sys.argv[4], "
 sys.stdin = io.StringIO(sys.argv[5])
 mod.main()
 `;
-async function pinnedRun(cwd: string, kind: string, version: string, digest: string, args: Json) {
+async function pinnedRun(cwd: string, kind: string, version: string, digest: string, args: Json, env: Record<string, string> = {}) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn("python3", ["-c", PINNED_RUN, COMPARE, kind, version, digest, JSON.stringify(args)], { cwd, env: { ...process.env, AGENT_ID: "s1" } });
+    const child = spawn("python3", ["-c", PINNED_RUN, COMPARE, kind, version, digest, JSON.stringify(args)], { cwd, env: { ...process.env, AGENT_ID: "s1", ...env } });
     const out: Buffer[] = [], err: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));
     child.stderr.on("data", (c: Buffer) => err.push(c));
@@ -162,6 +162,33 @@ test("UAC: a profile's include and exclude globs are resolved against the pinned
     assert.equal(section("unresolved")[0].kind, "unresolved_dynamic_selection");
     assert.match(section("unknown")[0].why, /no artefact file of the pinned UAC definitions matches/);
     assert.equal(out.status, "partial", "an unresolved selection and an unknown entry make it partial or at least not clean");
+  });
+});
+
+test("without `definitions` the tool reads the images' default directory, one directory per corpus, and never enters a link; the lists carry the three pins host.json declares", async () => {
+  await withCwd(async (cwd) => {
+    const digest = await pack(join(cwd, "default", "uac-3.4.0"), "uac-3.4.0.tar.gz", UAC_CORPUS);
+    await uacDelivery(cwd);
+    const env = { DFIRSWARM_TRIAGE_DEFINITIONS: join(cwd, "default") };
+    const out = body(await pinnedRun(cwd, "uac", "3.4.0", digest, { root: "d" }, env));
+    assert.equal(out.definitions[0].status, "read", JSON.stringify(out.definitions));
+    assert.equal(out.definitions[0].sha256, digest);
+    assert.equal(out.requested.first[0].profile, "ir_triage");
+    // A corpus directory that is a link is not entered: nothing is read from it.
+    await mkdir(join(cwd, "linked"), { recursive: true });
+    await symlink(join(cwd, "default", "uac-3.4.0"), join(cwd, "linked", "uac-3.4.0"));
+    const linked = body(await pinnedRun(cwd, "uac", "3.4.0", digest, { root: "d" }, { DFIRSWARM_TRIAGE_DEFINITIONS: join(cwd, "linked") }));
+    assert.deepEqual(linked.definitions, []);
+    assert.match(JSON.stringify(linked), /definitions_not_available/);
+    // The pins the comparator carries are the data entries the pack declares.
+    const host = JSON.parse(await readFile(join(import.meta.dirname, "..", "packs", "triage-collection", "requires", "host.json"), "utf8"));
+    const declared = host.binaries.flatMap((b: Json) => (b.install?.data ?? []).map((d: Json) => [d.file, d.sha256, d.into]));
+    const source = await readFile(COMPARE, "utf8");
+    assert.equal(declared.length, 3);
+    for (const [file, sha, into] of declared) {
+      assert.ok(source.includes(`"name": "${file}"`) && source.includes(`"sha256": "${sha}"`), `${file}: the comparator's list carries the pinned name and sha256`);
+      assert.match(into, /^\/opt\/dfir\/data\/triage-definitions\/[a-z]+-[0-9a-f.]+$/);
+    }
   });
 });
 

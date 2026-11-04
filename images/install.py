@@ -111,6 +111,7 @@ FACTS_MAX_BYTES = int(os.environ.get("DFIRSWARM_FACTS_MAX_BYTES", str(64 * 1024 
 # Where pinned downloads go, where pinned sources are unpacked, where their
 # programs are linked, and where apt's sources are; a test sets them.
 TOOLS = Path(os.environ.get("DFIRSWARM_TOOLS_DIR", "/opt/dfir/tools"))
+DATA_ROOT = Path(os.environ.get("DFIRSWARM_DATA_DIR", "/opt/dfir/data"))
 SRC = Path(os.environ.get("DFIRSWARM_SRC_DIR", "/opt/dfir/src"))
 BIN = Path(os.environ.get("DFIRSWARM_BIN_DIR", "/usr/local/bin"))
 APT_SOURCES = Path(os.environ.get("DFIRSWARM_APT_SOURCES_DIR", "/etc/apt/sources.list.d"))
@@ -771,14 +772,23 @@ def fetch_data(d: dict) -> tuple:
     An entry acquired by the operator (`acquire: "operator"`) is never fetched
     here: it comes from the local copy the build was given, or not at all.
     Returns (record, failure reason)."""
-    if not d.get("url") or not d.get("sha256") or not d.get("package"):
+    into = str(d.get("into", ""))
+    # What no program of the image imports (definitions a tool reads by a path)
+    # names an absolute directory under /opt/dfir/data/ and needs no package.
+    absolute = into.startswith("/")
+    if not d.get("url") or not d.get("sha256") or not (d.get("package") or absolute):
         return None, "no url, sha256 and package pinned"
-    root = package_dir(d["package"])
-    if not root:
-        return None, f"its program's Python package {d['package']} is not in the image"
-    dest_dir = (root / d.get("into", "")).resolve()
-    if not (dest_dir == root.resolve() or str(dest_dir).startswith(f"{root.resolve()}/")):
-        return None, f"{d.get('into')} leaves the package's directory"
+    if absolute:
+        dest_dir = Path(os.path.normpath(into))
+        if not str(dest_dir).startswith(f"{DATA_ROOT}/"):
+            return None, f"{into} is not a directory under {DATA_ROOT}"
+    else:
+        root = package_dir(d["package"])
+        if not root:
+            return None, f"its program's Python package {d['package']} is not in the image"
+        dest_dir = (root / into).resolve()
+        if not (dest_dir == root.resolve() or str(dest_dir).startswith(f"{root.resolve()}/")):
+            return None, f"{d.get('into')} leaves the package's directory"
     name = d.get("file") or Path(urllib.parse.urlparse(d["url"]).path).name
     if not name or name in (".", "..") or "/" in name or "\\" in name:
         return None, f"the file name {name!r} is not a plain name"
@@ -890,8 +900,8 @@ def fetch_data(d: dict) -> tuple:
         keep = bool(d.get("keep", False))
         rec["source"] = {"url": d["url"], "sha256": rec["sha256"], "bytes": rec["bytes"], "from": how, "kept": keep}
         rec["transform"] = {"commands": [[a.replace(str(dest), name) for a in argv] for argv in ran],
-                            "package": d["package"],
-                            "package_version": venv_answer("import importlib.metadata as m, sys; print(m.version(sys.argv[1]))", d["package"]) or None,
+                            "package": d.get("package"),
+                            "package_version": (venv_answer("import importlib.metadata as m, sys; print(m.version(sys.argv[1]))", d["package"]) or None) if d.get("package") else None,
                             "python": venv_answer("import platform; print(platform.python_version())") or None}
         if conv:
             rec["transform"]["converter"] = conv

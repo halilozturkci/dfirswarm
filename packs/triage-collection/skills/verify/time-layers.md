@@ -5,6 +5,7 @@ when: File times matter, or many files share one date.
 needs: []
 tools: [collection_index, collection_timestamps]
 requires_host: []
+mentions: [KAPE]
 ---
 
 Use when a conclusion rests on a timestamp of a delivered file. Not for decoding a time value (base `timeline/build`).
