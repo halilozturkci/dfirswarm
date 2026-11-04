@@ -24,6 +24,8 @@ Content and metadata
 `metadata/fingerprints` JA3, JA4, signature matches
 `analysis/engines-and-coverage` engine analysis and its coverage
 `sessions/reconstruct` what was actually sent
+`sessions/tls-keylogs` authorised TLS decryption
+`sessions/quic-http3` QUIC and HTTP/3
 `sessions/objects` exporting protocol objects
 
 Leads

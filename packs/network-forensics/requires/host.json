@@ -115,6 +115,18 @@
       },
       "licence": "GPL-2.0-only",
       "redistributable": false
+    },
+    {
+      "name": "nfdump",
+      "package": "nfdump",
+      "optional": true,
+      "why": "Read nfcapd flow files (the NetFlow v5, NetFlow v9 and IPFIX records nfcapd stored) with -v, -I, -E and -o json. flow_reader runs it as a reader: nfcapd and nfpcapd, which listen or build flows, are in the same package and are never run. Debian 12 ships 1.7.1 (1.7.1-2+deb12u1 at the image snapshot of 2026-10-30); its nfcapd does not decode sFlow.",
+      "install": {
+        "apt": "apt-get install -y nfdump"
+      },
+      "licence": "BSD-3-Clause (the Debian copyright file: ISC for the address conversion code, GPL-2+ for the bundled LZO code)",
+      "redistributable": false,
+      "facts": [["nfdump", "-V"]]
     }
   ]
 }

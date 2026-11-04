@@ -20,4 +20,6 @@ Router: `network/router`
 - `metadata/fingerprints` TLS fingerprints and Suricata output, with limits: A finding rests on a JA3 or JA4 value or a Suricata match.
 - `network/router` Network notes by question: Pick a network note when none is listed, or you cannot choose.
 - `sessions/objects` Exporting protocol objects with their provenance: You export files or other protocol objects from a capture with pcap_extract.
+- `sessions/quic-http3` Reading QUIC and HTTP/3 in a capture: A capture holds QUIC or UDP port 443 traffic and you need what it shows, with or without secrets.
 - `sessions/reconstruct` Reconstructing transactions and objects: You need what was actually sent, not just who spoke to whom.
+- `sessions/tls-keylogs` Authorised TLS decryption from key logs: You hold approved TLS secrets and need to know which sessions of a capture they decrypt.
