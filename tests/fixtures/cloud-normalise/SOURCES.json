@@ -1,5 +1,5 @@
 {
-  "about": "Where each fixture of tests/pack-cloud-normalise.test.ts comes from. No real export exists (the owner's fixtures are awaited). Each file is authored by hand from the published field list of the format named here and is not a copy of a vendor page. For gcp-audit.json, k8s-audit.jsonl, entra-directory-audit.json and the Azure files no vendor documentation was fetched or read while writing them, so the 'documentation' fields of those entries name the schema and say that the check against the live page is still to do. For the S3 server access log and the VPC Flow Log, the two AWS pages under 'pages' were read on 2026-11-04 (read-only page reading, nothing downloaded); the values in the fixtures are invented, from documentation address ranges and made-up ids. What each page supports is stated per claim: a verifier re-reads the page and checks the claim. Claims are paraphrases.",
+  "about": "Where each fixture of tests/pack-cloud-normalise.test.ts comes from. No real export exists (the owner's fixtures are awaited). Each file is authored by hand from the published field list of the format named here and is not a copy of a vendor page. For gcp-audit.json, k8s-audit.jsonl, entra-directory-audit.json and the Azure files no vendor documentation was fetched or read while writing them, so the 'documentation' fields of those entries name the schema and say that the check against the live page is still to do. For the S3 server access log and the VPC Flow Log, the two AWS pages under 'pages' were read on 2026-11-04 (read-only page reading, nothing downloaded); the values in the fixtures are invented, from documentation address ranges and made-up ids. What each page supports is stated per claim: a verifier re-reads the page and checks the claim. Claims are paraphrases. workspace-activities.json: the Google documentation was not read (only AWS pages were permitted), so the Reports API shape and the application, event and parameter names in it are NOT checked against a Google page and are illustrative.",
   "fixtures": {
     "gcp-audit.json": {
       "format": "Cloud Logging LogEntry with protoPayload of type google.cloud.audit.AuditLog, wrapped as the entries.list response",
@@ -55,6 +55,11 @@
       "format": "a custom subset with the ECS fields of version 7, with a header line",
       "schema_version": "version 7",
       "documentation": "pages.aws-vpc-flow-log-records; checked: yes, 2026-11-04"
+    },
+    "workspace-activities.json": {
+      "format": "Google Workspace Reports API activities as the list response's items array: a token authorization and revocation, a Drive visibility change with an old and a new value, an admin setting change with a delegation event in one activity, an activity with no events, and a record that is not an activity",
+      "schema_version": "not recorded: the Google documentation was not read",
+      "documentation": "Reports API activities list; checked against the live page: no (Google documentation reading was not permitted). The shape is the work card's (id.time, id.uniqueQualifier, id.applicationName, actor, ipAddress, events[{type, name, parameters[{name, value, multiValue, boolValue}]}]); the event and parameter names are illustrative and are not claimed to be Google's."
     }
   },
   "pages": {

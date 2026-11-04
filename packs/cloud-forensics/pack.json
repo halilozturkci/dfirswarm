@@ -1,7 +1,7 @@
 {
   "id": "cloud-forensics",
   "name": "Cloud and SaaS Forensics Pack",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "Method and tooling for logs that belong to somebody else's computer, examined as supplied exports: what a cloud or SaaS export covers and what its silence can show, the Microsoft 365 unified audit log, Entra sign-ins, AWS CloudTrail, Google Workspace, and the tokens, grants and mailbox rules behind a cloud account.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -24,10 +24,6 @@
     {
       "path": "skills/cloud/router.md",
       "why": "the pack's router: it names the other notes by the question each answers and holds no rule, tool or program of its own"
-    },
-    {
-      "path": "skills/google/workspace-access.md",
-      "why": "a method leaf for Workspace evidence: the pack has no reader for token, Drive or admin events, so it reads the export as supplied and names no tool or program"
     },
     {
       "path": "skills/logs/exported-evidence.md",
@@ -55,17 +51,17 @@
       "skills/entra/directory-audit.md": "c0f8c15e28588bf229d3b3161f4b2442ae833a38c1bc8e338c18e0b7f7902a27",
       "skills/entra/signins.md": "6161ca946c1ed80e2188af31a0f15c069807371964014227294a71a994bd3b4d",
       "skills/gcp/audit-logs.md": "4f884fa0599bff019973ef3a7edabffb1618af7a368d476f041555b33165417f",
-      "skills/google/workspace-access.md": "af272db6d3ff4edee0831de2920c81050dc3623ace590dd3a70dbe861eaf9a08",
-      "skills/google/workspace.md": "a8e5c5dc0150a693bf0bf54a410dcd1a7b9bf01461afd32e12c36c708f2a566a",
-      "skills/identity/grants.md": "971e2b10faf46f0da0b6a493f6b715b100ce6effa68eb6838988c9ea022f14dc",
-      "skills/identity/tokens.md": "004dd19420d1e8ae1ce9fd311d14cec8b26c6048cff3089c3f5ae5df1a592784",
+      "skills/google/workspace-access.md": "6b235e5f6e538bea69983395407b461209c91730809fdca6a0e2404eb5edf8c5",
+      "skills/google/workspace.md": "344953a3aec27d5f02b10413217289c0794bdacc2d3927732feb02d6a671b83f",
+      "skills/identity/grants.md": "7ad4c89acf22a7815aec9be4fbf9b868179d15c85fa69690f2c38797dc97b037",
+      "skills/identity/tokens.md": "bf85464ce33d71c6dd05933186e24e488cef1180a3e3d07f6148f25fe0e2bcb6",
       "skills/kubernetes/audit.md": "95c718e18cde5d16dac96476ded738bf27627418f6bb77948b8b8d9b69a9b065",
       "skills/logs/exported-evidence.md": "a19b5a38a4970401ac3e6c2d5c50f800b40c2a1ad7c485da7e0d06c5b2593bea",
       "skills/logs/sources.md": "34f7fd51560e6767ffbed3d75659cd551dbc27d7fd0c15766326c521adb84dfd",
       "skills/logs/what-exists.md": "61691258f0e2a1baeb8e02c1768a84483bc17e8ab184c03985e0232b1edfa952",
       "skills/m365/unified-audit-log.md": "04ba5c0035ac630d1274dc377ae9f8b93ac56845ba01713737353ec618bafe53",
-      "tools/cloud_normalise/manifest.json": "eb478b6ca174f6c7f7bbf8d7e9cbc82628a7759300d616a46f73e9760e66d8f8",
-      "tools/cloud_normalise/run.py": "0290a7dafbe8ef23ca5c27beab5bd35624e6cb6446a1648c87ab47aa2ccec514",
+      "tools/cloud_normalise/manifest.json": "eb27aa4c85ea31925ec5a5bc3fbaab12187ac8e159014e13ce6e0f3707fa7b54",
+      "tools/cloud_normalise/run.py": "046ae65cd27815661b35ceda2c5547262272b352fb9e194ebc567a9538606161",
       "tools/cloud_timeline_export/manifest.json": "d48c722e3407967e83c32e94a21f76b8f6505b3fda04463cff352613d8a1dc12",
       "tools/cloud_timeline_export/run.py": "049f0585ca8e819e3144780700db9e3db4957b772fc99d18c0865623d342093d",
       "tools/cloudtrail_parse/manifest.json": "8dc1f981a8f7007c2f4e08cc5f502fb313b52866a40c500ac3152c6367074913",

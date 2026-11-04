@@ -3,7 +3,7 @@ id: identity/grants
 title: Consents, app credentials and mailbox rules as durable state
 when: Consents, delegations, mailbox rules or account changes that can outlive a session.
 needs: [logs/what-exists]
-tools: [ual_parse, signin_analyse]
+tools: [ual_parse, signin_analyse, cloud_normalise]
 requires_host: []
 ---
 
@@ -12,6 +12,8 @@ Use when the evidence has consent events, application or service-principal recor
 **A consent event is a lead, not a grant.** `ual_parse` shows the audit records of consents, rules and permissions; `signin_analyse` shows later sign-ins. Verify the event's result, the client and resource ids, the grant type, the scopes or application roles, the consenting principal and any supplied grant state. Tell apart: delegated consent, application permissions, service-principal credentials, federated credentials, domain-wide delegation, and on accounts a registered authentication method, a role assignment or a created account. Removing a session does not show that any of these was removed; record the removal separately from the revocation.
 
 **Mailbox rules, filters, forwarding and delegations.** A recorded configuration is not evidence it acted: enabled state, conditions, transport restrictions and delivery outcomes decide that. A server-side rule can act without a new sign-in, but its presence alone does not show disclosure. Record when each was created and, separately, when the evidence shows it removed, or that it does not.
+
+**Entra and Workspace changes.** `cloud_normalise` gives an Entra directory-audit row `targets`, `modified_properties` (before and after, sensitive) and `change_topics`, and a Workspace activity its `parameters` and `before_after`; topics are hints from its own word list, not Microsoft's or Google's classification.
 
 **For each item record:** type, the identifiers in full, scopes or conditions, who created it and when, its last evidenced state, and whether any later activity used it.
 

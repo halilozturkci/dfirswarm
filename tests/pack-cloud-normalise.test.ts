@@ -994,10 +994,185 @@ test("1,000 structure-aware mutations of an S3 line, a VPC line and an Azure rec
 test("the manifest names the new adapters, the new argument and the Azure documentation gap; version and PARSER label moved together", async () => {
   const m = JSON.parse(await readFile(join(TOOLS, "cloud_normalise", "manifest.json"), "utf8"));
   assert.ok(m.version >= 2);
-  assert.match(await readFile(NORM, "utf8"), /^PARSER = "cloud_normalise\/2"$/m);
+  assert.match(await readFile(NORM, "utf8"), /^PARSER = "cloud_normalise\/\d+"$/m);
   assert.ok(m.params.vpc_flow_fields);
   for (const word of ["azure_activity_log", "aws_s3_access_log", "aws_vpc_flow", "2026-11-04", "NODATA", "SKIPDATA", "were not read"]) assert.ok(m.description.includes(word), word);
   assert.match(m.params.provider.description, /azure/);
   assert.match(m.params.provider.description, /aws_s3/);
   assert.match(m.params.provider.description, /aws_vpc/);
+});
+
+const jlines = (...rs: Json[]): string => rs.map((r) => JSON.stringify(r)).join(String.fromCharCode(10)) + String.fromCharCode(10);
+
+// ---- PKG-CLD-13: Google Workspace Reports API activities and the Entra change topics ----------------------------------------------------------------
+// The Workspace shape is the work card's (the Google documentation was not read: SOURCES.json says so); the event and parameter names in the fixture are
+// illustrative. The adapter takes every name from the record.
+
+const ws = (over: Json = {}, events: Json[] = [{ type: "auth", name: "authorize", parameters: [{ name: "client_id", value: "c-1" }] }]): Json => ({
+  kind: "admin#reports#activity", id: { time: "2026-02-14T09:00:00Z", uniqueQualifier: "-1", applicationName: "token", customerId: "C0example1" },
+  actor: { callerType: "USER", email: "alice@example.org", profileId: "1" }, ipAddress: "198.51.100.30", events, ...over,
+});
+
+test("the Workspace adapter reads Reports API activities as one row per event, with the parameter bag whole, the parameters by name, the pairs of before and after, and the actor apart from the target", async () => {
+  await withDir(async (cwd) => {
+    await fixtures(cwd, ["workspace-activities.json"]);
+    const out = body(await tool(NORM, cwd, { path: "work/ev/workspace-activities.json" }));
+    assert.equal(out.status, "partial", "one record of the envelope is not an activity");
+    assert.equal(out.coverage.rows, 6, "five activities: five events (two in one activity) and one activity with none");
+    assert.equal(out.coverage.records_unsupported, 1);
+    assert.equal(out.coverage.duplicates, 0, "two events of one activity share its unique qualifier and are not duplicates");
+    const r = await rows(cwd, "normalised.partial.jsonl");
+    assert.deepEqual(r.map((x) => [x.application, x.action ?? null, x.event_id]), [["token", "authorize", "-1001"], ["token", "revoke", "-1002"], ["drive", "change_document_visibility", "-2001"], ["admin", "CHANGE_EMAIL_SETTING", "-3001"], ["admin", "ADD_DELEGATE", "-3001"], ["login", null, "-4001"]]);
+    const [auth, revoke, drive, setting, delegate, none] = r;
+    assert.equal(auth.provider, "google_workspace");
+    assert.equal(auth.adapter, "workspace_activities");
+    assert.equal(auth.tenant, "C0example1");
+    assert.equal(auth.principal, "alice@example.org");
+    assert.equal(auth.principal_kind, "actor.email");
+    assert.equal(auth.principal_id, "100000000000000000002");
+    assert.equal(auth.source_ip, "198.51.100.30");
+    assert.equal(auth.outcome, "unknown", "no result is read from the activity");
+    assert.equal(auth.time_utc, "2026-02-14T09:00:00.123Z");
+    assert.equal(auth.event_type, "auth");
+    assert.equal(auth.parameters.length, 3, "the parameter bag is kept whole");
+    assert.deepEqual(auth.parameters[2].multiValue, ["https://example.invalid/auth/mail.read", "https://example.invalid/auth/drive.read"], "a multiValue stays a list");
+    assert.equal(auth.parameters_by_name.client_id, "1234567890-example.apps.example.invalid");
+    assert.deepEqual(auth.parameters_by_name.scope.length, 2);
+    assert.deepEqual(auth.topic_hints, ["grant"]);
+    assert.deepEqual(revoke.topic_hints, ["revocation"]);
+    assert.deepEqual(drive.before_after, [{ name: "visibility", before: "private", after: "people_with_link" }]);
+    assert.equal(drive.parameters_by_name.primary_event, true, "a boolValue is kept as a boolean");
+    assert.deepEqual(drive.topic_hints, ["sharing"]);
+    assert.deepEqual(setting.before_after, [{ name: "value", before: "off", after: "on" }]);
+    assert.equal(setting.parameters_by_name.SETTING_NAME, "Mail forwarding");
+    assert.equal(delegate.parameters_by_name.DELEGATE_EMAIL, "intruder@example.org", "the target is a parameter; the actor stays the principal");
+    assert.equal(delegate.principal, "admin@example.org");
+    assert.deepEqual(delegate.topic_hints, ["delegation"]);
+    assert.equal(delegate.event_index, 1);
+    assert.equal(delegate.events_in_activity, 2);
+    assert.equal(none.outcome, "unknown");
+    assert.equal(none.events_in_activity, 0);
+    assert.match(auth.topic_hints_basis, /not a classification the vendor documents/);
+    assert.equal(auth.raw_record.events[0].parameters[0].value, "1234567890-example.apps.example.invalid", "the whole activity is kept");
+    const rej = await rows(cwd, "rejected.jsonl");
+    assert.equal(rej.length, 1);
+    assert.equal(rej[0].raw_record.unrelated, true);
+  });
+});
+
+test("a Workspace activity is recognised by its shape in auto mode and by provider workspace; another provider's record is rejected for that provider, named", async () => {
+  await withDir(async (cwd) => {
+    await put(cwd, "work/ev/a.jsonl", jlines(ws(), gcp({ insertId: "g1" })));
+    const auto = body(await tool(NORM, cwd, { path: "work/ev/a.jsonl" }));
+    assert.equal(auto.coverage.rows, 2);
+    const only = body(await tool(NORM, cwd, { path: "work/ev/a.jsonl", provider: "workspace", out_dir: "work/s1/w" }));
+    assert.equal(only.coverage.rows, 1);
+    assert.equal(only.coverage.records_unsupported, 1);
+    const rej = await rows(cwd, "rejected.jsonl", "work/s1/w");
+    assert.match(rej[0].reason, /not a workspace record/);
+  });
+});
+
+test("canaries in parameter values, a multiValue under a secret-named parameter, token names and before and after values are withheld from every channel; the originals go to the 0600 values file only on write_values", async () => {
+  const secretBag = rnd(30, 401);
+  const multiSecret = rnd(30, 402);
+  const beforeText = rnd(24, 403);
+  const afterText = rnd(24, 404);
+  const tokenName = rnd(30, 405);
+  await withDir(async (cwd) => {
+    const a = ws({}, [{ type: "auth", name: "authorize", parameters: [
+      { name: "client_secret", value: secretBag },
+      { name: "access_token", multiValue: [multiSecret, `${multiSecret}-2`] },
+      { name: "OLD_VALUE", value: `password=${beforeText}` },
+      { name: "NEW_VALUE", value: `Authorization: Bearer ${JWT}` },
+      { name: "app_name", value: "Example Sync" },
+      { name: "note", value: `refresh api_key=${afterText}` },
+    ] }]);
+    a.actor.email = `svc password=${tokenName}`;
+    await put(cwd, "work/ev/a.jsonl", jlines(a, ws({ id: { time: "2026-02-14T09:00:01Z", uniqueQualifier: "-2", applicationName: "token", customerId: "C0example1" } })));
+    const run = await asJob(NORM, cwd, { path: "work/ev/a.jsonl" }, { SECRET_OUTPUT: "1" });
+    const out = body(run);
+    assert.equal(out.coverage.rows, 2, out.status_basis);
+    const everything = [run.stdout, run.stderr];
+    for (const f of await filesUnder(join(cwd, "out"))) if (!f.endsWith("cloud-normalise-values.jsonl")) everything.push(await readFile(join(cwd, "out", f), "utf8"));
+    const all = everything.join("\n");
+    for (const [label, secret] of [["secret-named parameter", secretBag], ["multiValue of a secret-named parameter", multiSecret], ["before value", beforeText], ["after value", JWT], ["note", afterText], ["actor", tokenName]] as Array<[string, string]>) {
+      assert.equal(leaked(secret, all), undefined, `${label} appears in the output`);
+      assert.equal(leaked(Buffer.from(secret).toString("base64"), all), undefined, `${label} appears in base64`);
+    }
+    assert.match(all, /Example Sync/, "a harmless parameter is kept");
+    assert.ok(all.includes("client_secret"), "the parameter name is printed");
+    assert.equal(await exists(join(cwd, "out", "cloud-normalise-values.jsonl")), false);
+  });
+  await withDir(async (cwd) => {
+    await put(cwd, "work/ev/a.jsonl", jlines(ws({}, [{ type: "auth", name: "authorize", parameters: [{ name: "access_token", multiValue: [multiSecret] }] }])));
+    const run = await asJob(NORM, cwd, { path: "work/ev/a.jsonl", write_values: true }, { SECRET_OUTPUT: "1" });
+    const out = body(run);
+    assert.ok(out.secret_values.written >= 1);
+    const values = await readFile(join(cwd, "out", "cloud-normalise-values.jsonl"), "utf8");
+    assert.ok(values.includes(multiSecret), "the original is in the values file");
+    assert.equal(leaked(multiSecret, run.stdout + (await readFile(join(cwd, "out", "cloud-normalise", "normalised.jsonl"), "utf8"))), undefined);
+  });
+});
+
+test("the Entra rows name the topics of a change (consent, grant, role, credential, revocation) from the words of the activity, apart from the actor, with the target ids and the before and after values; the values stay sensitive", async () => {
+  const oldSecret = rnd(26, 411);
+  const newSecret = rnd(26, 412);
+  await withDir(async (cwd) => {
+    const mk = (id: string, name: string, cat: string, targets: Json[]): Json => entra({ id, activityDisplayName: name, category: cat, targetResources: targets });
+    const recs = [
+      mk("d-consent", "Consent to application", "ApplicationManagement", [{ id: "sp-1", type: "ServicePrincipal", displayName: "Example App", modifiedProperties: [{ displayName: "ConsentAction.Permissions", oldValue: null, newValue: '"read mail"' }] }]),
+      mk("d-role", "Add member to role", "RoleManagement", [{ id: "u-9", type: "User", userPrincipalName: "target@example.org", modifiedProperties: [{ displayName: "Role.DisplayName", oldValue: null, newValue: '"Global Administrator"' }] }]),
+      mk("d-cred", "Update application - Certificates and secrets management", "ApplicationManagement", [{ id: "app-1", type: "Application", displayName: "Example App", modifiedProperties: [{ displayName: "KeyDescription", oldValue: `"password=${oldSecret}"`, newValue: `"password=${newSecret}"` }] }]),
+      mk("d-rem", "Remove app role assignment from service principal", "ApplicationManagement", []),
+      mk("d-plain", "Update user", "UserManagement", []),
+    ];
+    await put(cwd, "work/ev/a.jsonl", recs.map((x) => JSON.stringify(x)).join("\n") + "\n");
+    const run = await asJob(NORM, cwd, { path: "work/ev/a.jsonl" }, { SECRET_OUTPUT: "1" });
+    const out = body(run);
+    assert.equal(out.status, "complete", out.status_basis);
+    const text = await readFile(join(cwd, "out", "cloud-normalise", "normalised.jsonl"), "utf8");
+    const parsed = text.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const by = Object.fromEntries(parsed.map((x: Json) => [x.event_id, x]));
+    assert.deepEqual(by["d-consent"].change_topics, ["grant"]);
+    assert.deepEqual(by["d-role"].change_topics, ["role"]);
+    assert.ok(by["d-cred"].change_topics.includes("credential"));
+    assert.ok(by["d-rem"].change_topics.includes("revocation"));
+    assert.equal(by["d-plain"].change_topics ?? null, null);
+    assert.match(by["d-consent"].change_topics_basis, /not a classification Microsoft documents/);
+    assert.equal(by["d-role"].principal, "admin@example.org", "the actor is not the target");
+    assert.equal(by["d-role"].targets[0].id, "u-9");
+    assert.equal(by["d-role"].modified_properties[0].new_value, '"Global Administrator"', "the after value is kept");
+    assert.equal(by["d-role"].values_of_modified_properties_are_sensitive, true);
+    const all = [run.stdout, text].join("\n");
+    assert.equal(leaked(oldSecret, all), undefined, "the before value of a credential change is withheld");
+    assert.equal(leaked(newSecret, all), undefined, "the after value of a credential change is withheld");
+  });
+});
+
+test("500 structure-aware mutations of a Workspace activity end in rows or located rejects, never a crash", async () => {
+  let state = 777;
+  const rnd01 = (): number => ((state = (state * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const swaps: unknown[] = [null, 0, -1, "", "x".repeat(300), [], {}, [null], true, { value: { a: 1 } }, "\u0000", [{ name: 5, value: {} }], { name: "client_secret", value: [1] }];
+  const mutate = (v: Json): Json => (Array.isArray(v) ? v.map((x) => (rnd01() < 0.15 ? swaps[Math.floor(rnd01() * swaps.length)] : mutate(x))) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(() => rnd01() > 0.05).map(([k, x]) => [k, rnd01() < 0.15 ? swaps[Math.floor(rnd01() * swaps.length)] : mutate(x)])) : v);
+  const seed = JSON.parse(await readFile(join(FIX, "workspace-activities.json"), "utf8")).items[3];
+  await withDir(async (cwd) => {
+    const lines: string[] = [];
+    for (let i = 0; i < 500; i++) lines.push(JSON.stringify(mutate(seed)));
+    await put(cwd, "work/ev/f.jsonl", lines.join("\n") + "\n");
+    const run = await tool(NORM, cwd, { path: "work/ev/f.jsonl" });
+    assert.doesNotMatch(run.stderr, /Traceback/);
+    const out = JSON.parse(run.stdout);
+    assert.ok(["partial", "complete", "failed"].includes(out.status), out.status);
+    assert.ok(out.coverage.rows + out.coverage.records_rejected >= 500, `rows ${out.coverage.rows} rejected ${out.coverage.records_rejected}`);
+    assert.ok(out.coverage.rows > 50, "some mutated activities are still rows");
+  });
+});
+
+test("the manifest names the Workspace adapter, the version moved with the PARSER label, and the Google documentation gap is stated", async () => {
+  const m = JSON.parse(await readFile(join(TOOLS, "cloud_normalise", "manifest.json"), "utf8"));
+  assert.ok(m.version >= 3);
+  assert.match(await readFile(NORM, "utf8"), /^PARSER = "cloud_normalise\/3"$/m);
+  for (const word of ["workspace_activities", "parameter bag kept whole", "unchecked against vendor documentation", "NOT checked against a Google page", "change_topics"]) assert.ok(m.description.includes(word), word);
+  assert.match(m.params.provider.description, /workspace/);
 });

@@ -2,7 +2,7 @@
 """Turn identified cloud log exports into canonical rows, offline, and keep everything the adapters cannot read.
 
 Input: CSV, JSON (an array, a single object, an envelope such as `{"entries": [...]}`, `{"items": [...]}` or `{"value": [...]}`), JSON Lines
-and gzip of those, and the two text formats below; the format is read from the content and not from the name. Six adapters read six documented shapes:
+and gzip of those, and the two text formats below; the format is read from the content and not from the name. Seven adapters read seven documented shapes:
 
   - `gcp_audit`: a Cloud Logging `LogEntry` whose `protoPayload` is a `google.cloud.audit.AuditLog` (Admin Activity, Data Access, System
     Event and Policy Denied logs): the principal and its delegation chain, service, method, resource, status, caller address and user agent,
@@ -18,6 +18,8 @@ and gzip of those, and the two text formats below; the format is read from the c
   - `azure_activity_log`: an Azure Activity log record (JSON, or a CSV whose header carries the same field names): a start and its completion
     are separate rows of one correlation id; the scope and resource ids are kept as written; claims, authorization, properties and the HTTP
     request are kept whole and go through the credential rules. The Azure documentation was not read: the names are the work card's.
+  - `workspace_activities`: Google Workspace Reports API activities, one row per event, the parameter bag kept whole; the Google documentation was
+    not read, so the shape and every name are the work card's and unchecked against vendor documentation.
   - `aws_s3_access_log`: the S3 server access log, a space-separated text file, one request per line (27 fields, the AWS page of 2026-11-04).
     `-` is null; fields beyond the last the page lists are counted and kept.
   - `aws_vpc_flow`: VPC Flow Logs as delivered text: the fields are named by the header line (versions 2 to 11 on the AWS page of 2026-11-04);
@@ -2613,12 +2615,13 @@ TOOL = "cloud_normalise"
 # The label moves when what a row says changes (docs/packs.md, 'A tool's version and its PARSER label').
 # 1: the core and the adapters gcp_audit, kubernetes_audit and entra_directory_audit.
 # 2: the adapters azure_activity_log, aws_s3_access_log and aws_vpc_flow, and the text reader behind the last two.
-PARSER = "cloud_normalise/2"
+# 3: the adapter workspace_activities, and the change topics of the Entra directory audit rows.
+PARSER = "cloud_normalise/3"
 VALUES_NAME = "cloud-normalise-values.jsonl"
 ENVELOPE_KEYS = ("entries", "items", "value", "records", "Records")
 ARGS = frozenset(("path", "paths", "provider", "format", "delimiter", "out_dir", "principal", "limit", "time_limit_seconds", "max_expanded_bytes",
                   "max_record_bytes", "write_values", "vpc_flow_fields"))
-PROVIDERS = ("gcp", "kubernetes", "entra", "azure", "aws_s3", "aws_vpc")
+PROVIDERS = ("gcp", "kubernetes", "entra", "azure", "workspace", "aws_s3", "aws_vpc")
 MAX_IDS = 500000                  # distinct record keys held to annotate duplicates; past it duplicates are no longer annotated, and the coverage says so
 OUT_NAMES = {"rows": "normalised.jsonl", "rejected": "rejected.jsonl", "coverage": "coverage.json"}
 ENTRA_SECRET_NAME = re.compile(r"(?i)password|passwd|passphrase|secret|credential|token")   # a modified property named so has both its values withheld, whatever they look like
@@ -2904,6 +2907,9 @@ def entra_adapt(item, ctx):
         "time_raw": got("activityDateTime"), "event_id": ident(got("id")), "correlation_id": ident(got("correlationId")),
         "additional_details": got("additionalDetails"),
     }
+    hints = topic_hints(row["action"], row["category"], row["operation_type"])
+    row["change_topics"] = hints or None
+    row["change_topics_basis"] = "words in the activity, category and operation names, from this tool's own list; a hint for where to look, not a classification Microsoft documents" if hints else None
     return [row], protected
 
 
@@ -3338,11 +3344,144 @@ def text_kind(path):
     return None
 
 
+# ---- Google Workspace Reports API activities ----------------------------------------------------------------------------------------------------
+# The shape is the work card's: id{time, uniqueQualifier, applicationName, customerId}, actor, ipAddress, events[{type, name, parameters[{name, value,
+# multiValue, boolValue...}]}]. The Google documentation was not read for this version (only the AWS pages were permitted), so the shape, the application
+# names, the event names and the parameter names are NOT checked against a vendor page; the adapter takes every name from the record and invents none.
+
+WS_VALUE_KEYS = ("value", "multiValue", "intValue", "multiIntValue", "boolValue", "messageValue")
+WS_SECRET_NAME = ENTRA_SECRET_NAME
+MAX_TOPIC_CHARS = 2000
+TOPIC_RULES = (
+    ("grant", re.compile(r"grant|authori[sz]e|consent|permission")),
+    ("revocation", re.compile(r"revoke|remov|delet|disabl|deactivat")),
+    ("delegation", re.compile(r"delegat")),
+    ("forwarding", re.compile(r"forward")),
+    ("sharing", re.compile(r"visibility|shar(?:e|ing)|\bacl\b|user_access|access_change")),
+    ("role", re.compile(r"role|privilege")),
+    ("credential", re.compile(r"password|credential|secret|certificate|2sv|two.step|recovery|\bkeys?\b")),
+)
+
+
+def topic_hints(*texts):
+    """Words of an event name that point at consent, grant, revocation, delegation, forwarding, sharing, a role or a credential: this tool's own list, a hint
+    for where to look and never a classification any vendor documents."""
+    words = " ".join(t for t in texts if isinstance(t, str))[:MAX_TOPIC_CHARS].lower()
+    return [name for name, rx in TOPIC_RULES if rx.search(words)]
+
+
+def ws_recognise(item):
+    keys = key_map(item)
+    idd = item.get(keys["id"]) if "id" in keys else None
+    return is_dict(idd) and "applicationname" in key_map(idd) and isinstance(item.get(keys.get("events")), list)
+
+
+def ws_param_value(p):
+    for k in WS_VALUE_KEYS:
+        if k in p and p[k] is not None:
+            return p[k]
+    return None
+
+
+def ws_adapt(item, ctx):
+    keys = key_map(item)
+
+    def top(name):
+        k = keys.get(name.lower())
+        return item.get(k) if k is not None else None
+
+    idd = top("id") if is_dict(top("id")) else {}
+    ik = key_map(idd)
+
+    def idv(name):
+        k = ik.get(name.lower())
+        return idd.get(k) if k is not None else None
+
+    actor = top("actor") if is_dict(top("actor")) else {}
+    ak = key_map(actor)
+
+    def av(name):
+        k = ak.get(name.lower())
+        return actor.get(k) if k is not None else None
+
+    ekey = keys["events"]
+    events = item[ekey]
+    app = idv("applicationName")
+    principal = av("email") if av("email") not in (None, "") else av("profileId")
+    protected = dict(item)
+    new_events = []
+    rows = []
+    for ei, ev in enumerate(events):
+        if not is_dict(ev):
+            new_events.append(ev)
+            continue
+        ev2 = dict(ev)
+        evk = key_map(ev)
+        pkey = evk.get("parameters")
+        params = ev.get(pkey) if pkey is not None else None
+        bag, by_name = None, {}
+        if isinstance(params, list):
+            bag = []
+            for pi, p in enumerate(params):
+                if not is_dict(p):
+                    bag.append(p)
+                    continue
+                p2 = dict(p)
+                name = p.get("name")
+                if isinstance(name, str) and (name_is_sensitive(name) or WS_SECRET_NAME.search(name)):
+                    for vk in WS_VALUE_KEYS:
+                        if vk in p and p[vk] not in (None, "", [], {}):
+                            p2[vk] = ctx.withhold_field("/%s/%d/%s/%d/%s" % (ekey, ei, pkey, pi, vk), "a parameter named like a secret", p[vk])
+                bag.append(p2)
+                if isinstance(name, str):
+                    label = scrub_text(name)
+                    value = ws_param_value(p2)
+                    if label not in by_name:
+                        by_name[label] = value
+                    elif isinstance(by_name[label], dict) and "repeated" in by_name[label] and len(by_name[label]) == 1:
+                        by_name[label]["repeated"].append(value)
+                    else:
+                        by_name[label] = {"repeated": [by_name[label], value]}
+            ev2[pkey] = bag
+        new_events.append(ev2)
+        name_l = {k.lower(): k for k in by_name if isinstance(k, str)}
+        pairs = []
+        for low, label in name_l.items():
+            if low.startswith("old_") and ("new_" + low[4:]) in name_l:
+                pairs.append({"name": low[4:], "before": by_name[label], "after": by_name[name_l["new_" + low[4:]]]})
+        ename, etype = ev.get(evk.get("name")), ev.get(evk.get("type"))
+        row = {
+            "provider": "google_workspace", "adapter": "workspace_activities",
+            "tenant_kind": "customer (id.customerId)" if idv("customerId") not in (None, "") else "customer (the record does not name one)", "tenant": ident(idv("customerId")),
+            "principal": free(principal), "principal_kind": "actor.email" if av("email") not in (None, "") else ("actor.profileId" if av("profileId") not in (None, "") else None),
+            "principal_id": ident(av("profileId")), "actor_caller_type": free(av("callerType")), "actor_key": ident(av("key")),
+            "action": free(ename), "event_type": free(etype), "application": free(app), "resource": None,
+            "outcome": "unknown", "outcome_basis": "the activity record is read as it was written: this adapter reads no result field from it, so no success or failure is stated",
+            "source_ip": ident(top("ipAddress")), "owner_domain": ident(top("ownerDomain")),
+            "time_raw": idv("time"), "event_id": ident(idv("uniqueQualifier")), "event_index": ei, "events_in_activity": len(events),
+            "parameters": bag, "parameters_by_name": by_name or None, "before_after": pairs or None,
+            "topic_hints": topic_hints(ename if isinstance(ename, str) else "", app if isinstance(app, str) else "") or None,
+            "topic_hints_basis": "words in the application and event names, from this tool's own list; a hint for where to look, not a classification the vendor documents",
+            "values_are_sensitive": True if bag else None,
+            "_dedupe_part": "%d:%s" % (ei, ename if isinstance(ename, str) else ""),
+        }
+        rows.append(row)
+    protected[ekey] = new_events
+    if not rows:
+        rows.append({
+            "provider": "google_workspace", "adapter": "workspace_activities", "tenant_kind": "customer (id.customerId)", "tenant": ident(idv("customerId")),
+            "principal": free(principal), "action": None, "application": free(app), "outcome": "unknown", "outcome_basis": "the activity has no event",
+            "source_ip": ident(top("ipAddress")), "time_raw": idv("time"), "event_id": ident(idv("uniqueQualifier")), "events_in_activity": 0, "_dedupe_part": "none",
+        })
+    return rows, protected
+
+
 ADAPTERS = {
     "gcp": ("gcp_audit", gcp_recognise, gcp_adapt),
     "kubernetes": ("kubernetes_audit", k8s_recognise, k8s_adapt),
     "entra": ("entra_directory_audit", entra_recognise, entra_adapt),
     "azure": ("azure_activity_log", az_recognise, az_adapt),
+    "workspace": ("workspace_activities", ws_recognise, ws_adapt),
 }
 TEXT_ADAPTERS = {"s3log": ("aws_s3", "aws_s3_access_log", s3_adapt), "vpcflow": ("aws_vpc", "aws_vpc_flow", vpc_adapt)}
 
@@ -3369,7 +3508,7 @@ def choose(item, provider):
     for key, (name, recognise, adapt) in ADAPTERS.items():
         if recognise(item):
             return key, adapt
-    raise Unsupported("no adapter of this tool reads this record (adapters: gcp_audit, kubernetes_audit, entra_directory_audit, azure_activity_log; the S3 server access log and the VPC Flow Log are text files and are read as such)%s" % foreign_hint(item))
+    raise Unsupported("no adapter of this tool reads this record (adapters: gcp_audit, kubernetes_audit, entra_directory_audit, azure_activity_log, workspace_activities; the S3 server access log and the VPC Flow Log are text files and are read as such)%s" % foreign_hint(item))
 
 
 # ---- one file ---------------------------------------------------------------------------------------------------------------------------------

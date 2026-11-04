@@ -1,0 +1,7 @@
+### Added: cloud-forensics reads Google Workspace Reports API activities and names the topics of Entra identity changes (`cloud_normalise`)
+
+A seventh adapter of `cloud_normalise`, `workspace_activities`, reads Reports API activities of any application (admin, Drive, token, login) as one row per event: the actor as the principal and the targets only as parameters, the parameter bag kept whole (`name`, `value`, `multiValue`, `boolValue` and the other value members as written), `parameters_by_name`, `before_after` for parameters named `old_X` and `new_X`, and `topic_hints` (consent or grant, revocation, delegation, forwarding, sharing, a role, a credential). A value under a parameter named like a secret is withheld in every value member, and every parameter value is treated as sensitive. The outcome is `unknown`: no result field is read.
+
+The Entra directory-audit rows gain `change_topics` in the same way, beside the targets and the before and after values of their modified properties. The topics come from this tool's own word list and are hints, not a classification Microsoft or Google documents.
+
+The Google documentation was not read (only AWS pages were permitted), so the Reports API shape and the application, event and parameter names are the work card's and are not checked against a Google page; the manifest and `tests/fixtures/cloud-normalise/SOURCES.json` say so. `google/workspace`, `google/workspace-access`, `identity/tokens` and `identity/grants` name the tool, and `google/workspace-access` leaves `method_only`. Pack: cloud-forensics.
