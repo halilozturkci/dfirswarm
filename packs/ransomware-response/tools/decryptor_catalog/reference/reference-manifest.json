@@ -1,0 +1,10 @@
+{
+  "schema": "decryptor_catalog.reference-manifest/1",
+  "set_id": "project-seed",
+  "set_version": 1,
+  "snapshot_date": "2026-11-04",
+  "fresh_until": "2027-05-03",
+  "files": {
+    "entries.json": "4b5cd8e99c639c3194de9145b608a8b751f2c16888744c3fe1a47e9a4e31ad17"
+  }
+}

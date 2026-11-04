@@ -20,3 +20,18 @@ observed extension, note name, path, indicator or note text; with `yara` absent 
 the text rules did not run. The pack README no longer says that no reference data ships with it; `identify/samples-and-decryptors`
 and `encryptor/samples-and-notes` name the tool and the snapshot. The shared process block is carried by a ransomware-response
 tool for the first time, and the census, paging-rerun and carrier lists name the tool.
+
+### Added: ransomware-response has an eighth tool, `decryptor_catalog`, an offline reader of a dated snapshot of public decryptors (RAN-14)
+
+For family and variant hypotheses (and the prerequisites the caller holds or lacks) it gives the publisher, the tool's name and
+publication date, the variants and period the cited sources state it for, the prerequisites (a file pair, the machine the files were
+encrypted on, known plaintext) with whether each is met, the limitations, the approved acquisition source, the check date and
+freshness, the evidence strength and the numbered sources. The snapshot (`reference/entries.json`, AGPL-3.0-or-later, original
+summaries of public pages with their dates and the date they were read) holds five entries: the Avast decryptors for Akira and
+Rhysida, the Japan National Police Agency tool for Phobos and 8Base, the No More Ransom listing of a LockBit 3.0 tool and the Security
+Research Labs scripts for Black Basta. No executable, script or key ships or is fetched. A family that is in no entry answers
+`no_entry_in_snapshot`, with the sentence the manifest fixes: no entry in this snapshot is not "no decryptor exists". The
+`obtained_and_verified` flag is the caller's and is never set true by the tool. The snapshot's sha256 is checked against its manifest at
+every run and a mismatch, a missing file or an unlisted file is refused; a stale entry makes the answer partial; the tool answers with
+networking unavailable. `identify/samples-and-decryptors` names it, and the README's "no public-decryptor catalogue" is now the dated
+snapshot statement. The census, paging-rerun and carrier lists name the tool.

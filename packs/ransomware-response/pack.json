@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -60,7 +60,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "b1ba358746e87addbfab9630c6fa2484fc1e22cdd7be9b413e6e3ebb66d06fc5",
+      "README.md": "8587c87254afc37fd47d1eddd0486d4e51333d4d29e75bcc97c450d60c9eb5d1",
       "goals/ransomware-case.md": "bb889a729a06a1633e49284a99cf333aab899c57cbe5f0d8748e43ec02b78d62",
       "requires/host.json": "e9738f0296f8c734625a6a03a3d771737bd62a83432aae3bb7c0b0f82e10374c",
       "requires/python.txt": "5a396319de276d1ea51953493ef8e4f2dd0d7cb87c67aac6fbd0e63c096d63b6",
@@ -73,7 +73,7 @@
       "skills/exfil/before-encryption.md": "6c42dbf8bcc6c9c2bb4b2d37861754facfb9af82c883d95ca804b4cf0c652f9f",
       "skills/exfil/measure-and-claims.md": "7c8bf8ed8f82fa0b64f5c450045abcb0ba614c1ed620a706a5040c9a5e238118",
       "skills/identify/family.md": "39eb3c5c83497b2f380738eb870441e26dc58348ab80695eac1eaa0ea2a05812",
-      "skills/identify/samples-and-decryptors.md": "a3273e1a6115102a5323561e4ba12629f82237148426e43fe46c93dd112221a3",
+      "skills/identify/samples-and-decryptors.md": "c0c9b7513db989ad549a42093e4436831178a22ba8ec3c01e41b08b89af0dec4",
       "skills/impact/services-and-data.md": "ed62c87cb2a654dea8f718d003d239efb577df6e95eecdc73aae93a1532aa346",
       "skills/intrusion/entry-and-spread.md": "137e49cb9f8a015f051fc78ab82016c8dee266118b2d4ee12de65b0d1aa42d91",
       "skills/platforms/esxi-hypervisors.md": "ba44fbd5339956c1da9004f1e2878f89f4bee8549618ba2813769b51376baf11",
@@ -91,6 +91,10 @@
       "skills/scope/triage-tools.md": "2d8ca3366f1b39ea7ff0bde4984076550edf302336794a5d554a0d66a386a148",
       "tools/backup_destruction_correlate/manifest.json": "a1ef9719a1cd6edd9bf378c14c7d5d5b154423475a4b76ff2f5855d0e1ddc45d",
       "tools/backup_destruction_correlate/run.py": "388b444b9225a9e67d164e131e953d240ef8dd31e5f7dd448267b3a555ed664f",
+      "tools/decryptor_catalog/manifest.json": "2ec330f7d6a32277aaef8859d6b2293d9086cb88f20f77bb626a0348f9ba1714",
+      "tools/decryptor_catalog/reference/entries.json": "4b5cd8e99c639c3194de9145b608a8b751f2c16888744c3fe1a47e9a4e31ad17",
+      "tools/decryptor_catalog/reference/reference-manifest.json": "cf8932f2d327549c566a6a9d6adb17d94a290e225d9e83bd626157f9bcde8686",
+      "tools/decryptor_catalog/run.py": "65f3814d7c42da6b043ff6b3147db9d31329e573a5a7cc113be88602444389d8",
       "tools/encrypted_survey/manifest.json": "3cb7c268f3e3e99bf4944ff980662d864d834580734ccb49368ffca7e615d871",
       "tools/encrypted_survey/run.py": "c67fcb842443532e3660edc9a2416a9d55e6c642b56ee890341ff248d0831efe",
       "tools/encryption_extent/manifest.json": "56edb84727a13cf0495236a0dd749f3f5ddca567564509c5071df5bb69c2e6e6",
@@ -110,6 +114,7 @@
   },
   "tools": [
     "backup_destruction_correlate",
+    "decryptor_catalog",
     "encrypted_survey",
     "encryption_extent",
     "ransom_note_scan",

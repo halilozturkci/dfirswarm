@@ -1,0 +1,42 @@
+{
+  "name": "decryptor_catalog",
+  "description": "Look up public decryptors for family and variant hypotheses in a dated, offline snapshot, and say what each one needs and whether that is met. It is a metadata reader: it never fetches, never uploads a sample, a note or an identifier anywhere, and never executes anything; no decryptor, script, key or executable is in the snapshot and none is touched. INPUT: `hypotheses` (1 to 1000 family names such as `akira`, or objects {family, variant} using the variant ids of `ransomware_family_match`), `have` and `lack` (the prerequisite kinds the caller holds and the ones it knows it lacks: the local feature records), `obtained_and_verified` (an object of entry id to true or false) and `as_of`. A name is matched, in lower case, against the entry's family id, its family name and its aliases. SNAPSHOT: reference/entries.json (project-authored, AGPL-3.0-or-later; original summaries of what the cited public pages say, each page with its URL, its own dates and the date it was read; no executable, script or key is redistributed) and reference/reference-manifest.json with its sha256. The sha256 is checked at every run and a mismatch, a missing file or an unlisted file is a refusal (status failed, `reference_set_used` false); a manifest and files changed together are caught by the pack seal, not by this check. The set has a freshness date; an entry past `fresh_until`, and a snapshot past its date, are reported as stale and make the answer partial. It holds five entries: the Avast decryptors for Akira and Rhysida, the Japan National Police Agency tool for Phobos and 8Base, the No More Ransom listing of a LockBit 3.0 tool, and the Security Research Labs scripts for Black Basta. ANSWER: for each hypothesis with an entry, a row with the publisher, the tool's name, the publication date and its basis, the variants the sources state it for (`variant_status`: stated_for_this_variant, not_stated_for_this_variant, source_names_no_versions or variant_not_given) and what the sources say of its applicability, the prerequisites (each with `status` met, not_met or unknown from `have` and `lack`, and `prerequisites_status` all_met, not_met or unknown), the limitations, the approved acquisition source, the check date, the freshness, the evidence strength, the numbered sources and `obtained_and_verified`. That flag is the caller's: the tool copies what `obtained_and_verified` gives it, otherwise it is null, and it never sets it true; a family match or a listed entry says nothing about whether a decryptor fits the files in front of you. NO ENTRY: a hypothesis whose name is in no entry answers `no_entry_in_snapshot` with the sentence `No entry in this snapshot is not \"no decryptor exists\".` (this is the wording the answer prints, in every answer and for every such hypothesis; the test holds the tool's text and this one equal). The answer's `result` is `no_entry_in_snapshot` when no hypothesis has an entry and `entries_found` otherwise. A hypothesis is referred to by its position in the caller's list and an unknown name is not printed. `status` (also `complete`) is `complete` only when the snapshot matched its manifest and is fresh and every hypothesis was looked up; otherwise it is `partial` with `status_basis` and `partial_reasons`. The tool's own clock `max_seconds` (default 60, at most 100, below the manifest's 120) is checked before every hypothesis. Tables longer than `limit` are written whole as JSON Lines and named in pages. A stop signal (SIGTERM, SIGINT, SIGHUP) ends the tool with one JSON answer (status failed, interrupted, exit code 128 + the signal) after removing the pages it was writing. The handlers are installed when the tool's module code has run as far as its stop block: the start of the interpreter and the compiling of the file come first, and a stop signal in that window can end the tool with no JSON answer at all. SIGKILL cannot be caught: a tool killed that way leaves the hidden temporary files of the pages in tool-output and, in a window of microseconds, an empty file at a result name; delete them. The job's own timeout_seconds (120) is not passed to the tool: give max_seconds a value below it, because a job stopped by its timeout answers failed, not partial. A name, a path, a URL or a message that quotes a credential is withheld with the identifier-shaped strings: a value given to a password, token, secret or cookie name (password=..., Pwd=..., a Cookie header), a Name/Value pair in text whose Name is a credential, a -Password style switch, the argument of ConvertTo-SecureString, curl -u user:pass, mysql -uUSER -pSECRET, a bcrypt hash and the known token families; the text is replaced by a marker that holds only its length. Known gaps: a pair whose Value is an array nested in another or longer than 4,096 characters, a crypt hash that is not bcrypt, and a secret that has neither a credential name nor a token shape.",
+  "params": {
+    "hypotheses": {
+      "type": "array",
+      "description": "Family names (`akira`, `rhysida`, `phobos`, `lockbit`, `black-basta`, or a name or alias in the snapshot) or objects {family, variant}, at most 1000. An unknown name answers `no_entry_in_snapshot`"
+    },
+    "have": {
+      "type": "array",
+      "description": "Prerequisite kinds the caller holds (original_and_encrypted_pair, same_machine_as_encryption, known_plaintext_64_bytes, encryptor_bitness_known, memory_for_password_cracking, publisher_guide_read); a kind the snapshot does not list is refused"
+    },
+    "lack": {
+      "type": "array",
+      "description": "Prerequisite kinds the caller knows it lacks; a kind in both have and lack is refused"
+    },
+    "obtained_and_verified": {
+      "type": "object",
+      "description": "Entry id to true or false, set by the caller only: whether it obtained the tool from the approved source and verified it. The tool never sets it"
+    },
+    "as_of": {
+      "type": "string",
+      "description": "The date freshness is judged on, YYYY-MM-DD (default: today, UTC)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows shown inline in the entries table (default 50); every row is counted, and a table with more is written whole as JSON Lines and named in pages.entries.all_results"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds (default 60, at most 100; the manifest's timeout is 120). When it runs out no further hypothesis is looked up and the answer is partial"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"hypotheses\": [{\"family\": \"akira\", \"variant\": \"akira-original\"}], \"have\": [\"original_and_encrypted_pair\"]}",
+  "by": "maintainer",
+  "at": "2026-11-04T13:00:00.000Z",
+  "version": 1,
+  "sha256": "65f3814d7c42da6b043ff6b3147db9d31329e573a5a7cc113be88602444389d8"
+}
