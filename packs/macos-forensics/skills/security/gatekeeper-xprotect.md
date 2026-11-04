@@ -10,7 +10,7 @@ requires_host: []
 Use when an answer turns on how a file or application reached the Mac and what the system's download checks recorded. Not for persistence (`persistence/mechanisms`) or for judging whether a file is malicious.
 
 **Where it is recorded.** Four places, each only if the acquisition kept it:
-- The `com.apple.quarantine` extended attribute on the file, a text value of flags, a time, the downloading application and an event id. Extended attributes are present only if the acquisition kept them (`triage/system-profile`); no attribute is a statement that none was set.
+- The `com.apple.quarantine` extended attribute on the file, a text value of flags, a time, the downloading application and an event id. Extended attributes are present only if the acquisition kept them (`triage/system-profile`); a file with no attribute here does not show that none was set.
 - The quarantine events database in the user's `Library/Preferences` (`com.apple.LaunchServices.QuarantineEventsV2`), SQLite: read it with `sqlite_query` on a copy, with its sidecars, and take its schema from the file. Its times are expected to be Apple absolute seconds; confirm from the schema and with `timestamp_decode` before converting.
 - Provenance metadata, on builds that write it, as a further attribute; its content is not decoded here.
 - The code signature of the program and any notarisation ticket stapled to it, and the XProtect version files, property lists inside the bundle under a `CoreServices` directory (the location varies by build; look in `/System/Library` and `/Library/Apple/System/Library`): read with `plist_read`.
