@@ -1,0 +1,2 @@
+version interface-id srcaddr dstaddr start end action log-status ecs-cluster-name ecs-task-id ecs-service-name
+7 eni-0a1b2c3d 192.0.2.10 198.51.100.5 1771059600 1771059660 ACCEPT OK cluster-one task-0001 -

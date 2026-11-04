@@ -29,7 +29,7 @@
     "TEMPS": { "variants": [ { "carriers": 30, "example": "packs/computer-forensics-base/recipes/ad1-items/run.py" } ] },
     "SHARED BLOCK": { "variants": [
       { "carriers": 8, "example": "packs/triage-collection/tools/collection_coverage/run.py", "why": "triage-collection's block (the error form, where an output may be written, the lossless table, the secret-safe values file, the withholding)" },
-      { "carriers": 5, "example": "packs/cloud-forensics/tools/cloudtrail_parse/run.py", "why": "cloud-forensics' block: an unrelated text that happens to carry the same name" }
+      { "carriers": 6, "example": "packs/cloud-forensics/tools/cloudtrail_parse/run.py", "why": "cloud-forensics' block: an unrelated text that happens to carry the same name" }
     ] },
     "SHOWN": { "variants": [ { "carriers": 7, "example": "packs/memory-forensics/tools/mem_fs/run.py" } ] },
     "STOP": { "variants": [

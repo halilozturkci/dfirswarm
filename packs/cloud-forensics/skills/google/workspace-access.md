@@ -3,13 +3,13 @@ id: google/workspace-access
 title: Workspace grants, delegation, sharing and forwarding
 when: Reconstruct delegated access, Drive sharing or mail forwarding from Workspace evidence.
 needs: [logs/what-exists]
-tools: []
+tools: [cloud_normalise]
 requires_host: []
 ---
 
 Use when Workspace evidence must answer who holds delegated access, what was shared outside, or where mail was forwarded. Not for logins (`google/workspace`) or for revocation and containment (`identity/tokens`).
 
-**Reconstruct delegated access from what was supplied.** No reader of token, Drive or admin events is in this pack: read the export as supplied and cite its file, record and position. Correlate OAuth grant and revocation events with any exported application or grant inventory, the scopes, client ids, administrative delegation settings and later resource activity. Domain-wide delegation and Apps Script authorisation are separate state: a token audit export is not an inventory of every durable access. `https://mail.google.com/` is broad Gmail authorisation, and a grant is not use. Missing exports are an acquisition ask through the case workflow; never query the tenant or test a recovered token.
+**Reconstruct delegated access from what was supplied.** `cloud_normalise` (provider `workspace`) reads token, Drive and admin activities, one row per event with the whole `parameters` bag, `parameters_by_name`, `before_after` and `topic_hints` (words from this tool's own list, not Google's classification; the documentation was not checked): cite the row's file, record and line, and read the parameter names from the export. Correlate OAuth grant and revocation events with any exported application or grant inventory, the scopes, client ids, administrative delegation settings and later resource activity. Domain-wide delegation and Apps Script authorisation are separate state: a token audit export is not an inventory of every durable access. `https://mail.google.com/` is broad Gmail authorisation, and a grant is not use. Missing exports are an acquisition ask through the case workflow; never query the tenant or test a recovered token.
 
 **Separate exposure, access and transfer.** Look at external sharing, visibility changes, shared-drive membership, ownership changes, downloads and sync by file id and the event's actor and recipient context. A sharing change shows a recorded permission change, not that anyone retrieved the file. A download shows an access, not intent.
 

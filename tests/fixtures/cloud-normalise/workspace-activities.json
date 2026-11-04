@@ -1,0 +1,188 @@
+{
+  "kind": "admin#reports#activities",
+  "items": [
+    {
+      "kind": "admin#reports#activity",
+      "id": {
+        "time": "2026-02-14T09:00:00.123Z",
+        "uniqueQualifier": "-1001",
+        "applicationName": "token",
+        "customerId": "C0example1"
+      },
+      "actor": {
+        "callerType": "USER",
+        "email": "alice@example.org",
+        "profileId": "100000000000000000002"
+      },
+      "ipAddress": "198.51.100.30",
+      "events": [
+        {
+          "type": "auth",
+          "name": "authorize",
+          "parameters": [
+            {
+              "name": "client_id",
+              "value": "1234567890-example.apps.example.invalid"
+            },
+            {
+              "name": "app_name",
+              "value": "Example Sync"
+            },
+            {
+              "name": "scope",
+              "multiValue": [
+                "https://example.invalid/auth/mail.read",
+                "https://example.invalid/auth/drive.read"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "admin#reports#activity",
+      "id": {
+        "time": "2026-02-14T09:30:00Z",
+        "uniqueQualifier": "-1002",
+        "applicationName": "token",
+        "customerId": "C0example1"
+      },
+      "actor": {
+        "callerType": "USER",
+        "email": "alice@example.org",
+        "profileId": "100000000000000000002"
+      },
+      "ipAddress": "198.51.100.30",
+      "events": [
+        {
+          "type": "auth",
+          "name": "revoke",
+          "parameters": [
+            {
+              "name": "client_id",
+              "value": "1234567890-example.apps.example.invalid"
+            },
+            {
+              "name": "app_name",
+              "value": "Example Sync"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "admin#reports#activity",
+      "id": {
+        "time": "2026-02-14T10:00:00Z",
+        "uniqueQualifier": "-2001",
+        "applicationName": "drive",
+        "customerId": "C0example1"
+      },
+      "actor": {
+        "callerType": "USER",
+        "email": "admin@example.org",
+        "profileId": "100000000000000000001"
+      },
+      "ipAddress": "198.51.100.30",
+      "events": [
+        {
+          "type": "access",
+          "name": "change_document_visibility",
+          "parameters": [
+            {
+              "name": "doc_id",
+              "value": "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
+            },
+            {
+              "name": "doc_title",
+              "value": "Quarterly plan"
+            },
+            {
+              "name": "old_visibility",
+              "value": "private"
+            },
+            {
+              "name": "new_visibility",
+              "value": "people_with_link"
+            },
+            {
+              "name": "visibility_change",
+              "value": "external"
+            },
+            {
+              "name": "primary_event",
+              "boolValue": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "admin#reports#activity",
+      "id": {
+        "time": "2026-02-14T11:00:00Z",
+        "uniqueQualifier": "-3001",
+        "applicationName": "admin",
+        "customerId": "C0example1"
+      },
+      "actor": {
+        "callerType": "USER",
+        "email": "admin@example.org",
+        "profileId": "100000000000000000001"
+      },
+      "ipAddress": "198.51.100.30",
+      "events": [
+        {
+          "type": "EMAIL_SETTINGS",
+          "name": "CHANGE_EMAIL_SETTING",
+          "parameters": [
+            {
+              "name": "SETTING_NAME",
+              "value": "Mail forwarding"
+            },
+            {
+              "name": "OLD_VALUE",
+              "value": "off"
+            },
+            {
+              "name": "NEW_VALUE",
+              "value": "on"
+            }
+          ]
+        },
+        {
+          "type": "DELEGATION",
+          "name": "ADD_DELEGATE",
+          "parameters": [
+            {
+              "name": "USER_EMAIL",
+              "value": "bob@example.org"
+            },
+            {
+              "name": "DELEGATE_EMAIL",
+              "value": "intruder@example.org"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "admin#reports#activity",
+      "id": {
+        "time": "2026-02-14T12:00:00Z",
+        "uniqueQualifier": "-4001",
+        "applicationName": "login",
+        "customerId": "C0example1"
+      },
+      "actor": {
+        "email": "carol@example.org"
+      },
+      "ipAddress": "198.51.100.31",
+      "events": []
+    },
+    {
+      "unrelated": true,
+      "id": "x"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "about": "Where each fixture of tests/pack-cloud-normalise.test.ts comes from. No real export exists (the owner's fixtures are awaited). Each file is authored by hand from the published field list of the format named here and is not a copy of a vendor page; no vendor documentation was fetched or read while writing it, so the 'documentation' fields below name the schema and its version, and the check against the live page is still to do.",
+  "about": "Where each fixture of tests/pack-cloud-normalise.test.ts comes from. No real export exists (the owner's fixtures are awaited). Each file is authored by hand from the published field list of the format named here and is not a copy of a vendor page. For gcp-audit.json, k8s-audit.jsonl, entra-directory-audit.json and the Azure files no vendor documentation was fetched or read while writing them, so the 'documentation' fields of those entries name the schema and say that the check against the live page is still to do. For the S3 server access log and the VPC Flow Log, the two AWS pages under 'pages' were read on 2026-11-04 (read-only page reading, nothing downloaded); the values in the fixtures are invented, from documentation address ranges and made-up ids. What each page supports is stated per claim: a verifier re-reads the page and checks the claim. Claims are paraphrases. workspace-activities.json: the Google documentation was not read (only AWS pages were permitted), so the Reports API shape and the application, event and parameter names in it are NOT checked against a Google page and are illustrative.",
   "fixtures": {
     "gcp-audit.json": {
       "format": "Cloud Logging LogEntry with protoPayload of type google.cloud.audit.AuditLog, wrapped as the entries.list response",
@@ -15,6 +15,87 @@
       "format": "Microsoft Graph directoryAudit collection",
       "schema_version": "Microsoft Graph v1.0 directoryAudit",
       "documentation": "Graph directoryAudit resource type; checked against the live page: no"
+    },
+    "azure-activity.json": {
+      "format": "Azure Activity log events as the REST list's value array, written from the work card's field names (eventTimestamp, submissionTimestamp, operationName, status, subStatus, caller, claims, authorization{action,scope}, resourceId, correlationId, level, category, properties, httpRequest, eventDataId)",
+      "schema_version": "not recorded: the Azure documentation was not read",
+      "documentation": "Azure Activity log event schema; checked against the live page: no (Azure documentation reading was not permitted for this version). The nested {value, localizedValue} layout, the status words (Started, Succeeded, Failed, Accepted) and the use of the resource id to name the subscription are NOT verified against a vendor page."
+    },
+    "azure-activity.csv": {
+      "format": "the same fields as a CSV whose header carries the field names, nested objects as JSON text in a cell, with one row of plain text cells holding commas, a quote and a line break",
+      "schema_version": "not recorded: the Azure documentation was not read",
+      "documentation": "the column layout of the Azure portal's own CSV export is NOT known to this version and is not claimed; checked against the live page: no"
+    },
+    "s3-access.txt": {
+      "format": "S3 server access log, 27 fields per line, five invented records, one blank line, one line that is not a record, and one record with three extra trailing fields",
+      "schema_version": "the page of 2026-11-04 (27 fields)",
+      "documentation": "pages.aws-s3-server-access-log-format; checked against the live page: yes, 2026-11-04"
+    },
+    "vpc-flow-v2.txt": {
+      "format": "VPC Flow Log, version 2 default fields with a header line, five records including NODATA and SKIPDATA",
+      "schema_version": "version 2",
+      "documentation": "pages.aws-vpc-flow-log-records; checked against the live page: yes, 2026-11-04"
+    },
+    "vpc-flow-v2-noheader.txt": {
+      "format": "the same without a header line",
+      "schema_version": "version 2",
+      "documentation": "pages.aws-vpc-flow-log-records (the default format is the version 2 fields in table order); checked: yes, 2026-11-04"
+    },
+    "vpc-flow-v3.txt": {
+      "format": "version 2 fields plus the version 3 fields, with a header line",
+      "schema_version": "version 3",
+      "documentation": "pages.aws-vpc-flow-log-records; checked: yes, 2026-11-04"
+    },
+    "vpc-flow-v5.txt": {
+      "format": "a custom field order with a header line, including flow-direction, traffic-path and pkt-src-aws-service, and a NODATA record",
+      "schema_version": "version 5",
+      "documentation": "pages.aws-vpc-flow-log-records; checked: yes, 2026-11-04"
+    },
+    "vpc-flow-v7.txt": {
+      "format": "a custom subset with the ECS fields of version 7, with a header line",
+      "schema_version": "version 7",
+      "documentation": "pages.aws-vpc-flow-log-records; checked: yes, 2026-11-04"
+    },
+    "workspace-activities.json": {
+      "format": "Google Workspace Reports API activities as the list response's items array: a token authorization and revocation, a Drive visibility change with an old and a new value, an admin setting change with a delegation event in one activity, an activity with no events, and a record that is not an activity",
+      "schema_version": "not recorded: the Google documentation was not read",
+      "documentation": "Reports API activities list; checked against the live page: no (Google documentation reading was not permitted). The shape is the work card's (id.time, id.uniqueQualifier, id.applicationName, actor, ipAddress, events[{type, name, parameters[{name, value, multiValue, boolValue}]}]); the event and parameter names are illustrative and are not claimed to be Google's."
+    }
+  },
+  "pages": {
+    "aws-s3-server-access-log-format": {
+      "url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/LogFormat.html",
+      "title": "Amazon S3 server access log format",
+      "retrieved": "2026-11-04",
+      "supports": [
+        "A log file is newline-delimited records, one per request, with space-delimited fields; the page covers the space-delimited text format of a general purpose bucket and points elsewhere for the CloudWatch Logs JSON form (the tool does not read that form).",
+        "The record fields, in this order: bucket owner, bucket, time, remote IP, requester, request ID, operation, key, request-URI, HTTP status, error code, bytes sent, object size, total time, turn-around time, referer, user-agent, version id, host id, signature version, cipher suite, authentication type, host header, TLS version, access point ARN, aclRequired, source region: 27 fields.",
+        "The time is in UTC and written in square brackets as day/abbreviated-month/year:hour:minute:second and a numeric zone (the copy-operation section of the same page writes the month format with a different directive; the tool reads an abbreviated or a full month name).",
+        "Any field can be - when the data was unknown, unavailable or not applicable; bytes sent is - if zero; the error code is - if no error occurred; the requester is - for unauthenticated requests.",
+        "The request-URI, referer and user-agent are shown in double quotes and may include unescaped quotes from the user's input.",
+        "The format may be extended by appending new fields to the end of each line, and a parser must tolerate trailing fields it does not understand.",
+        "Operation names are of the forms SOAP.operation, REST.method.resource, WEBSITE.method.resource, BATCH.DELETE.OBJECT and S3.action.resource (for lifecycle and logging)."
+      ],
+      "not_supported_by_the_page_and_so_not_claimed": "the object key naming of delivered log files, delivery delay, and the set of values for each field beyond those the page lists"
+    },
+    "aws-vpc-flow-log-records": {
+      "url": "https://docs.aws.amazon.com/vpc/latest/userguide/flow-log-records.html",
+      "title": "Flow log records (Amazon VPC)",
+      "retrieved": "2026-11-04",
+      "supports": [
+        "A record is a string of space-separated fields; the default format is the version 2 fields in the table order; a custom format names the fields and their order; the version of a custom-format record is the highest version among its fields.",
+        "Version 2: version, account-id, interface-id, srcaddr, dstaddr, srcport, dstport, protocol, packets, bytes, start, end, action, log-status (14 fields, the default format).",
+        "Version 3: vpc-id, subnet-id, instance-id, tcp-flags, type, pkt-srcaddr, pkt-dstaddr.",
+        "Version 4: region, az-id, sublocation-type, sublocation-id.",
+        "Version 5: pkt-src-aws-service, pkt-dst-aws-service, flow-direction, traffic-path.",
+        "Version 7: ecs-cluster-arn, ecs-cluster-name, ecs-container-instance-arn, ecs-container-instance-id, ecs-container-id, ecs-second-container-id, ecs-service-name, ecs-task-definition-arn, ecs-task-arn, ecs-task-id. The table lists no field introduced in version 6.",
+        "Later: reject-reason (version 8), resource-id (9), encryption-status (10), and in version 11 instance-tag, instance-tag-2, interface-tag, interface-tag-2, asg-tag, asg-tag-2, interface-type, next-hop-interface-id, next-hop-subnet-id, next-hop-az-id, next-hop-vpc-id, next-hop-interface-type.",
+        "start and end are times in Unix seconds.",
+        "log-status is OK, NODATA (no network traffic to or from the interface during the aggregation interval) or SKIPDATA (some flow log records were skipped in the interval, for an internal capacity constraint or error).",
+        "A field that is not applicable or could not be computed for a record shows - ; with a plain text format all fields are strings.",
+        "Tag values (instance-tag and the other tag fields) are written with UTF-8 percent encoding of special characters."
+      ],
+      "not_supported_by_the_page_and_so_not_claimed": "whether a delivered file carries a header line of field names (the tool reads one when the first line is one, and states how the field order was known), and what the other fields hold in a NODATA or SKIPDATA record (the tool treats - as null and does not infer)"
     }
   }
 }

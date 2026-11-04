@@ -94,7 +94,7 @@ When the evidence cannot answer something a reference service can (a domain's re
 | `network-forensics` | 19 | 11 | 1 |
 | `reverse-engineering` | 21 | 12 | 1 |
 | `encrypted-containers` | 18 | 9 | 1 |
-| `cloud-forensics` | 15 | 5 | 1 |
+| `cloud-forensics` | 15 | 6 | 1 |
 | `ransomware-response` | 25 | 8 | 1 |
 | `triage-collection` | 20 | 8 | 1 |
 | `virtualization-backup-forensics` | 12 | 3 | 1 |

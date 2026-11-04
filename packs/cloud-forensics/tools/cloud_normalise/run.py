@@ -2,7 +2,7 @@
 """Turn identified cloud log exports into canonical rows, offline, and keep everything the adapters cannot read.
 
 Input: CSV, JSON (an array, a single object, an envelope such as `{"entries": [...]}`, `{"items": [...]}` or `{"value": [...]}`), JSON Lines
-and gzip of those; the format is read from the content and not from the name. Three adapters read three documented JSON shapes:
+and gzip of those, and the two text formats below; the format is read from the content and not from the name. Seven adapters read seven documented shapes:
 
   - `gcp_audit`: a Cloud Logging `LogEntry` whose `protoPayload` is a `google.cloud.audit.AuditLog` (Admin Activity, Data Access, System
     Event and Policy Denied logs): the principal and its delegation chain, service, method, resource, status, caller address and user agent,
@@ -15,6 +15,15 @@ and gzip of those; the format is read from the content and not from the name. Th
     service, operation type, the initiator (user or application, kept apart from the target resources) and the modified properties of each
     target. The values of modified properties are sensitive: a property named like a secret has its old and new values withheld, and every
     other value goes through the credential rules.
+  - `azure_activity_log`: an Azure Activity log record (JSON, or a CSV whose header carries the same field names): a start and its completion
+    are separate rows of one correlation id; the scope and resource ids are kept as written; claims, authorization, properties and the HTTP
+    request are kept whole and go through the credential rules. The Azure documentation was not read: the names are the work card's.
+  - `workspace_activities`: Google Workspace Reports API activities, one row per event, the parameter bag kept whole; the Google documentation was
+    not read, so the shape and every name are the work card's and unchecked against vendor documentation.
+  - `aws_s3_access_log`: the S3 server access log, a space-separated text file, one request per line (27 fields, the AWS page of 2026-11-04).
+    `-` is null; fields beyond the last the page lists are counted and kept.
+  - `aws_vpc_flow`: VPC Flow Logs as delivered text: the fields are named by the header line (versions 2 to 11 on the AWS page of 2026-11-04);
+    start and end are Unix seconds; a NODATA or SKIPDATA record is a row of kind no_flow_record, never a flow of zero traffic.
 
 Every row has: provider, adapter, tenant (the project, organisation or folder for gcp; the audit event and the directory audit record name
 none, and say so), principal, action, resource, outcome (success, failure, or unknown when the record says nothing) with its basis, the raw time and the
@@ -2605,16 +2614,18 @@ def cell(value):
 TOOL = "cloud_normalise"
 # The label moves when what a row says changes (docs/packs.md, 'A tool's version and its PARSER label').
 # 1: the core and the adapters gcp_audit, kubernetes_audit and entra_directory_audit.
-PARSER = "cloud_normalise/1"
+# 2: the adapters azure_activity_log, aws_s3_access_log and aws_vpc_flow, and the text reader behind the last two.
+# 3: the adapter workspace_activities, and the change topics of the Entra directory audit rows.
+PARSER = "cloud_normalise/3"
 VALUES_NAME = "cloud-normalise-values.jsonl"
 ENVELOPE_KEYS = ("entries", "items", "value", "records", "Records")
 ARGS = frozenset(("path", "paths", "provider", "format", "delimiter", "out_dir", "principal", "limit", "time_limit_seconds", "max_expanded_bytes",
-                  "max_record_bytes", "write_values"))
-PROVIDERS = ("gcp", "kubernetes", "entra")
+                  "max_record_bytes", "write_values", "vpc_flow_fields"))
+PROVIDERS = ("gcp", "kubernetes", "entra", "azure", "workspace", "aws_s3", "aws_vpc")
 MAX_IDS = 500000                  # distinct record keys held to annotate duplicates; past it duplicates are no longer annotated, and the coverage says so
 OUT_NAMES = {"rows": "normalised.jsonl", "rejected": "rejected.jsonl", "coverage": "coverage.json"}
 ENTRA_SECRET_NAME = re.compile(r"(?i)password|passwd|passphrase|secret|credential|token")   # a modified property named so has both its values withheld, whatever they look like
-READ_NAMES = (".json", ".jsonl", ".ndjson", ".csv", ".log", ".gz")
+READ_NAMES = (".json", ".jsonl", ".ndjson", ".csv", ".log", ".txt", ".gz")
 
 import hashlib
 import urllib.parse
@@ -2896,14 +2907,583 @@ def entra_adapt(item, ctx):
         "time_raw": got("activityDateTime"), "event_id": ident(got("id")), "correlation_id": ident(got("correlationId")),
         "additional_details": got("additionalDetails"),
     }
+    hints = topic_hints(row["action"], row["category"], row["operation_type"])
+    row["change_topics"] = hints or None
+    row["change_topics_basis"] = "words in the activity, category and operation names, from this tool's own list; a hint for where to look, not a classification Microsoft documents" if hints else None
     return [row], protected
+
+
+# ---- Azure Activity log ------------------------------------------------------------------------------------------------------------------
+# The field names are the work card's (eventTimestamp, submissionTimestamp, operationName, status, subStatus, caller, claims,
+# authorization{action,scope}, resourceId, correlationId, level, category, properties, httpRequest, eventDataId). The Azure documentation
+# was not read for this version, so the layout of the objects (a name with a value and a localizedValue) and the words a status can take
+# are NOT checked against a vendor page; the row says what it read and the manifest says so.
+
+AZURE_DONE = {"succeeded": "success", "success": "success"}
+AZURE_FAILED = {"failed": "failure", "failure": "failure"}
+_AZURE_SUB = re.compile(r"(?i)^/subscriptions/([^/]+)")
+
+
+def az_recognise(item):
+    keys = key_map(item)
+    return "eventtimestamp" in keys and "operationname" in keys
+
+
+def az_value(v):
+    """A field the REST form writes as {value, localizedValue} and an export may write as plain text."""
+    if isinstance(v, dict):
+        return text_of(v.get("value"))
+    return text_of(v)
+
+
+def az_adapt(item, ctx):
+    keys = key_map(item)
+
+    def got(name):
+        k = keys.get(name.lower())
+        return maybe_json(item.get(k)) if k is not None else None
+
+    op, status, sub, cat = got("operationName"), got("status"), got("subStatus"), got("category")
+    auth, claims, props, http = got("authorization"), got("claims"), got("properties"), got("httpRequest")
+    rid = got("resourceId")
+    state = az_value(status)
+    word = state.strip().lower() if state else None
+    if word in AZURE_DONE:
+        outcome, basis = AZURE_DONE[word], "status is %s" % free(state)
+    elif word in AZURE_FAILED:
+        outcome, basis = AZURE_FAILED[word], "status is %s" % free(state)
+    elif word is None:
+        outcome, basis = "unknown", "the record has no status"
+    else:
+        outcome, basis = "unknown", "status is %s: a start or an intermediate state is not an outcome; the operation's completion is another record of the same correlation id" % free(state)
+    m = _AZURE_SUB.match(rid) if isinstance(rid, str) else None
+    scope = auth.get("scope") if is_dict(auth) else None
+    row = {
+        "provider": "azure", "adapter": "azure_activity_log",
+        "tenant_kind": "subscription (read from the resource id)" if m else "subscription (the record does not name one)", "tenant": ident(m.group(1)) if m else None,
+        "principal": free(got("caller")), "principal_kind": "caller",
+        "action": free(az_value(op)), "operation_localized": free(op.get("localizedValue")) if is_dict(op) else None,
+        "resource": ident(rid) if isinstance(rid, str) else None,
+        "outcome": outcome, "outcome_basis": basis, "lifecycle": free(state),
+        "status": status if is_dict(status) else None, "sub_status": sub if is_dict(sub) else free(az_value(sub)),
+        "time_raw": got("eventTimestamp"), "submission_time_raw": got("submissionTimestamp"),
+        "event_id": ident(got("eventDataId")), "correlation_id": ident(got("correlationId")),
+        "category": free(az_value(cat)), "level": free(got("level")),
+        "authorization_action": free(auth.get("action")) if is_dict(auth) else None, "authorization_scope": ident(scope),
+        "authorization_detail": auth if is_dict(auth) else None,      # not named `authorization`: the name layer withholds a field of that name whole
+        "claims": claims if is_dict(claims) else (free(claims) if isinstance(claims, str) else None),
+        "claims_are_sensitive": True if claims else None,
+        "properties": props if props not in (None, "") else None,
+        "http_request": http if is_dict(http) else None,
+        "source_ip": ident(http.get("clientIpAddress")) if is_dict(http) else None,
+        "_dedupe_part": state,
+    }
+    ctx.second_time(row, "submission_time_raw", "submission_time_utc")
+    # the whole record, with the one key the name layer would withhold whole (authorization: it is an object of an action and a scope) renamed
+    protected = {("authorization_object" if isinstance(k, str) and k.strip().lower() == "authorization" else k): v for k, v in item.items()}
+    return [row], protected
+
+
+# ---- text formats: the S3 server access log and the VPC Flow Log ----------------------------------------------------------------------------
+# Both are read from the delivered text file line by line (the lines are the records); a line is never guessed at: it is a row or a located
+# reject. Field lists: the AWS pages named in tests/fixtures/cloud-normalise/SOURCES.json, read on 2026-11-04.
+
+S3_FIELDS = ("bucket_owner", "bucket", "time", "remote_ip", "requester", "request_id", "operation", "key", "request_uri", "http_status", "error_code",
+             "bytes_sent", "object_size", "total_time_ms", "turn_around_time_ms", "referer", "user_agent", "version_id", "host_id", "signature_version",
+             "cipher_suite", "authentication_type", "host_header", "tls_version", "access_point_arn", "acl_required", "source_region")
+S3_QUOTED = {8: "request_uri", 15: "referer", 16: "user_agent"}
+S3_MIN_FIELDS = 10                # through the HTTP status; an older or shorter record has the fields it has, the rest are absent
+MAX_TRAILING_SHOWN = 20
+_S3_URI_END = re.compile(r'" (?:[0-9]{3}|-)(?: |$)')
+_S3_TIME = re.compile(r"^\[([0-9]{1,2})/([A-Za-z]{3,9})/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2}) ([+-][0-9]{4})\]$")
+_S3_HEAD = re.compile(r"^[^ ]* [^ ]* \[[0-9]{1,2}/[A-Za-z]{3,9}/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}\] ")
+MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december")
+
+VPC_VERSIONS = {}
+for _ver, _names in (
+        (2, "version account-id interface-id srcaddr dstaddr srcport dstport protocol packets bytes start end action log-status"),
+        (3, "vpc-id subnet-id instance-id tcp-flags type pkt-srcaddr pkt-dstaddr"),
+        (4, "region az-id sublocation-type sublocation-id"),
+        (5, "pkt-src-aws-service pkt-dst-aws-service flow-direction traffic-path"),
+        (7, "ecs-cluster-arn ecs-cluster-name ecs-container-instance-arn ecs-container-instance-id ecs-container-id ecs-second-container-id "
+            "ecs-service-name ecs-task-definition-arn ecs-task-arn ecs-task-id"),
+        (8, "reject-reason"), (9, "resource-id"), (10, "encryption-status"),
+        (11, "instance-tag instance-tag-2 interface-tag interface-tag-2 asg-tag asg-tag-2 interface-type next-hop-interface-id next-hop-subnet-id "
+            "next-hop-az-id next-hop-vpc-id next-hop-interface-type")):
+    for _n in _names.split():
+        VPC_VERSIONS[_n] = _ver
+VPC_DEFAULT = tuple(n for n in VPC_VERSIONS if VPC_VERSIONS[n] == 2)
+VPC_NUMBERS = frozenset(("version", "srcport", "dstport", "protocol", "packets", "bytes", "start", "end", "tcp-flags", "traffic-path", "encryption-status"))
+VPC_FREE = frozenset(("instance-tag", "instance-tag-2", "interface-tag", "interface-tag-2", "asg-tag", "asg-tag-2", "ecs-cluster-name", "ecs-service-name"))
+VPC_STATUSES = ("OK", "NODATA", "SKIPDATA")
+_VPC_NAME = re.compile(r"^[a-z][a-z0-9-]*$")
+MAX_VPC_FIELDS = 200
+
+
+def num(text):
+    """A documented number as an integer; anything else is left as the text it was written as (and counted by the caller)."""
+    if isinstance(text, str) and re.fullmatch(r"[0-9]{1,18}", text):
+        return int(text)
+    return text
+
+
+def epoch_stamp(raw):
+    """Unix seconds (the unit the VPC page documents for start and end) as the same dict parse_stamp gives."""
+    if raw in (None, ""):
+        return {"utc": None, "ns": None, "status": "missing", "basis": "no time in the record"}
+    if not isinstance(raw, str) or not re.fullmatch(r"[0-9]{1,12}", raw) or int(raw) >= 253402300800:
+        return {"utc": None, "ns": None, "status": "unparseable", "basis": "not Unix seconds (a whole number of at most 12 digits, before the year 10000)"}
+    ns = int(raw) * 1000000000
+    return {"utc": ns_to_utc(ns), "ns": ns, "status": "zoned", "basis": "Unix seconds, which count from the UTC epoch (the VPC documentation gives the unit)"}
+
+
+def s3_stamp(raw):
+    m = _S3_TIME.match(raw) if isinstance(raw, str) else None
+    if not m:
+        return {"utc": None, "ns": None, "status": "unparseable", "basis": "not the [day/month/year:hour:minute:second zone] form the S3 page documents"}
+    word = m.group(2).lower()
+    month = [i for i, name in enumerate(MONTHS) if name == word or name[:3] == word]
+    if not month:
+        return {"utc": None, "ns": None, "status": "unparseable", "basis": "an unknown month name"}
+    iso = "%s-%02d-%02dT%s:%s:%s%s" % (m.group(3), month[0] + 1, int(m.group(1)), m.group(4), m.group(5), m.group(6), m.group(7))
+    st = parse_stamp(iso, None, False)
+    if st["status"] == "zoned":
+        st["basis"] = "the bracketed time carries its offset %s (the S3 page says these times are UTC)" % m.group(7)
+    return st
+
+
+def s3_tokens(line):
+    """The fields of one S3 server access log record and how many quoted fields held a quote of their own. The request URI, the referer and
+    the user agent are quoted and may hold unescaped quotes (the page says so): the URI ends at the first quote that is followed by a
+    space and the status, the referer at the first quote-space-quote, the user agent at the last quote of the line. A record built to
+    imitate those closings can move a field; the field count and the time field are the checks, and they are reported."""
+    out, inner, i, n = [], 0, 0, len(line)
+    while True:
+        idx = len(out)
+        if idx == 2 and line.startswith("[", i):
+            end = line.find("]", i + 1)          # the bracketed time holds a space of its own
+            if end < 0:
+                raise ValueError("the bracketed time is not closed")
+            out.append((line[i:end + 1], False))
+            i = end + 1
+            if i < n and line[i] != " ":
+                raise ValueError("the bracketed time is followed by text, not by a space")
+        elif line.startswith('"', i) and idx in S3_QUOTED:
+            if idx == 8:
+                m = _S3_URI_END.search(line, i + 1)
+                end = m.start() if m else -1
+            elif idx == 15:
+                end = line.find('" "', i + 1)
+            else:
+                end = line.rfind('"')
+            if end <= i:
+                raise ValueError("a quoted field is not closed")
+            body = line[i + 1:end]
+            inner += 1 if '"' in body else 0
+            out.append((body, True))
+            i = end + 1
+            if i < n and line[i] != " ":
+                raise ValueError("a quoted field is followed by text, not by a space")
+        else:
+            j = line.find(" ", i)
+            j = n if j < 0 else j
+            out.append((line[i:j], False))
+            i = j
+        if i >= n:
+            break
+        i += 1
+        if i == n:
+            out.append(("", False))
+            break
+        check_deadline(1 + n // 262144)
+    return out, inner
+
+
+def s3_rows(src, record_cap):
+    """Yield ("row", info, item) / ("reject", info, reason) for an S3 server access log; item holds the fields by name."""
+    src.mode, src.stopped, src.extra_keys, src.envelope, src.header = "text", None, [], None, None
+    lines = csv_lines(src, record_cap)
+    count = 0
+    while True:
+        line_no = src.line
+        try:
+            raw = next(lines)
+        except StopIteration:
+            break
+        except TooLong:
+            src.stopped = "a line longer than %d characters at line %d: the rest of the file was not read" % (record_cap, line_no)
+            yield "reject", {"record": count + 1, "line": line_no, "offset": src.offset(), "chars": None, "envelope": None}, src.stopped
+            return
+        text = raw[:-1] if raw.endswith("\n") else raw
+        text = text[:-1] if text.endswith("\r") else text
+        if not text.strip():
+            continue
+        count += 1
+        info = {"record": count, "line": line_no, "offset": None, "chars": None, "envelope": None}
+        try:
+            toks, inner = s3_tokens(text)
+        except ValueError as exc:
+            yield "reject", info, "not an S3 server access log record: %s" % exc
+            continue
+        if len(toks) < S3_MIN_FIELDS or not _S3_TIME.match(toks[2][0]):
+            yield "reject", info, "not an S3 server access log record: %d field(s), and the third is %s a bracketed time" % (len(toks), "not" if len(toks) >= 3 else "missing, so not")
+            continue
+        loose = [S3_QUOTED[i] for i in S3_QUOTED if i < len(toks) and not toks[i][1]]
+        if loose:
+            yield "reject", info, "not an S3 server access log record: the field %s is not quoted where the format quotes it (a quote of the record's own may have closed an earlier field)" % loose[0]
+            continue
+        names = S3_FIELDS[:len(toks)]
+        yield "row", info, {"fields": {name: tok for name, (tok, _q) in zip(names, toks)}, "trailing": [t for t, _q in toks[len(S3_FIELDS):]],
+                            "present": len(toks), "inner_quotes": inner, "line": text}
+        if src.timed_out:
+            return
+    if src.timed_out and not src.stopped:
+        src.stopped = "the time limit ended the read"
+
+
+def s3_adapt(item, ctx):
+    f = item["fields"]
+
+    def dash(name):
+        v = f.get(name)
+        return None if v in (None, "", "-") else v
+
+    ctx.count("fields_missing_from_a_short_record", len(S3_FIELDS) - item["present"] if item["present"] < len(S3_FIELDS) else 0)
+    ctx.count("unknown_trailing_fields", len(item["trailing"]))
+    ctx.count("quoted_fields_with_inner_quotes", item["inner_quotes"])
+    status = dash("http_status")
+    code = num(status) if status is not None else None
+    if isinstance(code, int) and 200 <= code < 300:
+        outcome, basis = "success", "the HTTP status is %d" % code
+    elif isinstance(code, int) and code >= 400:
+        outcome, basis = "failure", "the HTTP status is %d" % code
+    elif isinstance(code, int):
+        outcome, basis = "unknown", "the HTTP status is %d: neither a success nor a failure answer" % code
+    else:
+        outcome, basis = "unknown", "the record has no usable HTTP status"
+    key, bucket, requester = dash("key"), dash("bucket"), dash("requester")
+    resource = None
+    if bucket is not None:
+        resource = free(bucket + ("/" + key.lstrip("/") if key is not None else ""))
+    sent = dash("bytes_sent")
+    st = s3_stamp(f.get("time"))
+    row = {
+        "provider": "aws", "adapter": "aws_s3_access_log", "tenant_kind": "bucket owner (canonical user id)", "tenant": ident(dash("bucket_owner")),
+        "principal": free(requester), "principal_kind": "requester" if requester is not None else None,
+        "action": free(dash("operation")), "service": "s3", "resource": resource, "bucket": ident(bucket), "key": free(key),
+        "request_uri": free(dash("request_uri")), "http_status": code, "error_code": free(dash("error_code")),
+        "bytes_sent": num(sent) if sent is not None else None, "bytes_sent_note": "the record has - here: the page says - also means zero bytes sent for this field, and any field can be - when the data is unknown" if f.get("bytes_sent") == "-" else None,
+        "object_size": num(dash("object_size")) if dash("object_size") is not None else None,
+        "total_time_ms": num(dash("total_time_ms")) if dash("total_time_ms") is not None else None,
+        "turn_around_time_ms": num(dash("turn_around_time_ms")) if dash("turn_around_time_ms") is not None else None,
+        "referer": free(dash("referer")), "user_agent": free(dash("user_agent")), "version_id": free(dash("version_id")), "host_id": ident(dash("host_id")),
+        "signature_version": free(dash("signature_version")), "cipher_suite": free(dash("cipher_suite")), "authentication_type": free(dash("authentication_type")),
+        "host_header": free(dash("host_header")), "tls_version": free(dash("tls_version")), "access_point_arn": ident(dash("access_point_arn")),
+        "acl_required": free(dash("acl_required")), "source_region": free(dash("source_region")),
+        "source_ip": ident(dash("remote_ip")), "event_id": ident(dash("request_id")),
+        "outcome": outcome, "outcome_basis": basis,
+        "time_raw": f.get("time")[1:-1] if isinstance(f.get("time"), str) else None, "_stamp": st,
+        "fields_present": item["present"], "fields_documented": len(S3_FIELDS),
+        "unknown_trailing_field_count": len(item["trailing"]) or None,
+        "unknown_trailing_fields": [free(t) for t in item["trailing"][:MAX_TRAILING_SHOWN]] or None,
+        "unknown_trailing_fields_note": ("the first %d of %d are shown; the whole record is in raw_record" % (MAX_TRAILING_SHOWN, len(item["trailing"]))) if len(item["trailing"]) > MAX_TRAILING_SHOWN else None,
+        "_dedupe_part": dash("operation"),
+    }
+    return [row], {"line": item["line"]}
+
+
+def is_vpc_header(toks):
+    return len(toks) >= 2 and len(toks) <= MAX_VPC_FIELDS and all(_VPC_NAME.match(t) for t in toks) and sum(1 for t in toks if t in VPC_VERSIONS) * 2 >= len(toks) \
+        and len(set(toks)) == len(toks)
+
+
+def vpc_rows(src, record_cap, given):
+    """Yield ("row", info, item) / ("reject", info, reason) for a VPC Flow Log file. The field names are those of the header line the file
+    carries (a delivered file starts with one; a later header line, as in files put end to end, replaces it); without one, a 14-field
+    record that begins with the version 2 is read in the default order, and anything else is rejected unless the caller named the
+    fields (vpc_flow_fields)."""
+    src.mode, src.stopped, src.extra_keys, src.envelope, src.header = "text", None, [], None, None
+    src.header_lines = 0
+    fields, origin = (list(given), "the vpc_flow_fields argument") if given else (None, None)
+    lines = csv_lines(src, record_cap)
+    count = 0
+    while True:
+        line_no = src.line
+        try:
+            raw = next(lines)
+        except StopIteration:
+            break
+        except TooLong:
+            src.stopped = "a line longer than %d characters at line %d: the rest of the file was not read" % (record_cap, line_no)
+            yield "reject", {"record": count + 1, "line": line_no, "offset": src.offset(), "chars": None, "envelope": None}, src.stopped
+            return
+        text = raw[:-1] if raw.endswith("\n") else raw
+        text = text[:-1] if text.endswith("\r") else text
+        if not text.strip():
+            continue
+        toks = text.split(" ")
+        if is_vpc_header(toks):
+            fields, origin = toks, "the header line of the file (line %d)" % line_no
+            src.header_lines += 1
+            continue
+        count += 1
+        info = {"record": count, "line": line_no, "offset": None, "chars": None, "envelope": None}
+        if "" in toks:
+            yield "reject", info, "a flow log record with an empty field (two spaces in a row, or a space at either end)"
+            continue
+        use, why = fields, origin
+        if use is None:
+            if len(toks) == len(VPC_DEFAULT) and toks[0] == "2":
+                use, why = list(VPC_DEFAULT), "the default version 2 order (the file has no header line before this record)"
+            else:
+                yield "reject", info, "a flow log record with %d fields and no header line: the field order is not known (pass vpc_flow_fields, the format's field names in order)" % len(toks)
+                continue
+        if len(toks) != len(use):
+            yield "reject", info, "the record has %d fields and the field list (%s) has %d" % (len(toks), why, len(use))
+            continue
+        yield "row", info, {"names": use, "values": toks, "origin": why, "line": text}
+        if src.timed_out:
+            return
+    if src.timed_out and not src.stopped:
+        src.stopped = "the time limit ended the read"
+
+
+def vpc_adapt(item, ctx):
+    names, values = item["names"], item["values"]
+    f = {}
+    for n, v in zip(names, values):
+        f[n] = None if v == "-" else v
+    status = f.get("log-status")
+    declared = num(f["version"]) if f.get("version") is not None else None
+    known = [VPC_VERSIONS[n] for n in names if n in VPC_VERSIONS]
+    highest = max(known) if known else None
+    unknown = [n for n in names if n not in VPC_VERSIONS]
+    ctx.count("fields_not_in_the_documented_list", len(unknown))
+    if status is None and "log-status" in names:
+        kind, why = "unknown_status", "log-status is - in this record"
+    elif status in ("NODATA", "SKIPDATA"):
+        kind = "no_flow_record"
+        why = ("log-status is NODATA: the interface had no traffic during the aggregation interval (the documentation); this is a record of no traffic, not a flow of zero packets"
+               if status == "NODATA" else
+               "log-status is SKIPDATA: some flow log records were skipped in the interval (the documentation); this is not a flow, and it does not say how much traffic there was")
+        ctx.count("log_status_" + status, 1)
+    elif status in (None, "OK"):
+        kind, why = "flow", ("log-status is OK" if status else "log-status is not in this log's format")
+        if status:
+            ctx.count("log_status_OK", 1)
+    else:
+        kind, why = "unknown_status", "log-status is %s, a value the documentation does not list" % free(status)
+        ctx.count("log_status_other", 1)
+    flow = kind == "flow"
+    act = f.get("action")
+    if kind == "no_flow_record":
+        outcome, basis = "unknown", why
+    elif act == "ACCEPT":
+        outcome, basis = "success", "action is ACCEPT: the traffic was accepted (the documentation); this does not show a connection was established"
+    elif act == "REJECT":
+        outcome, basis = "failure", "action is REJECT: the traffic was rejected (the documentation)"
+    else:
+        outcome, basis = "unknown", "action is %s" % ("absent" if act is None else "not ACCEPT or REJECT")
+    shown = {}
+    for n in names:
+        v = f[n]
+        if v is None:
+            shown[n if n in VPC_VERSIONS else free(n)] = None
+        elif n in VPC_NUMBERS:
+            shown[n] = num(v)
+        elif n in VPC_FREE or n not in VPC_VERSIONS:
+            shown[n if n in VPC_VERSIONS else free(n)] = free(v)
+        else:
+            shown[n] = ident(v)
+    st = epoch_stamp(f.get("start")) if "start" in names else {"utc": None, "ns": None, "status": "missing", "basis": "start is not a field of this log's format"}
+    end = epoch_stamp(f.get("end")) if "end" in names else None
+    row = {
+        "provider": "aws", "adapter": "aws_vpc_flow", "tenant_kind": "account (the owner of the source network interface)", "tenant": ident(f.get("account-id")),
+        "principal": None, "principal_kind": None,
+        "action": free(act) if flow else free(status), "service": "vpc-flow-logs", "resource": ident(f.get("interface-id")),
+        "row_kind": kind, "row_kind_basis": why, "log_status": free(status),
+        "outcome": outcome, "outcome_basis": basis,
+        "flow_log_version": declared, "flow_log_version_from_fields": highest,
+        "fields_from": item["origin"], "fields": shown,
+        "time_raw": f.get("start"), "_stamp": st, "end_time_raw": f.get("end"), "end_time_utc": end["utc"] if end else None,
+        "source_ip": ident(f.get("srcaddr")) if flow else None, "destination_ip": ident(f.get("dstaddr")) if flow else None,
+        "source_port": num(f["srcport"]) if flow and f.get("srcport") is not None else None,
+        "destination_port": num(f["dstport"]) if flow and f.get("dstport") is not None else None,
+        "protocol_number": num(f["protocol"]) if flow and f.get("protocol") is not None else None,
+        "packets": num(f["packets"]) if flow and f.get("packets") is not None else None,
+        "bytes": num(f["bytes"]) if flow and f.get("bytes") is not None else None,
+        "traffic": None if flow else "none reported: this row is a log-status record, and its counts (if any) are in fields as written",
+        "unknown_field_names": [free(n) for n in unknown[:MAX_TRAILING_SHOWN]] or None,
+    }
+    if declared is not None and highest is not None and declared != highest:
+        row["flow_log_version_note"] = "the version field says %s and the highest version among this log's field names is %s" % (declared, highest)
+    return [row], {"line": item["line"]}
+
+
+def text_kind(path):
+    """'s3log' or 'vpcflow' when the first non-blank line of the file (decompressed if it is gzip) is the form of one of the two text formats,
+    else None. Read from the content; the name is never used."""
+    src = Source(path, MAX_EXPANDED_BYTES)
+    try:
+        src.ensure(8192)
+        head = src.buf[src.pos:src.pos + 8192]
+    finally:
+        src.close()
+    for line in head.split("\n"):
+        line = line.rstrip("\r")
+        if not line.strip():
+            continue
+        if _S3_HEAD.match(line[:4096]):
+            return "s3log"
+        toks = line.split(" ")
+        if is_vpc_header(toks):
+            return "vpcflow"
+        if re.fullmatch(r"[0-9]{1,2}", toks[0]) and 2 <= int(toks[0]) <= 99 and len(toks) >= 14 and "" not in toks:
+            return "vpcflow"
+        return None
+    return None
+
+
+# ---- Google Workspace Reports API activities ----------------------------------------------------------------------------------------------------
+# The shape is the work card's: id{time, uniqueQualifier, applicationName, customerId}, actor, ipAddress, events[{type, name, parameters[{name, value,
+# multiValue, boolValue...}]}]. The Google documentation was not read for this version (only the AWS pages were permitted), so the shape, the application
+# names, the event names and the parameter names are NOT checked against a vendor page; the adapter takes every name from the record and invents none.
+
+WS_VALUE_KEYS = ("value", "multiValue", "intValue", "multiIntValue", "boolValue", "messageValue")
+WS_SECRET_NAME = ENTRA_SECRET_NAME
+MAX_TOPIC_CHARS = 2000
+TOPIC_RULES = (
+    ("grant", re.compile(r"grant|authori[sz]e|consent|permission")),
+    ("revocation", re.compile(r"revoke|remov|delet|disabl|deactivat")),
+    ("delegation", re.compile(r"delegat")),
+    ("forwarding", re.compile(r"forward")),
+    ("sharing", re.compile(r"visibility|shar(?:e|ing)|\bacl\b|user_access|access_change")),
+    ("role", re.compile(r"role|privilege")),
+    ("credential", re.compile(r"password|credential|secret|certificate|2sv|two.step|recovery|\bkeys?\b")),
+)
+
+
+def topic_hints(*texts):
+    """Words of an event name that point at consent, grant, revocation, delegation, forwarding, sharing, a role or a credential: this tool's own list, a hint
+    for where to look and never a classification any vendor documents."""
+    words = " ".join(t for t in texts if isinstance(t, str))[:MAX_TOPIC_CHARS].lower()
+    return [name for name, rx in TOPIC_RULES if rx.search(words)]
+
+
+def ws_recognise(item):
+    keys = key_map(item)
+    idd = item.get(keys["id"]) if "id" in keys else None
+    return is_dict(idd) and "applicationname" in key_map(idd) and isinstance(item.get(keys.get("events")), list)
+
+
+def ws_param_value(p):
+    for k in WS_VALUE_KEYS:
+        if k in p and p[k] is not None:
+            return p[k]
+    return None
+
+
+def ws_adapt(item, ctx):
+    keys = key_map(item)
+
+    def top(name):
+        k = keys.get(name.lower())
+        return item.get(k) if k is not None else None
+
+    idd = top("id") if is_dict(top("id")) else {}
+    ik = key_map(idd)
+
+    def idv(name):
+        k = ik.get(name.lower())
+        return idd.get(k) if k is not None else None
+
+    actor = top("actor") if is_dict(top("actor")) else {}
+    ak = key_map(actor)
+
+    def av(name):
+        k = ak.get(name.lower())
+        return actor.get(k) if k is not None else None
+
+    ekey = keys["events"]
+    events = item[ekey]
+    app = idv("applicationName")
+    principal = av("email") if av("email") not in (None, "") else av("profileId")
+    protected = dict(item)
+    new_events = []
+    rows = []
+    for ei, ev in enumerate(events):
+        if not is_dict(ev):
+            new_events.append(ev)
+            continue
+        ev2 = dict(ev)
+        evk = key_map(ev)
+        pkey = evk.get("parameters")
+        params = ev.get(pkey) if pkey is not None else None
+        bag, by_name = None, {}
+        if isinstance(params, list):
+            bag = []
+            for pi, p in enumerate(params):
+                if not is_dict(p):
+                    bag.append(p)
+                    continue
+                p2 = dict(p)
+                name = p.get("name")
+                if isinstance(name, str) and (name_is_sensitive(name) or WS_SECRET_NAME.search(name)):
+                    for vk in WS_VALUE_KEYS:
+                        if vk in p and p[vk] not in (None, "", [], {}):
+                            p2[vk] = ctx.withhold_field("/%s/%d/%s/%d/%s" % (ekey, ei, pkey, pi, vk), "a parameter named like a secret", p[vk])
+                bag.append(p2)
+                if isinstance(name, str):
+                    label = scrub_text(name)
+                    value = ws_param_value(p2)
+                    if label not in by_name:
+                        by_name[label] = value
+                    elif isinstance(by_name[label], dict) and "repeated" in by_name[label] and len(by_name[label]) == 1:
+                        by_name[label]["repeated"].append(value)
+                    else:
+                        by_name[label] = {"repeated": [by_name[label], value]}
+            ev2[pkey] = bag
+        new_events.append(ev2)
+        name_l = {k.lower(): k for k in by_name if isinstance(k, str)}
+        pairs = []
+        for low, label in name_l.items():
+            if low.startswith("old_") and ("new_" + low[4:]) in name_l:
+                pairs.append({"name": low[4:], "before": by_name[label], "after": by_name[name_l["new_" + low[4:]]]})
+        ename, etype = ev.get(evk.get("name")), ev.get(evk.get("type"))
+        row = {
+            "provider": "google_workspace", "adapter": "workspace_activities",
+            "tenant_kind": "customer (id.customerId)" if idv("customerId") not in (None, "") else "customer (the record does not name one)", "tenant": ident(idv("customerId")),
+            "principal": free(principal), "principal_kind": "actor.email" if av("email") not in (None, "") else ("actor.profileId" if av("profileId") not in (None, "") else None),
+            "principal_id": ident(av("profileId")), "actor_caller_type": free(av("callerType")), "actor_key": ident(av("key")),
+            "action": free(ename), "event_type": free(etype), "application": free(app), "resource": None,
+            "outcome": "unknown", "outcome_basis": "the activity record is read as it was written: this adapter reads no result field from it, so no success or failure is stated",
+            "source_ip": ident(top("ipAddress")), "owner_domain": ident(top("ownerDomain")),
+            "time_raw": idv("time"), "event_id": ident(idv("uniqueQualifier")), "event_index": ei, "events_in_activity": len(events),
+            "parameters": bag, "parameters_by_name": by_name or None, "before_after": pairs or None,
+            "topic_hints": topic_hints(ename if isinstance(ename, str) else "", app if isinstance(app, str) else "") or None,
+            "topic_hints_basis": "words in the application and event names, from this tool's own list; a hint for where to look, not a classification the vendor documents",
+            "values_are_sensitive": True if bag else None,
+            "_dedupe_part": "%d:%s" % (ei, ename if isinstance(ename, str) else ""),
+        }
+        rows.append(row)
+    protected[ekey] = new_events
+    if not rows:
+        rows.append({
+            "provider": "google_workspace", "adapter": "workspace_activities", "tenant_kind": "customer (id.customerId)", "tenant": ident(idv("customerId")),
+            "principal": free(principal), "action": None, "application": free(app), "outcome": "unknown", "outcome_basis": "the activity has no event",
+            "source_ip": ident(top("ipAddress")), "time_raw": idv("time"), "event_id": ident(idv("uniqueQualifier")), "events_in_activity": 0, "_dedupe_part": "none",
+        })
+    return rows, protected
 
 
 ADAPTERS = {
     "gcp": ("gcp_audit", gcp_recognise, gcp_adapt),
     "kubernetes": ("kubernetes_audit", k8s_recognise, k8s_adapt),
     "entra": ("entra_directory_audit", entra_recognise, entra_adapt),
+    "azure": ("azure_activity_log", az_recognise, az_adapt),
+    "workspace": ("workspace_activities", ws_recognise, ws_adapt),
 }
+TEXT_ADAPTERS = {"s3log": ("aws_s3", "aws_s3_access_log", s3_adapt), "vpcflow": ("aws_vpc", "aws_vpc_flow", vpc_adapt)}
 
 
 def foreign_hint(item):
@@ -2928,7 +3508,7 @@ def choose(item, provider):
     for key, (name, recognise, adapt) in ADAPTERS.items():
         if recognise(item):
             return key, adapt
-    raise Unsupported("no adapter of this tool reads this record (adapters: gcp_audit, kubernetes_audit, entra_directory_audit)%s" % foreign_hint(item))
+    raise Unsupported("no adapter of this tool reads this record (adapters: gcp_audit, kubernetes_audit, entra_directory_audit, azure_activity_log, workspace_activities; the S3 server access log and the VPC Flow Log are text files and are read as such)%s" % foreign_hint(item))
 
 
 # ---- one file ---------------------------------------------------------------------------------------------------------------------------------
@@ -2939,6 +3519,7 @@ class Ctx:
 
     def __init__(self, withheld, locator):
         self.withheld, self.locator = withheld, locator
+        self.notes = {}
 
     def second_time(self, row, raw_key, utc_key):
         st = stamp(row.get(raw_key))
@@ -2946,6 +3527,11 @@ class Ctx:
 
     def withhold_field(self, pointer, why, original):
         return self.withheld.field(self.locator, pointer, why, original)
+
+    def count(self, name, n=1):
+        """A count an adapter keeps for the file's coverage (unknown trailing fields, log-status words...); a zero is not noted."""
+        if n:
+            self.notes[name] = self.notes.get(name, 0) + n
 
 
 class Run:
@@ -3023,23 +3609,33 @@ class FileRow:
             self.d["first_failures"].append({"record": record, "line": line, "reason": reason})
 
 
-def open_rows(path, fmt_arg, delimiter, max_expanded, record_cap):
-    seen = sniff(path)
-    wanted = {"auto": seen, "csv": "csv", "json": "json", "jsonl": "json"}[fmt_arg]
+def open_rows(path, fmt_arg, delimiter, max_expanded, record_cap, provider="auto", vpc_fields=None):
+    kind = text_kind(path)
+    seen = kind or sniff(path)
+    if kind is None and fmt_arg in ("s3log", "vpcflow") and seen == "csv":
+        seen = fmt_arg                # a text file the first line does not identify (a custom flow log with no header line), named by the caller
+    shown_kind = {"s3log": "an S3 server access log", "vpcflow": "a VPC Flow Log"}.get(seen, seen)
+    wanted = {"auto": seen, "csv": "csv", "json": "json", "jsonl": "json", "s3log": "s3log", "vpcflow": "vpcflow"}[fmt_arg]
     if wanted != seen:
-        raise ValueError("format %s was asked for, and the content of this file reads as %s" % (fmt_arg, seen))
+        raise ValueError("format %s was asked for, and the content of this file reads as %s" % (fmt_arg, shown_kind))
+    if seen in TEXT_ADAPTERS and provider not in ("auto", TEXT_ADAPTERS[seen][0]):
+        raise ValueError("provider %s was asked for, and the content of this file reads as %s (provider %s)" % (provider, shown_kind, TEXT_ADAPTERS[seen][0]))
     src = Source(path, max_expanded)
     basis = "the content" if fmt_arg == "auto" else "the format argument, and the content agrees"
+    if seen == "s3log":
+        return src, s3_rows(src, record_cap), seen, basis
+    if seen == "vpcflow":
+        return src, vpc_rows(src, record_cap, vpc_fields), seen, basis
     if seen == "json":
         return src, read_units(src, ENVELOPE_KEYS, record_cap, MAX_DOCUMENT_BYTES), seen, basis
     return src, csv_rows(src, delimiter, record_cap, record_cap), seen, basis
 
 
-def dedupe_key(adapter, row):
+def dedupe_key(adapter, row, part=None):
     ident_ = row.get("event_id")
     if ident_ is None:
         return None
-    raw = "%s\x00%s\x00%s" % (adapter, ident_, row.get("stage") or "")
+    raw = "%s\x00%s\x00%s" % (adapter, ident_, row.get("stage") or part or "")
     return int.from_bytes(hashlib.blake2b(raw.encode("utf-8", "backslashreplace"), digest_size=8).digest(), "big")
 
 
@@ -3047,7 +3643,7 @@ def process_file(path, opts, sinks, withheld, fr):
     """Read one file into the rows page and the rejects page. Returns the Source (for its problems) and whether the file's read was cut."""
     d = fr.d
     shown = d["file"]
-    src, units, fmt, basis = open_rows(path, opts["format"], opts["delimiter"], opts["max_expanded"], opts["record_cap"])
+    src, units, fmt, basis = open_rows(path, opts["format"], opts["delimiter"], opts["max_expanded"], opts["record_cap"], opts["provider"], opts["vpc_fields"])
     d["format"], d["format_basis"] = fmt, basis
     sinks["rejected"].start_file()
     stopped_all = False
@@ -3077,19 +3673,26 @@ def process_file(path, opts, sinks, withheld, fr):
             try:
                 if fmt == "csv":
                     item = {k: maybe_json(v) for k, v in item.items()}
-                key, adapt = choose(item, opts["provider"])
+                if fmt in TEXT_ADAPTERS:
+                    key, adapt = TEXT_ADAPTERS[fmt][0], TEXT_ADAPTERS[fmt][2]
+                else:
+                    key, adapt = choose(item, opts["provider"])
                 ctx = Ctx(withheld, loc)
                 rows, protected = adapt(item, ctx)
+                for note, n in ctx.notes.items():
+                    counts = d.setdefault("adapter_counts", {})
+                    counts[note] = counts.get(note, 0) + n
                 pending = []
                 for row in rows:
-                    st = stamp(row.get("time_raw"))
+                    st = row.pop("_stamp", None) or stamp(row.get("time_raw"))
+                    part = row.pop("_dedupe_part", None)
                     row["time_utc"], row["time_status"], row["time_basis"] = st["utc"], st["status"], st["basis"]
                     d["time_statuses"][st["status"]] = d["time_statuses"].get(st["status"], 0) + 1
                     shown_principal = row.get("principal")
                     if opts["principal"] and not (shown_principal and hits(opts["principal"], shown_principal)):
                         d["records_filtered_out"] += 1
                         continue
-                    dk = dedupe_key(row["adapter"], row)
+                    dk = dedupe_key(row["adapter"], row, part)
                     dup = None
                     if dk is not None:
                         if dk in RUN.ids:
@@ -3155,10 +3758,16 @@ def main():
         fail("path or paths is required: an export file or a directory of them")
     provider = want_str(args, "provider") or "auto"
     if provider not in ("auto",) + PROVIDERS:
-        fail("provider must be auto, gcp, kubernetes or entra")
+        fail("provider must be auto, " + ", ".join(PROVIDERS))
     fmt_arg = want_str(args, "format") or "auto"
-    if fmt_arg not in ("auto", "csv", "json", "jsonl"):
-        fail("format must be auto, csv, json or jsonl")
+    if fmt_arg not in ("auto", "csv", "json", "jsonl", "s3log", "vpcflow"):
+        fail("format must be auto, csv, json, jsonl, s3log or vpcflow")
+    vpc_text = want_str(args, "vpc_flow_fields")
+    vpc_fields = None
+    if vpc_text is not None:
+        vpc_fields = vpc_text.replace(",", " ").split()
+        if not vpc_fields or len(vpc_fields) > MAX_VPC_FIELDS or len(set(vpc_fields)) != len(vpc_fields) or not all(_VPC_NAME.match(x) for x in vpc_fields):
+            fail("vpc_flow_fields must be 1 to %d distinct field names (lower case letters, digits and hyphens), separated by spaces or commas" % MAX_VPC_FIELDS)
     delimiter = want_str(args, "delimiter") or ","
     if len(delimiter) != 1:
         fail("delimiter must be one character")
@@ -3211,7 +3820,7 @@ def main():
     withheld = Withheld(vault, limit)
     sinks = {"rows": LosslessPage(TOOL, limit, dest=str(directory / OUT_NAMES["rows"])),
              "rejected": RejectLog(LosslessPage("rejected_records", limit, dest=str(directory / OUT_NAMES["rejected"])))}
-    opts = {"provider": provider, "format": fmt_arg, "delimiter": delimiter, "principal": pattern, "max_expanded": max_expanded, "record_cap": record_cap}
+    opts = {"provider": provider, "format": fmt_arg, "delimiter": delimiter, "principal": pattern, "max_expanded": max_expanded, "record_cap": record_cap, "vpc_fields": vpc_fields}
     problems, pagination = [], []
     any_cut = False
     replaced_total = 0
@@ -3265,6 +3874,8 @@ def main():
             d.update({"compressed": src.compressed, "encoding": src.encoding, "bytes_read": src.bytes_read, "shape": getattr(src, "mode", None)})
             if src.trailing_zero_bytes:
                 d["trailing_zero_bytes"] = src.trailing_zero_bytes
+            if getattr(src, "header_lines", 0):
+                d["header_lines"] = src.header_lines
             cut = bool(src.error or src.capped or getattr(src, "stopped", None) or src.timed_out or stopped_all)
             if src.timed_out:
                 d["status"] = "partial"
@@ -3307,6 +3918,10 @@ def main():
     all_read = bool(RUN.files) and all(f["status"] == "read" for f in RUN.files)
     complete = all_read and not pagination and replaced_total == 0 and not skipped.total
     totals = RUN.live_totals()
+    adapter_counts = {}
+    for f in RUN.files:
+        for k, v in (f.get("adapter_counts") or {}).items():
+            adapter_counts[k] = adapter_counts.get(k, 0) + v
     failed = totals["rows"] == 0 and not totals["records_filtered_out"] and not complete
     status = status_of(
         failed, complete,
@@ -3317,7 +3932,8 @@ def main():
         "no record could be turned into a row (see problems and rejected.jsonl)")
     coverage = RUN.snapshot(status["status"], status["status_basis"])
     coverage.update({
-        "providers_requested": provider, "adapters": {k: v[0] for k, v in ADAPTERS.items()}, "time_limit_seconds": seconds,
+        "providers_requested": provider, "adapters": {**{k: v[0] for k, v in ADAPTERS.items()}, **{v[0]: v[1] for v in TEXT_ADAPTERS.values()}},
+        "adapter_counts": adapter_counts, "time_limit_seconds": seconds,
         "stopped_by_time_limit": RUN.stopped_by_time, "max_expanded_bytes": max_expanded, "max_record_bytes": record_cap,
         "pagination_markers": pagination, "problems": [scrub_text(p) for p in problems], "skipped_entries": skipped.total, "skipped_first": named(skipped.items),
         "duplicate_annotation": ("complete" if not RUN.ids_full else "stopped after %d distinct record keys: duplicates after that are not annotated" % MAX_IDS),
@@ -3349,7 +3965,7 @@ def main():
         "output_names_note": "an output whose name was already taken (an earlier run in the same directory) is kept beside the earlier one, as name.2.ext; a read that ended early publishes the rows as normalised.partial.jsonl",
         "coverage": {**RUN.live_totals(), "observed_time_range": coverage["observed_time_range"], "time_limit_seconds": seconds, "stopped_by_time_limit": RUN.stopped_by_time,
                      "max_expanded_bytes": max_expanded, "max_record_bytes": record_cap, "duplicate_annotation": coverage["duplicate_annotation"],
-                     "rejected_records_not_listed": coverage["rejected_records_not_listed"], "skipped_entries": skipped.total},
+                     "rejected_records_not_listed": coverage["rejected_records_not_listed"], "skipped_entries": skipped.total, "adapter_counts": adapter_counts},
         "sources": sources_page.page, "problems": coverage["problems"], "pagination_markers": pagination,
         "rows": [], "rows_inline": 0, "row_count": RUN.live_totals()["rows"],
         "values_withheld": {"count": withheld_summary["count"], "by_reason": withheld_summary["by_reason"], "locators": withheld_summary["locators"],

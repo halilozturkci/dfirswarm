@@ -1,0 +1,126 @@
+{
+  "findings": [
+    {
+      "accountId": "111122223333",
+      "arn": "arn:aws:guardduty:eu-west-1:111122223333:detector/detector-one/finding/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "createdAt": "2026-02-14T09:00:00.000Z",
+      "description": "An example finding written for a test.",
+      "id": "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "partition": "aws",
+      "region": "eu-west-1",
+      "resource": {
+        "resourceType": "Instance",
+        "instanceDetails": {
+          "instanceId": "i-0123456789abcdef0",
+          "tags": [
+            {
+              "key": "role",
+              "value": "bastion"
+            }
+          ]
+        }
+      },
+      "schemaVersion": "2.0",
+      "service": {
+        "action": {
+          "actionType": "NETWORK_CONNECTION",
+          "networkConnectionAction": {
+            "blocked": false,
+            "connectionDirection": "INBOUND",
+            "protocol": "TCP",
+            "remoteIpDetails": {
+              "ipAddressV4": "203.0.113.9",
+              "country": {
+                "countryName": "Examplia"
+              }
+            },
+            "remotePortDetails": {
+              "port": 54321
+            }
+          }
+        },
+        "archived": false,
+        "count": 1,
+        "detectorId": "detector-one",
+        "eventFirstSeen": "2026-02-14T08:59:00.000Z",
+        "eventLastSeen": "2026-02-14T09:00:00.000Z",
+        "evidence": {
+          "threatIntelligenceDetails": [
+            {
+              "threatListName": "example-list",
+              "threatNames": [
+                "example-name"
+              ]
+            }
+          ]
+        },
+        "serviceName": "guardduty"
+      },
+      "severity": 2,
+      "title": "Example finding UnauthorizedAccess:EC2/SSHBruteForce",
+      "type": "UnauthorizedAccess:EC2/SSHBruteForce",
+      "updatedAt": "2026-02-14T09:00:00.000Z"
+    },
+    {
+      "accountId": "111122223333",
+      "arn": "arn:aws:guardduty:eu-west-1:111122223333:detector/detector-one/finding/ffeeddccbbaa99887766554433221100",
+      "createdAt": "2026-02-14T09:00:00.000Z",
+      "description": "An example finding written for a test.",
+      "id": "ffeeddccbbaa99887766554433221100",
+      "partition": "aws",
+      "region": "eu-west-1",
+      "resource": {
+        "resourceType": "Instance",
+        "instanceDetails": {
+          "instanceId": "i-0123456789abcdef0",
+          "tags": [
+            {
+              "key": "role",
+              "value": "bastion"
+            }
+          ]
+        }
+      },
+      "schemaVersion": "2.0",
+      "service": {
+        "action": {
+          "actionType": "NETWORK_CONNECTION",
+          "networkConnectionAction": {
+            "blocked": false,
+            "connectionDirection": "INBOUND",
+            "protocol": "TCP",
+            "remoteIpDetails": {
+              "ipAddressV4": "203.0.113.9",
+              "country": {
+                "countryName": "Examplia"
+              }
+            },
+            "remotePortDetails": {
+              "port": 54321
+            }
+          }
+        },
+        "archived": true,
+        "count": 4,
+        "detectorId": "detector-one",
+        "eventFirstSeen": "2026-02-14T08:59:00.000Z",
+        "eventLastSeen": "2026-02-14T09:10:00.000Z",
+        "evidence": {
+          "threatIntelligenceDetails": [
+            {
+              "threatListName": "example-list",
+              "threatNames": [
+                "example-name"
+              ]
+            }
+          ]
+        },
+        "serviceName": "guardduty"
+      },
+      "severity": 2,
+      "title": "Example finding Recon:EC2/PortProbeUnprotectedPort",
+      "type": "Recon:EC2/PortProbeUnprotectedPort",
+      "updatedAt": "2026-02-14T09:10:00.000Z"
+    }
+  ]
+}

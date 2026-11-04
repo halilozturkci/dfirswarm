@@ -18,7 +18,7 @@ Inventory each family on its own line: supplied, not supplied, disabled or unkno
 - **Kubernetes:** API-server audit events with the audit policy and the backend that delivered them, beside any control-plane and workload logs.
 - **Every family:** the current configuration, as a snapshot at its collection time; disabled sources, selectors and exclusions; retention that expired; delivery that failed; what the acquisition left out.
 
-This pack reads CloudTrail (`cloudtrail_parse`), Entra sign-ins and Workspace logins (`signin_analyse`) the Microsoft 365 unified audit log (`ual_parse`), and, through `cloud_normalise`, Cloud Audit Logs, Kubernetes audit events and the Entra directory audit; `cloud_timeline_export` puts its rows in one order. Any other supplied family has no reader here: read it in a recorded job, check its fields against the source's documentation, and say so.
+This pack reads CloudTrail (`cloudtrail_parse`), Entra sign-ins and Workspace logins (`signin_analyse`) the Microsoft 365 unified audit log (`ual_parse`), and, through `cloud_normalise`, Cloud Audit Logs, Kubernetes audit events, the Entra directory audit, Azure Activity log records, S3 server access logs and VPC flow logs; `cloud_timeline_export` puts its rows in one order. Any other supplied family has no reader here: read it in a recorded job, check its fields against the source's documentation, and say so.
 
 **Does not show:** that a listed family existed in this tenant, or that an unlisted one did not.
 

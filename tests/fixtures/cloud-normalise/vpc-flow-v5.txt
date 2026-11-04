@@ -1,0 +1,4 @@
+start end srcaddr dstaddr flow-direction traffic-path pkt-src-aws-service log-status version
+1771059600 1771059660 192.0.2.10 198.51.100.5 egress 2 - OK 5
+1771059660 1771059720 198.51.100.5 192.0.2.10 ingress - S3 OK 5
+1771059720 1771059780 - - - - - NODATA 5

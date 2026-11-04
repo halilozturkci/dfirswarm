@@ -4,10 +4,11 @@ title: CloudTrail records, coverage and session origin
 when: Supplied AWS CloudTrail exports need event interpretation or identity correlation.
 needs: [logs/what-exists]
 tools: [cloudtrail_parse]
+mentions: [guardduty_findings]
 requires_host: []
 ---
 
-Use when you hold CloudTrail files, lookup-events pages or JSON Lines and must say which principal did what, from where, and what the export can show. Not for S3 access logs, VPC flow logs or GuardDuty findings (no reader here). Offline: never authenticate to the account.
+Use when you hold CloudTrail files or lookup-events pages and must say which principal did what, from where, and what the export shows. Not for S3 or VPC logs, or GuardDuty (`guardduty_findings`). Offline: never authenticate to the account.
 
 **First, the surface.** Event History, trail files and event data store results differ in coverage and shape: establish account, region, event categories, selectors and interval. A missing `GetObject` record does not show nothing was read: check data events were captured. `cloudtrail_parse` reads Records files, arrays, JSON Lines, lookup-events pages and gzip; not tar or ZIP.
 
