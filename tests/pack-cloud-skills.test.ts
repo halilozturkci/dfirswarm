@@ -15,6 +15,10 @@ const SKILLS = join(ROOT, "packs", "cloud-forensics", "skills");
 const IDS = [
   "aws/cloudtrail",
   "aws/cloudtrail-integrity",
+  "aws/guardduty",
+  "aws/s3-access",
+  "aws/vpc-flow",
+  "azure/activity-resource-logs",
   "entra/directory-audit",
   "entra/signins",
   "gcp/audit-logs",
@@ -26,11 +30,12 @@ const IDS = [
   "logs/exported-evidence",
   "logs/sources",
   "logs/what-exists",
+  "m365/mailbox-persistence",
   "m365/unified-audit-log",
 ];
 
 // The pack's one router: shown alone when a run's index is over budget, and names every other skill once (routerChecks below).
-// IDS holds the fourteen leaves; the router reads no artefact, so the per-leaf checks of this file do not apply to it.
+// IDS holds the nineteen leaves; the router reads no artefact, so the per-leaf checks of this file do not apply to it.
 const ROUTER = "cloud/router";
 
 const read = (id: string): { front: Record<string, string>; text: string; body: string } => {
@@ -47,7 +52,7 @@ const read = (id: string): { front: Record<string, string>; text: string; body: 
 
 const list = (v: string): string[] => v.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean);
 
-test("the pack carries these fourteen skills and its router, and no others", () => {
+test("the pack carries these nineteen skills and its router, and no others", () => {
   const found: string[] = [];
   const walk = (dir: string, prefix: string): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -219,7 +224,7 @@ test("pwsh and aws are said to be an operator's acquisition tools, in requires a
   }
   const pack = JSON.parse(readFileSync(join(ROOT, "packs", "cloud-forensics", "pack.json"), "utf8"));
   assert.ok(pack.unreferenced_ok.some((e: { name: string; why: string }) => e.name === "pwsh" && /never connects to a tenant/.test(e.why)));
-  assert.equal(pack.skills, 15);
+  assert.equal(pack.skills, 20);
 });
 
 test("aws/cloudtrail-integrity routes the CloudTrail integrity check to the operator: the command and its options are named and cited with a date, the result vocabulary is fixed, a signature-less export and a file hash are not validation, and nothing tells the agent to run the program", () => {
@@ -330,6 +335,147 @@ test("kubernetes/audit keeps stages as separate rows, says an API request is not
   assert.match(body, /Linux pack if it is loaded \(check the run's skill index/);
   assert.match(body, /replaced whole by a marker/);
   assert.doesNotMatch(body, /containers\/runtime-orchestration/, "no pointer into the other pack is a dependency");
+});
+
+// ---- The five leaves that read the S3, VPC, Azure, GuardDuty and mailbox evidence (PKG-CLD-16) --------------------------------------------
+
+const S1B_LEAVES = ["aws/s3-access", "aws/vpc-flow", "azure/activity-resource-logs", "aws/guardduty", "m365/mailbox-persistence"];
+const toolSource = (tool: string): string => readFileSync(join(TOOLS_DIR, tool, "run.py"), "utf8");
+const toolParams = (tool: string): string[] => Object.keys(JSON.parse(readFileSync(join(TOOLS_DIR, tool, "manifest.json"), "utf8")).params);
+
+test("the five leaves name only what the tools they list write: every snake_case, hyphenated or file name in backticks is a field, a parameter, an output file or a tool of the pack", () => {
+  const sources: Record<string, string> = {
+    "aws/s3-access": toolSource("cloud_normalise") + toolSource("cloudtrail_parse"),
+    "aws/vpc-flow": toolSource("cloud_normalise"),
+    "azure/activity-resource-logs": toolSource("cloud_normalise"),
+    "aws/guardduty": toolSource("guardduty_findings"),
+    "m365/mailbox-persistence": toolSource("ual_parse") + toolSource("cloud_normalise"),
+  };
+  const params = new Set<string>([...["cloud_normalise", "cloudtrail_parse", "guardduty_findings", "ual_parse"].flatMap(toolParams)]);
+  const tools = new Set(["cloud_normalise", "cloudtrail_parse", "guardduty_findings", "ual_parse", "network_log_summary", "secret_output", "write_values"]);
+  // Values the tools write as words of their own (a provider, a format, a state), spelled in the source as quoted strings.
+  const dynamic = /^log_status_(NODATA|SKIPDATA)$/; // adapter_counts keys are built as "log_status_" + the status
+  for (const id of S1B_LEAVES) {
+    const { body } = read(id);
+    for (const m of body.matchAll(/`([^`]+)`/g)) {
+      const name = m[1];
+      if (/^[a-z]+\/[a-z0-9-]+$/.test(name) || name === "-" || name === "true") continue; // a skill id, a literal
+      const isName = /^[a-z][a-z0-9_]*$/.test(name) && name.length >= 3;
+      const isField = /^[a-z][a-z0-9]*(-[a-z0-9]+)+$/.test(name) && !name.endsWith(".jsonl");
+      const isFile = /^[A-Za-z0-9._-]+\.jsonl$/.test(name);
+      if (!isName && !isField && !isFile) continue;
+      if (params.has(name) || tools.has(name) || dynamic.test(name)) continue;
+      const src = sources[id];
+      // A VPC field name is written in the adapter as one word of a list (VPC_VERSIONS), the others as a quoted key.
+      assert.ok(src.includes(`"${name}"`) || (isField && new RegExp(`[ "]${name}[ "]`).test(src)), `${id} names \`${name}\`, which its tools do not write`);
+    }
+  }
+});
+
+test("the five leaves open Use when ... Not for, state the offline boundary and what they do not show, and run a sensitive reader as a secret_output job", () => {
+  for (const id of S1B_LEAVES) {
+    const { front, body } = read(id);
+    assert.match(body.trimStart().split("\n")[0], /^Use when .*\bNot for\b.*\bOffline: /, id);
+    assert.match(body, /\*\*Does not show:\*\*/, id);
+    assert.match(body, /\*\*Sensitive output:\*\*/, id);
+    assert.match(body, /secret_output: true/, id);
+    assert.deepEqual(list(front.needs ?? "[]"), ["logs/what-exists"], `${id}: the chain stays inside its budget`);
+    assert.ok(list(front.tools ?? "[]").length >= 1, `${id} lists the tool it reads with`);
+  }
+});
+
+test("aws/s3-access keeps attempted, successful, exposed and transferred apart, and the four sources apart", () => {
+  const { front, body } = read("aws/s3-access");
+  assert.deepEqual(list(front.tools ?? "[]"), ["cloud_normalise", "cloudtrail_parse"]);
+  assert.match(body, /\*\*Four sources, four claims\.\*\*/);
+  assert.match(body, /A request absent from one is not absent from the others/);
+  assert.match(body, /\*\*Attempted, successful, exposed and transferred are four claims\.\*\*/);
+  assert.match(body, /Public exposure is a separate claim, from the policy, ACL and public-access settings in force at the request/);
+  assert.match(body, /A transfer needs a successful answer with bytes: compare `bytes_sent` with `object_size`/);
+  assert.match(body, /the record does not show what the requester did with it/);
+  assert.match(body, /A ranged GET answers part of an object, so a 2xx is not the whole object/);
+  assert.match(body, /count distinct `event_id`/);
+  assert.match(body, /never from a default/);
+  assert.match(body, /`provider` `aws_s3`/);
+  assert.match(body, /`format` `s3log`/);
+});
+
+test("aws/vpc-flow keeps NODATA and SKIPDATA out of the flows, accepted apart from success, and points to the network pack only conditionally and at an id that exists", () => {
+  const { front, body } = read("aws/vpc-flow");
+  assert.deepEqual(list(front.tools ?? "[]"), ["cloud_normalise"]);
+  assert.match(body, /`NODATA` and `SKIPDATA`\.\*\* `row_kind` is `no_flow_record`/);
+  assert.match(body, /NODATA is not a flow of zero/);
+  assert.match(body, /an interval beside a SKIPDATA record is not shown to be quiet/);
+  assert.match(body, /\*\*Accepted is not application success\.\*\*/);
+  assert.match(body, /A record is not a connection/);
+  assert.match(body, /Bytes count traffic in a window, not the size of what was taken/);
+  assert.match(body, /flow_log_version_from_fields/);
+  // The pointer is conditional, in the wording the work card fixes, and the id it names is a skill of the network pack.
+  assert.match(body, /`flows\/interpret` if the network pack is loaded; check the run's tool inventory/);
+  assert.ok(readFileSync(join(ROOT, "packs", "network-forensics", "skills", "flows", "interpret.md"), "utf8").startsWith("---\nid: flows/interpret\n"), "the id exists");
+  // A mentions entry is a tool or a program (pack-links); the one tool of the other pack the leaf names is mentioned, never listed, and never depended on.
+  assert.deepEqual(list(front.mentions ?? "[]"), ["network_log_summary"]);
+  assert.match(body, /`network_log_summary` does not read this schema/);
+  assert.ok(!/flow_reader|pcap_summary|nfdump/.test(body), "no other tool of the network pack is named");
+  const pack = JSON.parse(readFileSync(join(ROOT, "packs", "cloud-forensics", "pack.json"), "utf8"));
+  assert.ok(!(pack.depends as string[]).some((d) => d.startsWith("network-forensics")), "the cloud pack does not depend on the network pack");
+});
+
+test("azure/activity-resource-logs keeps the three planes apart, the scope from the resource, a start from its completion, and says its names are unchecked against Azure documentation", () => {
+  const { front, body } = read("azure/activity-resource-logs");
+  assert.deepEqual(list(front.tools ?? "[]"), ["cloud_normalise"]);
+  assert.match(body, /\*\*Three planes, three sources\.\*\*/);
+  assert.match(body, /this tool has no adapter for them/);
+  assert.match(body, /A control-plane row does not show data-plane access, and a missing data-plane log does not show none/);
+  assert.match(body, /`resource` and `authorization_scope` are separate fields printed as written/);
+  assert.match(body, /A Started or Accepted row has `outcome` `unknown`, never success/);
+  assert.match(body, /its completion is another row with the same `correlation_id`, and rows are never merged/);
+  assert.match(body, /A start with no completion in the set is an open question, not a failure/);
+  assert.match(body, /not checked against Azure documentation/);
+  assert.match(body, /\*\*History of diagnostic settings\.\*\*/);
+  assert.match(body, /entra\/directory-audit/);
+});
+
+test("aws/guardduty keeps updates apart from incidents, takes suppression and detector state from nowhere it is not recorded, and corroborates against supplied raw evidence", () => {
+  const { front, body } = read("aws/guardduty");
+  assert.deepEqual(list(front.tools ?? "[]"), ["guardduty_findings"]);
+  assert.deepEqual(list(front.mentions ?? "[]"), ["cloudtrail_parse"]);
+  assert.match(body, /\*\*Updates are not incidents\.\*\*/);
+  assert.match(body, /so records are not occurrences/);
+  assert.match(body, /read the versions, not only the latest/);
+  assert.match(body, /Which finding ids make one incident is your judgement/);
+  assert.match(body, /`suppression` says the file cannot tell which/);
+  assert.match(body, /Whether the detector was enabled, and in which Regions, is not in a finding/);
+  assert.match(body, /no finding is not no activity/);
+  assert.match(body, /Archived and suppressed findings are not exported by default/);
+  assert.match(body, /\*\*Corroborate against the supplied raw evidence\.\*\*/);
+  assert.match(body, /raw evidence with no finding is not a missed detection/);
+  assert.match(body, /are untrusted/);
+});
+
+test("m365/mailbox-persistence keeps configuration, authorisation, execution and delivery apart, agrees with the unified audit log leaf, and claims no reader that does not exist", () => {
+  const { front, body } = read("m365/mailbox-persistence");
+  assert.deepEqual(list(front.tools ?? "[]"), ["ual_parse", "cloud_normalise"]);
+  assert.match(body, /Configuration is not effective authorisation, which is not execution, which is not delivery/);
+  for (const step of ["Configuration", "Authorisation change", "Execution", "Delivery"]) assert.match(body, new RegExp(`\\*\\*${step}\\.\\*\\*`));
+  assert.match(body, /`MailItemsAccessed` records access to items, not a rule firing/);
+  assert.match(body, /No reader for message trace is here/);
+  assert.match(body, /`m365\/unified-audit-log` says there is no reader here for mailbox configuration or message delivery/);
+  // The unified audit log leaf says the same, in its own sentence, which this package leaves as it is.
+  assert.match(read("m365/unified-audit-log").text, /Not for sign-in analysis \(`entra\/signins`\), mailbox configuration, or message delivery \(no reader here\)/);
+  assert.match(body, /Transport controls\*\* act on mail in flight with no mailbox rule/);
+  assert.match(body, /`identity\/grants`/);
+  assert.doesNotMatch(body, /message_trace|message trace reader|settings reader/i, "no tool of this pack reads a settings snapshot or a message trace");
+});
+
+test("the router names the five new leaves, the README says twenty skills and the pack counts them", () => {
+  const router = readFileSync(join(SKILLS, "cloud", "router.md"), "utf8");
+  for (const id of S1B_LEAVES) assert.match(router, new RegExp(`\`${id}\` `), `${id} is in the router`);
+  const readme = readFileSync(join(ROOT, "packs", "cloud-forensics", "README.md"), "utf8");
+  assert.match(readme, /\*\*Twenty skills\*\*/);
+  assert.match(readme, /it names the other nineteen/);
+  for (const id of S1B_LEAVES) assert.ok(readme.includes(`\`${id}\``), `${id} is in the README`);
+  assert.equal(IDS.length, 19);
 });
 
 // ---- The router: the one entry a run shows for this pack when its index is over the run's budget. ----

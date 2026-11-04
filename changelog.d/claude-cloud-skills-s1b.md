@@ -1,0 +1,11 @@
+### Added: five cloud skills for S3 access, VPC flow, Azure activity, GuardDuty and mailbox persistence
+
+`cloud-forensics` gains five leaves, each opening "Use when ... Not for ..." and naming only fields of the tools that exist (`tests/pack-cloud-skills.test.ts` holds that against the sources of `cloud_normalise`, `cloudtrail_parse`, `guardduty_findings` and `ual_parse`):
+
+- **`aws/s3-access`**: CloudTrail data events, server access logs, inventories and the history of the access configuration are four sources with four claims; an attempted request, a successful one, public exposure and a shown transfer are four claims; a ranged, repeated or delayed record is kept, never read as a whole object.
+- **`aws/vpc-flow`**: the version and field layout (`flow_log_version`, `fields_from`), the account and interface scope, a record as an aggregation window, `NODATA` and `SKIPDATA` as `no_flow_record` rows and never a flow of zero, accepted traffic apart from application success, bytes apart from content. The pointer to the network pack's `flows/interpret` is conditional ("if the network pack is loaded; check the run's tool inventory"); the network pack's `network_log_summary` is named as a mention only, with the fact that it does not read this schema.
+- **`azure/activity-resource-logs`**: the control plane against resource and data-plane logs against Entra, scope against resource, a start against its completion by `correlation_id`, and the history of diagnostic settings; it says the field names are unchecked against Azure documentation.
+- **`aws/guardduty`**: one finding id updated over time is one chain and not an incident, archived against suppressed with the file unable to tell a rule from a hand archive, detector state taken from supplied settings, and corroboration against the raw evidence that was supplied.
+- **`m365/mailbox-persistence`**: configuration is not effective authorisation, which is not execution, which is not delivery; it agrees with `m365/unified-audit-log` that no reader here covers mailbox configuration or message delivery, and names no reader that does not exist.
+
+The router names all five, the README says twenty skills and the doc counts follow. Pack: cloud-forensics.

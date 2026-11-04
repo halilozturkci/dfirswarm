@@ -536,7 +536,7 @@ result.
 ## 7. The packs in this repository
 
 Thirteen, all under the same AGPL-3.0-or-later as the harness, in `packs/`:
-312 skills, 138 tools and 15 goal templates. Every one of them is sealed,
+317 skills, 138 tools and 15 goal templates. Every one of them is sealed,
 checksummed, and installs and verifies in the test suite.
 
 | Pack | Skills | Tools | Goals | What it is for |
@@ -550,7 +550,7 @@ checksummed, and installs and verifies in the test suite.
 | `network-forensics` | 19 | 11 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
 | `reverse-engineering` | 21 | 12 | 1 | static triage of a binary or a document, under quarantine |
 | `encrypted-containers` | 18 | 9 | 1 | which scheme, which protectors, and where the key already is |
-| `cloud-forensics` | 15 | 6 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
+| `cloud-forensics` | 20 | 6 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
 | `ransomware-response` | 25 | 8 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
 | `triage-collection` | 20 | 8 | 1 | a collector's output, which is how most cases arrive |
 | `virtualization-backup-forensics` | 12 | 3 | 1 | the control plane of virtualization and backup: hypervisor records, disk and snapshot chains, backup catalogues, and which recovery points survive |
