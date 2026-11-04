@@ -84,7 +84,7 @@ test("each skill names the tools its front matter lists, and says what it does n
   for (const id of IDS) {
     const { front, body } = read(id);
     for (const tool of list(front.tools ?? "[]")) assert.ok(body.includes(tool), `${id} lists ${tool} and does not name it`);
-    for (const tool of ["cloudtrail_parse", "signin_analyse", "ual_parse", "cloud_normalise", "cloud_timeline_export"]) {
+    for (const tool of ["cloudtrail_parse", "signin_analyse", "ual_parse", "cloud_normalise", "cloud_timeline_export", "guardduty_findings"]) {
       if (body.includes(tool)) assert.ok(list(front.tools ?? "[]").includes(tool) || list(front.mentions ?? "[]").includes(tool), `${id} names ${tool} and lists it in neither tools nor mentions`);
     }
     for (const tool of list(front.mentions ?? "[]")) assert.ok(!list(front.tools ?? "[]").includes(tool), `${id} both uses and mentions ${tool}`);
@@ -277,7 +277,7 @@ const TOOLS_DIR = join(ROOT, "packs", "cloud-forensics", "tools");
 test("the four new leaves name only fields the adapters write: every snake_case name in backticks is a field of cloud_normalise's source, a tool, a recipe, a parameter of its manifest or a skill id", () => {
   const source = readFileSync(join(TOOLS_DIR, "cloud_normalise", "run.py"), "utf8");
   const manifest = JSON.parse(readFileSync(join(TOOLS_DIR, "cloud_normalise", "manifest.json"), "utf8"));
-  const allowed = new Set<string>([...Object.keys(manifest.params), "cloud_normalise", "cloud_timeline_export", "cloudtrail_parse", "signin_analyse", "ual_parse", "check_inputs", "cloud_export_inventory", "secret_output", "write_values", "rejected", "pagination_markers", "status"]);
+  const allowed = new Set<string>([...Object.keys(manifest.params), "cloud_normalise", "cloud_timeline_export", "guardduty_findings", "cloudtrail_parse", "signin_analyse", "ual_parse", "check_inputs", "cloud_export_inventory", "secret_output", "write_values", "rejected", "pagination_markers", "status"]);
   for (const id of NEW_LEAVES) {
     const { body } = read(id);
     for (const m of body.matchAll(/`([^`]+)`/g)) {

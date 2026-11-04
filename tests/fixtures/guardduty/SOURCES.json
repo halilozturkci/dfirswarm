@@ -1,0 +1,88 @@
+{
+  "about": "Where the fixtures of tests/pack-cloud-guardduty.test.ts come from. No real export exists. The files are written by hand from the field lists of the AWS pages under 'pages', read on 2026-11-04 (read-only page reading, nothing downloaded); every value in them is invented (documentation address ranges, made-up ids, an example account). Claims below are paraphrases of what each page says; a verifier re-reads the page and checks the claim.",
+  "pages": {
+    "finding": {
+      "url": "https://docs.aws.amazon.com/guardduty/latest/APIReference/API_Finding.html",
+      "title": "Finding (GuardDuty API reference)",
+      "retrieved": "2026-11-04",
+      "supports": [
+        "The Finding object has accountId, arn, createdAt, id, region, resource, schemaVersion, severity, type and updatedAt (all required), and the optional associatedAttackSequenceArn, confidence, customDetectionRuleName, description, partition, service and title.",
+        "severity is a Double; createdAt and updatedAt are Strings; the type is a string of 1 to 100 characters.",
+        "The Region of a finding generated from global service events might differ from the Region where GuardDuty identifies the potential threat."
+      ]
+    },
+    "service": {
+      "url": "https://docs.aws.amazon.com/guardduty/latest/APIReference/API_Service.html",
+      "title": "Service (GuardDuty API reference)",
+      "retrieved": "2026-11-04",
+      "supports": [
+        "The Service object has the optional members action, additionalInfo, archived (Boolean: whether the finding is archived), count (Integer: the total count of the occurrences of this finding type), detection, detectorId, ebsVolumeScanDetails, eventFirstSeen and eventLastSeen (Strings), evidence, featureName, malwareScanDetails, resourceRole, runtimeDetails, serviceName and userFeedback.",
+        "The page lists no member that marks a finding as archived by a suppression rule."
+      ]
+    },
+    "get-findings": {
+      "url": "https://docs.aws.amazon.com/guardduty/latest/APIReference/API_GetFindings.html",
+      "title": "GetFindings (GuardDuty API reference)",
+      "retrieved": "2026-11-04",
+      "supports": [
+        "The response is a JSON object whose findings member is an array of Finding objects (at most 50), with lowerCamelCase member names, for example accountId, createdAt, service.archived, service.count and service.eventLastSeen.",
+        "The Evidence object of the response holds threatIntelligenceDetails, a list of objects with threatFileSha256, threatListName and threatNames.",
+        "The action object of the response holds actionType and, by type, awsApiCallAction, dnsRequestAction, kubernetesApiCallAction, networkConnectionAction, portProbeAction and rdsLoginAttemptAction, among others; a network connection action holds remoteIpDetails (with ipAddressV4 and country) and remotePortDetails."
+      ]
+    },
+    "export": {
+      "url": "https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_exportfindings.html",
+      "title": "Exporting generated GuardDuty findings to Amazon S3 buckets",
+      "retrieved": "2026-11-04",
+      "supports": [
+        "GuardDuty retains the generated findings for 90 days.",
+        "Export settings are regional: they are configured in each Region where GuardDuty is used.",
+        "Archived findings, including new instances of suppressed findings, are not exported by default.",
+        "Updated active findings are exported at a set frequency: 15 minutes, 1 hour or 6 hours, with 6 hours the default.",
+        "Findings objects are written under a path of the form /AWSLogs/<account id>/GuardDuty/<Region>, and the S3 object is a UUID with the extension .jsonl.gz; the UUID is not the detector id or the finding id.",
+        "An administrator account's export includes the findings of its member accounts generated in the same Region."
+      ],
+      "not_supported_by_the_page_and_so_not_claimed": "the letter case of the keys inside an exported finding"
+    },
+    "aggregation": {
+      "url": "https://docs.aws.amazon.com/guardduty/latest/ug/finding-aggregation.html",
+      "title": "GuardDuty finding aggregation",
+      "retrieved": "2026-11-04",
+      "supports": [
+        "When GuardDuty detects new activity related to the same security issue, it updates the original finding with the latest details instead of creating a new one, aggregating it under the same finding id and increasing the Count.",
+        "An aggregated finding is updated with the latest occurrence, and older information such as a remote IP is replaced.",
+        "Which activity is aggregated into one finding and which creates a new one depends on the finding type."
+      ]
+    },
+    "suppression": {
+      "url": "https://docs.aws.amazon.com/guardduty/latest/ug/findings_suppression-rule.html",
+      "title": "Suppression rules in GuardDuty",
+      "retrieved": "2026-11-04",
+      "supports": [
+        "New findings that match a suppression rule are automatically archived; GuardDuty continues to generate them and marks them as archived.",
+        "Suppressed findings are not sent to Security Hub CSPM, Amazon S3, Amazon Detective or Amazon EventBridge.",
+        "Archived findings are kept for 90 days and are found through the service.archived criterion."
+      ]
+    },
+    "severity": {
+      "url": "https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_findings-severity.html",
+      "title": "Severity levels of GuardDuty findings",
+      "retrieved": "2026-11-04",
+      "supports": [
+        "The severity value lies between 1.0 and 10.0; Low is 1.0 to 3.9, Medium 4.0 to 6.9, High 7.0 to 8.9 and Critical 9.0 to 10.0."
+      ]
+    }
+  },
+  "fixtures": {
+    "guardduty-api.json": {
+      "format": "a GetFindings response with two findings, lowerCamelCase, one active and one archived",
+      "schema_version": "schemaVersion 2.0 as the fixture writes it (the page does not give a value)",
+      "documentation": "pages.finding, pages.service, pages.get-findings; checked against the live pages: yes, 2026-11-04"
+    },
+    "guardduty-export.jsonl": {
+      "format": "JSON Lines, one finding per line, with UpperCamelCase keys (the form the card uses; the export page does not say which form the export has, so the tool reads both): one finding id exported three times as it was updated, and one finding of another Region and account",
+      "schema_version": "as above",
+      "documentation": "pages.finding, pages.service, pages.export, pages.aggregation; checked: yes, 2026-11-04; the key case is the card's and is NOT confirmed by a page"
+    }
+  }
+}
