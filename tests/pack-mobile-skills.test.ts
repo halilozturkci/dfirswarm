@@ -122,6 +122,7 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["recipes/ios-filesystem/run.py", "extractions/what-you-have", ["sqlite.tsv"]],
   ["tools/backup_materialise/run.py", "extractions/backups", ["copy_content"]],
   ["tools/ab_layout/run.py", "extractions/backups", ["copy_content"]],
+  ["tools/backup_decrypt/run.py", "extractions/backups", ["password_ref", "wrong_secret", "verified"]],
   ["tools/heic_inspect/run.py", "media/provenance", ["write_values"]],
   ["recipes/android-backup-apps/run.py", "validation/parser-coverage", ["modules.tsv", "errors_logged", "no_record", "errored", "unknown"]],
 ];
@@ -300,13 +301,13 @@ test("the seven new leaves exist, the old ids stay alive, and two leaves never s
   assert.doesNotMatch(skills.get("ios/containers-and-time")!.body, /A restore or a migration can move data between containers/);
 });
 
-test("the new leaves name only tools and programs that exist, say no decryption is provided, and prescribe no bypass", async () => {
+test("the new leaves name only tools and programs that exist, name the decrypt tool, and prescribe no bypass", async () => {
   const skills = await load(SKILLS);
   const tools = new Set((await readdir(join(PACK, "tools"), { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name));
   for (const name of ["backup_materialise", "ab_layout", "heic_inspect"]) assert.ok(tools.has(name), `${name} is a tool of the pack`);
   const backups = skills.get("extractions/backups")!.body;
   for (const name of ["backup_materialise", "ab_layout"]) assert.match(backups, new RegExp("`" + name + "`"));
-  assert.match(backups, /No decryption is provided here/);
+  assert.match(backups, /`backup_decrypt`/);
   const protection = skills.get("extractions/protection-state")!.body;
   assert.match(protection, /never prescribes a bypass/);
   assert.match(protection, /Feasibility is not authority/);
