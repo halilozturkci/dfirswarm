@@ -1,7 +1,7 @@
 {
   "id": "mobile-forensics",
   "name": "Mobile Forensics Pack",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "Method and tooling for a phone: what kind of extraction you were handed and what it cannot contain, iOS backups and their manifest, Android package and user data, the app databases that carry messages and location, protobuf blobs, and what deleted means inside SQLite.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -32,8 +32,11 @@
       "recipes/ios-filesystem/run.py": "d61ac3d2d6f05cd430846c7151e732d197eb6082f1e3b71e4a8a8b069c36a64c",
       "recipes/ios-ileapp/recipe.json": "1588edfe3ded3126bfd98aaa7617099f4751337ddc5a8887aa6ea9fb5632cad9",
       "recipes/ios-ileapp/run.py": "6b8a82d85cf781da44d24bc2f716fbcc2f5bcd80965a6d5b08ac245ee4a0685f",
-      "requires/host.json": "cbaf378096c2f97da7cbecf930324c7b3c839c6fbb60001df3d3b213ee60e7f3",
-      "requires/python.txt": "3816ab554bef3ef99c10c0fa5b0e07c2f4425eb238a4c04d430f43b5162bdad7",
+      "requires/host.json": "d9c0f272d62a76699c63910863ec6092fbfced5433e4d33f18b2fd89b1293632",
+      "requires/locks/aleapp.txt": "e56156ff8d76634c508cfa1741ff1fb4f784b5ae17e11afce65e446111dfab33",
+      "requires/locks/ileapp.txt": "c5bebd9a9fff08af9b1a2d505dd29c0f375640b1983284c0befde3537c15ddab",
+      "requires/python.lock": "de66c533d34c84d6c938370df8df1872b1d8b22548856e1290a58371f28da530",
+      "requires/python.txt": "2bb7cd2c24fd76a216da1cc4458224bb458d0db333d8004753a0b8f8b2c70001",
       "skills/INDEX.md": "afb930146f65cfaf2a8e4754ba7a31730b94143e6f1242ac76e113a63c379cd2",
       "skills/android/artifacts.md": "1c194a7e903bf033514fc2ebd7c93e00ff3c369ead324e2a039ab1cb9dbc31a0",
       "skills/apps/databases.md": "e1e3ee4349e70a4d2063218bd894fffb5e7d239334fe499ae92d4d9dbd6ede72",

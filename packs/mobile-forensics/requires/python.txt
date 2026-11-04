@@ -1,3 +1,5 @@
 # The mobile pack's tools use the standard library only: sqlite3 and plistlib are
 # in it, and the protobuf reader here is a wire-format decoder rather than a library.
+# The image installs the line below from requires/python.lock (the sha256 of each file PyPI
+# publishes, with Pillow, which it needs); the line is the note.
 pillow-heif==1.8.0     # BSD-3-Clause, with libheif (LGPL-3.0) inside. An iPhone's HEIC photo opened from Pillow in a script.
