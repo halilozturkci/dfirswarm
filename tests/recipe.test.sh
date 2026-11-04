@@ -850,7 +850,7 @@ tar -czf "$D/tool-1.0.tar.gz" -C "$D/src" tool-1.0
 tool_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$D/tool-1.0.tar.gz")"
 patch_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$D/fix.patch")"
 bad_patch_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$D/bad.patch")"
-res="$(PYTHONPATH="$D/site" DFIRSWARM_VENV="$D/venv" DFIRSWARM_TOOLS_DIR="$D/tools" DFIRSWARM_BUILD_DIR="$D/work" PATH="$D/bin:$PATH" \
+res="$(PYTHONPATH="$D/site" DFIRSWARM_VENV="$D/venv" DFIRSWARM_TOOLS_DIR="$D/tools" DFIRSWARM_DATA_DIR="$D/data" DFIRSWARM_BUILD_DIR="$D/work" PATH="$D/bin:$PATH" \
        python3 - "$ROOT/images" "$D" "$data_sha" "$tool_sha" "$patch_sha" "$bad_patch_sha" <<'EOF'
 import json, os, sys
 sys.path.insert(0, sys.argv[1])
@@ -876,6 +876,14 @@ got, why = install.fetch_data({**d, "into": "../outside"})
 out["escape"] = [bool(got), why, os.path.exists(f"{D}/site/outside")]
 got, why = install.fetch_data({**d, "file": "named.zip"})
 out["named"] = [bool(got), os.path.basename((got or {}).get("path", ""))]
+# Definitions a tool reads by a path: an absolute directory under the data root, no package.
+ad = {k: v for k, v in d.items() if k != "package"}
+got, why = install.fetch_data({**ad, "into": f"{D}/data/triage-definitions/x-1"})
+out["abs_good"] = [bool(got), why, os.path.isfile(f"{D}/data/triage-definitions/x-1/pack.zip"), (got or {}).get("kind")]
+for bad_into in (f"{D}/data/../outside", f"{D}/elsewhere", f"{D}/data"):
+    got, why = install.fetch_data({**ad, "into": bad_into})
+    out.setdefault("abs_bad", []).append([bool(got), why])
+out["abs_outside_exists"] = os.path.exists(f"{D}/outside") or os.path.exists(f"{D}/elsewhere")
 for bad_name in ("../../escape.bin", "sub/escape.bin", "..", "a\\b"):
     got, why = install.fetch_data({**d, "file": bad_name, "into": "named"})
     out.setdefault("bad_names", []).append([bool(got), why])
@@ -926,6 +934,9 @@ jq -e '.warm_fails == [true, "failed"]' <<<"$res" >/dev/null || fail "a warm com
 jq -e '.bad_sha[0] == false and (.bad_sha[1] | test("is not the pinned")) and .bad_sha[2] == false' <<<"$res" >/dev/null || fail "data with other bytes was kept: $res"
 jq -e '.no_package[0] == false and (.no_package[1] | test("is not in the image"))' <<<"$res" >/dev/null || fail "data for a package the image lacks was put somewhere: $res"
 jq -e '.escape[0] == false and (.escape[1] | test("leaves the package")) and .escape[2] == false' <<<"$res" >/dev/null || fail "data was put outside its package's directory: $res"
+jq -e '.abs_good == [true, null, true, "data"]' <<<"$res" >/dev/null || fail "a data file with an absolute directory under the data root and no package was not installed: $res"
+jq -e '.abs_bad | length == 3 and all(.[]; .[0] == false and (.[1] | test("is not a directory under")))' <<<"$res" >/dev/null || fail "an absolute data directory outside the data root was accepted: $res"
+jq -e '.abs_outside_exists == false' <<<"$res" >/dev/null || fail "a data file was written outside the data root"
 jq -e '.named == [true, "named.zip"]' <<<"$res" >/dev/null || fail "a data file does not take the name its pack gives it: $res"
 jq -e '.bad_names | length == 4 and all(.[]; .[0] == false and (.[1] | test("not a plain name")))' <<<"$res" >/dev/null || fail "a data file name that climbs out of the directory, or names a path, was accepted: $res"
 jq -e '.escaped_file_exists == false' <<<"$res" >/dev/null || fail "a data file was written outside its directory by its name"

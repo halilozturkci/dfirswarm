@@ -281,7 +281,10 @@ anything is unpacked, installed or built.
   steps. One url, its sha256 and its size (`bytes`, a download stops past it) for every architecture, put
   under the name it has at its url (or `file`) in `into` inside the directory
   of a Python package of the image's venv (`package`), where the program looks
-  for it. `warm` is a command run once the file is there, for a program that
+  for it. Definitions a tool reads by a path, not through a package, name an absolute
+  `into` under `/opt/dfir/data/` instead and no `package` (the triage pack's UAC,
+  Velociraptor and KapeFiles corpora go to `/opt/dfir/data/triage-definitions/<name>-<version>/`);
+  an `into` anywhere else is refused. `warm` is a command run once the file is there, for a program that
   indexes what it finds the first time it runs and would otherwise do it in
   every VM the image boots; a warm that fails is recorded (`warm: failed` in
   `image.json`) and does not lose the file. `check` is a command that must

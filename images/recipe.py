@@ -67,7 +67,8 @@ each fetched by install.py and refused unless its sha256 is the pinned one:
   install.data       one file a program reads and that is not a program (a
                      symbol table pack, a rule set), the same bytes for every
                      architecture: a url and its sha256, put as named inside
-                     a Python package of the image's venv (`package`, `into`).
+                     a Python package of the image's venv (`package`, `into`),
+                     or, with an absolute `into` under /opt/dfir/data/, no package.
                      `warm` is a command run once it is there, for a program
                      that indexes what it finds the first time it runs;
                      `check` one that must then succeed (the images workflow

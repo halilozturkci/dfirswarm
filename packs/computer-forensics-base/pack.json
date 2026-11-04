@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.14.6",
+  "version": "1.14.7",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -37,7 +37,7 @@
       "skills/evidence/ad1.md": "a395221dd27dc91c22a638c01dc5a358a7e5f7fb68ed38cf7778a5ece21a2b21",
       "skills/evidence/archives.md": "c8c5ab3fe9b88db6cbce37f198d4b0d0c83b691c8468fccd4b0dba157c7ab8e7",
       "skills/evidence/catalog.md": "2c3bb4e6cbdb90f52dc4e29334448ce7518b0fe236f660385b6182e2c9431399",
-      "skills/evidence/collections.md": "81b789869278ecd15b3b585ac580984e86b4a53d56631f44e83568a5baf5280e",
+      "skills/evidence/collections.md": "ac8da776ad27483fc40994a205772e74882228afc21f3058cf1adba0131bae78",
       "skills/evidence/coverage.md": "b2547de852d7943a4271c0bb6443c676c2f4bc19034771ae56884f806cda0750",
       "skills/evidence/imaging.md": "c82ad5544273385be06cef9a193db4d5cdd66ad1ae1f0aa200201034cabbc563",
       "skills/evidence/provenance.md": "8929a35e8a8ed6d1b0d9fee4af380f7f0b525d8b7851361f2640d07b5acd59bc",

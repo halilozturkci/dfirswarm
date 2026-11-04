@@ -5,6 +5,7 @@ when: Events may be the collector's own, or the order of collection steps matter
 needs: []
 tools: [collection_manifest_parse, timestamp_decode, collection_timestamps]
 requires_host: []
+mentions: [KAPE]
 ---
 
 Use when a conclusion could be confused with the collection itself. Not for the four layers of file time (`verify/time-layers`) or for what a collector copied (`verify/target-outcomes`).

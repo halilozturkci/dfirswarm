@@ -79,6 +79,25 @@
       "redistributable": false
     },
     {
+      "name": "dwarf2json",
+      "package": "dwarf2json",
+      "optional": true,
+      "why": "Turn a Linux kernel's debug material (a vmlinux or debug-symbols file, or a System.map) into an Intermediate Symbol Format table that `vol` loads. The isf_intake tool runs it on what the operator supplies and calls the table ready only when its banner is, character for character, one found in the image. The project publishes a Linux build for amd64 only (v0.9.0 has no arm64 asset), so an arm64 image records it as not installed. Its source builds with Go 1.18 and fetches a module (pflag) when built, so a build recipe is not used.",
+      "install": {
+        "brew": "https://github.com/volatilityfoundation/dwarf2json/releases",
+        "apt": "pinned download 0.9.0 (install.download)",
+        "download": {
+          "version": "0.9.0",
+          "amd64": {
+            "url": "https://github.com/volatilityfoundation/dwarf2json/releases/download/v0.9.0/dwarf2json-linux-amd64",
+            "sha256": "e2e75ba5bc9c22bc38a48edffbb050456d089d54998d54f46cb580223d9fbc6b"
+          }
+        }
+      },
+      "licence": "Volatility Software License 1.0 (https://github.com/volatilityfoundation/dwarf2json/blob/v0.9.0/LICENSE.txt)",
+      "redistributable": false
+    },
+    {
       "name": "avml",
       "package": "AVML",
       "optional": true,

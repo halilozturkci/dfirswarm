@@ -1,7 +1,7 @@
 {
   "id": "memory-forensics",
   "name": "Memory Forensics Pack",
-  "version": "1.15.3",
+  "version": "1.15.4",
   "description": "Method and tooling for a memory image: what the container is before anything else, what can be read with no framework at all, processes and injection, network state, credential material, and the discipline that keeps a string in memory from becoming a claim about behaviour.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -28,9 +28,9 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "8ef6580a2c68bcf4f170700feabefb1fba5e7718ec1836c9e6d5aa7f5b73d73f",
+      "README.md": "29cac064836f9ddc387868742421214257f359822960d2af187ecf8ab7435e74",
       "goals/memory-triage.md": "16661eee801bceda2ea7010e733ce1ad677f1e38489834ddb1be782d95b0b985",
-      "requires/host.json": "0acbd4125515941f933809791a302f536589d85d3dc8d1730bf414585a5ae44f",
+      "requires/host.json": "2f42551d5f06f84d32c4a7be7a7e4fcc428b491b083fe847d4d7c6d92470f744",
       "requires/python.txt": "805da5f067cc98775d074649955d9cca3e18379ef9284f73d162d6aae998f0f6",
       "requires/symbols.windows.json": "d94b7dfa6ef6014bdf0f82952488e774a0f590500a872b87149f75256bddb105",
       "skills/INDEX.md": "1cba211f7548280053918748410ade7c1044eead0a8c14f093acfc46ff55e76d",
@@ -47,7 +47,7 @@
       "skills/processes/kernel-integrity.md": "32d1b3653cfc3de5d87c50f19aaa03c7409b106f3dac58c93f3ce1fecef6ed73",
       "skills/processes/preserve-regions.md": "181ce4a691eb94f82d9a76ae470bcfb38651c483448554e8687102bb90c7b9e9",
       "skills/strings/discipline.md": "c33bacce4c1586a72a3894f674ef5622ce67bc1ffe9685b1c21bf24bb6bb29a6",
-      "skills/symbols/linux.md": "94f8e304fb40d42924be77ac1b92d41a6fbcebc66ad39d9edfc701be15a47ab2",
+      "skills/symbols/linux.md": "1279f5d8a766c5ab9c2755e924b97567e1a6ec8eff33c616a38ada3818b1f678",
       "skills/symbols/macos.md": "fb289f37448aeb7c66306f38cacdcab9f00860d25e1bf256d84944bfa35e0d16",
       "skills/timeline/memory.md": "fbcd184dfcb9dc941c2fdae047a0380333cadffefc2b0c60cbbe546179d3873c",
       "skills/triage/address-spaces.md": "27d4522843b0c337bf684e00c436e69bd449fa37ee1d98e0a60c425ff9d7acc2",
@@ -64,8 +64,8 @@
       "skills/triage/what-you-have.md": "9c694ae5c0c695fc243b486390fdd95a728ccef2fd2c01f4dd772a1b8e012355",
       "tools/carve_handoff/manifest.json": "8516b664af82e5cb1597040bae8061eb789d46d41f41920da302a147d5a05637",
       "tools/carve_handoff/run.py": "3be8872bae7f408f84fe754b72e8e96f8b42a9bd0588958394e8810f011de56c",
-      "tools/isf_intake/manifest.json": "64fd483395da8034ad1fc4da918e9d9aa9f311b3fe0aad33e6b9d30076857d92",
-      "tools/isf_intake/run.py": "fc35fa10d657431c96637e4fa7488403c964d24e8b36ca5c8fa068b176db46f5",
+      "tools/isf_intake/manifest.json": "d64931e49ea8d1289f57ac9ce16d9bdf91101d8cc8f023b0b2d824056540bbc6",
+      "tools/isf_intake/run.py": "98e07af36eef03397bb686d4c18ac87f4331e2dadaa8b213839ca19e4b6d4443",
       "tools/mem_carve/manifest.json": "0f51c51c9ee84d517e29d2894c1ba1bb57d389b82090e0e3043d7024a0768673",
       "tools/mem_carve/run.py": "c5ae768971a392774f695f59218e1f13b5da551820509582d56a960481a42edf",
       "tools/mem_fs/manifest.json": "09d32408d80b3f38ad7fc3b7533a5601bb5d5cbc5d34ea49f6e84706c8e9a58b",

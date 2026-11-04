@@ -2360,7 +2360,7 @@ def main():
         fail("symbols_out must be a directory under %s" % ("$OUT in a job" if job else "the run directory"))
     converter = shutil.which("dwarf2json")
     if converter is None:
-        fail("dwarf2json is not on PATH: the converter is not installed here (this pack does not yet declare it), so no table can be made", verdict="blocked")
+        fail("dwarf2json is not on PATH: the converter is not installed here (the pack pins dwarf2json 0.9.0 for amd64 only; the project publishes no arm64 build), so no table can be made", verdict="blocked")
     vol = find_vol()
     if vol is None:
         fail("there is no `vol` on PATH: the image's banner is found with Volatility's banners.Banners", verdict="blocked")
