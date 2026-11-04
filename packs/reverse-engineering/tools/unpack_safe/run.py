@@ -909,17 +909,20 @@ def end_holders(targets):
 
 def output_settled(path):
     """(whether the file is still, why not): the size of the file is read, the tool waits SETTLE_SECONDS, and the size is read again; a file that
-    grew, or that a process still holds open (end_holders ended those in the tool's group, so this is a process outside it), is not whole."""
+    grew, that has a second name (a hard link), or that a process still holds open (end_holders ended those in the tool's group, so this is a process outside it), is not whole."""
     try:
         before = os.stat(path).st_size
         time.sleep(SETTLE_SECONDS)
-        after = os.stat(path).st_size
+        seen = os.stat(path)
+        after = seen.st_size
     except OSError as exc:
         return False, "the file could not be looked at again: %s" % describe(exc)
     held = holders_of([path]) or []
-    if after == before and not held:
+    if after == before and not held and seen.st_nlink == 1:
         return True, None
     reasons = []
+    if seen.st_nlink != 1:
+        reasons.append("the file has %d names (a hard link made by the program or a process it left): a process that holds no descriptor can still append through the other name" % seen.st_nlink)
     if after != before:
         reasons.append("the file grew from %d to %d bytes after the program had ended" % (before, after))
     if held:

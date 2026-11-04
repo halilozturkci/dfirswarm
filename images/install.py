@@ -80,6 +80,7 @@ NOTICE and the SBOM.
 import hashlib
 import http.client
 import json
+import lzma
 import os
 import re
 import shutil
@@ -616,9 +617,10 @@ def nupkg_mkdirs(root: Path, rel: str, made: list) -> Path:
 
 
 # What an archive can raise while it is read: a name, a bound or a kind it does not allow (ValueError, OSError), a tar or zip structure that is not
-# one (TarError, BadZipFile), and a compressed stream that is corrupt (zlib.error) or ends before its end marker (EOFError). Each one records the
-# optional program as not installed; none stops the build with a traceback.
-UNPACK_ERRORS = (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile, zlib.error, EOFError)
+# one (TarError, BadZipFile), a compressed stream that is corrupt (zlib.error, lzma.LZMAError) or ends before its end marker (EOFError), and a zip
+# entry stored by a method the standard library does not read (NotImplementedError). Each one records the optional program as not installed. Any other
+# exception (a zip entry that needs a password raises RuntimeError, memory runs out as MemoryError) is not caught here and stops the build with a traceback.
+UNPACK_ERRORS = (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile, zlib.error, lzma.LZMAError, EOFError, NotImplementedError)
 
 
 def unpack_nupkg(archive: Path, dest: Path) -> None:

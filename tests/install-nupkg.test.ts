@@ -188,10 +188,10 @@ out["bomb"] = {"got": got, "why": why, "tree": tree(work / "tools" / "h_bomb"), 
 import zlib
 
 
-def raw_zip(name, comp, usize, crc, label):
+def raw_zip(name, comp, usize, crc, label, method=8):
     nm = name.encode()
-    local = struct.pack("<4sHHHHHIIIHH", b"PK\3\4", 20, 0, 8, 0, 0x21, crc, len(comp), usize, len(nm), 0) + nm + comp
-    central = struct.pack("<4sHHHHHHIIIHHHHHII", b"PK\1\2", 20, 20, 0, 8, 0, 0x21, crc, len(comp), usize, len(nm), 0, 0, 0, 0, 0, 0) + nm
+    local = struct.pack("<4sHHHHHIIIHH", b"PK\3\4", 20, 0, method, 0, 0x21, crc, len(comp), usize, len(nm), 0) + nm + comp
+    central = struct.pack("<4sHHHHHHIIIHHHHHII", b"PK\1\2", 20, 20, 0, method, 0, 0x21, crc, len(comp), usize, len(nm), 0, 0, 0, 0, 0, 0) + nm
     end = struct.pack("<4sHHHHIIH", b"PK\5\6", 0, 0, 1, 1, len(central), len(local), 0)
     counter[0] += 1
     d = work / ("src%d" % counter[0])
@@ -215,8 +215,39 @@ for label, comp in (("zlib_error", corrupt), ("eof_error", unfinished)):
     except Exception as e:  # noqa: BLE001 - the case is that nothing escapes
         out[label] = {"raised": type(e).__name__ + ": " + str(e)}
 
-# a gzip-compressed tar cut short: the compressed stream ends before its end marker (EOFError from the standard library)
+# a zip entry stored by a method the library does not read (99, AES), and one stored as LZMA whose stream is garbage: NotImplementedError and lzma.LZMAError
+for label, method, comp in (("method_99", 99, b"x" * 64), ("zip_lzma", 14, bytes([9, 20, 5, 0, 0x5D, 0, 0, 0x10, 0]) + os.urandom(300))):
+    path = raw_zip("prog", comp, len(data), crc, label, method)
+    path = path.rename(path.with_name("prog.zip"))          # a plain zip archive, the generic unpack (not the NuGet one)
+    try:
+        got, why = install.fetch({"name": "h_" + label, "version": "1", "amd64": {"url": "file://" + str(path), "sha256": sha(path), "bin": "prog"}}, [])
+        out[label] = {"got": got, "why": why, "raised": None}
+    except Exception as e:  # noqa: BLE001
+        out[label] = {"raised": type(e).__name__ + ": " + str(e)}
+
+# a tar.xz whose compressed stream is corrupt in the middle (lzma.LZMAError)
 import io, tarfile
+counter[0] += 1
+d = work / ("src%d" % counter[0])
+d.mkdir()
+raw = io.BytesIO()
+with tarfile.open(fileobj=raw, mode="w:xz") as t:
+    info = tarfile.TarInfo("prog")
+    blob = os.urandom(200000)
+    info.size = len(blob)
+    t.addfile(info, io.BytesIO(blob))
+broken = bytearray(raw.getvalue())
+for i in range(len(broken) // 2, len(broken) // 2 + 64):
+    broken[i] ^= 0xFF
+path = d / "prog.tar.xz"
+path.write_bytes(bytes(broken))
+try:
+    got, why = install.fetch({"name": "h_xz_corrupt", "version": "1", "amd64": {"url": "file://" + str(path), "sha256": sha(path), "bin": "prog"}}, [])
+    out["xz_corrupt"] = {"got": got, "why": why, "raised": None}
+except Exception as e:  # noqa: BLE001
+    out["xz_corrupt"] = {"raised": type(e).__name__ + ": " + str(e)}
+
+# a gzip-compressed tar cut short: the compressed stream ends before its end marker (EOFError from the standard library)
 counter[0] += 1
 d = work / ("src%d" % counter[0])
 d.mkdir()
@@ -337,8 +368,9 @@ test("a DOS-created entry (no unix mode) is unpacked as a plain file, and the ar
   assert.deepEqual(out.modes_perm, { "tools/any/linux-x64/setuid": "0o644", w: "0o644" }, "setuid and world-writable bits are not carried");
 });
 
-for (const label of ["zlib_error", "eof_error", "tar_eof"]) {
-  test(`a ${label === "zlib_error" ? "corrupt deflate stream" : label === "eof_error" ? "truncated deflate stream" : "gzip tar cut short"} does not abort the build: the program is recorded as not installed`, () => {
+const CORRUPT: Record<string, string> = { zlib_error: "corrupt deflate stream", eof_error: "truncated deflate stream", tar_eof: "gzip tar cut short", method_99: "zip entry of method 99", zip_lzma: "zip entry with a corrupt LZMA stream", xz_corrupt: "corrupt tar.xz" };
+for (const label of Object.keys(CORRUPT)) {
+  test(`a ${CORRUPT[label]} does not abort the build: the program is recorded as not installed`, () => {
     assert.equal(out[label].raised, null, "nothing escaped the handler");
     assert.equal(out[label].got, null);
     assert.match(out[label].why, /^could not unpack: /);

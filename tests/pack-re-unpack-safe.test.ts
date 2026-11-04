@@ -45,6 +45,7 @@ async function fakeUpx(bin: string): Promise<void> {
   if grep -q FORKNOW "$f"; then ( while :; do printf 'B'; sleep 0.05; done >> "$out" ) & echo $! > "$PIDS/kid.pid"; fi
   if grep -q FORKLATE "$f"; then sleep 0.6; ( while :; do printf 'B'; sleep 0.05; done >> "$out" ) & echo $! > "$PIDS/kid.pid"; fi
   if grep -q FORKDOUBLE "$f"; then ( ( while :; do printf 'B'; sleep 0.05; done >> "$out" ) & echo $! > "$PIDS/kid.pid" ) & sleep 0.3; fi
+  if grep -q HARDLINK "$f"; then ln "$out" "$(dirname "$out")/hl"; ( exec >&- 2>&-; sleep 1; printf x >> "$out" ) & fi
   if grep -q NEVEREXIT "$f"; then sleep 120 & echo $! > "$PIDS/kid.pid"; fi
   if grep -q SETSIDKID "$f"; then setsid sh -c 'echo $$ > "$PIDS/kid.pid"; while :; do printf B; sleep 0.05; done >> "$1"' sh "$out" </dev/null & sleep 0.5; fi
   exit 0;;
@@ -314,6 +315,20 @@ for (const marker of ["FORKNOW", "FORKLATE", "FORKDOUBLE", "NEVEREXIT"]) {
     });
   });
 }
+
+test("a hard link to the derivative (a by-name writer with no descriptor open) makes the answer partial and no derivative is claimed", async () => {
+  await withCwd(async (cwd, bin) => {
+    await fakeUpx(bin);
+    await put(cwd, "work/h.exe", packed("HARDLINK"));
+    const out = body(await tool(UNPACK, cwd, { path: "work/h.exe" }, { PIDS: join(cwd, "pids") }, bin));
+    assert.equal(out.status, "partial", JSON.stringify(out).slice(0, 400));
+    assert.match(out.status_basis, /2 names/);
+    assert.deepEqual(out.limits_hit, ["process_left_running"]);
+    assert.equal(out.derivative, null);
+    assert.equal((await filesUnder(join(cwd, "work/s1/tool-output"))).filter((f) => f.endsWith(".unpacked") || f.startsWith("stage-")).length, 0);
+    await new Promise((r) => setTimeout(r, 1_200));
+  });
+});
 
 test("a child upx puts in a session of its own (setsid) cannot be ended: partial, says so, and no derivative is claimed", async () => {
   await withCwd(async (cwd, bin) => {

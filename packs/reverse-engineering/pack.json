@@ -55,7 +55,7 @@
       "skills/elf/structure.md": "0dea03c016835d00341ee5cf5f4e47b03a1a7cdf569e371116f774d8c8ddef24",
       "skills/macho/structure.md": "77082d8d2e91cb1c2749d2a1177025085edffd0bb9e3bb7e226f5aa62a0078ee",
       "skills/managed/clr.md": "23d5e2db3c3ac1986c26413fe9d6ab2cc27cb67c26bc5c59307c58d9830db2d7",
-      "skills/managed/decompiled.md": "33569f3b306042da01bd56f5b044ca8ef8c42667f42c178a186744c357aef5a2",
+      "skills/managed/decompiled.md": "298655af28825d541b70859ebdc9bd9b08b5c27e1b798e9288accd1e40232402",
       "skills/packing/static-recovery.md": "9bec6ea2bcccbeb6f7bf4fddf130c0f7c46046bf31649c69a22ec337979ec42a",
       "skills/pe/authenticode.md": "c2936b7800f4cf721373ad59a5a0da11544dc2dc070ac8d02d657462ae319a35",
       "skills/pe/signature-and-resources.md": "2bac1472064932f4430f26a618488105bc4604ee8fe4aa3df5bc7922dce249ff",
@@ -71,8 +71,8 @@
       "skills/triage/quarantine.md": "67e54196b0bf206feb6107054903bea7b6fe384466cddc602cdc21cf45afe28d",
       "tools/authenticode_verify/manifest.json": "df5bf8cde1e3f18cda35ff8ed81f17bae3d35f8246ca06817728e20040916041",
       "tools/authenticode_verify/run.py": "fbcc20934442d5f9edb45b992b92176dc00ca55cdfaebe0f6cad95e8851532d8",
-      "tools/clr_inspect/manifest.json": "05a4d44ba3c1db5d80295d37d1fba39df355d6843316c394c4d34a81b2396cd6",
-      "tools/clr_inspect/run.py": "89b3164597fe15359ff50470a566e70b1455ef0f1bec828aaefa27b52dc2efea",
+      "tools/clr_inspect/manifest.json": "d2edbf3bde77de11923bcbe264f1041f1eb94698382ece2da851ab7719515d16",
+      "tools/clr_inspect/run.py": "5bb1b886418b14e9dea54373d9c6bdd1caa157356cbb6662ee3f7753e647eca9",
       "tools/doc_probe/manifest.json": "1a2729fd097622b1af1204f7b346b8e995de0cb5e9b47842d6dc6d71721f17db",
       "tools/doc_probe/run.py": "56d2037b7c7787d6828e73d9d58815e3bcd13b8845a449cc3d04793152ad9184",
       "tools/doc_structure/manifest.json": "24b6ab05370ab74d291f92adccded2bd2bedab1beb6e20083842cb6d53a21704",
@@ -91,10 +91,10 @@
       "tools/marshal_inspect/run.py": "82ee3d16bdab1c705a952ca0124a6719df26d02b9fd600c085d660c33e3b6f40",
       "tools/pe_directories/manifest.json": "0e223e71b09cd94e9308b06524db42e6e04a5394ba7eeaba7111d8aeba9da64f",
       "tools/pe_directories/run.py": "3a7b805e6f828d1facbaa7768ebaac645c3d9a3ec2f7f28228a301d56d87a3d0",
-      "tools/pe_info/manifest.json": "ecd62c936fd17c87a288eaabcaeeb5359b3afe93e32bce727080dfcb4162d01f",
+      "tools/pe_info/manifest.json": "75a354f5ee6ff87ceb526575fb7eaacffa8c6b15628c2320e278877e7d519cb3",
       "tools/pe_info/run.py": "0057b818e6a61bf83028df3c3c1f90dbd32299ba4af3651e27fd016efec9b467",
-      "tools/unpack_safe/manifest.json": "1c8031d3bce0aa7a0ccf39b99bba862ceb0708e8bd6b8be4331b700fb587120b",
-      "tools/unpack_safe/run.py": "4412db9e4ba23a129e12588b02041c7011939a82ad8ce51f5189d1ba064a0762"
+      "tools/unpack_safe/manifest.json": "12c6cd3ad3d64e648c6c72aa52298803c67bfae8d42c4460abeb1e5de9b320bc",
+      "tools/unpack_safe/run.py": "14a2664bd8f3caa8320a2d8e983cb16ff4922957e5bfe7c4dcfc072ae3c334a3"
     }
   },
   "tools": [

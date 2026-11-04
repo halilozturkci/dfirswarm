@@ -56,6 +56,7 @@ case "$name" in
   fork_double) ( ( while :; do printf '// late line\n'; sleep 0.05; done ) & echo $! > "${cwd}/pids/child.pid" ) & cat "${cwd}/body.cs"; sleep 0.3; exit 0;;
   setsid_child) setsid sh -c 'echo $$ > "${cwd}/pids/child.pid"; while :; do printf "// late line\n"; sleep 0.05; done' </dev/null & cat "${cwd}/body.cs"; sleep 0.5; exit 0;;
   never_exit) sleep 120 & echo $! > "${cwd}/pids/child.pid"; cat "${cwd}/body.cs"; exit 0;;
+  hardlink) cat "${cwd}/body.cs"; ln "$(readlink /proc/$$/fd/1)" hl; ( exec >&- 2>&-; sleep 1; printf x >> hl ) & exit 0;;
 esac
 exit 3`);
 }
@@ -381,6 +382,21 @@ test("a child the decompiler puts in a session of its own (setsid) cannot be end
       if (child) { try { process.kill(child, "SIGKILL"); } catch { /* gone */ } }
     }
     if (child) assert.ok(await gone(child, 3_000), "the test ended the child by its recorded pid");
+  });
+});
+
+test("a hard link to the output made by the decompiler (a by-name writer with no descriptor open) makes the answer partial, process_left_running, and the file is removed", async () => {
+  await withCwd(async (cwd, bin) => {
+    await fakeProgram(cwd, bin);
+    await put(cwd, "work/hl.dll", asm("hardlink"));
+    const a = parse(await job(cwd, bin, { path: "work/hl.dll", decompile: true }));
+    assert.equal(a.status, "partial", JSON.stringify(a).slice(0, 400));
+    assert.match(a.status_basis, /2 names/);
+    assert.ok(a.limits_hit.includes("process_left_running"));
+    assert.equal(a.reconstruction, null);
+    assert.deepEqual(await outputs(cwd), [], "no reconstruction is kept");
+    await new Promise((r) => setTimeout(r, 1_200));
+    assert.deepEqual(await outputs(cwd), [], "and none appears when the late writer has run");
   });
 });
 
