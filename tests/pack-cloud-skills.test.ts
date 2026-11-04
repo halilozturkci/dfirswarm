@@ -392,12 +392,16 @@ test("aws/s3-access keeps attempted, successful, exposed and transferred apart, 
   assert.match(body, /\*\*Attempted, successful, exposed and transferred are four claims\.\*\*/);
   assert.match(body, /Public exposure is a separate claim, from the policy, ACL and public-access settings in force at the request/);
   assert.match(body, /A transfer needs a successful answer with bytes: compare `bytes_sent` with `object_size`/);
-  assert.match(body, /the record does not show what the requester did with it/);
+  assert.match(body, /The record does not show what the requester did with it/);
   assert.match(body, /A ranged GET answers part of an object, so a 2xx is not the whole object/);
   assert.match(body, /Count distinct `event_id`/);
   assert.match(body, /never from a default/);
   assert.match(body, /`provider` `aws_s3`/);
-  assert.match(body, /`format` `s3log`/);
+  // What `notable` flags is held against the tool's own table, so that the sentence cannot drift from it.
+  const notable = /^NOTABLE = \{([\s\S]*?)\n\}/m.exec(toolSource("cloudtrail_parse"))![1];
+  for (const call of ["PutBucketPolicy", "PutBucketAcl", "PutBucketPublicAccessBlock"]) assert.ok(notable.includes(`"${call}"`), call);
+  assert.ok(!notable.includes("PutBucketLogging"), "PutBucketLogging is not flagged, so the leaf must not say logging calls are");
+  assert.match(body, /`notable` flags only policy, ACL and public-access-block writes; find logging calls such as PutBucketLogging with `events`/);
 });
 
 test("aws/vpc-flow keeps NODATA and SKIPDATA out of the flows, accepted apart from success, and points to the network pack only conditionally and at an id that exists", () => {

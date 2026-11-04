@@ -15,7 +15,7 @@ Use when you hold Azure Activity log records, resource or data-plane logs, diagn
 
 **Scope and identity.** `tenant` is the subscription read from the resource id. `resource` and `authorization_scope` are separate fields printed as written: compare them, never assume one is the other. `principal` is the caller as written; `authorization_action` and `authorization_detail` are what the record names; `claims` is kept whole and sensitive. `source_ip` comes from `http_request`.
 
-**Start and completion.** `lifecycle` is the status word; `status` and `sub_status` are kept as written, so read `sub_status` before calling a row a failure. A Started or Accepted row has `outcome` `unknown`, never success; its completion is another row with the same `correlation_id`, and rows are never merged. A start with no completion in the set is an open question, not a failure. `time_raw` is the event time and `submission_time_raw` the submission time.
+**Start and completion.** `lifecycle` is the status word; `status` (only when the record's status is an object) and `sub_status` are kept as written, so read `sub_status` before calling a row a failure. A Started or Accepted row has `outcome` `unknown`, never success; its completion is another row with the same `correlation_id`, and rows are never merged. A start with no completion in the set is an open question, not a failure. `time_raw` is the event time and `submission_time_raw` the submission time.
 
 **History of diagnostic settings.** Whether resource logs existed for a resource, and where they went, comes from the history of its settings: look for changes to one among these rows by the setting's resource id (unchecked against Azure documentation). A snapshot is state at its collection time only.
 

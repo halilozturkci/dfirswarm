@@ -16,7 +16,7 @@ Use when you hold VPC Flow Log files and must say which interface saw which traf
 
 **Scope.** `tenant` is the account of the source interface and `resource` its interface id. `source_ip` and `destination_ip` are `srcaddr` and `dstaddr`; where the format has them, `pkt-srcaddr`, `pkt-dstaddr`, `vpc-id`, `subnet-id` and `instance-id` are separate fields in `fields`. Which instance, NAT device or interface an address belongs to comes from a supplied inventory for that time, not from the log.
 
-**A record is a window.** `time_raw` and `end_time_raw` bound the interval aggregated into the record; `packets` and `bytes` count that interval. A record is not a connection, and one flow can fill several records. The interval length is a setting of the log: take it from supplied settings.
+**A record is a window.** `time_raw` and `end_time_raw` bound the interval aggregated into the record; `packets` and `bytes` count that interval. A record is not a connection, and one flow can fill several records. Take the interval length from supplied settings, not from memory.
 
 **`NODATA` and `SKIPDATA`.** `row_kind` is `no_flow_record` when `log_status` is NODATA (no traffic in the interval, as the AWS page says) or SKIPDATA (some records were skipped in the interval). No packet or byte count is lifted and `adapter_counts` has `log_status_NODATA` and `log_status_SKIPDATA`. NODATA is not a flow of zero, and an interval beside a SKIPDATA record is not shown to be quiet.
 
