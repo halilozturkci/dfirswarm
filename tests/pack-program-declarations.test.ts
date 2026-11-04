@@ -73,6 +73,7 @@ const WORD = {
   uac: "the name of a collector in a table of collectors, not a program the tool runs",
   velociraptor: "the name of a collector in a table of collectors, not a program the tool runs",
   java: "a file type or a language name in a table of names, not the program",
+  aws: "the value of a provider key in a normalised row (\"provider\": \"aws\"), the cloud the record came from, not the program",
   pwsh: "a word in a list of program names to recognise in a command line, not a program the tool runs",
 };
 const w = (...programs: Array<keyof typeof WORD>): Record<string, string> => Object.fromEntries(programs.map((p) => [p, WORD[p]]));
@@ -80,6 +81,7 @@ const COLLECTORS = w("7z", "CyLR", "KAPE", "log", "uac", "velociraptor");
 
 /** Words that are not calls. A tool or recipe that is not here and names a program in its source declares it. */
 const ALLOWED: Record<string, Record<string, string>> = {
+  "cloud-forensics/tools/cloud_normalise": w("aws"),
   "computer-forensics-base/tools/file_type": w("7z"),
   "ransomware-response/tools/encryption_extent": w("7z"),
   "encrypted-containers/tools/archive_probe": w("strings"),
