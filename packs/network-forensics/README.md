@@ -8,12 +8,12 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Seventeen skills**: the pack's router, `network/router` (at most 400 tokens: it names the other sixteen by the
+**Nineteen skills**: the pack's router, `network/router` (at most 400 tokens: it names the other eighteen by the
 question each answers, holds no rule, and is the one line a run shows for the pack when its skills index is over
-budget), and, as twelve leaves of decision rules and four second-level
+budget), and, as fourteen leaves of decision rules and four second-level
 leaves they point to when needed: `capture/what-you-have` (and
 `capture/derivatives`), `capture/carve-from-images`, `sessions/reconstruct` (and
-`sessions/objects`), `metadata/dns-tls` (and `metadata/fingerprints`),
+`sessions/objects`), `sessions/tls-keylogs`, `sessions/quic-http3`, `metadata/dns-tls` (and `metadata/fingerprints`),
 `metadata/encrypted-dns`, `beacons/periodicity`, `exfil/volume` (and `exfil/counters`),
 `logs/web-proxy-firewall`, `correlate/host`, `evidence/captured-secrets`, `flows/interpret`,
 `analysis/engines-and-coverage`.

@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. Flow records in an nfcapd file (NetFlow v5, v9, IPFIX) are read with nfdump.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,13 +18,13 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "fa4713543587baa16acd5b741fa51c8736a16224278b897ba22c5fe57e0906e1",
+      "README.md": "004ef71cb0300ebe4241b993a7898153553b894df6060825f3cfa81a328dba96",
       "goals/what-left-the-network.md": "8e6dd6ae10d2bd8380b567e8bffb3bc644ac90602eed83edbd3773fd8ebdc811",
       "recipes/network-capture/recipe.json": "1482cf3a27b265327ef9234754f9d4dd02f0306f2b4ddf594edaae8925fc5c07",
       "recipes/network-capture/run.py": "9f65fef58d95cfedd0b3d248faa1d964dbb6030a2687fe8eb4f047e5d8db5c21",
       "requires/host.json": "83fa967a712d4e6b02fe25e40364c5665704c9fdbb80e81e1558b2783f3fff5e",
       "requires/python.txt": "d5768d4bec0bea8ec8e736e2710a757309af18fa3f862dae2db201e154d45a4a",
-      "skills/INDEX.md": "5bcaff51a4b4597b9852e99b309a15ecd603bc0c810b21183ff6578278c3b1f1",
+      "skills/INDEX.md": "1fbb6463d683f2b6b9ba4051f7dd2759dd2d82e24e30115235538e1d7dd62ef4",
       "skills/analysis/engines-and-coverage.md": "e535f675b6a3c368cf35667ec980bf57a3dc5f43cdcd8f83b8be5cb40dc1904b",
       "skills/beacons/periodicity.md": "3066a9a0de8db4cd7a07444852f15801cf03558561616d8f6c2ef270cd80cc9f",
       "skills/capture/carve-from-images.md": "adc9464ec4f5f9750b0297b5a971d046f72e55bf4563f121eed56bdc66a8eaa4",
@@ -36,12 +36,14 @@
       "skills/exfil/volume.md": "3382fc5dcc6b636694c3f3046500d19c4d3a48cd28c5fa9e185bc993ce419489",
       "skills/flows/interpret.md": "8e3f9b5703d8598afcd746b0d4d06fba74be74860b547a8c572a7a7967ce8c5e",
       "skills/logs/web-proxy-firewall.md": "b981af4780a5152e6a31d154961da3e6aa6ef84b6830a2c8f71e972b708e0930",
-      "skills/metadata/dns-tls.md": "8de97ae16e94631fdba8c377043feb3d46b4a5527ee16d38825fc83c2c68bd45",
+      "skills/metadata/dns-tls.md": "e933d6331f52c007467cae31977747fb9153ff0da390be73033ab5d2d92460b1",
       "skills/metadata/encrypted-dns.md": "af3ff382c68fa7bf6d926805923298603cdcb32b218439117c00110530051104",
       "skills/metadata/fingerprints.md": "7fc9786942def4a443011873fd2a9e7b2b9b58cee512db22af110aae51cdeda9",
-      "skills/network/router.md": "a2543db90a413ac4187a828366e554f2658a08084bab2d0de104933d637588ff",
+      "skills/network/router.md": "c636e7d72305b9821a864c829ad7a963916e5f3d5ca2f43a102a0de810df43f5",
       "skills/sessions/objects.md": "22b63e82da1ecc6eda1ddf41b2e7e9d4ac801b3d9d154f5bd76e29b635265f36",
+      "skills/sessions/quic-http3.md": "8eb112841c0cbc55a68ab0600a7d9689f438df3daa61af04a358a66c0a64596c",
       "skills/sessions/reconstruct.md": "d52275cea747ec09e9dc2155fffa2f814f330abaef6273cea22bfb635e2f9da6",
+      "skills/sessions/tls-keylogs.md": "55e7e4c3a75b933db4551bc076e3f3197977b898594fb29b1eca80381063ed90",
       "tests/pack.test.sh": "f83730891c6dc137fa0aa1ddd26b6d1d3ba9bc9609ff6a277ffb7ed9a3d7d372",
       "tools/beacon_score/manifest.json": "22cc98f291bba21d04b24a2e3ddfdf819871383cc32a7398130d3ed1ccae7961",
       "tools/beacon_score/run.py": "e1f43f8e890e860e5fe369205aa4bcfc0be65446f8fbb6aa6719fdfc98d6ddb2",
@@ -83,7 +85,7 @@
   "recipes": [
     "network-forensics/network-capture"
   ],
-  "skills": 17,
+  "skills": 19,
   "method_only": [
     {
       "path": "skills/network/router.md",

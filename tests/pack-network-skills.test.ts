@@ -45,7 +45,7 @@ const ROUTER = "network/router";
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, 17);
+  assert.equal(skills.size, 19);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? 400 : 800), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
@@ -88,7 +88,7 @@ test("every second-level leaf is pointed to by a leaf that says when to open it"
   const skills = await load(SKILLS);
   const pointers: Record<string, string> = {
     "capture/derivatives": "capture/what-you-have", "sessions/objects": "sessions/reconstruct",
-    "metadata/fingerprints": "metadata/dns-tls", "exfil/counters": "exfil/volume",
+    "metadata/fingerprints": "metadata/dns-tls", "exfil/counters": "exfil/volume", "sessions/quic-http3": "metadata/dns-tls",
   };
   for (const [child, parent] of Object.entries(pointers)) {
     const p = skills.get(parent);
@@ -113,6 +113,8 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["network_log_summary", "logs/web-proxy-firewall", ["referer"]],
   ["network_log_summary", "logs/web-proxy-firewall", ["decoding_substituted", "timestamp_raw", "timestamp_utc", "timezone_source", "unparsed", "blank", "parsed"]],
   ["suricata_run", "analysis/engines-and-coverage", ["dry_run", "rule_load", "known", "effective_configuration", "dump_config", "not_covered", "checksum_mode"]],
+  ["tls_decrypt", "sessions/tls-keylogs", ["keylog_file", "use_embedded_secrets", "decryption_secrets_blocks", "key_log_preference", "status_counts", "write_payload", "payloads", "contains_secret_values", "no_secret_for_session", "out_dir", "flows"]],
+  ["quic_inspect", "sessions/quic-http3", ["fields_missing", "limits", "dissector_missing", "encrypted_payload", "udp_443_not_dissected_as_quic", "server_names", "alpn", "frame_types", "http3_stream_ids", "ended_by", "retry_scid", "follows_attempt", "endpoints_changed", "unlinked", "all_results", "keylog_file", "use_embedded_secrets", "datagrams", "attempts"]],
   ["zeek_run", "analysis/engines-and-coverage", ["dry_run", "script_load_status", "logs_requested_not_written", "logs_empty", "engine_diagnostics", "checksum_validation"]],
 ];
 
@@ -178,7 +180,7 @@ test("a Zeek column a skill names is a column Zeek has, and a column Zeek droppe
 
 // ---- The four leaves of the first skills package: captured secrets, flow records, encrypted DNS, engines and coverage. ----
 
-const NEW_LEAVES = ["evidence/captured-secrets", "flows/interpret", "metadata/encrypted-dns", "analysis/engines-and-coverage"];
+const NEW_LEAVES = ["evidence/captured-secrets", "flows/interpret", "metadata/encrypted-dns", "analysis/engines-and-coverage", "sessions/tls-keylogs", "sessions/quic-http3"];
 const PACKS = join(NET, "..");
 
 /** Every tool a skill of this pack can name: the pack's own and those of the packs it depends on. */
@@ -266,7 +268,28 @@ routerChecks({
   before: [
     "beacons/periodicity", "capture/carve-from-images", "capture/derivatives", "capture/what-you-have", "correlate/host", "exfil/counters",
     "exfil/volume", "logs/web-proxy-firewall", "metadata/dns-tls", "metadata/fingerprints", "sessions/objects", "sessions/reconstruct",
-    "analysis/engines-and-coverage", "evidence/captured-secrets", "flows/interpret", "metadata/encrypted-dns",
+    "analysis/engines-and-coverage", "evidence/captured-secrets", "flows/interpret", "metadata/encrypted-dns", "sessions/tls-keylogs", "sessions/quic-http3",
   ],
   profiles: ["network", "full"],
+});
+
+// ---- The two session leaves of the TLS key log and QUIC tools ----
+
+test("the key log is a FILE reference in both session leaves, no leaf holds the line of one, and the QUIC paragraph of dns-tls names the tool and points to the leaf", async () => {
+  const skills = await load(SKILLS);
+  const tls = skills.get("sessions/tls-keylogs")!.body;
+  const quic = skills.get("sessions/quic-http3")!.body;
+  assert.match(tls, /`keylog_file` as a job input/);
+  assert.match(tls, /text that looks like a key log is refused/);
+  assert.match(quic, /`keylog_file` as a FILE, never its text/);
+  for (const s of skills.values()) assert.doesNotMatch(s.text, /(?:CLIENT_RANDOM|CLIENT_TRAFFIC_SECRET_0|SERVER_TRAFFIC_SECRET_0) [0-9a-f]{16,}/i, `${s.id} holds no line of a key log`);
+  assert.match(tls, /secret_output: true/);
+  assert.match(quic, /secret_output: true/);
+  assert.match(tls, /Decrypted is not identified/);
+  assert.match(quic, /A UDP tuple is not a session/);
+  const dns = skills.get("metadata/dns-tls")!;
+  assert.ok((dns.meta.tools as string[]).includes("quic_inspect"));
+  assert.match(dns.body, /`quic_inspect`/);
+  assert.match(dns.body, /Only if QUIC or HTTP\/3 decides the question: `sessions\/quic-http3`/);
+  assert.doesNotMatch(dns.body, /no QUIC (?:or encrypted-DNS )?method/);
 });
