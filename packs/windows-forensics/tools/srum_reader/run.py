@@ -59,6 +59,7 @@ MAX_WALK = 200_000
 MAX_DEPTH = 16
 MAX_LOGS = 2000
 MAX_LIMIT = 10_000
+INLINE_BYTES = 256 << 10          # the most the inline rows may hold together; the rest are in the rows file only
 ESE_MAGIC = bytes.fromhex("efcdab89")
 ESE_STATES = {1: "just created", 2: "dirty shutdown", 3: "clean shutdown", 4: "being converted", 5: "force detach"}
 EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
@@ -2767,6 +2768,14 @@ class SealedPage(NoReplacePage):
     def _write(self, row):
         super()._write(row_object(row))
 
+    def add(self, row):
+        # the inline rows are held to INLINE_BYTES as well as to `limit`: a row past it goes to the file only (rows_inline_truncated says so)
+        if len(self.page) < self.limit:
+            self.used = getattr(self, "used", 0) + len(json.dumps(row, ensure_ascii=False, default=str))
+            if self.used > INLINE_BYTES:
+                self.limit = len(self.page)
+        super().add(row)
+
     def finish(self):
         if self._out is None and self.total:
             # the whole result is always a file the answer names, even when it fits in the inline page
@@ -3218,6 +3227,8 @@ def walk_csv(path, table, visit, reading):
             if header is None:
                 reading.problem("%s: the CSV is empty (no header row)" % table)
                 return
+            if len(set(header)) != len(header):
+                reading.problem("%s: the CSV header names a column twice: the later column's cell replaces the earlier one in each row" % table)
             if len(header) > MAX_COLUMNS:
                 reading.problem("%s: the CSV header has %d columns (more than %d): it was not read" % (table, len(header), MAX_COLUMNS))
                 return

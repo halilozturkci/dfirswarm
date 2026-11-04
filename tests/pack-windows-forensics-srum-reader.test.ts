@@ -538,6 +538,49 @@ test("a rerun does not replace a larger rows file with a smaller one, and the ro
   });
 });
 
+test("a clock that runs out while the rows are read is said: the status is partial, the answer comes back inside max_seconds, and what was cut is never reported complete", async () => {
+  await withCwd(async (cwd, bin) => {
+    const { db } = await layout(cwd);
+    // 200,000 rows written by the stand-in itself (python3 is on the PATH of the suite): more than the boundary can judge in 12 seconds.
+    await stub(bin, "SrumECmd", `d=""
+while [ $# -gt 0 ]; do case "$1" in --csv) d="$2"; shift;; esac; shift; done
+python3 - "$d" <<'PY'
+import sys
+with open(sys.argv[1] + "/x_SrumECmd_NetworkUsages_Output.csv", "w") as f:
+    f.write("${NET_HEAD}\\n")
+    for i in range(200000):
+        f.write("%d,2026-10-12 08:%02d:%02d,C:\\\\p\\\\a%d.exe,,2026-01-01 00:00:00,User,S-1-5-18,u,5,7,1,2,1689399632855040,Ethernet,11,Home\\n" % (i, (i // 60) % 60, i % 60, i))
+PY
+echo "${CONSOLE_CLEAN}"`);
+    const began = Date.now();
+    const out = body<Answer>(await tool("srum_reader", cwd, { path: db, max_seconds: 12 }, {}, bin));
+    assert.ok(Date.now() - began < 20_000, `the answer came in ${Date.now() - began} ms`);
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /ran out while srumecmd's output was being read/);
+    assert.ok(out.rows_total > 0 && out.rows_total < 200000, `rows_total ${out.rows_total}`);
+    assert.equal((await rowsOf(cwd, out)).length, out.rows_total, "every row that was read is in the file");
+    assert.deepEqual(await leftovers(cwd), []);
+  });
+});
+
+test("the inline rows are held to a byte budget as well as to limit: a row past it is in the file only, and a repeated column name is a named problem", async () => {
+  await withCwd(async (cwd, bin) => {
+    const { db } = await layout(cwd);
+    const rows: Net[] = [{ id: 1, time: "2026-10-12 08:00:00", app: "y".repeat(400_000), sid: "S-1-5-18", user: "u" }, ...NET_GOOD];
+    await stub(bin, "SrumECmd", srumecmd(NET_CSV(rows), join(cwd, "args.txt"), { console: CONSOLE_CLEAN }));
+    const out = body<Answer>(await tool("srum_reader", cwd, { path: db, limit: 1000 }, {}, bin));
+    assert.equal(out.rows_total, 4);
+    assert.equal(out.rows.length, 0, "the first row alone is past 256 KiB");
+    assert.equal(out.rows_inline_truncated, true);
+    assert.equal((await rowsOf(cwd, out)).length, 4);
+    assert.ok(JSON.stringify(out).length < 200_000, "the answer stays small");
+    await stub(bin, "SrumECmd", srumecmd({ "x_SrumECmd_NetworkUsages_Output.csv": `${NET_HEAD},Id\n${net(NET_GOOD[0])},9\n` }, join(cwd, "args.txt"), { console: CONSOLE_CLEAN }));
+    const dup = body<Answer>(await tool("srum_reader", cwd, { path: db }, {}, bin));
+    assert.equal(dup.status, "partial");
+    assert.match(dup.backends.srumecmd.problems.join(" "), /names a column twice/);
+  });
+});
+
 test("the manifest and the docs say what the tool is: the programs it runs are declared, and the unverified shapes are said", async () => {
   const manifest = JSON.parse(await readFile(join(WIN, "srum_reader", "manifest.json"), "utf8")) as { requires: string[]; description: string; version: number; timeout_seconds: number; params: Record<string, unknown> };
   assert.deepEqual(manifest.requires, ["SrumECmd", "dotnet", "target-query"]);
