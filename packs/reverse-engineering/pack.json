@@ -32,7 +32,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "28fcadcebb2bd21692b9685e659f02f50ac7b4dec4eefe3904d93e04b3ab934a",
+      "README.md": "37ffde99ccb1ccb21ab4c27b34dcdb1239e658e264b8e45a7a5c989b88a06ea9",
       "goals/sample-triage.md": "0f6798ec18204b277c9430d5a74359cf7c5142131ccfc5071293b3dd1bd0ad12",
       "recipes/capa-floss/recipe.json": "48547ec179a3f92f54450eef692464fa520713f3fd029602d8144c0dca4500d8",
       "recipes/capa-floss/run.py": "8ae49d24221e35f26ae4a88fa5b308cb08b58b15c9c6716c4dbee140780717ac",
@@ -42,7 +42,7 @@
       "requires/locks/floss.txt": "83949fd4edbc82abdb527a7957d401e4a18f40a4c70f6bec104e4edbf4808d0d",
       "requires/locks/olevba.txt": "0fa1a024d9ce875c81addf1f3fc6f6e0ec794fc08fba4744c0f1d791f2758faa",
       "requires/python.lock": "78ca0b72b924a3678f631bf0fe6bdda0608b6ff995a3893eafdf995e880c03a4",
-      "requires/python.txt": "c8831228d4b61be16e43d0ef686b9952a4084d217b6024fa4449169904559f25",
+      "requires/python.txt": "4c21e34dfc288a77e3774aa5b92bbd00435f2efbf632842f300b36b482ff8d9d",
       "skills/INDEX.md": "1b27f30d64e3a417bcc57769120c018ebef788e686ee9a054ee7fd8be02f88b6",
       "skills/capabilities/mapping.md": "b568574dffe48e3acd7e284c0d921e01f20e1f81ee53e907538ccff005e271a7",
       "skills/code/second-readers.md": "17f9afaee56dc8183cb00403388fd2e5ab06582718921ccd84258020e6096cf5",
