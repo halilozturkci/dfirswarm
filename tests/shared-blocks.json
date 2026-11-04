@@ -21,12 +21,12 @@
     ] },
     "PLACE": { "variants": [ { "carriers": 58, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "PROCESS": { "variants": [
-      { "carriers": 44, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
+      { "carriers": 45, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
       { "carriers": 14, "example": "packs/windows-forensics/recipes/windows-artefacts/run.py", "why": "the windows lineage: its stop and process handling differs from the general text" }
     ] },
     "RECORDS BLOCK": { "variants": [ { "carriers": 7, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },
     "SCAN": { "variants": [ { "carriers": 6, "example": "packs/computer-forensics-base/tools/chunk_needles/run.py" } ] },
-    "TEMPS": { "variants": [ { "carriers": 30, "example": "packs/computer-forensics-base/recipes/ad1-items/run.py" } ] },
+    "TEMPS": { "variants": [ { "carriers": 31, "example": "packs/computer-forensics-base/recipes/ad1-items/run.py" } ] },
     "SHARED BLOCK": { "variants": [
       { "carriers": 8, "example": "packs/triage-collection/tools/collection_coverage/run.py", "why": "triage-collection's block (the error form, where an output may be written, the lossless table, the secret-safe values file, the withholding)" },
       { "carriers": 6, "example": "packs/cloud-forensics/tools/cloudtrail_parse/run.py", "why": "cloud-forensics' block: an unrelated text that happens to carry the same name" }
@@ -37,6 +37,6 @@
       { "carriers": 9, "example": "packs/encrypted-containers/tools/archive_probe/run.py", "why": "the encrypted-containers lineage" },
       { "carriers": 10, "example": "packs/macos-forensics/tools/fsevents_parse/run.py", "why": "the macOS lineage" }
     ] },
-    "WITHHOLDING": { "variants": [ { "carriers": 60, "example": "packs/computer-forensics-base/tools/archive_extract/run.py" } ] }
+    "WITHHOLDING": { "variants": [ { "carriers": 61, "example": "packs/computer-forensics-base/tools/archive_extract/run.py" } ] }
   }
 }
