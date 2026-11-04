@@ -44,7 +44,7 @@ const FILES = ["0", "3", "6", "9", "b", "e", "h", "k", "n", "q", "t", "w", "z"];
 
 test("the three tools that print evidence carry the same guard block, byte for byte, next to the boundary block", async () => {
   const blocks: string[] = [];
-  for (const t of ["fsevents_parse", "knowledgec_query", "unified_log", "macos_tcc", "macos_login_items", "safari_history", "segb_read", "apfs_inventory"]) {
+  for (const t of ["fsevents_parse", "knowledgec_query", "unified_log", "macos_tcc", "macos_login_items", "safari_history", "segb_read", "apfs_inventory", "macos_triage"]) {
     const text = await readFile(join(MAC, t, "run.py"), "utf8");
     const start = text.indexOf("# BEGIN SHARED GUARD");
     const stop = text.indexOf("# END SHARED GUARD");
@@ -473,7 +473,7 @@ os.kill(os.getpid(), signal.SIGTERM)                  # it arrives while signals
 got = m.emit_answer({"status": "complete", "status_basis": "every row was read", "n": 1}, None, indent=2)
 sys.stderr.write("RETURNED=%r\\n" % got)
 `;
-  for (const t of ["fsevents_parse", "knowledgec_query", "unified_log", "macos_tcc", "macos_login_items", "safari_history", "segb_read", "apfs_inventory"]) {
+  for (const t of ["fsevents_parse", "knowledgec_query", "unified_log", "macos_tcc", "macos_login_items", "safari_history", "segb_read", "apfs_inventory", "macos_triage"]) {
     const run = await runPySnippet(snippet, [join(MAC, t, "run.py")], {});
     assert.equal(run.code, 0, run.stderr);
     const answer = JSON.parse(run.stdout) as Json;

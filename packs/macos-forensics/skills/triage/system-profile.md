@@ -3,7 +3,7 @@ id: triage/system-profile
 title: Build the system profile before anything else
 when: Establish the acquisition, OS build, hardware evidence, clocks and acquired volumes.
 needs: []
-tools: [plist_read]
+tools: [plist_read, macos_triage]
 requires_host: [mac_apt.py]
 ---
 
@@ -26,6 +26,6 @@ Tie each result to the volume or snapshot it came from: another system or a snap
 
 **Volumes.** List every acquired APFS container, volume, role and volume group (the System and Data pair is the usual arrangement, not the whole inventory) and the snapshots that matter (`filesystem/apfs`). Record the sealed state you observed, not the one you expect.
 
-**Programs.** This pack declares `mac_apt.py` 1.33.2, pinned, in the amd64 worker image only: the arm64 build leaves it out because it stops at import there, a packaging limit that says nothing about the subject's hardware. Check the tool inventory; `mac_apt.py -h` prints the input modes and plugin names the installed copy accepts. Its presence does not show that it supports the subject's macOS build or that a plugin finished; no wrapper or skill here drives it, so keep each plugin's own log and output.
+**Programs.** This pack declares `mac_apt.py` 1.33.2, pinned, in the amd64 worker image only: the arm64 build leaves it out because it stops at import there, a packaging limit that says nothing about the subject's hardware. Check the tool inventory; `macos_triage` runs it and reads its log per plugin; `mac_apt.py -h` prints its input modes and plugin names. Presence shows neither support for the subject's macOS build nor that a plugin finished; its log does. Keep each plugin's log.
 
 **Does not show.** A dead disk holds retained configuration and recorded activity. It cannot answer for the live IORegistry, processes, connections, unlocked keys or service state, and running `launchctl`, `diskutil` or `system_profiler` on the examiner's Mac describes that Mac. Name the runtime evidence you could not have as a limitation of the profile.
