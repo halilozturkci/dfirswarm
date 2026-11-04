@@ -1,7 +1,7 @@
 ---
 id: filesystem/layers
 title: Layered storage and historical states
-when: A container, split set, volume manager, encryption layer or snapshot sits between you and the files.
+when: A container, split set, volume manager, encryption layer or snapshot is between you and files.
 needs: []
 tools: [image_layout, file_type, layer_describe, icat_extract, chunk_needles]
 requires_host: [mmls, fsstat, img_stat, img_cat, qemu-img]

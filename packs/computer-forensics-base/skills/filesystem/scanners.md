@@ -1,7 +1,7 @@
 ---
 id: filesystem/scanners
 title: Needle and feature scans over raw bytes
-when: Searching an image, blob or unallocated export for strings or record types, not a known header.
+when: Searching an image, blob or unallocated export for strings or record types, not a header.
 needs: []
 tools: [ioc_scan, chunk_needles, feature_scan]
 requires_host: [bulk_extractor, icat]

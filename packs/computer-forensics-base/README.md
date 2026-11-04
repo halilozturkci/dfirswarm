@@ -11,7 +11,7 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 
 ## What it carries
 
-**Twenty-nine skills**, fetched one at a time by the agents that need them. Each is a leaf of at most 800 tokens that opens with "Use when ... Not for ..."; a topic that needs more has a second-level leaf the first one points to ("only if"), so `skills/INDEX.md` lists both. One of them is the pack's router, `base/router` (at most 400 tokens): when a run's index is over its budget the prompt shows this one line for the pack, and the router names every other skill by the question it answers:
+**Thirty skills**, fetched one at a time by the agents that need them. Each is a leaf of at most 800 tokens that opens with "Use when ... Not for ..."; a topic that needs more has a second-level leaf the first one points to ("only if"), so `skills/INDEX.md` lists both. One of them is the pack's router, `base/router` (at most 400 tokens): when a run's index is over its budget the prompt shows this one line for the pack, and the router names every other skill by the question it answers:
 
 | | |
 | --- | --- |
@@ -30,6 +30,7 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 | `evidence/tool-validation` | validate a parser before you trust it: version, status counts, the decisive field against the bytes, independence, a positive control |
 | `data/sqlite` | a SQLite database is a set of files: snapshot it, apply its WAL in a copy, query the state you name |
 | `data/sqlite-secrets` | a table of cookies, logins, tokens, keys or messages: its values go to a sealed file, never into your context (`sqlite_query` with `write_values`) |
+| `data/browser-storage` | a Chromium or Electron IndexedDB, Local Storage or Session Storage: the inventory, the locators, what a preview shows, and the sealed file for the values (`browser_storage`) |
 | `data/documents-media` | document and image content as layers: bytes, rendering, extracted text, embedded objects, metadata, OCR, concealment |
 | `filesystem/extract` | get a file out of an image, and say which record it came from |
 | `filesystem/semantics` | path against object identity, record reuse, sizes, allocation, deletion, times, snapshots and TRIM: what a recovered file does and does not show |

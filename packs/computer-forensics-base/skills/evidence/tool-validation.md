@@ -1,7 +1,7 @@
 ---
 id: evidence/tool-validation
-title: Validate a parser before you trust its result
-when: A negative or decisive value rests on a tool's output, or the tool is new to the run.
+title: Validate a parser before trusting its result
+when: A negative or decisive value rests on a tool's output, or the tool is new.
 needs: []
 tools: [timeline_super, sqlite_snapshot, ioc_scan]
 requires_host: [pinfo]
