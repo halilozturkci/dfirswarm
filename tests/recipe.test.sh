@@ -1368,7 +1368,7 @@ root = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location("install", root / "images" / "install.py")
 inst = importlib.util.module_from_spec(spec); spec.loader.exec_module(inst)
 # pack -> the programs checked (None: all). reverse-engineering: only the two pip programs its pins cover; capa's brew line is that pack's own.
-PINNED = {"computer-forensics-base": None, "linux-forensics": None, "mobile-forensics": None, "reverse-engineering": {"floss", "olevba"}}
+PINNED = {"computer-forensics-base": None, "linux-forensics": None, "mobile-forensics": None, "encrypted-containers": None, "reverse-engineering": {"floss", "olevba"}}
 PIP = re.compile(r"^python3 -m pip install (.+)$")
 def norm(n): return re.sub(r"[-_.]+", "-", n).lower()
 def held(lock_text):
@@ -1461,6 +1461,6 @@ jq -e '[.pip_locks[].program] | (index("log2timeline") and index("psort") and in
   || fail "plaso and dissect are not installed from hash locks in core: $(jq -c '[.pip_locks[].program]' "$TMP/core-pins/spec.json")"
 jq -e '.python_locks | map(select(.pack == "computer-forensics-base")) | length == 1' "$TMP/core-pins/spec.json" >/dev/null || fail "the base pack's python.lock (Pillow) is not in core's spec"
 jq -e '.sources[] | select(.name == "ccl_indexeddb_dump") | .pip_lock.sha256 | test("^[0-9a-f]{64}$")' "$TMP/core-pins/spec.json" >/dev/null || fail "the ccl venv's lock is not in core's spec with its sha256"
-pass "every pip line of the base, linux, mobile and reverse-engineering packs and the tool library is == with a hash lock that holds it; the locks of one venv agree; core's spec installs plaso, dissect, Pillow and the ccl venv from locks"
+pass "every pip line of the base, linux, mobile, encrypted-containers and reverse-engineering packs and the tool library is == with a hash lock that holds it; the locks of one venv agree; core's spec installs plaso, dissect, Pillow and the ccl venv from locks"
 
 echo "recipe: all checks passed"
