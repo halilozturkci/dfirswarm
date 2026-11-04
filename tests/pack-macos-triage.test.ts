@@ -14,7 +14,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
@@ -767,5 +767,78 @@ test("the recipe creates its files exclusively: any name it writes that already 
     const c = await coverage(join(cwd, "fresh"));
     for (const name of ["plugins.tsv", "index.tsv", "coverage.json", "mac_apt.stdout", "mac_apt.stderr"]) assert.ok(name in c.secret_bearing, name);
     assert.equal(((await stat(join(cwd, "fresh", "plugins.tsv"))).mode & 0o777).toString(8), "600");
+  });
+});
+
+// ---- a name created by another process after the start check -----------------------------------------------------------------------------------
+
+test("the recipe: a name another process creates after the start check (a file, or a dangling link) is refused with JSON and exit 2, nothing foreign is touched and coverage.json stays partial", async () => {
+  await withCwd(async (cwd, bin) => {
+    const path = await e01(cwd);
+    for (const name of ["plugins.tsv", "index.tsv"]) {
+      for (const how of ["file", "link"]) {
+        const victim = join(cwd, `victim-${how}-${name}`);
+        const target = `os.path.join(os.path.dirname(out), ${JSON.stringify(name)})`;
+        const plant = how === "file" ? `open(${target}, "w").write("foreign")` : `os.symlink(${JSON.stringify(victim)}, ${target})`;
+        await stand(bin, `${plant}\n${OK_TWO}`);
+        const dir = join(cwd, `race-${how}-${name}`);
+        const r = await recipe(cwd, bin, ["run", "--target", tgt(path, ["TCC", "BASHSESSIONS"]), "--out", dir]);
+        const label = `${how} ${name}: ${r.stdout}${r.stderr}`;
+        assert.equal(r.code, 2, label);
+        assert.doesNotMatch(r.stderr, /Traceback/, label);
+        const a = JSON.parse(r.stdout) as Json;
+        assert.equal(a.ok, false, label);
+        assert.equal(a.status, "failed", label);
+        assert.match(a.status_basis, /another process may have created a name/, label);
+        assert.equal((await coverage(dir)).status, "partial", label);
+        if (how === "file") assert.equal(await readFile(join(dir, name), "utf8"), "foreign", label);
+        else {
+          assert.equal((await lstat(join(dir, name))).isSymbolicLink(), true, label);
+          await assert.rejects(stat(victim), label);
+        }
+        if (name === "plugins.tsv") await assert.rejects(stat(join(dir, "index.tsv")), label);
+      }
+    }
+  });
+});
+
+test("the recipe: a link planted at coverage.json or a scratch directory name between the start check and its use is refused and never followed", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stand(bin, OK_TWO);
+    const path = await e01(cwd);
+    const hook = join(cwd, "hook.py");
+    // in-process: the recipe's own first coverage write is the moment after the start check and before the names are used
+    await writeFile(hook, [
+      "import importlib.util, os, sys",
+      "spec = importlib.util.spec_from_file_location('macrecipe', sys.argv[1])",
+      "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+      "out, name, target = sys.argv[2], sys.argv[3], sys.argv[4]",
+      "real = m.write_coverage",
+      "def planted(*a, **k):",
+      "    if k.get('first') and name == 'coverage.json':",
+      "        os.symlink(target, os.path.join(out, name))",
+      "    real(*a, **k)",
+      "    if k.get('first') and name != 'coverage.json':",
+      "        os.symlink(target, os.path.join(out, name))",
+      "m.write_coverage = planted",
+      "m.shutil.which = lambda p: sys.argv[5]",
+      "sys.exit(m.run(sys.argv[6], 'E01', ['TCC'], out))",
+    ].join("\n"));
+    for (const name of ["mac_apt", "mac_apt-cwd", "mac_apt-tmp", "mac_apt-home", "coverage.json"]) {
+      const out = join(cwd, `plant-${name}`);
+      const victim = join(cwd, `victim-dir-${name}`);
+      await mkdir(victim, { recursive: true });
+      await mkdir(out, { recursive: true });
+      const child = spawn("python3", [hook, RECIPE, out, name, victim, join(bin, "mac_apt.py"), join(cwd, path)], { cwd, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` } });
+      const chunks: Buffer[] = [];
+      child.stdout.on("data", (c: Buffer) => chunks.push(c));
+      child.stderr.on("data", (c: Buffer) => chunks.push(c));
+      const code = await new Promise<number | null>((res) => child.on("close", (c) => res(c)));
+      const text = Buffer.concat(chunks).toString();
+      assert.equal(code, 2, `${name}: ${text}`);
+      assert.doesNotMatch(text, /Traceback/, name);
+      assert.deepEqual(await readdir(victim), [], `${name}: nothing was written through the link`);
+      assert.equal((await lstat(join(out, name))).isSymbolicLink(), true, name);
+    }
   });
 });

@@ -11,17 +11,24 @@ takes them with an input type the caller names. mac_apt 1.33.2 is installed in t
 
 WHAT WAS READ AND WHAT WAS NEVER SEEN. mac_apt was not installed or run to build this recipe. Its argument shape and the texts of the start, plugin start, plugin end,
 plugin exception and finish log lines were read from the source of v1.33.2 (GitHub raw view, 2026-11-04). The prefix of a log line, the wording of an empty or
-unsupported plugin and the per-plugin file names were not, and `empty` and `unsupported` rest on an assumed wording. The recipe's tests drive it with a stand-in program.
+unsupported plugin and the per-plugin file names were not, and `empty` and `unsupported` rest on an assumed wording. The source sets the log file format
+'%(asctime)s|%(name)s|%(levelname)s|%(message)s', read through a page summary and never seen in a real run. So `parsed` rests on a log format never observed: a plugin is
+`parsed` when no line of its run holds an error word, and a failure logged below ERROR level or without an error word (permission denied, timed out, no such file,
+refused, skipping, errno) can still read as `parsed`, and a run can then be `complete`. The recipe's tests drive it with a stand-in program.
 
 WHAT `complete` MEANS. mac_apt exits 0 after errors it has logged, so the exit code is never the status. The recipe reads mac_apt's own log (Log.<time>.txt in the output
 folder; the console output only when that file is missing, and then at best partial) and gives each plugin one status in plugins.tsv: parsed, empty, unsupported or failed.
 The run is `complete` only when mac_apt exited 0, the log has its start line (with the pinned version) and its finish line, every plugin the target names is parsed or
 empty, and no error line or traceback sits outside a plugin. The default plugin set FAST (and ALL) can never be complete: the plugins they expand to are not listed by anything
 read here. coverage.json is written first, as partial, and replaced whole at the end. A run never writes over an earlier run: if the output directory already holds
-mac_apt/ or a coverage.json, it refuses and leaves them as they are. No password is passed (a FileVault password is the tool's, from a sealed file). The files hold the
+any of the ten names it writes (mac_apt, coverage.json, coverage.json.tmp, plugins.tsv, index.tsv, mac_apt.stdout, mac_apt.stderr, mac_apt-cwd, mac_apt-tmp,
+mac_apt-home), a link included, it refuses (exit 2) and leaves them as they are. Its files and scratch directories are created exclusively (a link at a name is
+never followed): if another process creates one of those names after that check, or a file operation fails, the run stops with the same refusal (exit 2, one JSON
+answer), touches nothing it did not create, and leaves coverage.json as the partial account it wrote first. No password is passed (a FileVault password is the tool's, from a sealed file). The files hold the
 examined system's own content; a recipe cannot declare secret_output, so coverage.json marks every file it wrote under secret_bearing.
 """
 import argparse
+import errno
 import json
 import os
 import platform
@@ -934,14 +941,32 @@ def excl(path, mode="w"):
     return os.fdopen(fd, mode, encoding="utf-8") if "b" not in mode else os.fdopen(fd, mode)
 
 
-def write_coverage(out, status, covered, errors, basis, limits=(), **more):
-    # written to a temporary name and renamed: a stop never leaves half a file, and the first account (partial) is replaced whole
+def write_coverage(out, status, covered, errors, basis, limits=(), first=False, **more):
+    # written to a temporary name and renamed: a stop never leaves half a file, and the first account (partial) is replaced whole.
+    # The first account is put in place with a hard link, which fails when the name exists (a name created after the start check is never replaced).
     final = os.path.join(out, "coverage.json")
     temp = final + ".tmp"
     with excl(temp, "w") as handle:
         json.dump({"recipe": "macos-artefacts", "status": status, "status_basis": basis, "covered": covered, "not_covered": NOT_COVERED,
                    "limits_hit": list(limits), "errors": list(errors), **more}, handle, indent=2, sort_keys=True)
         handle.write("\n")
+    if first:
+        try:
+            try:
+                os.link(temp, final)
+            except FileExistsError:
+                raise
+            except OSError:
+                if os.path.lexists(final):
+                    raise FileExistsError(errno.EEXIST, "File exists", final)
+                os.replace(temp, final)
+                return
+        finally:
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
+        return
     os.replace(temp, final)
 
 
@@ -1043,6 +1068,20 @@ def run(path, kind, requested, out, seconds=MACAPT_SECONDS):
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "the output directory already holds the files of an earlier run, and this recipe never writes over one: nothing was run",
                           "why": "the output directory already holds one of the names this recipe writes (mac_apt/, coverage.json, plugins.tsv, index.tsv, mac_apt.stdout, mac_apt.stderr, mac_apt-cwd, mac_apt-tmp, mac_apt-home)"}))
         return 2
+    try:
+        return run_checked(path, kind, requested, out, seconds, report)
+    except OSError as exc:
+        # A name was created by another process after the check above, or a file operation failed: nothing foreign is touched, coverage.json stays the
+        # partial account written first, and the answer is one JSON line with exit 2 (never a traceback).
+        ran = " mac_apt had already been started: what it wrote is kept as it is." if STATE.get("started") else ""
+        print(json.dumps({"ok": False, "status": "failed",
+                          "status_basis": "a file or directory this recipe creates exclusively could not be created, or a file operation failed (%s): another process may have created a name after the start check. "
+                                          "Nothing that was not created by this run was touched, and coverage.json, if this run wrote it, is left as the partial account it wrote first.%s" % (errno.errorcode.get(exc.errno, "OSError"), ran),
+                          "error": str(exc)}))
+        return 2
+
+
+def run_checked(path, kind, requested, out, seconds, report):
     os.makedirs(out, exist_ok=True)
     path = os.path.abspath(path)
     plugins = requested or ["FAST"]
@@ -1052,17 +1091,18 @@ def run(path, kind, requested, out, seconds=MACAPT_SECONDS):
     more = {"input": {"type": kind, "route": "mac_apt.py -o <out>/mac_apt -c %s <input> %s" % (kind, " ".join(plugins))}, "plugins_requested": plugins}
     # Said before mac_apt starts: a run stopped at its limit leaves this, and is read as partial.
     write_coverage(out, "partial", "started; mac_apt did not finish (stopped before its end)", ["the run ended before mac_apt did"],
-                   "the run started and mac_apt had not finished when this was written: a run that is stopped before its end leaves this account", **more)
+                   "the run started and mac_apt had not finished when this was written: a run that is stopped before its end leaves this account", first=True, **more)
     if platform.machine().lower() in ("aarch64", "arm64") or not shutil.which(PROGRAM):
         reason = ARM_REASON if platform.machine().lower() in ("aarch64", "arm64") else "mac_apt.py (pinned 1.33.2, amd64 worker image) is not on PATH in this image"
         write_coverage(out, "failed", "nothing: mac_apt is not available here", [reason], "mac_apt is not available here, so nothing was parsed: " + reason, **more)
         return 1
     prog = os.path.abspath(shutil.which(PROGRAM))
     for sub in ("mac_apt", "mac_apt-cwd", "mac_apt-tmp", "mac_apt-home"):
-        os.makedirs(os.path.join(out, sub), exist_ok=True)
+        os.mkdir(os.path.join(out, sub))  # no exist_ok: the start check required these names absent, and a link planted since is never entered
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "LANG": "C", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1",
            "TMPDIR": os.path.join(out, "mac_apt-tmp"), "HOME": os.path.join(out, "mac_apt-home")}
     argv = [prog, "-o", report, "-c", kind, path if not path.startswith("-") else "./" + path] + plugins
+    STATE["started"] = True
     code, timed_out, held = run_program(argv, os.path.join(out, "mac_apt.stdout"), os.path.join(out, "mac_apt.stderr"), os.path.join(out, "mac_apt-cwd"), env, seconds)
     logs = sorted(n for n in os.listdir(report) if LOG_NAME.fullmatch(n) and not os.path.islink(os.path.join(report, n)))
     console = not logs
