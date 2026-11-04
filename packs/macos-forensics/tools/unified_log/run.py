@@ -2556,6 +2556,130 @@ def settle_check(roots):
     return {"grew": sum(1 for path, size in after.items() if before.get(path) != size), "holders": file_holders(roots), "settle_seconds": SETTLE_SECONDS}
 # program-group: settle end
 
+# program-group: subreaper
+# Tool-local (outside the shared blocks); the same text is in macos_triage, the macos-artefacts recipe and unified_log.
+# A process that leaves the tool's group (setsid, setpgid) is out of reach of a group sweep. So, on Linux, this tool makes itself a CHILD SUBREAPER
+# (prctl PR_SET_CHILD_SUBREAPER) before it starts the program: every orphan of the program, whatever its session or group, is re-parented to this tool. When the
+# program has ended, the children of this tool that are not programs it is running are killed (each pid's start time and parent are read again just before the
+# signal) and reaped with waitpid until a round finds none, for at most CHILD_SECONDS, BEFORE any size, hash or log is read. Where the tool cannot become the
+# subreaper, or the process table cannot be read, the files cannot be proved final: `unchecked` says so and the caller answers at most partial.
+CHILD_SECONDS = 3.0        # the longest the tool works at finding, ending and reaping the orphans that came to it
+SUB = {"on": None, "why": None}
+PRE_KIDS = {}              # the children this tool already had when it became the subreaper (pid -> start time): not the program's, never touched
+
+
+def become_subreaper():
+    """Make this tool a child subreaper (Linux). Returns whether it is one; SUB["why"] says why not."""
+    if SUB["on"] is not None:
+        return SUB["on"]
+    if not sys.platform.startswith("linux"):
+        SUB["on"], SUB["why"] = False, "this is not Linux, where a process can be made the parent of its descendants' orphans"
+        return False
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(36, 1, 0, 0, 0) != 0:      # PR_SET_CHILD_SUBREAPER
+            SUB["on"], SUB["why"] = False, "prctl(PR_SET_CHILD_SUBREAPER) was refused (errno %d)" % ctypes.get_errno()
+        else:
+            SUB["on"], SUB["why"] = True, None
+            PRE_KIDS.update({pid: start for pid, start, _state in _my_children() or []})
+    except Exception as exc:  # noqa: BLE001
+        SUB["on"], SUB["why"] = False, "prctl(PR_SET_CHILD_SUBREAPER) could not be called (%s)" % type(exc).__name__
+    return SUB["on"]
+
+
+def _pp_stat(pid):
+    """(start time, state, parent pid) of `pid` from /proc/<pid>/stat (Linux), or None."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            text = fh.read(4096).decode("ascii", "replace")
+        tail = text[text.rindex(")") + 2:].split()
+        return (tail[19], tail[0], int(tail[1])) if len(tail) > 19 else None
+    except (OSError, ValueError):
+        return None
+
+
+def _my_children():
+    """[(pid, start time, state)] of the children of this tool, or None when /proc cannot be read in 10 seconds."""
+    me = os.getpid()
+    found = []
+    limit = time.monotonic() + 10
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return None
+    for number, name in enumerate(names):
+        if not name.isdigit():
+            continue
+        if number % 64 == 0 and time.monotonic() > limit:
+            return None
+        row = _pp_stat(int(name))
+        if row is not None and row[2] == me:
+            found.append((int(name), row[0], row[1]))
+    return found
+
+
+def end_children(keep=()):
+    """Kill and reap every child of this tool except the pids in `keep` (programs it is running now). Returns {"ended": live processes killed, "unreadable":
+    whether the table could not be read}. A zombie is only reaped (it had ended before; it is not counted)."""
+    ended, end = 0, time.monotonic() + CHILD_SECONDS
+    if not SUB["on"]:
+        return {"ended": 0, "unreadable": False}
+    keep = set(keep)
+    while True:
+        rows = _my_children()
+        if rows is None:
+            return {"ended": ended, "unreadable": True}
+        victims = [(pid, start, state) for pid, start, state in rows if pid not in keep and PRE_KIDS.get(pid) != start]
+        if not victims:
+            return {"ended": ended, "unreadable": False}
+        for pid, start, state in victims:
+            if state != "Z":
+                again = _pp_stat(pid)
+                if again is None or again[0] != start or again[2] != os.getpid():
+                    continue
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    ended += 1
+                except OSError:
+                    pass
+            reap_until = time.monotonic() + 1.0
+            while time.monotonic() < reap_until:
+                try:
+                    if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                        break
+                except ChildProcessError:
+                    break
+                time.sleep(0.01)
+        if time.monotonic() >= end:
+            rows = _my_children()
+            return {"ended": ended, "unreadable": rows is None or any(pid not in keep and PRE_KIDS.get(pid) != start for pid, start, _t in rows)}
+        time.sleep(0.02)
+
+
+def sweep_left(before):
+    """When a program has ended: end what is new in the tool's own group (end_group_orphans) and every orphan that came to this tool (end_children). Returns
+    {"ended": how many live processes were killed, "note": what the group sweep could not do, "unchecked": [the reasons the files cannot be proved final]}."""
+    group = end_group_orphans(before)
+    keep = [p.pid for p in globals().get("ACTIVE", [])]
+    kids = end_children(keep)
+    unchecked = []
+    if not SUB["on"]:
+        unchecked.append("the tool could not make itself the parent of orphaned processes (%s), so a process that left its process group could not be found" % SUB["why"])
+    elif kids["unreadable"]:
+        unchecked.append("the process table could not be read (or still held processes after %g seconds), so what the program left behind may not have been ended" % CHILD_SECONDS)
+    return {"ended": group["ended"] + kids["ended"], "note": group["note"], "unchecked": unchecked}
+
+
+def end_leftovers_on_stop():
+    """A stop signal: the same, without the answer."""
+    if BEFORE["members"] is not None:
+        end_group_orphans(BEFORE["members"])
+    end_children([p.pid for p in globals().get("ACTIVE", [])])
+# program-group: subreaper end
+
+BEFORE = {"members": None}    # (the stop hook of the shared text above is not used here: the unwind of the reader ends what is left)
+
 
 READER_GROUP = {"settle": None}   # what the second look at the reader's files found
 
@@ -2677,6 +2801,7 @@ def kill_reader(proc):
 
 def run_reader(argv, stdout, stderr, seconds):
     """(exit code, timed out): the reader runs for at most `seconds` and is killed when the time is up or a stop signal arrives."""
+    become_subreaper()                     # before the reader starts: every orphan it leaves comes to this tool
     before = group_members()
     proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, preexec_fn=functools.partial(_die_with_parent, os.getpid()) if sys.platform.startswith("linux") else None)
     hook = lambda: kill_reader(proc)       # noqa: E731 (a stop signal ends the reader before the exception unwinds)
@@ -2707,7 +2832,8 @@ def run_reader(argv, stdout, stderr, seconds):
         # whatever the reader left in the tool's group (a child that closed its descriptors and writes later, a double fork) is ended and waited for to be gone
         # BEFORE the output is counted, hashed or measured (a second look is harmless where the time-out or the stop already made one)
         try:
-            late = end_group_orphans(before)
+            late = sweep_left(before)
+            READER_GROUP["unchecked"] = late["unchecked"]
             if late["ended"]:
                 READER_LEFT["ended"] = READER_LEFT.get("ended", 0) + late["ended"]
             if late["note"] and not READER_LEFT.get("note"):
@@ -2941,9 +3067,9 @@ def run_log(args):
     else:
         status = "complete"
     settled = READER_GROUP["settle"]
-    abandoned = []
+    abandoned = [reason + ": the output cannot be shown to be final" for reason in READER_GROUP.get("unchecked", [])]
     if READER_GROUP.get("left_behind") and not (timed_out or interrupted is not None):
-        abandoned.append("the reader left %d process(es) running in the tool's process group after it ended; they were killed and waited for before the output was counted, hashed or measured, so what "
+        abandoned.append("the reader left %d process(es) running (in the tool's process group or, after setsid or setpgid, outside it) after it ended; they were killed and waited for before the output was counted, hashed or measured, so what "
                          "they would still have written is missing from it, and the output is what it held at that moment" % READER_GROUP["left_behind"])
     if settled and settled["grew"]:
         abandoned.append("%d file(s) of the reader (its output or its error stream) changed after the reader's group was empty: a process in a session of its own (setsid) is still writing, "

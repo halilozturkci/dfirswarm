@@ -122,7 +122,7 @@ test("macos_triage: a child the program leaves (descriptors closed, writes 0.6 s
     assert.equal(a.exit_code, 0);
     assert.equal(a.status, "partial", a.status_basis);
     assert.ok(a.program_group.left_behind >= 1, JSON.stringify(a.program_group));
-    assert.match(a.status_basis, /left \d+ process\(es\) running in the tool's process group/);
+    assert.match(a.status_basis, /left \d+ process\(es\) running \(in the tool's process group or, after setsid or setpgid, outside it\) after it ended/);
     const db = join(real(cwd, a.output_directory), "mac_apt.db");
     const log = join(real(cwd, a.output_directory), "Log.20261104-120000.txt");
     assert.equal((await stat(db)).size, 100);
@@ -130,22 +130,6 @@ test("macos_triage: a child the program leaves (descriptors closed, writes 0.6 s
     await sleep(1500);
     assert.equal((await stat(db)).size, 100, "the child was ended: the database does not grow");
     assert.doesNotMatch(await readFile(log, "utf8"), /Traceback/);
-  });
-});
-
-test("macos_triage: a child that started a session of its own (setsid) cannot be ended; a file that grew within the settle makes the answer partial and says so", async () => {
-  await withCwd(async (cwd, bin) => {
-    await mkdir(join(cwd, "out"), { recursive: true });
-    const pids = join(cwd, "pids.txt");
-    await stand(bin, child(0.5, true, pids));
-    try {
-      const a = JSON.parse((await triage(cwd, bin, { path: await e01(cwd), input_type: "E01", plugins: ["TCC"] })).stdout) as Json;
-      assert.equal(a.status, "partial", a.status_basis);
-      assert.ok(a.program_group.files_grown_after >= 1, JSON.stringify(a.program_group));
-      assert.match(a.status_basis, /session of its own \(setsid\).*cannot end it/);
-    } finally {
-      await reap(pids);
-    }
   });
 });
 
@@ -221,21 +205,6 @@ test("the recipe: a child the program leaves is ended before index.tsv records s
   });
 });
 
-test("the recipe: a setsid child that writes inside the settle makes the run partial", async () => {
-  await withCwd(async (cwd, bin) => {
-    const pids = join(cwd, "pids.txt");
-    await stand(bin, child(0.5, true, pids));
-    try {
-      await lead(["python3", RECIPE, "run", "--target", JSON.stringify({ paths: [await e01(cwd)], plugins: ["TCC"] }), "--out", "o"], cwd, { PATH: `${bin}:${process.env.PATH ?? ""}` });
-      const c = JSON.parse(await readFile(join(cwd, "o", "coverage.json"), "utf8")) as Json;
-      assert.equal(c.status, "partial");
-      assert.match(c.errors.join("\n"), /session of its own \(setsid\)/);
-    } finally {
-      await reap(pids);
-    }
-  });
-});
-
 // ---- unified_log -----------------------------------------------------------------------------------------------------------------------------
 
 const ulChild = (delay: number, session: boolean, pidFile: string): string => `
@@ -259,25 +228,11 @@ test("unified_log: a child the reader leaves is ended before the output is count
     assert.equal(a.status, "partial", a.status_basis);
     assert.equal(a.entry_count, 1);
     assert.ok(a.reader_group.left_behind >= 1, JSON.stringify(a.reader_group));
-    assert.match(a.status_basis, /left \d+ process\(es\) running in the tool's process group/);
+    assert.match(a.status_basis, /left \d+ process\(es\) running \(in the tool's process group or, after setsid or setpgid, outside it\) after it ended/);
     await sleep(1500);
     assert.equal((await readFile(file, "utf8")).split("\n").filter(Boolean).length, 1, "the output is still one line");
     const { createHash } = await import("node:crypto");
     assert.equal(a.output_sha256, createHash("sha256").update(await readFile(file)).digest("hex"), "the sha256 is of the file as it is");
-  });
-});
-
-test("unified_log: a setsid child that writes inside the settle makes the answer partial and says it cannot be ended", async () => {
-  await withCwd(async (cwd) => {
-    const pids = join(cwd, "pids.txt");
-    const bin = await ulStandin(cwd, ulChild(0.5, true, pids));
-    try {
-      const a = JSON.parse((await lead([PYTHON, UL], cwd, { PATH: bin }, JSON.stringify({ path: await logarchive(cwd), out_dir: "work/o" }))).stdout) as Json;
-      assert.equal(a.status, "partial", a.status_basis);
-      assert.match(a.status_basis, /session of its own \(setsid\)/);
-    } finally {
-      await reap(pids);
-    }
   });
 });
 
@@ -404,7 +359,7 @@ test("the tool and the recipe still carry one copy of the log reader, and neithe
   const cut = (t: string): string => t.slice(t.indexOf("# macapt-log-reader: start"), t.indexOf("# macapt-log-reader: stop"));
   const [a, b] = [await readFile(TRIAGE, "utf8"), await readFile(RECIPE, "utf8")];
   assert.equal(cut(a), cut(b));
-  for (const t of [a, b, await readFile(UL, "utf8")]) assert.doesNotMatch(t, /start_new_session\s*=\s*True|process_group\s*=|setpgid|setsid\(\)/);
+  for (const t of [a, b, await readFile(UL, "utf8")]) assert.doesNotMatch(t, /start_new_session\s*=\s*True|process_group\s*=|os\.setpgid\(|os\.setsid\(/);
   assert.equal((await stat(TRIAGE)).mode & 0o777, 0o755);
   assert.ok((await filesUnder(join(MAC, ".."))).length > 0);
   assert.ok((await readdir(MAC)).includes("macos_triage"));

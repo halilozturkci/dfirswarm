@@ -1,7 +1,7 @@
 {
   "id": "macos-forensics",
   "name": "macOS Forensics Pack",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, TCC privacy permissions, quarantine and XProtect evidence, Spotlight stores, Biome framing, recent items, accounts and the limits of attribution, keychains opened with the case's password, what APFS retains, and running mac_apt (the macos_triage tool and a recipe) and judging its log. Whether the pinned mac_apt reads a Spotlight store was not tested; no parser here reads a Spotlight store, a quarantine record or a Biome payload.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -34,8 +34,8 @@
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "b7a79b53bb7ef82d3d3b300b7c670a07bf14348db214836b1942bf6128761c8b",
       "goals/mac-compromise.md": "586f381ae391e64e379750942fb00dac286110742f943c9bf776f0f89e4341d0",
-      "recipes/macos-artefacts/recipe.json": "f25dc98cadb5e0a97b4d059cced267cef5bc7748055a691746b8e8167f428162",
-      "recipes/macos-artefacts/run.py": "ab0007ea30b95e94f3d331afd7f81dea95c10cc476d283be05ddb4e9883f9091",
+      "recipes/macos-artefacts/recipe.json": "10b9d413bda163a034d0443faf3323d92f355563df8658fb64925c8005764657",
+      "recipes/macos-artefacts/run.py": "91ab86c3b79bcab8f7fbe00df2ed56855fe280c6fad36a89d95b990ad802d4a5",
       "requires/host.json": "cf4c36c4714b77e0439fd9f0aab3c3872c814b08bd7f218d72064ed4e8d615b8",
       "requires/locks/chainbreaker.txt": "dab6391c45828b4a1ef378402b6381c60183c214a25fbbb9d7fc843af0b189d3",
       "requires/locks/mac_apt.txt": "1a54f5f97e3052307c2c9fd5d892c952e2ab8560a77192b0603775a0f411b1ab",
@@ -65,7 +65,7 @@
       "skills/security/tcc.md": "caa762cdc7b165e92ce75152c298da04db2d6bd80807c97bfebd7b0a2fd296aa",
       "skills/triage/clocks-hardware.md": "eb682191ae96e05cbfddcb047da966fa3192c0d475ea7ad0abc1889a15d921ac",
       "skills/triage/system-profile.md": "8d254821d7941baabfb28a2582bef8aac9d258015d7852505a595b469444ae95",
-      "skills/workflow/mac-apt.md": "b9b5986f030ba15d97072854211ac3743a862976daae1325f200068ef642aa7b",
+      "skills/workflow/mac-apt.md": "ad5787566b65ae6255db6ed45d4398988a93adef8a55370cefc07dfa452ed4ba",
       "tools/apfs_inventory/manifest.json": "dbb12725192355700b0fc51b3a58378d45658f114a9857a4e0fa53fb2ecac118",
       "tools/apfs_inventory/run.py": "9a341b9a0eeae9e074fbea09d8de835e089bdbad4eebeee7088810503fed36de",
       "tools/fsevents_parse/manifest.json": "d9765574c30365a6e04e96c9a7671c4396d35bc9c85fb370eda0e5464e4481a4",
@@ -78,16 +78,16 @@
       "tools/macos_login_items/run.py": "a498922ca188c466ce9997687f411abf4f03d3ffe8067265615a3964077cb2ec",
       "tools/macos_tcc/manifest.json": "87fd7d2f3afe46b13521f4e268186259f17ea7cb930c2e99240df3c4ea579294",
       "tools/macos_tcc/run.py": "41511dcb13d716a5e200d2e36608f9a3e41acbec0fd0d28cd42efc4cbc95773f",
-      "tools/macos_triage/manifest.json": "d2168bf3d9213bc7a9268a9bee1e0a472af636d025d450d7f05756cac6cc3b3e",
-      "tools/macos_triage/run.py": "4c890629d95d3c73db51e5b82c9df713bb0592cf7cefccdbf85c2b064dd5dabb",
+      "tools/macos_triage/manifest.json": "fa85066385bc041d4fc790a4683866ce6beeb9d639972a2c60b6af8774b80b3b",
+      "tools/macos_triage/run.py": "067fa2006cb8b6e79b55c9560f57b7bb3a61b19d1df12ad2fb2f0c85e50a5d34",
       "tools/plist_read/manifest.json": "bcef242e9a359a91ad785558268582ef16b628cde9dc129f532e1a07e4e51ba8",
       "tools/plist_read/run.py": "15fbae291e8c5cd71ac1403c9af8f8e2b7b8d52bde843c9b7a8020d3ee79ed29",
       "tools/safari_history/manifest.json": "b051cae5daba1aafad9340f8ea8334d766d9df2ddc66d0422d601557897c2b54",
       "tools/safari_history/run.py": "470e29cd5b7f238b558906d56cde2f8cc768551caf0663822f7f7fca33f62863",
       "tools/segb_read/manifest.json": "90856552ad8fdada0db58d1a7ba63df931fc94a6364be862e4269c4c8abfba4f",
       "tools/segb_read/run.py": "d8c9551094f62a521a035a4b9ac4655033c888d6bc6922a3e1afd967689f3d4a",
-      "tools/unified_log/manifest.json": "e2ac36dccaba1c8dc6c681235259e199a617b51706598250394f1dbc919e54ba",
-      "tools/unified_log/run.py": "ebe843cb5746badae0420873693479764aa52dd46a3da84cc578703ce0534a82"
+      "tools/unified_log/manifest.json": "fe5e30e245d2380e55d9f134da9ce9daddd54c3f5a79c6a2d5bc029732786a0d",
+      "tools/unified_log/run.py": "1634f93dac8fd6f1bc1d40627c73ee3e2d8c227ecf4472d9053097533184573b"
     }
   },
   "tools": [

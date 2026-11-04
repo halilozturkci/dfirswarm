@@ -2839,6 +2839,128 @@ def settle_check(roots):
     return {"grew": sum(1 for path, size in after.items() if before.get(path) != size), "holders": file_holders(roots), "settle_seconds": SETTLE_SECONDS}
 # program-group: settle end
 
+# program-group: subreaper
+# Tool-local (outside the shared blocks); the same text is in macos_triage, the macos-artefacts recipe and unified_log.
+# A process that leaves the tool's group (setsid, setpgid) is out of reach of a group sweep. So, on Linux, this tool makes itself a CHILD SUBREAPER
+# (prctl PR_SET_CHILD_SUBREAPER) before it starts the program: every orphan of the program, whatever its session or group, is re-parented to this tool. When the
+# program has ended, the children of this tool that are not programs it is running are killed (each pid's start time and parent are read again just before the
+# signal) and reaped with waitpid until a round finds none, for at most CHILD_SECONDS, BEFORE any size, hash or log is read. Where the tool cannot become the
+# subreaper, or the process table cannot be read, the files cannot be proved final: `unchecked` says so and the caller answers at most partial.
+CHILD_SECONDS = 3.0        # the longest the tool works at finding, ending and reaping the orphans that came to it
+SUB = {"on": None, "why": None}
+PRE_KIDS = {}              # the children this tool already had when it became the subreaper (pid -> start time): not the program's, never touched
+
+
+def become_subreaper():
+    """Make this tool a child subreaper (Linux). Returns whether it is one; SUB["why"] says why not."""
+    if SUB["on"] is not None:
+        return SUB["on"]
+    if not sys.platform.startswith("linux"):
+        SUB["on"], SUB["why"] = False, "this is not Linux, where a process can be made the parent of its descendants' orphans"
+        return False
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(36, 1, 0, 0, 0) != 0:      # PR_SET_CHILD_SUBREAPER
+            SUB["on"], SUB["why"] = False, "prctl(PR_SET_CHILD_SUBREAPER) was refused (errno %d)" % ctypes.get_errno()
+        else:
+            SUB["on"], SUB["why"] = True, None
+            PRE_KIDS.update({pid: start for pid, start, _state in _my_children() or []})
+    except Exception as exc:  # noqa: BLE001
+        SUB["on"], SUB["why"] = False, "prctl(PR_SET_CHILD_SUBREAPER) could not be called (%s)" % type(exc).__name__
+    return SUB["on"]
+
+
+def _pp_stat(pid):
+    """(start time, state, parent pid) of `pid` from /proc/<pid>/stat (Linux), or None."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            text = fh.read(4096).decode("ascii", "replace")
+        tail = text[text.rindex(")") + 2:].split()
+        return (tail[19], tail[0], int(tail[1])) if len(tail) > 19 else None
+    except (OSError, ValueError):
+        return None
+
+
+def _my_children():
+    """[(pid, start time, state)] of the children of this tool, or None when /proc cannot be read in 10 seconds."""
+    me = os.getpid()
+    found = []
+    limit = time.monotonic() + 10
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return None
+    for number, name in enumerate(names):
+        if not name.isdigit():
+            continue
+        if number % 64 == 0 and time.monotonic() > limit:
+            return None
+        row = _pp_stat(int(name))
+        if row is not None and row[2] == me:
+            found.append((int(name), row[0], row[1]))
+    return found
+
+
+def end_children(keep=()):
+    """Kill and reap every child of this tool except the pids in `keep` (programs it is running now). Returns {"ended": live processes killed, "unreadable":
+    whether the table could not be read}. A zombie is only reaped (it had ended before; it is not counted)."""
+    ended, end = 0, time.monotonic() + CHILD_SECONDS
+    if not SUB["on"]:
+        return {"ended": 0, "unreadable": False}
+    keep = set(keep)
+    while True:
+        rows = _my_children()
+        if rows is None:
+            return {"ended": ended, "unreadable": True}
+        victims = [(pid, start, state) for pid, start, state in rows if pid not in keep and PRE_KIDS.get(pid) != start]
+        if not victims:
+            return {"ended": ended, "unreadable": False}
+        for pid, start, state in victims:
+            if state != "Z":
+                again = _pp_stat(pid)
+                if again is None or again[0] != start or again[2] != os.getpid():
+                    continue
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    ended += 1
+                except OSError:
+                    pass
+            reap_until = time.monotonic() + 1.0
+            while time.monotonic() < reap_until:
+                try:
+                    if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                        break
+                except ChildProcessError:
+                    break
+                time.sleep(0.01)
+        if time.monotonic() >= end:
+            rows = _my_children()
+            return {"ended": ended, "unreadable": rows is None or any(pid not in keep and PRE_KIDS.get(pid) != start for pid, start, _t in rows)}
+        time.sleep(0.02)
+
+
+def sweep_left(before):
+    """When a program has ended: end what is new in the tool's own group (end_group_orphans) and every orphan that came to this tool (end_children). Returns
+    {"ended": how many live processes were killed, "note": what the group sweep could not do, "unchecked": [the reasons the files cannot be proved final]}."""
+    group = end_group_orphans(before)
+    keep = [p.pid for p in globals().get("ACTIVE", [])]
+    kids = end_children(keep)
+    unchecked = []
+    if not SUB["on"]:
+        unchecked.append("the tool could not make itself the parent of orphaned processes (%s), so a process that left its process group could not be found" % SUB["why"])
+    elif kids["unreadable"]:
+        unchecked.append("the process table could not be read (or still held processes after %g seconds), so what the program left behind may not have been ended" % CHILD_SECONDS)
+    return {"ended": group["ended"] + kids["ended"], "note": group["note"], "unchecked": unchecked}
+
+
+def end_leftovers_on_stop():
+    """A stop signal: the same, without the answer."""
+    if BEFORE["members"] is not None:
+        end_group_orphans(BEFORE["members"])
+    end_children([p.pid for p in globals().get("ACTIVE", [])])
+# program-group: subreaper end
+
 PARSER = "macos_triage/1"
 PROGRAM = "mac_apt.py"
 PINNED_VERSION = "1.33.2"
@@ -2908,6 +3030,7 @@ EVIDENCE = set()          # the strings of the answer that came from the evidenc
 # Every line is read whole up to MA_LINE_CAP bytes; a longer line is read to its cap, counted (long_lines) and makes the run partial. The read has a
 # deadline and a byte cap; either one ends it (cut) and the run is partial. Nothing a line says is kept except its number: a log line can quote the evidence.
 import re
+import stat
 
 MA_LINE_CAP = 1 << 20          # a line is scanned whole up to this many bytes; beyond them it is counted in long_lines (unreadable) and the run is partial
 MA_READ_MAX = 512 << 20        # the most bytes of log read in one run; beyond them the read is cut and the run is partial
@@ -2933,18 +3056,21 @@ MA_EMPTY = re.compile(r"\bno\b.{0,80}\b(?:found|data|records|entries|items)\b|\b
 MA_STATUSES = ("parsed", "empty", "unsupported", "failed")
 
 
-def ma_read_log(paths, deadline=None, max_bytes=MA_READ_MAX):
+def ma_read_log(paths, deadline=None, max_bytes=MA_READ_MAX, stop=None):
     """Read the given log files in order as one account. Returns a dict: lines, long_lines (lines longer than MA_LINE_CAP, read to the cap), bytes, cut (None, or
     the sentence that says the read ended before the end of the log: its deadline or its byte cap), unanchored (lines that hold the text of a start, plugin or
     finish line without the shape that anchors one), started (bool), program, version, finished (bool), no_macos (bool), run_errors (the lines with an error
     word or a traceback outside any plugin's window), plugins (a list of windows in the order they began: name, line, ran, exception, errors, tracebacks,
-    warnings, unsupported, empty, other, closed_by) and unreadable."""
+    warnings, unsupported, empty, other, closed_by) and unreadable (a log that could not be opened, or is not a regular file). `stop` is a function that
+    says a stop signal is waiting."""
     out = {"lines": 0, "long_lines": 0, "bytes": 0, "cut": None, "unanchored": 0, "started": False, "program": None, "version": None, "finished": False,
            "no_macos": False, "run_errors": [], "plugins": [], "unreadable": []}
     current = None
 
     def cut_now():
-        if deadline is not None and time.monotonic() >= deadline:
+        if stop is not None and stop():
+            out["cut"] = "a stop signal arrived while the log was read"
+        elif deadline is not None and time.monotonic() >= deadline:
             out["cut"] = "the time given to reading the log ran out"
         elif out["bytes"] >= max_bytes:
             out["cut"] = "the log is longer than the %d bytes this tool reads" % max_bytes
@@ -2954,10 +3080,15 @@ def ma_read_log(paths, deadline=None, max_bytes=MA_READ_MAX):
         if out["cut"] or cut_now():
             break
         try:
-            handle = open(path, "rb")
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
         except OSError as exc:
             out["unreadable"].append(exc.strerror or type(exc).__name__)
             continue
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)                       # a FIFO, a device or a directory at the name of a log is not a log, and is never read (it could block for ever)
+            out["unreadable"].append("not a regular file")
+            continue
+        handle = os.fdopen(fd, "rb")
         with handle:
             while True:
                 if out["cut"] or cut_now():
@@ -3211,6 +3342,7 @@ class Run:
         self.why = None
         self.left_behind = 0           # processes new in the tool's group since the program started, found when it had ended (or was ended), and killed
         self.group_note = None         # why the group could not be searched, or what could not be done
+        self.unchecked = []            # why the files of the run cannot be proved final (the tool could not be the parent of orphans, or the table was unreadable)
 
 
 def run_program(argv, seconds, cap, cwd, env, stdout_path, stderr_path, result):
@@ -3224,6 +3356,7 @@ def run_program(argv, seconds, cap, cwd, env, stdout_path, stderr_path, result):
     total = 0
     selector = None
     proc = None
+    become_subreaper()                     # before the program starts: every orphan it leaves comes to this tool
     if BEFORE["members"] is None:
         BEFORE["members"] = group_members()
     before = BEFORE["members"]
@@ -3301,8 +3434,8 @@ def run_program(argv, seconds, cap, cwd, env, stdout_path, stderr_path, result):
                     pass
             # whatever the program left in the group (a child that closed its descriptors and writes later, a double fork) is ended and waited for to be gone
             # BEFORE the caller reads a size, a hash or the log
-            swept = end_group_orphans(before)
-            result.left_behind, result.group_note = swept["ended"], swept["note"]
+            swept = sweep_left(before)
+            result.left_behind, result.group_note, result.unchecked = swept["ended"], swept["note"], swept["unchecked"]
         if selector is not None:
             selector.close()
         for fd in fds.values():
@@ -3507,10 +3640,10 @@ def run_triage(args):
             else:
                 log_deadline = min(max(st["run_deadline"] or now, now + LOG_FLOOR_SECONDS), started + LOG_END_SECONDS)
             if logs:
-                read = ma_read_log([str(out_dir / p) for p in logs], log_deadline)
+                read = ma_read_log([str(out_dir / p) for p in logs], log_deadline, MA_READ_MAX, lambda: pending_stop_signal() is not None)
                 result["log_source"] = "the log file mac_apt writes in its output folder"
             else:
-                read = ma_read_log([str(run_dir / "stdout.txt"), str(run_dir / "stderr.txt")], log_deadline)
+                read = ma_read_log([str(run_dir / "stdout.txt"), str(run_dir / "stderr.txt")], log_deadline, MA_READ_MAX, lambda: pending_stop_signal() is not None)
                 console = True
                 result["log_source"] = "the console output (stdout, then stderr): no Log.<time>.txt was found in the output folder, so the file the source names was not observed"
                 problems.append("no Log.<time>.txt was found in the output folder: the console output was read instead, and a run read that way is at best partial")
@@ -3588,8 +3721,10 @@ def run_triage(args):
             lead = []                  # the reasons for partial that the status basis names first
             if run.group_note:
                 notes.append(run.group_note)
+            for reason in run.unchecked:
+                lead.append(reason + ": the files of the run cannot be shown to be final")
             if run.left_behind and not (run.timed_out or run.capped):
-                lead.append("mac_apt left %d process(es) running in the tool's process group after it ended; they were killed and waited for before any size, hash or log was read, "
+                lead.append("mac_apt left %d process(es) running (in the tool's process group or, after setsid or setpgid, outside it) after it ended; they were killed and waited for before any size, hash or log was read, "
                             "so what they would still have written is missing from the files, and the files are what they held at that moment" % run.left_behind)
             if settle and settle["grew"]:
                 lead.append("%d file(s) under the run directory changed after mac_apt's group was empty: a process in a session of its own (setsid) is still writing, this tool cannot end it, "
@@ -3655,7 +3790,7 @@ def run_triage(args):
                 result["status"] = "complete"
                 result["status_basis"] = ("mac_apt exited 0, its log was recognised from the start line to the finish line, and each of the %d requested plugin(s) is parsed or empty by the log (parsed means no line of its run holds an error word, which rests on a log format never observed); "
                                           "that is the log's account, not a count of records, and the wording behind `empty` and `unsupported` was never observed. "
-                                          "No process was left in mac_apt's group and no file of the run grew after it ended (a process in a session of its own would be seen only by one of those two)" % len(plugin_rows))
+                                          "No process was left running after mac_apt ended (this tool is the parent of every orphan, looked for them and for new members of its group, and found none) and no file of the run grew after it" % len(plugin_rows))
     if st["storage"]:
         result["status"] = "failed"
         result["status_basis"] = "the output directory refused a write (a fact about that directory, not about the evidence): the account is not whole"
@@ -3707,7 +3842,7 @@ def main():
     if not isinstance(args, dict):
         fail("the arguments must be a JSON object")
     STOP["hooks"].append(kill_all)       # a stop signal ends the program and what it started first (the shared PROCESS block), then the tool answers
-    STOP["hooks"].append(lambda: BEFORE["members"] is not None and end_group_orphans(BEFORE["members"]))   # and what is new in the tool's group (an orphan is not below the tool)
+    STOP["hooks"].append(end_leftovers_on_stop)     # and what is new in the tool's group and every orphan that came to the tool (an orphan is not below the tool)
     run_triage(args)
 
 
