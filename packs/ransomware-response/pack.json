@@ -101,7 +101,7 @@
       "tools/encryption_extent/run.py": "7c1a6453c4e5a84c89035976e05298bf0a31a5cb418f81d407a570f1b17797c1",
       "tools/ransom_note_scan/manifest.json": "660fd4d540b7821f671643f674f86cced4d28fc869da5345822f8e1a2bf69d59",
       "tools/ransom_note_scan/run.py": "6a2b84451ef4a1c2ffe52dc82b726c2b76feec1313a73e333bf65f112e98afb2",
-      "tools/ransomware_family_match/manifest.json": "ab0c6b7eb970b8682b3ffc8f3121b4aa685a530def3d037fd15475a089c2f1af",
+      "tools/ransomware_family_match/manifest.json": "ab7902f28e43528bceab3acd293c7c19a211ff7232c90f3265f9a7b00da27ca8",
       "tools/ransomware_family_match/reference/entries.json": "ee08925d3011770c76c53debfae973cb64f074ddcba0cfb0ec5bb8f44f536d14",
       "tools/ransomware_family_match/reference/reference-manifest.json": "1ee2a09b159a47ca1d6eb56caa997b76ea982e25dbe036753a94bc605f4f3bc0",
       "tools/ransomware_family_match/reference/rules.yar": "678bc6c9076d580975bd4713112c133e9e14783d73e244023b0cd389b8d38909",
