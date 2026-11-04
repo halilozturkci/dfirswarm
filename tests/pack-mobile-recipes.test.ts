@@ -1900,3 +1900,186 @@ test("android-backup-apps passes over the map extension block of an old GNU spar
     assert.equal((cov.modules as unknown as { adb_backup: { tar_end: string } }).adb_backup.tar_end, "reached");
   });
 });
+
+// --- ios-ileapp over an unencrypted iOS backup directory (-t itunes) ----------------------------------------------------------------
+
+/** An iOS backup directory built from the format's own layout: Manifest.db (SQLite magic, or ciphertext), the three plists, one blob. */
+const BACKUPDIR = String.raw`
+import json, os, plistlib, sys
+path, spec = sys.argv[1], json.loads(sys.argv[2])
+os.makedirs(path)
+if spec.get("manifest_db", "plain") == "plain":
+    open(os.path.join(path, "Manifest.db"), "wb").write(b"SQLite format 3\0" + bytes(4080))
+else:
+    open(os.path.join(path, "Manifest.db"), "wb").write(bytes(range(256)) * 16)
+if spec.get("manifest_plist", "ok") == "ok":
+    plistlib.dump({"IsEncrypted": spec.get("encrypted", False), "Version": "10.0", "SystemDomainsVersion": "24.0"}, open(os.path.join(path, "Manifest.plist"), "wb"))
+elif spec["manifest_plist"] == "no_flag":
+    plistlib.dump({"Version": "10.0"}, open(os.path.join(path, "Manifest.plist"), "wb"))
+elif spec["manifest_plist"] == "garbage":
+    open(os.path.join(path, "Manifest.plist"), "wb").write(b"bplist00" + b"\xff" * 64)
+elif spec["manifest_plist"] == "huge":
+    open(os.path.join(path, "Manifest.plist"), "wb").write(b"<?xml version='1.0'?><plist><string>" + b"a" * (5 << 20) + b"</string></plist>")
+elif spec["manifest_plist"] == "link":
+    plistlib.dump({"IsEncrypted": False}, open(os.path.join(path, "..", "elsewhere.plist"), "wb"))
+    os.symlink(os.path.join(path, "..", "elsewhere.plist"), os.path.join(path, "Manifest.plist"))
+if spec.get("info", True):
+    plistlib.dump({"Device Name": "Test phone", "Product Version": "17.0"}, open(os.path.join(path, "Info.plist"), "wb"))
+if spec.get("status", "finished"):
+    plistlib.dump({"SnapshotState": spec.get("status", "finished"), "IsFullBackup": True}, open(os.path.join(path, "Status.plist"), "wb"))
+if spec.get("derivative"):
+    open(os.path.join(path, "derivative.json"), "w").write(json.dumps({"kind": "ios-backup-derivative"}))
+os.makedirs(os.path.join(path, "ab"))
+open(os.path.join(path, "ab", "ab" + "c" * 38), "wb").write(b"blob")
+`;
+
+test("ios-ileapp reads an unencrypted iOS backup directory with -t itunes, passes no password option and no terminal, and says which route it took", async () => {
+  await withCwd(async (cwd, bin) => {
+    // The stand-in sees the whole argv: write it verbatim, one word per line.
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "ileapp"), `#!/usr/bin/env bash
+printf '%s\\n' "$@" > "$PWD/argv-all.txt"
+readlink /proc/$$/fd/0 > "$PWD/stdin-is.txt" 2>/dev/null || echo unknown > "$PWD/stdin-is.txt"
+while [[ $# -gt 0 ]]; do case "$1" in -o) out="$2"; shift 2;; -t) kind="$2"; shift 2;; -i) src="$2"; shift 2;; *) shift;; esac; done
+${REPORT}
+${LOG.header(1)}
+${LOG.found(1, 1, "Messages", "messages", 2)}
+${LOG.end}
+`, "utf8");
+    await chmod(join(bin, "ileapp"), 0o755);
+    const backup = join(cwd, "work", "backup");
+    await build(BACKUPDIR, backup, JSON.stringify({}));
+    const detect = await recipe("ios-ileapp", ["detect", "--target", target(backup), "--probe-out", join(cwd, "probe")], cwd, {}, bin);
+    assert.equal(detect.code, 0, detect.stdout);
+    assert.match(detect.stdout, /iOS backup directory/);
+    const out = join(cwd, "out");
+    const result = await recipe("ios-ileapp", ["run", "--target", target(backup), "--out", out], cwd, {}, bin);
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    const cov = await coverage(out);
+    assert.equal(cov.status, "complete", JSON.stringify(cov));
+    assert.match(cov.covered, /unencrypted iOS backup directory \(-t itunes\)/);
+    const input = (cov as unknown as { input: { type: string; route: string; backup: { encryption: string; completion: string } } }).input;
+    assert.equal(input.type, "itunes");
+    assert.equal(input.backup.encryption, "not_encrypted");
+    assert.equal(input.backup.completion, "finished");
+    // The program ran once, from a directory under the output, with exactly -t itunes -i <backup> -o <scratch>, no other option, and a stdin that is /dev/null.
+    const argv = (await readFile(join(out, "ileapp-cwd", "argv-all.txt"), "utf8")).trimEnd().split("\n");
+    assert.equal(argv.length, 6, argv.join(" | "));
+    assert.deepEqual(argv.slice(0, 4), ["-t", "itunes", "-i", backup]);
+    assert.equal(argv[4], "-o");
+    assert.doesNotMatch(argv.join(" "), /password|itunes_password|--keychain/i);
+    assert.equal((await readFile(join(out, "ileapp-cwd", "stdin-is.txt"), "utf8")).trim(), "/dev/null");
+    // The backup itself is untouched.
+    assert.deepEqual((await readdir(backup)).sort(), ["Info.plist", "Manifest.db", "Manifest.plist", "Status.plist", "ab"]);
+    // A backup without Info.plist, or without a finished Status.plist, is partial: the run says what the backup does not show.
+    for (const [label, spec, pattern] of [
+      ["noinfo", { info: false }, /no readable Info\.plist/],
+      ["nostatus", { status: "" }, /no readable Status\.plist/],
+      ["running", { status: "running" }, /may not be whole \(Status\.plist SnapshotState is not finished\)/],
+    ] as const) {
+      const dir = join(cwd, "work", label);
+      await build(BACKUPDIR, dir, JSON.stringify(spec));
+      const o = join(cwd, `out-${label}`);
+      const r = await recipe("ios-ileapp", ["run", "--target", target(dir), "--out", o], cwd, {}, bin);
+      assert.equal(r.code, 0, r.stdout);
+      const c = await coverage(o);
+      assert.equal(c.status, "partial", label);
+      assert.ok(c.errors.some((e) => pattern.test(e)), `${label}: ${JSON.stringify(c.errors)}`);
+    }
+  });
+});
+
+test("ios-ileapp never starts iLEAPP on an encrypted backup, or one whose encryption it cannot establish, or on a derivative; hostile plists and links are not followed", async () => {
+  await withCwd(async (cwd, bin) => {
+    await standin(bin, "ileapp", `${REPORT}\necho started >> "$out/../started.txt"\n${LOG.header(1)}\n${LOG.found(1, 1, "Messages", "messages", 2)}\n${LOG.end}`);
+    const cases: [string, Record<string, unknown>, RegExp][] = [
+      ["encrypted", { encrypted: true }, /the backup is encrypted \(Manifest\.plist says IsEncrypted is true\)/],
+      ["cipher", { manifest_db: "cipher" }, /not established.*Manifest\.db is not a plain SQLite file/],
+      ["noflag", { manifest_plist: "no_flag" }, /not established.*no IsEncrypted key/],
+      ["garbage", { manifest_plist: "garbage" }, /not established.*Manifest\.plist is unreadable/],
+      ["huge", { manifest_plist: "huge" }, /not established.*Manifest\.plist is too_large/],
+      ["link", { manifest_plist: "link" }, /Manifest\.plist is link/],
+    ];
+    // A symbolic Manifest.plist is not a backup directory at all (detect says so), and run refuses it as JSON.
+    for (const [label, spec, pattern] of cases) {
+      const dir = join(cwd, "work", label);
+      await build(BACKUPDIR, dir, JSON.stringify(spec));
+      const out = join(cwd, `out-${label}`);
+      const r = await recipe("ios-ileapp", ["run", "--target", target(dir), "--out", out], cwd, {}, bin);
+      if (label === "link") {
+        assert.equal(r.code, 2, r.stdout);
+        assert.equal((JSON.parse(r.stdout) as { status: string }).status, "failed");
+        assert.equal(await exists(join(out, "coverage.json")), false);
+        continue;
+      }
+      assert.equal(r.code, 1, `${label}: ${r.stdout}`);
+      const ans = JSON.parse(r.stdout) as { ok: boolean; status: string; status_basis: string };
+      assert.equal(ans.status, "failed", label);
+      assert.match(ans.status_basis, pattern, label);
+      const c = await coverage(out);
+      assert.equal(c.status, "failed");
+      assert.equal(await exists(join(out, "ileapp.stdout")), false, `${label}: iLEAPP was started`);
+      assert.equal(await exists(join(cwd, `out-${label}`, "started.txt")), false);
+    }
+    // A derivative (its banner) is not a route: detect says no, run refuses before writing anything.
+    const derivative = join(cwd, "work", "derivative");
+    await build(BACKUPDIR, derivative, JSON.stringify({ derivative: true }));
+    const d = await recipe("ios-ileapp", ["detect", "--target", target(derivative), "--probe-out", join(cwd, "p")], cwd, {}, bin);
+    assert.equal(d.code, 1);
+    assert.match(d.stdout, /backup_materialise derivative/);
+    const dr = await recipe("ios-ileapp", ["run", "--target", target(derivative), "--out", join(cwd, "out-derivative")], cwd, {}, bin);
+    assert.equal(dr.code, 2);
+    assert.equal(await exists(join(cwd, "out-derivative")), false);
+    // A directory that is not a backup is not read.
+    await mkdir(join(cwd, "work", "empty"));
+    const e = await recipe("ios-ileapp", ["detect", "--target", target(join(cwd, "work", "empty")), "--probe-out", join(cwd, "p")], cwd, {}, bin);
+    assert.equal(e.code, 1);
+  });
+});
+
+test("ios-ileapp over a backup directory ends the program and its children at its limit and on a stop signal, and four runs at once do not disturb each other", async () => {
+  await withCwd(async (cwd, bin) => {
+    const stall = `${REPORT}\n${LOG.header(1)}\n${LOG.found(1, 1, "Messages", "messages", 2)}\n(sleep 600 & echo $! >> "$out/../pids.txt"; wait) &\necho $$ >> "$out/../pids.txt"\nsleep 600`;
+    await standin(bin, "ileapp", stall);
+    const backup = join(cwd, "work", "backup");
+    await build(BACKUPDIR, backup, JSON.stringify({}));
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+    // A stop signal: the tree is gone, one JSON line, exit 143, the account written before the program started says partial and says which route it was.
+    const out = join(cwd, "stopped");
+    await mkdir(out, { recursive: true });
+    const child = spawn("python3", [join(RECIPES, "ios-ileapp", "run.py"), "run", "--target", target(backup), "--out", out], { cwd, env });
+    const stdout: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => stdout.push(c));
+    const exit = new Promise<number | null>((resolve) => child.on("close", (code, signal) => resolve(code ?? (signal ? 128 + 99 : null))));
+    const guard = setTimeout(() => child.kill("SIGKILL"), 60000);
+    let pids: number[] = [];
+    try {
+      for (let i = 0; i < 300 && pids.length < 2; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        pids = await pidsIn(join(out, "pids.txt")).catch(() => []);
+      }
+      assert.ok(pids.length >= 2, "the program started");
+      child.kill("SIGTERM");
+      assert.equal(await exit, 143);
+      const last = JSON.parse(Buffer.concat(stdout).toString("utf8")) as { status: string };
+      assert.equal(last.status, "partial");
+      const cov = await coverage(out);
+      assert.equal(cov.status, "partial");
+      assert.equal((cov as unknown as { input: { type: string } }).input.type, "itunes");
+      await new Promise((r) => setTimeout(r, 300));
+      for (const pid of pids) assert.equal(alivePid(pid), false, `process ${pid} is still running after the stop`);
+    } finally {
+      clearTimeout(guard);
+      for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+    }
+    // Four runs at once, each with the 3-second limit: each ends within the limit and leaves its own partial account, and no process of any of them.
+    const started = Date.now();
+    const runs = await Promise.all([0, 1, 2, 3].map((i) => recipe("ios-ileapp", ["run", "--target", target(backup), "--out", join(cwd, `four-${i}`), "--max-seconds", "3"], cwd, {}, bin)));
+    assert.ok(Date.now() - started < 60000, `took ${Date.now() - started} ms`);
+    for (const [i, r] of runs.entries()) {
+      assert.equal(r.code, 1, r.stdout);
+      assert.equal((await coverage(join(cwd, `four-${i}`))).status, "partial");
+      for (const pid of await pidsIn(join(cwd, `four-${i}`, "pids.txt"))) assert.equal(alivePid(pid), false, `run ${i}: process ${pid} is still running`);
+    }
+  });
+});

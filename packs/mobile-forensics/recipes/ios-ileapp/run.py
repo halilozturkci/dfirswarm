@@ -50,7 +50,19 @@ coverage.json, it refuses and leaves them as they are. The exit status is the
 program's own (0 when it exited 0, 1 otherwise); the answer is the `status` in
 coverage.json, and `ok` in the printed line says only that the program exited 0.
 
-The input is a tar (plain, gzip, bzip2 or xz) or a zip, told apart by what the file
+The input is an iOS full file-system acquisition (below), or an UNENCRYPTED iOS backup directory (Manifest.db, Manifest.plist,
+and Info.plist and Status.plist when the backup has them). A backup directory is given to iLEAPP's `-t itunes` input type,
+whose backup reader maps the backup's hashed names back to the domain and path the phone knew them by; this recipe does not
+lay the backup out first. A backup is run only when its Manifest.plist says IsEncrypted is false and its Manifest.db is a
+plain SQLite file: an encrypted backup, or one whose state cannot be read, ends as failed before iLEAPP starts, because
+iLEAPP would ask for a password, and this recipe never passes `--itunes_password` (or any password option) and never gives
+iLEAPP a terminal to ask on. The receipt (coverage.json, key `input`) says which route was taken. A backup_materialise
+derivative (its derivative.json banner) is not given to `-t fs`: iLEAPP's own source for that type only requires a
+non-empty directory, and what its modules' search paths make of a backup's domain/path layout was not established, so the
+recipe refuses a derivative and says to give the backup itself. Which backups iLEAPP's `-t itunes` reader supports is
+decided by iLEAPP (its refusal is in the kept log and the run is then not complete).
+
+The archive input is a tar (plain, gzip, bzip2 or xz) or a zip, told apart by what the file
 is and not by what zipfile finds in it: a tar header whose checksum holds, or a
 compressed stream, is a tar even when its last member is a zip. A tar is scanned for
 the platform's marker header by header, apart from the library that lists it: an
@@ -58,12 +70,15 @@ extended header (a GNU long name, a pax header) that declares more than 16 MiB i
 not read, since the library would hold it whole in memory.
 """
 import argparse
+import errno
 import io
 import json
 import os
+import plistlib
 import re
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -1513,8 +1528,101 @@ def container_kind(path):
         return "tar"
 
 
+MAX_PLIST_BYTES = 4 << 20
+BACKUP_FILES = ("Manifest.db", "Manifest.plist", "Info.plist", "Status.plist")
+SQLITE_MAGIC = b"SQLite format 3\x00"
+
+
+def regular_state(path):
+    """'ok', 'missing', 'link', 'not_regular' or 'unreadable' (and the size): looked at without following a link."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return "missing", 0
+    except OSError:
+        return "unreadable", 0
+    if stat.S_ISLNK(info.st_mode):
+        return "link", 0
+    if not stat.S_ISREG(info.st_mode):
+        return "not_regular", 0
+    return "ok", info.st_size
+
+
+def read_head(path, limit):
+    """Up to `limit` bytes of a regular file, opened without following a link and without blocking; None when it cannot be read."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return None
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            return handle.read(limit)
+    except OSError:
+        return None
+
+
+def read_plist(path):
+    """(status, tree): a backup's plain plist, at most MAX_PLIST_BYTES, read without following a link."""
+    state, size = regular_state(path)
+    if state != "ok":
+        return state, None
+    if size > MAX_PLIST_BYTES:
+        return "too_large", None
+    data = read_head(path, MAX_PLIST_BYTES + 1)
+    if data is None:
+        return "unreadable", None
+    if len(data) > MAX_PLIST_BYTES:
+        return "too_large", None
+    try:
+        return "ok", plistlib.loads(data)
+    except Exception:  # noqa: BLE001  a parser fault on hostile input is that file's state, not a crash
+        return "unreadable", None
+
+
+def backup_state(path):
+    """What the backup directory says about itself, read without iLEAPP: which of its four files are there, whether it is encrypted
+    (Manifest.plist IsEncrypted, and the first bytes of Manifest.db) and whether it finished (Status.plist SnapshotState)."""
+    files = {name: regular_state(os.path.join(path, name))[0] for name in BACKUP_FILES}
+    m_status, manifest = read_plist(os.path.join(path, "Manifest.plist"))
+    flag = manifest.get("IsEncrypted", "absent") if m_status == "ok" and isinstance(manifest, dict) else "unreadable"
+    magic = read_head(os.path.join(path, "Manifest.db"), 16) if files["Manifest.db"] == "ok" else None
+    if flag is True:
+        encryption, why = "encrypted", "Manifest.plist says IsEncrypted is true"
+    elif flag is False and magic == SQLITE_MAGIC:
+        encryption, why = "not_encrypted", "Manifest.plist IsEncrypted is false and Manifest.db is a plain SQLite file"
+    elif flag is False:
+        encryption, why = "unknown", "Manifest.plist says IsEncrypted is false but Manifest.db is %s" % ("not a plain SQLite file" if magic is not None else "not readable")
+    else:
+        encryption = "unknown"
+        why = ("Manifest.plist is %s" % m_status) if m_status != "ok" else ("Manifest.plist has no IsEncrypted key" if flag == "absent" else "Manifest.plist IsEncrypted is not a boolean")
+    s_status, snapshot = read_plist(os.path.join(path, "Status.plist"))
+    if s_status == "ok" and isinstance(snapshot, dict) and isinstance(snapshot.get("SnapshotState"), str):
+        done = snapshot["SnapshotState"] == "finished"
+        completion = "finished" if done else "not_finished"
+        completion_why = "Status.plist SnapshotState is %s" % ("finished" if done else "not finished")
+    else:
+        completion = "unknown"
+        completion_why = ("Status.plist is %s" % s_status) if s_status != "ok" else "Status.plist has no SnapshotState string"
+    return {"files": files, "encryption": encryption, "encryption_basis": why, "completion": completion, "completion_basis": completion_why}
+
+
+def backup_directory(path):
+    """(is a backup directory, why): Manifest.db and Manifest.plist are the backup; Info.plist and Status.plist are named when missing."""
+    present = {name: regular_state(os.path.join(path, name))[0] for name in BACKUP_FILES}
+    if regular_state(os.path.join(path, "derivative.json"))[0] != "missing":
+        return False, ("a backup_materialise derivative (it holds derivative.json): this recipe reads an iOS backup directory with iLEAPP's own backup reader, "
+                       "and does not give a derivative to -t fs; give the backup itself")
+    if present["Manifest.db"] == "ok" and present["Manifest.plist"] == "ok":
+        missing = [n for n in ("Info.plist", "Status.plist") if present[n] != "ok"]
+        return True, "an iOS backup directory (Manifest.db and Manifest.plist)" + ("; missing " + " and ".join(missing) if missing else "")
+    return False, "a directory without Manifest.db and Manifest.plist as regular files: not an iOS backup directory"
+
+
 def detect(path):
-    """(applies, why, kind): kind is iLEAPP's input type, tar or zip."""
+    """(applies, why, kind): kind is iLEAPP's input type, tar, zip or itunes (an unencrypted backup directory)."""
+    if os.path.isdir(path):
+        found, why = backup_directory(path)
+        return found, why, ("itunes" if found is True else None)
     if not os.path.isfile(path):
         return "unknown", "not a readable file, so it cannot be told what it holds", None
     try:
@@ -1644,15 +1752,25 @@ def run(path, kind, out, seconds=LEAPP_SECONDS):
         print(json.dumps({"ok": False, "status": "failed", "status_basis": "the output directory already holds the files of an earlier run, and this recipe never writes over one: nothing was run", "why": "the output directory already holds ileapp/ or coverage.json: the recipe does not write over an earlier run"}))
         return 2
     os.makedirs(out, exist_ok=True)
+    path = os.path.abspath(path)
+    # What the input is, said in the receipt: an archive is handed to iLEAPP as it is; a backup directory goes to -t itunes, and only after
+    # it has been read here as unencrypted (iLEAPP would otherwise ask for a password, which this recipe never gives or passes).
+    bstate = backup_state(path) if kind == "itunes" else None
+    more = {"input": {"route": "-t itunes over an iOS backup directory, read by iLEAPP's own backup reader (no derivative)", "type": "itunes", "backup": bstate}} if bstate else {"input": {"route": "-t %s over the acquisition archive" % kind, "type": kind}}
     # Said before iLEAPP starts: a run stopped at its limit leaves this, and is read as partial.
     write_coverage(out, "partial", "started; iLEAPP did not finish (stopped before its end)", ["the run ended before iLEAPP did"],
-                   "the run started and iLEAPP had not finished when this was written: a run that is stopped before its end leaves this account")
+                   "the run started and iLEAPP had not finished when this was written: a run that is stopped before its end leaves this account", **more)
+    if bstate and bstate["encryption"] != "not_encrypted":
+        why = "the backup is encrypted" if bstate["encryption"] == "encrypted" else "the backup's encryption state is not established"
+        write_coverage(out, "failed", "nothing: %s, so iLEAPP was not started" % why,
+                       ["%s (%s): iLEAPP would ask for a password, and this recipe passes none; give a backup that is not encrypted" % (why, bstate["encryption_basis"])],
+                       "nothing was parsed: %s (%s), and iLEAPP was not started" % (why, bstate["encryption_basis"]), **more)
+        return 1
     prog = program()
     if not prog:
         write_coverage(out, "failed", "nothing: iLEAPP is not in this image", ["ileapp is not on PATH in this job image"],
-                       "iLEAPP is not in this image, so nothing was parsed")
+                       "iLEAPP is not in this image, so nothing was parsed", **more)
         return 1
-    path = os.path.abspath(path)
     scratch = os.path.join(out, "ileapp-run")
     # The run directory is read-only in a job: the program's working directory and its temporary files
     # are under the output, and every file it leaves there is kept and counted.
@@ -1716,6 +1834,12 @@ def run(path, kind, out, seconds=LEAPP_SECONDS):
     if timed_out:
         errors = ["iLEAPP did not finish in the %g seconds this recipe gives it: it was ended with everything it started, and what it wrote is kept whole in ileapp.stdout, ileapp.stderr and the report folder" % seconds]
     problems = []
+    if bstate:
+        if bstate["completion"] != "finished":
+            problems.append("the backup may not be whole (%s)" % bstate["completion_basis"])
+        for name in ("Info.plist", "Status.plist"):
+            if bstate["files"][name] != "ok":
+                problems.append("the backup has no readable %s (%s)" % (name, bstate["files"][name]))
     named = lambda status: [m["artefact"] for m in modules if m["status"] == status][:5]
     if counts["errored"]:
         problems.append("%d module(s) errored: %s%s; see modules.tsv and ileapp.stdout" % (counts["errored"], ", ".join(named("errored")), " and others" if counts["errored"] > 5 else ""))
@@ -1741,18 +1865,18 @@ def run(path, kind, out, seconds=LEAPP_SECONDS):
     gated = counts["unsupported"]
     if rc == 0 and tsvs and not problems and not timed_out:
         write_coverage(out, "complete", "iLEAPP exited 0 over the %s and its log accounts for %d module(s): %d completed, %d with no record (no source file or no data)%s; %d TSV report(s)"
-                       % (kind, len(modules), counts["completed"], counts["no_record"],
+                       % ("unencrypted iOS backup directory (-t itunes)" if bstate else kind, len(modules), counts["completed"], counts["no_record"],
                           ", %d that do not take this operating-system version (see modules.tsv)" % gated if gated else "", tsvs), errors,
                        "iLEAPP exited 0, wrote %d TSV report(s) and its log accounts for every module it started as completed, no_record or unsupported" % tsvs,
-                       modules=receipt_json)
+                       modules=receipt_json, **more)
     elif reports:
         write_coverage(out, "partial", "iLEAPP wrote %d report file(s); %d module(s) in its log: %d completed, %d no_record, %d unsupported, %d errored, %d errors_logged, %d unknown"
                        % (len(reports), len(modules), counts["completed"], counts["no_record"], gated, counts["errored"], counts["errors_logged"], counts["unknown"]),
                        (errors + problems) or ["iLEAPP wrote no TSV report"],
-                       basis_of("partial because ", (errors + problems) or ["iLEAPP wrote no TSV report"]), modules=receipt_json)
+                       basis_of("partial because ", (errors + problems) or ["iLEAPP wrote no TSV report"]), modules=receipt_json, **more)
     else:
         write_coverage(out, "failed", "nothing parsed", (errors + problems) or ["iLEAPP wrote no report"],
-                       basis_of("nothing was parsed: ", (errors + problems) or ["iLEAPP wrote no report"]), modules=receipt_json)
+                       basis_of("nothing was parsed: ", (errors + problems) or ["iLEAPP wrote no report"]), modules=receipt_json, **more)
     return 0 if rc == 0 and not timed_out else 1
 
 

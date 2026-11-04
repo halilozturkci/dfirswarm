@@ -162,7 +162,11 @@ read and said. `ios-filesystem` decodes a compressed tar within an output budget
 too (`--max-decompressed-bytes`). Neither writes over an earlier run's
 output.
 Two broad extractions, run by the kickoff: `ios-ileapp` hands a whole iOS full
-file-system acquisition (a tar or a zip) to iLEAPP and keeps every report it
+file-system acquisition (a tar or a zip) to iLEAPP, or an unencrypted iOS backup
+directory to iLEAPP's own backup reader (`-t itunes`; the backup is not laid out first,
+an encrypted backup or one whose `IsEncrypted` cannot be read is `failed` before iLEAPP
+starts, no password option is ever passed, a `backup_materialise` derivative is refused,
+and `coverage.json` names the route in `input`), and keeps every report it
 writes, a TSV per artefact with records, its timeline and the HTML, under
 `ileapp/`; `android-aleapp` does the same for an Android full file-system
 acquisition with ALEAPP. Each reads the program's own log for one outcome per
