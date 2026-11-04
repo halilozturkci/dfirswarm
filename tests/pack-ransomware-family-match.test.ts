@@ -494,3 +494,20 @@ test("a rerun with a smaller, different table keeps the earlier larger file and 
     assert.equal((await readFile(join(cwd, second), "utf8")).trimEnd().split("\n").length, 2);
   });
 });
+
+test("the Phobos entry cites the analyst page only for what it says, and the LockBit 3.0 variant is a weak single-source lead", async () => {
+  const doc = JSON.parse(await readFile(join(DIR, "reference", "entries.json"), "utf8")) as J;
+  const phobos = doc.entries.find((e: J) => e.id === "phobos").variants.find((v: J) => v.id === "phobos-core");
+  const by = (f: J): string => `${f.kind}:${f.value ?? f.pattern ?? f.rule}`;
+  const src = Object.fromEntries(phobos.features.map((f: J) => [by(f), f.sources.join()]));
+  assert.equal(src["extension:.phobos"], "S13");
+  assert.equal(src["note_name:info.hta"], "S13");
+  assert.equal(src["note_name:info.txt"], "S13");
+  assert.ok(Object.entries(src).filter(([, s]) => s.includes("S14")).every(([k]) => k.startsWith("extension:") && k.includes("[^")), "S14 is cited for the rename pattern only");
+  assert.equal(phobos.evidence_strength, "moderate");
+  assert.equal(phobos.features.find((f: J) => f.value === ".phobos").strength, "moderate");
+  const lock = doc.entries.find((e: J) => e.id === "lockbit").variants.find((v: J) => v.id === "lockbit-three");
+  assert.equal(lock.evidence_strength, "weak");
+  assert.ok(lock.features.every((f: J) => f.strength === "weak" && f.sources.join() === "S04"));
+  assert.match(lock.context[0].text, /single|one page/);
+});

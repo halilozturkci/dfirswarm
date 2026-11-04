@@ -35,3 +35,7 @@ Research Labs scripts for Black Basta. No executable, script or key ships or is 
 every run and a mismatch, a missing file or an unlisted file is refused; a stale entry makes the answer partial; the tool answers with
 networking unavailable. `identify/samples-and-decryptors` names it, and the README's "no public-decryptor catalogue" is now the dated
 snapshot statement. The census, paging-rerun and carrier lists name the tool.
+
+### Changed: ransomware-response corrects its reference snapshots and the `yara` note (RAN-13, RAN-14)
+
+The Phobos entry now cites the analyst page only for the rename pattern (which that page gives with placeholders) and the shadow-copy commands, and the `.phobos` extension and `info.hta` note rest on one page (moderate); the LockBit 3.0 variant is a single-source lead (weak); the Akira_v2, Rhysida and decryptor wording follows the cited pages more closely. `requires/host.json` no longer says that no rules ship with the pack: two note-text rules do.

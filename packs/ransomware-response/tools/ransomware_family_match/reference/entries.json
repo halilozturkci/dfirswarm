@@ -250,7 +250,7 @@
           ],
           "context": [
             {
-              "text": "Unit 42 assesses that the Akira_v2 samples were first designed to run on ESXi systems.",
+              "text": "Unit 42 assesses that the Linux and ESXi samples it describes, of which Akira_v2 is a later variant, were first designed to run on ESXi systems.",
               "sources": [
                 "S02"
               ]
@@ -270,7 +270,7 @@
       "name": "LockBit",
       "reviewed_on": "2026-11-04",
       "fresh_until": "2027-05-03",
-      "evidence_strength": "moderate",
+      "evidence_strength": "weak",
       "evidence_basis": "the lowest evidence strength of its variants; a variant's strength is that of its strongest feature that is neither generic nor shape-only",
       "variants": [
         {
@@ -316,13 +316,13 @@
           "id": "lockbit-three",
           "label": "LockBit 3.0, as one vendor names it",
           "valid_for": "SentinelOne, first published 2022-11-30 and updated 2025-09-17; no other retrieved page names this extension, so it is a single-source lead.",
-          "evidence_strength": "moderate",
+          "evidence_strength": "weak",
           "features": [
             {
               "kind": "extension",
               "match": "exact",
               "value": ".lockbit3",
-              "strength": "moderate",
+              "strength": "weak",
               "generic": false,
               "sources": [
                 "S04"
@@ -332,7 +332,7 @@
               "kind": "note_name",
               "match": "exact",
               "value": "restore-my-files.txt",
-              "strength": "moderate",
+              "strength": "weak",
               "generic": false,
               "sources": [
                 "S04"
@@ -340,6 +340,12 @@
             }
           ],
           "context": [
+            {
+              "text": "This variant rests on one page. The curator did not retrieve other vendors' reports, so a LockBit build whose extension or note name differs from these is not excluded by this entry, and a match here is a lead only.",
+              "sources": [
+                "S04"
+              ]
+            },
             {
               "text": "SentinelOne reports the note name above as the one dropped by LockBit 3.0.",
               "sources": [
@@ -497,7 +503,7 @@
           ],
           "context": [
             {
-              "text": "Both pages say the note is a PDF document; only Trend Micro gives its name.",
+              "text": "SentinelOne says the note is a PDF document without naming it; Trend Micro gives a file name that ends in .pdf.",
               "sources": [
                 "S11",
                 "S12"
@@ -518,28 +524,26 @@
         {
           "id": "phobos-core",
           "label": "Phobos with the id, mail address and .phobos suffix",
-          "valid_for": "PCrisk (updated 2024-11-19) and an analyst page (updated 2020-03-03) describe the suffix.",
-          "evidence_strength": "strong",
+          "valid_for": "PCrisk (updated 2024-11-19) names the .phobos extension and the two note files; an analyst page (updated 2020-03-03) gives the rename as a pattern with placeholders and lists the shadow-copy commands it saw.",
+          "evidence_strength": "moderate",
           "features": [
             {
               "kind": "extension",
               "match": "exact",
               "value": ".phobos",
-              "strength": "strong",
+              "strength": "moderate",
               "generic": false,
               "sources": [
-                "S13",
-                "S14"
+                "S13"
               ]
             },
             {
               "kind": "extension",
               "match": "regex",
               "pattern": "\\.id\\[[^\\]]{1,64}\\]\\.\\[[^\\]]{1,128}\\]\\.[a-z0-9]{1,16}",
-              "strength": "strong",
+              "strength": "moderate",
               "generic": false,
               "sources": [
-                "S13",
                 "S14"
               ]
             },
@@ -547,11 +551,10 @@
               "kind": "note_name",
               "match": "exact",
               "value": "info.hta",
-              "strength": "strong",
+              "strength": "moderate",
               "generic": false,
               "sources": [
-                "S13",
-                "S14"
+                "S13"
               ]
             },
             {
@@ -561,8 +564,7 @@
               "strength": "weak",
               "generic": true,
               "sources": [
-                "S13",
-                "S14"
+                "S13"
               ]
             },
             {

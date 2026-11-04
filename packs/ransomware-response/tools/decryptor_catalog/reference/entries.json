@@ -94,7 +94,7 @@
       "variants_stated": [
         "akira-original"
       ],
-      "applicability": "Stated for the Akira ransomware the post describes: the 64-bit and 32-bit Windows builds, and files encrypted by the Linux build when the Windows decryptor runs under WINE. The post says a native Linux decryptor was in development when it was written. It does not say whether builds reported after its date are covered.",
+      "applicability": "Stated for the Akira ransomware the post describes: a 64-bit Windows decryptor that matches the 64-bit ransomware, a 32-bit one for users who have no other option, and use of the Windows decryptor under WINE for files encrypted by the Linux build. The post says a native Linux decryptor was in development when it was written. It does not say whether builds reported after its date are covered.",
       "prerequisites": [
         {
           "kind": "original_and_encrypted_pair",
@@ -153,7 +153,7 @@
       ],
       "limitations": [
         "Results can depend on the drive letter set, the file order, the number of CPU cores, the bitness of the encryptor and the original file format.",
-        "Common formats (Office documents, archives, pictures, multimedia) are covered; files in less common or proprietary formats are not unless the publisher adds support.",
+        "Common formats (Office documents, archives, pictures, multimedia) are covered; for less common or proprietary formats the post invites you to contact the publisher to ask for support.",
         "Small text files (source code, INI, XML, HTML and similar) must be above a minimum size to be decrypted."
       ],
       "acquisition": {
