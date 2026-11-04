@@ -52,6 +52,9 @@ each fetched by install.py and refused unless its sha256 is the pinned one:
                      by apt, so its dependencies come from Debian; its `bin`,
                      when it has one, is where the package puts the program.
                      An architecture with no entry is recorded as not installed.
+                     A `.nupkg` (a NuGet package, which is a zip file) is
+                     unpacked whole by install.py's own rules (images/README.md),
+                     its `bin` the program's path inside it.
   install.source     one archive for every architecture (a tag's tarball),
                      unpacked under /opt/dfir/src/<name>, its `pip` arguments
                      run in a venv of its own there, its `entry` put on PATH.
@@ -105,7 +108,10 @@ to avoid taking an earlier build's gaps from the cache.
 
 `run` names the interpreter a download's or a source's program needs:
 `python` (the program's own venv, else the image's), or any program the image
-holds (`perl`, `dotnet`, which a pack may pin as a download of its own). An apt
+holds (`perl`, `dotnet`, which a pack may pin as a download of its own). A
+download's architecture entry may carry a `run` of its own, which wins over the
+download's (a program that is a native build on one architecture and a .NET
+assembly on the other); an empty one means the program runs by itself. An apt
 line with `-t <codename>-backports` comes from the image's Debian backports.
 
 A program marked `not_in_image` (with why) belongs to another system than the

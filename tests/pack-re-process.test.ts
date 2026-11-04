@@ -187,7 +187,7 @@ const NETWORK_PROCESS_SHA = "318081f44222ce78d9fc6da2b1e1727401eb1a00fbc2c1702f7
 const NETWORK_ZEEK = join(RE, "..", "network-forensics", "tools", "zeek_run", "run.py"); // the network pack's text is read, not pinned by a digest, so that a sweep of the block does not leave this test behind
 
 test("the tool and the recipes that start programs carry one process block, the network pack's text, and nothing in the pack starts a program in a session or a group of its own", async () => {
-  const files = [join(TOOLS, "fuzzy_hash", "run.py"), join(TOOLS, "unpack_safe", "run.py"), join(TOOLS, "authenticode_verify", "run.py"), DOC_STRUCTURE, RECIPE, CAPA_FLOSS];
+  const files = [join(TOOLS, "fuzzy_hash", "run.py"), join(TOOLS, "unpack_safe", "run.py"), join(TOOLS, "authenticode_verify", "run.py"), join(TOOLS, "clr_inspect", "run.py"), DOC_STRUCTURE, RECIPE, CAPA_FLOSS];
   const blocks = await Promise.all(files.map(processBlock));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   assert.equal(sha(blocks[0]!), NETWORK_PROCESS_SHA);

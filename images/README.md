@@ -231,8 +231,23 @@ anything is unpacked, installed or built.
   checked, so what it depends on comes from Debian: radare2 (upstream's
   package per architecture) and Zeek (the Zeek project's own `zeek-8.0-core`
   for Debian 12; `bin` names where the package puts it, `/opt/zeek/bin`).
+  A NuGet package (`.nupkg`, a zip file) is unpacked whole under
+  `/opt/dfir/tools/<name>/` after its sha256 is checked, by rules of its own:
+  only regular files and directories, every name under that directory (a
+  name that is absolute, has a drive letter, a backslash, a control character
+  or an empty, `.` or `..` component is refused), a link, a device or another
+  special file, an encrypted member, a method other than stored or deflate, a
+  name twice or a file where a directory is refused, nothing existing is
+  replaced or followed (`O_EXCL`, `O_NOFOLLOW`, no link on the way), at most
+  2,000 members, 256 MiB for a member and 512 MiB in all, and every file
+  0644 and every directory 0755 whatever the archive says (the wrapper makes
+  the program executable). A package that is refused leaves nothing behind but its archive, and
+  the program is recorded as not installed. ilspycmd comes this way (a
+  Native AOT build for amd64, the framework-dependent build on the .NET
+  runtime for arm64: see `run`).
 - `run` — the interpreter a program needs: `python`, or a program the image
-  holds. Eric Zimmerman's MFTECmd, EvtxECmd and RECmd are their `net` zips (built for .NET 10),
+  holds. A download's architecture entry may carry its own `run`, which wins
+  over the download's (an empty one: the program runs by itself). Eric Zimmerman's MFTECmd, EvtxECmd and RECmd are their `net` zips (built for .NET 10),
   one for every architecture, each run by `dotnet`, which the same pack pins
   as a download of its own (the .NET 10 runtime per architecture): a runtime
   is installed once, before what runs on it.

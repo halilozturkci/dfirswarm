@@ -55,7 +55,11 @@ of the network.
 
 A pinned download is fetched over HTTPS, checked against its sha256 before
 anything is unpacked, unpacked under /opt/dfir/tools/<name>/ and put on PATH
-by a wrapper in /usr/local/bin. An architecture with no entry is recorded,
+by a wrapper in /usr/local/bin. A NuGet package (.nupkg, a zip file) is
+unpacked whole by unpack_nupkg: regular files and directories only, nothing
+outside the directory, nothing replaced or followed, bounded in members and
+bytes, modes fixed at 0644 and 0755. A download's architecture entry may name
+its own `run` (the interpreter), which wins over the download's. An architecture with no entry is recorded,
 not guessed. A `.deb` is installed by apt from where it was checked, so its
 dependencies come from Debian. A pinned source is checked the same way,
 unpacked under /opt/dfir/src/<name>/ (its archive's one top directory
@@ -80,6 +84,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tarfile
@@ -507,6 +512,16 @@ def wrapper(name: str, program: Path, run_with: str | None = None, run_from_dir:
     return None
 
 
+def download_run(d: dict):
+    """The interpreter a pinned download's program runs on this architecture: the architecture's own `run` when its entry says one (a
+    program that is a native build on one architecture and a .NET assembly on the other), else the download's. None for a program that
+    runs by itself."""
+    entry = d.get(arch())
+    if isinstance(entry, dict) and "run" in entry:
+        return entry["run"] or None
+    return d.get("run")
+
+
 def fetch(d: dict, apt: list) -> tuple:
     """Install one pinned download. Returns (record, failure reason)."""
     entry = d.get(arch())
@@ -544,15 +559,128 @@ def fetch(d: dict, apt: list) -> tuple:
         program = dest / entry.get("bin", archive.name)
         if not program.is_file():
             return None, f"{entry.get('bin', archive.name)} is not in what was downloaded"
-    why = wrapper(d["name"], program, d.get("run"), bool(d.get("run_from_dir")))
+    why = wrapper(d["name"], program, download_run(d), bool(d.get("run_from_dir")))
     if why:
         return None, why
     return {"kind": "deb" if name.endswith(".deb") else "download", "version": d.get("version"),
             "url": entry["url"], "sha256": want}, None
 
 
+# A NuGet package (.nupkg) is a zip file. One is unpacked whole, by the rules
+# below, and never by the plain zip route: a package is a download from a
+# registry anyone can publish to, and the bytes are only as trusted as the pin
+# that named them (the sha256 is checked before this runs).
+NUPKG_MAX_FILES = 2000
+NUPKG_MAX_NAME = 512
+NUPKG_MAX_COMPONENT = 255
+NUPKG_MAX_FILE_BYTES = 256 << 20
+NUPKG_MAX_TOTAL_BYTES = 512 << 20
+NUPKG_METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+
+
+def nupkg_name(name: str) -> tuple:
+    """(relative path, whether it is a directory) for a package member's name, or ValueError. A name is refused if it is absolute or
+    has a drive letter, a backslash, a NUL or another control character, an empty, `.` or `..` component, or is longer than the bounds."""
+    shown = name.encode("ascii", "backslashreplace").decode()[:80]
+    if not name or len(name) > NUPKG_MAX_NAME:
+        raise ValueError(f"a member name of {len(name)} characters is refused")
+    if name.startswith("/") or re.match(r"^[A-Za-z]:", name):
+        raise ValueError(f"{shown} is an absolute name")
+    if "\\" in name or any(ord(c) < 0x20 or ord(c) == 0x7F for c in name):
+        raise ValueError(f"{shown} holds a backslash or a control character")
+    is_dir = name.endswith("/")
+    parts = name[:-1].split("/") if is_dir else name.split("/")
+    for part in parts:
+        if part in ("", ".", ".."):
+            raise ValueError(f"{shown} leaves the download's directory or has an empty component")
+        if len(part) > NUPKG_MAX_COMPONENT:
+            raise ValueError(f"{shown} has a component longer than {NUPKG_MAX_COMPONENT}")
+    return "/".join(parts), is_dir
+
+
+def nupkg_mkdirs(root: Path, rel: str, made: list) -> Path:
+    """Make the directories of rel under root one step at a time, each a real directory (never a link). Returns the last."""
+    here = root
+    for part in rel.split("/"):
+        here = here / part
+        try:
+            st = os.lstat(here)
+        except FileNotFoundError:
+            os.mkdir(here, 0o755)
+            made.append(("d", here))
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            raise ValueError(f"{rel} runs through something that is not a directory")
+    return here
+
+
+def unpack_nupkg(archive: Path, dest: Path) -> None:
+    """Unpack a NuGet package into dest: only regular files and directories, every one under dest, written with O_EXCL and O_NOFOLLOW
+    (nothing existing is replaced or followed), mode 0644 for a file and 0755 for a directory whatever the archive says (a program is
+    made executable by its wrapper). Refused whole, and what was made removed, for an encrypted member, a method other than stored or
+    deflate, a symbolic link, a device or another special file, a name twice, a file where a directory is, more than NUPKG_MAX_FILES members,
+    a member that declares more than NUPKG_MAX_FILE_BYTES, or members that together write more than NUPKG_MAX_TOTAL_BYTES (counted as they
+    are written: the zip reader stops a member at its declared size, so a header that understates a member cannot make it longer)."""
+    root = dest.resolve()
+    made: list = []
+    seen: set = set()
+    total = 0
+    try:
+        with zipfile.ZipFile(archive) as z:
+            infos = z.infolist()
+            if len(infos) > NUPKG_MAX_FILES:
+                raise ValueError(f"{len(infos)} members; at most {NUPKG_MAX_FILES} are taken")
+            for info in infos:
+                rel, is_dir = nupkg_name(info.filename)
+                if info.flag_bits & 0x1:
+                    raise ValueError(f"{rel} is encrypted")
+                if info.compress_type not in NUPKG_METHODS:
+                    raise ValueError(f"{rel} uses compression method {info.compress_type}; only stored and deflate are taken")
+                kind = stat.S_IFMT((info.external_attr >> 16) & 0xFFFF) if info.create_system == 3 else 0
+                if kind == stat.S_IFLNK:
+                    raise ValueError(f"{rel} is a symbolic link")
+                if kind not in (0, stat.S_IFREG, stat.S_IFDIR):
+                    raise ValueError(f"{rel} is a special file")
+                if kind != 0 and (kind == stat.S_IFDIR) != is_dir:
+                    raise ValueError(f"{rel} is a directory entry that is not named as one, or the reverse")
+                if rel in seen:
+                    raise ValueError(f"{rel} is in the package twice")
+                seen.add(rel)
+                if is_dir:
+                    nupkg_mkdirs(root, rel, made)
+                    continue
+                if info.file_size > NUPKG_MAX_FILE_BYTES:
+                    raise ValueError(f"{rel} declares {info.file_size} bytes; at most {NUPKG_MAX_FILE_BYTES} are taken")
+                parent, _, leaf = rel.rpartition("/")
+                directory = nupkg_mkdirs(root, parent, made) if parent else root
+                fd = os.open(directory / leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+                made.append(("f", directory / leaf))
+                written = 0
+                with os.fdopen(fd, "wb") as out, z.open(info) as src:
+                    while chunk := src.read(1 << 20):
+                        written += len(chunk)
+                        total += len(chunk)
+                        if written > NUPKG_MAX_FILE_BYTES or total > NUPKG_MAX_TOTAL_BYTES:
+                            raise ValueError(f"{rel} grows past the bounds ({NUPKG_MAX_FILE_BYTES} bytes a member, {NUPKG_MAX_TOTAL_BYTES} in all)")
+                        out.write(chunk)
+                    out.flush()
+                    os.fchmod(out.fileno(), 0o644)
+    except BaseException:
+        for kind, path in reversed(made):
+            try:
+                os.unlink(path) if kind == "f" else os.rmdir(path)
+            except OSError:
+                pass
+        raise
+    archive.unlink()
+
+
 def unpack(archive: Path, name: str, dest: Path, strip: bool = False, skip: list = ()) -> None:
-    if name.endswith(".zip"):
+    if name.endswith(".nupkg"):
+        if strip or skip:
+            raise ValueError("a .nupkg is unpacked whole: strip and skip are not taken")
+        unpack_nupkg(archive, dest)
+    elif name.endswith(".zip"):
         with zipfile.ZipFile(archive) as z:
             names = z.namelist()
             top = top_dir(names) if strip else ""
@@ -1772,7 +1900,7 @@ def main(spec_path: str) -> int:
 
     # A runtime first (dotnet, pinned as a download of its own), then what
     # runs on it.
-    for d in sorted(spec.get("downloads", []), key=lambda d: bool(d.get("run"))):
+    for d in sorted(spec.get("downloads", []), key=lambda d: bool(download_run(d))):
         if not settle("download", d, *fetch(d, apt)):
             return 1
     for d in sources:

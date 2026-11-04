@@ -382,7 +382,7 @@ test("the review's wording fixes are in the leaves and the goal, and the goal's 
   // The counts outside the pack follow the pack.
   for (const file of ["docs/packs.md", "README.md"]) {
     const doc = await readFile(join(RE, "..", "..", file), "utf8");
-    assert.match(doc, /^\| `reverse-engineering` \| 21 \| 12 \| 1 \|/m, `${file} counts 21 skills (the router is counted, as pack.json counts it), twelve tools and one goal template`);
+    assert.match(doc, /^\| `reverse-engineering` \| 21 \| 13 \| 1 \|/m, `${file} counts 21 skills (the router is counted, as pack.json counts it), thirteen tools and one goal template`);
   }
 });
 
@@ -411,7 +411,7 @@ test("the new leaves name no program this pack does not declare, and say a reade
     // Programs the pack does not declare: naming one would imply it is installed.
     assert.doesNotMatch(text, /\b(Ghidra|IDA Pro|x64dbg|OllyDbg|WinDbg|ILSpy|dnSpy|dotPeek|pyinstxtractor|uncompyle6?|decompyle3|pycdc|diec|Detect It Easy|PEiD|qpdf|pdfid|pdf-parser|osslsigncode|LIEF|angr|Unicorn|Qiling|Frida)\b/i, `${id} names a program the pack does not declare`);
   }
-  assert.match(skills.get("managed/clr")!.body, /none is declared/);
+  assert.match(skills.get("managed/clr")!.body, /`clr_inspect` with `decompile` \(a `secret_output` job\) writes an `ilspycmd` reconstruction file, never inline; never run for real yet/);   // the decompiler is declared now, and the leaf says it was never run for real
   assert.match(skills.get("runtimes/python-packaged")!.body, /No extractor or bytecode disassembler is declared/);
   assert.match(skills.get("code/static-inspection")!.body, /This pack declares none/);
   assert.match(skills.get("scripts/static-analysis")!.body, /No parse-only tooling is declared/);

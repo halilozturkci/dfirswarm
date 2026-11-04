@@ -92,7 +92,7 @@ When the evidence cannot answer something a reference service can (a domain's re
 | `mobile-forensics` | 18 | 7 | 1 |
 | `memory-forensics` | 28 | 8 | 1 |
 | `network-forensics` | 19 | 11 | 1 |
-| `reverse-engineering` | 21 | 12 | 1 |
+| `reverse-engineering` | 21 | 13 | 1 |
 | `encrypted-containers` | 18 | 9 | 1 |
 | `cloud-forensics` | 15 | 6 | 1 |
 | `ransomware-response` | 25 | 8 | 1 |

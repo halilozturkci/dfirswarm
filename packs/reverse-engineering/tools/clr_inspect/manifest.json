@@ -1,0 +1,52 @@
+{
+  "name": "clr_inspect",
+  "description": "Read a .NET assembly's CLR header and metadata root as structure, and, in a job run as secret output, write a labelled reconstruction of its C# to $OUT with `ilspycmd` (the ILSpy command line). Inline there is metadata only, as declared by the file: the PE format and machine; the CLR header (runtime version, flags and their names, the entry point as a token with its table and row or as a native RVA, whether a strong-name signature, resources, vtable fixups or a managed native header are declared); the metadata root (format version, version string, the streams with their offsets and sizes, at most 32 listed and the rest counted) and the row counts the table stream's header declares for ten tables (Module, TypeRef, TypeDef, Field, MethodDef, MemberRef, CustomAttribute, Assembly, AssemblyRef, ManifestResource). The rows, the heaps, the IL, the resources, strong-name validity and Authenticode are not read (pe_directories reads the tables with `clr_tables`); a count is what the header declares, not what the rows hold. A PE with no CLR header is `unsupported` (a native file, or a single-file bundle, which is not read). With `decompile` true the tool runs `ilspycmd --disable-updatecheck FILE` with a fixed environment (no proxy, no caller variables, an empty home), its standard output in a file of its own under $OUT/tool-output (named clr-inspect.reconstruction.cs, never replacing a file) and its error text in clr-inspect.log; the C# is never printed, and the log is never printed. SENSITIVE: a reconstruction holds the assembly's string literals, names and resources, so `decompile` is refused as JSON, before anything is read or created, outside a job run as secret output (run the job with secret_output: true); the files are mode 0600. The file begins with three comment lines that say it is a reconstruction by a decompiler, an interpretation of the IL and not the author's source, with the program's version line and the SHA-256 of the assembly; the program's output follows unchanged, so the file's SHA-256 covers both. `complete` with decompile means the program exited 0 and its output, within the budget, is the file named; it does not mean the C# is faithful, compiles, or is the author's source. A nonzero exit status is `partial` (the program reports with it that parts of the assembly could not be decompiled, and the file may also end where it stopped), a time limit or the output budget (`max_output_bytes`) ends the program and what it started and removes the partial file (`partial`, nothing is kept), and a file that changed while the program read it is `failed`. The program's words are never parsed: only its exit status, its version line (`ilspycmd --version`, recorded as printed) and the size, line count and SHA-256 of the files it wrote are used. IMPORTANT: no .NET runtime was available while this tool was written, so `ilspycmd` was never run for real here; the tests use stand-ins for it, and the options used are those of the package's own documentation (11.2.0.10050). The tool makes no network request itself and starts the program with its update check disabled; whether the program makes any other request was not measured. Decompiling reads the file as data; a decompiler parses hostile input, so run it where the pack's quarantine applies. Every string out of the file (a version string, a stream name) passes the shared sanitiser and then the backstop before it is printed, by shape only: a token, a key id, user-info or a value given to a password or token name is withheld, a string of another shape is printed; one longer than 2,048 characters is given by its length. Withholding is by shape; a secret of another shape is printed; a file whose secrets matter is read in a `secret_output` job. Requires ilspycmd only for `decompile` (declared optional; the metadata mode needs no program). A stop signal (SIGTERM, SIGINT or SIGHUP) ends the program and what it started, removes the files of the call that are not yet the answer's, and answers with one JSON document (status `failed`, `interrupted` true), exit 128 plus the signal, from the moment the module has run as far as its handlers, which are installed at module level; a second signal does nothing while the first is answered.",
+  "use": {
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "4d5a"
+      }
+    ],
+    "extensions": [
+      ".exe",
+      ".dll",
+      ".winmd",
+      ".netmodule"
+    ]
+  },
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The .NET assembly (a regular file of at most 1 GiB; read, never changed; a link, a pipe or a device is refused)"
+    },
+    "decompile": {
+      "type": "boolean",
+      "description": "Write a labelled C# reconstruction with ilspycmd to a file under $OUT/tool-output (default false: metadata only). Refused outside a job; run the job with secret_output: true"
+    },
+    "max_output_bytes": {
+      "type": "integer",
+      "description": "Budget of the reconstruction file with decompile, from 1048576 to 1073741824 (default 134217728); past it the program is ended and the partial file removed"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "Time for the whole call, from 5 to 120 (default 90); a program not finished by then is ended and the answer is partial"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "requires": [
+    "ilspycmd"
+  ],
+  "secret_output": {
+    "when_args": [
+      "decompile"
+    ]
+  },
+  "timeout_seconds": 180,
+  "example": "{\"path\": \"work/extracted/sample.dll\"}",
+  "by": "maintainer",
+  "at": "2026-11-04T12:00:00.000Z",
+  "version": 1,
+  "sha256": "18616f4476ba5faba490c5dd243ef581d9f93bf189e69d9e38b8aba65fa61cb4"
+}
