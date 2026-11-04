@@ -193,7 +193,7 @@ test("the rules the split keeps: observation against verdict, bounded negatives,
   has("persistence/login-items-quieter", /A registration is not execution/);
   has("persistence/login-items-quieter", /do not read an Accessibility permission as root or SYSTEM, or a TCC row's modified time as the time of a grant/);
   has("persistence/login-items-quieter", /\(`security\/tcc`\)/);
-  has("persistence/login-items-quieter", /a bookmark or alias by length only/);
+  has("persistence/login-items-quieter", /a bookmark or alias by length and its magic/);
 });
 
 // The six leaves of the second macOS skills batch: one rule each, stated as the rule and not as one wording of it.

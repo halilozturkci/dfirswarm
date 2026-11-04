@@ -11,7 +11,7 @@ Use when a question rests on recent-item lists, shared file lists, bookmarks or 
 
 **Sources.** The sources are different formats with different limits:
 - SharedFileList archives (`.sfl`, `.sfl2` and later, under the user's `Library/Application Support/com.apple.sharedfilelist/`): NSKeyedArchiver graphs of recent documents, applications, servers and favourites. `plist_read` shows their structure; it does not resolve the references.
-- Bookmarks and aliases inside them or in preferences: binary data. `plist_read` shows no binary value, so the path inside is not read; a decoder for them must be named, version-checked and validated before its output is cited. `macos_login_items` resolves background-item archives only, and shows a bookmark by length alone.
+- Bookmarks and aliases inside them or in preferences: binary data. `plist_read` shows no binary value, so the path inside is not read; a decoder for them must be named, version-checked and validated before its output is cited. `macos_login_items` resolves background-item archives only, and shows a bookmark by length and its magic.
 - Application MRUs: each application keeps its own list in its preferences property list, under keys it names itself. There is no standard key; read the schema from the file.
 - Browser history: Safari's `History.db` with `safari_history` (visits, Apple absolute times). Other browsers are other stores.
 

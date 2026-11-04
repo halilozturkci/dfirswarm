@@ -11,7 +11,7 @@ Use when `mac_apt.py` is to parse a macOS acquisition, or a run of it must be ju
 
 **Is it here.** `mac_apt.py` is installed in the amd64 worker image only. On arm64 `macos_triage` answers `failed` with the packaging reason and the `macos-artefacts` recipe's detect exits 1: that says nothing about the subject. Check the tool inventory first. The tool runs `mac_apt.py -h` and reports the version it found; cite that version. `mac_apt.py -h` prints its input modes and plugin names.
 
-**Input mode.** Give `input_type` as the acquisition is: a folder for MOUNTED, a file for AFF4, AXIOMZIP, DD, DMG, E01, SPARSE, UAC, VMDK or VR. A mismatch, and a link, are refused before the program starts. A FileVault password goes only as `password_file`, a sealed 0600 file; there is no password argument.
+**Input mode.** Give `input_type` as the acquisition is: a folder for MOUNTED, a file for AFF4, AXIOMZIP, DD, DMG, E01, SPARSE, UAC, VMDK or VR. A mismatch, and a link, are refused before the program starts for MOUNTED, E01, SPARSE, VMDK, DMG, UAC, VR, AFF4 and AXIOMZIP; for DD the tool has no such check. A FileVault password goes only as `password_file`, a sealed 0600 file; there is no password argument.
 
 **Plugins.** Name them (upper case; a trailing `-` excludes one). FAST and ALL expand to plugins nothing here lists, so such a run is at most `partial`. Presence shows neither support for the subject's macOS build nor that a plugin finished; its log does. Keep each plugin's log.
 
