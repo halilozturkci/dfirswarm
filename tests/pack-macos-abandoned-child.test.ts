@@ -181,7 +181,7 @@ test("macos_triage: the finish hint on the console is not an error word", async 
   });
 });
 
-test("macos_triage: a log read is charged to the tool's clock: a 250 MB log with max_seconds 1 is cut, partial, and the call ends in about the floor, not in minutes", async () => {
+test("macos_triage: a log read is charged to the tool's clock: a 250 MB log with max_seconds 1 is cut, partial, and the call ends in about the floor, not in minutes", { timeout: 180_000 }, async () => {
   await withCwd(async (cwd, bin) => {
     await mkdir(join(cwd, "out"), { recursive: true });
     await stand(bin, `
@@ -201,7 +201,7 @@ finish()
     assert.match(a.status_basis, /log was not fully read/);
     assert.ok(r.ms < 60_000, `${r.ms} ms`);
   });
-}, { timeout: 180_000 });
+});
 
 // ---- the abandoned child in the recipe --------------------------------------------------------------------------------------------------------
 
