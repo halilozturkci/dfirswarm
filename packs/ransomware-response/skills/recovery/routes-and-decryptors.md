@@ -24,13 +24,9 @@ and for a signature type, what the header and footer markers delimit: a candidat
 a recovered file. Check its completeness and structure and keep its source offset.
 Encryption in place does not exclude an older copy elsewhere.
 
-**Public decryptors.** Use only a tool the operator supplied whose provenance was
-checked and whose documented support matches the variant. Keep its version, hash,
-source and instructions. Test on disposable copies of representative files, large
-files and the relevant formats included, never over an original. Compare what comes
-back with trusted originals where they exist, and check structure and application
-behaviour: a success message is not enough. Never run a decryptor that came from the
-evidence. `recovery_validate` checks what came back, run separately: it hashes the
+**Public decryptors.** Looking one up, obtaining it, testing it on copies and keeping its provenance: `recovery/public-decryptors`.
+
+**Checking an output.** `recovery_validate` checks what came back, run separately: it hashes the
 output, tests the structure of its format, compares with known originals and the
 ciphertext, and names the unrecovered ranges. Its verdict is one of
 `matches_known_original`, `structurally_valid`, `unrecovered`, `inconclusive`; a
@@ -42,6 +38,6 @@ command, a report or the ledger; cite the sealed output by reference. A tool tha
 take its key only on its command line puts it in the recorded trace: say so in the
 report, so that the trace can be redacted before it is shared.
 
-**Does not show.** Three entropy windows do not locate every modified region or show recoverability; a carved file does not show a recovery; a success message does not show that a decryptor restored the files; failing one route does not show permanent loss.
+**Does not show.** Three entropy windows do not locate every modified region or show recoverability; a carved file does not show a recovery; failing one route does not show permanent loss.
 
-Record: the carve's source offset and the checks of completeness and structure; the decryptor's version, hash, source and instructions; which files were tested and what came back against trusted originals.
+Record: the carve's source offset and the checks of completeness and structure; for a decryptor's output, the verdict of each checked file.

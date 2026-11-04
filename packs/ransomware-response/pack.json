@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.13.1",
+  "version": "1.13.2",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -60,11 +60,11 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "8587c87254afc37fd47d1eddd0486d4e51333d4d29e75bcc97c450d60c9eb5d1",
+      "README.md": "3e51912c6dae38d6e754c3ead49cff5e9b8dc68d590f2ee564ea2e7b632b06e2",
       "goals/ransomware-case.md": "bb889a729a06a1633e49284a99cf333aab899c57cbe5f0d8748e43ec02b78d62",
       "requires/host.json": "4bf84d221f19635921ee5714bc80b0a400df0f6eb684add9e29f15f81406f4b5",
       "requires/python.txt": "5a396319de276d1ea51953493ef8e4f2dd0d7cb87c67aac6fbd0e63c096d63b6",
-      "skills/INDEX.md": "510b2e3a47245ab9cb464e2b9db4e919e0db7fa6cca404dc025fa6c20dc8eb83",
+      "skills/INDEX.md": "f9eaecd341ce2c6a705aeb5aaca33ab59bf2708293c260f279a3efa7fe93b915",
       "skills/encryptor/backup-infrastructure.md": "6dfb17662545572071fae08dc192839c5f1fe44e22b5146711086a2bde280bb6",
       "skills/encryptor/destroyed-backups.md": "88741458b5d852e5093371e52ac3d6a443e711dbe1499c580997ccb7772f5793",
       "skills/encryptor/samples-and-notes.md": "822286221a6148fea68ffd24ae7bf85afc463905796462ef44ea44c6f32b1443",
@@ -73,14 +73,15 @@
       "skills/exfil/before-encryption.md": "6c42dbf8bcc6c9c2bb4b2d37861754facfb9af82c883d95ca804b4cf0c652f9f",
       "skills/exfil/measure-and-claims.md": "7c8bf8ed8f82fa0b64f5c450045abcb0ba614c1ed620a706a5040c9a5e238118",
       "skills/identify/family.md": "39eb3c5c83497b2f380738eb870441e26dc58348ab80695eac1eaa0ea2a05812",
-      "skills/identify/samples-and-decryptors.md": "c0c9b7513db989ad549a42093e4436831178a22ba8ec3c01e41b08b89af0dec4",
+      "skills/identify/samples-and-decryptors.md": "f17af7b21a4ef3dd3e4d880efe617449a564b23465f2d1fd3370e8645a2b175e",
       "skills/impact/services-and-data.md": "ed62c87cb2a654dea8f718d003d239efb577df6e95eecdc73aae93a1532aa346",
       "skills/intrusion/entry-and-spread.md": "137e49cb9f8a015f051fc78ab82016c8dee266118b2d4ee12de65b0d1aa42d91",
       "skills/platforms/esxi-hypervisors.md": "ba44fbd5339956c1da9004f1e2878f89f4bee8549618ba2813769b51376baf11",
       "skills/platforms/nas-storage.md": "48229ad42fa98748cc1ca13dadde9d9927852b659aa739ba45417df37a909a85",
-      "skills/ransomware/router.md": "e0595d66f7ddc9df0d92d6b79a2fc315485a23b502217dfb2fd2396fa6d5757a",
+      "skills/ransomware/router.md": "cb04326305c5cc1bac46b9c4dbed33f279a052dd063b4a3544002148da1395db",
       "skills/recovery/preserve-and-restore.md": "8aeb94f76d1abd9828d1d16210ce401e8faf26387f1affa505b7230f62c5077b",
-      "skills/recovery/routes-and-decryptors.md": "3405ad7b9e4357b17c55dc04d0791473869490875f45e37df05063bf081b86d1",
+      "skills/recovery/public-decryptors.md": "0a6b22fa2575a255cf909d35652247775da8472d9b0afcb8a95f6020c837215c",
+      "skills/recovery/routes-and-decryptors.md": "ff299b07e45425f3c36a0bf7ced808309768eb690340f21e7fbfdab0d89600e4",
       "skills/recovery/what-is-possible.md": "b7481ded7186f0948f32a870ede9364f500b410735615ca7f2e3905f53d6a017",
       "skills/reporting/conclusions-and-controls.md": "68a4989d2a8ec7605cab51d0b7107613aa5b5abf9753cfb5f9660be0d79d09b7",
       "skills/reporting/for-regulators.md": "695c9b585403e0551fcb9d857d2e150682f249d50e2ef9c9720b87dbf718cae7",
@@ -122,5 +123,5 @@
     "ransomware_scope_report",
     "recovery_validate"
   ],
-  "skills": 24
+  "skills": 25
 }

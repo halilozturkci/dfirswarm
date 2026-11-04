@@ -19,6 +19,7 @@ Router: `ransomware/router`
 - `platforms/nas-storage` Network storage, shares and replication: A NAS appliance, its shares, snapshots or replication were encrypted or altered.
 - `ransomware/router` Ransomware notes by question: Pick one when none is listed, or you cannot choose.
 - `recovery/preserve-and-restore` The minimum preservation package before a rebuild: A rebuild, repair, decryption or reconnection is about to change a source.
+- `recovery/public-decryptors` Public decryptors: catalogue lookup, test on copies: A family or variant may have a public decryptor to obtain and test.
 - `recovery/routes-and-decryptors` Partial damage, deleted originals, decryptors: Files are partly encrypted, originals may be deleted, or a decryptor is to be tested.
 - `recovery/what-is-possible` Assessing and validating recovery without destroying evidence: The organisation needs a defensible recovery position and restoration plan.
 - `reporting/conclusions-and-controls` Conclusions by phase, and control findings: Writing conclusions by phase, a negative exfiltration finding or insurance findings.

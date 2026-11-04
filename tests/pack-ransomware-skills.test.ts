@@ -67,7 +67,7 @@ const SECOND: Record<string, string> = {
 // A second-level leaf made by a later split (it is in SECOND below, and pointed to by its parent in the text).
 const SECOND_ADDED = ["scope/triage-tools-names"];
 // Leaves added after the split pass: each one is a leaf of its own, named once by the router and listed in the index.
-const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage", "intrusion/entry-and-spread", "recovery/preserve-and-restore", "impact/services-and-data"];
+const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage", "intrusion/entry-and-spread", "recovery/preserve-and-restore", "impact/services-and-data", "recovery/public-decryptors"];
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
@@ -172,7 +172,7 @@ test("the secret rules: a Sensitive output line wherever a tool that reaches not
   assert.match(rep, /Never write a credential's value or its hash/);
   assert.match(rep, /Write where it was, its type and length, what it\s+grants and the rotation it needs/);
   assert.match(rep, /no contact\s+with the adversary, no payment, no negotiation and no external submission/);
-  assert.match(skills.get("recovery/routes-and-decryptors")!.body, /Never run a decryptor that came from the\s+evidence/);
+  assert.match(skills.get("recovery/public-decryptors")!.body, /Never run a decryptor that came from the evidence/);
   assert.match(skills.get("recovery/what-is-possible")!.body, /name the routes tried/);
 });
 
@@ -204,6 +204,8 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["tools/encrypted_survey/run.py", "scope/triage-tools", ["noncandidate", "unmeasured", "read_failed", "candidate_file_fraction", "status", "status_basis", "max_seconds", "sample", "coverage", "tail_bytes"]],
   ["tools/encrypted_survey/run.py", "identify/family", ["shared_tail_suffix", "tail_bytes"]],
   ["tools/ransom_note_scan/run.py", "scope/triage-tools", ["content_resembles_note", "filename_only", "write_values", "ransom-note-values.jsonl"]],
+  ["tools/decryptor_catalog/run.py", "recovery/public-decryptors", ["have", "lack", "no_entry_in_snapshot", "variant_status", "prerequisites_status", "all_met", "not_met", "unknown", "limitations", "acquisition", "obtained_and_verified", "fresh_until", "partial"]],
+  ["tools/recovery_validate/run.py", "recovery/public-decryptors", ["provenance"]],
 ];
 
 test("the tool fields a skill names are fields the tools write", async () => {
@@ -471,4 +473,81 @@ test("the two method leaves for entry and for preservation are named once, condi
   const p = flat(skills.get("recovery/preserve-and-restore")!.body);
   for (const part of ["minimum package", "Emergency exceptions", "evidence the exception loses", "in isolation", "Identity before reconnection", "Clean-build decisions", "Acceptance"]) assert.ok(p.includes(part), `preserve-and-restore covers ${part}`);
   assert.deepEqual(pack.depends.map((d) => d.split(/[<>=]/)[0]), ["computer-forensics-base"]);
+});
+
+test("recovery/public-decryptors names both tools, every field it names is one they have, and the two leaves that discussed decryptors route to it and keep what they did not move", async () => {
+  const skills = await load(SKILLS);
+  const leaf = skills.get("recovery/public-decryptors");
+  assert.ok(leaf, "the leaf exists");
+  const text = flat(leaf.body).trim();
+  assert.match(text, /^Use when .* Not for /);
+  assert.deepEqual(leaf.meta.tools, ["decryptor_catalog", "recovery_validate"]);
+  assert.deepEqual(leaf.meta.needs, []);
+  assert.ok(TOKENS(leaf.text) <= 800, `${TOKENS(leaf.text).toFixed(0)} tokens`);
+  for (const head of ["Shows.", "Does not show.", "Record:", "Sensitive output:"]) assert.ok(text.includes(head), head);
+  // Every `snake_case` word the leaf puts in code is a tool name or a parameter or field one of the two tools has.
+  const catalog = await readFile(join(PACK, "tools", "decryptor_catalog", "run.py"), "utf8");
+  const validate = await readFile(join(PACK, "tools", "recovery_validate", "run.py"), "utf8");
+  const manifest = JSON.parse(await readFile(join(PACK, "tools", "decryptor_catalog", "manifest.json"), "utf8")) as { params: Record<string, unknown> };
+  for (const p of ["hypotheses", "have", "lack", "obtained_and_verified"]) assert.ok(p in manifest.params, `decryptor_catalog takes ${p}`);
+  for (const m of leaf.body.matchAll(/`([a-z][a-z_]*)`/g)) {
+    const word = m[1];
+    if (["decryptor_catalog", "recovery_validate"].includes(word)) continue;
+    assert.ok(catalog.includes(`"${word}"`) || validate.includes(`"${word}"`), `${word} is named by the leaf and is a field of neither tool`);
+  }
+  // the claims: a dated snapshot and never a current list; no entry is not "no decryptor exists"; the flag is the caller's; terms are the publisher's
+  assert.match(text, /dated; it fetches, uploads and runs nothing and is not a current list/);
+  assert.match(text, /`no_entry_in_snapshot` is not "no decryptor exists"/);
+  assert.match(text, /`obtained_and_verified` is yours: the tool copies what you give it and never sets it true/);
+  assert.match(text, /The tool's terms are its publisher's/);
+  assert.match(text, /Reach catalogues through the case's authorised process/);
+  assert.match(text, /Browsing a catalogue is not uploading a note or an encrypted sample to an identification service/);
+  assert.match(text, /Never run a decryptor that came from the evidence\./);
+  assert.match(text, /Keep the output of a failed run beside the others/);
+  assert.match(text, /public decryptor availability not verified as of this date/);
+  // "operator" is the authorised human, and appears once
+  assert.equal((leaf.text.match(/operator/gi) ?? []).length, 1);
+  assert.match(leaf.text, /a tool the operator supplied/);
+  // the routing: each of the two leaves points to it, and the router and the index name it once
+  const routes = skills.get("recovery/routes-and-decryptors")!;
+  const samples = skills.get("identify/samples-and-decryptors")!;
+  assert.match(flat(routes.body), /`recovery\/public-decryptors`/);
+  assert.match(flat(samples.body), /`recovery\/public-decryptors`/);
+  assert.deepEqual(routes.meta.tools, ["file_carver", "recovery_validate"]);
+  assert.deepEqual(samples.meta.tools, ["ransom_note_scan", "ransomware_family_match"]);
+  assert.equal(skills.get(ROUTER)!.body.split("`recovery/public-decryptors`").length - 1, 1, "the router names it once");
+  assert.equal((await readFile(join(SKILLS, "INDEX.md"), "utf8")).split("`recovery/public-decryptors`").length - 1, 1, "the index names it once");
+  const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { method_only: Array<{ path: string }> };
+  assert.ok(!pack.method_only.some((m) => m.path === "skills/recovery/public-decryptors.md"), "it names tools of the pack, so it is not method only");
+  // the register: each sentence moved out of the two leaves is in the new one and no longer in the old ones
+  const MOVED: Array<[string, string]> = [
+    ["recovery/routes-and-decryptors", "Use only a tool the operator supplied whose provenance was checked and whose documented support matches the variant."],
+    ["recovery/routes-and-decryptors", "Test on disposable copies of representative files, large files and the relevant formats included, never over an original."],
+    ["recovery/routes-and-decryptors", "Compare what comes back with trusted originals where they exist, and check structure and application behaviour: a success message is not enough."],
+    ["recovery/routes-and-decryptors", "Never run a decryptor that came from the evidence."],
+    ["recovery/routes-and-decryptors", "a success message does not show that a decryptor restored the files"],
+    ["recovery/routes-and-decryptors", "which files were tested and what came back against trusted originals"],
+    ["identify/samples-and-decryptors", "Ask for dated material from the original law-enforcement or vendor publisher and from public catalogues such as No More Ransom."],
+    ["identify/samples-and-decryptors", "Browsing a catalogue is not uploading a note or an encrypted sample to an identification service: do not upload evidence or victim identifiers without explicit case authority."],
+    ["identify/samples-and-decryptors", "Identification needs no payment and no contact with the adversary."],
+    ["identify/samples-and-decryptors", "for a candidate decryptor record the publisher, exact version,"],
+    ["identify/samples-and-decryptors", "the integrity and authenticity checks, the instructions, the variants it supports, the key it needs and its known limits"],
+    ["identify/samples-and-decryptors", "a matching family name does not show a decryptor's compatibility"],
+    ["identify/samples-and-decryptors", "failing to reach current references does not show that no decryptor exists"],
+    ["identify/samples-and-decryptors", "If current references cannot be reached, write \"public decryptor availability not verified as of this date\", not \"no decryptor exists\"."],
+  ];
+  for (const [from, sentence] of MOVED) {
+    assert.ok(text.toLowerCase().includes(sentence.toLowerCase()), `moved from ${from}, missing from the new leaf: ${sentence}`);
+    assert.ok(!flat(skills.get(from)!.body).toLowerCase().includes(sentence.toLowerCase()), `${from} still says it: ${sentence}`);
+  }
+  // kept where it was: the checks of an output are recovery_validate's, and a sample's static examination is the identify leaf's
+  const r = flat(routes.body);
+  assert.match(r, /`recovery_validate` checks what came back, run separately/);
+  for (const w of ["matches_known_original", "structurally_valid", "unrecovered", "inconclusive"]) assert.ok(r.includes(`\`${w}\``), w);
+  assert.match(flat(samples.body), /Do not execute recovered code/);
+  // no sentence of five words or more is in the new leaf and in a leaf beside it
+  const sentences = (t: string): string[] =>
+    norm(t.replace(/^---[\s\S]*?---/, "").replace(/\*\*[^*]+\*\*/g, " ")).split(/(?<=[.:;])\s+/).map((x) => x.trim()).filter((x) => x.split(" ").length >= 5);
+  const neighbours = ["recovery/routes-and-decryptors", "identify/samples-and-decryptors", "identify/family", "recovery/what-is-possible"].flatMap((id) => sentences(skills.get(id)!.text));
+  for (const sentence of sentences(leaf.text)) assert.ok(!neighbours.includes(sentence), `repeated in a neighbouring leaf: ${sentence}`);
 });
