@@ -394,7 +394,7 @@ test("aws/s3-access keeps attempted, successful, exposed and transferred apart, 
   assert.match(body, /A transfer needs a successful answer with bytes: compare `bytes_sent` with `object_size`/);
   assert.match(body, /the record does not show what the requester did with it/);
   assert.match(body, /A ranged GET answers part of an object, so a 2xx is not the whole object/);
-  assert.match(body, /count distinct `event_id`/);
+  assert.match(body, /Count distinct `event_id`/);
   assert.match(body, /never from a default/);
   assert.match(body, /`provider` `aws_s3`/);
   assert.match(body, /`format` `s3log`/);

@@ -15,7 +15,7 @@ Use when you hold S3 server access logs, CloudTrail data events, object or versi
 
 **Attempted, successful, exposed and transferred are four claims.** `action` and `request_uri` name the request; `http_status` and `error_code` say how it was answered, and `outcome_basis` says why `outcome` is what it is. Public exposure is a separate claim, from the policy, ACL and public-access settings in force at the request, taken from the history; `authentication_type` and `principal` (`-` is null) say how a request was authenticated, not who was behind it. A transfer needs a successful answer with bytes: compare `bytes_sent` with `object_size` per request (`bytes_sent_note` explains a `-`). Even then the record does not show what the requester did with it.
 
-**Range, repeated and delayed.** A ranged GET answers part of an object, so a 2xx is not the whole object. Keep repeated requests, and count distinct `event_id` (the request id) when exports overlap. `time_raw` is the request time; a log object is delivered later, so a file's last line does not end the activity.
+**Range, repeated and delayed.** A ranged GET answers part of an object, so a 2xx is not the whole object. Count distinct `event_id` (the request id) when exports overlap. `time_raw` is the request time; a log is delivered after its requests (`logs/what-exists`), so a file's last line does not end the activity.
 
 **History of the configuration.** Changes to logging, policy and ACLs are read from CloudTrail records of those calls (`notable` flags them) or from supplied snapshots, which are state at their collection time. Whether logging or data events were on at the request comes from the history, never from a default.
 
