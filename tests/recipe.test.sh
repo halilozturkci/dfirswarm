@@ -1353,4 +1353,106 @@ python3 "$R" build re --out "$TMP/re-ctx" --allow-nonredistributable >/dev/null 
 jq -e '.apt | has("yara")' "$TMP/re-ctx/spec.json" >/dev/null || fail "yara is not in the re profile's spec"
 pass "yara is pinned by the image's apt snapshot, said in its entry, and no apt entry claims to be unpinned"
 
+# --- every pip line of the pinned packs is == with a hash lock ------------------
+# OD-10: a pip requirement is pinned with == and installed with hashes. For the
+# packs below (the others are still to be done by their own packages) every
+# `python3 -m pip install` line is ==, names a pip_lock that exists, is a hash
+# lock (images/install.py lock_problem) and holds each word's version; every
+# python.txt line is == and held by the pack's python.lock at that version; a
+# pinned source's pip_lock is a hash lock too. Across the sets that share the
+# image's venv (python.lock, a program's pip_lock, library-python.lock) one package
+# is at one version, since the later install would otherwise replace the earlier.
+python3 - "$ROOT" <<'PYEOF' || fail "a pip line of a pinned pack is not == with a hash lock, or two locks of one venv disagree"
+import importlib.util, json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("install", root / "images" / "install.py")
+inst = importlib.util.module_from_spec(spec); spec.loader.exec_module(inst)
+# pack -> the programs checked (None: all). reverse-engineering: only the two pip programs its pins cover; capa's brew line is that pack's own.
+PINNED = {"computer-forensics-base": None, "linux-forensics": None, "reverse-engineering": {"floss", "olevba"}}
+PIP = re.compile(r"^python3 -m pip install (.+)$")
+def norm(n): return re.sub(r"[-_.]+", "-", n).lower()
+def held(lock_text):
+    out = {}
+    for m in re.finditer(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==([^\s\;]+)", lock_text, flags=re.M):
+        out[norm(m.group(1))] = m.group(2)
+    return out
+bad, shared = [], []   # shared: (where, {name: version}) of every lock that installs into the image's venv
+def check_lock(where, rel, base):
+    path = base / rel
+    if not path.is_file():
+        bad.append(f"{where}: lock {rel} does not exist"); return None
+    text = path.read_text(encoding="utf-8")
+    why = inst.lock_problem(text)
+    if why:
+        bad.append(f"{where}: {rel} is not a hash lock: {why}"); return None
+    return held(text)
+for pack, only in PINNED.items():
+    pdir = root / "packs" / pack / "requires"
+    for b in json.loads((pdir / "host.json").read_text(encoding="utf-8")).get("binaries", []):
+        inst_ = b.get("install") or {}
+        if only is not None and b["name"] not in only:
+            continue
+        for route in ("brew", "apt"):
+            m = PIP.match(inst_.get(route, ""))
+            if not m:
+                continue
+            where = f"{pack}/{b['name']} ({route})"
+            words = m.group(1).split()
+            lock = check_lock(where, inst_.get("pip_lock", ""), pdir.parent) if inst_.get("pip_lock") else None
+            if lock is None and not inst_.get("pip_lock"):
+                bad.append(f"{where}: pip install without a pip_lock"); continue
+            for w in words:
+                n, eq, v = w.partition("==")
+                if not eq:
+                    bad.append(f"{where}: {w} is not pinned with ==")
+                elif lock is not None and lock.get(norm(n)) != v:
+                    bad.append(f"{where}: the lock does not hold {w}")
+            if lock is not None and route == "apt":
+                shared.append((where, lock))
+        src = inst_.get("source")
+        if isinstance(src, dict) and src.get("pip_lock"):
+            check_lock(f"{pack}/{b['name']} (source)", src["pip_lock"], pdir.parent)
+    txt, lockf = pdir / "python.txt", pdir / "python.lock"
+    wants = [l.split("#")[0].strip() for l in txt.read_text(encoding="utf-8").splitlines() if l.split("#")[0].strip()] if txt.exists() else []
+    if wants:
+        lock = check_lock(f"{pack} python.txt", "python.lock", pdir)
+        for w in wants:
+            n, eq, v = w.partition("==")
+            if not eq:
+                bad.append(f"{pack} python.txt: {w} is not pinned with ==")
+            elif lock is not None and lock.get(norm(n)) != v:
+                bad.append(f"{pack} python.lock does not hold {w}")
+        if lock is not None:
+            shared.append((f"{pack} python.lock", lock))
+# the tool library's list: == and held by the lock the base Dockerfile installs with hashes
+lib = [l.split("#")[0].strip() for l in (root / "images" / "library-python.txt").read_text(encoding="utf-8").splitlines() if l.split("#")[0].strip()]
+libl = check_lock("images/library-python.lock", "library-python.lock", root / "images")
+for w in lib:
+    n, eq, v = w.partition("==")
+    if not eq:
+        bad.append(f"images/library-python.txt: {w} is not pinned with ==")
+    elif libl is not None and libl.get(norm(n)) != v:
+        bad.append(f"images/library-python.lock does not hold {w}")
+if libl is not None:
+    shared.append(("images/library-python.lock", libl))
+dock = (root / "images" / "base.Dockerfile").read_text(encoding="utf-8")
+if not re.search(r"pip install [^\n]*--require-hashes -r /tmp/dfirswarm-build/library-python\.lock", dock) or "COPY library-python.txt library-python.lock " not in dock:
+    bad.append("images/base.Dockerfile does not install library-python.lock with --require-hashes")
+seen = {}
+for where, lock in shared:
+    for n, v in lock.items():
+        if n in seen and seen[n][1] != v:
+            bad.append(f"{n} is {seen[n][1]} in {seen[n][0]} and {v} in {where}: one venv, one version")
+        seen.setdefault(n, (where, v))
+if bad:
+    print("\n".join(bad), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+python3 "$R" build core --out "$TMP/core-pins" --allow-nonredistributable >/dev/null 2>&1 || fail "the core profile did not build a context"
+jq -e '[.pip_locks[].program] | (index("log2timeline") and index("psort") and index("pinfo") and index("target-query"))' "$TMP/core-pins/spec.json" >/dev/null \
+  || fail "plaso and dissect are not installed from hash locks in core: $(jq -c '[.pip_locks[].program]' "$TMP/core-pins/spec.json")"
+jq -e '.python_locks | map(select(.pack == "computer-forensics-base")) | length == 1' "$TMP/core-pins/spec.json" >/dev/null || fail "the base pack's python.lock (Pillow) is not in core's spec"
+jq -e '.sources[] | select(.name == "ccl_indexeddb_dump") | .pip_lock.sha256 | test("^[0-9a-f]{64}$")' "$TMP/core-pins/spec.json" >/dev/null || fail "the ccl venv's lock is not in core's spec with its sha256"
+pass "every pip line of the base, linux and reverse-engineering packs and the tool library is == with a hash lock that holds it; the locks of one venv agree; core's spec installs plaso, dissect, Pillow and the ccl venv from locks"
+
 echo "recipe: all checks passed"

@@ -1,3 +1,4 @@
 # The base pack's tools use only the standard library. What follows is for the
-# agents' own scripts, in every image that holds this pack:
-Pillow>=10.0           # MIT-CMU. A photo or a screenshot opened in a script: its pixels, bit planes and EXIF, and a re-saved copy to compare.
+# agents' own scripts, in every image that holds this pack. The image installs it from
+# requires/python.lock (the sha256 of each file PyPI publishes); the line here is the note:
+Pillow==12.3.0         # MIT-CMU. A photo or a screenshot opened in a script: its pixels, bit planes and EXIF, and a re-saved copy to compare.
