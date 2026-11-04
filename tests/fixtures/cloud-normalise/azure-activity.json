@@ -1,0 +1,234 @@
+{
+  "value": [
+    {
+      "eventDataId": "ev-0001",
+      "correlationId": "corr-0001",
+      "eventTimestamp": "2026-02-14T09:00:01.1234567Z",
+      "submissionTimestamp": "2026-02-14T09:00:11Z",
+      "operationName": {
+        "value": "Microsoft.Authorization/roleAssignments/write",
+        "localizedValue": "Create role assignment"
+      },
+      "status": {
+        "value": "Started",
+        "localizedValue": "Started"
+      },
+      "subStatus": {
+        "value": "",
+        "localizedValue": ""
+      },
+      "caller": "admin@example.org",
+      "claims": {
+        "aud": "https://management.core.windows.net/",
+        "iss": "https://sts.windows.net/00000000-0000-4000-8000-0000000000bb/",
+        "name": "Admin Example",
+        "ipaddr": "198.51.100.20",
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "admin@example.org"
+      },
+      "authorization": {
+        "action": "Microsoft.Authorization/roleAssignments/write",
+        "scope": "/subscriptions/00000000-0000-4000-8000-0000000000aa/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample"
+      },
+      "resourceId": "/subscriptions/00000000-0000-4000-8000-0000000000aa/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample",
+      "level": "Informational",
+      "category": {
+        "value": "Administrative",
+        "localizedValue": "Administrative"
+      },
+      "properties": {
+        "statusCode": "Created",
+        "serviceRequestId": "svc-1"
+      },
+      "httpRequest": {
+        "clientRequestId": "cr-1",
+        "clientIpAddress": "198.51.100.20",
+        "method": "PUT",
+        "uri": "https://management.example.invalid/x"
+      }
+    },
+    {
+      "eventDataId": "ev-0002",
+      "correlationId": "corr-0001",
+      "eventTimestamp": "2026-02-14T09:00:02.1234567Z",
+      "submissionTimestamp": "2026-02-14T09:00:12Z",
+      "operationName": {
+        "value": "Microsoft.Authorization/roleAssignments/write",
+        "localizedValue": "Create role assignment"
+      },
+      "status": {
+        "value": "Succeeded",
+        "localizedValue": "Succeeded"
+      },
+      "subStatus": {
+        "value": "Created",
+        "localizedValue": "Created"
+      },
+      "caller": "admin@example.org",
+      "claims": {
+        "aud": "https://management.core.windows.net/",
+        "iss": "https://sts.windows.net/00000000-0000-4000-8000-0000000000bb/",
+        "name": "Admin Example",
+        "ipaddr": "198.51.100.20",
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "admin@example.org"
+      },
+      "authorization": {
+        "action": "Microsoft.Authorization/roleAssignments/write",
+        "scope": "/subscriptions/00000000-0000-4000-8000-0000000000aa/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample"
+      },
+      "resourceId": "/subscriptions/00000000-0000-4000-8000-0000000000aa/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample",
+      "level": "Informational",
+      "category": {
+        "value": "Administrative",
+        "localizedValue": "Administrative"
+      },
+      "properties": {
+        "statusCode": "Created",
+        "serviceRequestId": "svc-2"
+      },
+      "httpRequest": {
+        "clientRequestId": "cr-2",
+        "clientIpAddress": "198.51.100.20",
+        "method": "PUT",
+        "uri": "https://management.example.invalid/x"
+      }
+    },
+    {
+      "eventDataId": "ev-0003",
+      "correlationId": "corr-0002",
+      "eventTimestamp": "2026-02-14T09:00:03.1234567Z",
+      "submissionTimestamp": "2026-02-14T09:00:13Z",
+      "operationName": {
+        "value": "Microsoft.Authorization/roleAssignments/write",
+        "localizedValue": "Create role assignment"
+      },
+      "status": {
+        "value": "Failed",
+        "localizedValue": "Failed"
+      },
+      "subStatus": {
+        "value": "Forbidden",
+        "localizedValue": "Forbidden"
+      },
+      "caller": "intruder@example.org",
+      "claims": {
+        "aud": "https://management.core.windows.net/",
+        "iss": "https://sts.windows.net/00000000-0000-4000-8000-0000000000bb/",
+        "name": "Admin Example",
+        "ipaddr": "198.51.100.20",
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "admin@example.org"
+      },
+      "authorization": {
+        "action": "Microsoft.Authorization/roleAssignments/write",
+        "scope": "/subscriptions/00000000-0000-4000-8000-0000000000aa/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample"
+      },
+      "resourceId": "/subscriptions/00000000-0000-4000-8000-0000000000aa/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample",
+      "level": "Informational",
+      "category": {
+        "value": "Administrative",
+        "localizedValue": "Administrative"
+      },
+      "properties": {
+        "statusCode": "Created",
+        "serviceRequestId": "svc-3"
+      },
+      "httpRequest": {
+        "clientRequestId": "cr-3",
+        "clientIpAddress": "198.51.100.20",
+        "method": "PUT",
+        "uri": "https://management.example.invalid/x"
+      }
+    },
+    {
+      "eventDataId": "ev-0004",
+      "correlationId": "corr-0003",
+      "eventTimestamp": "2026-02-14T09:00:04.1234567Z",
+      "submissionTimestamp": "2026-02-14T09:00:14Z",
+      "operationName": {
+        "value": "Microsoft.Authorization/roleAssignments/write",
+        "localizedValue": "Create role assignment"
+      },
+      "subStatus": {
+        "value": "",
+        "localizedValue": ""
+      },
+      "caller": "admin@example.org",
+      "claims": {
+        "aud": "https://management.core.windows.net/",
+        "iss": "https://sts.windows.net/00000000-0000-4000-8000-0000000000bb/",
+        "name": "Admin Example",
+        "ipaddr": "198.51.100.20",
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "admin@example.org"
+      },
+      "authorization": {
+        "action": "Microsoft.Authorization/roleAssignments/write",
+        "scope": "/subscriptions/00000000-0000-4000-8000-0000000000aa/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample"
+      },
+      "resourceId": "/subscriptions/00000000-0000-4000-8000-0000000000aa/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample",
+      "level": "Informational",
+      "category": {
+        "value": "Administrative",
+        "localizedValue": "Administrative"
+      },
+      "properties": {
+        "statusCode": "Created",
+        "serviceRequestId": "svc-4"
+      },
+      "httpRequest": {
+        "clientRequestId": "cr-4",
+        "clientIpAddress": "198.51.100.20",
+        "method": "PUT",
+        "uri": "https://management.example.invalid/x"
+      }
+    },
+    {
+      "eventDataId": "ev-0005",
+      "correlationId": "corr-0004",
+      "eventTimestamp": "2026-02-14T09:00:05.1234567Z",
+      "submissionTimestamp": "2026-02-14T09:00:15Z",
+      "operationName": {
+        "value": "Microsoft.Authorization/roleAssignments/write",
+        "localizedValue": "Create role assignment"
+      },
+      "status": {
+        "value": "Accepted",
+        "localizedValue": "Accepted"
+      },
+      "subStatus": {
+        "value": "Accepted",
+        "localizedValue": "Accepted"
+      },
+      "caller": "admin@example.org",
+      "claims": {
+        "aud": "https://management.core.windows.net/",
+        "iss": "https://sts.windows.net/00000000-0000-4000-8000-0000000000bb/",
+        "name": "Admin Example",
+        "ipaddr": "198.51.100.20",
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "admin@example.org"
+      },
+      "authorization": {
+        "action": "Microsoft.Authorization/roleAssignments/write",
+        "scope": "/subscriptions/00000000-0000-4000-8000-0000000000aa/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample"
+      },
+      "resourceId": "/subscriptions/00000000-0000-4000-8000-0000000000aa/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample",
+      "level": "Informational",
+      "category": {
+        "value": "Administrative",
+        "localizedValue": "Administrative"
+      },
+      "properties": {
+        "statusCode": "Created",
+        "serviceRequestId": "svc-5"
+      },
+      "httpRequest": {
+        "clientRequestId": "cr-5",
+        "clientIpAddress": "198.51.100.20",
+        "method": "PUT",
+        "uri": "https://management.example.invalid/x"
+      }
+    },
+    {
+      "unrelated": "record",
+      "eventDataId": "not-azure"
+    }
+  ]
+}

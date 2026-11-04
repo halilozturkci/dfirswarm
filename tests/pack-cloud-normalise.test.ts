@@ -510,7 +510,7 @@ test("the clock is one: a run that reaches time_limit_seconds is partial, says s
 test("a directory walk skips links, special files and archives with a named reason, and keeps the run partial", async () => {
   await withDir(async (cwd) => {
     await fixtures(cwd, ["k8s-audit.jsonl"]);
-    await put(cwd, "work/ev/notes.txt", "x");
+    await put(cwd, "work/ev/notes.md", "x");
     await put(cwd, "work/ev/old.zip", Buffer.from("PK\x03\x04rest"));
     const out = body(await tool(NORM, cwd, { path: "work/ev" }));
     assert.equal(out.status, "partial");
@@ -563,4 +563,441 @@ test("the tool is a new carrier of the shared blocks and its version, PARSER lab
   assert.equal(typeof manifest.version, "number");
   assert.equal((await stat(NORM)).mode & 0o111, 0o111, "run.py is executable");
   void ROOT;
+});
+
+// ---- PKG-CLD-10: the Azure Activity log, the S3 server access log and the VPC Flow Log ----------------------------------------------------------
+// Fixtures: tests/fixtures/cloud-normalise/{azure-activity.json,azure-activity.csv,s3-access.txt,vpc-flow-*.txt}, authored from the field lists
+// SOURCES.json cites (the AWS pages were read on 2026-11-04; the Azure pages were not read).
+
+const AZ_SUB = "00000000-0000-4000-8000-0000000000aa";
+
+async function rejects(cwd: string, dir = DIR): Promise<Json[]> {
+  return rows(cwd, "rejected.jsonl", dir);
+}
+
+test("the Azure adapter keeps a start and its completion as two rows of one correlation id, reads the scope whole, and names what a status says and does not say", async () => {
+  await withDir(async (cwd) => {
+    await fixtures(cwd, ["azure-activity.json"]);
+    const out = body(await tool(NORM, cwd, { path: "work/ev/azure-activity.json" }));
+    assert.equal(out.status, "partial", "one record of the envelope is not an Activity log record");
+    assert.equal(out.coverage.rows, 5);
+    assert.equal(out.coverage.records_unsupported, 1);
+    const r = await rows(cwd, "normalised.partial.jsonl");
+    assert.deepEqual(r.map((x) => [x.event_id, x.lifecycle ?? null, x.outcome]), [["ev-0001", "Started", "unknown"], ["ev-0002", "Succeeded", "success"], ["ev-0003", "Failed", "failure"], ["ev-0004", null, "unknown"], ["ev-0005", "Accepted", "unknown"]]);
+    assert.equal(r[0].correlation_id, r[1].correlation_id, "the pair shares a correlation id");
+    assert.equal(r[0].duplicate_of_an_earlier_record, undefined, "the start and the completion are not duplicates");
+    assert.match(r[0].outcome_basis, /start or an intermediate state is not an outcome/);
+    assert.equal(r[0].provider, "azure");
+    assert.equal(r[0].adapter, "azure_activity_log");
+    assert.equal(r[0].tenant, AZ_SUB);
+    assert.equal(r[0].principal, "admin@example.org");
+    assert.equal(r[2].principal, "intruder@example.org");
+    assert.equal(r[0].action, "Microsoft.Authorization/roleAssignments/write");
+    assert.equal(r[0].authorization_scope, `/subscriptions/${AZ_SUB}/resourceGroups/rg-example/providers/Microsoft.Storage/storageAccounts/stexample`, "the scope id is intact");
+    assert.equal(r[0].resource, r[0].authorization_scope);
+    assert.equal(r[0].claims.ipaddr, "198.51.100.20", "the claims are kept whole");
+    assert.equal(Object.keys(r[0].claims).length, 5);
+    assert.equal(r[0].source_ip, "198.51.100.20");
+    assert.equal(r[0].time_utc, "2026-02-14T09:00:01.1234567Z");
+    assert.equal(r[0].submission_time_utc, "2026-02-14T09:00:11Z");
+    assert.equal(r[0].raw_record.authorization_object.scope, r[0].authorization_scope, "the whole record is kept, the authorization object under a name the name layer leaves alone");
+    const rej = await rejects(cwd);
+    assert.equal(rej.length, 1);
+    assert.equal(rej[0].raw_record.eventDataId, "not-azure");
+  });
+});
+
+test("an Azure export as CSV is read when its header carries the field names: quoted fields with commas, quotes and line breaks, and JSON cells", async () => {
+  await withDir(async (cwd) => {
+    await fixtures(cwd, ["azure-activity.csv"]);
+    const out = body(await tool(NORM, cwd, { path: "work/ev/azure-activity.csv" }));
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.equal(out.sources[0].format, "csv");
+    const r = await rows(cwd);
+    assert.equal(r.length, 4);
+    assert.deepEqual(r.map((x) => x.outcome), ["unknown", "success", "failure", "success"]);
+    assert.equal(r[3].principal, 'o"brien, pat@example.org');
+    assert.equal(r[3].action, "Create role assignment,\nsecond line");
+    assert.equal(r[3].lifecycle, "Succeeded");
+    assert.equal(r[0].claims.name, "Admin Example", "a JSON cell is the structure it holds");
+    assert.equal(r[1].authorization_scope, r[0].authorization_scope);
+  });
+});
+
+test("the S3 adapter reads the 27 documented fields, reads - as null, counts unknown trailing fields, and counts a quoted field that holds a quote", async () => {
+  await withDir(async (cwd) => {
+    await fixtures(cwd, ["s3-access.txt"]);
+    const out = body(await tool(NORM, cwd, { path: "work/ev/s3-access.txt" }));
+    assert.equal(out.status, "partial", "one line is not an S3 record");
+    assert.equal(out.coverage.rows, 5);
+    assert.equal(out.coverage.records_malformed, 1);
+    assert.deepEqual(out.coverage.adapter_counts, { unknown_trailing_fields: 3, quoted_fields_with_inner_quotes: 2 });
+    const r = await rows(cwd, "normalised.partial.jsonl");
+    const [a, b, c, d, e] = r;
+    assert.equal(a.adapter, "aws_s3_access_log");
+    assert.equal(a.fields_present, 27);
+    assert.equal(a.tenant.length, 64);
+    assert.equal(a.principal, "arn:aws:sts::111122223333:assumed-role/analyst/session-1");
+    assert.equal(a.event_id, "REQ0001EXAMPLE");
+    assert.equal(a.resource, "example-logs-bucket/reports/q1.csv");
+    assert.equal(a.http_status, 200);
+    assert.equal(a.bytes_sent, 5120);
+    assert.equal(a.object_size, 5120);
+    assert.equal(a.total_time_ms, 31);
+    assert.equal(a.turn_around_time_ms, 12);
+    assert.equal(a.tls_version, "TLSv1.3");
+    assert.equal(a.source_region, "eu-west-1");
+    assert.equal(a.error_code ?? null, null, "- is null");
+    assert.equal(a.referer ?? null, null, "a quoted - is null too");
+    assert.equal(a.time_raw, "14/Feb/2026:09:00:00 +0000");
+    assert.equal(a.time_utc, "2026-02-14T09:00:00Z");
+    assert.equal(a.time_status, "zoned");
+    assert.equal(b.bytes_sent ?? null, null, "- is null, never a number the record did not write");
+    assert.match(b.bytes_sent_note, /zero bytes sent/);
+    assert.equal(b.acl_required, "Yes");
+    assert.equal(c.principal ?? null, null, "an unauthenticated request has no requester");
+    assert.equal(c.outcome, "failure");
+    assert.equal(c.error_code, "AccessDenied");
+    assert.equal(c.signature_version ?? null, null);
+    assert.equal(d.fields_present, 30);
+    assert.equal(d.unknown_trailing_field_count, 3);
+    assert.deepEqual(d.unknown_trailing_fields, ["future-one", "future-two", "future-three"]);
+    assert.equal(e.request_uri, 'GET /example-logs-bucket/a/b?x="y&z=1 HTTP/1.1');
+    assert.equal(e.user_agent, 'Mozilla/5.0 "quoted" agent');
+    assert.equal(e.authentication_type, "QueryString");
+    assert.equal(e.source_region, "us-east-1");
+    assert.equal(a.raw_record.line.split(" ").length > 20, true, "the whole line is kept");
+    const rej = await rejects(cwd);
+    assert.equal(rej.length, 1);
+    assert.equal(rej[0].line, 5, "located by its line in the file (the blank line before it counts)");
+    assert.equal(rej[0].kind, "malformed");
+    assert.match(rej[0].reason, /not an S3 server access log record/);
+    const cov = JSON.parse(await readFile(join(cwd, DIR, "coverage.partial.json"), "utf8"));
+    assert.equal(cov.sources[0].format, "s3log");
+    assert.equal(cov.sources[0].adapter_counts.unknown_trailing_fields, 3);
+  });
+});
+
+test("an S3 log is read from the content (gzip, no extension, a byte order mark, CRLF), and a record that has fewer fields than the list keeps the ones it has", async () => {
+  await withDir(async (cwd) => {
+    const text = await readFile(join(FIX, "s3-access.txt"), "utf8");
+    const good = text.split("\n").filter((l) => l.startsWith("0123"));
+    await put(cwd, "work/ev/obj", gz("﻿" + good.slice(0, 2).join("\r\n") + "\r\n"));
+    const out = body(await tool(NORM, cwd, { path: "work/ev/obj" }));
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.equal(out.sources[0].compressed, true);
+    assert.equal(out.coverage.rows, 2);
+    const short = good[0].slice(0, good[0].indexOf('"aws-cli/2.15.0"') + '"aws-cli/2.15.0"'.length);
+    await put(cwd, "work/ev/short.txt", short + "\n");
+    const s = body(await tool(NORM, cwd, { path: "work/ev/short.txt", out_dir: "work/s1/short" }));
+    assert.equal(s.coverage.rows, 1);
+    assert.equal(s.coverage.adapter_counts.fields_missing_from_a_short_record, 10);
+    const r = await rows(cwd, "normalised.jsonl", "work/s1/short");
+    assert.equal(r[0].fields_present, 17);
+    assert.equal(r[0].host_id ?? null, null);
+  });
+});
+
+test("hostile S3 lines: NUL bytes, an unclosed quote, a missing time, a line of a million quotes and one of a million spaces are rows or located rejects, in bounded time", async () => {
+  await withDir(async (cwd) => {
+    const text = await readFile(join(FIX, "s3-access.txt"), "utf8");
+    const good = text.split("\n").filter((l) => l.startsWith("0123"));
+    const nul = good[0].replace("aws-cli/2.15.0", "aws-cli/\u0000/2.15.0");
+    const unclosed = good[1].replace('"PUT /example-logs-bucket/upload.bin HTTP/1.1"', '"PUT /example-logs-bucket/upload.bin HTTP/1.1');
+    const notime = good[2].replace(/\[[^\]]*\]/, "14/Feb/2026");
+    const quotes = good[0].split('"aws-cli/2.15.0"')[0] + '"' + '" '.repeat(500_000) + "x";
+    const spaces = good[0] + " ".repeat(1_000_000) + "tail";
+    await put(cwd, "work/ev/h.txt", [nul, unclosed, notime, quotes, spaces, good[3]].join("\n") + "\n");
+    const t0 = Date.now();
+    const out = body(await tool(NORM, cwd, { path: "work/ev/h.txt" }));
+    assert.ok(Date.now() - t0 < 30_000, `took ${Date.now() - t0} ms`);
+    assert.equal(out.coverage.rows + out.coverage.records_rejected, 6, "every line is a row or a reject");
+    assert.ok(out.coverage.rows >= 2, "the NUL line and the good line are rows");
+    const rej = await rejects(cwd);
+    assert.ok(rej.length >= 2 && rej.every((x) => typeof x.line === "number" && x.reason));
+    const r = await rows(cwd, "normalised.partial.jsonl");
+    assert.ok(r.some((x) => JSON.stringify(x.user_agent ?? "").includes("\\u0000")), "a NUL is kept in the text, not dropped");
+    assert.equal(out.status, "partial");
+  });
+});
+
+test("a VPC Flow Log is read by the field names of its header line, for the versions 2 to 7 and the ones the page lists after them; start and end are Unix seconds", async () => {
+  await withDir(async (cwd) => {
+    await fixtures(cwd, ["vpc-flow-v2.txt", "vpc-flow-v3.txt", "vpc-flow-v5.txt", "vpc-flow-v7.txt"]);
+    const out = body(await tool(NORM, cwd, { path: "work/ev" }));
+    assert.equal(out.status, "complete", out.status_basis);
+    const bySource: Record<string, Json> = Object.fromEntries(out.sources.map((s: Json) => [s.file.replace("work/ev/", ""), s]));
+    assert.equal(bySource["vpc-flow-v2.txt"].format, "vpcflow");
+    assert.equal(bySource["vpc-flow-v2.txt"].header_lines, 1);
+    const r = await rows(cwd);
+    const v = (n: number): Json[] => r.filter((x) => x.flow_log_version === n);
+    assert.equal(v(2).length, 5);
+    assert.equal(v(3).length, 2);
+    assert.equal(v(5).length, 3);
+    assert.equal(v(7).length, 1);
+    const f = v(2)[0];
+    assert.equal(f.row_kind, "flow");
+    assert.equal(f.time_raw, "1771059600");
+    assert.equal(f.time_utc, "2026-02-14T09:00:00Z");
+    assert.equal(f.end_time_utc, "2026-02-14T09:01:00Z");
+    assert.equal(f.source_ip, "192.0.2.10");
+    assert.equal(f.destination_port, 443);
+    assert.equal(f.packets, 20);
+    assert.equal(f.bytes, 4249);
+    assert.equal(f.outcome, "success");
+    assert.equal(v(2)[2].outcome, "failure");
+    assert.equal(f.tenant, "111122223333");
+    assert.equal(f.resource, "eni-0a1b2c3d");
+    const c = v(3)[0];
+    assert.equal(c.fields["tcp-flags"], 19);
+    assert.equal(c.fields["pkt-dstaddr"], "198.51.100.5");
+    assert.equal(c.fields["vpc-id"], "vpc-0123");
+    assert.equal(v(3)[1].fields["instance-id"], null, "- is null");
+    const s5 = v(5);
+    assert.equal(s5[0].fields["flow-direction"], "egress", "a shuffled custom order is read by name");
+    assert.equal(s5[0].fields["traffic-path"], 2);
+    assert.equal(s5[1].fields["pkt-src-aws-service"], "S3");
+    assert.equal(s5[0].time_utc, "2026-02-14T09:00:00Z");
+    assert.equal(s5[0].flow_log_version, 5, "the version field of a format that carries it");
+    const e = v(7)[0];
+    assert.equal(e.fields["ecs-cluster-name"], "cluster-one");
+    assert.equal(e.fields["ecs-service-name"], null);
+    assert.equal(e.flow_log_version_from_fields, 7);
+  });
+});
+
+test("NODATA and SKIPDATA rows are reported as those, never as a flow of zero traffic, and counted by status", async () => {
+  await withDir(async (cwd) => {
+    await fixtures(cwd, ["vpc-flow-v2.txt", "vpc-flow-v5.txt"]);
+    const out = body(await tool(NORM, cwd, { path: "work/ev" }));
+    assert.deepEqual(out.coverage.adapter_counts, { log_status_OK: 5, log_status_NODATA: 2, log_status_SKIPDATA: 1 });
+    const r = await rows(cwd);
+    const status = r.filter((x) => x.row_kind === "no_flow_record");
+    assert.equal(status.length, 3);
+    for (const x of status) {
+      assert.equal(x.packets ?? null, null, "no packet count is lifted");
+      assert.equal(x.bytes ?? null, null, "no byte count is lifted");
+      assert.equal(x.source_ip ?? null, null);
+      assert.equal(x.outcome, "unknown");
+      assert.match(x.traffic, /none reported/);
+      assert.equal(x.fields.packets ?? null, null, "- stays null, not 0");
+    }
+    const nodata = status.find((x) => x.log_status === "NODATA" && x.fields.start);
+    assert.match(nodata.row_kind_basis, /not a flow of zero packets/);
+    const skip = status.find((x) => x.log_status === "SKIPDATA");
+    assert.match(skip.row_kind_basis, /does not say how much traffic/);
+    assert.equal(skip.time_status, "missing", "a start of - is a missing time");
+    assert.equal(skip.time_utc ?? null, null);
+  });
+});
+
+test("a VPC file with no header line: the 14-field version 2 default order is read and says so; any other record is rejected with the reason; vpc_flow_fields names the order", async () => {
+  await withDir(async (cwd) => {
+    await fixtures(cwd, ["vpc-flow-v2-noheader.txt", "vpc-flow-v5.txt"]);
+    const plain = body(await tool(NORM, cwd, { path: "work/ev/vpc-flow-v2-noheader.txt" }));
+    assert.equal(plain.status, "complete", plain.status_basis);
+    const r = await rows(cwd);
+    assert.equal(r.length, 3);
+    assert.match(r[0].fields_from, /default version 2 order \(the file has no header line/);
+    assert.equal(r[0].fields.bytes, 4249);
+    const v3 = (await readFile(join(FIX, "vpc-flow-v3.txt"), "utf8")).split("\n").slice(1).join("\n");
+    await put(cwd, "work/ev/v3-nohdr.txt", v3);
+    const lost = refused(await tool(NORM, cwd, { path: "work/ev/v3-nohdr.txt", out_dir: "work/s1/lost" }));
+    assert.equal(lost.coverage.rows, 0);
+    const rej = await rows(cwd, "rejected.partial.jsonl", "work/s1/lost").catch(() => rejects(cwd, "work/s1/lost"));
+    assert.match(rej[0].reason, /no header line: the field order is not known \(pass vpc_flow_fields/);
+    const text = (await readFile(join(FIX, "vpc-flow-v5.txt"), "utf8")).split("\n").slice(1).join("\n");
+    await put(cwd, "work/ev/v5-nohdr.txt", text);
+    const given = body(await tool(NORM, cwd, { path: "work/ev/v5-nohdr.txt", format: "vpcflow", out_dir: "work/s1/given", vpc_flow_fields: "start end srcaddr dstaddr flow-direction traffic-path pkt-src-aws-service log-status version" }));
+    assert.equal(given.coverage.rows, 3);
+    const g = await rows(cwd, "normalised.jsonl", "work/s1/given");
+    assert.match(g[0].fields_from, /vpc_flow_fields argument/);
+    assert.equal(g[0].fields["flow-direction"], "egress");
+    refused(await tool(NORM, cwd, { path: "work/ev/v5-nohdr.txt", vpc_flow_fields: "Not A Field" }));
+  });
+});
+
+test("a VPC record whose field count differs from the header's, a repeated header (files put end to end) and unknown field names are handled by name, never by position alone", async () => {
+  await withDir(async (cwd) => {
+    const v2 = await readFile(join(FIX, "vpc-flow-v2.txt"), "utf8");
+    const v5 = await readFile(join(FIX, "vpc-flow-v5.txt"), "utf8");
+    const odd = "start end srcaddr some-future-field action log-status\n1771059600 1771059660 192.0.2.1 value-one ACCEPT OK\n";
+    await put(cwd, "work/ev/mix.txt", v2.split("\n").slice(0, 3).join("\n") + "\n2 111122223333 eni-1 only-three-fields\n" + v5 + odd);
+    const out = body(await tool(NORM, cwd, { path: "work/ev/mix.txt" }));
+    assert.equal(out.status, "partial");
+    assert.equal(out.coverage.records_malformed, 1);
+    assert.equal(out.coverage.rows, 2 + 3 + 1);
+    assert.equal(out.sources[0].header_lines, 3);
+    const r = await rows(cwd, "normalised.partial.jsonl");
+    assert.deepEqual(r.map((x) => x.flow_log_version ?? null), [2, 2, 5, 5, 5, null]);
+    assert.deepEqual(r[5].unknown_field_names, ["some-future-field"]);
+    assert.equal(out.coverage.adapter_counts.fields_not_in_the_documented_list, 1);
+    const rej = await rejects(cwd);
+    assert.match(rej[0].reason, /4 fields and the field list/);
+    assert.equal(rej[0].line, 4);
+  });
+});
+
+test("an explicit provider or format that contradicts the content of a text file is not read: the file is unsupported and the reason says what it is", async () => {
+  await withDir(async (cwd) => {
+    await fixtures(cwd, ["s3-access.txt", "vpc-flow-v2.txt", "gcp-audit.json"]);
+    const a = refused(await tool(NORM, cwd, { path: "work/ev/s3-access.txt", provider: "gcp", out_dir: "work/s1/a" }));
+    assert.match(a.problems.join(" "), /reads as an S3 server access log \(provider aws_s3\)/);
+    assert.equal(a.sources[0].status, "unsupported");
+    const b = refused(await tool(NORM, cwd, { path: "work/ev/vpc-flow-v2.txt", format: "csv", out_dir: "work/s1/b" }));
+    assert.match(b.problems.join(" "), /content of this file reads as a VPC Flow Log/);
+    const c = body(await tool(NORM, cwd, { path: "work/ev/vpc-flow-v2.txt", provider: "aws_vpc", format: "vpcflow", out_dir: "work/s1/c" }));
+    assert.equal(c.status, "complete");
+    const d = refused(await tool(NORM, cwd, { path: "work/ev/gcp-audit.json", provider: "azure", out_dir: "work/s1/d" }));
+    assert.equal(d.coverage.rows, 0);
+    assert.ok((await rejects(cwd, "work/s1/d")).every((x) => /not a azure record/.test(x.reason)));
+  });
+});
+
+test("canaries in S3 request URIs, referers and user agents, in VPC tag values and in the claims, properties and request of an Azure record are withheld from every channel; identifiers are printed", async () => {
+  const uriSecret = rnd(24, 201);
+  const refSecret = rnd(24, 202);
+  const tokenSecret = JWT;
+  const tagSecret = rnd(24, 203);
+  const claimSecret = rnd(30, 204);
+  const claimText = rnd(24, 205);
+  const propText = rnd(24, 206);
+  const httpSecret = rnd(24, 207);
+  const callerSecret = rnd(24, 208);
+  await withDir(async (cwd) => {
+    const text = await readFile(join(FIX, "s3-access.txt"), "utf8");
+    const good = text.split("\n").filter((l) => l.startsWith("0123"));
+    const line = good[0].replace("GET /example-logs-bucket/reports/q1.csv HTTP/1.1", `GET /example-logs-bucket/reports/q1.csv?password=${uriSecret} HTTP/1.1`)
+      .replace('"-" "aws-cli/2.15.0"', `"https://example.org/?api_key=${refSecret}" "curl Authorization: Bearer ${tokenSecret}"`);
+    await put(cwd, "work/ev/s3.txt", line + "\n");
+    await put(cwd, "work/ev/vpc.txt", `version account-id interface-id srcaddr dstaddr start end action log-status instance-tag\n11 111122223333 eni-1 192.0.2.1 192.0.2.2 1771059600 1771059660 ACCEPT OK password=${tagSecret}\n`);
+    const az = JSON.parse(await readFile(join(FIX, "azure-activity.json"), "utf8")).value[1];
+    az.claims.client_secret = claimSecret;
+    az.claims.note = `login with password=${claimText}`;
+    az.properties.requestbody = `{"password":"${propText}"}`;
+    az.httpRequest.uri = `https://management.example.invalid/x?access_token=${httpSecret}`;
+    az.caller = `svc password=${callerSecret}`;
+    await put(cwd, "work/ev/az.json", JSON.stringify({ value: [az] }));
+    const run = await asJob(NORM, cwd, { path: "work/ev" }, { SECRET_OUTPUT: "1" });
+    const out = body(run);
+    assert.equal(out.coverage.rows, 3, out.status_basis);
+    const everything = [run.stdout, run.stderr];
+    for (const f of await filesUnder(join(cwd, "out"))) if (!f.endsWith("cloud-normalise-values.jsonl")) everything.push(await readFile(join(cwd, "out", f), "utf8"));
+    const all = everything.join("\n");
+    for (const [label, secret] of [["S3 request URI", uriSecret], ["S3 referer", refSecret], ["S3 user agent", tokenSecret], ["VPC tag value", tagSecret], ["Azure named claim", claimSecret], ["Azure claim text", claimText], ["Azure property text", propText], ["Azure http request", httpSecret], ["Azure caller", callerSecret]] as Array<[string, string]>) {
+      assert.equal(leaked(secret, all), undefined, `${label} appears in the output`);
+      assert.equal(leaked(Buffer.from(secret).toString("base64"), all), undefined, `${label} appears in base64`);
+    }
+    assert.ok(all.includes("REQ0001EXAMPLE") && all.includes("ev-0002") && all.includes("eni-1"), "identifiers are printed");
+    assert.ok(out.values_withheld.count >= 8, `withheld ${out.values_withheld.count}`);
+  });
+  await withDir(async (cwd) => {
+    const text = await readFile(join(FIX, "s3-access.txt"), "utf8");
+    const line = text.split("\n").filter((l) => l.startsWith("0123"))[0].replace("GET /example-logs-bucket/reports/q1.csv HTTP/1.1", `GET /example-logs-bucket/reports/q1.csv?password=${uriSecret} HTTP/1.1`);
+    await put(cwd, "work/ev/s3.txt", line + "\n");
+    const run = await asJob(NORM, cwd, { path: "work/ev/s3.txt", write_values: true }, { SECRET_OUTPUT: "1" });
+    const out = body(run);
+    assert.ok(out.secret_values.written >= 1);
+    const values = await readFile(join(cwd, "out", "cloud-normalise-values.jsonl"), "utf8");
+    assert.ok(values.includes(uriSecret), "the original is in the values file");
+    assert.equal(leaked(uriSecret, run.stdout + (await readFile(join(cwd, "out", "cloud-normalise", "normalised.jsonl"), "utf8"))), undefined);
+  });
+});
+
+test("four simultaneous runs over large text files each end near their own clock, partial, with their counts", async () => {
+  await withDir(async (cwd) => {
+    const text = await readFile(join(FIX, "s3-access.txt"), "utf8");
+    const one = text.split("\n").filter((l) => l.startsWith("0123"))[0];
+    const block = Array.from({ length: 150_000 }, (_, i) => one.replace("REQ0001EXAMPLE", `REQ${i}`)).join("\n") + "\n";
+    const vpc = "version account-id interface-id srcaddr dstaddr srcport dstport protocol packets bytes start end action log-status\n" + Array.from({ length: 250_000 }, (_, i) => `2 111122223333 eni-0a1b2c3d 192.0.2.10 198.51.100.5 ${i % 60000} 443 6 20 4249 1771059600 1771059660 ACCEPT OK`).join("\n") + "\n";
+    await put(cwd, "work/ev/a/s3.txt", block);
+    await put(cwd, "work/ev/b/vpc.txt", vpc);
+    await put(cwd, "work/ev/c/s3.txt", block);
+    await put(cwd, "work/ev/d/vpc.txt", vpc);
+    const t0 = Date.now();
+    const runs = await Promise.all(["a", "b", "c", "d"].map((n) => tool(NORM, cwd, { path: `work/ev/${n}`, out_dir: `work/s1/${n}`, time_limit_seconds: 4 })));
+    const took = Date.now() - t0;
+    assert.ok(took < 4000 + 12_000, `took ${took} ms`);
+    for (const run of runs) {
+      assert.doesNotMatch(run.stderr, /Traceback/);
+      const out = JSON.parse(run.stdout);
+      assert.ok(out.coverage.rows > 0);
+      assert.ok(["partial", "complete"].includes(out.status));
+      if (out.status === "partial") assert.equal(out.coverage.stopped_by_time_limit, true);
+    }
+  });
+});
+
+test("SIGTERM during a text read ends with exit 143, one line of JSON and a partial coverage file", async (t) => {
+  await withDir(async (cwd) => {
+    const text = await readFile(join(FIX, "s3-access.txt"), "utf8");
+    const one = text.split("\n").filter((l) => l.startsWith("0123"))[0];
+    await put(cwd, "work/ev/a.txt", Array.from({ length: 600_000 }, (_, i) => one.replace("REQ0001EXAMPLE", `REQ${i}`)).join("\n") + "\n");
+    const { child, done } = spawnTool(NORM, cwd, { path: "work/ev/a.txt", time_limit_seconds: 300 });
+    await new Promise((r) => setTimeout(r, 2500));
+    child.kill("SIGTERM");
+    const run = await done;
+    if (run.code === 0) {
+      t.diagnostic("the read finished before the signal");
+      return;
+    }
+    assert.equal(run.code, 143, run.stderr);
+    const line = JSON.parse(run.stdout.trim().split("\n").pop() as string);
+    assert.equal(line.status, "partial");
+    assert.ok(line.totals.rows > 0);
+    assert.deepEqual((await readdir(join(cwd, DIR))).sort(), ["coverage.partial.json"]);
+  });
+});
+
+test("1,000 structure-aware mutations of an S3 line, a VPC line and an Azure record end in a row or a located reject, never a crash", async () => {
+  let state = 987;
+  const rnd01 = (): number => ((state = (state * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const text = await readFile(join(FIX, "s3-access.txt"), "utf8");
+  const s3seed = text.split("\n").filter((l) => l.startsWith("0123"))[4];
+  const vpcSeed = "2 111122223333 eni-0a1b2c3d 192.0.2.10 198.51.100.5 49152 443 6 20 4249 1771059600 1771059660 ACCEPT OK";
+  const bits = ["", " ", "  ", '"', '" "', "[", "]", "-", "\u0000", "99999999999999999999", "x".repeat(300), "\ud800", "\r", "\t"];
+  const mutate = (s: string): string => {
+    let out = s;
+    for (let k = 0; k < 1 + Math.floor(rnd01() * 3); k++) {
+      const at = Math.floor(rnd01() * (out.length + 1));
+      const cut = Math.floor(rnd01() * 6);
+      out = out.slice(0, at) + bits[Math.floor(rnd01() * bits.length)] + out.slice(at + cut);
+    }
+    return out;
+  };
+  await withDir(async (cwd) => {
+    const s3lines: string[] = [];
+    const vpclines: string[] = ["version account-id interface-id srcaddr dstaddr srcport dstport protocol packets bytes start end action log-status"];
+    for (let i = 0; i < 499; i++) s3lines.push(mutate(s3seed).replace(/[\r\n]/g, " "));
+    for (let i = 0; i < 400; i++) vpclines.push(mutate(vpcSeed).replace(/[\r\n]/g, " "));
+    await put(cwd, "work/ev/s3.txt", s3seed + "\n" + s3lines.join("\n") + "\n");
+    await put(cwd, "work/ev/vpc.txt", vpclines.join("\n") + "\n");
+    const az = JSON.parse(await readFile(join(FIX, "azure-activity.json"), "utf8")).value[1];
+    const swaps: unknown[] = [null, 0, -1, "", "x".repeat(300), [], {}, [null], true, { value: { a: 1 } }, "\u0000"];
+    const mut = (v: Json): Json => (Array.isArray(v) ? v.map((x) => (rnd01() < 0.15 ? swaps[Math.floor(rnd01() * swaps.length)] : mut(x))) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(() => rnd01() > 0.05).map(([k, x]) => [k, rnd01() < 0.15 ? swaps[Math.floor(rnd01() * swaps.length)] : mut(x)])) : v);
+    const azl: string[] = [];
+    for (let i = 0; i < 100; i++) azl.push(JSON.stringify(mut(az)));
+    await put(cwd, "work/ev/az.jsonl", azl.join("\n") + "\n");
+    for (const [name, total] of [["s3.txt", 500], ["vpc.txt", 400], ["az.jsonl", 100]] as const) {
+      const run = await tool(NORM, cwd, { path: `work/ev/${name}`, out_dir: `work/s1/${name}` });
+      assert.doesNotMatch(run.stderr, /Traceback/, name);
+      const out = JSON.parse(run.stdout);
+      assert.ok(["partial", "complete", "failed"].includes(out.status), name);
+      const c = out.coverage;
+      assert.ok(c.rows + c.records_rejected + c.records_filtered_out >= total - 1, `${name}: rows ${c.rows} rejected ${c.records_rejected} of ${total}`);
+      assert.ok(c.rows > total / 10, `${name}: some mutated records are still rows (${c.rows} of ${total})`);
+      assert.ok(c.records_rejected > 0, `${name}: some are located rejects`);
+    }
+  });
+});
+
+test("the manifest names the new adapters, the new argument and the Azure documentation gap; version and PARSER label moved together", async () => {
+  const m = JSON.parse(await readFile(join(TOOLS, "cloud_normalise", "manifest.json"), "utf8"));
+  assert.ok(m.version >= 2);
+  assert.match(await readFile(NORM, "utf8"), /^PARSER = "cloud_normalise\/2"$/m);
+  assert.ok(m.params.vpc_flow_fields);
+  for (const word of ["azure_activity_log", "aws_s3_access_log", "aws_vpc_flow", "2026-11-04", "NODATA", "SKIPDATA", "were not read"]) assert.ok(m.description.includes(word), word);
+  assert.match(m.params.provider.description, /azure/);
+  assert.match(m.params.provider.description, /aws_s3/);
+  assert.match(m.params.provider.description, /aws_vpc/);
 });
