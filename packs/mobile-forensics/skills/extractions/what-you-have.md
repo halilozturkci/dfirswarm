@@ -3,7 +3,7 @@ id: extractions/what-you-have
 title: Mobile extraction scope and authority
 when: Start here: a phone, backup or app export, before any question.
 needs: []
-tools: [manifest_db, backup_materialise, ab_layout, heic_inspect, file_type]
+tools: [manifest_db, backup_materialise, ab_layout, heic_inspect, file_type, backup_decrypt]
 requires_host: []
 ---
 
@@ -19,7 +19,7 @@ Use when the evidence is a phone, a backup or an app export and you have not yet
 
 **Deletion.** A logical extraction has no device free space, but a database in it can hold deleted records in its own free pages and journals (`apps/databases`). Answer a deletion question only from the sources you hold, and name the ones you do not.
 
-**Protection state.** Take lock state and keys from the operator, not from a label. A locked profile, an unacquired one or an encrypted blob is a coverage gap, never an empty source. For an iOS backup or an Android `.ab`, `manifest_db` and the `android-backup` recipe read the plain parts and say what is encrypted: fetch `extractions/backups`. `backup_materialise` lays an unencrypted iOS backup out by its map as a derivative (a copy, not the phone); its `copy_content` is a secret-output job. No decryption is provided here; do not guess at a password.
+**Protection state.** Take lock state and keys from the operator, not from a label. A locked profile, an unacquired one or an encrypted blob is a coverage gap, never an empty source. For an iOS backup or an Android `.ab`, `manifest_db` and the `android-backup` recipe read the plain parts and say what is encrypted: fetch `extractions/backups`. `backup_materialise` lays an unencrypted iOS backup out by its map as a derivative (a copy, not the phone); its `copy_content` is a secret-output job. Never guess a password: `backup_decrypt` takes one from a file.
 
 **Recipes.** iOS tar: the `ios-filesystem` catalogue first (its `sqlite.tsv` finds databases by file name suffix, with their `-wal`, `-shm` and `-journal`; a database with another name is not listed). `ios-ileapp` and `android-aleapp` are run by the kickoff: read their `modules.tsv`. `android-backup-apps` lays an unencrypted `.ab` out and runs ALEAPP on that derivative of an adb backup (not the phone): read `ab-members.tsv` and `modules.tsv`. `ab_layout` makes an unencrypted `.ab` a derivative, never an acquisition. `heic_inspect` previews a HEIC original and walks its boxes; its metadata is the original's. A finished inventory is not a finished examination.
 

@@ -22,9 +22,9 @@ backup answer, and `extractions/protection-state`; `apps/databases`, `apps/fragm
 answers, holds no rule, and is the one line a run shows for the pack when its skills
 index is over budget.
 
-**Six tools.** Each says in its manifest what it measures and what it does
+**Seven tools.** Each says in its manifest what it measures and what it does
 not, and each returns its whole result: an inline page and, when there is more,
-a file the answer names. None of them decrypts anything or reads a password.
+a file the answer names. Only `backup_decrypt` decrypts anything or reads a password, and only in a job run as secret output.
 `sqlite_freespace` and `protobuf_peek` read no `-wal` or `-journal`; `manifest_db`
 opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
 
@@ -70,6 +70,22 @@ opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
   `copy_content` (false by default, a plan) writes content and is a secret-output
   mode: a job run as secret output only; a name shaped like a recovery password is
   the placeholder everywhere and its real name is only in the 0600 values file.
+- `backup_decrypt` decrypts an encrypted iOS backup (iOS 13 or later) with the library
+  `iphone_backup_decrypt` 0.11.2, pinned with hashes in `requires/`, from `password_ref`: a
+  0600 file the job was given. The library runs in a child process; this tool only looks at
+  the file, and the child reads it, so the password is on no command line, in no
+  environment variable, on no output channel, in no path or file (an exception of the
+  library is reported by its class name). The manifest declares `secret_output: required`.
+  The decrypted `Manifest.db` and one decrypted file per file row go under
+  `$OUT/backup_decrypt-<id>/decrypted/<xx>/<file id>` (mode 0600, never replaced), with a
+  result file of one line per Manifest row. `verified` means the decrypted `Manifest.db`
+  opens and every file row has the length the Manifest records as its Size; it does not
+  say the content is what the phone held. `wrong_secret`, `secret_unavailable`,
+  `unsupported_format`, `backend_unavailable` and `partial` are told apart; a row the
+  backend could not select with certainty (a domain that differs only in case or in a
+  `_` or `%`) is `ambiguous_selection` and not decrypted. The library was exercised here
+  only through a stand-in for its three documented calls; it has not been run on a real
+  backup. Its licence label (MIT) is the owner's: PyPI carries none and the file was not read.
 - `heic_inspect` makes a JPEG or PNG preview of a HEIC or HEIF original under
   `$OUT/heic_inspect` and ties it back to the original: the size and SHA-256 of
   both, the dimensions, the image count, which item is primary, and the backend's
@@ -197,11 +213,11 @@ ADR 0013's "A source's broad extraction before a negative on it".
 
 ## What this pack does not provide
 
-**No decryption.** An encrypted iOS backup or an encrypted Android `.ab` payload
-is identified and its readable parts are listed; opening it needs a decryption
-backend that this pack does not carry, and the pack reads no password. The pack
-does not choose one. Say in the report what could not be read and why, and ask the
-operator for what the case lawfully supplies.
+**Decryption is one backend and one tool.** Only an iOS backup, with `backup_decrypt`,
+and only from a password file the operator supplies; the pack breaks or guesses no
+password. An encrypted Android `.ab` payload, and a backup from before iOS 13, are
+identified and their readable parts listed, not opened. Say in the report what could
+not be read and why, and ask the operator for what the case lawfully supplies.
 
 **No claim about a phone's deleted data from a label.** A logical extraction or a
 backup has no unallocated space of the device, but the files in it can still hold
