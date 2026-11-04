@@ -577,8 +577,19 @@ entries of a pack re-pin the same way: new URL if it names a version, new sha256
 from the bytes you downloaded, never copied from a page you did not check.
 
 To re-pin **Zeek** (`packs/network-forensics/requires/host.json`): the Zeek
-project's build service keeps only the latest release, so the pinned `.deb`
-URLs go 404 when Zeek releases again. Download both `.deb` files (amd64 and
-arm64) of the current release from the entry's repository path, take their
-sha256, and set the two URLs, the version and the two sha256 values; then raise
-the pack's version, seal it, and build `network`.
+project's build service keeps only the latest release, so the two `.deb` files
+of the pinned version are kept as the assets of a release of this repository,
+tagged `assets/zeek-<version>` and made with `--latest=false` (it is a store of
+pinned downloads, never the repository's latest release); its notes name the
+build service URL each file came from and each file's sha256. The entry's URLs
+point at `https://github.com/halilozturkci/dfirswarm/releases/download/assets/zeek-<version>/<file>`.
+A GitHub release asset answers with a redirect to GitHub's own download host
+over https, which the build's redirect rule accepts. To move to a new Zeek
+version, download both `.deb` files (amd64 and arm64) from the build service's
+repository path while it still serves that version, take their sha256, create
+the release for the new tag with the two files and notes in that form
+(`gh release create assets/zeek-<version> --latest=false --notes-file ...`),
+and set the two URLs, the version and the two sha256 values; then raise the
+pack's version, seal it, and build `network`. The files are a public copy of the
+Zeek project's package: the entry keeps `redistributable: false` until the
+licence review has decided otherwise.
