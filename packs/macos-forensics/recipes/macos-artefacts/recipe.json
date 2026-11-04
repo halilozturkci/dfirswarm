@@ -1,0 +1,68 @@
+{
+  "id": "macos-artefacts",
+  "version": "1.0.0",
+  "description": "A broad extraction of a macOS acquisition (an Expert Witness, sparse, VMDK or UDIF image, a raw APFS container or HFS+ volume, a raw disk with an Apple GPT partition, or a folder that is the root of a macOS volume): the pinned mac_apt 1.33.2 runs a plugin set over it in the input mode the object shows (FAST unless the target names its plugins) and writes its database, CSV files and log under mac_apt/. mac_apt exits 0 after errors it has logged, so the run reads its own log for one outcome per plugin (plugins.tsv: parsed, empty, unsupported or failed) and says complete only when mac_apt exited 0, the log has its start line and its finish line, every plugin the target names is parsed or empty and no error line or traceback sits outside a plugin; FAST and ALL can never be complete because the plugins they expand to are not listed by anything read here. mac_apt was never installed or run to build this recipe: its argument shape and the texts of the start, plugin start, plugin end, plugin exception and finish log lines were read from its v1.33.2 source (GitHub, 2026-11-04); the prefix of a log line, the wording of an empty or unsupported plugin and the per-plugin file names were not, and empty and unsupported rest on an assumed wording. coverage.json is written first (partial) and replaced whole at the end; a run never writes over an earlier run. On arm64, where mac_apt is not installed (its statx helper stops at import), detect exits 1 with the packaging reason. The output is the examined system's own content: coverage.json marks every file it wrote under secret_bearing.",
+  "object": "macOS disk image, volume or mounted folder",
+  "order": 41,
+  "min_bytes": 1024,
+  "suffixes": [
+    ".e01",
+    ".dmg",
+    ".sparseimage",
+    ".vmdk",
+    ".dd",
+    ".raw",
+    ".img"
+  ],
+  "magic": [
+    {
+      "offset": 0,
+      "hex": "455646090d0aff00"
+    },
+    {
+      "offset": 0,
+      "hex": "73707273"
+    },
+    {
+      "offset": 0,
+      "hex": "4b444d56"
+    },
+    {
+      "offset": 32,
+      "hex": "4e585342"
+    },
+    {
+      "offset": 512,
+      "hex": "4546492050415254"
+    }
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "requires": [
+    "mac_apt.py"
+  ],
+  "auto": [],
+  "purpose": "broad_extraction",
+  "capability": "macos-artifacts",
+  "exclusions": [
+    "what no plugin of the pinned mac_apt release parses: those files stay in the source, unread by this extraction",
+    "deleted records beyond what a plugin reads itself (SQLite free pages, WAL): nothing is carved",
+    "an encrypted volume: no password is passed here, and what mac_apt does without one was never observed (the tool macos_triage takes a sealed password file)",
+    "UAC, Velociraptor and AFF4 inputs: this recipe does not detect them (the tool macos_triage takes them with an input type the caller names)",
+    "the plugins a FAST or ALL set expands to are not listed by anything read here, so a plugin that never started cannot be told from one that was not meant to",
+    "a plugin the log does not account for as parsed or empty: see plugins.tsv"
+  ],
+  "limits": {
+    "seconds": 14400
+  },
+  "outputs": [
+    "mac_apt/",
+    "mac_apt.stdout",
+    "mac_apt.stderr",
+    "plugins.tsv",
+    "index.tsv",
+    "coverage.json"
+  ],
+  "covers": "What mac_apt's plugins parse from the acquisition: its database, the per-plugin files of the CSV format and its log, kept whole under mac_apt/, with plugins.tsv holding the outcome of each plugin the log names or the target asked for. A plugin that finds nothing is empty only by an assumed wording of its log lines, a plugin that does not take the operating-system version is unsupported only by an assumed wording, and parsed is not a count of records; a plugin that failed, whose end the log does not show, or that never started is not covered, however many others wrote. The program runs in a process group of its own with a time limit of its own (--max-seconds, default 14100 seconds, under the 14400 of the limit): one that does not finish is ended with everything it started, what it wrote is kept, and the run says partial or failed, never complete; a stop signal ends the program and its children before the recipe ends. A run never writes over an earlier run's output. The output is the examined system's own content (a sensitive output).",
+  "sha256": "4cd3f988801ce83faa07446ec108abebb014e91652588dc115ad5669a255d900"
+}

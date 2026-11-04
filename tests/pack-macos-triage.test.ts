@@ -512,4 +512,203 @@ test("the tool without a job is not secret output: the harness's manifest key is
   });
 });
 
-void spawn;
+
+// ---- the macos-artefacts recipe ---------------------------------------------------------------------------------------------------------------
+
+const RECIPE = join(MAC, "..", "recipes", "macos-artefacts", "run.py");
+
+type Ran = { code: number | null; stdout: string; stderr: string };
+function recipe(cwd: string, bin: string, args: string[], env: Record<string, string> = {}): Promise<Ran> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("python3", [RECIPE, ...args], { cwd, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, ...env }, detached: true });
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    child.stderr.on("data", (c: Buffer) => err.push(c));
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") }));
+  });
+}
+const tgt = (path: string, plugins?: string[]): string => JSON.stringify({ paths: [path], ...(plugins ? { plugins } : {}) });
+const detect = async (cwd: string, bin: string, path: string, env: Record<string, string> = {}): Promise<{ code: number | null; j: Json }> => {
+  const r = await recipe(cwd, bin, ["detect", "--target", tgt(path)], env);
+  return { code: r.code, j: JSON.parse(r.stdout) as Json };
+};
+const coverage = async (out: string): Promise<Json> => JSON.parse(await readFile(join(out, "coverage.json"), "utf8")) as Json;
+
+/** A GPT disk with one partition entry of the given type GUID (the mixed-endian bytes as the table stores them). */
+function gptDisk(guid: string): Buffer {
+  const disk = Buffer.alloc(512 * 40);
+  disk.write("EFI PART", 512, "latin1");
+  disk.writeBigUInt64LE(2n, 512 + 72);
+  disk.writeUInt32LE(128, 512 + 80);
+  disk.writeUInt32LE(128, 512 + 84);
+  const [a, b, c, d, e] = guid.split("-");
+  const entry = Buffer.concat([Buffer.from(a, "hex").reverse(), Buffer.from(b, "hex").reverse(), Buffer.from(c, "hex").reverse(), Buffer.from(d + e, "hex")]);
+  entry.copy(disk, 1024);
+  return disk;
+}
+
+test("recipe detect: what it applies to, what it does not, and what it cannot tell", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stand(bin, OK_TWO);
+    const w = (name: string, data: Buffer | string) => writeFile(join(cwd, "work", name), data);
+    await e01(cwd);
+    await w("t.txt", "plain text, nothing of an image");
+    await w("sparse.sparseimage", Buffer.concat([Buffer.from("sprs"), Buffer.alloc(2048)]));
+    await w("apfs.img", Buffer.concat([Buffer.alloc(32), Buffer.from("NXSB"), Buffer.alloc(2048)]));
+    await w("hfs.img", Buffer.concat([Buffer.alloc(1024), Buffer.from("H+"), Buffer.alloc(2048)]));
+    await w("mac.dmg", Buffer.concat([Buffer.alloc(4096), Buffer.from("koly"), Buffer.alloc(508)]));
+    await w("apple.raw", gptDisk("7c3457ef-0000-11aa-aa11-00306543ecac"));
+    await w("windows.raw", gptDisk("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"));
+    await mkdir(join(cwd, "work", "vol", "System", "Library", "CoreServices"), { recursive: true });
+    await w("vol/System/Library/CoreServices/SystemVersion.plist", "<plist/>");
+    await mkdir(join(cwd, "work", "plain"), { recursive: true });
+    for (const [p, code, re] of [
+      ["work/mac.E01", 0, /Expert Witness/],
+      ["work/sparse.sparseimage", 0, /sparse/],
+      ["work/apfs.img", 0, /APFS container/],
+      ["work/hfs.img", 0, /HFS\+/],
+      ["work/mac.dmg", 0, /UDIF/],
+      ["work/apple.raw", 0, /GPT partition of the type of APFS/],
+      ["work/windows.raw", 1, /GPT with no partition of an Apple type/],
+      ["work/vol", 0, /MOUNTED/],
+      ["work/plain", 1, /without System/],
+      ["work/t.txt", 1, /no signature/],
+      ["work/missing", 2, /cannot be told/],
+    ] as const) {
+      const d = await detect(cwd, bin, p);
+      assert.equal(d.code, d.j.applies === true ? 0 : d.j.applies === false ? 1 : 2, p);
+      assert.equal(d.code, code, `${p}: ${JSON.stringify(d.j)}`);
+      assert.match(d.j.why, re, p);
+    }
+    // an object that looks right but no mac_apt.py on this machine: cannot tell, exit 2 (not a claim that it does not apply)
+    const none = await detect(cwd, bin, "work/mac.E01", { PATH: "/usr/bin:/bin" });
+    assert.equal(none.code, 2);
+    assert.equal(none.j.applies, "unknown");
+    await symlink(join(cwd, "work", "mac.E01"), join(cwd, "work", "ln.E01"));
+    assert.equal((await detect(cwd, bin, "work/ln.E01")).code, 1);
+    const bad = await recipe(cwd, bin, ["detect", "--target", "not json"]);
+    assert.equal(bad.code, 2);
+    assert.equal(JSON.parse(bad.stdout).applies, "unknown");
+  });
+});
+
+test("recipe run: coverage.json says complete for named plugins the log accounts for; FAST is partial; every file it wrote is marked secret_bearing", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stand(bin, `open(os.path.join(HERE, "argv.txt"), "w").write(repr(argv))\nopen(os.path.join(out, "mac_apt.db"), "w").write("db")\n${OK_TWO}`);
+    const path = await e01(cwd);
+    const done = await recipe(cwd, bin, ["run", "--target", tgt(path, ["tcc", "bashsessions"]), "--out", "r1"]);
+    assert.equal(done.code, 0, done.stdout + done.stderr);
+    assert.equal(JSON.parse(done.stdout).status, "complete");
+    const c = await coverage(join(cwd, "r1"));
+    assert.equal(c.status, "complete");
+    assert.equal(c.plugins.counts.parsed, 2);
+    assert.match(c.plugins.not_observed, /never observed/i);
+    assert.ok("mac_apt/mac_apt.db" in c.secret_bearing && "mac_apt.stdout" in c.secret_bearing);
+    for (const name of Object.keys(c.secret_bearing)) assert.ok((await stat(join(cwd, "r1", name))).isFile(), name);
+    const tsv = await readFile(join(cwd, "r1", "plugins.tsv"), "utf8");
+    assert.match(tsv, /^plugin\tstatus\t/);
+    assert.match(tsv, /\nTCC\tparsed\t/);
+    assert.match(await readFile(join(cwd, "r1", "index.tsv"), "utf8"), /mac_apt\/mac_apt\.db\t2\t/);
+    assert.match((await readFile(join(bin, "argv.txt"), "utf8")).replaceAll("'", ""), /, -c, E01, [^,]*mac\.E01, TCC, BASHSESSIONS\]$/);
+    const fast = await recipe(cwd, bin, ["run", "--target", tgt(path), "--out", "r2"]);
+    assert.equal(fast.code, 0);
+    assert.equal((await coverage(join(cwd, "r2"))).status, "partial");
+    assert.match((await coverage(join(cwd, "r2"))).errors.join(" "), /expands it to/);
+  });
+});
+
+test("recipe run: a traceback behind an exit 0, a cut log, a log with no start line and no macOS installation are never complete", async () => {
+  await withCwd(async (cwd, bin) => {
+    const path = await e01(cwd);
+    const cases: Array<[string, string, string, RegExp]> = [
+      ["traceback", `start()\nplugin("TCC", ["Traceback (most recent call last):", "KeyError: 1"], ran=False)\nlog("An exception occurred while running plugin - TCC", "ERROR")\nplugin("BASH", ["x"])\nfinish()\n`, "partial", /plugin\(s\) failed/],
+      ["cut", `start()\nplugin("TCC", ["x"])\nplugin("BASH", ["x"], ran=False)\n`, "partial", /finish line/],
+      ["wrong mode", `print("Exiting -> Invalid")\n`, "failed", /nothing was parsed/],
+      ["no macOS", `start()\nlog("Could not find OSX/macOS installation!", "ERROR")\nlog("Finished in time = 00:00:01")\n`, "failed", /nothing was parsed/],
+      ["outside error", `start()\nlog("boom", "ERROR")\nplugin("TCC", ["x"])\nplugin("BASH", ["x"])\nfinish()\n`, "partial", /outside any plugin/],
+    ];
+    let n = 0;
+    for (const [name, script, want, re] of cases) {
+      await stand(bin, script);
+      const r = await recipe(cwd, bin, ["run", "--target", tgt(path, ["TCC", "BASH"]), "--out", `c${n}`]);
+      const c = await coverage(join(cwd, `c${n++}`));
+      assert.equal(c.status, want, `${name}: ${c.status_basis}`);
+      assert.match(c.status_basis, re, name);
+      assert.notEqual(JSON.parse(r.stdout).status, "complete", name);
+    }
+  });
+});
+
+test("recipe run: a hang is ended at its limit with its children, coverage.json says partial, and the log written so far is read", async () => {
+  await withCwd(async (cwd, bin) => {
+    const pids = join(cwd, "pids.txt");
+    await stand(bin, `start()\nplugin("TCC", ["x"])\nlog("Running plugin SLOW")\nimport subprocess\nc = subprocess.Popen(["sleep", "300"])\nopen(${JSON.stringify(pids)}, "a").write("%d %d\\n" % (os.getpid(), c.pid))\ntime.sleep(300)\n`);
+    const r = await recipe(cwd, bin, ["run", "--target", tgt(await e01(cwd), ["TCC", "SLOW"]), "--out", "h", "--max-seconds", "2"]);
+    assert.equal(r.code, 1);
+    const c = await coverage(join(cwd, "h"));
+    assert.equal(c.status, "partial");
+    assert.match(c.status_basis, /did not finish in the 2 seconds/);
+    assert.ok(await gone(await pidsOf(pids)));
+  });
+});
+
+test("recipe run: SIGTERM ends mac_apt and its child, exit 143, and coverage.json (written first) says partial", async () => {
+  await withCwd(async (cwd, bin) => {
+    const pids = join(cwd, "pids.txt");
+    await stand(bin, `start()\nplugin("TCC", ["x"])\nimport subprocess\nc = subprocess.Popen(["sleep", "300"])\nopen(${JSON.stringify(pids)}, "a").write("%d %d\\n" % (os.getpid(), c.pid))\ntime.sleep(300)\n`);
+    const path = await e01(cwd);
+    const child = spawn("python3", [RECIPE, "run", "--target", tgt(path, ["TCC"]), "--out", "s"], { cwd, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` }, detached: true });
+    const out: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    const closed = new Promise<number | null>((res) => child.on("close", (code) => res(code)));
+    await new Promise((r) => setTimeout(r, 2500));
+    child.kill("SIGTERM");
+    assert.equal(await closed, 143);
+    assert.equal((await coverage(join(cwd, "s"))).status, "partial");
+    assert.match(Buffer.concat(out).toString(), /stopped by SIGTERM/);
+    assert.ok(await gone(await pidsOf(pids)));
+  });
+});
+
+test("recipe run: a rerun in the same output directory refuses and leaves every file as it was; nothing is written outside the output directory", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stand(bin, `open("stray.txt", "w").write("in cwd")\n${OK_TWO}`);
+    const path = await e01(cwd);
+    const before = new Set(await readdir(cwd));
+    const a = await recipe(cwd, bin, ["run", "--target", tgt(path, ["TCC", "BASHSESSIONS"]), "--out", "o"]);
+    assert.equal(a.code, 0);
+    const files = await filesUnder(join(cwd, "o"));
+    const kept = new Map<string, string>();
+    for (const f of files) kept.set(f, (await readFile(f)).toString("base64"));
+    const b = await recipe(cwd, bin, ["run", "--target", tgt(path, ["TCC", "BASHSESSIONS"]), "--out", "o"]);
+    assert.equal(b.code, 2);
+    assert.match(JSON.parse(b.stdout).status_basis, /never writes over one/);
+    for (const f of files) assert.equal((await readFile(f)).toString("base64"), kept.get(f), f);
+    assert.deepEqual((await filesUnder(join(cwd, "o"))).sort(), files.sort());
+    assert.deepEqual((await readdir(cwd)).filter((n) => !before.has(n)), ["o"]);
+    for (const f of await filesUnder(join(cwd, "work"))) assert.ok(f.endsWith("mac.E01"), f);
+  });
+});
+
+test("recipe run: with no mac_apt.py the run is refused, because detect could not tell", async () => {
+  await withCwd(async (cwd, bin) => {
+    const r = await recipe(cwd, bin, ["run", "--target", tgt(await e01(cwd)), "--out", "n"], { PATH: "/usr/bin:/bin" });
+    assert.equal(r.code, 2);
+    assert.match(JSON.parse(r.stdout).status_basis, /not one this recipe reads here/);
+  });
+});
+
+test("the recipe and the tool carry one copy of the log reader, and the recipe's JSON is a broad extraction that names its exclusions", async () => {
+  const cut = (text: string): string => text.slice(text.indexOf("# macapt-log-reader: start"), text.indexOf("# macapt-log-reader: stop"));
+  const [a, b] = [cut(await readFile(TRIAGE, "utf8")), cut(await readFile(RECIPE, "utf8"))];
+  assert.ok(a.length > 3000);
+  assert.equal(a, b);
+  const r = JSON.parse(await readFile(join(MAC, "..", "recipes", "macos-artefacts", "recipe.json"), "utf8")) as Json;
+  assert.equal(r.purpose, "broad_extraction");
+  assert.equal(r.capability, "macos-artifacts");
+  assert.deepEqual(r.auto, []);
+  assert.ok(r.exclusions.length >= 4);
+  assert.equal((await stat(RECIPE)).mode & 0o777, 0o755);
+});
