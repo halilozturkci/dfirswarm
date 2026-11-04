@@ -2477,6 +2477,89 @@ def descendants(pid):
     return found
 
 
+# program-group: settle
+# Tool-local (outside the shared blocks); the same text is in macos_triage, the macos-artefacts recipe and unified_log.
+# After the program has ended and what it left in the tool's own process group was ended, the files of the run are looked at again: a file that grew, or a
+# process outside the group that still holds one open (Linux, /proc), is a process in a session of its own (setsid), which this tool cannot end.
+SETTLE_SECONDS = 1.0       # the files are looked at again after this long
+
+
+def tree_sizes(roots, limit=200000):
+    """{path: size} of the regular files named in `roots` or under the directories named there (links not followed), at most `limit` of them."""
+    found = {}
+    stack = []
+    for root in roots:
+        try:
+            if os.path.isfile(str(root)) and not os.path.islink(str(root)):
+                found[str(root)] = os.stat(str(root)).st_size
+            else:
+                stack.append(str(root))
+        except OSError:
+            pass
+    while stack and len(found) < limit:
+        here = stack.pop()
+        try:
+            with os.scandir(here) as it:
+                for entry in it:
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            found[entry.path] = entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return found
+
+
+def file_holders(roots):
+    """The pids (not this tool's) that hold a file under `roots` open, or None where that cannot be looked for (no /proc: not Linux). The roots are this call's own."""
+    if not os.path.isdir("/proc/self"):
+        return None
+    targets = tuple(os.path.realpath(str(r)).rstrip("/") for r in roots)
+    me = os.getpid()
+    found = []
+    limit = time.monotonic() + 10
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return None
+    for number, name in enumerate(names):
+        if not name.isdigit() or int(name) == me:
+            continue
+        if number % 64 == 0 and time.monotonic() > limit:
+            return None
+        try:
+            for fd in os.listdir("/proc/%s/fd" % name):
+                try:
+                    link = os.readlink("/proc/%s/fd/%s" % (name, fd))
+                    if any(link == t or link.startswith(t + "/") for t in targets):
+                        found.append(int(name))
+                        break
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return found
+
+
+def settle_check(roots):
+    """After the program's group was emptied: the sizes under `roots` are read, SETTLE_SECONDS pass, they are read again. Returns {"grew": the number of
+    files that are new or changed in size, "holders": the pids that still hold a file open or None, "settle_seconds": SETTLE_SECONDS}. Any of them
+    means something outside the program's group (a process in a session of its own) is still writing, and this tool cannot end it."""
+    before = tree_sizes(roots)
+    time.sleep(SETTLE_SECONDS)
+    after = tree_sizes(roots)
+    return {"grew": sum(1 for path, size in after.items() if before.get(path) != size), "holders": file_holders(roots), "settle_seconds": SETTLE_SECONDS}
+# program-group: settle end
+
+
+READER_GROUP = {"settle": None}   # what the second look at the reader's files found
+
+
 def _die_with_parent(parent):  # runs in the child between fork and exec
     try:
         import ctypes
@@ -2621,6 +2704,17 @@ def run_reader(argv, stdout, stderr, seconds):
     finally:
         if hook in STOP["hooks"]:
             STOP["hooks"].remove(hook)
+        # whatever the reader left in the tool's group (a child that closed its descriptors and writes later, a double fork) is ended and waited for to be gone
+        # BEFORE the output is counted, hashed or measured (a second look is harmless where the time-out or the stop already made one)
+        try:
+            late = end_group_orphans(before)
+            if late["ended"]:
+                READER_LEFT["ended"] = READER_LEFT.get("ended", 0) + late["ended"]
+            if late["note"] and not READER_LEFT.get("note"):
+                READER_LEFT["note"] = late["note"]
+            READER_GROUP["left_behind"] = late["ended"]
+        except Exception:  # noqa: BLE001 (the stop that may be handled goes on)
+            pass
 
 
 def run_log(args):
@@ -2778,6 +2872,10 @@ def run_log(args):
                         returncode, timed_out = run_reader(argv, out, err, reader_seconds)
                 else:
                     returncode, timed_out = run_reader(argv, subprocess.DEVNULL, err, reader_seconds)
+            if not timed_out:
+                # the reader's group is empty: its output and error files are looked at again after a moment; a file that grew, or a process outside the group that
+                # holds one open, is a process in a session of its own, which this tool cannot end
+                READER_GROUP["settle"] = settle_check([p for p in (output_path, stderr_path) if os.path.isfile(p)])
             hold_signals()      # the last statement of the sweep's try: a stop signal in the few bytecodes after the reader lands in the except below
         except OSError as exc:
             fail("the reader's output could not be created or started, and it did not run", out_dir=out_dir,
@@ -2842,6 +2940,23 @@ def run_log(args):
         status = "partial"
     else:
         status = "complete"
+    settled = READER_GROUP["settle"]
+    abandoned = []
+    if READER_GROUP.get("left_behind") and not (timed_out or interrupted is not None):
+        abandoned.append("the reader left %d process(es) running in the tool's process group after it ended; they were killed and waited for before the output was counted, hashed or measured, so what "
+                         "they would still have written is missing from it, and the output is what it held at that moment" % READER_GROUP["left_behind"])
+    if settled and settled["grew"]:
+        abandoned.append("%d file(s) of the reader (its output or its error stream) changed after the reader's group was empty: a process in a session of its own (setsid) is still writing, "
+                         "this tool cannot end it, and the counts, the preview and the sha256 may be short" % settled["grew"])
+    if settled and settled["holders"]:
+        abandoned.append("%d process(es) outside the reader's group hold its output or error file open (a process in a session of its own): this tool cannot end it, and the files may still be growing"
+                         % len(settled["holders"]))
+    if settled and settled["holders"] is None:
+        warnings.append("which processes hold the reader's files open could not be looked for here (no /proc): a process the reader left in a session of its own is seen only if a file grew within %g seconds" % settled["settle_seconds"])
+    if abandoned:
+        problems.extend(abandoned)
+        if status == "complete":
+            status = "partial"
     if coverage.get("counting_stopped_at_line") and interrupted is None:
         status = "partial"
         problems.append("counting the output stopped at line %d because its time ran out: the counts and the preview cover the lines before it" % coverage["counting_stopped_at_line"])
@@ -2864,9 +2979,16 @@ def run_log(args):
         warnings.append(READER_LEFT["note"])
     digest_text = None
     if output_exists:
+        size_before = os.path.getsize(output_path)
         digest_text = digest(output_path, (time.monotonic() + INTERRUPT_COUNT_SECONDS) if interrupted is not None else budget_end + DIGEST_SECONDS)
         if digest_text is None:
             problems.append("the sha256 of the output was not computed: the time for it ran out")
+            if status == "complete":
+                status = "partial"
+        if os.path.getsize(output_path) != size_before:
+            problems.append("the output file changed size while it was counted and hashed (%d bytes, then %d): a process in a session of its own is still writing, this tool cannot end it, "
+                            "and the counts and the sha256 do not describe the file as it is" % (size_before, os.path.getsize(output_path)))
+            digest_text = None
             if status == "complete":
                 status = "partial"
     if status == "complete":
@@ -2907,6 +3029,9 @@ def run_log(args):
         "stderr": stderr_path,
         "stderr_bytes": stderr_bytes,
         **({"reader_processes_left": dict(READER_LEFT)} if READER_LEFT else {}),
+        "reader_group": {"left_behind": READER_GROUP.get("left_behind", 0),
+                         **({"files_grown_after": settled["grew"], "files_held_open_by_others": None if settled["holders"] is None else len(settled["holders"]),
+                             "settle_seconds": settled["settle_seconds"]} if settled else {})},
         "timeout_seconds_used": timeout,
         "budget": {"seconds_for_reader": round(reader_seconds) if reader_seconds is not None else None, "staging_seconds": round(marks["staged"], 1),
                    "census_seconds": round(marks["census"], 1), "seconds_used": round(time.monotonic() - started, 1)},

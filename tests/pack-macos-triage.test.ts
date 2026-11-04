@@ -55,7 +55,7 @@ def finish():
     log("Review the Log file and report any ERRORs or EXCEPTIONS to the developers")
 `;
 
-async function stand(bin: string, script: string, format = "2026-11-04 12:00:00,000 - MAIN - %s - %s"): Promise<void> {
+async function stand(bin: string, script: string, format = "2026-11-04 12:00:00,000|MAIN|%s|%s"): Promise<void> {
   await mkdir(bin, { recursive: true });
   const file = join(bin, "mac_apt.py");
   await writeFile(file, `#!/usr/bin/env python3\n${PRE.replace('"__FORMAT__"', JSON.stringify(format))}\n${script}\n`);
@@ -118,11 +118,13 @@ test("explicit plugins that the log shows run to their end are parsed and the ru
   });
 });
 
-test("the prefix of a log line is not relied on: no prefix at all reads the same", async () => {
+test("a log without the line shape (time|logger|LEVEL|message, read from the source and never observed) is not recognised: failed, never complete", async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, OK_TWO, "%.0s%s");
-    const a = ok(await run(cwd, bin, { path: await e01(cwd), input_type: "E01", plugins: ["TCC", "BASHSESSIONS"] }));
-    assert.equal(a.status, "complete", a.status_basis + JSON.stringify(a.problems));
+    const a = body(await run(cwd, bin, { path: await e01(cwd), input_type: "E01", plugins: ["TCC", "BASHSESSIONS"] }));
+    assert.equal(a.status, "failed");
+    assert.ok(a.log.unanchored_lines >= 4);
+    assert.match(a.problems.join("\n"), /without the line shape/);
   });
 });
 
@@ -343,7 +345,7 @@ test("a nonzero exit, a log read from the console, and a version the pin does no
     assert.equal(a.exit_code, 3);
     // no Log.<time>.txt: the lines go to the console only
     await stand(bin, `
-def con(line): print("12:00:00 INFO " + line)
+def con(line): print("12:00:00|MAIN|INFO|" + line)
 con("Started macOS Artifact Parsing Tool, version 1.33.2")
 con("Running plugin TCC")
 con("TCC plugin ran for 00:00:01")
@@ -715,12 +717,12 @@ test("the recipe and the tool carry one copy of the log reader, and the recipe's
 
 // ---- the error vocabulary does not rest on an uppercase level word that was never observed; the recipe's files are exclusive ---------------------
 
-test("a lowercase error line or a failure sentence inside a plugin's run is failed, in the tool and the recipe, whatever the line's prefix", async () => {
+test("a lowercase error line or a failure sentence inside a plugin's run is failed, in the tool and the recipe, whatever the logger name is", async () => {
   await withCwd(async (cwd, bin) => {
     const path = await e01(cwd);
     let n = 0;
     for (const sentence of ["error: could not open database", "Failed to parse database", "unable to read the file", "Exception while reading", "cannot decode record"]) {
-      for (const format of ["%.0s%s", "2026-11-04 12:00:00,000 - MAIN - %s - %s"]) {
+      for (const format of ["2026-11-04 12:00:00,000|MAIN|%s|%s", "2026-11-04 12:00:00,000|a.b|%s|%s"]) {
         await stand(bin, `start()\nplugin("TCC", ["Processed 3 rows"])\nplugin("SAFARI", [${JSON.stringify(sentence)}])\nfinish()\n`, format);
         const a = ok(await run(cwd, bin, { path, input_type: "E01", plugins: ["TCC", "SAFARI"] }));
         assert.equal(status(a, "SAFARI"), "failed", sentence);

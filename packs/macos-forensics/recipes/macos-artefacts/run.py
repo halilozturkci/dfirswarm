@@ -658,6 +658,188 @@ def install_signal_handlers():
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
 
+# program-group: sweep
+# Tool-local (outside the shared blocks); macos_triage and the macos-artefacts recipe (unified_log has the same two functions).
+# Before the first program starts, the members of the tool's own process group are noted (group_members). When a program has ended, every member that is new
+# since, other than this tool, is killed (end_group_orphans: only when this tool leads its group, as the harness starts it; each pid is checked again, by start
+# time and group, just before the signal) and the table is read again until none is left. This happens BEFORE any size, hash or log is read. What the program
+# left in a session of its own is not in the group and is not touched.
+GROUP_TABLE_SECONDS = 3       # the longest reading of the process table when the processes a program left are looked for
+BEFORE = {"members": None}    # the members of the tool's group before the program started (a stop signal ends what is new since)
+
+
+def _proc_stat(pid):
+    """(start time, state, process group) of `pid` from /proc/<pid>/stat (Linux), or None."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            text = fh.read(4096).decode("ascii", "replace")
+        tail = text[text.rindex(")") + 2:].split()
+        return (tail[19], tail[0], tail[2]) if len(tail) > 19 else None
+    except (OSError, ValueError):
+        return None
+
+
+def group_members():
+    """{pid: (start time, state)} of the processes in this tool's process group, or None when the table cannot be read in GROUP_TABLE_SECONDS.
+    The start time is read from /proc on Linux; where ps is used it is None."""
+    group = str(os.getpgrp())
+    found = {}
+    limit = time.monotonic() + GROUP_TABLE_SECONDS
+    if os.path.isdir("/proc/self"):
+        try:
+            names = os.listdir("/proc")
+        except OSError:
+            return None
+        for number, name in enumerate(names):
+            if not name.isdigit():
+                continue
+            if number % 64 == 0 and time.monotonic() > limit:
+                return None
+            row = _proc_stat(int(name))
+            if row is not None and row[2] == group:
+                found[int(name)] = (row[0], row[1])
+        return found
+    for ps in (shutil.which("ps"), "/bin/ps", "/usr/bin/ps"):
+        if not ps:
+            continue
+        try:
+            table = subprocess.run([ps, "-A", "-o", "pid=,pgid=,state="], capture_output=True, text=True, timeout=GROUP_TABLE_SECONDS).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        for line in table.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[0].isdigit() and parts[1] == group:
+                found[int(parts[0])] = (None, parts[2][:1])
+        return found
+    return None
+
+
+def end_group_orphans(before):
+    """After a stop or a time-out, end the processes that are in this tool's own process group and were not there before the reader started: what the
+    reader forked and lost (a double fork leaves a process whose parent is gone, out of reach of a walk down the process tree). Only when this tool
+    leads its group (the harness starts a tool as the leader of one), so that every member that is new since the reader started was started below this
+    tool; a process that was there before is never touched, and a pid's identity (its start time) is read again just before the signal. Returns
+    {"ended": n, "note": a sentence or None}."""
+    if before is None:
+        return {"ended": 0, "note": "the process table could not be read before the reader started, so the processes it left in the tool's group were not searched for"}
+    if os.getpgrp() != os.getpid():
+        return {"ended": 0, "note": "the tool does not lead its process group (the harness starts a tool as the leader of one), so nothing outside the reader's own tree was searched for"}
+    ended = 0
+    note = None
+    for _round in range(3):
+        now = group_members()
+        if now is None:
+            note = "the process table could not be read after the reader ended, so the processes it left in the tool's group may not all have been ended"
+            break
+        victims = [(pid, start) for pid, (start, state) in now.items() if pid != os.getpid() and state != "Z" and before.get(pid, (object(), ""))[0] != start]
+        if not victims:
+            break
+        for pid, start in victims:
+            if start is not None:
+                again = _proc_stat(pid)
+                if again is None or again[0] != start or again[2] != str(os.getpgrp()):
+                    continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+                ended += 1
+            except OSError:
+                pass
+        time.sleep(0.05)
+    else:
+        note = "processes were still appearing in the tool's group after three rounds: they may not all have been ended"
+    return {"ended": ended, "note": note}
+# program-group: sweep end
+
+# program-group: settle
+# Tool-local (outside the shared blocks); the same text is in macos_triage, the macos-artefacts recipe and unified_log.
+# After the program has ended and what it left in the tool's own process group was ended, the files of the run are looked at again: a file that grew, or a
+# process outside the group that still holds one open (Linux, /proc), is a process in a session of its own (setsid), which this tool cannot end.
+SETTLE_SECONDS = 1.0       # the files are looked at again after this long
+
+
+def tree_sizes(roots, limit=200000):
+    """{path: size} of the regular files named in `roots` or under the directories named there (links not followed), at most `limit` of them."""
+    found = {}
+    stack = []
+    for root in roots:
+        try:
+            if os.path.isfile(str(root)) and not os.path.islink(str(root)):
+                found[str(root)] = os.stat(str(root)).st_size
+            else:
+                stack.append(str(root))
+        except OSError:
+            pass
+    while stack and len(found) < limit:
+        here = stack.pop()
+        try:
+            with os.scandir(here) as it:
+                for entry in it:
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            found[entry.path] = entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return found
+
+
+def file_holders(roots):
+    """The pids (not this tool's) that hold a file under `roots` open, or None where that cannot be looked for (no /proc: not Linux). The roots are this call's own."""
+    if not os.path.isdir("/proc/self"):
+        return None
+    targets = tuple(os.path.realpath(str(r)).rstrip("/") for r in roots)
+    me = os.getpid()
+    found = []
+    limit = time.monotonic() + 10
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return None
+    for number, name in enumerate(names):
+        if not name.isdigit() or int(name) == me:
+            continue
+        if number % 64 == 0 and time.monotonic() > limit:
+            return None
+        try:
+            for fd in os.listdir("/proc/%s/fd" % name):
+                try:
+                    link = os.readlink("/proc/%s/fd/%s" % (name, fd))
+                    if any(link == t or link.startswith(t + "/") for t in targets):
+                        found.append(int(name))
+                        break
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return found
+
+
+def settle_check(roots):
+    """After the program's group was emptied: the sizes under `roots` are read, SETTLE_SECONDS pass, they are read again. Returns {"grew": the number of
+    files that are new or changed in size, "holders": the pids that still hold a file open or None, "settle_seconds": SETTLE_SECONDS}. Any of them
+    means something outside the program's group (a process in a session of its own) is still writing, and this tool cannot end it."""
+    before = tree_sizes(roots)
+    time.sleep(SETTLE_SECONDS)
+    after = tree_sizes(roots)
+    return {"grew": sum(1 for path, size in after.items() if before.get(path) != size), "holders": file_holders(roots), "settle_seconds": SETTLE_SECONDS}
+# program-group: settle end
+
+_kill_all_shared = kill_all
+
+
+def kill_all():
+    """The shared kill_all (the program and what is below the tool), then what is new in the tool's own group since the program started (an orphan is not
+    below the tool). The handler of the shared block looks this name up when a stop signal arrives."""
+    notes = _kill_all_shared()
+    if BEFORE["members"] is not None:
+        end_group_orphans(BEFORE["members"])
+    return notes
+
 # macapt-log-reader: start
 # The same text is in macos_triage and the macos-artefacts recipe (tests/pack-macos-triage.test.ts holds the copies equal).
 # It reads the log of ONE mac_apt run and says, per plugin, what the log shows. What is READ FROM mac_apt v1.33.2's SOURCE (mac_apt.py, GitHub raw view)
@@ -666,23 +848,37 @@ def install_signal_handlers():
 #     "An exception occurred while running plugin - {name}" (logged with log.exception, so a traceback follows it), "Finished in time = HH:MM:SS",
 #     "Could not find OSX/macOS installation!", ":( Could not find a partition having a macOS installation on it", the log file name
 #     "Log.<%Y%m%d-%H%M%S>.txt" in the output folder, and that the script ends with exit 0 even after an error it logged (Exit() calls sys.exit()).
-#   NOT read from the source, never observed: the prefix each log line carries (level, time, logger), the wording of a plugin that finds nothing or
-#     does not take an operating-system version, and where the console copy of the log goes. So every pattern below is searched anywhere in the line,
-#     a level word is looked for as a whole word, and `empty` and `unsupported` rest on wording that is an ASSUMPTION (see the manifest).
-# Nothing a line says is kept except its number: a log line can quote the evidence.
+#     The source also sets the log format '%(asctime)s|%(name)s|%(levelname)s|%(message)s' (read through a page summary, never seen in a real run).
+#   NOT read from the source, never observed: the log file as a real run writes it, the wording of a plugin that finds nothing or does not take an
+#     operating-system version, and where the console copy of the log goes. `empty` and `unsupported` rest on wording that is an ASSUMPTION (see the manifest).
+# ANCHORING (rests on that format, which was never observed). A line that has the shape time|logger|LEVEL|message is a recognised line only when its MESSAGE
+# begins with the text of the line (a start, a plugin start, a plugin end, an exception, the finish, no macOS found): a message that merely ends with that text,
+# or quotes it in the middle (evidence the log repeats), is an ordinary line. A line WITHOUT that shape is never recognised as one of those lines, even if it
+# holds their text: it is counted (unanchored), the run cannot be complete, and the plugin it would have opened, closed or finished stays not-parsed. So if
+# the real format differs from the one read from the source, a run reads as failed or partial, never as a wrong complete. A value of the evidence that holds
+# a line break followed by the whole shape could still forge a line (mac_apt's logger was not seen to escape one). The one line exempt from the error
+# vocabulary is the finish hint, and only as the whole message of a line of that shape with no error word in its prefix.
+# Every line is read whole up to MA_LINE_CAP bytes; a longer line is read to its cap, counted (long_lines) and makes the run partial. The read has a
+# deadline and a byte cap; either one ends it (cut) and the run is partial. Nothing a line says is kept except its number: a log line can quote the evidence.
 import re
 
-MA_LINE_BOUND = 4000
+MA_LINE_CAP = 1 << 20          # a line is scanned whole up to this many bytes; beyond them it is counted in long_lines (unreadable) and the run is partial
+MA_READ_MAX = 512 << 20        # the most bytes of log read in one run; beyond them the read is cut and the run is partial
+MA_TAIL_BYTES = 1 << 16        # the part of stdout and stderr (their end) that is read for an error word when a log file exists
+MA_PREFIX = re.compile(r"[^|\r\n]{1,40}\|[^|\r\n]{1,80}\|(?P<level>[A-Z]{3,10})\|(?P<msg>.*)")
 MA_STARTED = re.compile(r"Started (?P<prog>.{1,120}?), version (?P<ver>[0-9A-Za-z][0-9A-Za-z.+_-]{0,40})\s*$")
 MA_PLUGIN_RUN = re.compile(r"Running plugin (?P<n>[A-Za-z0-9_]{1,64})\s*$")
 MA_PLUGIN_RAN = re.compile(r"(?P<n>[A-Za-z0-9_]{1,64}) plugin ran for (?P<t>[0-9]{2,}:[0-9]{2}:[0-9]{2})\s*$")
 MA_EXCEPTION = re.compile(r"An exception occurred while running plugin - (?P<n>[A-Za-z0-9_]{1,64})\s*$")
 MA_FINISHED = re.compile(r"Finished in time = (?P<t>[0-9]{2,}:[0-9]{2}:[0-9]{2})\s*$")
 MA_NO_MACOS = re.compile(r"Could not find OSX/macOS installation!|Could not find a partition having a macOS installation on it")
+MA_EVENTS = (MA_STARTED, MA_PLUGIN_RUN, MA_PLUGIN_RAN, MA_EXCEPTION, MA_FINISHED, MA_NO_MACOS)
+MA_ANY_EVENT = re.compile("|".join("(?:%s)" % re.sub(r"\(\?P<\w+>", "(?:", p.pattern) for p in MA_EVENTS))
 MA_TRACEBACK = re.compile(r"Traceback \(most recent call last\)")
 MA_LEVEL_BAD = re.compile(r"(?<![A-Za-z])(?:ERROR|CRITICAL)(?![A-Za-z])|\b(?:errors?|exceptions?|tracebacks?|fail(?:ed|s|ure|ures)?|cannot|can't|could not|couldn't|unable|corrupt(?:ed)?|malformed|invalid)\b", re.I)
 # (the level word of the prefix was never observed, so a line is a failure line when it holds the uppercase level word OR any word of the broader vocabulary above, in any case)
-MA_REVIEW = re.compile(r"Review the Log file and report any")                 # the finish-time hint of the source, which names ERRORs and EXCEPTIONS without one having happened
+MA_REVIEW = re.compile(r"Review the Log file and report any ERRORs or EXCEPTIONS to the developers\.?\s*")      # the finish-time hint of the source: it names ERRORs and EXCEPTIONS without one having happened
+MA_REVIEW_PHRASE = re.compile(r"Review the Log file and report any ERRORs or EXCEPTIONS to the developers")
 MA_LEVEL_WARN = re.compile(r"(?<![A-Za-z])WARNING(?![A-Za-z])")
 MA_SEPARATOR = re.compile(r"-{20,}\s*$")
 MA_UNSUPPORTED = re.compile(r"\b(?:not supported|unsupported)\b", re.I)                                                  # ASSUMED wording
@@ -690,14 +886,26 @@ MA_EMPTY = re.compile(r"\bno\b.{0,80}\b(?:found|data|records|entries|items)\b|\b
 MA_STATUSES = ("parsed", "empty", "unsupported", "failed")
 
 
-def ma_read_log(paths):
-    """Read the given log files in order as one account. Returns a dict: lines, long_lines, started (bool), program, version, finished (bool),
-    no_macos (bool), run_errors (the lines with an error word or a traceback outside any plugin's window), plugins (a list of windows in the order
-    they began: name, line, ran, exception, errors, tracebacks, warnings, unsupported, empty, other, closed_by) and files read."""
-    out = {"lines": 0, "long_lines": 0, "started": False, "program": None, "version": None, "finished": False, "no_macos": False,
-           "run_errors": [], "plugins": [], "unreadable": []}
+def ma_read_log(paths, deadline=None, max_bytes=MA_READ_MAX):
+    """Read the given log files in order as one account. Returns a dict: lines, long_lines (lines longer than MA_LINE_CAP, read to the cap), bytes, cut (None, or
+    the sentence that says the read ended before the end of the log: its deadline or its byte cap), unanchored (lines that hold the text of a start, plugin or
+    finish line without the shape that anchors one), started (bool), program, version, finished (bool), no_macos (bool), run_errors (the lines with an error
+    word or a traceback outside any plugin's window), plugins (a list of windows in the order they began: name, line, ran, exception, errors, tracebacks,
+    warnings, unsupported, empty, other, closed_by) and unreadable."""
+    out = {"lines": 0, "long_lines": 0, "bytes": 0, "cut": None, "unanchored": 0, "started": False, "program": None, "version": None, "finished": False,
+           "no_macos": False, "run_errors": [], "plugins": [], "unreadable": []}
     current = None
+
+    def cut_now():
+        if deadline is not None and time.monotonic() >= deadline:
+            out["cut"] = "the time given to reading the log ran out"
+        elif out["bytes"] >= max_bytes:
+            out["cut"] = "the log is longer than the %d bytes this tool reads" % max_bytes
+        return out["cut"] is not None
+
     for path in paths:
+        if out["cut"] or cut_now():
+            break
         try:
             handle = open(path, "rb")
         except OSError as exc:
@@ -705,38 +913,49 @@ def ma_read_log(paths):
             continue
         with handle:
             while True:
-                raw = handle.readline(MA_LINE_BOUND + 1)
+                if out["cut"] or cut_now():
+                    break
+                raw = handle.readline(MA_LINE_CAP + 1)
                 if not raw:
                     break
-                if len(raw) > MA_LINE_BOUND and not raw.endswith(b"\n"):
+                out["bytes"] += len(raw)
+                if len(raw) > MA_LINE_CAP and not raw.endswith(b"\n"):
                     out["long_lines"] += 1
-                    while True:                      # the rest of the line is skipped, in pieces
-                        rest = handle.readline(MA_LINE_BOUND)
-                        if not rest or rest.endswith(b"\n"):
+                    while True:                      # the rest of the line is skipped, in pieces (the clock is looked at between them)
+                        rest = handle.readline(MA_LINE_CAP)
+                        out["bytes"] += len(rest)
+                        if not rest or rest.endswith(b"\n") or cut_now():
                             break
                 out["lines"] += 1
                 number = out["lines"]
                 line = raw.decode("utf-8", "replace").rstrip("\r\n")
-                m = MA_STARTED.search(line)
+                shaped = MA_PREFIX.fullmatch(line)
+                message = shaped.group("msg") if shaped else line
+
+                def event(pattern):
+                    return pattern.match(message) if shaped else None
+                if not shaped and MA_ANY_EVENT.search(line):
+                    out["unanchored"] += 1
+                m = event(MA_STARTED)
                 if m and not out["started"]:
                     out["started"], out["program"], out["version"] = True, m.group("prog"), m.group("ver")
                     continue
-                m = MA_PLUGIN_RUN.search(line)
+                m = event(MA_PLUGIN_RUN)
                 if m:
                     current = {"name": m.group("n"), "line": number, "ran": False, "exception": 0, "errors": 0, "tracebacks": 0, "warnings": 0,
                                "unsupported": 0, "empty": 0, "other": 0, "closed_by": None}
                     out["plugins"].append(current)
                     continue
-                if MA_FINISHED.search(line):
+                if event(MA_FINISHED):
                     out["finished"] = True
                     if current is not None:
                         current["closed_by"] = current["closed_by"] or "finish"
                     current = None
                     continue
-                if MA_NO_MACOS.search(line):
+                if event(MA_NO_MACOS):
                     out["no_macos"] = True
                     continue
-                m = MA_PLUGIN_RAN.search(line)
+                m = event(MA_PLUGIN_RAN)
                 if m:
                     if current is not None and current["name"] == m.group("n") and not current["ran"]:
                         current["ran"], current["closed_by"] = True, "ran"
@@ -744,7 +963,7 @@ def ma_read_log(paths):
                     else:
                         out["run_errors"].append(number)          # a "ran for" line for a plugin that is not the one in hand: the log is not in the order read
                     continue
-                m = MA_EXCEPTION.search(line)
+                m = event(MA_EXCEPTION)
                 if m:
                     target = current if current is not None and current["name"] == m.group("n") else next((w for w in reversed(out["plugins"]) if w["name"] == m.group("n")), None)
                     if target is None:
@@ -752,7 +971,8 @@ def ma_read_log(paths):
                     else:
                         target["exception"] += 1
                     continue
-                bad = bool(MA_LEVEL_BAD.search(line)) and not MA_REVIEW.search(line)
+                exempt = bool(shaped) and bool(MA_REVIEW.fullmatch(message)) and not MA_LEVEL_BAD.search(line[:shaped.start("msg")])
+                bad = bool(MA_LEVEL_BAD.search(line)) and not exempt
                 trace = bool(MA_TRACEBACK.search(line))
                 if current is None:
                     if bad or trace:
@@ -773,6 +993,26 @@ def ma_read_log(paths):
                 else:
                     current["other"] += 1
     return out
+
+
+def ma_tail_hits(paths):
+    """(the number of lines with an error word or a traceback, the number of files that could not be read) in the last MA_TAIL_BYTES of each file: stdout and
+    stderr are read this way when a log file exists, because a traceback printed there is not in the log. The finish hint is taken out of a line first."""
+    hits = unreadable = 0
+    for path in paths:
+        try:
+            with open(path, "rb") as handle:
+                size = os.fstat(handle.fileno()).st_size
+                handle.seek(max(0, size - MA_TAIL_BYTES))
+                text = handle.read(MA_TAIL_BYTES).decode("utf-8", "replace")
+        except OSError:
+            unreadable += 1
+            continue
+        for line in text.splitlines():
+            line = MA_REVIEW_PHRASE.sub("", line)
+            if MA_LEVEL_BAD.search(line) or MA_TRACEBACK.search(line):
+                hits += 1
+    return hits, unreadable
 
 
 def ma_plugin_status(window):
@@ -809,6 +1049,8 @@ PINNED_VERSION = "1.33.2"
 PROGRAM = "mac_apt.py"
 MACAPT_SECONDS = 14100      # recipe.json limits.seconds (14400) less the time to write the account of the run
 PIPE_FLOOR = 1.0
+LOG_FLOOR_SECONDS = 10.0     # the log is read for what is left of the seconds given to mac_apt, and for at least this long
+LOG_END_SECONDS = 14250.0   # and never past this many seconds from the start of the run (recipe.json limits.seconds is 14400)
 ARM_REASON = ("mac_apt 1.33.2 is installed in the amd64 worker image only: its statx helper has no syscall number for aarch64 and stops at import on Linux arm64 "
               "(a packaging limit of the pinned copy, which says nothing about the evidence)")
 PLUGIN_NAME = re.compile(r"[A-Za-z0-9_]{1,64}-?")
@@ -993,13 +1235,19 @@ def last_word(signum):
 
 
 def run_program(argv, out_path, err_path, cwd, env, seconds):
-    """(exit code, timed out, pipes held) of mac_apt: in this recipe's own process group (the shared PROCESS block), its stdout and stderr written whole to two files."""
+    """(exit code, timed out, pipes held, the group) of mac_apt: in this recipe's own process group (the shared PROCESS block), its stdout and stderr written whole to
+    two files. The group is {"left_behind" (members new in the tool's group since mac_apt started, found when it had ended, and killed), "note"}: what mac_apt left is
+    ended and waited for before the caller reads a size, a hash or the log."""
     STATE["last_word"] = last_word
     install_signal_handlers()
     fo = excl(out_path, "wb")
     fe = excl(err_path, "wb")
     files = {"stdout": fo, "stderr": fe}
+    if BEFORE["members"] is None:
+        BEFORE["members"] = group_members()
+    before = BEFORE["members"]
     proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=env)
+    group = {"left_behind": 0, "note": None}
     ACTIVE.append(proc)
     selector = selectors.DefaultSelector()
     timed_out = held = False
@@ -1038,7 +1286,7 @@ def run_program(argv, out_path, err_path, cwd, env, seconds):
             timed_out = True
             kill_tree(proc)
             code = proc.wait()
-        return code, timed_out, held
+        return code, timed_out, held, group
     finally:
         if proc.poll() is None:
             kill_tree(proc)
@@ -1054,6 +1302,10 @@ def run_program(argv, out_path, err_path, cwd, env, seconds):
                 pipe.close()
             except (OSError, ValueError):
                 pass
+        # whatever mac_apt left in the group (a child that closed its descriptors and writes later, a double fork) is ended and waited for to be gone BEFORE
+        # the caller reads a size, a hash or the log
+        swept = end_group_orphans(before)
+        group["left_behind"], group["note"] = swept["ended"], swept["note"]
         for handle in (fo, fe):
             handle.flush()
             handle.close()
@@ -1082,6 +1334,7 @@ def run(path, kind, requested, out, seconds=MACAPT_SECONDS):
 
 
 def run_checked(path, kind, requested, out, seconds, report):
+    began = time.monotonic()
     os.makedirs(out, exist_ok=True)
     path = os.path.abspath(path)
     plugins = requested or ["FAST"]
@@ -1103,10 +1356,16 @@ def run_checked(path, kind, requested, out, seconds, report):
            "TMPDIR": os.path.join(out, "mac_apt-tmp"), "HOME": os.path.join(out, "mac_apt-home")}
     argv = [prog, "-o", report, "-c", kind, path if not path.startswith("-") else "./" + path] + plugins
     STATE["started"] = True
-    code, timed_out, held = run_program(argv, os.path.join(out, "mac_apt.stdout"), os.path.join(out, "mac_apt.stderr"), os.path.join(out, "mac_apt-cwd"), env, seconds)
+    run_deadline = time.monotonic() + seconds
+    code, timed_out, held, group = run_program(argv, os.path.join(out, "mac_apt.stdout"), os.path.join(out, "mac_apt.stderr"), os.path.join(out, "mac_apt-cwd"), env, seconds)
+    # the group is empty: the files of the run are looked at again after a moment; a file that grew, or a process outside the group that holds one open, is a
+    # process in a session of its own, which this recipe cannot end
+    settle = settle_check([report] + [os.path.join(out, n) for n in ("mac_apt-cwd", "mac_apt-tmp", "mac_apt-home")])
     logs = sorted(n for n in os.listdir(report) if LOG_NAME.fullmatch(n) and not os.path.islink(os.path.join(report, n)))
     console = not logs
-    read = ma_read_log([os.path.join(report, n) for n in logs] if logs else [os.path.join(out, "mac_apt.stdout"), os.path.join(out, "mac_apt.stderr")])
+    now = time.monotonic()
+    log_deadline = min(max(run_deadline, now + LOG_FLOOR_SECONDS), began + LOG_END_SECONDS)
+    read = ma_read_log([os.path.join(report, n) for n in logs] if logs else [os.path.join(out, "mac_apt.stdout"), os.path.join(out, "mac_apt.stderr")], log_deadline)
     rows = ma_plugins(read)
     missing = []
     if expected is not None:
@@ -1134,6 +1393,30 @@ def run_checked(path, kind, requested, out, seconds, report):
                 "what mac_apt printed" if rel.startswith("mac_apt.std") else "a file mac_apt wrote"
             fh.write("%s\t%d\t%s\n" % (tsv_escape(rel), size, what))
     problems = []
+    if group["left_behind"] and not timed_out:
+        problems.append("mac_apt left %d process(es) running in the tool's process group after it ended; they were killed and waited for before any size, hash or log was read, so what they "
+                        "would still have written is missing from the files, and the files are what they held at that moment" % group["left_behind"])
+    if settle["grew"]:
+        problems.append("%d file(s) of the run changed after mac_apt's group was empty: a process in a session of its own (setsid) is still writing, this recipe cannot end it, "
+                        "and the sizes in index.tsv and the log read here may be short" % settle["grew"])
+    if settle["holders"]:
+        problems.append("%d process(es) outside mac_apt's group hold a file of the run open (a process in a session of its own): this recipe cannot end it, and the files may still be growing"
+                        % len(settle["holders"]))
+    if settle["holders"] is None:
+        problems.append("which processes hold the run's files open could not be looked for here (no /proc): a process mac_apt left in a session of its own is seen only if a file grew within %g seconds" % settle["settle_seconds"])
+    if read["cut"]:
+        problems.append("the log was not fully read: %s, so a plugin or the finish line past the cut is not in the account" % read["cut"])
+    if read["long_lines"]:
+        problems.append("%d log line(s) are longer than %d bytes and were read only to that length" % (read["long_lines"], MA_LINE_CAP))
+    if read["unanchored"]:
+        problems.append("%d log line(s) hold the text of a start, plugin or finish line without the line shape that anchors one (time|logger|LEVEL|message, read from the source and never observed): "
+                        "they were not counted as those lines" % read["unanchored"])
+    if logs:
+        tail_hits, tail_unreadable = ma_tail_hits([os.path.join(out, "mac_apt.stdout"), os.path.join(out, "mac_apt.stderr")])
+        if tail_hits:
+            problems.append("the end of mac_apt.stdout or mac_apt.stderr (the last %d bytes of each) holds %d line(s) with an error word or a traceback, which the log does not show" % (MA_TAIL_BYTES, tail_hits))
+        if tail_unreadable:
+            problems.append("mac_apt.stdout or mac_apt.stderr could not be read for an error word")
     if timed_out:
         problems.append("mac_apt did not finish in the %g seconds this recipe gives it: it was ended with everything it started, and what it wrote is kept whole" % seconds)
     if held:
@@ -1165,13 +1448,16 @@ def run_checked(path, kind, requested, out, seconds, report):
     secret.update({"plugins.tsv": "the plugin names the log showed and the log lines they started on", "index.tsv": "the names and sizes of the files mac_apt wrote",
                    "coverage.json": "this receipt: plugin names, counts and reasons derived from the examined system's log"})
     receipt = {"log_format_recognised": read["started"], "log_source": "Log.<time>.txt in mac_apt/" if logs else "the console output (mac_apt.stdout, then mac_apt.stderr)",
-               "lines": read["lines"], "long_lines": read["long_lines"], "counts": counts, "plugins_not_started": missing, "plugins_listed_in": "plugins.tsv",
+               "lines": read["lines"], "long_lines": read["long_lines"], "log_bytes_read": read["bytes"], "log_read_cut": read["cut"],
+               "unanchored_lines": read["unanchored"], "program_group": {"left_behind": group["left_behind"], "note": group["note"],
+               "files_grown_after": settle["grew"], "files_held_open_by_others": None if settle["holders"] is None else len(settle["holders"]), "settle_seconds": settle["settle_seconds"]},
+               "counts": counts, "plugins_not_started": missing, "plugins_listed_in": "plugins.tsv",
                "error_lines_outside_plugins": len(read["run_errors"]), "read_from_source": READ_FROM_SOURCE, "not_observed": NOT_OBSERVED}
     ran_any = bool(read["plugins"])
     extra = dict(more, plugins=receipt, secret_bearing=secret, sensitive_output="the files under mac_apt/ and the kept log hold the examined system's own content; a recipe cannot declare secret_output, so this receipt marks them")
     if read["started"] and ran_any and not problems:
         write_coverage(out, "complete", "mac_apt exited 0 and its log accounts for %d plugin(s): %d parsed, %d empty (by the log; not a count of records)" % (len(rows), counts["parsed"], counts["empty"]),
-                       [], "mac_apt exited 0, its log was recognised from the start line to the finish line, and each of the %d requested plugin(s) is parsed or empty by the log (parsed means no line of its run holds an error word, which rests on a log format never observed); the wording behind `empty` was never observed" % len(rows), **extra)
+                       [], "mac_apt exited 0, its log was recognised from the start line to the finish line, and each of the %d requested plugin(s) is parsed or empty by the log (parsed means no line of its run holds an error word, which rests on a log format never observed); the wording behind `empty` was never observed. No process was left in mac_apt's group and no file of the run grew after it ended (a process in a session of its own would be seen only by one of those two)" % len(rows), **extra)
     elif read["started"] and ran_any:
         write_coverage(out, "partial", "%d plugin(s) in the log: %d parsed, %d empty, %d unsupported, %d failed" % (len(rows), counts["parsed"], counts["empty"], counts["unsupported"], counts["failed"]),
                        problems, basis_of("partial because ", problems), **extra)

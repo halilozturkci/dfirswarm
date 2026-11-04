@@ -232,8 +232,8 @@ test("the six leaves of the second batch carry their rules, say what was never o
   has("artifacts/recent-items", /A stored reference is not an open/);
   has("artifacts/recent-items", /shows no binary value, so the path inside is not read/);
   // Sentences moved out of the leaves at the limit stay in the pack, and the leaf they left points to the new home.
-  has("workflow/mac-apt", /`mac_apt\.py -h` prints its input modes and plugin names/);
-  has("workflow/mac-apt", /Presence shows neither support for the subject's macOS build nor that a plugin finished; its log does\. Keep each plugin's log/);
+  has("workflow/mac-apt", /`mac_apt\.py -h` should print its input modes and plugin names \(not observed\)/);
+  has("workflow/mac-apt", /Presence shows no support for the subject's build; the log shows whether it finished/);
   has("triage/system-profile", /\(`workflow\/mac-apt`\)/);
   has("artifacts/knowledgec", /`segb_read` frames it only \(`artifacts\/biome`\)/);
   has("artifacts/plists-archives-dates", /`artifacts\/recent-items`/);
