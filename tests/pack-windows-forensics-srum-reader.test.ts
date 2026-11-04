@@ -351,6 +351,29 @@ test("the database state: a dirty one with no log beside it is partial, one with
   });
 });
 
+test("what SrumECmd says about its own run is not lost: a table it could not export, a read problem, an error on the file, a repaired copy and an unreadable hive each make the status partial", async () => {
+  await withCwd(async (cwd, bin) => {
+    const { db, hive } = await layout(cwd);
+    const say = async (line: string): Promise<Answer> => {
+      await stub(bin, "SrumECmd", srumecmd(NET_CSV(), join(cwd, "args.txt"), { console: `${CONSOLE_CLEAN}\n${line}` }));
+      return body<Answer>(await tool("srum_reader", cwd, { path: db, software: hive }, {}, bin));
+    };
+    let out = await say("Error exporting 'NetworkUsages' data! Error: boom");
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /reported 1 table\(s\) it could not export/);
+    out = await say("3 problem(s) found while reading the database (everything else was exported):");
+    assert.match(out.status_basis, /reported 3 problem\(s\) while reading the database/);
+    out = await say("Error processing file! Message: x.");
+    assert.match(out.status_basis, /an error processing the file/);
+    out = await say("the copy was repaired with esentutl /p (what only the missing logs had is lost)");
+    assert.match(out.status_basis, /repaired its copy of the database/);
+    out = await say("Unable to read SOFTWARE hive 'x': user and network profile names are missing (see above)");
+    assert.match(out.status_basis, /could not read the SOFTWARE hive/);
+    assert.match((await rowsOf(cwd, out))[1].profile_unresolved_because, /could not read the SOFTWARE hive/);
+    for (const r of [out]) assert.equal(r.status, "partial");
+  });
+});
+
 test("the arguments are checked before anything runs", async () => {
   await withCwd(async (cwd, bin) => {
     const { db } = await layout(cwd);

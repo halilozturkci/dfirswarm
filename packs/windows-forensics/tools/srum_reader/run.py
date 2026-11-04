@@ -2658,22 +2658,22 @@ OWN_NAMES.update((
     'console_format_version', 'counter_units', 'counters', 'csv_files', 'cut_files', 'database',
     'deadline', 'directory', 'dirty', 'earliest', 'elapsed_seconds', 'energy_usage',
     'energy_usage_long_term', 'energyusage', 'energyusagelt', 'entries_seen', 'error', 'exit_code',
-    'facts', 'file_type', 'files', 'first_time', 'format_version', 'found',
-    'found_by', 'found_count', 'hive_unreadable', 'interface_luid', 'interface_type', 'interval_seconds_since_previous_row_time',
-    'intervals_note', 'last_time', 'last_word', 'latest', 'logs', 'logs_beside',
-    'logs_beside_count', 'logs_beside_note', 'logs_replayed', 'name', 'network_connectivity', 'network_usage',
-    'networkconnections', 'networkconnectivity', 'networkconnectivityusage', 'networkdata', 'networkdatausage', 'networkusage',
-    'networkusages', 'not_compared', 'not_compared_count', 'note', 'notes', 'ok',
-    'other', 'parser', 'path', 'problems', 'profile', 'profile_id',
-    'profile_name', 'profile_resolved', 'profile_unresolved_because', 'push_notifications', 'pushnotification', 'pushnotifications',
-    'read_problems', 'reason', 'repaired_copy', 'result', 'retained_interval', 'row',
-    'rows', 'rows_file', 'rows_inline_truncated', 'rows_total', 'rows_with_a_time_not_read', 'rows_with_replaced_bytes',
-    'seconds', 'semantics_note', 'signal', 'software', 'software_hive', 'source_file',
-    'source_row', 'state', 'state_code', 'status', 'status_basis', 'table',
-    'table_errors', 'tables', 'tables_written', 'time', 'time_column', 'time_note',
-    'time_raw', 'time_semantics', 'unit', 'unresolved', 'unresolved_ids', 'unresolved_ids_total',
-    'unresolved_note', 'user', 'user_id', 'user_name', 'user_resolved', 'user_sid',
-    'value', 'vfuprov', 'why', 'work',
+    'facts', 'file_error', 'file_type', 'files', 'first_time', 'format_version',
+    'found', 'found_by', 'found_count', 'hive_unreadable', 'interface_luid', 'interface_type',
+    'interval_seconds_since_previous_row_time', 'intervals_note', 'last_time', 'last_word', 'latest', 'logs',
+    'logs_beside', 'logs_beside_count', 'logs_beside_note', 'logs_replayed', 'name', 'network_connectivity',
+    'network_usage', 'networkconnections', 'networkconnectivity', 'networkconnectivityusage', 'networkdata', 'networkdatausage',
+    'networkusage', 'networkusages', 'not_compared', 'not_compared_count', 'note', 'notes',
+    'ok', 'other', 'parser', 'path', 'problems', 'profile',
+    'profile_id', 'profile_name', 'profile_resolved', 'profile_unresolved_because', 'push_notifications', 'pushnotification',
+    'pushnotifications', 'read_problems', 'reason', 'repaired_copy', 'result', 'retained_interval',
+    'row', 'rows', 'rows_file', 'rows_inline_truncated', 'rows_total', 'rows_with_a_time_not_read',
+    'rows_with_replaced_bytes', 'seconds', 'semantics_note', 'signal', 'software', 'software_hive',
+    'source_file', 'source_row', 'state', 'state_code', 'status', 'status_basis',
+    'table', 'table_errors', 'tables', 'tables_written', 'time', 'time_column',
+    'time_note', 'time_raw', 'time_semantics', 'unit', 'unresolved', 'unresolved_ids',
+    'unresolved_ids_total', 'unresolved_note', 'user', 'user_id', 'user_name', 'user_resolved',
+    'user_sid', 'value', 'vfuprov', 'why', 'work',
 ))
 
 FIELDS.update({
@@ -3149,7 +3149,8 @@ def run_srumecmd(db, software, parent):
     facts["table_errors"] = len(re.findall(r"Error exporting '[^']{1,80}' data", text))
     m = re.search(r"([\d,]{1,12}) problem\(s\) found while reading the database", text)
     facts["read_problems"] = int(m.group(1).replace(",", "")) if m else 0
-    facts["repaired_copy"] = "esentutl /p" in text and "repair" in text.lower()
+    facts["repaired_copy"] = bool(re.search(r"repaired with esentutl|repairing the copy", text))
+    facts["file_error"] = "Error processing file!" in text
     rec["state"] = "ran"
     return rec
 
@@ -3427,7 +3428,7 @@ def main():
         fail("path is neither a regular file nor a directory, so it was not opened", path=path)
     if software is not None:
         regular(software, "software")
-    OWN_NAMES.update(x for x in (db, software) if x)
+    OWN_NAMES.update(x for x in (software_arg,) if x)          # (only what the caller typed: a name found under a directory is evidence and is judged)
     try:
         header = read_header(db)
     except NotEse as exc:
@@ -3544,6 +3545,10 @@ def main():
                 reasons.append("SrumECmd reported %d table(s) it could not export" % b["facts"]["table_errors"])
             if b["facts"].get("read_problems"):
                 reasons.append("SrumECmd reported %d problem(s) while reading the database" % b["facts"]["read_problems"])
+            if b["facts"].get("file_error"):
+                reasons.append("SrumECmd reported an error processing the file")
+            if b["facts"].get("repaired_copy"):
+                reasons.append("SrumECmd repaired its copy of the database (esentutl /p): what only the missing logs held is lost")
             if b["facts"].get("hive_unreadable"):
                 reasons.append("SrumECmd could not read the SOFTWARE hive: profile and user names are missing")
         bad_time = sum(s.time_unparsed for per in stats.values() for s in per.values())
