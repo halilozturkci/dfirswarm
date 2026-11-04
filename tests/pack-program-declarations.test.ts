@@ -69,13 +69,14 @@ const WORD = {
   log: "a field or a key named log (a collector's log, a result's log), not the program",
   "7z": "an archive type or suffix in a table of names, not the program",
   CyLR: "the name of a collector in a table of collectors, not a program the tool runs",
+  KAPE: "the name of a collector in a table of collectors, not a program the tool runs",
   uac: "the name of a collector in a table of collectors, not a program the tool runs",
   velociraptor: "the name of a collector in a table of collectors, not a program the tool runs",
   java: "a file type or a language name in a table of names, not the program",
   pwsh: "a word in a list of program names to recognise in a command line, not a program the tool runs",
 };
 const w = (...programs: Array<keyof typeof WORD>): Record<string, string> => Object.fromEntries(programs.map((p) => [p, WORD[p]]));
-const COLLECTORS = w("7z", "CyLR", "log", "uac", "velociraptor");
+const COLLECTORS = w("7z", "CyLR", "KAPE", "log", "uac", "velociraptor");
 
 /** Words that are not calls. A tool or recipe that is not here and names a program in its source declares it. */
 const ALLOWED: Record<string, Record<string, string>> = {
@@ -106,7 +107,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "reverse-engineering/recipes/capa-floss": w("strings"),
   "triage-collection/recipes/collection-intake": COLLECTORS,
   "triage-collection/tools/collection_coverage": COLLECTORS,
-  "triage-collection/tools/collection_id": w("7z", "log", "uac", "velociraptor"),
+  "triage-collection/tools/collection_id": w("7z", "KAPE", "log", "uac", "velociraptor"),
   "triage-collection/tools/collection_index": w("7z", "log"),
   "triage-collection/tools/collection_manifest_parse": COLLECTORS,
   "triage-collection/tools/collection_manifest_verify": COLLECTORS,
@@ -127,7 +128,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "memory-forensics/tools/vol_readiness": { vol: "the tool starts `vol` itself and, when it is not on PATH, answers that as its own result (a blocked view, or a JSON refusal naming it) instead of the harness refusing the call first; requires/host.json declares vol as an optional program of the pack", yara: "not a program the tool starts: the name is the Python module (yara, yara_x) whose import it tests in the interpreter of the vol script" },
   "memory-forensics/tools/mem_registry": { vol: "the tool starts `vol` itself and, when it is not on PATH, answers that as its own result (a blocked view, or a JSON refusal naming it) instead of the harness refusing the call first; requires/host.json declares vol as an optional program of the pack" },
   "memory-forensics/tools/vol_views": { vol: "the tool starts `vol` itself and, when it is not on PATH, answers that as its own result (a blocked view, or a JSON refusal naming it) instead of the harness refusing the call first; requires/host.json declares vol as an optional program of the pack" },
-  "memory-forensics/tools/isf_intake": { vol: "the tool starts `vol` itself and, when it is not on PATH, answers that as its own result (a blocked view, or a JSON refusal naming it) instead of the harness refusing the call first; requires/host.json declares vol as an optional program of the pack" },
+  "memory-forensics/tools/isf_intake": { dwarf2json: "the tool starts `dwarf2json` itself and, when it is not on PATH, answers that as its own result (a JSON refusal with the verdict blocked) instead of the harness refusing the call first; requires/host.json declares dwarf2json as an optional program of the pack", vol: "the tool starts `vol` itself and, when it is not on PATH, answers that as its own result (a blocked view, or a JSON refusal naming it) instead of the harness refusing the call first; requires/host.json declares vol as an optional program of the pack" },
   "virtualization-backup-forensics/tools/backup_audit_normalise": w("log", "strings"),
   "virtualization-backup-forensics/tools/virtualization_inventory": w("log", "strings"),
   "windows-forensics/tools/sigma_hunt": { hayabusa: "one of two engines, either of which is enough (the description says so, and tests/pack-windows-forensics.test.ts pins that it declares neither: declaring both would claim both are needed)", zircolite: "one of two engines, either of which is enough (see hayabusa)" },
