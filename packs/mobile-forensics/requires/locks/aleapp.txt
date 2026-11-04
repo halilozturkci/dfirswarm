@@ -1,6 +1,7 @@
 # Hash lock for ALEAPP 2026.4.1's own venv: the pip list of requires/host.json (bencoding, packaging, PyCryptodome, pytz, simplekml, wheel and xmltodict are pinned here, where the host.json list left them open), the Brotli, lz4 and zstd of the git readers (pip_after installs the readers themselves with --no-deps), and everything they need.
 # every line is name==version with the sha256 of each file PyPI publishes for it that CPython 3.11 on Linux glibc (x86_64 or aarch64) can use, plus the
-# sdist (an architecture with no wheel builds from it). Resolved from PyPI's JSON metadata for exactly that environment; pip installs it with --require-hashes, so a file whose hash
+# sdist (an architecture with no wheel builds from it), except that the x86_64 manylinux_2_4 wheel of zstd 1.5.7.2 is not hashed here: amd64 builds zstd from its sdist
+# (the compiler is present). Resolved from PyPI's JSON metadata for exactly that environment; pip installs it with --require-hashes, so a file whose hash
 # is not here does not install. The set holds every dependency, since hash mode refuses an unlisted one.
 bcrypt==3.2.0 \
     --hash=sha256:5b93c1726e50a93a033c36e5ca7fdcd29a5c7395af50a6892f5d9e7c6cfbfb29 \

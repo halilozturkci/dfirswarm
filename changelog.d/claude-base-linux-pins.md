@@ -4,7 +4,10 @@
 (base) and `target-fs` (linux) install the dissect metapackage 3.22
 (dissect.target 3.25.1), each from a lock in `requires/locks/` that holds the
 sha256 of every file PyPI publishes for the package and its whole dependency
-set that CPython 3.11 on Linux (x86_64 or aarch64) can use, plus the sdist.
+set that CPython 3.11 on Linux (x86_64 or aarch64) can use, plus the sdist;
+the one exception is the x86_64 manylinux_2_4 wheel of zstd 1.5.7.2, which the
+plaso and ccl locks do not hash, so amd64 builds zstd from the sdist (the
+compiler is present).
 Pillow is `==12.3.0` in `python.txt`, installed from the pack's
 `requires/python.lock`. `ccl_indexeddb_dump`'s own venv installs Brotli 1.2.1
 and zstd 1.5.7.2 from a hash lock; `ccl_simplesnappy` is not on PyPI and stays

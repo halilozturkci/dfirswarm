@@ -1724,7 +1724,9 @@ def main(spec_path: str) -> int:
     compiles = bool(spec["pip"] or spec["requirements"] or locks or any(d.get("pip") or d.get("pip_lock") for d in sources))
     # Some wheels have no build for every architecture (flare-floss pulls
     # binary2strings, which arm64 has to compile), and some none at all
-    # (dfvfs pulls libewf-python and libfvde-python, sdists only; a pinned
+    # (dfvfs pulls libewf-python and libfvde-python: the pack's python.lock
+    # holds the hash of a cp311 wheel for each architecture and of the sdist,
+    # which an architecture or glibc without a wheel compiles; a pinned
     # source's requirements pull more). The compiler, and what a source says
     # its requirements build with, is here for the build only and leaves with it.
     build_deps = ["build-essential", "python3-dev"]

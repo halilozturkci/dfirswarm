@@ -8,7 +8,9 @@ aarch64 can use, plus the sdist. ALEAPP's venv installs
 `requires/locks/aleapp.txt` the same way; bencoding, packaging, PyCryptodome,
 pytz, simplekml, wheel and xmltodict, which its list left open, are pinned
 there, and Brotli 1.2.1, lz4 4.3.3 and zstd 1.5.7.2 moved from `pip_after` into
-the lock. `pillow-heif` 1.8.0 is locked with its Pillow in `requires/python.lock`.
+the lock; the x86_64 manylinux_2_4 wheel of that zstd is not hashed in it, so
+amd64 builds zstd from the sdist (the compiler is present). `pillow-heif` 1.8.0
+is locked with its Pillow in `requires/python.lock`.
 The four git packages ALEAPP installs (`mister_skinnylegs`, the two readers and
 `ccl_simplesnappy`) stay outside the lock, each at a commit, because pip's hash
 mode cannot hash a git URL and their archives were not downloaded to take a

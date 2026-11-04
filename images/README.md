@@ -247,7 +247,7 @@ anything is unpacked, installed or built.
   for the build only, `apt_deps` stay. `pip_after` is a second `pip install`
   into the same venv, after `pip`: ALEAPP's `mister_skinnylegs` names its
   readers by an unpinned git URL, which pip will not let another URL replace,
-  so ALEAPP's other requirements go in `pip` and `mister_skinnylegs` with its
+  so ALEAPP's other requirements go in `pip_lock` and `mister_skinnylegs` with its
   dependencies go in `pip_after` with `--no-deps`, each git one at a commit.
   `env` is the environment of its pip:
   mac_apt pins pytsk3 20230125, an sdist whose bundled Sleuth Kit finds the

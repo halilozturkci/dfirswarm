@@ -1,6 +1,7 @@
 # Hash lock for plaso 20260720 and everything it needs: log2timeline, psort and pinfo.
 # every line is name==version with the sha256 of each file PyPI publishes for it that CPython 3.11 on Linux glibc (x86_64 or aarch64) can use, plus the
-# sdist (an architecture with no wheel builds from it). Resolved from PyPI's JSON metadata for exactly that environment; pip installs it with --require-hashes, so a file whose hash
+# sdist (an architecture with no wheel builds from it), except that the x86_64 manylinux_2_4 wheel of zstd 1.5.7.2 is not hashed here: amd64 builds zstd from its sdist
+# (the compiler is present). Resolved from PyPI's JSON metadata for exactly that environment; pip installs it with --require-hashes, so a file whose hash
 # is not here does not install. The set holds every dependency, since hash mode refuses an unlisted one.
 acstore==20260411 \
     --hash=sha256:fb59294ae940c69e3e045c0b32270bf70510536c7afc90c5f5521e2b382b4c8e
