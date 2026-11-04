@@ -2173,9 +2173,11 @@ def main():
     result = None
     try:
         result = ResultFile(rel_dir, key)
-        json.dump(document, result.fh, indent=2, ensure_ascii=True)
+        # the backstop reads what is written to the file as it reads what is printed: a string the sanitiser let through is withheld by its length,
+        # counted in withheld_by_final_check, and makes the answer partial (a fault of this tool, never of the file)
+        json.dump(final_check(document, safe_made), result.fh, indent=2, ensure_ascii=True)
         result_path = result.publish()
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         problems.append("the whole result could not be written to a file: %s" % describe(exc))
         result_path = None
         if result is not None:

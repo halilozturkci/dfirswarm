@@ -17,7 +17,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { FUZZY, TOOLS, asJob, body, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { FUZZY, TOOLS, asJob, body, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 
 const TLSH_DIGEST = "T1" + "A1B2C3D4E5".repeat(7); // T1 and 70 hexadecimal digits: the digest of 128 buckets and a one-byte checksum
@@ -385,4 +385,32 @@ test("a stop signal's last word carries a status_basis that says it was stopped 
 test("P3 the manifest says a stop by signal is answered with status interrupted", async () => {
   const text = JSON.parse(await readFile(join(TOOLS, "fuzzy_hash", "manifest.json"), "utf8")).description as string;
   assert.match(text, /a stop by signal \(status `interrupted`\)/);
+});
+
+test("a process an engine leaves behind is ended before its output is read: the engine is failed, the log stops growing, nothing is left running", async () => {
+  await withCwd(async (cwd, bin) => {
+    await mkdir(join(cwd, "pids"), { recursive: true });
+    await engines(bin, {
+      ssdeep: `if [ "$1" = "-V" ]; then echo "2.14.1"; exit 0; fi
+( while :; do printf 'late\\n'; sleep 0.05; done ) & echo $! > "${cwd}/pids/kid.pid"
+echo 'ssdeep,1.1--blocksize:hash:hash,filename'
+echo "${SSDEEP_DIGEST},\\"$(basename "$3")\\""
+exit 0`,
+    });
+    await put(cwd, "work/s.bin", Buffer.from("x".repeat(5000)));
+    let kid = 0;
+    try {
+      const out = body(await tool(FUZZY, cwd, { path: "work/s.bin" }, {}, bin));
+      kid = await pidFile(join(cwd, "pids", "kid.pid"), 3_000).catch(() => 0);
+      assert.ok(kid, "the engine recorded its child's pid");
+      const f = out.files[0];
+      assert.equal(f.ssdeep, null);
+      assert.equal(f.ssdeep_status, "failed");
+      assert.match(f.ssdeep_unavailable, /left \d+ process/);
+      assert.ok(await gone(kid, 3_000), "the child is ended by the tool");
+      assert.equal(f.tlsh, TLSH_DIGEST, "the other engine's result stands");
+    } finally {
+      if (kid) { try { process.kill(kid, "SIGKILL"); } catch { /* gone */ } }
+    }
+  });
 });

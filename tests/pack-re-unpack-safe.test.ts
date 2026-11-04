@@ -41,7 +41,13 @@ async function fakeUpx(bin: string): Promise<void> {
   if grep -q EMPTYOUT "$f"; then : > "$out"; exit 0; fi
   if grep -q EXTRA "$f"; then echo junk > "$(dirname "$out")/junk"; fi
   n=$(sed -n 's/.*expand=\\([0-9]*\\).*/\\1/p' "$f" | head -1)
-  head -c "$n" /dev/zero | tr '\\0' 'A' > "$out"; chmod 755 "$out"; exit 0;;
+  head -c "$n" /dev/zero | tr '\\0' 'A' > "$out"; chmod 755 "$out"
+  if grep -q FORKNOW "$f"; then ( while :; do printf 'B'; sleep 0.05; done >> "$out" ) & echo $! > "$PIDS/kid.pid"; fi
+  if grep -q FORKLATE "$f"; then sleep 0.6; ( while :; do printf 'B'; sleep 0.05; done >> "$out" ) & echo $! > "$PIDS/kid.pid"; fi
+  if grep -q FORKDOUBLE "$f"; then ( ( while :; do printf 'B'; sleep 0.05; done >> "$out" ) & echo $! > "$PIDS/kid.pid" ) & sleep 0.3; fi
+  if grep -q NEVEREXIT "$f"; then sleep 120 & echo $! > "$PIDS/kid.pid"; fi
+  if grep -q SETSIDKID "$f"; then setsid sh -c 'echo $$ > "$PIDS/kid.pid"; while :; do printf B; sleep 0.05; done >> "$1"' sh "$out" </dev/null & sleep 0.5; fi
+  exit 0;;
 esac
 exit 2`);
 }
@@ -281,5 +287,51 @@ test("a stage directory with extra files from upx is removed, and the log is mod
     const left = await filesUnder(join(cwd, "work/s1/tool-output"));
     assert.deepEqual(left.filter((f) => f.startsWith("stage-")), [], left.join());
     assert.equal((await stat(join(cwd, "work/s1/tool-output", out.log))).mode & 0o777, 0o600);
+  });
+});
+
+/** A upx stand-in that forks a child which keeps appending to the derivative. The child's pid is recorded (PIDS) and killed at the end. */
+for (const marker of ["FORKNOW", "FORKLATE", "FORKDOUBLE", "NEVEREXIT"]) {
+  test(`a child upx abandons (${marker}) is ended before the derivative is hashed: partial, and no derivative that later differs from the answer`, async () => {
+    await withCwd(async (cwd, bin) => {
+      await fakeUpx(bin);
+      await put(cwd, "work/f.exe", packed(marker));
+      const pids = join(cwd, "pids");
+      await mkdir(pids, { recursive: true });
+      let kid = 0;
+      try {
+        const out = body(await tool(UNPACK, cwd, { path: "work/f.exe" }, { PIDS: pids }, bin));
+        kid = await pidFile(join(pids, "kid.pid"), 3_000).catch(() => 0);
+        assert.ok(kid, "the child recorded its pid");
+        assert.equal(out.status, "partial", JSON.stringify(out).slice(0, 400));
+        assert.match(out.status_basis, /left \d+ process/);
+        assert.equal(out.derivative, null);
+        assert.ok(await gone(kid, 3_000), "the child is ended");
+        assert.equal((await filesUnder(join(cwd, "work/s1/tool-output"))).filter((f) => f.endsWith(".unpacked") || f.startsWith("stage-")).length, 0);
+      } finally {
+        if (kid) { try { process.kill(kid, "SIGKILL"); } catch { /* gone */ } }
+      }
+    });
+  });
+}
+
+test("a child upx puts in a session of its own (setsid) cannot be ended: partial, says so, and no derivative is claimed", async () => {
+  await withCwd(async (cwd, bin) => {
+    await fakeUpx(bin);
+    await put(cwd, "work/s.exe", packed("SETSIDKID"));
+    const pids = join(cwd, "pids");
+    await mkdir(pids, { recursive: true });
+    let kid = 0;
+    try {
+      const out = body(await tool(UNPACK, cwd, { path: "work/s.exe" }, { PIDS: pids }, bin));
+      kid = await pidFile(join(pids, "kid.pid"), 3_000).catch(() => 0);
+      assert.ok(kid, "the child recorded its pid");
+      assert.equal(out.status, "partial", JSON.stringify(out).slice(0, 400));
+      assert.match(out.status_basis, /session of its own/);
+      assert.equal(out.derivative, null);
+      assert.equal((await filesUnder(join(cwd, "work/s1/tool-output"))).filter((f) => f.endsWith(".unpacked") || f.startsWith("stage-")).length, 0);
+    } finally {
+      if (kid) { try { process.kill(kid, "SIGKILL"); } catch { /* gone */ } }
+    }
   });
 });

@@ -95,6 +95,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -554,7 +555,7 @@ def fetch(d: dict, apt: list) -> tuple:
     else:
         try:
             unpack(archive, name, dest)
-        except (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile) as e:
+        except UNPACK_ERRORS as e:
             return None, f"could not unpack: {e}"
         program = dest / entry.get("bin", archive.name)
         if not program.is_file():
@@ -612,6 +613,12 @@ def nupkg_mkdirs(root: Path, rel: str, made: list) -> Path:
         if not stat.S_ISDIR(st.st_mode):
             raise ValueError(f"{rel} runs through something that is not a directory")
     return here
+
+
+# What an archive can raise while it is read: a name, a bound or a kind it does not allow (ValueError, OSError), a tar or zip structure that is not
+# one (TarError, BadZipFile), and a compressed stream that is corrupt (zlib.error) or ends before its end marker (EOFError). Each one records the
+# optional program as not installed; none stops the build with a traceback.
+UNPACK_ERRORS = (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile, zlib.error, EOFError)
 
 
 def unpack_nupkg(archive: Path, dest: Path) -> None:
@@ -726,7 +733,7 @@ def fetch_source(d: dict, apt: list) -> tuple:
         return None, why
     try:
         unpack(archive, archive.name.lower(), dest, strip=True, skip=list(d.get("skip") or []))
-    except (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile) as e:
+    except UNPACK_ERRORS as e:
         archive.unlink(missing_ok=True)
         return None, f"could not unpack: {e}"
     venv = None
@@ -1124,7 +1131,7 @@ def build_source(spec_path: str) -> int:
         return done(why)
     try:
         unpack(archive, archive.name.lower(), work, strip=True)
-    except (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile) as e:
+    except UNPACK_ERRORS as e:
         return done(f"could not unpack: {e}")
     jobs = str(os.cpu_count() or 2)
     env = d.get("env")

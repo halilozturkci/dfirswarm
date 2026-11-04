@@ -141,6 +141,7 @@ verify) shift
   name=$(grep -a -o 'SCENARIO:[a-z_]*' "$in" | head -1 | cut -d: -f2)
   case "$name" in
     hang) echo $$ > "$PIDS/prog.pid"; sleep 120; exit 0;;
+    kid) ( while :; do echo late; sleep 0.05; done ) & echo $! > "$PIDS/kid.pid"; name=ok;;
     flood) echo $$ > "$PIDS/prog.pid"; yes 'Signature verification: ok' ; exit 0;;
     odd_exit) echo "something else"; exit 3;;
     spaces) { printf 'Signature Index: 1'; head -c 400000 /dev/zero | tr '\\0' ' '; printf 'x\n'; printf 'Message digest algorithm  : a'; head -c 400000 /dev/zero | tr '\\0' ' '; printf 'b\n'
@@ -659,6 +660,26 @@ test("output that was not read whole and clean is never a verification: a line n
       assert.equal(a.signatures[0].revocation, "not_checked", why);
       assert.ok(a.limits_hit.includes("output_not_read_whole"), why);
       assert.doesNotMatch(a.status_basis, /every signature verified/, why);
+    }
+  });
+});
+
+test("a process the program leaves behind holding its output pipe is ended with the tool's answer: nothing is left running, and a late line is not taken as the program's report", async () => {
+  await withCwd(async (cwd, bin) => {
+    await fakeProgram(cwd, bin);
+    await trust(cwd);
+    await mkdir(join(cwd, "pids"), { recursive: true });
+    let kid = 0;
+    try {
+      const t0 = Date.now();
+      const a = await run(cwd, bin, "kid", TRUST, { PIDS: join(cwd, "pids") });
+      kid = await pidFile(join(cwd, "pids", "kid.pid"), 3_000).catch(() => 0);
+      assert.ok(kid, "the program recorded its child's pid");
+      assert.ok(Date.now() - t0 < 30_000);
+      assert.ok(await gone(kid, 5_000), "the child that held the pipe is ended by the tool");
+      assert.ok(a.status === "complete" ? a.verification === "verified" : true, "a complete answer is the program's own report: " + JSON.stringify(a).slice(0, 300));
+    } finally {
+      if (kid) { try { process.kill(kid, "SIGKILL"); } catch { /* gone */ } }
     }
   });
 });

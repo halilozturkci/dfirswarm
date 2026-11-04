@@ -568,3 +568,33 @@ test("P2 the manifest says what the withholding bound was measured on, and the r
     assert.match(text, /rely on those rates, not on the bound above/);
   }
 });
+
+test("the backstop runs over the paged result file as it does over the answer: with the front sanitiser removed, no raw string reaches the file", async () => {
+  await withCwd(async (cwd) => {
+    const secret = "AKIAIOSFODNN7EXAMPLE";
+    const file = Buffer.concat([pycHeader(3495), code({ consts: [str(secret), str("plain text")]})]);
+    await put(cwd, "inputs/m.bin", file);
+    // The tool loaded as a module (main() does not run), its sanitiser made the identity until the result file is opened, and then main() run: what
+    // the front let through is for the backstop alone.
+    const wrapper = [
+      "import importlib.util, sys",
+      "spec = importlib.util.spec_from_file_location('mi', sys.argv[1])",
+      "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+      "orig = m.shown_path; live = [False]",
+      "m.shown_path = lambda *a, **k: orig(*a, **k) if live[0] else a[0]",
+      "init = m.ResultFile.__init__",
+      "def opened(self, *a, **k):\n    live[0] = True\n    init(self, *a, **k)",
+      "m.ResultFile.__init__ = opened",
+      "m.main()",
+    ].join("\n");
+    const r = spawnSync("python3", ["-c", wrapper, MARSHAL], { cwd, input: JSON.stringify({ path: "inputs/m.bin" }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+    assert.doesNotMatch(r.stderr, /Traceback/);
+    const answer = JSON.parse(r.stdout) as Json;
+    assert.ok(answer.result_file, r.stdout.slice(0, 400));
+    const written = await readFile(join(cwd, answer.result_file), "utf8");
+    assert.doesNotMatch(written, /AKIAIOSFODNN7/, "a raw string reached the paged result file");
+    assert.doesNotMatch(r.stdout, /AKIAIOSFODNN7/);
+    assert.ok(answer.withheld_by_final_check >= 1, "the backstop counted what it withheld");
+    assert.equal(answer.status, "partial");
+  });
+});

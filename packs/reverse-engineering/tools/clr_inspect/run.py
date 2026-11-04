@@ -2311,11 +2311,114 @@ def create_exclusive(directory, name, mode=0o600):
     raise OSError(errno.EEXIST, "a thousand files of this name already exist")
 
 
+LEFT_SECONDS = 3.0                 # the longest the tool works at ending what still holds a file of its call
+SETTLE_SECONDS = 0.3               # after that, the file is looked at again after this long: a file that still grows is not whole
+
+
+def _identities(targets):
+    """{(device, inode)} of the open files (an int is a descriptor of this tool) and paths (a str) in `targets`; one that cannot be looked at is left out."""
+    found = set()
+    for target in targets:
+        try:
+            st = os.fstat(target) if isinstance(target, int) else os.stat(target)
+        except OSError:
+            continue
+        found.add((st.st_dev, st.st_ino))
+    return found
+
+
+def _holds(pid, want):
+    """Whether process `pid` has one of the files `want` open (Linux: /proc/<pid>/fd; a process of another user cannot be looked at and holds nothing here)."""
+    try:
+        for name in os.listdir("/proc/%d/fd" % pid):
+            try:
+                other = os.stat("/proc/%d/fd/%s" % (pid, name))
+            except OSError:
+                continue
+            if (other.st_dev, other.st_ino) in want:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def holders_of(targets):
+    """The pids, not this tool's, that hold one of `targets` open, or None when they cannot be looked for (no /proc: not Linux). The files are
+    private to this call (a stage directory made for it, a log it created), so a process that holds one got it from what the tool started."""
+    if not os.path.isdir("/proc/self"):
+        return None
+    want = _identities(targets)
+    if not want:
+        return []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return None
+    me = os.getpid()
+    return [int(entry) for entry in entries if entry.isdigit() and int(entry) != me and _holds(int(entry), want)]
+
+
+def end_holders(targets):
+    """End what still holds one of the call's own files once the program has ended (or been killed): every such process in the tool's own process
+    group is killed (SIGKILL, each checked again just before it is signalled), repeated until none is left, for at most LEFT_SECONDS. The group
+    is the tool's own, as the harness ends the tool by it; a process outside it that holds a file (one that started a session of its own) is not
+    touched. Returns (the pids ended, the pids still holding a file afterwards, or None when they cannot be looked for)."""
+    mine = os.getpgrp()
+    ended = set()
+    end = time.monotonic() + LEFT_SECONDS
+    while True:
+        holders = holders_of(targets)
+        if holders is None:
+            return ended, None
+        inside = []
+        for pid in holders:
+            try:
+                if os.getpgid(pid) == mine:
+                    inside.append(pid)
+            except OSError:
+                pass
+        if not inside:
+            return ended, holders
+        want = _identities(targets)
+        for pid in inside:
+            if _holds(pid, want):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    ended.add(pid)
+                except OSError:
+                    pass
+        if time.monotonic() >= end:
+            return ended, holders_of(targets)
+        time.sleep(0.02)
+
+
+def output_settled(path):
+    """(whether the file is still, why not): the size of the file is read, the tool waits SETTLE_SECONDS, and the size is read again; a file that
+    grew, or that a process still holds open (end_holders ended those in the tool's group, so this is a process outside it), is not whole."""
+    try:
+        before = os.stat(path).st_size
+        time.sleep(SETTLE_SECONDS)
+        after = os.stat(path).st_size
+    except OSError as exc:
+        return False, "the file could not be looked at again: %s" % describe(exc)
+    held = holders_of([path]) or []
+    if after == before and not held:
+        return True, None
+    reasons = []
+    if after != before:
+        reasons.append("the file grew from %d to %d bytes after the program had ended" % (before, after))
+    if held:
+        reasons.append("a process (pid %s) outside the tool's process group still holds the file open" % ", ".join(str(p) for p in held[:5]))
+    return False, "; ".join(reasons) + " (a process in a session of its own cannot be ended by this tool, and the file may still be growing)"
+
+
 def run_decompiler(argv, seconds, budget, out_path, err_path, home):
     """Run the decompiler with its standard output in out_path and its error text in err_path (both already made, in a directory of this call);
     watched for the output budget, the error cap and the time. The record: exit_code, timed_out, stopped_by_budget, stopped_by_stderr, seconds,
-    launch_failed."""
-    rec = {"exit_code": None, "timed_out": False, "stopped_by_budget": False, "stopped_by_stderr": False, "seconds": 0.0, "launch_failed": None}
+    launch_failed, left_behind (how many processes of the tool's group still held the files when the program had ended on its own, and were ended),
+    holders_outside (processes outside the group that still hold them), holders_unknown (they could not be looked for)."""
+    rec = {"exit_code": None, "timed_out": False, "stopped_by_budget": False, "stopped_by_stderr": False, "seconds": 0.0, "launch_failed": None,
+           "left_behind": 0, "holders_outside": [], "holders_unknown": False}
     started = time.monotonic()
     with open(out_path, "ab", buffering=0) as out, open(err_path, "ab", buffering=0) as err:
         try:
@@ -2348,7 +2451,14 @@ def run_decompiler(argv, seconds, budget, out_path, err_path, home):
                 break
         finally:
             ACTIVE.remove(proc)
-            reap_orphans()                   # a process the program started and left behind would go on writing into the file that is about to be read
+            reaped = reap_orphans()          # a process the program started and left behind would go on writing into the file that is about to be read
+            # and so would one that no sample saw (forked and left within a moment, or after 0.6 s): whatever of the tool's group still holds the output
+            # or the error file is ended, and waited for to be gone, before the file is measured
+            ended, outside = end_holders([out.fileno(), err.fileno()])
+            if not (rec["timed_out"] or rec["stopped_by_budget"] or rec["stopped_by_stderr"]):
+                rec["left_behind"] = len(set(ended) | set(reaped))
+            rec["holders_outside"] = outside or []
+            rec["holders_unknown"] = outside is None
     rec["exit_code"] = proc.returncode
     rec["seconds"] = round(time.monotonic() - started, 3)
     return rec
@@ -2506,6 +2616,18 @@ def main():
     if ran["timed_out"]:
         limits_hit.append("time")
         drop("partial", "`ilspycmd` did not finish within the call's time budget of %d seconds and was ended; the partial file was removed" % seconds)
+    if ran["holders_outside"]:
+        limits_hit.append("process_left_running")
+        drop("partial", "a process (pid %s) outside the tool's process group still holds the files of the program: a process in a session of its own cannot be ended "
+                        "by this tool, and the reconstruction may still be growing; it was removed and nothing is claimed about its bytes or its hash"
+                        % ", ".join(str(p) for p in ran["holders_outside"][:5]))
+    if ran["holders_unknown"]:
+        notes.append("the processes that hold the reconstruction could not be looked for (no /proc here): a process the program left running is found only if a sample saw it, "
+                     "and the file is checked for growth over %.1f seconds only" % SETTLE_SECONDS)
+    steady, why_not = output_settled(out_path)
+    if not steady:
+        limits_hit.append("process_left_running")
+        drop("partial", "%s: the reconstruction is not whole and was removed; nothing is claimed about its bytes or its hash" % why_not)
     out_fd, out_st = open_regular(str(out_path))
     err_fd, err_st = open_regular(str(err_path))
     if out_fd is None or err_fd is None:
@@ -2513,9 +2635,13 @@ def main():
     try:
         sha_out, nbytes, nlines, whole = digest_fd(out_fd, max(deadline, time.monotonic()) + 5, budget + len(header) + 1)
         err_bytes = err_st.st_size
+        grew_while_read = whole and os.fstat(out_fd).st_size != nbytes
     finally:
         os.close(out_fd)
         os.close(err_fd)
+    if grew_while_read:
+        limits_hit.append("process_left_running")
+        drop("partial", "the reconstruction grew while it was read back: a process in a session of its own may still be writing, and this tool cannot end it; the file was removed")
     if not whole:
         limits_hit.append("time")
         drop("partial", "the call's time budget ran out while the reconstruction was read back; it was removed")
@@ -2538,6 +2664,12 @@ def main():
     recon = {"reconstruction_file": made(str(final)), "bytes": nbytes, "header_bytes": len(header), "lines": nlines, "sha256": made(sha_out), "mode": "0600",
              "label": LABEL, "inline": False}
     log = {"log_file": made(str(log_path)), "bytes": err_bytes, "note": "the program's error text, never printed; the failures it lists are in this file"}
+    if ran["left_behind"]:
+        limits_hit.append("process_left_behind")
+        finish("partial", "`ilspycmd` exited with status %s and left %d process(es) of the tool's process group holding its output, which the tool ended (and waited for) before the "
+                          "file was read: the file is stable, %d bytes, but what those processes would still have written is missing; read the reconstruction as incomplete. "
+                          "A process in a session of its own cannot be ended by this tool%s"
+                          % (ran["exit_code"], ran["left_behind"], nbytes, "; none was found holding the file" if not ran["holders_unknown"] else ""))
     if ran["exit_code"] == 0:
         finish("complete", "`ilspycmd` ran to its end with exit status 0 and its output, %d bytes, is the file named: a reconstruction, written whole under the budget of %d bytes" % (nbytes, budget))
     limits_hit.append("program_exit_status")

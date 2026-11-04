@@ -602,7 +602,7 @@ test("canaries of every shape the shared block names, planted in every printed s
     // The miss rate is stated in the manifest (the Wilson bound at 95% for the measured count); a shape the block does not cover is printed.
     console.log(`canaries: ${missed} of ${planted_} reached an output; ${misses.slice(0, 40).join("; ")}`);
     assert.ok(planted_ >= 600, `${planted_} canaries planted`);
-    // 17 shapes, 10 slots: with RE_CANARY_SEEDS=50 that is 500 per shape and none reached an output (the Wilson upper bound at 95% is 0.8% per shape,
+    // 17 shapes, 10 slots: with RE_CANARY_SEEDS=50 that is 500 per shape and none of those reached an output (the Wilson upper bound at 95% is 0.8% per shape for these shapes and slots; it does not cover a 30-character base64 run in -tags, which a later review measured leaking,
     // the figure the manifest states). A shape the rules do not name, and a secret of no shape, are printed: this test says nothing of them.
     assert.equal(missed, 0, `${missed} of ${planted_} canaries reached an output: ${misses.slice(0, 12).join("; ")}`);
   });
