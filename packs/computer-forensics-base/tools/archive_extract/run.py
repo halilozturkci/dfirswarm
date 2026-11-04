@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Extract the members of a zip, tar (plain, gzip, bzip2, xz, zstd), 7z or single-file compressed archive into a new directory, bounded.
+"""Extract the members of a zip, tar (plain, gzip, bzip2, xz, zstd), 7z, RAR or single-file compressed archive into a new directory, bounded.
 
 An archive is hostile input. This tool writes member CONTENT only: it never recreates a link, a device node, a FIFO or
 a directory mode, never writes outside its output directory, never executes anything and never decompresses without a
 bound. What it does, exactly:
 
-  * Format is read from the bytes (zip, tar, gzip, bzip2, xz, zstd, 7z), never from the file name. A compressed stream
+  * Format is read from the bytes (zip, tar, gzip, bzip2, xz, zstd, 7z, RAR), never from the file name. A compressed stream
     is looked into: a tar inside it is a tar, anything else is ONE member (a gzip's own file name, else the archive's
-    name without its suffix). RAR, CAB, ISO and the rest are named and refused (unsupported), never guessed. zstd is read
+    name without its suffix). CAB, ISO and the rest are named and refused (unsupported), never guessed. zstd is read
     through Python's compression.zstd (3.14) or the zstd program of the base image, in that order (the zstandard module is not used: its streaming reader
     ends a truncated frame without an error);
     if none is there a zstd archive is reported unsupported with that reason.
@@ -41,6 +41,12 @@ bound. What it does, exactly:
     listing and checked against the listing's CRC, so the program never writes a file and path rules never depend on it.
     A listing's order is the stream's order; a CRC that does not match, or a stream that is longer or shorter than the
     listing, is said, member by member.
+  * A RAR (version 4: the bytes 52 61 72 21 1A 07 00; version 5: 52 61 72 21 1A 07 01 00) goes the same way through the
+    same program, 7zz first (7-Zip's own build, which carries the RAR codec; a 7z of another build is used only when there is
+    no 7zz, and what it cannot decode shows as a member that did not come out whole). The members to extract are always named to
+    the program in a list file (a link, a device, an alternate stream or an encrypted member is never asked for), the program
+    is given no password, and a program that exits with a status other than 0 after the listing or after the extraction makes
+    the answer partial, whatever the members say. A RAR with encrypted headers cannot be listed and is refused.
 
 Exit code 0 means the engine ran and the answer is whole about what it did (a partial extraction is exit 0 with status
 partial and the reasons); 1 is an archive that cannot be read at all, a refused argument or a place that cannot be
@@ -70,7 +76,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 15}
+TOOL = {"name": "archive_extract", "version": 16}
 STARTED = time.monotonic()               # the run's clock starts with the tool: the archive hash and the 7z banner are on it too
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
@@ -95,6 +101,9 @@ ZIP_DIRECTORY_MAX = 64 * 1024 * 1024      # zipfile holds every entry of the dir
 ZIP_DIRECTORY_FACTOR = 4                  # and a directory declaring more than this many times max_members is not loaded to extract that few
 SEVEN_Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
 SEVEN_Z_NAMES = ("7z", "7zz", "7za", "7zr")
+RAR_READER_NAMES = ("7zz", "7z", "7za", "7zr")         # 7zz first: 7-Zip's own build carries the RAR codec, the packaged 7z of a distribution may not
+RAR4_MAGIC = b"Rar!\x1a\x07\x00"
+RAR5_MAGIC = b"Rar!\x1a\x07\x01\x00"
 LISTING_LINE_MAX = 16 * 1024 * 1024
 TAIL_KEEP = 4 * 1024 * 1024               # decompressed bytes kept for salvaging a member cut short by a break
 SEGMENT = 200                            # an on-disk name component longer than this is shortened and hashed; name_b64 keeps the whole
@@ -2295,6 +2304,7 @@ class Engine:
         self.next_index = n + 1
         self.current = n
         comps, flags = name_analysis(raw, m["windows"])
+        flags.extend(m.get("flags") or [])
         key = hashlib.blake2b(raw, digest_size=8).digest()
         if key in self.name_seen:
             flags.append("duplicate-name")
@@ -2817,8 +2827,8 @@ def run_single(eng, path, kind, dec, from_index):
 
 # ---- 7z ----------------------------------------------------------------------------------------------------------------
 
-def find_7z():
-    for name in SEVEN_Z_NAMES:
+def find_7z(names=SEVEN_Z_NAMES):
+    for name in names:
         found = shutil.which(name)
         if found:
             return found
@@ -2844,6 +2854,17 @@ def banner(program, seconds=15):
     return None
 
 
+def reader_message(path):
+    """The first lines the reader said on stderr, without its ERRORS:/WARNINGS: headings, scrubbed and bounded ('' when it said nothing)."""
+    try:
+        with open(path, "rb") as fh:
+            text = fh.read(4000).decode("utf-8", "replace")
+    except OSError:
+        return ""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and ln.strip() not in ("ERRORS:", "WARNINGS:")]
+    return scrub(" / ".join(lines[:2]))[:300]
+
+
 def listing_records(path):
     """The records of `7z l -slt -ba` as dicts of bytes, one per blank-line-separated block, read a line at a time."""
     fields = {}
@@ -2866,7 +2887,7 @@ def listing_records(path):
         yield fields
 
 
-def seven_member(n, f):
+def seven_member(n, f, rar=False):
     attrs = f.get(b"Attributes", b"").decode("ascii", "replace")
     mode_text = attrs.split(" ", 1)[1] if " " in attrs else ""
     folder = f.get(b"Folder") == b"+" or attrs.startswith("D")
@@ -2881,19 +2902,41 @@ def seven_member(n, f):
     mod = f.get(b"Modified", b"").decode("ascii", "replace").strip()
     size = f.get(b"Size", b"").strip()
     crc = f.get(b"CRC", b"").strip()
-    return {"n": n, "raw": f[b"Path"], "windows": True, "kind": kind, "size": int(size) if size.isdigit() else None, "packed": None,
-            "mtime_raw": mod or None, "mtime_utc": (mod.replace(" ", "T") + "Z") if mod else None,
-            "mtime_zone": "utc (7z's listing was run with TZ=UTC; resolution 100 ns)" if mod else None,
-            "mode": mode_text or attrs or None, "uid": None, "gid": None, "link": None, "encrypted": f.get(b"Encrypted") == b"+",
-            "crc": int(crc, 16) if re.fullmatch(rb"[0-9A-Fa-f]{1,8}", crc) else None, "method": f.get(b"Method", b"").decode("ascii", "replace") or None,
-            "locator": "7z:index=%d" % n}
+    m = {"n": n, "raw": f[b"Path"], "windows": True, "kind": kind, "size": int(size) if size.isdigit() else None, "packed": None,
+         "mtime_raw": mod or None, "mtime_utc": (mod.replace(" ", "T") + "Z") if mod else None,
+         "mtime_zone": "utc (7z's listing was run with TZ=UTC; resolution 100 ns)" if mod else None,
+         "mode": mode_text or attrs or None, "uid": None, "gid": None, "link": None, "encrypted": f.get(b"Encrypted") == b"+",
+         "crc": int(crc, 16) if re.fullmatch(rb"[0-9A-Fa-f]{1,8}", crc) else None, "method": f.get(b"Method", b"").decode("ascii", "replace") or None,
+         "locator": ("rar:index=%d" if rar else "7z:index=%d") % n}
+    if rar:
+        # What the RAR listing says beyond a plain file. A member that is not a plain file is never asked for in the stream: the program's
+        # output for a link record is not assumed, so its bytes (if any) are not looked for, and nothing is extracted for it.
+        m["streamable"] = kind == "file"
+        m["flags"] = []
+        if f.get(b"Symbolic Link", b"").strip():
+            m["kind"], m["link"], m["streamable"] = "symlink", f[b"Symbolic Link"].strip(), False
+        elif f.get(b"Hard Link", b"").strip():
+            m["kind"], m["link"], m["streamable"] = "hardlink", f[b"Hard Link"].strip(), False
+        elif f.get(b"Copy Link", b"").strip():
+            m["streamable"] = False
+            m["unsupported"] = "a RAR file-copy record: the listing names its source, and this route does not extract it"
+        elif f.get(b"Alternate Stream") == b"+" and kind == "file":
+            m["streamable"] = False
+            m["unsupported"] = "an alternate data stream of another member: this route does not extract it"
+        if f.get(b"Split Before") == b"+":
+            m["flags"].append("continues-from-earlier-volume")
+        if f.get(b"Split After") == b"+":
+            m["flags"].append("continues-in-next-volume")
+        if f.get(b"Solid") == b"+":
+            m["flags"].append("solid")
+    return m
 
 
 class Pipe:
     """The bytes 7z writes to its stdout, read with the clock running; split into members by the sizes of its own listing."""
 
     def __init__(self, proc, deadline, max_ratio=None, packed=0):
-        self.fd = proc.stdout.fileno()
+        self.fd = proc.stdout.fileno() if proc is not None else -1
         self.deadline = deadline
         self.eof = False
         self.total = 0
@@ -2938,7 +2981,8 @@ class Piece:
             self.read(CHUNK)
 
 
-def run_7z(eng, path, from_index, max_members, sevenz):
+def run_7z(eng, path, from_index, max_members, sevenz, rar=False):
+    reader = os.path.basename(sevenz) if rar else "7z"
     env = dict(os.environ, TZ="UTC", LANG="C.UTF-8", LC_ALL="C.UTF-8")
     listing = eng.out_root / first_free(str(eng.out_root), "7z-listing", ".txt")
     stderr_l = eng.out_root / first_free(str(eng.out_root), "7z-list.stderr", "")
@@ -2966,27 +3010,37 @@ def run_7z(eng, path, from_index, max_members, sevenz):
         pass
     eng.extra["listing_file"] = listing.name
     eng.extra["listing_exit"] = rc
+    if rar and rc != 0:
+        # a reader that did not finish its listing (a cut archive, a missing volume, a header it cannot read) has not shown every member
+        # the archive holds: whatever it did list is extracted, and the answer is partial however those members come out
+        first_line = next((ln.strip() for ln in err_text.splitlines() if ln.strip()), "")
+        eng.stopped_by, eng.stop_text = eng.stopped_by or "reader_listing_exit", "%s exited with status %s while listing%s" % (
+            reader, rc, (": " + scrub(first_line)[:300]) if first_line else " (nothing on stderr)")
     # One pass over the listing to learn what the archive holds; the members are read again, a block at a time, below.
     n_all = encrypted_n = device_n = 0
     names_plain, names_all = {}, {}
     for n, f in enumerate(listing_records(str(listing))):
         if n % 1024 == 0 and eng.time_left() <= 0:
             raise Budget("max_seconds", "the time budget of %d seconds was used reading 7z's listing, after %d members" % (eng.a["max_seconds"], n))
-        m = seven_member(n, f)
+        m = seven_member(n, f, rar)
         n_all += 1
         encrypted_n += 1 if m["encrypted"] else 0
         device_n += 1 if m["kind"] in ("char-device", "block-device", "fifo") else 0
         names_all[f[b"Path"]] = names_all.get(f[b"Path"], 0) + 1
-        if m["kind"] in ("file", "symlink") and not m["encrypted"] and m["size"] is not None:
+        if (m["streamable"] if rar else m["kind"] in ("file", "symlink")) and not m["encrypted"] and m["size"] is not None:
             names_plain[f[b"Path"]] = names_plain.get(f[b"Path"], 0) + 1
     if n_all == 0:
+        if rar:
+            raise ArchiveError("%s listed no member of this RAR (exit %s): %s" % (reader, rc, scrub(err_text) or "nothing on stderr"), listing_exit=rc,
+                               note="a RAR whose headers are encrypted cannot be listed without its password; none is used or guessed, so nothing was extracted. "
+                                    "A reader of another build than 7-Zip's own 7zz may also lack the RAR codec")
         raise ArchiveError("7z listed no member (exit %s): %s" % (rc, scrub(err_text) or "nothing on stderr"), listing_exit=rc,
                            note="a 7z whose headers are encrypted cannot be listed without its password; none is used or guessed, so nothing was extracted")
     eng.extra["members_in_archive"] = n_all
     eng.extra["encrypted_members"] = encrypted_n
     # With an encrypted member or a device the stream is asked for by name: only the plain files that can be named are in it,
     # in listing order. Otherwise 7z is asked for everything and the stream holds every file, in listing order.
-    select_mode = encrypted_n > 0 or device_n > 0
+    select_mode = rar or encrypted_n > 0 or device_n > 0
     argv = [sevenz, "x", "-so", "-y", "-bd"]
     unselectable = set()
     selection = None
@@ -2997,7 +3051,7 @@ def run_7z(eng, path, from_index, max_members, sevenz):
             for nm, k in sorted(names_plain.items()):
                 # a spelling shared with a member that is not selected cannot be told apart from it in the stream; a line break,
                 # an empty name or a leading dash cannot be passed in a list file
-                if names_all[nm] != k or b"\n" in nm or b"\r" in nm or not nm or nm.startswith(b"-"):
+                if names_all[nm] != k or b"\n" in nm or b"\r" in nm or not nm or nm.startswith(b"-") or (rar and nm != nm.strip()):
                     refused.add(nm)
                     continue
                 sfh.write(nm + b"\n")
@@ -3010,16 +3064,24 @@ def run_7z(eng, path, from_index, max_members, sevenz):
         argv.append("@" + str(selection))
     stderr_x = eng.out_root / first_free(str(eng.out_root), "7z-extract.stderr", "")
     err_fh = private_file(str(stderr_x), "wb")
-    proc = spawn(argv, stdout=subprocess.PIPE, stderr=err_fh, env=env)
-    ACTIVE.append(proc)
-    pipe = Pipe(proc, eng.deadline, eng.a["max_ratio"], os.path.getsize(path))
+    wanted = len(names_plain) - len(unselectable & set(names_plain))
+    if rar and wanted == 0:
+        # a list file with no name would not mean "nothing": no extraction is started
+        proc = None
+        pipe = Pipe(None, eng.deadline, eng.a["max_ratio"], os.path.getsize(path))
+        pipe.eof = True
+    else:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=err_fh, env=env)
+        ACTIVE.append(proc)
+        pipe = Pipe(proc, eng.deadline, eng.a["max_ratio"], os.path.getsize(path))
     handled = 0
     desync = False
     try:
         for n, f in enumerate(listing_records(str(listing))):
-            m = seven_member(n, f)
+            m = seven_member(n, f, rar)
             name = f[b"Path"]
-            in_stream = m["kind"] in ("file", "symlink") and not m["encrypted"] and m["size"] is not None and name not in unselectable
+            in_stream = ((m["streamable"] if rar else m["kind"] in ("file", "symlink")) and not m["encrypted"] and m["size"] is not None
+                         and name not in unselectable)
             piece = Piece(pipe, m["size"]) if in_stream else None
             if n < from_index:
                 if piece is not None:
@@ -3037,7 +3099,9 @@ def run_7z(eng, path, from_index, max_members, sevenz):
                 except EOFError:
                     desync = True
                 m["link"] = target[:LINK_TARGET_MAX]
-            elif m["kind"] == "file" and piece is None and not m["encrypted"]:
+            elif m["kind"] in ("symlink", "hardlink") and m["link"] is not None:
+                m["link"] = m["link"][:LINK_TARGET_MAX]
+            elif m["kind"] == "file" and piece is None and not m["encrypted"] and not m.get("unsupported"):
                 if m["size"] is None:
                     m["unsupported"] = "7z's listing gives no size for this member, so its bytes cannot be told apart in the stream"
                 else:
@@ -3058,17 +3122,35 @@ def run_7z(eng, path, from_index, max_members, sevenz):
             if extra:
                 eng.notes.append("7z wrote more bytes than its listing declares: the CRC of each member says which are whole")
                 eng.extra["stream_longer_than_listing"] = True
+                if rar:
+                    eng.stopped_by, eng.stop_text = eng.stopped_by or "archive_unreadable", "%s wrote more bytes than its listing declares" % reader
     finally:
-        try:
-            proc.stdout.close()
-        except OSError:
-            pass
-        kill_tree(proc)
-        rc2 = proc.wait()
-        if proc in ACTIVE:
-            ACTIVE.remove(proc)
+        rc2 = 0
+        if proc is not None:
+            try:
+                proc.stdout.close()
+            except OSError:
+                pass
+            if rar and pipe.eof:
+                # the stream ended by itself: the program's own exit status is part of the answer, so it is waited for (inside the clock)
+                # before the tree is killed, and a program that does not exit is killed and said
+                try:
+                    proc.wait(timeout=max(0.5, min(30.0, eng.time_left())))
+                except subprocess.TimeoutExpired:
+                    pass
+            kill_tree(proc)
+            rc2 = proc.wait()
+            if proc in ACTIVE:
+                ACTIVE.remove(proc)
         err_fh.close()
-    eng.extra["extract_exit"] = rc2 if rc2 >= 0 else "killed by signal %d" % -rc2
+    eng.extra["extract_exit"] = ("not started: no member to extract" if proc is None else rc2) if rc2 >= 0 else "killed by signal %d" % -rc2
+    if rar and proc is not None and rc2 != 0:
+        said = reader_message(stderr_x)
+        if not eng.stopped_by:
+            eng.stopped_by, eng.stop_text = "reader_extract_exit", "%s exited with status %s while extracting" % (
+                reader, rc2 if rc2 >= 0 else "killed by signal %d" % -rc2)
+        if said and eng.stopped_by in ("reader_extract_exit", "reader_listing_exit", "archive_unreadable"):
+            eng.stop_text = "%s; the extraction said: %s" % (eng.stop_text, said)
     try:
         if os.path.getsize(stderr_x) == 0:
             os.unlink(stderr_x)
@@ -3078,7 +3160,10 @@ def run_7z(eng, path, from_index, max_members, sevenz):
         pass
     if desync:
         eng.notes.append("7z's output ended before its listing did: the members after that point are not in the stream (see their statuses)")
-        eng.stopped_by, eng.stop_text = eng.stopped_by or "archive_unreadable", "7z's output ended before its listing did"
+        if rar and eng.stopped_by:
+            eng.stop_text = "%s; 7z's output ended before its listing did" % eng.stop_text
+        else:
+            eng.stopped_by, eng.stop_text = eng.stopped_by or "archive_unreadable", "7z's output ended before its listing did"
 
 
 # ---- detection ---------------------------------------------------------------------------------------------------------
@@ -3094,19 +3179,25 @@ def tar_header_ok(block):
 
 
 def detect(path):
-    """(format, detail). Format is zip, 7z, tar, gzip, bzip2, xz, zstd, or an unsupported name, from the bytes."""
+    """(format, detail). Format is zip, 7z, rar, tar, gzip, bzip2, xz, zstd, or an unsupported name, from the bytes."""
     with open_regular(path) as fh:
         head = fh.read(4096)
     if head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
         return "zip", "zip signature at offset 0"
     if head.startswith(SEVEN_Z_MAGIC):
         return "7z", "7z signature at offset 0"
+    if head.startswith(RAR5_MAGIC):
+        return "rar", "RAR version 5 signature at offset 0"
+    if head.startswith(RAR4_MAGIC):
+        return "rar", "RAR version 4 signature at offset 0"
     kind = looks_like(head)
     if kind in ("gzip", "bzip2", "xz", "zstd"):
         return kind, "%s signature at offset 0" % kind
     if head[257:262] == b"ustar" or tar_header_ok(head[:512]) and head[:512].strip(b"\0"):
         return "tar", "tar header at offset 0"
-    if kind in ("rar", "cab"):
+    if kind == "rar":
+        return "unsupported:rar", "a RAR signature at offset 0 that is neither version 4 (Rar!, 1A 07 00) nor version 5 (Rar!, 1A 07 01 00): not read"
+    if kind == "cab":
         return "unsupported:" + kind, "%s signature at offset 0" % kind
     if head[:4] == b"\xd0\xcf\x11\xe0":
         return "unsupported:ole", "OLE compound file signature"
@@ -3119,7 +3210,7 @@ def detect(path):
                 return "zip", "no signature at offset 0, but an end-of-central-directory record at the end (a zip with a prefix)"
     except OSError:
         pass
-    return None, "not a zip, tar, gzip, bzip2, xz, zstd or 7z archive: its first bytes are %s" % head[:16].hex()
+    return None, "not a zip, tar, gzip, bzip2, xz, zstd, 7z or RAR archive: its first bytes are %s" % head[:16].hex()
 
 
 def sha256_of(path, limit, deadline):
@@ -3194,7 +3285,8 @@ def main():
         fail("the archive cannot be read: %s" % describe(exc), path=scrub(path))
     if fmt is None or fmt.startswith("unsupported:"):
         fail("unsupported or unrecognised archive: %s" % why, path=scrub(path), format=fmt, bytes=size,
-             supported=["zip", "tar (plain, gzip, bzip2, xz, zstd)", "gzip, bzip2, xz, zstd (a single file)", "7z (with the 7z program)"])
+             supported=["zip", "tar (plain, gzip, bzip2, xz, zstd)", "gzip, bzip2, xz, zstd (a single file)", "7z (with the 7z program)",
+                        "RAR version 4 and 5 (with the 7zz program)"])
 
     os.umask(0o077)
     st = os.stat(path)
@@ -3239,6 +3331,16 @@ def main():
 
     info = {"path": scrub(path), "bytes": size, "format": fmt, "detected_by": why, "sha256": None}
     sevenz = None
+    if fmt == "rar":
+        sevenz = find_7z(RAR_READER_NAMES)
+        if sevenz is None:
+            fail("a RAR archive needs a RAR reader (7zz, 7-Zip's own build; 7z, 7za or 7zr are tried after it), none of which is on PATH; "
+                 "nothing was extracted", path=scrub(path), format="rar", program="7zz",
+                 install="the base image holds 7zz (pinned 7-Zip download); elsewhere, 7-Zip's own Linux build from https://www.7-zip.org/download.html")
+        info["program"] = {"path": sevenz, "banner": banner(sevenz, STARTED + a["max_seconds"] - time.monotonic())}
+        if os.path.basename(sevenz) != "7zz":
+            info["program"]["note"] = ("no 7zz is on PATH, so %s reads this RAR: whether that build carries the RAR codec is not checked here; "
+                                       "a member it cannot decode is said as a member that did not come out whole" % os.path.basename(sevenz))
     if fmt == "7z":
         sevenz = find_7z()
         if sevenz is None:
@@ -3292,6 +3394,8 @@ def main():
                 run_zip(eng, path, a["from_index"], a["max_members"])
             elif fmt == "7z":
                 run_7z(eng, path, a["from_index"], a["max_members"], sevenz)
+            elif fmt == "rar":
+                run_7z(eng, path, a["from_index"], a["max_members"], sevenz, rar=True)
             elif fmt == "tar":
                 run_tar(eng, path, False, a["from_index"], a["max_members"])
             else:
