@@ -183,6 +183,44 @@ else
   absent steghide
 fi
 
+# 7zz is the reader archive_extract sends a RAR to. The 542-byte RAR 5 archive
+# below is packs/computer-forensics-base/tests/fixtures/rar/rar5-subdirs.rar (from
+# the rarfile project's test files, ISC licence; its sha256 is checked
+# before it is used). Its files are stored, not compressed, so this shows that
+# 7zz lists a RAR 5 archive and gives a member's bytes, and nothing about the
+# RAR decompressors. A program the image does not hold is skipped when its packs
+# do not name it, as above.
+if command -v 7zz >/dev/null 2>&1; then
+  base64 -d > "$T/rar5.rar" <<'B64'
+UmFyIRoHAQDz4YLrCwEFBwAGAQGAgIAAWyrxsjACAwuGAASGAKSDAsekBMmAAAESc3ViL2RpcjIv
+ZmlsZTIudHh0CgMTCNwVX4XkBhNmaWxlMgokNHkgOAIDC4gABIgApIMCfSS3cYAAARpzdWIvd2l0
+aCBzcGFjZS9sb25nIGZuLnR4dAoDEyncFV9mv8sdbG9uZyBmbgoOjzxzOAIDC4UABIUApIMCwYns
+L4AAARpzdWIvw7zItcSpw7bhuIvDqC9maWxlLnR4dAoDE0TdFV+dEHMIZmlsZQqvrxG4MAIDC4YA
+BIYApIMCBPcp4oAAARJzdWIvZGlyMS9maWxlMS50eHQKAxP92xVfHJEnNGZpbGUxCtVl6Z4kAgML
+AAUA7YMBAAAAAIAAAQhzdWIvZGlyMgoDEwjcFV/ICfsT1nxQqSoCAwsABQDtgwEAAAAAgAABDnN1
+Yi93aXRoIHNwYWNlCgMTKdwVX1vbgh6UOOweJQIDCwAFAO2DAQAAAACAAAEJc3ViL2VtcHR5CgMT
+5dsVX/bv4ArIG6fPLQIDCwAFAO2DAQAAAACAAAERc3ViL8O8yLXEqcO24biLw6gKAxNE3RVfmSwq
+CYEdQEkkAgMLAAUA7YMBAAAAAIAAAQhzdWIvZGlyMQoDE/3bFV8Nrd40msCgER8CAwsABQDtgwEA
+AAAAgAABA3N1YgoDEzLdFV+8OWMOHXdWUQMFBAA=
+B64
+  RAR_SHA=4449d0e82e09f52af23a11cd84904625de8b15beafcf73e5c30dc3296beae0b2
+  if [ "$(sha256sum "$T/rar5.rar" | cut -d' ' -f1)" != "$RAR_SHA" ]; then
+    no "the RAR 5 archive in this script is not the file whose sha256 is pinned in it"
+  else
+    7zz l -slt -ba "$T/rar5.rar" </dev/null > "$T/rar5.list" 2>"$T/rar5.err"; rc=$?
+    files="$(grep -c '^Folder = -' "$T/rar5.list")"
+    dirs="$(grep -c '^Folder = +' "$T/rar5.list")"
+    got="$(7zz x -so -y -bd "$T/rar5.rar" sub/dir1/file1.txt </dev/null 2>/dev/null)"
+    if [ "$rc" -eq 0 ] && [ "$files" = 4 ] && [ "$dirs" = 6 ] && grep -qx 'Path = sub/dir1/file1.txt' "$T/rar5.list" && [ "$got" = file1 ]; then
+      ok "7zz lists a real RAR 5 archive (4 files, 6 directories) and gives a member's bytes"
+    else
+      no "7zz did not read the RAR 5 archive as expected (exit $rc, $files files, $dirs directories, member bytes '$got')"
+    fi
+  fi
+else
+  absent 7zz
+fi
+
 # The isolated venv of ccl_indexeddb_dump decodes Brotli content taken from the
 # evidence, and Brotli before 1.2.1 has an out-of-bounds write in its decoder
 # (GHSA-9v8h-qqgm-4m35): the venv must hold 1.2.1 or newer.

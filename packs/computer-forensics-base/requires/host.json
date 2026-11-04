@@ -372,12 +372,40 @@
       "name": "7z",
       "package": "p7zip-full",
       "optional": true,
-      "why": "List the members of a 7z archive for the archive-members recipe, which calls the first of `7z`, `7zz`, `7za` and `7zr` it finds (archive_extract looks for the same four). Installed by the base image as p7zip-full, whose package carries no RAR codec: a RAR is not read by it.",
+      "why": "List the members of a 7z archive for the archive-members recipe, which calls the first of `7z`, `7zz`, `7za` and `7zr` it finds (archive_extract looks for the same four). Installed by the base image as p7zip-full. A RAR is read through the 7zz entry below, which archive_extract looks for first on a RAR.",
       "install": {
         "brew": "brew install p7zip",
         "apt": "apt-get install -y p7zip-full"
       },
       "licence": "LGPL-2.1-or-later, with the unRAR licence restriction on the RAR code",
+      "redistributable": false
+    },
+    {
+      "name": "7zz",
+      "package": "7-Zip",
+      "optional": true,
+      "why": "7-Zip's own Linux console build (26.05, the build its download page links to, from the project's GitHub release), whose RAR codec reads RAR versions 4 and 5. archive_extract sends a RAR to it, listing with `7zz l -slt -ba` and extracting to a pipe, and looks for it before 7z, 7za and 7zr; it also lists and extracts a 7z. The base image's p7zip-full is a different build and is not relied on for RAR. The RAR codec is under 7-Zip's licence with the unRAR restriction: 7-Zip's License.txt says the unRAR sources cannot be used to re-create the RAR compression algorithm. Pinned by sha256 per architecture; it links the C++ runtime of the image (libstdc++6).",
+      "install": {
+        "brew": "brew install sevenzip",
+        "apt": "pinned download 26.05 (install.download)",
+        "download": {
+          "version": "26.05",
+          "apt_deps": [
+            "libstdc++6"
+          ],
+          "amd64": {
+            "url": "https://github.com/ip7z/7zip/releases/download/26.05/7z2605-linux-x64.tar.xz",
+            "sha256": "22cf82fcc6eb7474f1d5bb4f02c0f8ebd573a718089d6833dc30f8350a3b232e",
+            "bin": "7zz"
+          },
+          "arm64": {
+            "url": "https://github.com/ip7z/7zip/releases/download/26.05/7z2605-linux-arm64.tar.xz",
+            "sha256": "0b71f6cfc34669b3bf69f2347efd3429f77020665003a13b9cdc53b784270421",
+            "bin": "7zz"
+          }
+        }
+      },
+      "licence": "LGPL-2.1-or-later, with the unRAR licence restriction on the RAR code; BSD-3-Clause and BSD-2-Clause for some code (7-Zip's License.txt for the Linux builds)",
       "redistributable": false
     }
   ]
