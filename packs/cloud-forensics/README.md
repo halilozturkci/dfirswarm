@@ -7,12 +7,12 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Fifteen skills**: the pack's router, `cloud/router` (at most 400 tokens: it names the other fourteen by the question each
+**Twenty skills**: the pack's router, `cloud/router` (at most 400 tokens: it names the other nineteen by the question each
 answers, holds no rule, and is the one line a run shows for the pack when its skills index is over budget), and
 `logs/exported-evidence` (what an exported file is, before what it says), `logs/what-exists` and `logs/sources` (what an export covers and which sources to
 inventory), `m365/unified-audit-log`, `entra/signins`, `aws/cloudtrail` and `aws/cloudtrail-integrity` (the
 operator's digest check, cited), `google/workspace` and
-`google/workspace-access`, `identity/tokens` and `identity/grants`, and the three that read what `cloud_normalise` writes: `entra/directory-audit`, `gcp/audit-logs` and `kubernetes/audit`.
+`google/workspace-access`, `identity/tokens` and `identity/grants`, the three that read what `cloud_normalise` writes: `entra/directory-audit`, `gcp/audit-logs` and `kubernetes/audit`, and five more: `aws/s3-access`, `aws/vpc-flow`, `azure/activity-resource-logs`, `aws/guardduty` and `m365/mailbox-persistence`.
 
 **Six tools**, all readers of exports that were supplied (nothing here connects to a tenant). `ual_parse` reads a
 Microsoft 365 unified audit log export and opens the `AuditData` payload, keeping the whole of it beside the fields it

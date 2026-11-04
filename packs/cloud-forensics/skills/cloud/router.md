@@ -17,12 +17,17 @@ Any cloud export
 
 Microsoft
 `m365/unified-audit-log` Purview audit records
+`m365/mailbox-persistence` mailbox rules, forwarding, delegates
 `entra/signins` who authenticated, how, from where
 `entra/directory-audit` who changed identities and applications
+`azure/activity-resource-logs` Activity log, resource logs
 
 Other providers
 `aws/cloudtrail` principal, action, origin
 `aws/cloudtrail-integrity` operator's digest check, cited
+`aws/s3-access` S3 requests, logs, inventories
+`aws/vpc-flow` VPC flow log records
+`aws/guardduty` GuardDuty finding updates
 `google/workspace` Workspace audit exports
 `google/workspace-access` delegation, sharing, forwarding
 `gcp/audit-logs` Cloud Audit Log entries
