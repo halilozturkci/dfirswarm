@@ -3,17 +3,18 @@ id: encryptor/samples-and-notes
 title: Recovered samples, tails and note placement
 when: You hold a recovered binary or script, repeated tails, or note placement.
 needs: []
-tools: [encrypted_survey, ransom_note_scan, encryption_extent]
+tools: [encrypted_survey, ransom_note_scan, encryption_extent, ransomware_family_match]
 requires_host: [yara]
 ---
 
 Use only if you hold a recovered binary or script, or read tails and note placement. Not for the execution chain (`encryptor/traces`).
 
-**Samples and file effects.** Read and hash recovered code; never run it. No rules
-ship with this pack: if `yara` is installed and the case supplies a ruleset, record
-the engine version, the ruleset's source, revision and hash, the rule names and the
-match locations. A match is a classification lead, not proof of execution or
-attribution.
+**Samples and file effects.** Read and hash recovered code; never run it. The pack ships a
+dated snapshot of note-text rules and family features for a few families, used by
+`ransomware_family_match`; it ships no rule for a sample's code. If `yara` is installed and
+the case supplies a ruleset, record the engine version, the ruleset's source, revision and
+hash, the rule names and the match locations. A match is a classification lead, not proof
+of execution or attribution.
 
 `encrypted_survey` names candidates and samples a few tails; its answer says what it
 read and did not (`status`, `status_basis`, `coverage`). `ransom_note_scan` says where note files

@@ -3,7 +3,7 @@ id: identify/samples-and-decryptors
 title: Samples, behaviour and public decryptors
 when: A sample survives, behaviour is attributed, or public decryptors are checked.
 needs: []
-tools: []
+tools: [ransom_note_scan, ransomware_family_match]
 requires_host: [yara]
 ---
 
@@ -15,6 +15,13 @@ revision and hash, the rules that matched and where. A generic packer or shared-
 rule does not identify a ransomware family. Do not execute recovered code. If the
 reverse-engineering pack is loaded (it shares the `re` image profile; that is not a
 dependency), its skills take the sample from there; otherwise record the limit.
+
+**Match what you observed to the dated snapshot.** `ransomware_family_match` reads the values file of
+`ransom_note_scan` (a job run with `secret_output: true`), the extensions you saw and, optionally, a date. It gives candidate
+families and variants with the features that matched, their strength, their sources and rule versions, the
+contradictions between features, and `ambiguous` when two families are supported alike. Its reference set is a
+reviewed snapshot with a date, not a catalogue: no match does not mean that an unknown family is absent, and a
+family match never names an affiliate or an actor. Confirm a candidate against the sources it cites.
 
 **Keep behavioural attribution qualified.** Deployment tools, exclusions and the order
 of operations can support a campaign hypothesis; they are shared across actors and
