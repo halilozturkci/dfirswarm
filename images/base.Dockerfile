@@ -89,9 +89,9 @@ ARG NONREDISTRIBUTABLE="debian-gpl-packages"
 # Debian package list and the venv (what a VM holds at stop is diffed against
 # them, so the image's own packages are never "installed outside the image"),
 # /etc/dfirswarm/NOTICE and the SBOM, /etc/dfirswarm/sbom.json.
-COPY library-python.txt install.py /tmp/dfirswarm-build/
+COPY library-python.txt library-python.lock install.py /tmp/dfirswarm-build/
 RUN python3 -m venv /opt/dfir/venv \
- && /opt/dfir/venv/bin/pip install --no-cache-dir -r /tmp/dfirswarm-build/library-python.txt \
+ && /opt/dfir/venv/bin/pip install --no-cache-dir --require-hashes -r /tmp/dfirswarm-build/library-python.lock \
  && REDISTRIBUTABLE="$REDISTRIBUTABLE" NONREDISTRIBUTABLE="$NONREDISTRIBUTABLE" PI_VERSION="$PI_VERSION" \
       python3 /tmp/dfirswarm-build/install.py --base \
  && rm -rf /tmp/dfirswarm-build

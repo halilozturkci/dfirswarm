@@ -6,13 +6,18 @@
 # place, as a file, with no root and no mount (a mount made in a VM is that
 # VM's alone, and nothing under it is recorded). The run's contract recommends
 # them and the crypto toolbox set checks for them. An image with this pack
-# (disk, full) installs them at build time: dfvfs pulls libewf-python and
-# libfvde-python, which have no wheel and are compiled then, while the build
-# still has its compiler. Only pyAesCrypt is pinned: the others float until their
-# versions are recorded per architecture, with the transitive graph of dfvfs.
-libbde-python        # LGPL-3.0-or-later. pybde: a BitLocker volume, unlocked in user space.
-libvhdi-python       # LGPL-3.0-or-later. pyvhdi: a virtual hard disk in user space (VHD; check that the build reads the VHDX you have).
-libluksde-python     # LGPL-3.0-or-later. pyluksde: a LUKS volume.
-pytsk3               # Apache-2.0 for the bindings, with The Sleuth Kit built in (its CPL-1.0 and IPL-1.0 parts: see fls in the base pack). A file system from a byte stream.
-dfvfs                # Apache-2.0. The layers (EWF, VHDX, BitLocker, LUKS, NTFS) stacked in one process; its libyal dependencies are not pinned here.
+# (disk, full) installs them at build time from requires/python.lock: every package
+# here is == and the lock holds the sha256 of each file PyPI publishes for it and
+# for dfvfs's whole dependency graph (CPython 3.11, Linux x86_64 and aarch64), which
+# includes libewf-python and libfvde-python, the two the pack's tools do not import
+# themselves. PyPI carries a cp311 manylinux wheel of each libyal binding and of
+# pytsk3 for both architectures, plus the sdist, and the lock holds all of them:
+# where an architecture has no wheel, pip compiles the sdist while the build still
+# has its compiler. The lines here are the notes; the licences are the ones the
+# packages' PyPI metadata declare.
+libbde-python==20260916        # LGPL-3.0-or-later. pybde: a BitLocker volume, unlocked in user space.
+libvhdi-python==20260901       # LGPL-3.0-or-later. pyvhdi: a virtual hard disk in user space (VHD; check that the build reads the VHDX you have).
+libluksde-python==20260902     # LGPL-3.0-or-later. pyluksde: a LUKS volume.
+pytsk3==20260715               # Apache-2.0 for the bindings, with The Sleuth Kit built in (its CPL-1.0 and IPL-1.0 parts: see fls in the base pack). A file system from a byte stream.
+dfvfs==20260924                # Apache-2.0. The layers (EWF, VHDX, BitLocker, LUKS, NTFS) stacked in one process; its libyal dependencies are locked in requires/python.lock.
 pyAesCrypt==6.1.1    # Apache-2.0 (its package metadata: Apache License 2.0). AES Crypt containers.

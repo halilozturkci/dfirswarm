@@ -1,0 +1,12 @@
+# Hash lock for pillow-heif 1.8.0 and what it needs. It installs into the image's venv beside the base pack's Pillow, so Pillow is held at the base pack's 12.3.0.
+# every line is name==version with the sha256 of each file PyPI publishes for it that CPython 3.11 on Linux glibc (x86_64 or aarch64) can use, plus the
+# sdist (an architecture with no wheel builds from it). Resolved from PyPI's JSON metadata for exactly that environment; pip installs it with --require-hashes, so a file whose hash
+# is not here does not install. The set holds every dependency, since hash mode refuses an unlisted one.
+pillow==12.3.0 \
+    --hash=sha256:23d27a3e0307ec2244cc51e7287b919aa68d097504ebe19df4e76a98a3eea5bd \
+    --hash=sha256:3b8182a766685eaa002637e28b4ec8d6b18819a0c71f579bf0dbaa5830297cce \
+    --hash=sha256:bcb46e2f9feff8d06323983bd83ed00c201fdcab3d74973e7072a889b3979fcd
+pillow-heif==1.8.0 \
+    --hash=sha256:741115092cd6922d4ca5db801455617aaca2e52d17ec293852bd67357964c861 \
+    --hash=sha256:e47c27432c6fd3d66c22f0de9f27fd379383b646c947520bc485854ce72060d0 \
+    --hash=sha256:ffcd347a4903db4081a4416ea2ad9332e3d8db6eedd9df83ead5ea1a53d1e9a1

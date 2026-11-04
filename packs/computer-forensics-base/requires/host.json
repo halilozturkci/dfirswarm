@@ -176,10 +176,11 @@
       "name": "log2timeline",
       "package": "plaso",
       "optional": true,
-      "why": "Build a super timeline from a whole image in one pass: every parser Plaso carries, into one storage file. Older packages install it as log2timeline.py; the tool accepts either.",
+      "why": "Build a super timeline from a whole image in one pass: every parser Plaso carries, into one storage file. Older packages install it as log2timeline.py; the tool accepts either. Pinned to plaso 20260720 with its whole dependency set in a hash lock (requires/locks/plaso.txt: a wheel hash per architecture where PyPI has one, and the sdist), so the image installs nothing else; the three programs share the one lock.",
       "install": {
-        "brew": "python3 -m pip install plaso",
-        "apt": "python3 -m pip install plaso"
+        "brew": "python3 -m pip install plaso==20260720",
+        "apt": "python3 -m pip install plaso==20260720",
+        "pip_lock": "requires/locks/plaso.txt"
       },
       "licence": "Apache-2.0",
       "redistributable": false
@@ -188,10 +189,11 @@
       "name": "psort",
       "package": "plaso",
       "optional": true,
-      "why": "Filter, sort and export a Plaso storage file. The half of a super timeline an examiner actually reads. Older packages install it as psort.py; the tool accepts either.",
+      "why": "Filter, sort and export a Plaso storage file. The half of a super timeline an examiner actually reads. Older packages install it as psort.py; the tool accepts either. Pinned to plaso 20260720 with its whole dependency set in a hash lock (requires/locks/plaso.txt: a wheel hash per architecture where PyPI has one, and the sdist), so the image installs nothing else; the three programs share the one lock.",
       "install": {
-        "brew": "python3 -m pip install plaso",
-        "apt": "python3 -m pip install plaso"
+        "brew": "python3 -m pip install plaso==20260720",
+        "apt": "python3 -m pip install plaso==20260720",
+        "pip_lock": "requires/locks/plaso.txt"
       },
       "licence": "Apache-2.0",
       "redistributable": false
@@ -200,10 +202,11 @@
       "name": "pinfo",
       "package": "plaso",
       "optional": true,
-      "why": "Print a Plaso storage file's own processing report: what each parser did, and the warnings and errors it raised. Older packages install it as pinfo.py. The disk-timeline recipe keeps its output as pinfo.txt, and a negative from a super timeline is read against it.",
+      "why": "Print a Plaso storage file's own processing report: what each parser did, and the warnings and errors it raised. Older packages install it as pinfo.py. The disk-timeline recipe keeps its output as pinfo.txt, and a negative from a super timeline is read against it. Pinned to plaso 20260720 with its whole dependency set in a hash lock (requires/locks/plaso.txt: a wheel hash per architecture where PyPI has one, and the sdist), so the image installs nothing else; the three programs share the one lock.",
       "install": {
-        "brew": "python3 -m pip install plaso",
-        "apt": "python3 -m pip install plaso"
+        "brew": "python3 -m pip install plaso==20260720",
+        "apt": "python3 -m pip install plaso==20260720",
+        "pip_lock": "requires/locks/plaso.txt"
       },
       "licence": "Apache-2.0",
       "redistributable": false
@@ -259,10 +262,11 @@
       "name": "target-query",
       "package": "dissect.target",
       "optional": true,
-      "why": "One query interface over E01, VMDK, QCOW and a triage collection, with a plugin per artefact family. AGPL-3.0, the same licence as this harness.",
+      "why": "One query interface over E01, VMDK, QCOW and a triage collection, with a plugin per artefact family. AGPL-3.0, the same licence as this harness. Pinned to the dissect metapackage 3.22 (dissect.target 3.25.1 and the dissect.* parsers it names) with its whole dependency set in a hash lock (requires/locks/dissect.txt: a wheel hash per architecture where PyPI has one, and the sdist).",
       "install": {
-        "brew": "python3 -m pip install dissect",
-        "apt": "python3 -m pip install dissect"
+        "brew": "python3 -m pip install dissect==3.22",
+        "apt": "python3 -m pip install dissect==3.22",
+        "pip_lock": "requires/locks/dissect.txt"
       },
       "licence": "AGPL-3.0-or-later",
       "redistributable": false
@@ -273,7 +277,7 @@
       "optional": true,
       "why": "Read a LUKS header and its key slots without unlocking the volume.",
       "install": {
-        "brew": "python3 -m pip install libluksde-python",
+        "brew": "https://github.com/libyal/libluksde (the library's own command-line tool, built from source; the PyPI package libluksde-python is the Python binding and does not install it)",
         "apt": "apt-get install -y libluksde-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -285,7 +289,7 @@
       "optional": true,
       "why": "Read the encryption metadata of a Core Storage (legacy FileVault 2) volume and its key material references. Not assumed to read an APFS volume: APFS structure is the macos-forensics pack's and the route into an encrypted APFS volume the encrypted-containers pack's.",
       "install": {
-        "brew": "python3 -m pip install libfvde-python",
+        "brew": "https://github.com/libyal/libfvde (the library's own command-line tool, built from source; the PyPI package libfvde-python is the Python binding and does not install it)",
         "apt": "apt-get install -y libfvde-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -297,7 +301,7 @@
       "optional": true,
       "why": "Read an APFS container and its volumes, which the Sleuth Kit does not. Experimental libfsapfs: upstream does not support snapshots, Fusion drives or T2 encryption.",
       "install": {
-        "brew": "python3 -m pip install libfsapfs-python",
+        "brew": "https://github.com/libyal/libfsapfs (the library's own command-line tool, built from source; the PyPI package libfsapfs-python is the Python binding and does not install it)",
         "apt": "apt-get install -y libfsapfs-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -319,7 +323,7 @@
       "name": "ccl_indexeddb_dump",
       "package": "ccl_chromium_reader",
       "optional": true,
-      "why": "A Chromium or Electron IndexedDB (a chat client's, a web app's) read by database, object store and record; the ccl_chromium_reader library beside it, in /opt/dfir/src/ccl_indexeddb_dump/.venv/bin/python, also reads LevelDB, Local Storage, Session Storage and the cache. Brotli is held at 1.2.1 over the reader's old bound of 1.2.0, because before 1.2.1 the decoder (which reads content taken from the evidence) has an out-of-bounds write (GHSA-9v8h-qqgm-4m35).",
+      "why": "A Chromium or Electron IndexedDB (a chat client's, a web app's) read by database, object store and record; the ccl_chromium_reader library beside it, in /opt/dfir/src/ccl_indexeddb_dump/.venv/bin/python, also reads LevelDB, Local Storage, Session Storage and the cache. Brotli is held at 1.2.1 over the reader's old bound of 1.2.0, because before 1.2.1 the decoder (which reads content taken from the evidence) has an out-of-bounds write (GHSA-9v8h-qqgm-4m35). Brotli 1.2.1 and zstd 1.5.7.2 install first from a hash lock (requires/locks/ccl_indexeddb_dump.txt: a file hash per architecture where PyPI has one, and the sdist). ccl_simplesnappy is not on PyPI and stays at its commit, an archive URL, outside the lock; its bytes are not hashed here.",
       "install": {
         "brew": "https://github.com/cclgroupltd/ccl_chromium_reader (not on PyPI)",
         "apt": "pinned source 0.3.18 (install.source)",
@@ -329,11 +333,10 @@
           "sha256": "df03121f6623c28b5c58363eb0e3691e743fd59c08e76e672c1ba00432d16e68",
           "entry": "tools_and_utilities/dump_indexeddb_details.py",
           "run": "python",
+          "pip_lock": "requires/locks/ccl_indexeddb_dump.txt",
           "pip": [
             "--no-deps",
             ".",
-            "Brotli==1.2.1",
-            "zstd==1.5.7.2",
             "https://github.com/cclgroupltd/ccl_simplesnappy/archive/3d085230baa8c46cf2090ebba29bf6e8eab31087.tar.gz"
           ]
         }
