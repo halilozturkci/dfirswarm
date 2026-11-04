@@ -27,13 +27,13 @@ opened only when the leaf above points to them.
 | Scripts | `scripts/static-analysis` |
 | Rules | `rules/yara`, `rules/authoring` |
 
-Not provided, and the skills say so where it matters: a .NET decompiler (`pe_directories` reads the
+Not provided, and the skills say so where it matters: a .NET decompiler of its own (`clr_inspect` runs `ilspycmd` where it is installed; `pe_directories` reads the
 metadata tables only when asked, with `clr_tables`), a Python archive extractor, a bytecode disassembler or
 decompiler, a packer-signature detector, parse-only script tooling,
 and a decompiler for native code. The new skills
 name only programs the pack declares.
 
-**Twelve tools of its own, and `file_type` from the base pack.** `file_type` reads
+**Thirteen tools of its own, and `file_type` from the base pack.** `file_type` reads
 what a file is from its bytes and says when the extension disagrees.
 `entropy_map` measures how evenly byte values are spread, window by window, and
 writes the whole profile to a file; it reports a measurement and does not
@@ -46,7 +46,7 @@ SHA-256, ssdeep and TLSH together, and can give the TLSH distance between two
 samples without executing either one. `elf_directories` reads an ELF file's program headers, every dynamic tag, `.dynsym` and `.symtab`, and the notes (the GNU build ID among
 them), through the program headers when the section headers are stripped. `macho_directories` reads, per slice of a Mach-O or a universal binary, the symbol table, the dyld bind and export names, the chained-fixups imports, the build version and the code-signature blob structure (no signature is verified). `authenticode_verify` verifies a PE file's Authenticode signatures by running `osslsigncode verify` (never its own cryptography) against the roots, timestamp-authority roots and revocation list the call supplies, reads the program's words back per signature (the file's digest against the signed one, the signature, the signer's names, the signing time, a timestamp counter-signature) and says `not_checked` for every part it was given no material for; it uses no default CA store and no network, and reads its words only for the release it was checked against (2.5). `unpack_safe` unpacks a UPX-packed file
 into a derivative under the output budget (UPX only; both SHA-256 values and the
-UPX version recorded; the original never changed). `doc_probe` opens a document as a container:
+UPX version recorded; the original never changed). `clr_inspect` reads a .NET assembly's CLR header, metadata root and declared row counts as structure and, in a `secret_output` job with `decompile`, runs `ilspycmd` (optional; amd64 Native AOT, arm64 on the declared .NET runtime) to write a labelled C# reconstruction to a file under `$OUT`, never inline: a decompiler's output is an interpretation, not the author's source, and the program was never run for real by the change that added the tool. `doc_probe` opens a document as a container:
 the member list, the External targets of its relationships, the members whose
 names match a code-related pattern, and byte markers for OLE, RTF and PDF. A
 marker or a relationship shows what a file holds, not what runs or was fetched.

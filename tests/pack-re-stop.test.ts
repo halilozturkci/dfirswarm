@@ -27,6 +27,7 @@ import { buildPeDirs } from "./pack-re-doc-fixtures.ts";
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
 const UNPACK_SAFE = join(TOOLS, "unpack_safe", "run.py");
 const AUTHENTICODE_VERIFY = join(TOOLS, "authenticode_verify", "run.py");
+const CLR_INSPECT = join(TOOLS, "clr_inspect", "run.py");
 const SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
 const NUMBER = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 } as const;
 
@@ -98,6 +99,14 @@ sleep 60`);
       await put(cwd, "inputs/s.exe", buildPe({}).file);
       await put(cwd, "inputs/ca.pem", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n");
       return { argv: [], stdin: JSON.stringify({ path: "inputs/s.exe", trust_ca: "inputs/ca.pem" }) };
+    },
+  },
+  {
+    name: "clr_inspect", script: CLR_INSPECT, marker: MODULE_LEVEL,
+    work: async (cwd) => {
+      const path = await put(cwd, "inputs/big.dll", buildPeDirs({ clr: {} }).file);
+      await truncate(path, 2 ** 30);
+      return { argv: [], stdin: JSON.stringify({ path: "inputs/big.dll" }) };
     },
   },
   {
