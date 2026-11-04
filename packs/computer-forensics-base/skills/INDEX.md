@@ -9,7 +9,7 @@ Router: `base/router`
 - `data/sqlite` A SQLite database is a set of files: A SQLite database, with or without its -wal, -shm or -journal.
 - `data/sqlite-secrets` Secret tables without the values: A table holds cookies, logins, tokens or keys.
 - `evidence/ad1` An AD1 image is a collection in a container: Evidence is an FTK Imager logical image (.ad1).
-- `evidence/archives` Archives and extraction fidelity: A zip, tar, 7z or compressed file whose members you need as files.
+- `evidence/archives` Archives and extraction fidelity: A zip, tar, 7z, RAR or compressed file whose members you need as files.
 - `evidence/catalog` Use the catalogue with its coverage and revision: At the start, before repeating preparation, reading a listing, or reporting a catalogue search.
 - `evidence/collections` Establish what a logical collection actually contains: Evidence arrives as copied files, an archive or an AD1 logical image.
 - `evidence/coverage` What a search did and did not cover: Before writing "not found", "none", or a count of "all"; when a search returned nothing.

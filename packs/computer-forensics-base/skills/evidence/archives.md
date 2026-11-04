@@ -1,9 +1,9 @@
 ---
 id: evidence/archives
 title: Archives and extraction fidelity
-when: A zip, tar, 7z or compressed file whose members you need as files.
+when: A zip, tar, 7z, RAR or compressed file whose members you need as files.
 tools: [archive_extract]
-requires_host: [7z]
+requires_host: [7z, 7zz]
 ---
 
 Use when a zip, tar, 7z or compressed file must become files. Not for an AD1 logical image (`evidence/ad1`) or a disk image.
