@@ -1,8 +1,8 @@
 {
   "id": "macos-forensics",
   "name": "macOS Forensics Pack",
-  "version": "1.7.1",
-  "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, accounts and the limits of attribution, keychains opened with the case's password, and what APFS retains. TCC, background items, Safari history, Biome framing and an APFS inventory have a tool here and no skill of their own yet; Gatekeeper and XProtect and Spotlight have neither.",
+  "version": "1.8.0",
+  "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, accounts and the limits of attribution, keychains opened with the case's password, and what APFS retains. TCC, background items, Safari history, Biome framing, an APFS inventory and mac_apt triage (a recipe too) have a tool here and no skill of their own yet; Gatekeeper and XProtect and Spotlight have neither.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
     "DFIR Swarm"
@@ -32,9 +32,11 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "87caf59efe34f52bdb8a7f3f101a38d03a80b0177724cb18b42c198857a5e176",
+      "README.md": "f9300c9fb2d8af5eb4c8b682dd494161cd0715c4925a4ca5d490951f176c4e04",
       "goals/mac-compromise.md": "50e6a65c7611900ec2e7b8089b3f2c1d86cf5bcb8c14ae1059e986df6cb2f00a",
-      "requires/host.json": "8a801e5d6fed3b08642d737a94bfd1add14941b902aaa50fb34007041a74a29c",
+      "recipes/macos-artefacts/recipe.json": "38be6bc74cae5051956394bd369f9abfbd8c571da651492b98bc0059f881fe8b",
+      "recipes/macos-artefacts/run.py": "4cd3f988801ce83faa07446ec108abebb014e91652588dc115ad5669a255d900",
+      "requires/host.json": "cf4c36c4714b77e0439fd9f0aab3c3872c814b08bd7f218d72064ed4e8d615b8",
       "requires/locks/chainbreaker.txt": "dab6391c45828b4a1ef378402b6381c60183c214a25fbbb9d7fc843af0b189d3",
       "requires/locks/mac_apt.txt": "1a54f5f97e3052307c2c9fd5d892c952e2ab8560a77192b0603775a0f411b1ab",
       "requires/python.txt": "b9fd9b97af3d66de786eb48c116a119308a6b2087411ef45b2cc1aa369dc6eba",
@@ -57,7 +59,7 @@
       "skills/persistence/mechanisms.md": "bb9b414728736035d90bbe875ff87d17a1b2211e816f3cde0eb1630c89883756",
       "skills/security/keychains.md": "2a07a66d0616d8e1270cb601399cef745fdd82f0e9716b8f3842103a0801f0d6",
       "skills/triage/clocks-hardware.md": "eb682191ae96e05cbfddcb047da966fa3192c0d475ea7ad0abc1889a15d921ac",
-      "skills/triage/system-profile.md": "6771e67fea5bc88e0dcb72e1a1c61c3ff77606fec1d7128a010251acbf4bbf16",
+      "skills/triage/system-profile.md": "9a34bcc9c3e67e5b77a6580d0a489bdadd905cb48d3782ade563c752f14e20c5",
       "tools/apfs_inventory/manifest.json": "dbb12725192355700b0fc51b3a58378d45658f114a9857a4e0fa53fb2ecac118",
       "tools/apfs_inventory/run.py": "9a341b9a0eeae9e074fbea09d8de835e089bdbad4eebeee7088810503fed36de",
       "tools/fsevents_parse/manifest.json": "d9765574c30365a6e04e96c9a7671c4396d35bc9c85fb370eda0e5464e4481a4",
@@ -70,6 +72,8 @@
       "tools/macos_login_items/run.py": "a498922ca188c466ce9997687f411abf4f03d3ffe8067265615a3964077cb2ec",
       "tools/macos_tcc/manifest.json": "08619d6b00bce60bb088a40161bade05c66a92eaa2bdbb7257e8301ee618bc9e",
       "tools/macos_tcc/run.py": "41511dcb13d716a5e200d2e36608f9a3e41acbec0fd0d28cd42efc4cbc95773f",
+      "tools/macos_triage/manifest.json": "1c62130df4985dd6647eb07fa72229719cebc3ec65fa49d42ef6f231e9a5075b",
+      "tools/macos_triage/run.py": "61c4f17b783a45d8e175d5c194f1df9d28031945ab0cd590c77c1dc7cb6c53e4",
       "tools/plist_read/manifest.json": "bcef242e9a359a91ad785558268582ef16b628cde9dc129f532e1a07e4e51ba8",
       "tools/plist_read/run.py": "15fbae291e8c5cd71ac1403c9af8f8e2b7b8d52bde843c9b7a8020d3ee79ed29",
       "tools/safari_history/manifest.json": "b051cae5daba1aafad9340f8ea8334d766d9df2ddc66d0422d601557897c2b54",
@@ -87,10 +91,14 @@
     "knowledgec_query",
     "macos_login_items",
     "macos_tcc",
+    "macos_triage",
     "plist_read",
     "safari_history",
     "segb_read",
     "unified_log"
   ],
-  "skills": 19
+  "skills": 19,
+  "recipes": [
+    "macos-forensics/macos-artefacts"
+  ]
 }

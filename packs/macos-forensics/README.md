@@ -81,6 +81,18 @@ whatever reads a tool's stdout stops reading a full pipe, only SIGKILL ends the 
   records per class, decrypted and not, and gives the file's size and sha256; it prints no name, value or hash of
   one. The Local Items store (`keychain-2.db`) is answered `unsupported_format`. No password is guessed or cracked.
 
+- `macos_triage` runs the pinned `mac_apt.py` (1.33.2, amd64 worker image only) in the input mode the caller names (AFF4,
+  AXIOMZIP, DD, DMG, E01, MOUNTED, SPARSE, UAC, VMDK or VR; a mismatch with the object is refused before the program starts),
+  keeps its logs and output whole under a run directory of its own, and gives each plugin `parsed`, `empty`, `unsupported` or
+  `failed` from mac_apt's own log, never from its exit code (mac_apt exits 0 after errors it has logged). A FileVault password
+  is only a sealed file handed to mac_apt as `-pf`, and the tool declares `secret_output: required`. The `macos-artefacts`
+  recipe (`purpose: broad_extraction`) does the same over an image or a mounted folder it recognises, writes `coverage.json`
+  first and an index, and cannot be complete for the FAST or ALL sets. What was read and what was not: the argument shape and
+  the texts of the start, plugin start, plugin end, plugin exception and finish log lines come from the 1.33.2 source; mac_apt
+  was never run here, so the prefix of a log line, the wording behind `empty` and `unsupported` and the per-plugin file names
+  are unverified, and the tests use stand-in programs. On arm64, where mac_apt is not installed, the tool answers `failed`
+  with the packaging reason and the recipe's detect exits 1.
+
 The boundary is the windows-forensics pack's block, copied byte for byte (a test holds
 the copies equal): an allow-list per field type, a deny-list for free text and a second
 check written apart. It works by shape, so a secret of another shape (a plain password, a
@@ -89,8 +101,8 @@ a file whose secrets matter is read in a job run with `secret_output: true`.
 
 **One goal template**: `mac-compromise.md`.
 
-**Not in this pack.** A wrapper, recipe or skill for `mac_apt.py` (declared in
-`requires/host.json`, installed in the amd64 worker image only); Gatekeeper and
+**Not in this pack.** A skill of its own for `mac_apt.py` (`macos_triage` and the `macos-artefacts` recipe run it; it is
+declared in `requires/host.json`, installed in the amd64 worker image only); Gatekeeper and
 XProtect, Spotlight, Biome and recent-item skills, and TCC and background-item skills
 (`macos_tcc` and `macos_login_items` have a naming edit in the persistence leaf, not a
 leaf of their own); APFS snapshot content access. A macOS examination that needs them
