@@ -1,0 +1,45 @@
+{
+  "name": "srum_reader",
+  "description": "Read the System Resource Usage Monitor database SRUDB.dat through the backends that read it, and say which backend produced each row. An adapter and a provenance layer, not a new ESE reader: Eric Zimmerman's `SrumECmd` (through the installed wrapper, which runs the pinned build with dotnet) and dissect.target (`target-query -f srum --json`) are run where they are installed, in this tool's process group, each under a share of this tool's own clock, with their output in files; what they wrote is read back and every row is kept as JSON Lines in a file the answer names (`rows_file`), with `backend`, the table and the source row on every row; `limit` rows are shown inline. SrumECmd IS EXPECTED NOT TO RUN ON A NON-WINDOWS HOST (the pinned 2026.10.1 has strings saying it needs Windows' own ESE libraries and exits; read from the dll's strings, never run): where it prints that, its state is `unsupported_platform` and it gives no row, said; dissect.target opens a collection directory (a root holding Windows/System32/sru/SRUDB.dat, as the windows-artefacts recipe runs it), so a lone file is read only by SrumECmd. Inputs: `path` is SRUDB.dat or a directory that holds exactly one file of that name (a directory with none or several is refused, naming them; the walk does not follow links and is bounded in entries, depth and time); `software` is the SOFTWARE hive, or the one config/SOFTWARE found under a given directory; `backend` is all (default), srumecmd or dissect. What the tool reads itself, with the standard library: the ESE header of SRUDB.dat (signature, format version, file type and the database state: clean shutdown, dirty shutdown, just created, being converted, force detach) and the names and sizes of the .log, .chk and .jrs files beside it. It does not replay logs and repairs nothing; SrumECmd reads a copy of the database and its logs that it makes in a folder of its own (--temp, removed afterwards), so the evidence is opened for reading only. Per table the answer gives the rows, the retained interval (earliest and latest row time), the counters with the unit the column name states (bytes, counts, cpu cycles, milliseconds, otherwise `not stated by the backend`), the time semantics, and how many application, user and profile ids did not resolve (kept in the row, flagged `*_resolved: false`, counted, never dropped). A row's time is its end; `interval_seconds_since_previous_row_time` is the distance to the previous distinct row time of the same table (not given for a table with more than 250,000 distinct times), NOT a measured length of the interval its counters cover. Counters are never added, averaged or compared across tables. A network profile name needs the SOFTWARE hive: without it a profile id is unresolved and the row says why. A cell is kept as printed (`other`, `time_raw`; a repeated column name in a CSV header is a named problem and makes the status partial); a time with no zone is taken as UTC, as SrumECmd's text says it prints; a row whose time cannot be read keeps its raw cell and makes the status partial. With both backends present, the row count of every table both name is compared (`comparison`: agree, disagree, or not_compared for a table the tool cannot match by name); a backend that is absent, fails, runs out of time, is unsupported on the host or writes a shape this tool does not know is not_run or not_compared, said, and is never agree. status is complete only when at least one backend produced rows, every file it wrote was read to its end with no problem, the database is in a clean-shutdown state (or dirty, with log files beside it that SrumECmd said it replayed; the basis names the actual state), SrumECmd reported no table it could not export, no read problem, no error on the file and no repaired copy, no time or byte was unreadable, the backends agree where both ran, and the clock did not run out; it is partial when a backend that was run failed or timed out while another gave rows, when a backend exited 0 but gave no row or printed error lines, when a Dissect record has no `_recorddescriptor` or no readable `ts`, when the database is not clean and no log or checkpoint file is beside it (or one is, but no backend said it replayed it), when SrumECmd reported a table it could not export, a read problem, an error on the file, a repaired copy or an unreadable SOFTWARE hive, when the database is in any other state than a clean or a dirty shutdown, when a file was cut at the 4 GiB cap, when a row held bytes that are not UTF-8 or a time it could not read, when the two backends disagree, and when the clock ran out; failed when no backend produced a row (a backend that exited 0 with none counts as not producing, each backend's state and reason are in `backends`) or the one asked for did not. FROM HELP STRINGS AND METADATA, NOT FROM A REAL RUN: SrumECmd's option names (-f, -r, --csv, --temp, --dt), its CSV file names (*_SrumECmd_<table>_Output.csv) and columns, the console lines this tool parses (the database state, the log replay, the errors) were read from the pinned build's strings and metadata, and the dissect.target record shape (JSON lines with `_recorddescriptor` and `ts`) is an ASSUMPTION, since no SrumECmd dll could hold it; no dotnet, Windows or dissect.target was available where the tool was written, so no real SRUDB.dat has been read by it and the tests use stand-in backends that write the documented shapes. The ESE header and the state codes follow libyal's documented layout. Bounds: each backend run is given at most 40% of max_seconds (1 to 240, default 200) and 15% is kept for reading and the answer; a backend output file may not pass 4 GiB (kernel-enforced); at most 16 MiB per Dissect line or CSV cell, 512 columns per CSV, 10,000 inline rows (limit), and the inline rows together are held to 256 KiB (`rows_inline_truncated`; the rest are in the file only). A SIGTERM, SIGINT or SIGHUP ends the backend and what it started, removes the temporary files and answers with an interrupted document. SENSITIVE: application paths, user names and profile names are evidence text; every string of the answer and of the rows file passes the shared boundary (a secret-shaped text becomes a marker with its length). There is no write_values mode. Not done: SRUM recovery from a damaged database (do that on a derivative, recorded); the joins across tables; any claim about what an application did. esedb_query stays the route for the raw tables.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "SRUDB.dat, or a directory that holds exactly one file of that name (a collection root, for dissect.target)",
+      "required": true
+    },
+    "software": {
+      "type": "string",
+      "description": "The SOFTWARE hive, for network profile names (default: the one config/SOFTWARE under a given directory, if there is exactly one)"
+    },
+    "backend": {
+      "type": "string",
+      "description": "all (default), srumecmd or dissect"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows shown inline (default 100, at most 10000); every row is kept, and the whole set is in the file the answer names"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The tool's own time limit in seconds, 1 to 240 (default 200); a backend or a file read that is not finished by then is ended, the answer says so and is partial"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"path\": \"work/extracted/Windows/System32/sru/SRUDB.dat\", \"software\": \"work/extracted/Windows/System32/config/SOFTWARE\", \"limit\": 50}",
+  "by": "maintainer",
+  "at": "2026-11-04T09:00:00.000Z",
+  "version": 1,
+  "use": {
+    "names": [
+      "SRUDB.dat"
+    ]
+  },
+  "requires": [
+    "SrumECmd",
+    "dotnet",
+    "target-query"
+  ],
+  "sha256": "2fb0c6021241305b7f6d2bf9b638bf6f9354d463eab2b94e9cddf780cf10f2c3"
+}

@@ -3,11 +3,11 @@ id: execution/esedb
 title: ESE databases
 when: Export tables from SRUDB.dat and others.
 needs: []
-tools: [esedb_query]
+tools: [esedb_query, srum_reader]
 requires_host: [esedbexport]
 ---
 
-Use when you read an ESE database through `esedb_query`. Not for what the tables mean: open `execution/srum` only if the database is SRUDB.dat, `browser/webcache` only if it is a WebCache.
+Use when you read an ESE database through `esedb_query`. Not for what the tables mean: open `execution/srum` only if the database is SRUDB.dat (`srum_reader` reads it; raw tables stay here), `browser/webcache` only if it is a WebCache.
 
 - **What it does.** It runs `esedbexport` and returns TABLES as text: with no `table` it lists them, with one it returns the rows, each numbered `_row` by its line in the exported file. It decodes nothing, joins nothing, resolves no container and reads no ESE log, so a database in a dirty state may lack its newest rows.
 - **Read the accounting first:** `status` (`complete`, `partial`, `failed`; `interrupted` is a stop by signal and no result), `exporter_exit_status`, `timed_out`, `exporter_version`, `db_sha256`. The export is made once per database into `esedb-export/<first 16 hex of db_sha256>/` (`export_dir`, the tables); the exporter's whole output is in `stdout_file` and `stderr_file` beside it, not in `export_dir`. A complete export is reused (`export_reused`) only if this version wrote it, its exit status was 0 and every listed table file is on disk at its recorded size; otherwise it is exported again. Cite the export by its manifest, not by a count you remember.

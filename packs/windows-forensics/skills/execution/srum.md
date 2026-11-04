@@ -3,18 +3,19 @@ id: execution/srum
 title: SRUM
 when: Application byte counts, CPU, network; limits.
 needs: [execution/esedb]
-tools: [esedb_query]
-requires_host: []
+tools: [srum_reader, esedb_query]
+requires_host: [SrumECmd, dotnet]
 ---
 
-Use when you interpret rows of the System Resource Usage Monitor database. Not for exporting the tables (`execution/esedb`, read it before you cite a row) or for deciding that data left (`execution/overview`).
+Use when you interpret rows of the System Resource Usage Monitor database. Not for exporting raw tables (`execution/esedb`, read it before you cite a row) or for deciding that data left (`execution/overview`).
 
-- **Source.** `C:\Windows\System32\sru\SRUDB.dat` is an ESE database with several resource-accounting tables of different schemas and interval semantics. Collect it with the ESE log and checkpoint files in the same directory, keep the original set untouched, and do any recovery on a derivative you record.
-- **Reading it.** `esedb_query` exports tables as text. It decodes nothing and joins nothing, and the pack has no SRUM join reader: the joins are yours.
-- **Joins.** An application or user column is an id into the id-map table (`SruDbIdMapTable`): resolve it there, not from the table you started in. The mapping's blob cells come back as the exporter wrote them: decode them offline, read only, and state how. Interface and profile ids need the matching table or a system artefact (`registry/overview`) before they name a network.
-- **Times.** Each table has its own interval and its own meaning for a time cell, and the exporter's text form of a time and its zone are what it printed: keep the raw cell and establish the clock from the schema before converting (`registry/clock`). Do not average, sum or compare across tables without saying which counters you add.
-- **Bytes are not exfiltration.** A counter gives no remote endpoint, content or process instance. "The application was accounted N bytes sent on interface X in this interval" is the claim; "data was exfiltrated" needs named corroboration: network or proxy records, firewall logs, process-creation records, file-access evidence.
-- **Retention and gaps.** Assume no retention period and no write cadence: take the retained interval from each table (earliest and latest time) and say it. Delayed commits, configuration, shutdown, maintenance and the acquisition time can leave gaps; an unreadable database, an unresolved mapping or a missing recent row is not zero activity.
-- Sensitive output: run `esedb_query` as a job with `secret_output: true`; what it withholds is in `execution/esedb`. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
+- **Source.** `C:\Windows\System32\sru\SRUDB.dat` is an ESE database with several accounting tables of different schemas and interval semantics. Collect it with the ESE log and checkpoint files beside it and the `SOFTWARE` hive, keep the originals untouched, and do any recovery on a derivative you record.
+- **Reading it.** `srum_reader` runs SrumECmd (through dotnet) and dissect.target where installed and keeps every row in a file, with the `backend` that produced it. Read `backends` first: SrumECmd's strings say it refuses to run off Windows (`unsupported_platform`; not run) and dissect needs a collection directory, so a Linux image may give no rows; neither shape was checked against a real run. `comparison` is `agree` only when both ran and every table's count matched. Raw tables stay with `esedb_query`.
+- **Joins.** The backend resolves application and user ids through `SruDbIdMapTable`; an id left unresolved stays in its row (`*_resolved: false`) and is counted (`unresolved_ids`). A network profile name needs the `SOFTWARE` hive, else the row says why it is unresolved.
+- **Times.** A row's time is its end; `interval_seconds_since_previous_row_time` is the gap to the table's previous row time, not a measured interval. Each table means its own thing (`time_semantics`): never add, average or compare counters across tables. Units are the column name's, else `not stated by the backend`.
+- **State.** `database.state` is the ESE header's: complete needs a clean shutdown, or a dirty one with logs a backend said it replayed; else `partial`. Nothing is replayed here.
+- **Bytes are not exfiltration.** A counter gives no remote endpoint, content or process instance: "the application was accounted N bytes sent on interface X in this interval" is the claim; "data was exfiltrated" needs named corroboration (network or proxy records, firewall logs, process creation, file access).
+- **Retention and gaps.** Take each table's `retained_interval` and say it. An unreadable database, an unresolved id or a missing recent row is not zero activity.
+- Sensitive output: run `esedb_query` as a job with `secret_output: true`; `srum_reader` has no values mode, and its paths and names pass the boundary (a secret-shaped text becomes a marker with its length). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 
-Shows: resource use the system accounted to an application and a user context in an interval. Does not show: who used the machine, what data moved or where it went, that a program ran to completion, which process instance produced a row, or that a program without a row did not run. Record: for each figure, the table, `_row`, raw time cell, application id and resolved name, SID, interface or profile id, the unit and the counter's meaning in that table.
+Shows: resource use accounted to an application and a user context in an interval. Does not show: who used the machine, what data moved or where, that a program ran to completion, or that a program without a row did not run. Record: per figure the table, `source_row`, `backend`, `time_raw`, the app id and name, SID, profile id, the unit.

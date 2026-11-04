@@ -60,8 +60,8 @@ except ValueError:
 MAX_WALK_ENTRIES = 2_000_000
 RUN_SECONDS = 3300                  # recipe.json allows 3600; no call is started past this
 PER_CALL_CAP = 600
-NOT_COVERED = ("Plaso (not run by this recipe), PowerShell block reassembly / WMI repository / $LogFile (no reader in this pack), the semantic joins of "
-               "SRUM (only dissect.target's own output, when it is installed), UserAssist / BAM / ShimCache (read by the userassist_bam_shimcache tool, which this recipe does not run; dissect.target's own output of the same functions is kept beside it as a second reading, when it is installed), "
+NOT_COVERED = ("Plaso (not run by this recipe), PowerShell block reassembly / WMI repository / $LogFile (no reader in this pack), the rows of "
+               "SRUM (this recipe lists the tables of SRUDB.dat and reads none; the srum_reader tool reads SRUDB.dat through SrumECmd or dissect.target and this recipe does not run it; dissect.target's own srum output is kept here when it is installed), UserAssist / BAM / ShimCache (read by the userassist_bam_shimcache tool, which this recipe does not run; dissect.target's own output of the same functions is kept beside it as a second reading, when it is installed), "
                "deleted and unallocated data, volume shadow copies, memory")
 
 HIVE_NAMES = {"system", "software", "sam", "security", "default", "ntuser.dat", "usrclass.dat", "amcache.hve", "components", "drivers", "bbi", "elam"}
@@ -960,7 +960,7 @@ EXTRA_CALLS = {
 }
 
 FAMILIES = ["registry-hives", "amcache", "shellbags", "prefetch", "shortcuts-jumplists", "event-logs", "recycle-bin", "mft", "usn-journal", "esedb", "browser-history"]
-DISSECT_FUNCTIONS = ["userassist", "bam", "shimcache", "srum", "services", "runkeys", "tasks"]   # srum: no tool of this pack reads it; services, runkeys and tasks: persistence_normalise reads them, and this recipe does not run it; userassist, bam and shimcache: dissect.target's own output, a second reading beside userassist_bam_shimcache (this recipe does not run that tool)
+DISSECT_FUNCTIONS = ["userassist", "bam", "shimcache", "srum", "services", "runkeys", "tasks"]   # srum: srum_reader reads SRUDB.dat and this recipe does not run it, so dissect.target's own output is a second reading; services, runkeys and tasks: persistence_normalise reads them, and this recipe does not run it; userassist, bam and shimcache: dissect.target's own output, a second reading beside userassist_bam_shimcache (this recipe does not run that tool)
 DISSECT_FUNCTION_SECONDS = 900
 NOT_RUN = {
     "plaso": "Plaso is not run by this recipe: the disk-timeline recipe of the base pack runs it over a disk image, and a directory of extracted artefacts is not a source it takes",

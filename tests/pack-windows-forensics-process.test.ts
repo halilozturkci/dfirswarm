@@ -16,7 +16,7 @@ import { AGENT, WIN, stub } from "./windows-pack-harness.ts";
 
 const TOOLS = ["esedb_query", "extract_stream", "sigma_hunt", "vss_stores", "yara_scan"];
 /** The two newer tools and the recipe hold the same block; their own group-kill, clock and signal cases are in their own suites (the program they start is optional, and a stand-in is wired to their arguments there). */
-const BLOCK_TOOLS = [...TOOLS, "registry_recover", "lnk_jumplist", "vss_materialise"];
+const BLOCK_TOOLS = [...TOOLS, "registry_recover", "lnk_jumplist", "vss_materialise", "srum_reader"];
 const RECIPE = join(WIN, "..", "recipes", "windows-artefacts", "run.py");
 
 const stripped = (text: string): string => text.replace(/"""[\s\S]*?"""/g, "").replace(/^\s*#.*$/gm, "");

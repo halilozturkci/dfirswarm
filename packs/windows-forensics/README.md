@@ -27,7 +27,7 @@ one-line index once and fetches a body only when it reaches that artefact family
 | Memory | `memory/windows` (`memory/hibernation-pagefile`) |
 | Anti-forensics | `antiforensics/traces` (`antiforensics/wiping`, `antiforensics/log-clearing`, `antiforensics/timestamps-clock`, `antiforensics/controls`) |
 
-**Twenty-four tools.** The parsers that carry most cases: `mft_records` (both time
+**Twenty-seven tools.** The parsers that carry most cases: `mft_records` (both time
 sets, resident data, every named stream), `evtx_query` and `evtx_carve` (records
 from a log, and records from a log that was cleared), `regkv`, `prefetch_mam`
 and `mam_scan`, `amcache_apps`, `usn_journal`, `shellbags`, `jumplist`,
@@ -44,7 +44,9 @@ fields, the layout and its basis, and `unsupported` for a layout it does not kno
 against real hives, and no second reader cross-checks it) and
 `persistence_normalise` (scheduled tasks, services and autorun keys: the task XML files, the TaskCache, the service keys, the Run, Winlogon, AppInit,
 IFEO and Active Setup entries and the events of an `evtx_query` result file as items with observations that are not verdicts; the WMI repository is not
-examined and no second reader is started).
+examined and no second reader is started) and `srum_reader` (SRUDB.dat read through SrumECmd and dissect.target, every row naming the backend that produced it, with the
+database's state, the unresolved ids counted and the table counts of the two compared; SrumECmd's own strings say it refuses to run off Windows (read from the dll's strings, not run), so in a Linux image only dissect.target can give rows, and neither backend's
+shape has been checked against a real run).
 
 **One recipe**, `windows-artefacts`, run on request over an extracted collection: it reads each
 family of artefact it finds with the tool above that reads it (and runs a fixed list of
