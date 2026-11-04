@@ -45,7 +45,7 @@ against real hives, and no second reader cross-checks it) and
 `persistence_normalise` (scheduled tasks, services and autorun keys: the task XML files, the TaskCache, the service keys, the Run, Winlogon, AppInit,
 IFEO and Active Setup entries and the events of an `evtx_query` result file as items with observations that are not verdicts; the WMI repository is not
 examined and no second reader is started) and `srum_reader` (SRUDB.dat read through SrumECmd and dissect.target, every row naming the backend that produced it, with the
-database's state, the unresolved ids counted and the table counts of the two compared; SrumECmd refuses to run off Windows, so in a Linux image only dissect.target can give rows, and neither backend's
+database's state, the unresolved ids counted and the table counts of the two compared; SrumECmd's own strings say it refuses to run off Windows (read from the dll's strings, not run), so in a Linux image only dissect.target can give rows, and neither backend's
 shape has been checked against a real run).
 
 **One recipe**, `windows-artefacts`, run on request over an extracted collection: it reads each

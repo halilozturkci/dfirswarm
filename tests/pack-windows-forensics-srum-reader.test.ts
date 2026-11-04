@@ -302,8 +302,9 @@ test("a malformed CSV is named, not swallowed: a ragged row, a time that is not 
     out = await run(`${NET_HEAD}\n${net({ ...NET_GOOD[0], user: "caf\u00e9" })}\n`.replace("caf\u00e9", "caf\ufffd"));
     assert.equal(out.rows_total, 1);
     const wide = Array.from({ length: 600 }, (_, i) => `c${i}`).join(",");
-    out = await run(`${wide}\n${wide}\n`);
-    assert.equal(out.status, "partial");
+    await stub(bin, "SrumECmd", srumecmd({ "x_SrumECmd_NetworkUsages_Output.csv": `${wide}\n${wide}\n` }, join(cwd, "a.txt"), { console: CONSOLE_CLEAN }));
+    out = failed(await tool("srum_reader", cwd, { path: db, backend: "srumecmd" }, {}, bin)) as Answer;
+    assert.equal(out.status, "failed", "a table that was not read gives no row");
     assert.match(out.backends.srumecmd.problems.join(" "), /600 columns/);
     // A table that is not one the tool knows is kept under its own name and says so.
     out = await run(`${NET_HEAD}\n${net(NET_GOOD[0])}\n`, "x_SrumECmd_Mystery_Output.csv");
@@ -371,6 +372,90 @@ test("what SrumECmd says about its own run is not lost: a table it could not exp
     assert.match(out.status_basis, /could not read the SOFTWARE hive/);
     assert.match((await rowsOf(cwd, out))[1].profile_unresolved_because, /could not read the SOFTWARE hive/);
     for (const r of [out]) assert.equal(r.status, "partial");
+  });
+});
+
+test("a backend that ran and gave nothing usable is never complete: no output, a header-only CSV, error lines on stderr, and records of an unknown shape", async () => {
+  await withCwd(async (cwd, bin) => {
+    const { db, root } = await layout(cwd);
+    const headerOnly = { "x_SrumECmd_NetworkUsages_Output.csv": `${NET_HEAD}\n` };
+    // dissect prints nothing (exit 0), SrumECmd is absent: no backend produced a row.
+    await stub(bin, "target-query", `case "$*" in *--help*) echo "--json"; exit 0;; esac\nexit 0`);
+    let out = failed(await tool("srum_reader", cwd, { path: root, backend: "dissect" }, {}, bin)) as Answer;
+    assert.equal(out.status, "failed");
+    assert.equal(out.rows_total, 0);
+    assert.match(out.status_basis, /no backend produced rows/);
+    // a SrumECmd whose CSV is only a header: failed, not complete with 0 rows.
+    await stub(bin, "SrumECmd", srumecmd(headerOnly, join(cwd, "a.txt"), { console: CONSOLE_CLEAN }));
+    out = failed(await tool("srum_reader", cwd, { path: db, backend: "srumecmd" }, {}, bin)) as Answer;
+    assert.equal(out.status, "failed");
+    // with both: SrumECmd has rows and dissect nothing => partial, and the empty one is named.
+    await stub(bin, "SrumECmd", srumecmd(NET_CSV(), join(cwd, "a.txt"), { console: CONSOLE_CLEAN }));
+    const both = body<Answer>(await tool("srum_reader", cwd, { path: root }, {}, bin));
+    assert.equal(both.status, "partial");
+    assert.match(both.status_basis, /dissect ran and exited 0 but produced no row/);
+    // dissect stderr says error although it exits 0: partial, with the first line shown.
+    await stub(bin, "target-query", targetQuery(dissectRecords("network_usage", 3), `echo "ERROR: failed to parse table" >&2`));
+    const err = body<Answer>(await tool("srum_reader", cwd, { path: root }, {}, bin));
+    assert.equal(err.status, "partial");
+    assert.match(err.status_basis, /dissect printed 1 line\(s\) that say error/);
+    assert.match(err.backends.dissect.facts.first_error_line, /failed to parse table/);
+    // records of an unknown shape: no descriptor, no ts, a ts that is not a string.
+    for (const odd of [{ foo: 1 }, { _recorddescriptor: ["windows/srum/network_usage", []] }, { _recorddescriptor: ["windows/srum/network_usage", []], ts: 5 }]) {
+      await stub(bin, "target-query", targetQuery([odd]));
+      const o = body<Answer>(await tool("srum_reader", cwd, { path: root, backend: "dissect" }, {}, bin));
+      assert.equal(o.status, "partial", JSON.stringify(odd));
+      assert.match(o.backends.dissect.problems.join(" "), /no _recorddescriptor|no readable ts/);
+    }
+  });
+});
+
+test("the status basis names the real database state: a dirty database whose logs SrumECmd replayed is complete and says dirty, not clean", async () => {
+  await withCwd(async (cwd, bin) => {
+    const { db } = await layout(cwd, 2, ["edb.log"]);
+    await stub(bin, "SrumECmd", srumecmd(NET_CSV(), join(cwd, "a.txt"), { console: "Transaction logs in 'x' replayed into the copies" }));
+    const out = body<Answer>(await tool("srum_reader", cwd, { path: db }, {}, bin));
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.match(out.status_basis, /database state is 'dirty shutdown', with log files beside it that a backend said it replayed/);
+    assert.doesNotMatch(out.status_basis, /clean-shutdown/);
+    const clean = await layout(cwd, 3);
+    const c = body<Answer>(await tool("srum_reader", cwd, { path: clean.db }, {}, bin));
+    assert.match(c.status_basis, /database state is 'clean shutdown'/);
+  });
+});
+
+test("a backend that was run and failed or timed out while the other gave rows makes the status partial, said in the basis", async () => {
+  await withCwd(async (cwd, bin) => {
+    const { root } = await layout(cwd);
+    await stub(bin, "target-query", targetQuery(dissectRecords("network_usage", 2)));
+    await stub(bin, "SrumECmd", "exit 3");
+    let out = body<Answer>(await tool("srum_reader", cwd, { path: root, max_seconds: 20 }, {}, bin));
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /srumecmd was run and failed .*its rows are missing and nothing was compared/);
+    await stub(bin, "SrumECmd", "sleep 60");
+    out = body<Answer>(await tool("srum_reader", cwd, { path: root, max_seconds: 10 }, {}, bin));
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /srumecmd was run and timed_out/);
+    // unsupported_platform stays as designed: complete, said in backends and comparison.
+    await stub(bin, "SrumECmd", `echo "Non-Windows platforms not supported due to the need to load ESE specific Windows libraries! Exiting..."`);
+    out = body<Answer>(await tool("srum_reader", cwd, { path: root }, {}, bin));
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.equal(out.backends.srumecmd.state, "unsupported_platform");
+  });
+});
+
+test("an interrupted run leaves no empty output directory", async () => {
+  await withCwd(async (cwd, bin) => {
+    const { db } = await layout(cwd);
+    const pidFile = join(cwd, "srum.pid");
+    await stub(bin, "SrumECmd", `echo $$ >> "${pidFile}"; exec sleep 60`);
+    const child = spawn("python3", [join(WIN, "srum_reader", "run.py")], { cwd, env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}` }, stdio: ["pipe", "pipe", "pipe"] });
+    child.stdin.end(JSON.stringify({ path: db, max_seconds: 100 }));
+    await pidsOf(pidFile, 1);
+    child.kill("SIGTERM");
+    await new Promise<number | null>((resolve) => child.on("close", (c) => resolve(c)));
+    const left = (await readdir(join(cwd, "work", "s1")).catch(() => [] as string[])).filter((n) => n.startsWith("srum_reader-"));
+    assert.deepEqual(left, []);
   });
 });
 
@@ -609,7 +694,7 @@ test("the manifest and the docs say what the tool is: the programs it runs are d
   assert.deepEqual(manifest.requires, ["SrumECmd", "dotnet", "target-query"]);
   assert.equal(manifest.version, 1);
   assert.deepEqual(Object.keys(manifest.params), ["path", "software", "backend", "limit", "max_seconds"]);
-  assert.match(manifest.description, /REFUSES TO RUN ON A NON-WINDOWS HOST/);
+  assert.match(manifest.description, /EXPECTED NOT TO RUN ON A NON-WINDOWS HOST/);
   assert.match(manifest.description, /FROM HELP STRINGS AND METADATA, NOT FROM A REAL RUN/);
   assert.match(manifest.description, /never agree/);
   const host = JSON.parse(await readFile(join(WIN, "..", "requires", "host.json"), "utf8")) as { binaries: Array<{ name: string; optional?: boolean; licence: string; install: { download?: { version: string; run: string; amd64: { url: string; sha256: string; bin: string } } } }> };

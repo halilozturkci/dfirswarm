@@ -7,7 +7,7 @@ every row as JSON Lines in a file the answer names, with `backend` on every row.
 (`agree` or `disagree`); a backend that is missing, fails, runs out of time, reports an unsupported platform or writes a shape this tool does not know is
 `not_run` or `not_compared`, said, and is never `agree`. esedb_query stays the route for the raw tables.
 
-SrumECmd REFUSES TO RUN ON NON-WINDOWS HOSTS: the build pinned here prints that it needs Windows' own ESE libraries and exits. In a Linux image it therefore
+SrumECmd REFUSES TO RUN ON NON-WINDOWS HOSTS: the build pinned here has a message in its strings saying it needs Windows' own ESE libraries and exiting (read from the dll's strings; the build was never run). In a Linux image it therefore
 gives no rows, and the answer says `unsupported_platform` for it; its rows come only from a Windows host. Dissect reads a collection directory (a root
 with Windows/System32/sru/SRUDB.dat, as the windows-artefacts recipe passes it); for a single file only SrumECmd is tried.
 
@@ -23,7 +23,7 @@ counters cover. Counters are never added, averaged or compared across tables. A 
 found under a given directory); without it a profile id is `unresolved` and says why.
 
 What comes from help strings and metadata, not from a real run: the option names (-f, -r, --csv, --temp, --dt), the CSV file and column names, the console
-lines parsed for the database state and the log replay, and the Dissect record shape. This tool could not run SrumECmd or dissect.target where it was written
+lines parsed for the database state and the log replay, and, as an ASSUMPTION that no SrumECmd dll could hold, the Dissect record shape (JSON lines with `_recorddescriptor` and `ts`). This tool could not run SrumECmd or dissect.target where it was written
 (no dotnet, no Windows, no dissect); the stand-in tests hold the adapter to the documented shapes, not to a real output.
 
 SENSITIVE OUTPUT. Application paths, user names and profile names come from the evidence. Every string of the answer and of the rows file goes through
@@ -2651,7 +2651,7 @@ def emit(doc, **dumps_kwargs):
 # The keys the answers and the rows file of this tool are made of: names the tool wrote itself. They are shown as they are even past the judging time, so that an answer
 # stays readable; a name from the evidence that is one of them holds no secret. (Regenerate from the literal keys when a key is added.)
 OWN_NAMES.update((
-    '_extra_cells', 'all_results', 'app', 'app_description', 'app_id', 'app_path',
+    '_extra_cells', 'error_lines', 'first_error_line', 'all_results', 'app', 'app_description', 'app_id', 'app_path',
     'app_resolved', 'app_resource_usage', 'app_timeline', 'applicationresourceusage', 'applicationtimeline', 'appresourceusage',
     'appresourceuseinfo', 'apptimeline', 'apptimelineprovider', 'backend', 'backends', 'bytes',
     'canonical_table', 'clean', 'columns', 'comparison', 'console_database_state', 'console_engine_version',
@@ -2705,6 +2705,7 @@ def describe(exc):
 
 
 CLOCK = {"deadline": None, "seconds": None}
+OUTDIR = {"path": None}           # this run's output directory, once it is made: removed at the end if nothing was placed in it
 TEMPS = []
 TEMP_DIRS = []                    # the directories a backend writes into; each is removed when its run ends, or by the last word
 
@@ -3060,6 +3061,24 @@ def run_program(argv, work, name, seconds):
     return proc.returncode, timed_out, None
 
 
+STDERR_ERROR = re.compile(r"(?im)^.{0,200}(?:\berror\b|\bexception\b|traceback|\bfatal\b|\bfailed\b|\[(?:ERR|FTL)\]).{0,200}$")
+
+
+def stderr_errors(work, name, stdout_too=False):
+    """(count, first line): the lines of the program's stderr (and, for SrumECmd, its console on stdout) that say error, exception, failed or fatal. A program that exits 0 and
+    complains is not trusted to have read everything."""
+    text = ""
+    for suffix in ((".stderr", ".stdout") if stdout_too else (".stderr",)):
+        try:
+            with open(os.path.join(work, name + suffix), "rb") as fh:
+                text += fh.read(LOG_BYTES).decode("utf-8", "replace") + "\n"
+        except OSError:
+            pass
+    hits = [m.group(0) for m in STDERR_ERROR.finditer(ANSI.sub("", text)) if "Error exporting" not in m.group(0) and "Error processing file" not in m.group(0)]
+    first = re.sub(r"[^\x20-\x7e]", "?", hits[0])[:200] if hits else None
+    return len(hits), first
+
+
 def console_text(work, name):
     """What the program printed (stdout, then stderr), read to LOG_BYTES, without terminal colour codes."""
     text = ""
@@ -3151,6 +3170,7 @@ def run_srumecmd(db, software, parent):
     facts["read_problems"] = int(m.group(1).replace(",", "")) if m else 0
     facts["repaired_copy"] = bool(re.search(r"repaired with esentutl|repairing the copy", text))
     facts["file_error"] = "Error processing file!" in text
+    facts["error_lines"], facts["first_error_line"] = stderr_errors(work, "srumecmd", True)
     rec["state"] = "ran"
     return rec
 
@@ -3193,6 +3213,7 @@ def run_dissect(target, parent):
             "target-query was ended by signal %d" % -code))
     else:
         rec["files"] = [("srum", os.path.join(work, "srum.stdout"))]
+        rec["facts"]["error_lines"], rec["facts"]["first_error_line"] = stderr_errors(work, "srum")
         rec["state"] = "ran"
     return rec
 
@@ -3288,6 +3309,11 @@ def walk_jsonl(path, visit, reading):
                 continue
             descriptor = record.get("_recorddescriptor")
             name = descriptor[0] if isinstance(descriptor, list) and descriptor and isinstance(descriptor[0], str) else None
+            if name is None:
+                reading.problem("record %d has no _recorddescriptor: its table is unknown" % n)
+            stamp = record.get("ts", record.get("timestamp"))
+            if not isinstance(stamp, str) or parse_time(stamp) is None:
+                reading.problem("record %d has no readable ts: the record shape is not the one this tool expects" % n)
             visit(name.rsplit("/", 1)[-1] if name else "srum", n, record)
 
 
@@ -3354,6 +3380,11 @@ def compare(counts):
 
 def last_word(signum):
     forget_temps()
+    if OUTDIR["path"] is not None:
+        try:
+            os.rmdir(OUTDIR["path"])          # an interrupted run leaves no empty directory; one that holds a placed rows file is kept
+        except OSError:
+            pass
     close_values()
     emit({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
           "status_basis": own("the tool was stopped by signal %d; nothing it had made is a result (the backends were ended and the temporary files were removed)" % signum),
@@ -3444,6 +3475,7 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         fail("the output directory could not be made", reason=describe(exc))
+    OUTDIR["path"] = str(directory)
     OWN_NAMES.add(shown_path(directory))
     backends = []
     try:
@@ -3551,6 +3583,14 @@ def main():
                 reasons.append("SrumECmd repaired its copy of the database (esentutl /p): what only the missing logs held is lost")
             if b["facts"].get("hive_unreadable"):
                 reasons.append("SrumECmd could not read the SOFTWARE hive: profile and user names are missing")
+            if b["facts"].get("error_lines"):
+                reasons.append("%s printed %d line(s) that say error, exception or failed although it exited 0 (backends.%s.facts.first_error_line shows the first)" % (b["name"], b["facts"]["error_lines"], b["name"]))
+            if not sum(s.rows for s in stats[b["name"]].values()):
+                reasons.append("%s ran and exited 0 but produced no row, so it read nothing usable" % b["name"])
+        usable = [b for b in ran if sum(s.rows for s in stats[b["name"]].values())]
+        for b in backends:
+            if b["state"] in ("failed", "timed_out") and usable:
+                reasons.append("%s was run and %s (%s): its rows are missing and nothing was compared" % (b["name"], b["state"], b["why"]))
         bad_time = sum(s.time_unparsed for per in stats.values() for s in per.values())
         if bad_time:
             reasons.append("%d row(s) have a time this tool could not read (kept with the raw cell, time null)" % bad_time)
@@ -3576,19 +3616,22 @@ def main():
             others = [b for b in backends if b["state"] != "ran"]
             comparison = {"state": "not_run", "why": own("a comparison needs both backends to have produced rows") + (": " + "; ".join("%s %s" % (b["name"], b["state"]) for b in others) if others else "")}
         # the status
-        if not ran:
+        if not usable:
             if which == "all" and out_of_time():
                 reasons.append("the tool's own clock ran out before a backend was run")
             status = "failed"
-            basis = "no backend produced rows: " + ("; ".join("%s %s (%s)" % (b["name"], b["state"], b["why"]) for b in backends) if backends else "none was started")
+            basis = "no backend produced rows: " + ("; ".join("%s %s (%s)" % (b["name"], b["state"], b["why"] or "it exited 0 and gave no row") for b in backends) if backends else "none was started")
+            if reasons:
+                basis += " (" + "; ".join(reasons) + ")"
         else:
             wanted = [b for b in backends if which != "all" and b["state"] != "ran"]
             if wanted:
                 status, basis = "failed", "%s was asked for and %s" % (wanted[0]["name"], wanted[0]["state"])
             else:
                 status = "partial" if reasons else "complete"
-                basis = "; ".join(reasons) if reasons else "every row of every table the backend(s) wrote was read to its end%s, and the database is in a clean-shutdown state" % (
-                    "; the two backends agree on every table's row count" if comparison["state"] == "agree" else "")
+                basis = "; ".join(reasons) if reasons else "every row of every table the backend(s) wrote was read to its end%s, and the database state is '%s'%s" % (
+                    "; the two backends agree on every table's row count" if comparison["state"] == "agree" else "", header["state"],
+                    ", with log files beside it that a backend said it replayed" if header["dirty"] else "")
                 if not reasons and comparison["state"] == "not_run":
                     basis += "; a second backend did not run, so the rows are one reader's (comparison.why says why)"
         unresolved_total = {kind: sum(s.unresolved[kind] for per in stats.values() for s in per.values()) for kind in ("app", "user", "profile")}

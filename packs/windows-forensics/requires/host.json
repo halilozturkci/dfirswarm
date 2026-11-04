@@ -373,7 +373,7 @@
       "name": "SrumECmd",
       "package": "Eric Zimmerman's tools",
       "optional": true,
-      "why": "A reader of SRUDB.dat for srum_reader (the rows of each SRUM table as CSV, with application and user ids resolved and, with the SOFTWARE hive, network profile names). Needs the .NET runtime; MIT licensed. The pinned build (2026.10.1) refuses to run on a non-Windows host, because it needs Windows' own ESE libraries and esentutl.exe: in a Linux image it reads nothing, and srum_reader says unsupported_platform for it; it gives rows only where it can run.",
+      "why": "A reader of SRUDB.dat for srum_reader (the rows of each SRUM table as CSV, with application and user ids resolved and, with the SOFTWARE hive, network profile names). Needs the .NET runtime; MIT licensed. The pinned build (2026.10.1) has strings saying it refuses to run on a non-Windows host, because it needs Windows' own ESE libraries and esentutl.exe (from the dll's strings, never run): in a Linux image it is expected to read nothing, and srum_reader says unsupported_platform for it; it gives rows only where it can run.",
       "install": {
         "brew": "https://ericzimmerman.github.io/",
         "apt": "pinned download 2026.10.1 (install.download), run by the .NET runtime (dotnet)",
