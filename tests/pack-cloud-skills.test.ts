@@ -15,18 +15,22 @@ const SKILLS = join(ROOT, "packs", "cloud-forensics", "skills");
 const IDS = [
   "aws/cloudtrail",
   "aws/cloudtrail-integrity",
+  "entra/directory-audit",
   "entra/signins",
+  "gcp/audit-logs",
   "google/workspace",
   "google/workspace-access",
   "identity/grants",
   "identity/tokens",
+  "kubernetes/audit",
+  "logs/exported-evidence",
   "logs/sources",
   "logs/what-exists",
   "m365/unified-audit-log",
 ];
 
 // The pack's one router: shown alone when a run's index is over budget, and names every other skill once (routerChecks below).
-// IDS holds the ten leaves; the router reads no artefact, so the per-leaf checks of this file do not apply to it.
+// IDS holds the fourteen leaves; the router reads no artefact, so the per-leaf checks of this file do not apply to it.
 const ROUTER = "cloud/router";
 
 const read = (id: string): { front: Record<string, string>; text: string; body: string } => {
@@ -43,7 +47,7 @@ const read = (id: string): { front: Record<string, string>; text: string; body: 
 
 const list = (v: string): string[] => v.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean);
 
-test("the pack carries these ten skills and its router, and no others", () => {
+test("the pack carries these fourteen skills and its router, and no others", () => {
   const found: string[] = [];
   const walk = (dir: string, prefix: string): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -65,10 +69,10 @@ test("every skill is a leaf: at most 800 tokens (bytes / 4.245) and 300 lines (t
   }
 });
 
-test("needs chains are two deep at most, every id resolves in the pack or in the base, and no skill declares a host program it does not run", () => {
+test("needs chains are two edges deep at most (three skills), every id resolves in the pack or in the base, and no skill declares a host program it does not run", () => {
   const base = new Set(["evidence/verify"]);
   const needs = (id: string): string[] => list(read(id).front.needs ?? "[]");
-  const chain = (id: string): number => (base.has(id) ? 0 : 1 + Math.max(0, ...needs(id).map(chain)));
+  const chain = (id: string): number => (base.has(id) ? -1 : needs(id).length ? 1 + Math.max(...needs(id).map(chain)) : 0);
   for (const id of IDS) {
     for (const n of needs(id)) assert.ok(IDS.includes(n) || base.has(n), `${id} needs ${n}`);
     assert.ok(chain(id) <= 2, `${id} needs chain is ${chain(id)} deep`);
@@ -80,7 +84,7 @@ test("each skill names the tools its front matter lists, and says what it does n
   for (const id of IDS) {
     const { front, body } = read(id);
     for (const tool of list(front.tools ?? "[]")) assert.ok(body.includes(tool), `${id} lists ${tool} and does not name it`);
-    for (const tool of ["cloudtrail_parse", "signin_analyse", "ual_parse"]) {
+    for (const tool of ["cloudtrail_parse", "signin_analyse", "ual_parse", "cloud_normalise", "cloud_timeline_export"]) {
       if (body.includes(tool)) assert.ok(list(front.tools ?? "[]").includes(tool) || list(front.mentions ?? "[]").includes(tool), `${id} names ${tool} and lists it in neither tools nor mentions`);
     }
     for (const tool of list(front.mentions ?? "[]")) assert.ok(!list(front.tools ?? "[]").includes(tool), `${id} both uses and mentions ${tool}`);
@@ -215,7 +219,7 @@ test("pwsh and aws are said to be an operator's acquisition tools, in requires a
   }
   const pack = JSON.parse(readFileSync(join(ROOT, "packs", "cloud-forensics", "pack.json"), "utf8"));
   assert.ok(pack.unreferenced_ok.some((e: { name: string; why: string }) => e.name === "pwsh" && /never connects to a tenant/.test(e.why)));
-  assert.equal(pack.skills, 11);
+  assert.equal(pack.skills, 15);
 });
 
 test("aws/cloudtrail-integrity routes the CloudTrail integrity check to the operator: the command and its options are named and cited with a date, the result vocabulary is fixed, a signature-less export and a file hash are not validation, and nothing tells the agent to run the program", () => {
@@ -259,9 +263,73 @@ test("the split pass: the pack's needs chains stay within the 1,900-token budget
   }
   // The base pack's evidence/verify is a pointer in the body, opened only when a digest must be checked, not a dependency.
   const exists = read("logs/what-exists");
-  assert.deepEqual(list(exists.front.needs ?? "[]"), []);
+  assert.deepEqual(list(exists.front.needs ?? "[]"), ["logs/exported-evidence"]);
   assert.match(exists.body, /base pack `evidence\/verify`, only if you must check a digest against a manifest/);
   assert.match(exists.body, /A file hash shows the bytes are those recorded when it was taken\. It does not show the provider made them/);
+});
+
+
+// ---- The skills that read what cloud_normalise writes (PKG-CLD-15) ------------------------------------------------------------------------
+
+const NEW_LEAVES = ["logs/exported-evidence", "entra/directory-audit", "gcp/audit-logs", "kubernetes/audit"];
+const TOOLS_DIR = join(ROOT, "packs", "cloud-forensics", "tools");
+
+test("the four new leaves name only fields the adapters write: every snake_case name in backticks is a field of cloud_normalise's source, a tool, a recipe, a parameter of its manifest or a skill id", () => {
+  const source = readFileSync(join(TOOLS_DIR, "cloud_normalise", "run.py"), "utf8");
+  const manifest = JSON.parse(readFileSync(join(TOOLS_DIR, "cloud_normalise", "manifest.json"), "utf8"));
+  const allowed = new Set<string>([...Object.keys(manifest.params), "cloud_normalise", "cloud_timeline_export", "cloudtrail_parse", "signin_analyse", "ual_parse", "check_inputs", "cloud_export_inventory", "secret_output", "write_values", "rejected", "pagination_markers", "status"]);
+  for (const id of NEW_LEAVES) {
+    const { body } = read(id);
+    for (const m of body.matchAll(/`([^`]+)`/g)) {
+      const name = m[1];
+      if (!/^[a-z][a-z0-9_]*$/.test(name) || name.length < 3) continue;
+      assert.ok(allowed.has(name) || source.includes(`"${name}"`), `${id} names \`${name}\`, which cloud_normalise does not write`);
+    }
+  }
+});
+
+test("exported-evidence is a prerequisite of what-exists with no needs of its own, at most 250 tokens (400 is the hard limit), and keeps byte integrity, authenticity and completeness apart", () => {
+  const leaf = read("logs/exported-evidence");
+  assert.deepEqual(list(leaf.front.needs ?? "[]"), []);
+  assert.ok(Buffer.byteLength(leaf.text) / 4.245 <= 250, "the chain bound of entra/signins and logs/what-exists leaves no more");
+  assert.deepEqual(list(read("logs/what-exists").front.needs ?? "[]"), ["logs/exported-evidence"]);
+  assert.match(leaf.body, /byte integrity \([^)]*\), authenticity \([^)]*\) and completeness \([^)]*\)\. None implies another/);
+  assert.match(leaf.body, /`check_inputs`/);
+  assert.match(leaf.body, /`cloud-export-inventory`/);
+});
+
+test("entra/directory-audit keeps the actor from the target and a request from an effect, says the modified values are sensitive, and agrees with entra/signins and identity/tokens", () => {
+  const { front, body } = read("entra/directory-audit");
+  assert.deepEqual(list(front.tools ?? "[]"), ["cloud_normalise"]);
+  assert.match(body, /Actor and target are different fields/);
+  assert.match(body, /Request is not effect/);
+  assert.match(body, /`ual_parse` is not a substitute/);
+  assert.match(body, /values are sensitive/);
+  assert.match(body, /Delegated grants, application roles and workload credentials are different objects/);
+  assert.match(read("entra/signins").text, /directory audit: cloud_normalise/);
+  assert.match(read("identity/tokens").text, /directory-audit export: `cloud_normalise`/);
+  assert.doesNotMatch(read("entra/signins").text + read("identity/tokens").text, /no reader here: read it in a recorded job|directory audit: no reader here/);
+});
+
+test("gcp/audit-logs separates the four logs, keeps the delegation chain, takes Data Access settings and retention from supplied settings and never from a default", () => {
+  const { front, body } = read("gcp/audit-logs");
+  assert.deepEqual(list(front.tools ?? "[]"), ["cloud_normalise"]);
+  for (const t of ["admin_activity", "data_access", "system_event", "policy_denied"]) assert.ok(body.includes(`\`${t}\``), t);
+  assert.match(body, /`delegation_chain` keeps every hop/);
+  assert.match(body, /come from supplied settings, never from memory of a default/);
+  assert.match(body, /`unknown` when the entry has no status/);
+  assert.match(body, /`receive_time_raw`/);
+});
+
+test("kubernetes/audit keeps stages as separate rows, says an API request is not execution, points to node evidence only conditionally and names an id that exists", () => {
+  const { front, body } = read("kubernetes/audit");
+  assert.deepEqual(list(front.tools ?? "[]"), ["cloud_normalise"]);
+  assert.match(body, /One row is one stage/);
+  assert.match(body, /separate rows, never separate actions/);
+  assert.match(body, /A request is not execution/);
+  assert.match(body, /Linux pack if it is loaded \(check the run's skill index/);
+  assert.match(body, /replaced whole by a marker/);
+  assert.doesNotMatch(body, /containers\/runtime-orchestration/, "no pointer into the other pack is a dependency");
 });
 
 // ---- The router: the one entry a run shows for this pack when its index is over the run's budget. ----

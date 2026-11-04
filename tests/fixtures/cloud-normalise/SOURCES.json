@@ -1,0 +1,20 @@
+{
+  "about": "Where each fixture of tests/pack-cloud-normalise.test.ts comes from. No real export exists (the owner's fixtures are awaited). Each file is authored by hand from the published field list of the format named here and is not a copy of a vendor page; no vendor documentation was fetched or read while writing it, so the 'documentation' fields below name the schema and its version, and the check against the live page is still to do.",
+  "fixtures": {
+    "gcp-audit.json": {
+      "format": "Cloud Logging LogEntry with protoPayload of type google.cloud.audit.AuditLog, wrapped as the entries.list response",
+      "schema_version": "LogEntry (Cloud Logging API v2); google.cloud.audit.AuditLog",
+      "documentation": "Cloud Audit Logs: the audit log entry structure; checked against the live page: no"
+    },
+    "k8s-audit.jsonl": {
+      "format": "Kubernetes audit Event, one per line",
+      "schema_version": "audit.k8s.io/v1",
+      "documentation": "Kubernetes auditing: audit.k8s.io/v1 Event; checked against the live page: no"
+    },
+    "entra-directory-audit.json": {
+      "format": "Microsoft Graph directoryAudit collection",
+      "schema_version": "Microsoft Graph v1.0 directoryAudit",
+      "documentation": "Graph directoryAudit resource type; checked against the live page: no"
+    }
+  }
+}

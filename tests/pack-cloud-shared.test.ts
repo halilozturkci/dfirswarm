@@ -15,8 +15,10 @@ import type { Json, Run } from "./cloud-pack-harness.ts";
 import { peakRssPrelude } from "./peak-rss.ts";
 import { CONTROLS, JWT, NAMED_CASES, TEXT_CASES, leaked } from "./cloud-pack-secrets.ts";
 
-const NAMES = ["cloudtrail_parse", "signin_analyse", "ual_parse"] as const;
-const SCRIPTS: Record<(typeof NAMES)[number], string> = { cloudtrail_parse: TRAIL, signin_analyse: SIGNIN, ual_parse: UAL };
+const NORMALISE = join(TOOLS, "cloud_normalise", "run.py");
+const TIMELINE = join(TOOLS, "cloud_timeline_export", "run.py");
+const NAMES = ["cloudtrail_parse", "signin_analyse", "ual_parse", "cloud_normalise", "cloud_timeline_export"] as const;
+const SCRIPTS: Record<(typeof NAMES)[number], string> = { cloudtrail_parse: TRAIL, signin_analyse: SIGNIN, ual_parse: UAL, cloud_normalise: NORMALISE, cloud_timeline_export: TIMELINE };
 
 const BEGIN = "# ---- BEGIN SHARED BLOCK";
 const END = "# ---- END SHARED BLOCK";
@@ -29,11 +31,13 @@ async function sharedBlock(name: (typeof NAMES)[number]): Promise<string> {
   return text.slice(from, text.indexOf("\n", to));
 }
 
-test("the shared block is identical in the three tools", async () => {
+test("the shared block is identical in the five tools", async () => {
   const blocks = await Promise.all(NAMES.map(sharedBlock));
   assert.ok(blocks[0].length > 20000, "the block is the shared code, not a stub");
   assert.equal(blocks[1], blocks[0], "signin_analyse's copy equals cloudtrail_parse's");
   assert.equal(blocks[2], blocks[0], "ual_parse's copy equals cloudtrail_parse's");
+  assert.equal(blocks[3], blocks[0], "cloud_normalise's copy equals cloudtrail_parse's");
+  assert.equal(blocks[4], blocks[0], "cloud_timeline_export's copy equals cloudtrail_parse's");
 });
 
 // Names and values each tool must withhold alike. A name can be echoed in a path, in an error message, in a file name in a census.
@@ -100,7 +104,7 @@ test("every manifest says what its tool reads, carries its script's sha256, decl
     const manifest = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
     const script = await readFile(SCRIPTS[name], "utf8");
     assert.equal(manifest.sha256, createHash("sha256").update(script).digest("hex"), `${name} sha256`);
-    assert.ok(manifest.version >= 4, `${name} version raised`);
+    assert.ok(manifest.version >= (name === "cloud_normalise" || name === "cloud_timeline_export" ? 1 : 4), `${name} version raised`);
     assert.ok(manifest.timeout_seconds > 580, `${name}: the most time_limit_seconds allows (580) is under the tool's timeout, so the tool stops itself before it is killed`);
     assert.match(manifest.params.time_limit_seconds.description, /default 420, at most 480/);
     assert.ok(manifest.use?.names?.length > 0, `${name} says what it reads`);
