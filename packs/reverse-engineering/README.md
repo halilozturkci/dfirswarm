@@ -11,27 +11,29 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Twenty skills**, each a short decision-rule leaf; the second-level leaves are
+**Twenty-four skills**, each a short decision-rule leaf; the second-level leaves are
 opened only when the leaf above points to them.
 
 | Family | Skills |
 | --- | --- |
 | Triage | `triage/quarantine` |
-| Executables | `pe/structure`, `pe/signature-and-resources`, `elf/structure`, `elf/packing-and-identity`, `macho/structure` |
-| Code | `code/static-inspection` |
-| Runtimes | `managed/clr`, `runtimes/go-rust`, `runtimes/python-packaged` |
+| Executables | `pe/structure`, `pe/signature-and-resources`, `pe/authenticode`, `elf/structure`, `elf/packing-and-identity`, `macho/structure` |
+| Code | `code/static-inspection`, `code/second-readers` |
+| Runtimes | `managed/clr`, `managed/decompiled`, `runtimes/go-rust`, `runtimes/python-packaged` |
 | Packing | `packing/static-recovery` |
 | Strings | `strings/obfuscated`, `strings/decoding-and-similarity` |
 | Capabilities | `capabilities/mapping` |
-| Documents | `documents/macros` (Office), `documents/external-and-active-content`, `documents/pdf-rtf` |
+| Documents | `documents/macros` (Office), `documents/external-and-active-content`, `documents/pdf-rtf`, `documents/second-reading` |
 | Scripts | `scripts/static-analysis` |
 | Rules | `rules/yara`, `rules/authoring` |
 
-Not provided, and the skills say so where it matters: a .NET decompiler of its own (`clr_inspect` runs `ilspycmd` where it is installed; `pe_directories` reads the
-metadata tables only when asked, with `clr_tables`), a Python archive extractor, a bytecode disassembler or
-decompiler, a packer-signature detector, parse-only script tooling,
-and a decompiler for native code. The new skills
-name only programs the pack declares.
+Not provided, and the skills say so where it matters: a Python archive extractor, a bytecode disassembler or
+decompiler, and parse-only script tooling. A .NET decompiler runs only through `clr_inspect` (`ilspycmd`, where it
+is installed; `pe_directories` reads the metadata tables only when asked, with `clr_tables`). Declared, run by no
+tool of the pack and never observed on a real sample: Ghidra's headless analyzer (a method, never a script, in
+`code/second-readers`), `diec` and `lief`. `ilspycmd` was not run for real either, and the limits of
+`authenticode_verify` and of `doc_structure`'s `second_reading` are in `pe/authenticode` and
+`documents/second-reading`. The skills name only programs the pack declares.
 
 **Thirteen tools of its own, and `file_type` from the base pack.** `file_type` reads
 what a file is from its bytes and says when the extension disagrees.

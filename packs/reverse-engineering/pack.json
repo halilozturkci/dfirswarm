@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -24,39 +24,15 @@
       "why": "declared for building a tool distributed as source from a tree the operator or a pack supplied; no skill names it, and nothing from the evidence is ever built or run"
     },
     {
-      "name": "analyzeHeadless",
-      "why": "Ghidra's headless analyzer, declared ahead of the skill that will describe the headless route as a method; no skill names it yet, and nothing from the evidence is ever installed into it as an extension or script"
-    },
-    {
-      "name": "java",
-      "why": "the JDK Ghidra's headless analyzer runs on; a runtime, never called by a skill on its own"
-    },
-    {
-      "name": "diec",
-      "why": "Detect It Easy's console program, declared ahead of the skill that will name it; no skill walks through it yet"
-    },
-    {
       "name": "dotnet",
       "why": "the .NET runtime that the framework-dependent ilspycmd build runs on (the arm64 image; the amd64 build needs none); a runtime, never called by a skill on its own"
-    },
-    {
-      "name": "qpdf",
-      "why": "run by doc_structure's optional second reading of a PDF encryption variant (second_reading: true), found on PATH and never required; no skill names it, because the tool names what it ran in its answer"
-    },
-    {
-      "name": "lief",
-      "why": "a Python library for PE, ELF and Mach-O structure, declared ahead of the skill that will name it; no tool of this pack imports it yet"
-    },
-    {
-      "name": "msoffcrypto-tool",
-      "why": "run by doc_structure's optional second reading of an Office encryption record (second_reading: true) as a program, found on PATH and never required; no tool of this pack imports it and no skill names it"
     }
   ],
   "secrets": [],
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "7e566ae0c51a56113ca117e200a526aa789aa4f39ce15a3999f04a0d65261b41",
+      "README.md": "28fcadcebb2bd21692b9685e659f02f50ac7b4dec4eefe3904d93e04b3ab934a",
       "goals/sample-triage.md": "0f6798ec18204b277c9430d5a74359cf7c5142131ccfc5071293b3dd1bd0ad12",
       "recipes/capa-floss/recipe.json": "48547ec179a3f92f54450eef692464fa520713f3fd029602d8144c0dca4500d8",
       "recipes/capa-floss/run.py": "8ae49d24221e35f26ae4a88fa5b308cb08b58b15c9c6716c4dbee140780717ac",
@@ -67,20 +43,24 @@
       "requires/locks/olevba.txt": "0fa1a024d9ce875c81addf1f3fc6f6e0ec794fc08fba4744c0f1d791f2758faa",
       "requires/python.lock": "78ca0b72b924a3678f631bf0fe6bdda0608b6ff995a3893eafdf995e880c03a4",
       "requires/python.txt": "c8831228d4b61be16e43d0ef686b9952a4084d217b6024fa4449169904559f25",
-      "skills/INDEX.md": "d9a2e3dab5cdcf8516f4db5c3a7fef49fac651a8d4daa0072b332d0e898a22c4",
+      "skills/INDEX.md": "1b27f30d64e3a417bcc57769120c018ebef788e686ee9a054ee7fd8be02f88b6",
       "skills/capabilities/mapping.md": "b568574dffe48e3acd7e284c0d921e01f20e1f81ee53e907538ccff005e271a7",
-      "skills/code/static-inspection.md": "67a4004b422bfbd63ccbcea22f07d9471da419305f990851fe49dc8af7d5ab25",
+      "skills/code/second-readers.md": "17f9afaee56dc8183cb00403388fd2e5ab06582718921ccd84258020e6096cf5",
+      "skills/code/static-inspection.md": "0c2b26fe7e36884b6cea4a3ff014a0e5436a6a87a0e56b4e8dc374320b5ea83c",
       "skills/documents/external-and-active-content.md": "7eaed7e8e8f3b29bed7d58942c27774e551709615abc46f7e89d43491199b250",
-      "skills/documents/macros.md": "30460fb86bed9e7536e0ad1e7b327e13a9ecf561165ef7e0b81b32d500728c75",
-      "skills/documents/pdf-rtf.md": "31485c7c788321bed5ee28415265fe6793d8106d46e01f1a3923c31be1812e36",
+      "skills/documents/macros.md": "cd605c48a7adb6a1745f556cbddf7f2ae3e9ca034296b39d56dd9caf51bd356d",
+      "skills/documents/pdf-rtf.md": "ca21590264220ffbb816e1536eee558a58116e09ecd39fffe1da4b3d34b67352",
+      "skills/documents/second-reading.md": "24fbc46d0b8dbf2753d904e79f2ead3587bd127b8d0bc5cdede899818ef89b18",
       "skills/elf/packing-and-identity.md": "a4cfdebf3efb071edca2da1560ff2e7b015ed89d366777645b995aeb2336176a",
-      "skills/elf/structure.md": "f3ca612cd9eb9a722aef9660198b11a6cb86d1dc085ef41d4e4c6da80b13f5de",
-      "skills/macho/structure.md": "8846795daa9b187c2feca5cb1973a0bcf36de0f7eb2d2dc2cefdbb487b9e19ae",
-      "skills/managed/clr.md": "ca5ce1cf1d9ff7c7a3267d1a9e82df95598d3d95d448ee541901a58a4daf02b5",
-      "skills/packing/static-recovery.md": "d0bcfcf7c6b3ba1d8076907a9fd94931022cfa41823c99e4be569e98eef345a5",
-      "skills/pe/signature-and-resources.md": "ae1c71d691971f994342dddc8d7c6621365d9a8e62354bd364b29f2e6b90c3d1",
+      "skills/elf/structure.md": "0dea03c016835d00341ee5cf5f4e47b03a1a7cdf569e371116f774d8c8ddef24",
+      "skills/macho/structure.md": "77082d8d2e91cb1c2749d2a1177025085edffd0bb9e3bb7e226f5aa62a0078ee",
+      "skills/managed/clr.md": "23d5e2db3c3ac1986c26413fe9d6ab2cc27cb67c26bc5c59307c58d9830db2d7",
+      "skills/managed/decompiled.md": "ca94f092150da4572bc3894bc391bec344b558383a1d585547ea9220d4f99867",
+      "skills/packing/static-recovery.md": "9bec6ea2bcccbeb6f7bf4fddf130c0f7c46046bf31649c69a22ec337979ec42a",
+      "skills/pe/authenticode.md": "c2936b7800f4cf721373ad59a5a0da11544dc2dc070ac8d02d657462ae319a35",
+      "skills/pe/signature-and-resources.md": "2bac1472064932f4430f26a618488105bc4604ee8fe4aa3df5bc7922dce249ff",
       "skills/pe/structure.md": "18915ca9d2598287dd5568ab1fb7c31d8a065f79eec54ee4d08f1035011202d2",
-      "skills/reverse-engineering/router.md": "733871064383e7b724fe7f0d79962b909d260a0e4729e8bcdd354e564f3513ac",
+      "skills/reverse-engineering/router.md": "4622d06b0bc4ae4a2c52034a5862bc5fa5cf4b2d5b81d31e9490a99c81840acc",
       "skills/rules/authoring.md": "69f5cc20f032ed367ef83cab58b64de51c135c217fc6aa9f4f224db71ceb2cb1",
       "skills/rules/yara.md": "8eadb83d84456b726ba99dff1c6e0d0547ace586aff7b47d4af58c8e2f16c3c9",
       "skills/runtimes/go-rust.md": "3b22b494d51add5fe92478e5fdc56b8676f8efc56997448a3c08ddb76df5c5b9",
@@ -136,7 +116,7 @@
     "reverse-engineering/capa-floss",
     "reverse-engineering/static-binary"
   ],
-  "skills": 21,
+  "skills": 25,
   "method_only": [
     {
       "path": "skills/reverse-engineering/router.md",

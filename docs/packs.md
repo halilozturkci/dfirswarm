@@ -536,7 +536,7 @@ result.
 ## 7. The packs in this repository
 
 Thirteen, all under the same AGPL-3.0-or-later as the harness, in `packs/`:
-318 skills, 141 tools and 15 goal templates. Every one of them is sealed,
+322 skills, 141 tools and 15 goal templates. Every one of them is sealed,
 checksummed, and installs and verifies in the test suite.
 
 | Pack | Skills | Tools | Goals | What it is for |
@@ -548,7 +548,7 @@ checksummed, and installs and verifies in the test suite.
 | `mobile-forensics` | 18 | 7 | 1 | iOS and Android extractions, app databases, protobuf |
 | `memory-forensics` | 28 | 8 | 1 | containers, what works with no framework, injection, credentials |
 | `network-forensics` | 19 | 11 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
-| `reverse-engineering` | 21 | 13 | 1 | static triage of a binary or a document, under quarantine |
+| `reverse-engineering` | 25 | 13 | 1 | static triage of a binary or a document, under quarantine |
 | `encrypted-containers` | 18 | 9 | 1 | which scheme, which protectors, and where the key already is |
 | `cloud-forensics` | 20 | 6 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
 | `ransomware-response` | 25 | 8 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
