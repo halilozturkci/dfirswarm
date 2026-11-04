@@ -411,7 +411,7 @@ test("the new leaves name no program this pack does not declare, and say a reade
     // Programs the pack does not declare: naming one would imply it is installed.
     assert.doesNotMatch(text, /\b(Ghidra|IDA Pro|x64dbg|OllyDbg|WinDbg|ILSpy|dnSpy|dotPeek|pyinstxtractor|uncompyle6?|decompyle3|pycdc|diec|Detect It Easy|PEiD|qpdf|pdfid|pdf-parser|osslsigncode|LIEF|angr|Unicorn|Qiling|Frida)\b/i, `${id} names a program the pack does not declare`);
   }
-  assert.match(skills.get("managed/clr")!.body, /none is declared/);
+  assert.match(skills.get("managed/clr")!.body, /`clr_inspect` with `decompile` \(a `secret_output` job\) writes an `ilspycmd` reconstruction file, never inline; never run for real yet/);   // the decompiler is declared now, and the leaf says it was never run for real
   assert.match(skills.get("runtimes/python-packaged")!.body, /No extractor or bytecode disassembler is declared/);
   assert.match(skills.get("code/static-inspection")!.body, /This pack declares none/);
   assert.match(skills.get("scripts/static-analysis")!.body, /No parse-only tooling is declared/);

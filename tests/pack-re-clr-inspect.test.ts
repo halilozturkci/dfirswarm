@@ -369,6 +369,35 @@ test("without ilspycmd the tool says so as JSON for decompile, and metadata mode
   });
 });
 
+test("a program found only through a relative PATH entry is not run: the evidence's working directory is not searched", async () => {
+  await withCwd(async (cwd, bin) => {
+    await put(cwd, "work/a.dll", asm());
+    const evil = "#!/bin/sh\necho started > ran.txt\necho v\n";
+    await put(cwd, "ilspycmd", evil, 0o755);
+    await put(cwd, "bin/ilspycmd", evil, 0o755);
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const out = await tool(CLR, cwd, { path: "work/a.dll", decompile: true }, { JOB_ID: "j000001", OUT: join(cwd, "out"), SECRET_OUTPUT: "1", PATH: `.:bin::${process.env.PATH ?? ""}` });
+    const a = parse(out);
+    assert.equal(a.status, "failed");
+    assert.match(a.error, /ilspycmd is not installed/);
+    assert.equal(await readFile(join(cwd, "ran.txt")).then(() => true, () => false), false, "nothing under the working directory was started");
+  });
+});
+
+test("a tool-output directory that is a link is refused and nothing is written through it", async () => {
+  await withCwd(async (cwd, bin) => {
+    await fakeProgram(cwd, bin);
+    await put(cwd, "work/a.dll", asm());
+    await mkdir(join(cwd, "out"), { recursive: true });
+    await mkdir(join(cwd, "elsewhere"), { recursive: true });
+    await symlink(join(cwd, "elsewhere"), join(cwd, "out", "tool-output"));
+    const a = parse(await job(cwd, bin, { path: "work/a.dll", decompile: true }));
+    assert.equal(a.status, "failed");
+    assert.match(a.status_basis, /symbolic link/);
+    assert.deepEqual(await readdir(join(cwd, "elsewhere")), []);
+  });
+});
+
 test("a link, a directory and a missing file are refused as JSON; hostile parameters are refused, never a traceback", async () => {
   await withCwd(async (cwd) => {
     await put(cwd, "work/a.dll", asm());

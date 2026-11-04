@@ -2024,8 +2024,14 @@ install_signal_handlers()
 # the stop handlers are installed here, at module level
 
 
+def absolute_path_entries():
+    """The caller's PATH without its relative entries ("", ".", "bin"): a relative entry names a place under the working directory, where the
+    evidence may be, and a program found there would be the evidence's own."""
+    return [d for d in os.environ.get("PATH", "").split(os.pathsep) if d.startswith("/")]
+
+
 def shutil_which(name):
-    for directory in os.environ.get("PATH", "").split(os.pathsep):
+    for directory in absolute_path_entries():
         candidate = os.path.join(directory, name)
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
@@ -2261,7 +2267,7 @@ def run_program(argv, seconds, cap):
 
 def program_env(home):
     """The environment the program gets: PATH and a few fixed variables, never the caller's (no proxy, no token, no settings location)."""
-    env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "LANG": "C.UTF-8", "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    env = {"PATH": os.pathsep.join(absolute_path_entries()) or "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8", "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
            "DOTNET_NOLOGO": "1", "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT": "1", "DOTNET_gcServer": "0"}
     if home:
         env.update({"HOME": home, "XDG_CONFIG_HOME": home + "/.config", "XDG_CACHE_HOME": home + "/.cache", "TMPDIR": home})
