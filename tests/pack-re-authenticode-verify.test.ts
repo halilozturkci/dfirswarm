@@ -148,8 +148,18 @@ verify) shift
     manysigs) i=0; while [ $i -lt 20000 ]; do printf 'Signature Index: %s\nSignature verification: failed\n\n' $i; i=$((i+1)); done; echo "Number of verified signatures: 20000"; echo Failed; exit 1;;
     longname) { echo 'Signature Index: 0  (Primary Signature)'; printf 'Signer'"'"'s certificate:\n\tSigner #0:\n\t\tSubject: /CN='; head -c 3000000 /dev/zero | tr '\\0' 'a'; echo; echo 'Signature verification: failed'; echo 'Number of verified signatures: 1'; echo Failed; }; exit 1;;
   esac
-  sed -e "s|^CAfile: .*|CAfile: $ca|" -e "s|^TSA's certificates file: .*|TSA's certificates file: $tsa|" -e "s|^CRLfile: .*|CRLfile: $crl|" "${fix}/$name.out"
-  exit $(cat "${fix}/$name.exit");;
+  code=$(cat "${fix}/$name.exit")
+  sed -e "s|^CAfile: .*|CAfile: $ca|" -e "s|^TSA's certificates file: .*|TSA's certificates file: $tsa|" -e "s|^CRLfile: .*|CRLfile: $crl|" "${fix}/$name.out" | case "$MUT" in
+    extra) cat; echo "foo bar";;
+    no_closing) grep -v '^Succeeded';;
+    failed_word) sed 's/^Succeeded/Failed/';;
+    no_digest) grep -v -E '^(Current|Calculated) message digest';;
+    echo_off) sed 's|^CAfile: .*|CAfile: /elsewhere.pem|';;
+    longline) cat; head -c 3000000 /dev/zero | tr '\0' 'a'; echo;;
+    *) cat;;
+  esac
+  case "$MUT" in exit1) exit 1;; failed_word) exit 0;; esac
+  exit $code;;
 esac
 exit 2`);
   return fix;
@@ -244,6 +254,7 @@ test("the failures the program reports are failed with a fixed reason: an untrus
     assert.equal(digest.status, "complete", JSON.stringify(digest));
     assert.equal(digest.verification, "failed");
     assert.deepEqual(digest.signatures[0].status_reasons, ["digest_mismatch"]);
+    assert.equal(digest.signatures[0].chain_trust, "not_evaluated_digest_mismatch", "the program does not evaluate the chain after a digest mismatch");
     assert.equal(digest.signatures[0].digest_matches_file, false);
     const revoked = await run(cwd, bin, "revoked", { ...TRUST, crl: "work/crl.pem" });
     assert.equal(revoked.verification, "failed");
@@ -340,7 +351,7 @@ test("a signature the file's own text imitates is not taken as verified: a descr
     assert.equal(a.status, "partial", JSON.stringify(a));
     assert.equal(a.verification, "not_checked");
     assert.match(a.status_basis, /ambiguous/);
-    assert.deepEqual(a.signatures.map((s: Json) => [s.status, s.signature_verification, s.status_reasons]), [["not_checked", "not_checked", ["output_ambiguous"]]]);
+    assert.deepEqual(a.signatures.map((s: Json) => [s.status, s.signature_verification, s.status_reasons]), [["not_checked", "not_checked", ["output_ambiguous", "output_not_read_whole"]]]);
     assert.ok(a.signatures[0].free_text_attributes_not_read >= 1);
     assert.doesNotMatch(JSON.stringify(a), /forged/i);
   });
@@ -476,7 +487,7 @@ test("hostile output from the program costs time in proportion to its size: long
       if (scenario === "manysigs") {
         assert.equal(a.status, "partial", JSON.stringify(a).slice(0, 300));
         assert.equal(a.signatures.length, 64);
-        assert.deepEqual(a.limits_hit, ["signatures"]);
+        assert.deepEqual(a.limits_hit, ["signatures", "output_not_read_whole"]);
       }
       if (scenario === "longname") assert.match(JSON.stringify(a), /a name of 3\d{6} characters/);
     }
@@ -628,5 +639,26 @@ test("with the real osslsigncode and a local time-stamp authority: the counter-s
     const bad = body(await tool(AV, cwd, { path: "stamped.exe", trust_ca: "ca.pem", tsa_ca: "other.pem" }));
     assert.equal(bad.signatures[0].timestamp.status, "failed");
     assert.equal(bad.verification, "failed");
+  });
+});
+
+test("output that was not read whole and clean is never a verification: a line no rule knows, a missing or disagreeing closing word, an exit status that disagrees, a trust file not echoed, a missing digest line, a 3 MB line", async () => {
+  await withCwd(async (cwd, bin) => {
+    await fakeProgram(cwd, bin);
+    await trust(cwd);
+    const both = { trust_ca: "work/ca.pem", tsa_ca: "work/tsa.pem" };
+    const clean = await run(cwd, bin, "ok", both);
+    assert.equal(clean.verification, "verified", "the unmutated output is a verification");
+    for (const mut of ["extra", "no_closing", "failed_word", "exit1", "no_digest", "echo_off", "longline"]) {
+      const a = await run(cwd, bin, "ok", both, { MUT: mut });
+      const why = `${mut}: ${JSON.stringify(a).slice(0, 700)}`;
+      assert.equal(a.status, "partial", why);
+      assert.notEqual(a.verification, "verified", why);
+      assert.equal(a.signatures[0].status, "not_checked", why);
+      assert.equal(a.signatures[0].signature_verification, "not_checked", why);
+      assert.equal(a.signatures[0].revocation, "not_checked", why);
+      assert.ok(a.limits_hit.includes("output_not_read_whole"), why);
+      assert.doesNotMatch(a.status_basis, /every signature verified/, why);
+    }
   });
 });

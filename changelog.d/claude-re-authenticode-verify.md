@@ -4,8 +4,9 @@
 its own) over a PE file with trust material from the call only: `trust_ca` (the
 roots the signer's chain must reach), `tsa_ca` (the timestamp authority's roots)
 and `crl` (a revocation list). The program is always given an explicit
-`-CAfile` and `-TSA-CAfile`, so it never reads its default CA store, and nothing
-uses the network. For each signature the answer says whether the file's digest
+`-CAfile` and `-TSA-CAfile`, so it never reads its default CA store, and the tool
+makes no network request itself (whether osslsigncode follows a CRL distribution
+point by itself was not measured). For each signature the answer says whether the file's digest
 is the signed one, whether the signature verified against the supplied roots,
 the signer's and the other certificates' names and validity times, the signing
 time, a timestamp counter-signature and whether it verified, and the result of

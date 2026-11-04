@@ -7202,8 +7202,14 @@ def read_qpdf(text, path):
             continue
         outcome = {"Incorrect password supplied": "incorrect", "Supplied password is user password": "user", "Supplied password is owner password": "owner"}.get(line)
         if outcome:
-            once("opened")
-            res["opened_with"] = outcome
+            # qpdf prints the user line and the owner line each when its password matched: an empty user and owner password print both
+            once("opened " + outcome)
+            if outcome == "incorrect" or res["opened_with"] in (None, outcome):
+                res["opened_with"] = outcome
+            elif res["opened_with"] != "incorrect":
+                res["opened_with"] = "user_and_owner"
+            else:
+                res["anomalies"] += 1
             continue
         m = re.fullmatch(r"(%s): (allowed|not allowed)" % "|".join(QPDF_PERMISSIONS), line)
         if m:
@@ -7377,7 +7383,8 @@ def second_reading(path, container, variants, hard_end):
     elif res["unrecognised_lines"] and status == "read":
         problems.append("%d line(s) of %s's output matched no rule of this reading; the fields it did match are given" % (res["unrecognised_lines"], name))
     out["status"] = status
-    out["result"] = {k: v for k, v in res.items() if k not in ("anomalies",)}
+    if status != "ambiguous":
+        out["result"] = {k: v for k, v in res.items() if k not in ("anomalies",)}
     out["basis"] = {"read": "%s read the encryption parameters" % name, "unsupported_by_the_program": "%s also does not support this variant" % name,
                     "failed": "%s did not give a reading (exit %s)" % (name, ran["exit_code"]), "ambiguous": "the output could not be read unambiguously"}[status]
     return out, problems, limits

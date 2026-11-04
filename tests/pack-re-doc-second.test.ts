@@ -201,6 +201,47 @@ sleep 60`);
   });
 });
 
+test("qpdf's user and owner lines are both read; a reading is read only when the program exited 0; an ambiguous reading has no result", async () => {
+  await withCwd(async (cwd, bin) => {
+    await fakeQpdf(cwd, bin, ["Supplied password is user password", "Supplied password is owner password", ...QPDF_TEXT]);
+    const both = await run(cwd, bin, "j.pdf", UNSUPPORTED_FILTER, { second_reading: true });
+    assert.equal(both.a.second_reading.status, "read");
+    assert.equal(both.a.second_reading.result.opened_with, "user_and_owner");
+    await fakeQpdf(cwd, bin, QPDF_TEXT, 2);
+    const failed = await run(cwd, bin, "j.pdf", UNSUPPORTED_FILTER, { second_reading: true });
+    assert.equal(failed.a.second_reading.status, "failed", "fields printed by a program that exited 2 are not a reading");
+    assert.match(failed.a.second_reading.basis, /exit 2/);
+    await fakeQpdf(cwd, bin, [...QPDF_TEXT, "Supplied password is user password", "Supplied password is user password"]);
+    const twice = await run(cwd, bin, "j.pdf", UNSUPPORTED_FILTER, { second_reading: true });
+    assert.equal(twice.a.second_reading.status, "ambiguous");
+    assert.equal(twice.a.second_reading.result, undefined, "an ambiguous reading's fields are not given");
+  });
+});
+
+test("a program that ignores TERM, INT and HUP is ended with the tool on SIGTERM, SIGINT and SIGHUP", async () => {
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    await withCwd(async (cwd, bin) => {
+      await mkdir(join(cwd, "pids"), { recursive: true });
+      await stub(bin, "qpdf", `if [ "$1" = "--version" ]; then echo "qpdf version 11.3.0"; exit 0; fi
+trap '' TERM INT HUP
+echo $$ > "${cwd}/pids/qpdf.pid"
+while true; do sleep 1; done`);
+      await put(cwd, "work/k.pdf", UNSUPPORTED_FILTER);
+      const r = startDetached(DOC_STRUCTURE, cwd, { path: "work/k.pdf", second_reading: true }, {}, bin);
+      try {
+        const pid = await pidFile(join(cwd, "pids", "qpdf.pid"));
+        r.signal(sig);
+        const code = await r.closed;
+        assert.equal(code, 128 + { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 }[sig], sig);
+        assert.equal((JSON.parse(r.stdout()) as Json).status, "failed");
+        assert.ok(await gone(pid, 10_000), `${sig}: the program of the second reading outlived the tool`);
+      } finally {
+        try { r.signal("SIGKILL"); } catch { /* gone */ }
+      }
+    });
+  }
+});
+
 const have = (name: string): boolean => spawnSync("sh", ["-c", `command -v ${name}`]).status === 0;
 
 test("with the real qpdf: an encryption filter qpdf does not support is said by qpdf, and a standard file it opens with the empty password says so", { skip: have("qpdf") ? false : "qpdf is not installed on this machine" }, async () => {

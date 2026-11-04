@@ -3,7 +3,7 @@
 
 The cryptography is the program's (OpenSSL's), never this tool's: the tool reads the PE headers' certificate table (an offset, a size and
 the WIN_CERTIFICATE headers inside it, as structure), starts `osslsigncode verify` with trust material from the call's own parameters only
-(an explicit -CAfile and -TSA-CAfile on every run, so the program never reads its default CA store; no network), and reads the words the
+(an explicit -CAfile and -TSA-CAfile on every run, so the program never reads its default CA store; the tool itself makes no network request), and reads the words the
 program printed back, one signature at a time: whether the file's digest is the one the signature signed, whether the signature verified
 against the trust material the call supplied, the certificates in it, the signing time, a timestamp counter-signature and whether it
 verified against the timestamp authority material the call supplied. Every part that was not checked is `not_checked`, never `verified`:
@@ -1857,7 +1857,7 @@ NOTE = ("A verification here is the program's reading of one signature against t
 READ = ["the DOS, COFF and optional headers, the data directory table (the certificate table's offset and size, and whether a CLR header is declared) and the WIN_CERTIFICATE headers inside the certificate table",
         "what `osslsigncode verify` printed: per signature its digest algorithm and whether the file's digest is the signed one, the signer's and the other certificates' names and validity times, the signing time, a timestamp counter-signature and its verification, the result of its signature verification, and the result of its revocation check when a list was supplied"]
 NOT_READ = ["the certificate or signature bytes (nothing is parsed or verified here; the program does it)", "serial numbers and digests (not printed)",
-            "revocation (OCSP, or a list the call did not supply), the system's or any default CA store (never read), the network (never used)",
+            "revocation (OCSP, or a list the call did not supply), the system's or any default CA store (never read), the network (this tool makes no request; whether the program follows a CRL distribution point by itself was not measured)",
             "catalog signatures and signatures of other file types (CAB, MSI, scripts)", "CLR strong-name signatures (they are not Authenticode)",
             "what the signed program does, who the publisher is, or whether it is safe"]
 
@@ -2509,7 +2509,7 @@ def signature_record(rec, trust, tsa, crl):
         "digest_algorithm": shown_name(rec["digest_algorithm"]) if rec["digest_algorithm"] else None,
         "digest_matches_file": rec["digest_matches"],
         "signature_verification": signature,
-        "chain_trust": ("checked_against_the_supplied_trust_material" if trust else "not_checked"),
+        "chain_trust": ("not_evaluated_digest_mismatch" if rec["digest_matches"] is False else "checked_against_the_supplied_trust_material" if trust else "not_checked"),
         "revocation": revocation,
         "signer": None if signer is None else {"subject": shown_name(signer["subject"]) if signer["subject"] is not None else None,
                                                "issuer": shown_name(signer["issuer"]) if signer["issuer"] is not None else None,
@@ -2700,6 +2700,8 @@ def main():
     for r in reading.signatures:
         if not r["complete"] and r["digest_matches"] is not False:
             reasons.append("signature %d: the program printed no verification result for it" % r["index"])
+        elif r["says"] == "ok" and r["digest_matches"] is not True:
+            reasons.append("signature %d: the program reported success and printed no comparison of the file's digest with the signed one" % r["index"])
     suspect = ambiguity(reading, verify_at)
     if suspect:
         # The program prints a signature's description and URL raw: a line printed twice, or out of place, may be the file's own text.
@@ -2721,7 +2723,7 @@ def main():
     if not records:
         if "no_signature" in messages and not table["present"]:
             finish("complete" if not reasons else "partial", "the file declares no certificate table and the program found no signature" if not reasons else "; ".join(reasons),
-                   verification="unsigned", verification_basis="the PE declares no certificate table and `osslsigncode verify` found no signature", signatures=[])
+                   verification="unsigned", verification_basis="the PE declares no certificate table and `osslsigncode verify` found no signature (catalog signatures, which sign a file from outside it, are not read)", signatures=[])
         damaged = messages & {"corrupt_signature_not_at_end", "corrupt_pe", "pkcs7_unreadable", "invalid_signature"}
         if damaged:
             what = ("; ".join(table["problems"])) if table["problems"] else "the certificate table's contents are not a signature the program can read"
@@ -2735,10 +2737,24 @@ def main():
             finish("failed" if "no_signature" not in messages else "partial", "the program's words (%s) do not agree with the certificate table read here; nothing is claimed" % ", ".join(sorted(messages)),
                    signatures=[], program_messages=sorted(messages))
         finish("failed", "`osslsigncode verify` printed no signature and no message this reading knows (exit %s): nothing is claimed" % ran["exit_code"], signatures=[])
-    statuses = [r["status"] for r in records]
-    verification = "failed" if "failed" in statuses else "verified" if all(s == "verified" for s in statuses) else "not_checked"
     if not table["present"]:
         reasons.append("the program found a signature and the headers declare no certificate table")
+    if reasons:
+        # Output that was not read whole and clean (a line no rule knows, a missing or disagreeing closing word, an echo that differs, a cut) is
+        # never a verification: what was not failed is not_checked, and the limit is said.
+        limits_hit.append("output_not_read_whole")
+        for rec in records:
+            if rec["status"] == "failed":
+                continue
+            rec["status"] = "not_checked"
+            if "output_not_read_whole" not in rec["status_reasons"]:
+                rec["status_reasons"].append("output_not_read_whole")
+            rec["signature_verification"] = "not_checked"
+            rec["revocation"] = "not_checked"
+            if rec["timestamp"]["status"] == "verified":
+                rec["timestamp"]["status"] = "not_checked"
+    statuses = [r["status"] for r in records]
+    verification = "failed" if "failed" in statuses else "verified" if all(s == "verified" for s in statuses) else "not_checked"
     unusable = trust and any("trust_material_unusable" in r["status_reasons"] for r in records)
     if unusable:
         finish("failed", "the program could not load the trust material named by trust_ca (no certificate in it, or a file it cannot read): nothing was verified",
