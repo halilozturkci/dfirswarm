@@ -37,7 +37,7 @@
     },
     {
       "name": "dotnet",
-      "why": "the .NET runtime a .NET decompiler runs on, declared ahead of that decompiler's own entry; a runtime, never called by a skill on its own"
+      "why": "the .NET runtime that the framework-dependent ilspycmd build runs on (the arm64 image; the amd64 build needs none); a runtime, never called by a skill on its own"
     },
     {
       "name": "qpdf",
@@ -69,7 +69,7 @@
       "requires/python.txt": "c8831228d4b61be16e43d0ef686b9952a4084d217b6024fa4449169904559f25",
       "skills/INDEX.md": "d9a2e3dab5cdcf8516f4db5c3a7fef49fac651a8d4daa0072b332d0e898a22c4",
       "skills/capabilities/mapping.md": "b568574dffe48e3acd7e284c0d921e01f20e1f81ee53e907538ccff005e271a7",
-      "skills/code/static-inspection.md": "3cb55eec74e8c06c4e69f919de64c1f92e3f40e66f183df4cf4c1840e43a492a",
+      "skills/code/static-inspection.md": "67a4004b422bfbd63ccbcea22f07d9471da419305f990851fe49dc8af7d5ab25",
       "skills/documents/external-and-active-content.md": "7eaed7e8e8f3b29bed7d58942c27774e551709615abc46f7e89d43491199b250",
       "skills/documents/macros.md": "30460fb86bed9e7536e0ad1e7b327e13a9ecf561165ef7e0b81b32d500728c75",
       "skills/documents/pdf-rtf.md": "31485c7c788321bed5ee28415265fe6793d8106d46e01f1a3923c31be1812e36",

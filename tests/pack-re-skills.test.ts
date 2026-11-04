@@ -413,7 +413,7 @@ test("the new leaves name no program this pack does not declare, and say a reade
   }
   assert.match(skills.get("managed/clr")!.body, /`clr_inspect` with `decompile` \(a `secret_output` job\) writes an `ilspycmd` reconstruction file, never inline; never run for real yet/);   // the decompiler is declared now, and the leaf says it was never run for real
   assert.match(skills.get("runtimes/python-packaged")!.body, /No extractor or bytecode disassembler is declared/);
-  assert.match(skills.get("code/static-inspection")!.body, /This pack declares none/);
+  assert.match(skills.get("code/static-inspection")!.body, /declares one decompiler, for \.NET assemblies only and optional; for any other binary it declares none/);
   assert.match(skills.get("scripts/static-analysis")!.body, /No parse-only tooling is declared/);
 });
 
