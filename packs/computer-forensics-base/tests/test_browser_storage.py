@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import unittest
+import uuid
 
 import browser_storage_fixtures as F
 from support import Case, run_tool, tool_path
@@ -26,7 +27,7 @@ READER_VENV = os.environ.get("BROWSER_STORAGE_VENV") or ("/opt/dfir/src/ccl_inde
 NEEDS_READER = unittest.skipUnless(READER_VENV, "no venv with ccl_chromium_reader 0.3.18 (set BROWSER_STORAGE_VENV)")
 LINUX = unittest.skipUnless(sys.platform.startswith("linux"), "needs /proc and Linux address-space limits")
 ORIGIN = "https://app.example.test"
-SPLIT_BOUND = {"nul_split": 0.12, "zwsp_split": 0.10, "utf16_split": 0.07}
+SPLIT_BOUND = {"nul_split": 0.17, "zwsp_split": 0.17, "utf16_split": 0.12}
 
 
 def wilson_upper(misses, n, z=1.96):
@@ -582,6 +583,7 @@ class Reader(Base):
         out4 = self.path("out4")
         r5 = self.call({"path": d, "write_values": True, "db_id": 9}, job=True, out=out4)
         self.assertEqual((r5.json["secret_values"]["records_written"], r5.json["status"]), (0, "complete"))
+        self.assertIn("matched no data record", r5.json["secret_values"]["note"])
 
     def test_the_values_file_stops_at_its_quota_with_an_end_line_and_the_status_says_so(self):
         recs = [rec(1, F.key_string("k%03d" % i), F.v8_string("x" * 200)) for i in range(40)]
@@ -628,15 +630,11 @@ class Reader(Base):
         b64 = alnum + "+/"
 
         def forced(chars, n):
-            """n random characters of `chars`, with a lower-case letter, a capital and a digit among them, as keys and tokens have."""
-            s = [rng.choice(chars) for _ in range(n)]
-            for pos, pool in zip(rng.sample(range(n), 3), (alnum[:26], alnum[26:52], alnum[52:])):
-                s[pos] = rng.choice(pool)
-            return "".join(s)
+            """n characters drawn uniformly at random from `chars`: no condition on them (a plant may hold no digit, or no capital)."""
+            return "".join(rng.choice(chars) for _ in range(n))
 
         def b64_of(nbytes):
-            core = forced(b64, (nbytes * 8 + 5) // 6)
-            return core + "=" * (-len(core) % 4)
+            return base64.b64encode(bytes(rng.getrandbits(8) for _ in range(nbytes))).decode("ascii")      # the base64 of random bytes, padding included
 
         def shape(prefix, chars, n, suffix=""):
             def make():
@@ -677,6 +675,7 @@ class Reader(Base):
             "aws_key": whole_prefixed("AKIA", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 16), "b64_16": whole(lambda: b64_of(16)), "b64_20": whole(lambda: b64_of(20)),
             "b64_32": whole(lambda: b64_of(32)), "jwt": jwt, "pem": pem, "userinfo": shape("https://svc:", alnum + "@", 14, "@host.example.test/path"),
             "password_eq": shape("Password=", alnum, 14), "password_colon_quoted": shape('password: "', alnum, 14, '"'), "gh_token": shape("ghp_", alnum, 36),
+            "cookie_sid_26": shape("SID=", alnum, 26), "uuid": whole(lambda: str(uuid.UUID(int=rng.getrandbits(128), version=4))),
             "hex_secret": whole(lambda: "".join(rng.choice("0123456789abcdef") for _ in range(40))),
             "nul_split": split("nul"), "zwsp_split": split("zwsp"), "utf16_split": split("utf16"),
         }
@@ -723,9 +722,9 @@ class Reader(Base):
         print("browser_storage canaries (preview slots): %s" % json.dumps(rates, sort_keys=True), file=sys.stderr)
         for name in ("aws_key", "jwt", "pem", "password_eq", "password_colon_quoted", "gh_token", "hex_secret"):
             self.assertEqual(misses[name], 0, "%s reached a preview: %s" % (name, rates[name]))
-        # The shapes the withholding only half knows: a random base64 text of 16, 20 or 32 bytes (22, 27 or 43 characters) and the password
+        # The plants are uniformly random (no letter, capital or digit is forced), 1,000 of each shape here; the manifest's rates are from 6,000. The shapes the withholding only half knows: a random base64 text of 16, 20 or 32 bytes (22, 27 or 43 characters) and the password
         # of user-info that holds an @. The rates measured with this seed are in the manifest; a worse rate fails here.
-        for name, bound in (("b64_16", 0.20), ("b64_20", 0.22), ("b64_32", 0.03), ("userinfo", 0.06)):
+        for name, bound in (("b64_16", 0.23), ("b64_20", 0.28), ("b64_32", 0.04), ("userinfo", 0.09), ("cookie_sid_26", 0.10), ("uuid", 0.03)):
             self.assertLessEqual(rates[name]["wilson95_upper"], bound, "%s: %s" % (name, rates[name]))
         for name in ("nul_split", "zwsp_split", "utf16_split"):
             self.assertLessEqual(rates[name]["wilson95_upper"], SPLIT_BOUND[name], "%s: %s" % (name, rates[name]))

@@ -2651,7 +2651,7 @@ def main():
         dropped = values.drop() if values is not None else False
         said = {"reader_version": "the venv's ccl_chromium_reader is not %s, the version this tool is written against" % READER,
                 "reader_not_importable": "ccl_chromium_reader could not be imported in the venv",
-                "memory_limit": "the reader needed more memory than the %d bytes it is given" % MEMORY_BYTES,
+                "memory_limit": "the reader needed more memory than the %d bytes it is given" % ((doc.get("memory_limit_bytes") if isinstance(doc, dict) else None) or MEMORY_BYTES),
                 "deadline": "the reader's clock of %d seconds ran out before it had made a document" % seconds}.get(fatal)
         basis = said or ("the reader's process was killed at its clock (%d seconds) and made no document" % (seconds + CHILD_GRACE) if timed_out else
                          "the reader's process ended with a signal (%d) and made no document" % -code if isinstance(code, int) and code < 0 else
@@ -2737,6 +2737,8 @@ def main():
                                              "names, key, key_type, key_raw_b64, value, value_error, raw_b64 = the record's value bytes whole) and an end line"}
         if written == 0 and answer["format"] == "leveldb" and (db_id is not None or store_id is not None):
             answer["secret_values"]["note"] = "db_id and store_id select IndexedDB stores; this directory was read as a plain LevelDB, so nothing was selected"
+        elif written == 0 and (db_id is not None or store_id is not None) and not doc.get("stopped"):
+            answer["secret_values"]["note"] = "db_id and store_id matched no data record, so the file holds a header and an end line and no record; status complete says the files were read, not that anything was selected"
     else:
         answer["values_inline"] = preview_records > 0
         answer["preview_chars"] = preview_chars
@@ -2758,7 +2760,11 @@ def main():
     answer["not_checked"] = ["the CRC32C of log records and table blocks (neither the reader nor this tool verifies it)",
                              "values stored outside the LevelDB (blob files): no blob directory is read",
                              "that a record is the newest the browser wrote: the counts follow the sequence numbers the files hold",
-                             "Local Storage and Session Storage records are not interpreted"]
+                             "Local Storage and Session Storage records are not interpreted",
+                             "that the MANIFEST agrees with the directory: it is read, and a table it names that is not there, a table that is there and it does not name, an empty MANIFEST or "
+                             "a missing one does not change the status",
+                             "that a database or object store listed is current: the reader takes the names from the newest metadata record that is a put, so a name whose newest record is a "
+                             "delete is still listed, with has_metadata true"]
     answer["limits"] = {"input_bytes": listing["bytes"], "input_limit": INPUT_MAX, "record_limit": MAX_RECORDS, "clock_seconds": seconds,
                         "previews_are_bounded": "depth 4, 12 entries a level, preview_chars characters a text; the whole record is in the values file of a secret_output job"}
     answer["withholding"] = {"counts": dict(COUNTS), "rule": "by shape: a token-shaped run, user-info, a credential-named field or text pair is not printed; a secret of another shape is printed"}

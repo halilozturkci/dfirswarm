@@ -24,11 +24,17 @@ Two further defects of the reader were measured and are handled, not hidden. The
 decodes that V8 tag as V8 defines it; and the reader's `backing_store_schema_version` is never filled (it looks bytes keys up as strings), so the tool reads the
 schema version from the metadata record itself.
 
-Withholding is by shape and a secret of another shape is printed. Measured on 1,000 random plants of each shape in preview slots (the Wilson upper bound at
-95%): AWS key ids, JWTs, PEM keys, `Password=` and `password: "..."` pairs, `ghp_` tokens and 40-digit hex strings none printed (at most 0.4% each); a random
-base64 text of 16 bytes 15.3% (at most 17.7%), of 20 bytes 17.4% (19.9%), of 32 bytes 1.2% (2.1%); user-info whose password holds an `@` 3.3% (4.6%); a key id
-split by NUL characters 8.1% (10.0%), by zero-width spaces 6.7% (8.4%), and a token in UTF-16 text read as one-byte 4.0% (5.4%). NUL and zero-width characters
-are removed from a printed text. A file whose secrets matter is read in a `secret_output` job.
+Withholding is by shape and a secret of another shape is printed. Measured with plants drawn uniformly at random, with no condition on their characters (6,000 of each
+shape, seed 20261104, through the preview path; a plant counts when a 12-character piece of its random part reaches the answer; Wilson upper bound at 95% in brackets):
+AWS key ids, JWTs, PEM keys, `Password=` and `password: "..."` pairs, `ghp_` tokens and 40-digit hex strings none printed (at most 0.1% each); a base64 text of 16
+random bytes 17.8% printed (18.8%), of 20 bytes 22.4% (23.5%), of 32 bytes 1.5% (1.8%); a cookie `SID=` with 26 alphanumerics 5.6% (6.2%); a UUID 0.2% (0.4%); user-info
+whose password may hold an `@` 4.8% (5.3%); a key id split by NUL characters 11.9% (12.8%), by zero-width spaces 11.4% (12.2%), and a token in UTF-16 text read as one-byte
+6.6% (7.3%). A token that is not uniformly random is printed at another rate. NUL and zero-width characters are removed from a printed text. A file whose secrets matter is
+read in a `secret_output` job.
+
+The status `complete` says the data files were read to their end by the formats' rules; it does not compare the MANIFEST with the directory, and it does not drop a database or
+store whose newest metadata record is a delete (the answer's `not_checked` says both). A run stopped by the record cap or the clock gives the files' statuses and record
+counts, not the per-store counts, previews or records.
 
 `ccl_simplesnappy` 0.4, the one dependency that is not on PyPI, is now hashed: the URL of its commit's archive carries `#sha256=0d7558f8...6ca7` (4,321 bytes,
 measured on 2026-11-04 from the archive the owner approved downloading), and pip refuses an archive that differs (a wrong hash on a file:// URL of the same archive was refused in a throwaway venv).
