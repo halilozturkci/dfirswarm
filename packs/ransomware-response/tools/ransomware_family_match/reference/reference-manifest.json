@@ -1,0 +1,11 @@
+{
+  "schema": "ransomware_family_match.reference-manifest/1",
+  "set_id": "project-seed",
+  "set_version": 1,
+  "snapshot_date": "2026-11-04",
+  "fresh_until": "2027-05-03",
+  "files": {
+    "entries.json": "6b04bc8cf58dd4ab8999a76c3043c67cebba51dea9cff9cfd4c05de72beb6467",
+    "rules.yar": "678bc6c9076d580975bd4713112c133e9e14783d73e244023b0cd389b8d38909"
+  }
+}

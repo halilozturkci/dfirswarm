@@ -256,6 +256,20 @@ const CASES: Case[] = [
     small: { limit: 1, only_objects: ["backup_catalog"] },
   },
   {
+    // Run 2 considers fewer reference entries (the filter), so its candidates table is a different, smaller one under the same name.
+    tool: "ransomware-response/ransomware_family_match",
+    build: async () => ({ extensions: [".akira", ".basta", ".play", ".rhysida"] }),
+    large: { limit: 1 },
+    small: { limit: 1, filter: "black" },
+  },
+  {
+    // Run 2 asks about fewer families, so its entries table is a different, smaller one under the same name.
+    tool: "ransomware-response/decryptor_catalog",
+    build: async () => ({ hypotheses: ["akira", "rhysida", "phobos", "lockbit"] }),
+    large: { limit: 1 },
+    small: { limit: 1, hypotheses: ["akira", "rhysida"] },
+  },
+  {
     tool: "ransomware-response/recovery_validate",
     build: async (dir) => {
       const files: string[] = [];

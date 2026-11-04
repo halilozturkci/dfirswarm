@@ -1,6 +1,6 @@
 # Ransomware Response Pack
 
-Evidence-led ransomware examination. Its six tools return candidates, measurements and counts; what a
+Evidence-led ransomware examination. Its eight tools return candidates, measurements and counts; what a
 candidate shows has to be validated before anyone acts on it.
 
 Depends on the Computer Forensics Base Pack. It does not repeat the intrusion
@@ -23,11 +23,24 @@ and the router `ransomware/router` (at most 400 tokens; the prompt shows this on
 `reporting/for-regulators` (`reporting/notification-register`,
 `reporting/conclusions-and-controls`).
 
-**Six tools.** `backup_destruction_correlate` keeps five observations apart per host and
+**Eight tools.** `backup_destruction_correlate` keeps five observations apart per host and
 object (command seen, action attempted, reported outcome, inventory change, verified loss)
 from the answers of other packs' tools given by reference, each versioned by its `parser`.
 It copies no event text, reports a command with no change and a change with no command as
 such, and never turns "a delete command ran" into "the backups are gone".
+`ransomware_family_match` gives candidate families and variants for the extensions and ransom-note names an examination
+observed (the note names come from the sealed values file of `ransom_note_scan`, run as a secret_output job), with the
+reference features that matched, their strength and sources, the rule ids and versions of the note-text rules (`yara` is the
+engine), contradictions, and `ambiguous` or `unidentified` when the evidence does not separate or support a family. Its
+reference set is a dated, reviewed snapshot of seven families, each entry citing the public pages it comes from; a stale entry
+is reported, a changed file is refused, no match does not mean that an unknown family is absent, and a family never
+names an affiliate or an actor.
+`decryptor_catalog` is an offline metadata reader over a dated snapshot of five public decryptors (Avast's for Akira and Rhysida, the
+Japan National Police Agency's for Phobos and 8Base, the No More Ransom listing of one for LockBit 3.0, and Security Research Labs' scripts
+for Black Basta). For family and variant hypotheses and the prerequisites you hold it gives the publisher, the variants and period the
+sources state, the prerequisites (a file pair, the machine the files were encrypted on, known plaintext) with whether each is met, the
+limits, the approved source and the check date. An unknown family answers `no_entry_in_snapshot`, which is not "no decryptor exists"; the
+tool fetches nothing, runs nothing, redistributes nothing, and the obtained-and-verified flag is only ever the caller's.
 `ransomware_scope_report` takes sealed outputs by reference (censuses,
 extent and recovery outputs, timelines, a recipe's coverage) and reports scope per host
 with denominators, assessed against unassessed bytes, candidate against validated
@@ -78,8 +91,9 @@ And preserve before you restore. Every hour of restoration changes the sources.
 
 ## Not in this pack
 
-No family rules or reference data ship with it, no public-decryptor catalogue, and
-no tool of its own that reads hypervisor or backup records (`backup_destruction_correlate`
+It ships a small dated snapshot of family features for `ransomware_family_match` (seven families, each entry citing public
+pages, none naming an affiliate or an actor) and no rules for a sample's code; `decryptor_catalog` has a dated snapshot of five public decryptors and none of the decryptors
+themselves. The pack has no tool of its own that reads hypervisor or backup records (`backup_destruction_correlate`
 takes the answers of the other packs' readers by reference). `yara` is declared for rules the
 case supplies.
 

@@ -28,6 +28,8 @@ const FAMILIES: Record<string, string> = {
   "ransomware-validate": join(PACKS, "ransomware-response", "tools", "recovery_validate", "run.py"),
   "ransomware-scope": join(PACKS, "ransomware-response", "tools", "ransomware_scope_report", "run.py"),
   "ransomware-correlate": join(PACKS, "ransomware-response", "tools", "backup_destruction_correlate", "run.py"),
+  "ransomware-family": join(PACKS, "ransomware-response", "tools", "ransomware_family_match", "run.py"),
+  "ransomware-catalog": join(PACKS, "ransomware-response", "tools", "decryptor_catalog", "run.py"),
   "reverse-engineering": DOC_PROBE,
   "tool-library": join(ROOT, "tool-library", "sqlite_query", "run.py"),
 };

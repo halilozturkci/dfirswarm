@@ -127,6 +127,8 @@ const PLACE_CARRIERS: Array<[string, string]> = [
   ["packs/ransomware-response/tools/recovery_validate/run.py", "PLACE"],
   ["packs/ransomware-response/tools/ransomware_scope_report/run.py", "PLACE"],
   ["packs/ransomware-response/tools/backup_destruction_correlate/run.py", "PLACE"],
+  ["packs/ransomware-response/tools/ransomware_family_match/run.py", "PLACE"],
+  ["packs/ransomware-response/tools/decryptor_catalog/run.py", "PLACE"],
   ["tool-library/yara_scan/run.py", "PLACE"],
   ["packs/memory-forensics/tools/mem_carve/run.py", "PAGE"],
   ["packs/memory-forensics/tools/mem_fs/run.py", "PAGE"],
@@ -200,7 +202,7 @@ test("every copy of the comparison in the tree is the one fixed text (the macOS 
   const groups = [...seen.entries()].sort((a, b) => b[1].length - a[1].length);
   assert.equal(groups.length, 2, JSON.stringify(groups.map(([k, v]) => [k.slice(0, 10), v.length])));
   assert.equal(groups[0][0], SAME_BYTES_SHA);
-  assert.equal(groups[0][1].length, 87, "56 carriers before the four tools of ransomware-response added since (encryption_extent, recovery_validate, ransomware_scope_report, backup_destruction_correlate), the five memory-forensics tools that carry the byte comparison (vol_readiness, mem_registry, carve_handoff, vol_views, isf_intake), and the four encrypted-containers tools (crypto_metadata, crypto_selftest, archive_metadata, materialise_decrypted), and linux-forensics container_layers (its place-without-replacing copy), and the collection_timestamps and collection_profile_compare tools of triage-collection, and the backup_materialise, heic_inspect and ab_layout tools of mobile-forensics, and capture_transform, flow_reader, tls_decrypt, quic_inspect and conn_series of network-forensics, and powershell_blocks, vss_materialise, userassist_bam_shimcache and persistence_normalise of windows-forensics, and keychain_open of macos-forensics, and cloud_normalise and cloud_timeline_export of cloud-forensics");
+  assert.equal(groups[0][1].length, 89, "56 carriers before the five tools of ransomware-response added since (encryption_extent, recovery_validate, ransomware_scope_report, backup_destruction_correlate, ransomware_family_match, decryptor_catalog), the five memory-forensics tools that carry the byte comparison (vol_readiness, mem_registry, carve_handoff, vol_views, isf_intake), and the four encrypted-containers tools (crypto_metadata, crypto_selftest, archive_metadata, materialise_decrypted), and linux-forensics container_layers (its place-without-replacing copy), and the collection_timestamps and collection_profile_compare tools of triage-collection, and the backup_materialise, heic_inspect and ab_layout tools of mobile-forensics, and capture_transform, flow_reader, tls_decrypt, quic_inspect and conn_series of network-forensics, and powershell_blocks, vss_materialise, userassist_bam_shimcache and persistence_normalise of windows-forensics, and keychain_open of macos-forensics, and cloud_normalise and cloud_timeline_export of cloud-forensics");
   assert.deepEqual(groups[1][1], ["packs/macos-forensics/tools/unified_log/run.py"]);
 });
 
@@ -325,6 +327,8 @@ const STOP_CARRIERS = {
     "packs/ransomware-response/tools/recovery_validate/run.py",
     "packs/ransomware-response/tools/ransomware_scope_report/run.py",
     "packs/ransomware-response/tools/backup_destruction_correlate/run.py",
+    "packs/ransomware-response/tools/ransomware_family_match/run.py",
+    "packs/ransomware-response/tools/decryptor_catalog/run.py",
     "packs/windows-forensics/tools/regkv/run.py",
     "packs/windows-forensics/tools/lnk_parse/run.py",
     "packs/reverse-engineering/tools/pe_info/run.py",
