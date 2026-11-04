@@ -10,9 +10,9 @@ says "if that pack is loaded" and asks you to check the run's tool inventory.
 
 ## What it carries
 
-**Twenty-four skills**: seven decision leaves, each a question of a case, eleven
-second-level leaves they point to ("only if X"), five more leaves that the router and the index
-name (`intrusion/entry-and-spread`, `recovery/preserve-and-restore`, `platforms/esxi-hypervisors`, `platforms/nas-storage`, `impact/services-and-data`),
+**Twenty-five skills**: seven decision leaves, each a question of a case, eleven
+second-level leaves they point to ("only if X"), six more leaves that the router and the index
+name (`intrusion/entry-and-spread`, `recovery/preserve-and-restore`, `platforms/esxi-hypervisors`, `platforms/nas-storage`, `impact/services-and-data`, `recovery/public-decryptors`),
 and the router `ransomware/router` (at most 400 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf); every leaf is at most 800 tokens.
 `scope/first-hour` (`scope/triage-tools`, `scope/phase-timeline`),
 `exfil/before-encryption` (`exfil/measure-and-claims`),
@@ -35,7 +35,7 @@ engine), contradictions, and `ambiguous` or `unidentified` when the evidence doe
 reference set is a dated, reviewed snapshot of seven families, each entry citing the public pages it comes from; a stale entry
 is reported, a changed file is refused, no match does not mean that an unknown family is absent, and a family never
 names an affiliate or an actor.
-`decryptor_catalog` is an offline metadata reader over a dated snapshot of five public decryptors (Avast's for Akira and Rhysida, the
+`decryptor_catalog` (its method is `recovery/public-decryptors`) is an offline metadata reader over a dated snapshot of five public decryptors (Avast's for Akira and Rhysida, the
 Japan National Police Agency's for Phobos and 8Base, the No More Ransom listing of one for LockBit 3.0, and Security Research Labs' scripts
 for Black Basta). For family and variant hypotheses and the prerequisites you hold it gives the publisher, the variants and period the
 sources state, the prerequisites (a file pair, the machine the files were encrypted on, known plaintext) with whether each is met, the
