@@ -119,6 +119,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
   "windows-forensics/tools/evtx_carve": w("log", "strings"),
   "windows-forensics/tools/evtx_query": w("log", "strings"),
   "windows-forensics/tools/lnk_jumplist": w("strings"),
+  "windows-forensics/tools/srum_reader": w("log", "strings"),
   "windows-forensics/tools/lnk_parse": w("java", "pwsh", "strings"),
   "windows-forensics/tools/persistence_normalise": w("log", "strings"),
   "windows-forensics/tools/powershell_blocks": w("log", "strings"),

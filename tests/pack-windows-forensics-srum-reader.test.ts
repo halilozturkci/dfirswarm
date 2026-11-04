@@ -527,7 +527,9 @@ test("a rerun does not replace a larger rows file with a smaller one, and the ro
     await stub(bin, "SrumECmd", srumecmd(NET_CSV(), join(cwd, "args.txt"), { console: CONSOLE_CLEAN }));
     const first = body<Answer>(await tool("srum_reader", cwd, { path: db }, {}, bin));
     const before = await readFile(join(cwd, first.rows_file), "utf8");
-    const second = body<Answer>(await tool("srum_reader", cwd, { path: db }, {}, bin));
+    const second = body<Answer>(await tool("srum_reader", cwd, { path: db, limit: 1 }, {}, bin));
+    assert.equal(second.rows.length, 1);
+    assert.equal(second.rows_total, 3);
     assert.equal(second.rows_file, first.rows_file, "the same rows are the same file");
     assert.equal(await readFile(join(cwd, second.rows_file), "utf8"), before);
     assert.match(first.rows_file, /^work\/s1\/srum_reader-[0-9a-f]{12}\/rows\.jsonl$/);
