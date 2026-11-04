@@ -437,7 +437,7 @@ test("the leaves that name the adopted programs say what was never observed, kee
   assert.match(skills.get("packing/static-recovery")!.body, /\(`diec`, where installed: `code\/second-readers`\)/);
   assert.doesNotMatch(skills.get("packing/static-recovery")!.body, /none is declared in this pack/);
   const dec = skills.get("managed/decompiled")!.body;
-  for (const re of [/refused as JSON outside a job run with `secret_output: true`/, /never printed inline/, /does not mean the C# is faithful, compiles or is the author's/, /Whether the program makes any request of its own, and what shared libraries the amd64 Native AOT build needs, were not measured/, /keep appending to the file after `complete`/]) assert.match(dec, re);
+  for (const re of [/refused as JSON outside a job run with `secret_output: true`/, /never printed inline/, /does not mean the C# is faithful, compiles or is the author's/, /Whether the program makes any request of its own, and what shared libraries the amd64 Native AOT build needs, were not measured/, /ends every process of its own group that still holds the program's output/, /`process_left_behind`\), never `complete`/, /A process in a session of its own \(setsid\) cannot be ended by the tool/, /the file may still grow/]) assert.match(dec, re);
   const sig = skills.get("pe/authenticode")!.body;
   assert.match(sig, /Whether `osslsigncode` follows a CRL distribution point in a certificate by itself was not measured/);
   assert.match(sig, /osslsigncode 2\.5 only; another release is `unsupported`/);

@@ -184,6 +184,56 @@ got, why = install.fetch(pin(path, name="h_bomb"), [])
 install.NUPKG_MAX_FILE_BYTES = 256 << 20
 out["bomb"] = {"got": got, "why": why, "tree": tree(work / "tools" / "h_bomb"), "archive_bytes": path.stat().st_size}
 
+# a corrupt deflate stream (zlib.error) and a truncated one (EOFError) are not tracebacks that stop the build: the optional program is recorded as not installed
+import zlib
+
+
+def raw_zip(name, comp, usize, crc, label):
+    nm = name.encode()
+    local = struct.pack("<4sHHHHHIIIHH", b"PK\3\4", 20, 0, 8, 0, 0x21, crc, len(comp), usize, len(nm), 0) + nm + comp
+    central = struct.pack("<4sHHHHHHIIIHHHHHII", b"PK\1\2", 20, 20, 0, 8, 0, 0x21, crc, len(comp), usize, len(nm), 0, 0, 0, 0, 0, 0) + nm
+    end = struct.pack("<4sHHHHIIH", b"PK\5\6", 0, 0, 1, 1, len(central), len(local), 0)
+    counter[0] += 1
+    d = work / ("src%d" % counter[0])
+    d.mkdir()
+    path = d / "pkg.nupkg"
+    path.write_bytes(local + central + end)
+    return path
+
+
+data = bytes(range(256)) * 40
+crc = zlib.crc32(data)
+good = zlib.compressobj(9, zlib.DEFLATED, -15)
+stream = good.compress(data) + good.flush()
+corrupt = bytes([0x07]) + stream[1:]                  # BTYPE 3: not a block type
+unfinished = stream[:len(stream) // 2]                  # half of the deflate stream: the data ends before the end marker
+for label, comp in (("zlib_error", corrupt), ("eof_error", unfinished)):
+    path = raw_zip("tools/any/linux-x64/prog", comp, len(data), crc, label)
+    try:
+        got, why = install.fetch(pin(path, name="h_" + label), [])
+        out[label] = {"got": got, "why": why, "tree": tree(work / "tools" / ("h_" + label)), "raised": None}
+    except Exception as e:  # noqa: BLE001 - the case is that nothing escapes
+        out[label] = {"raised": type(e).__name__ + ": " + str(e)}
+
+# a gzip-compressed tar cut short: the compressed stream ends before its end marker (EOFError from the standard library)
+import io, tarfile
+counter[0] += 1
+d = work / ("src%d" % counter[0])
+d.mkdir()
+raw = io.BytesIO()
+with tarfile.open(fileobj=raw, mode="w:gz") as t:
+    info = tarfile.TarInfo("prog")
+    blob = os.urandom(200000)
+    info.size = len(blob)
+    t.addfile(info, io.BytesIO(blob))
+path = d / "prog.tar.gz"
+path.write_bytes(raw.getvalue()[: len(raw.getvalue()) // 2])
+try:
+    got, why = install.fetch({"name": "h_tar_eof", "version": "1", "amd64": {"url": "file://" + str(path), "sha256": sha(path), "bin": "prog"}}, [])
+    out["tar_eof"] = {"got": got, "why": why, "raised": None}
+except Exception as e:  # noqa: BLE001
+    out["tar_eof"] = {"raised": type(e).__name__ + ": " + str(e)}
+
 # strip and skip are not taken for a package
 try:
     install.unpack(Path(work / "x.nupkg"), "x.nupkg", work, strip=True)
@@ -286,6 +336,14 @@ test("a DOS-created entry (no unix mode) is unpacked as a plain file, and the ar
   assert.equal(out.modes.got?.kind, "download");
   assert.deepEqual(out.modes_perm, { "tools/any/linux-x64/setuid": "0o644", w: "0o644" }, "setuid and world-writable bits are not carried");
 });
+
+for (const label of ["zlib_error", "eof_error", "tar_eof"]) {
+  test(`a ${label === "zlib_error" ? "corrupt deflate stream" : label === "eof_error" ? "truncated deflate stream" : "gzip tar cut short"} does not abort the build: the program is recorded as not installed`, () => {
+    assert.equal(out[label].raised, null, "nothing escaped the handler");
+    assert.equal(out[label].got, null);
+    assert.match(out[label].why, /^could not unpack: /);
+  });
+}
 
 test("a text that is not a zip file is refused as such", () => {
   assert.equal(out.notzip.got, null);

@@ -264,3 +264,25 @@ test("with the real msoffcrypto-tool: an extensible EncryptionInfo is said unsup
     assert.equal(sr.result.error, "unsupported_extensible_encryption");
   });
 });
+
+test("a process qpdf leaves behind holding its output pipe is ended when the tool answers: nothing is left running", async () => {
+  await withCwd(async (cwd, bin) => {
+    await mkdir(join(cwd, "pids"), { recursive: true });
+    await stub(bin, "qpdf", `if [ "$1" = "--version" ]; then echo "qpdf version 11.3.0"; exit 0; fi
+( while :; do echo late; sleep 0.05; done ) & echo $! > "${cwd}/pids/kid.pid"
+${QPDF_TEXT.map((l) => `echo '${l}'`).join("\n")}
+exit 0`);
+    let kid = 0;
+    try {
+      const t0 = Date.now();
+      const { a } = await run(cwd, bin, "k.pdf", UNSUPPORTED_FILTER, { second_reading: true });
+      kid = await pidFile(join(cwd, "pids", "kid.pid"), 3_000).catch(() => 0);
+      assert.ok(kid, "qpdf recorded its child's pid");
+      assert.ok(Date.now() - t0 < 30_000);
+      assert.ok(a.second_reading, "the answer carries the second reading's own record");
+      assert.ok(await gone(kid, 5_000), "the child that held the pipe is ended by the tool");
+    } finally {
+      if (kid) { try { process.kill(kid, "SIGKILL"); } catch { /* gone */ } }
+    }
+  });
+});

@@ -826,6 +826,107 @@ def printable(text, limit=120):
     return "".join(c if " " <= c <= "~" else "?" for c in text)[:limit]
 
 
+LEFT_SECONDS = 3.0                 # the longest the tool works at ending what still holds a file of its call
+SETTLE_SECONDS = 0.3               # after that, the file is looked at again after this long: a file that still grows is not whole
+
+
+def _identities(targets):
+    """{(device, inode)} of the open files (an int is a descriptor of this tool) and paths (a str) in `targets`; one that cannot be looked at is left out."""
+    found = set()
+    for target in targets:
+        try:
+            st = os.fstat(target) if isinstance(target, int) else os.stat(target)
+        except OSError:
+            continue
+        found.add((st.st_dev, st.st_ino))
+    return found
+
+
+def _holds(pid, want):
+    """Whether process `pid` has one of the files `want` open (Linux: /proc/<pid>/fd; a process of another user cannot be looked at and holds nothing here)."""
+    try:
+        for name in os.listdir("/proc/%d/fd" % pid):
+            try:
+                other = os.stat("/proc/%d/fd/%s" % (pid, name))
+            except OSError:
+                continue
+            if (other.st_dev, other.st_ino) in want:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def holders_of(targets):
+    """The pids, not this tool's, that hold one of `targets` open, or None when they cannot be looked for (no /proc: not Linux). The files are
+    private to this call (a stage directory made for it, a log it created), so a process that holds one got it from what the tool started."""
+    if not os.path.isdir("/proc/self"):
+        return None
+    want = _identities(targets)
+    if not want:
+        return []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return None
+    me = os.getpid()
+    return [int(entry) for entry in entries if entry.isdigit() and int(entry) != me and _holds(int(entry), want)]
+
+
+def end_holders(targets):
+    """End what still holds one of the call's own files once the program has ended (or been killed): every such process in the tool's own process
+    group is killed (SIGKILL, each checked again just before it is signalled), repeated until none is left, for at most LEFT_SECONDS. The group
+    is the tool's own, as the harness ends the tool by it; a process outside it that holds a file (one that started a session of its own) is not
+    touched. Returns (the pids ended, the pids still holding a file afterwards, or None when they cannot be looked for)."""
+    mine = os.getpgrp()
+    ended = set()
+    end = time.monotonic() + LEFT_SECONDS
+    while True:
+        holders = holders_of(targets)
+        if holders is None:
+            return ended, None
+        inside = []
+        for pid in holders:
+            try:
+                if os.getpgid(pid) == mine:
+                    inside.append(pid)
+            except OSError:
+                pass
+        if not inside:
+            return ended, holders
+        want = _identities(targets)
+        for pid in inside:
+            if _holds(pid, want):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    ended.add(pid)
+                except OSError:
+                    pass
+        if time.monotonic() >= end:
+            return ended, holders_of(targets)
+        time.sleep(0.02)
+
+
+def output_settled(path):
+    """(whether the file is still, why not): the size of the file is read, the tool waits SETTLE_SECONDS, and the size is read again; a file that
+    grew, or that a process still holds open (end_holders ended those in the tool's group, so this is a process outside it), is not whole."""
+    try:
+        before = os.stat(path).st_size
+        time.sleep(SETTLE_SECONDS)
+        after = os.stat(path).st_size
+    except OSError as exc:
+        return False, "the file could not be looked at again: %s" % describe(exc)
+    held = holders_of([path]) or []
+    if after == before and not held:
+        return True, None
+    reasons = []
+    if after != before:
+        reasons.append("the file grew from %d to %d bytes after the program had ended" % (before, after))
+    if held:
+        reasons.append("a process (pid %s) outside the tool's process group still holds the file open" % ", ".join(str(p) for p in held[:5]))
+    return False, "; ".join(reasons) + " (a process in a session of its own cannot be ended by this tool, and the file may still be growing)"
+
+
 class Steps:
     """The programs run for one call: each step's output goes, with a header line, to the one log file under the tool-output directory, and
     only its first 64 KiB is read back, to classify UPX's answer. None of it is printed."""
@@ -841,10 +942,11 @@ class Steps:
         digest = hashlib.sha256(key.encode("utf-8", "surrogatepass")).hexdigest()[:12]
         self.log, self.log_name = create_exclusive(self.dir, "unpack-safe-%s.log" % digest, 0o600)
 
-    def run(self, label, argv, seconds, watch=None):
+    def run(self, label, argv, seconds, watch=None, produced=None):
         """Run one program; the record: label, argv, exit_code, timed_out, stopped_by_watch, seconds, text (the first 64 KiB of its output)."""
         remaining = self.deadline - time.monotonic()
-        rec = {"label": label, "argv": argv, "exit_code": None, "timed_out": False, "stopped_by_watch": False, "seconds": 0.0, "text": "", "output_bytes": 0}
+        rec = {"label": label, "argv": argv, "exit_code": None, "timed_out": False, "stopped_by_watch": False, "seconds": 0.0, "text": "", "output_bytes": 0,
+               "left_behind": 0, "holders_outside": [], "holders_unknown": False}
         if remaining <= 0:
             rec["not_attempted"] = "the call's time budget was spent before this step"
             self.records.append(rec)
@@ -879,6 +981,13 @@ class Steps:
                     break
         finally:
             ACTIVE.remove(proc)
+            # a process the program left behind would go on writing into the log, and into the derivative: whatever of the tool's group still holds the log
+            # (or the file named in `produced`) is ended, and waited for to be gone, before anything is read
+            ended, outside = end_holders([self.log.fileno()] + list(produced or []))
+            if not (rec["timed_out"] or rec["stopped_by_watch"]):
+                rec["left_behind"] = len(ended)
+            rec["holders_outside"] = outside or []
+            rec["holders_unknown"] = outside is None
         rec["exit_code"] = proc.returncode
         rec["seconds"] = round(time.monotonic() - started, 3)
         end = os.fstat(self.log.fileno()).st_size
@@ -895,6 +1004,8 @@ class Steps:
             for k in ("not_attempted", "launch_failed"):
                 if k in r:
                     row[k] = r[k]
+            if r["left_behind"]:
+                row["left_behind"] = r["left_behind"]
             row["status"] = ("not_attempted" if "not_attempted" in r else "launch_failed" if "launch_failed" in r else "timed_out" if r["timed_out"]
                              else "stopped_by_budget" if r["stopped_by_watch"] else "ok" if r["exit_code"] == 0 else "failed")
             out.append(row)
@@ -1044,7 +1155,7 @@ def main():
         except OSError:
             return False
 
-    unpack = steps.run("upx -d", [upx, "-d", "-o", str(produced), "--", path], max(1, deadline - time.monotonic()), over_budget)
+    unpack = steps.run("upx -d", [upx, "-d", "-o", str(produced), "--", path], max(1, deadline - time.monotonic()), over_budget, produced=[str(produced)])
 
     def drop():
         try:
@@ -1073,6 +1184,23 @@ def main():
     if unpack["exit_code"] != 0:
         drop()
         finish("failed", "upx -d failed (exit %s; UPX's words are in the log): no derivative exists" % unpack["exit_code"])
+    if unpack["holders_outside"]:
+        drop()
+        finish("partial", "a process (pid %s) outside the tool's process group still holds the log or the derivative: a process in a session of its own cannot be ended by this tool, "
+                          "and the derivative may still be growing; it was removed" % ", ".join(str(p) for p in unpack["holders_outside"][:5]),
+               limits_hit=["process_left_running"], expected_unpacked_bytes=expected)
+    if unpack["holders_unknown"]:
+        notes.append("the processes that hold the derivative could not be looked for (no /proc here): a process upx left running is found only if a sample saw it")
+    steady, why_not = output_settled(produced)
+    if not steady:
+        drop()
+        finish("partial", "%s: the derivative is not whole and was removed; nothing is claimed about its bytes or its hash" % why_not,
+               limits_hit=["process_left_running"], expected_unpacked_bytes=expected)
+    if unpack["left_behind"]:
+        drop()
+        finish("partial", "upx -d exited with status 0 and left %d process(es) of the tool's process group holding its output, which the tool ended before the file was read: "
+                          "the derivative may be cut short and was removed. A process in a session of its own cannot be ended by this tool" % unpack["left_behind"],
+               limits_hit=["process_left_behind"], expected_unpacked_bytes=expected)
     # What UPX made, read through a descriptor opened without following a link.
     out_fd, out_st = open_regular(str(produced))
     if out_fd is None:
@@ -1084,6 +1212,10 @@ def main():
             finish("failed" if out_st.st_size == 0 else "partial", "the unpacked file is %d bytes: %s" % (out_st.st_size, "empty" if out_st.st_size == 0 else "past the output budget"),
                    limits_hit=[] if out_st.st_size == 0 else ["max_output_bytes"])
         derived_sha, derived_read, derived_whole = sha256_fd(out_fd, deadline + 5)
+        if derived_whole and os.fstat(out_fd).st_size != derived_read:
+            drop()
+            finish("partial", "the derivative grew while it was hashed: a process in a session of its own may still be writing, and this tool cannot end it; the file was removed",
+                   limits_hit=["process_left_running"])
         if not derived_whole:
             drop()
             finish("partial", "the call's time budget ran out while hashing the derivative; it was removed", limits_hit=["time"])

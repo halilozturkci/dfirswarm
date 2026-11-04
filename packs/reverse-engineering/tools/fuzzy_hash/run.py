@@ -793,6 +793,107 @@ class Logs:
         return bool(self.fhs)
 
 
+LEFT_SECONDS = 3.0                 # the longest the tool works at ending what still holds a file of its call
+SETTLE_SECONDS = 0.3               # after that, the file is looked at again after this long: a file that still grows is not whole
+
+
+def _identities(targets):
+    """{(device, inode)} of the open files (an int is a descriptor of this tool) and paths (a str) in `targets`; one that cannot be looked at is left out."""
+    found = set()
+    for target in targets:
+        try:
+            st = os.fstat(target) if isinstance(target, int) else os.stat(target)
+        except OSError:
+            continue
+        found.add((st.st_dev, st.st_ino))
+    return found
+
+
+def _holds(pid, want):
+    """Whether process `pid` has one of the files `want` open (Linux: /proc/<pid>/fd; a process of another user cannot be looked at and holds nothing here)."""
+    try:
+        for name in os.listdir("/proc/%d/fd" % pid):
+            try:
+                other = os.stat("/proc/%d/fd/%s" % (pid, name))
+            except OSError:
+                continue
+            if (other.st_dev, other.st_ino) in want:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def holders_of(targets):
+    """The pids, not this tool's, that hold one of `targets` open, or None when they cannot be looked for (no /proc: not Linux). The files are
+    private to this call (a stage directory made for it, a log it created), so a process that holds one got it from what the tool started."""
+    if not os.path.isdir("/proc/self"):
+        return None
+    want = _identities(targets)
+    if not want:
+        return []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return None
+    me = os.getpid()
+    return [int(entry) for entry in entries if entry.isdigit() and int(entry) != me and _holds(int(entry), want)]
+
+
+def end_holders(targets):
+    """End what still holds one of the call's own files once the program has ended (or been killed): every such process in the tool's own process
+    group is killed (SIGKILL, each checked again just before it is signalled), repeated until none is left, for at most LEFT_SECONDS. The group
+    is the tool's own, as the harness ends the tool by it; a process outside it that holds a file (one that started a session of its own) is not
+    touched. Returns (the pids ended, the pids still holding a file afterwards, or None when they cannot be looked for)."""
+    mine = os.getpgrp()
+    ended = set()
+    end = time.monotonic() + LEFT_SECONDS
+    while True:
+        holders = holders_of(targets)
+        if holders is None:
+            return ended, None
+        inside = []
+        for pid in holders:
+            try:
+                if os.getpgid(pid) == mine:
+                    inside.append(pid)
+            except OSError:
+                pass
+        if not inside:
+            return ended, holders
+        want = _identities(targets)
+        for pid in inside:
+            if _holds(pid, want):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    ended.add(pid)
+                except OSError:
+                    pass
+        if time.monotonic() >= end:
+            return ended, holders_of(targets)
+        time.sleep(0.02)
+
+
+def output_settled(path):
+    """(whether the file is still, why not): the size of the file is read, the tool waits SETTLE_SECONDS, and the size is read again; a file that
+    grew, or that a process still holds open (end_holders ended those in the tool's group, so this is a process outside it), is not whole."""
+    try:
+        before = os.stat(path).st_size
+        time.sleep(SETTLE_SECONDS)
+        after = os.stat(path).st_size
+    except OSError as exc:
+        return False, "the file could not be looked at again: %s" % describe(exc)
+    held = holders_of([path]) or []
+    if after == before and not held:
+        return True, None
+    reasons = []
+    if after != before:
+        reasons.append("the file grew from %d to %d bytes after the program had ended" % (before, after))
+    if held:
+        reasons.append("a process (pid %s) outside the tool's process group still holds the file open" % ", ".join(str(p) for p in held[:5]))
+    return False, "; ".join(reasons) + " (a process in a session of its own cannot be ended by this tool, and the file may still be growing)"
+
+
 def run_engine(logs, argv, label, timeout):
     """Run one invocation. Returns a dict: status (ok, timeout, failed, launch_failed), returncode, stdout (the first
     64 KiB, as text), stderr (the first 2 KiB), bytes written to each stream, seconds."""
@@ -821,6 +922,7 @@ def run_engine(logs, argv, label, timeout):
         return result
     ACTIVE.append(proc)
     status = "ok"
+    left = 0
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -829,6 +931,10 @@ def run_engine(logs, argv, label, timeout):
         proc.wait()
     finally:
         ACTIVE.remove(proc)
+        # a process the engine left behind would go on writing into the log that is about to be read: whatever of the tool's group still holds the
+        # engine's output files is ended, and waited for to be gone, before they are read
+        ended, outside = end_holders([fh.fileno() for fh, _start in handles.values()])
+        left = (len(ended) if status == "ok" else 0) + len(outside or [])
     result["returncode"] = proc.returncode
     result["seconds"] = round(time.monotonic() - started, 3)
     text = {}
@@ -843,6 +949,10 @@ def run_engine(logs, argv, label, timeout):
     if status == "timeout":
         result["status"] = "timeout"
         result["reason"] = "the program was stopped at its time limit of %d second(s)" % timeout
+    elif left:
+        result["status"] = "failed"
+        result["reason"] = ("the program left %d process(es) holding its output, which the tool ended before the output was read where it could (a process in a session of its own "
+                            "cannot be ended by this tool): the output is not trusted" % left)
     elif proc.returncode != 0:
         result["status"] = "failed"
         first = next((l.strip() for l in text["stderr"].splitlines() if l.strip()), "")

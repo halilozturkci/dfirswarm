@@ -866,6 +866,9 @@ def cell(value):
 # END SHARED WITHHOLDING
 
 
+MAX_WITHHELD_LISTED = 10_000      # the most withheld strings listed one by one in `withheld_fields`; the rest are counted
+
+
 def show(ctx, field, text, offset):
     """A string read from the sample as it may be printed. A library path, a search path or an install name can carry
     user-info or a query value: those are withheld, the field is listed in `withheld_fields` with where the string lies
@@ -877,7 +880,10 @@ def show(ctx, field, text, offset):
     else:
         shown = "/".join(scrub(part, "names") for part in text.split("/"))
     if shown != text:
-        ctx.withheld_fields.append({"field": field, "file_offset": offset, "length": len(text)})
+        if len(ctx.withheld_fields) < MAX_WITHHELD_LISTED:
+            ctx.withheld_fields.append({"field": field, "file_offset": offset, "length": len(text)})
+        else:
+            ctx.withheld_not_listed += 1     # a file with millions of withheld names does not make the answer millions of entries long
     return shown
 
 
@@ -1019,6 +1025,7 @@ class Ctx:
         self.limits = []
         self.pages = {}
         self.withheld_fields = []
+        self.withheld_not_listed = 0
 
     def problem(self, text):
         if text in self.problems:
@@ -1420,6 +1427,8 @@ def read_imports(img, ctx, out, import_dir, to_range, wide):
                         continue
                     if not complete:
                         ctx.problem("an import name in %s has no terminator within its section or %d bytes" % (library, NAME_CAP))
+                    # the same display function as the library name and the export name: a token-shaped function name is withheld
+                    name = show(ctx, "import_function", name, hint_range[0] + 2)
                 total += 1
                 entry["function_count"] += 1
                 functions.add({"library": library, "function": name})
@@ -1985,6 +1994,8 @@ def main():
               "entropy_work": {"bytes_measured": ctx.budget["used"], "budget": ctx.budget["limit"]}, "note": NOTE}
     if ctx.withheld_fields:
         result["withheld_fields"] = ctx.withheld_fields
+        if ctx.withheld_not_listed:
+            result["withheld_fields_not_listed"] = ctx.withheld_not_listed
         result["withheld_note"] = ("User-info, query values and token-shaped text in these strings are withheld from the answer; each entry gives "
                                    "the field and where the string lies in the sample, which is the whole of it.")
     if ctx.problems_dropped:
