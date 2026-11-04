@@ -1,7 +1,7 @@
 {
   "id": "macos-forensics",
   "name": "macOS Forensics Pack",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, accounts and the limits of attribution, keychains opened with the case's password, and what APFS retains. TCC, background items, Safari history, Biome framing and an APFS inventory have a tool here and no skill of their own yet; Gatekeeper and XProtect and Spotlight have neither.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -34,8 +34,9 @@
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "87caf59efe34f52bdb8a7f3f101a38d03a80b0177724cb18b42c198857a5e176",
       "goals/mac-compromise.md": "50e6a65c7611900ec2e7b8089b3f2c1d86cf5bcb8c14ae1059e986df6cb2f00a",
-      "requires/host.json": "630ebbedd0dc8883b5e8b5f8c4bffc0b6bce2df975a6fc10cf152425b30f5254",
+      "requires/host.json": "8a801e5d6fed3b08642d737a94bfd1add14941b902aaa50fb34007041a74a29c",
       "requires/locks/chainbreaker.txt": "dab6391c45828b4a1ef378402b6381c60183c214a25fbbb9d7fc843af0b189d3",
+      "requires/locks/mac_apt.txt": "1a54f5f97e3052307c2c9fd5d892c952e2ab8560a77192b0603775a0f411b1ab",
       "requires/python.txt": "b9fd9b97af3d66de786eb48c116a119308a6b2087411ef45b2cc1aa369dc6eba",
       "skills/INDEX.md": "693dc616bf0d8b12fe2c6ed00006364cc5f4228d4f7c0ca3b39f1a6566d3a0a1",
       "skills/accounts/attribution-remote.md": "e7800e17fce7a64152802da68c41e727310147573871c8abd75ea45fd050c283",
