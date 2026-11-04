@@ -69,19 +69,20 @@ by the `python-311` job, which runs the `tests/pack-*.test.ts` suites inside the
 images' own `node:24-bookworm-slim` with Debian's `python3`; it runs for a
 change to a pack, the tool library, an image file or such a suite, and in every
 nightly run. Other Pythons are not tested here.
-Python 3.15 is not supported. The deep-nesting case of `beacon_score` (a series nested
+Python 3.15 is not supported, which here means untested: the one reason is that the deep-nesting case of `beacon_score` (a series nested
 100,000 deep, `tests/pack-network-beacon-score.test.ts`) took 300 s on a hosted macOS
-runner's 3.15, and the cause was never found. Run in the `python:3.15` image
+runner's 3.15, and that run could not be reproduced; 3.14 has not been tried. Run in the `python:3.15` image
 (3.15.2, Linux amd64, digest `sha256:f17ec845ebdd4f3347431579e1c22eaeec82913f039f2a54b937c7ff870bacdb`)
 under `timeout -s KILL`, the case did not reproduce: with the default 8 MB stack the
 tool answered with a failed document (the interpreter refuses to decode the array,
 "Stack overflow") in 1.4 s wall (container start included; 0.13 s of Python by
 `cProfile`, almost all of it the interpreter's own imports) for the series and 0.8 s
 for `window_end`, four runs together took 1.5 s, and with an unlimited stack it
-decoded the array and answered in 2.8 s. With a 1 MiB stack the interpreter itself
-crashed (SIGSEGV, exit 139) before any answer, as `json.loads` alone does
-on a 100,000-deep array at that stack size. The macOS 300 s run is therefore unexplained, and 3.15
+decoded the array and answered in 2.8 s. The macOS 300 s run is unexplained, and 3.15
 stays outside the tested Pythons until a run on it is understood.
+A 1 MiB stack is not a 3.15 trait: on the host's Python 3.12 with `ulimit -s 1024`, `json.loads` of a
+100,000-deep array exits 139 (SIGSEGV), and `beacon_score` exits -11 with no JSON. That crash
+without JSON at a tiny stack was there before and is a known limit of the tool.
 The `spikes/` directory is neither typechecked (`tsconfig.json` covers
 `extensions/`, `scripts/` and `tests/`) nor re-run: its scripts record
 measurements made once, and they can go stale. The host suites run on
