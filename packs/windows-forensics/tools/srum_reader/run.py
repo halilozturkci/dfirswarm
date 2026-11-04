@@ -3649,7 +3649,8 @@ def main():
                   "semantics_note": SEMANTICS_NOTE, "notes": notes, "rows": page.page, "rows_total": rows_result["matched"], "rows_file": rows_result.get("all_results"),
                   "rows_inline_truncated": rows_result["truncated"],
                   "elapsed_seconds": round(time.monotonic() - started, 2),
-                  "note": own("SrumECmd's option names, CSV names and columns and console lines, and the dissect record shape, are from help strings and metadata, not from a real run; "
+                  "note": own("SrumECmd's option names, CSV names and columns and console lines were read from the strings of its dll and it was never run; "
+                              "the dissect.target record shape is an assumption; "
                               "esedb_query reads the raw tables")}
         emit(answer, indent=1)
         close_values()
