@@ -32,6 +32,7 @@ Content
 `filesystem/carving` residual bytes, carved candidates
 `filesystem/scanners` needle and record scans of bytes
 `data/sqlite` databases, WAL; `data/sqlite-secrets` secret tables
+`data/browser-storage` IndexedDB, Local and Session Storage
 `data/documents-media` PDF, Office, images, media
 
 Time

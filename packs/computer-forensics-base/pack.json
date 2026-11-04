@@ -45,22 +45,22 @@
       "skills/evidence/coverage.md": "b2547de852d7943a4271c0bb6443c676c2f4bc19034771ae56884f806cda0750",
       "skills/evidence/imaging.md": "c82ad5544273385be06cef9a193db4d5cdd66ad1ae1f0aa200201034cabbc563",
       "skills/evidence/provenance.md": "8929a35e8a8ed6d1b0d9fee4af380f7f0b525d8b7851361f2640d07b5acd59bc",
-      "skills/evidence/scope.md": "310d60e13d41df55ef456b34fd72222e21bb50c58ca0d31f5df8d3119335bcba",
-      "skills/evidence/tool-validation.md": "e75f55cea7121dcf8ca391cfa4ef479fc1f5858c0cbad19b6c29e74a5cfe432b",
+      "skills/evidence/scope.md": "b92d1bbaca3b7ede50a882826c27b52d654ec0a68d9fec7f16df7bf42bde2198",
+      "skills/evidence/tool-validation.md": "cfceba43d6cfda9d70836049305aa91bc7e8bdeaebf277dbac5a4384ad7b09ea",
       "skills/evidence/verify.md": "6e63549a05970fdcce440d2ef811aa6ac1450b33638a8dca24ce72308bdf2552",
       "skills/filesystem/carving.md": "13d3145b7c0ef55c16631dca981cb999bbb87e0362a8e46eacc54f82aa4ecce0",
-      "skills/filesystem/encrypted-metadata.md": "a4bbde77b68abd250c5add4c96d0ab7b46e24ccd58943e28961e898dee30fa9c",
-      "skills/filesystem/encrypted.md": "11a9b8705b374179664772e950ea7c6fff26fb1d8016874a6f1844bea23036aa",
+      "skills/filesystem/encrypted-metadata.md": "c983b04857e757245e441ed4f4b69b1181fda55bd9a13985fb148c7ba210fe94",
+      "skills/filesystem/encrypted.md": "be5918c9620737e1f526bd6bd386b3749037d75ce7bb649e788cc50680fe1edc",
       "skills/filesystem/extract.md": "0fb0e1b226a3e22f63166541650de461a25292e2978f731976feb40e946d07a0",
       "skills/filesystem/layers-mapping.md": "1d66ffcfc958264e7140bd3e8abba9f738592fca6052d848ae93b0f384730b39",
-      "skills/filesystem/layers.md": "53091bec05489819cc759d5cd80180f6f45f5a7e4e57f5faeba76867553b38ac",
-      "skills/filesystem/scanners.md": "32492c2a0d81b632928e8a61aa8b6756a0b34584f9a08cc8681d8ca04b6ea346",
-      "skills/filesystem/semantics.md": "9db1eafc72dbb98222678210d75dcd53737fc024b322baa6746d63779f0deec1",
+      "skills/filesystem/layers.md": "e361e5a2a78a394eecd193ee64a057381161973e56472e4a0f9b60e7d9093d7c",
+      "skills/filesystem/scanners.md": "8d27919cd0dbbd34dfbeb71b6017f73b416de9fb86db0781117f5298ad6946e3",
+      "skills/filesystem/semantics.md": "29bd62c89955ad7e645091de50366d89c320598026d6b250f7e305808963ed75",
       "skills/reporting/citations.md": "b2bd8e6562e54ff3676f14efdf80a9afad367fa6edcb307881b22b27b7ed9a6a",
       "skills/reporting/disagreement.md": "38318108c68c645bb075c991b4fc8e01c22f9c7111de5a39fc255009b8884913",
       "skills/timeline/build.md": "1ed2444b754cd9233ba5c9e465758c3b468df600ac6141289af1afc3e64b6e08",
       "skills/timeline/clocks-drift.md": "5e373612780bc2475d0dc068aa761a3861c689216d237b5a68472a1d5f9dd58d",
-      "skills/timeline/clocks.md": "63f4c147708eb9e128d182105a7f430b95bc0324fed15ea17ebad408eae1b921",
+      "skills/timeline/clocks.md": "169510047f6a6e0ed47c5546203e70d32b654a223828f0d66a2098cf848c80e3",
       "skills/timeline/super-scope.md": "402ed8b0b1d7e91435a1c172c7aebdea12ab1f812ba81b8303e4a24108b7d798",
       "skills/timeline/super.md": "141f267266838cd620e925225331adc3fe9971e09095f63064490c54ef02731a",
       "tests/fixtures/rar/LICENSE-rarfile.txt": "44defaa4d449e7837e6c2bc692751c5dfd438baa3677b9e25a9a41092d2aa9a8",
@@ -72,6 +72,7 @@
       "tests/test_archive_extract.py": "2e5f51ee165bf26f1309ec1ba637dd4abfedcc3198e3a4b2451391705bbb830c",
       "tests/test_archive_extract_rar.py": "301504942bd599d65d7f28c5609ce6fa3f1258b7a2bb59909aecdd2f69658350",
       "tests/test_archive_members.py": "3c7ed42a32080f1f2951d1ff78266bc71c8e755b00b582624dd657f19225c1a3",
+      "tests/test_browser_storage.py": "4df8dc8824761049b9d261ab72064812d38cd5ba39bcaf978d72ecf7d12e17cd",
       "tests/test_byte_range_extract.py": "154dd129cf18c098e1710f996f4d28e24b8c68cbed6e56cff859066aee20daac",
       "tests/test_catalog_search.py": "17142b159732d841ec5eaf1df1693ecfd1eb7b7686c3333a57280930551b94eb",
       "tests/test_check_inputs.py": "e7e3fa8a88761cd4eac5fd2fb1fc37a155df58f4e7b50a29753deeb136bf5ca6",
@@ -152,6 +153,7 @@
   "tools": [
     "ad1_extract",
     "archive_extract",
+    "browser_storage",
     "byte_range_extract",
     "catalog_search",
     "check_inputs",
@@ -170,19 +172,13 @@
     "timeline_super",
     "timestamp_decode"
   ],
-  "skills": 29,
+  "skills": 30,
   "recipes": [
     "computer-forensics-base/ad1-items",
     "computer-forensics-base/archive-members",
     "computer-forensics-base/disk-timeline",
     "computer-forensics-base/disk-volumes",
     "computer-forensics-base/memory-windows"
-  ],
-  "unreferenced_ok": [
-    {
-      "name": "ccl_indexeddb_dump",
-      "why": "declared for the browser structured-storage wrapper and skill planned for a later change; no skill of this pack names it yet"
-    }
   ],
   "method_only": [
     {

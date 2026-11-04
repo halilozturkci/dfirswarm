@@ -1,7 +1,7 @@
 ---
 id: filesystem/semantics
 title: Filesystem identity, allocation and recovery limits
-when: Citing a file by path or inode, reading a deleted entry, or saying a file was deleted.
+when: Citing a file by path or inode, reading a deleted entry, or saying it was deleted.
 needs: []
 tools: [icat_extract]
 requires_host: [istat]

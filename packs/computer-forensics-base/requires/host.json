@@ -323,7 +323,7 @@
       "name": "ccl_indexeddb_dump",
       "package": "ccl_chromium_reader",
       "optional": true,
-      "why": "A Chromium or Electron IndexedDB (a chat client's, a web app's) read by database, object store and record; the ccl_chromium_reader library beside it, in /opt/dfir/src/ccl_indexeddb_dump/.venv/bin/python, also reads LevelDB, Local Storage, Session Storage and the cache. Brotli is held at 1.2.1 over the reader's old bound of 1.2.0, because before 1.2.1 the decoder (which reads content taken from the evidence) has an out-of-bounds write (GHSA-9v8h-qqgm-4m35). Brotli 1.2.1 and zstd 1.5.7.2 install first from a hash lock (requires/locks/ccl_indexeddb_dump.txt: a file hash per architecture where PyPI has one, and the sdist). ccl_simplesnappy is not on PyPI and stays at its commit, an archive URL, outside the lock; its bytes are not hashed here.",
+      "why": "A Chromium or Electron IndexedDB (a chat client's, a web app's) read by database, object store and record; the ccl_chromium_reader library beside it, in /opt/dfir/src/ccl_indexeddb_dump/.venv/bin/python, also reads LevelDB, Local Storage, Session Storage and the cache. Brotli is held at 1.2.1 over the reader's old bound of 1.2.0, because before 1.2.1 the decoder (which reads content taken from the evidence) has an out-of-bounds write (GHSA-9v8h-qqgm-4m35). Brotli 1.2.1 and zstd 1.5.7.2 install first from a hash lock (requires/locks/ccl_indexeddb_dump.txt: a file hash per architecture where PyPI has one, and the sdist). ccl_simplesnappy is not on PyPI: it installs from the archive of its commit, and the archive's sha256 (0d7558f81dff6b62d6177569fdeaaa8ed9fdeac2c3c473696f34f4dd5c3d6ca7, 4,321 bytes, measured on 2026-11-04) is in the URL after the # sign, where pip checks it and refuses an archive that differs; it is outside the lock file, which takes name==version lines only. GitHub does not promise that an archive of a commit stays byte-identical, so a build that fails on that hash is a changed archive to look at, not a pin to loosen.",
       "install": {
         "brew": "https://github.com/cclgroupltd/ccl_chromium_reader (not on PyPI)",
         "apt": "pinned source 0.3.18 (install.source)",
@@ -337,7 +337,7 @@
           "pip": [
             "--no-deps",
             ".",
-            "https://github.com/cclgroupltd/ccl_simplesnappy/archive/3d085230baa8c46cf2090ebba29bf6e8eab31087.tar.gz"
+            "https://github.com/cclgroupltd/ccl_simplesnappy/archive/3d085230baa8c46cf2090ebba29bf6e8eab31087.tar.gz#sha256=0d7558f81dff6b62d6177569fdeaaa8ed9fdeac2c3c473696f34f4dd5c3d6ca7"
           ]
         }
       },

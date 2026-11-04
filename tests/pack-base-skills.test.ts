@@ -59,7 +59,7 @@ const ROUTER = "base/router";
 
 // Skills whose tools can put secrets, credentials or private text in front of the agent: each has a Sensitive output part.
 const SENSITIVE = [
-  "data/documents-media", "data/sqlite", "data/sqlite-secrets", "filesystem/carving", "filesystem/encrypted", "filesystem/encrypted-metadata", "filesystem/extract",
+  "data/browser-storage", "data/documents-media", "data/sqlite", "data/sqlite-secrets", "filesystem/carving", "filesystem/encrypted", "filesystem/encrypted-metadata", "filesystem/extract",
   "filesystem/scanners", "filesystem/semantics", "timeline/super", "evidence/archives",
 ];
 
@@ -76,7 +76,7 @@ const ROUTER_MAX = 400;
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, 29);
+  assert.equal(skills.size, 30);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? ROUTER_MAX : LEAF_MAX), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(TOKENS(s.text) <= 1000, `${s.id} is over the 1,000 a skill may have`);
@@ -95,7 +95,7 @@ test("every skill is a leaf within the budget, opens with Use when ... Not for .
   for (const id of skills.keys()) assert.ok(index.includes(`\`${id}\``), `${id} is in the index`);
   // The pack budget is the harness's own count of the index entries (extensions/skills.ts), not the file's size: past it a pack shows its router only.
   const parsed = await readPackIndex(PACK);
-  assert.equal(parsed.entries.length, 29);
+  assert.equal(parsed.entries.length, 30);
   assert.ok(parsed.tokens <= SKILL_BUDGET.pack, `the pack index is ${Math.round(parsed.tokens)} tokens of entries`);
 });
 

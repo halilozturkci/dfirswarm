@@ -1,7 +1,7 @@
 ---
 id: filesystem/encrypted
-title: Distinguish encryption from other causes of unreadability
-when: A supported reader cannot open a source, or validated metadata identifies encryption.
+title: Tell encryption from other causes of unreadability
+when: A reader cannot open a source, or validated metadata identifies encryption.
 needs: []
 tools: []
 requires_host: [fsstat, fls, bdeinfo]

@@ -11,7 +11,7 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 
 ## What it carries
 
-**Twenty-nine skills**, fetched one at a time by the agents that need them. Each is a leaf of at most 800 tokens that opens with "Use when ... Not for ..."; a topic that needs more has a second-level leaf the first one points to ("only if"), so `skills/INDEX.md` lists both. One of them is the pack's router, `base/router` (at most 400 tokens): when a run's index is over its budget the prompt shows this one line for the pack, and the router names every other skill by the question it answers:
+**Thirty skills**, fetched one at a time by the agents that need them. Each is a leaf of at most 800 tokens that opens with "Use when ... Not for ..."; a topic that needs more has a second-level leaf the first one points to ("only if"), so `skills/INDEX.md` lists both. One of them is the pack's router, `base/router` (at most 400 tokens): when a run's index is over its budget the prompt shows this one line for the pack, and the router names every other skill by the question it answers:
 
 | | |
 | --- | --- |
@@ -30,6 +30,7 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 | `evidence/tool-validation` | validate a parser before you trust it: version, status counts, the decisive field against the bytes, independence, a positive control |
 | `data/sqlite` | a SQLite database is a set of files: snapshot it, apply its WAL in a copy, query the state you name |
 | `data/sqlite-secrets` | a table of cookies, logins, tokens, keys or messages: its values go to a sealed file, never into your context (`sqlite_query` with `write_values`) |
+| `data/browser-storage` | a Chromium or Electron IndexedDB, Local Storage or Session Storage: the inventory, the locators, what a preview shows, and the sealed file for the values (`browser_storage`) |
 | `data/documents-media` | document and image content as layers: bytes, rendering, extracted text, embedded objects, metadata, OCR, concealment |
 | `filesystem/extract` | get a file out of an image, and say which record it came from |
 | `filesystem/semantics` | path against object identity, record reuse, sizes, allocation, deletion, times, snapshots and TRIM: what a recovered file does and does not show |
@@ -45,11 +46,11 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 | `reporting/citations` | every claim resolves to an inspectable observation, and a negative is bounded |
 | `reporting/disagreement` | disputing, correcting and republishing, through the ledger's own acts |
 
-**Nineteen tools**: `image_layout`, `check_inputs`, `catalog_search`,
+**Twenty tools**: `image_layout`, `check_inputs`, `catalog_search`,
 `icat_extract`, `sig_carve`, `file_carver`, `ioc_scan`, `chunk_needles`,
 `file_type`, `sqlite_query`, `feature_scan`, `timeline_super`,
 `timestamp_decode`, `ad1_extract`, `archive_extract`, `sqlite_snapshot`,
-`image_verify`, `layer_describe`, `byte_range_extract`. `file_type` to `timestamp_decode` arrived
+`image_verify`, `layer_describe`, `byte_range_extract`, `browser_storage`. `file_type` to `timestamp_decode` arrived
 with the packs that depend on this one: a tool every pack would have carried
 belongs here once, not in each of them. `ad1_extract` writes an AccessData
 AD1 logical image's files out, checked against the digests the image
@@ -67,7 +68,10 @@ table and volumes, and `missing_dependencies`; it looks at nothing you did not
 declare and mounts nothing. `byte_range_extract` copies declared byte ranges of a file, or of a
 split raw set through its descriptor, into files of their own under byte and time budgets, with a
 sha256 for each range; a short range stays `.partial`, and it says nothing about whether the bytes
-are a file.
+are a file. `browser_storage` inventories a Chromium or Electron LevelDB directory (an IndexedDB, Local Storage or Session Storage) with the pinned
+`ccl_chromium_reader` 0.3.18, which it runs in the `ccl_indexeddb_dump` venv as a program of its own: databases, object stores, key types, puts, deletes and
+current keys, a locator for every record, and a bounded preview after the shared withholding. With `write_values`, in a `secret_output` job, it writes every record
+whole to a 0600 file; a venv that is missing is `failed`, never an empty inventory. It does not verify the files' checksums, read blob files or interpret Local Storage.
 Every one takes JSON on stdin and returns JSON, and every call lands on the
 run's trace under the calling agent's name. What they return is bounded and
 says so: a carve is a candidate with `boundary: validated` or `heuristic`, a
