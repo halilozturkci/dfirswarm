@@ -60,7 +60,8 @@ const CHILDREN: Record<string, string> = {
   "persistence/login-items-quieter": "persistence/mechanisms",
 };
 // The leaves that can reach secret material say so; the rest point to them.
-const SECRET_LEAVES = ["accounts/users", "artifacts/plists", "artifacts/knowledgec", "artifacts/fsevents", "logs/unified", "persistence/mechanisms", "triage/system-profile"];
+const SECRET_LEAVES = ["accounts/users", "artifacts/plists", "artifacts/knowledgec", "artifacts/fsevents", "logs/unified", "persistence/mechanisms", "triage/system-profile",
+  "workflow/mac-apt", "security/tcc", "security/gatekeeper-xprotect", "artifacts/spotlight", "artifacts/biome", "artifacts/recent-items"];
 
 test("every skill is a leaf within the budget, opens with Use when/only if ... Not for ..., has a short index entry, and old ids stay", async () => {
   const skills = await load(SKILLS);
@@ -123,6 +124,9 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["fsevents_parse", "artifacts/fsevents", ["files_by_state", "flags_undecoded", "coverage", "problems", "status_basis", "max_seconds", "not_attempted", "contains_blind_records", "write_values"]],
   ["unified_log", "logs/unified", ["decoded_coverage", "support_files", "problems", "warnings", "status_basis", "reader_outcome"]],
   ["unified_log", "logs/unified-readers", ["reader", "timeout_seconds", "budget"]],
+  ["macos_tcc", "security/tcc", ["columns", "access_columns", "auth_value_meaning", "managed", "last_modified_utc", "last_reminder_utc", "problems", "rowid"]],
+  ["segb_read", "artifacts/biome", ["layout_basis", "state_raw", "time1_raw", "time2_raw", "stream_from_path", "confidence", "skip_frames", "next_file", "problems"]],
+  ["macos_triage", "workflow/mac-apt", ["plugins", "status_basis", "not_observed", "input_type", "password_file"]],
 ];
 
 test("the tool fields a skill names are fields the tools write", async () => {
@@ -188,6 +192,51 @@ test("the rules the split keeps: observation against verdict, bounded negatives,
   has("persistence/mechanisms", /which no key-name pattern in `plist_read` catches/);
   has("persistence/login-items-quieter", /A registration is not execution/);
   has("persistence/login-items-quieter", /do not read an Accessibility permission as root or SYSTEM, or a TCC row's modified time as the time of a grant/);
+  has("persistence/login-items-quieter", /\(`security\/tcc`\)/);
+  has("persistence/login-items-quieter", /a bookmark or alias by length only/);
+});
+
+// The six leaves of the second macOS skills batch: one rule each, stated as the rule and not as one wording of it.
+const NEW_IDS = ["workflow/mac-apt", "security/tcc", "security/gatekeeper-xprotect", "artifacts/spotlight", "artifacts/biome", "artifacts/recent-items"];
+
+test("the six leaves of the second batch carry their rules, say what was never observed, and hold the sentences moved out of the leaves at the limit", async () => {
+  const skills = await load(SKILLS);
+  const has = (id: string, re: RegExp): void => assert.match(skills.get(id)!.body.replace(/\s+/g, " "), re, `${id}: ${re}`);
+  for (const id of NEW_IDS) {
+    const body = skills.get(id)!.body;
+    assert.match(body, /^Record: /m, `${id} has Record`);
+    assert.match(body, /^Sensitive output: /m, `${id} has Sensitive output`);
+    assert.match(body, /^Shows: .*Does not show: /m, `${id} has Shows and Does not show`);
+  }
+  has("workflow/mac-apt", /amd64 worker image only/);
+  has("workflow/mac-apt", /mac_apt exits 0 after errors it has logged/);
+  has("workflow/mac-apt", /was never run here/);
+  has("workflow/mac-apt", /can still read `parsed`/);
+  has("workflow/mac-apt", /A negative from a plugin that read `parsed` is not yet a negative/);
+  has("workflow/mac-apt", /FAST and ALL expand to plugins nothing here lists, so such a run is at most `partial`/);
+  has("workflow/mac-apt", /there is no password argument/);
+  has("workflow/mac-apt", /declares `secret_output` required/);
+  has("security/tcc", /never merges the system and user stores/);
+  has("security/tcc", /It is not the time of a grant/);
+  has("security/tcc", /Authorization is not access/);
+  has("security/tcc", /Any other number, and `auth_reason`, stay raw/);
+  has("security/gatekeeper-xprotect", /A quarantine flag is not malicious/);
+  has("security/gatekeeper-xprotect", /did not necessarily come from this machine/);
+  has("artifacts/spotlight", /Never `mdfind` the examiner's index/);
+  has("artifacts/spotlight", /UNVERIFIED/);
+  has("artifacts/spotlight", /a parser limit, not an empty index/);
+  has("artifacts/biome", /A container time is not the time of the event/);
+  has("artifacts/biome", /never checked here against Apple's own description or a real sample/);
+  has("artifacts/biome", /not proof that a person deleted anything/);
+  has("artifacts/biome", /iOS semantics do not carry over/);
+  has("artifacts/recent-items", /A stored reference is not an open/);
+  has("artifacts/recent-items", /shows no binary value, so the path inside is not read/);
+  // Sentences moved out of the leaves at the limit stay in the pack, and the leaf they left points to the new home.
+  has("workflow/mac-apt", /`mac_apt\.py -h` prints its input modes and plugin names/);
+  has("workflow/mac-apt", /Presence shows neither support for the subject's macOS build nor that a plugin finished; its log does\. Keep each plugin's log/);
+  has("triage/system-profile", /\(`workflow\/mac-apt`\)/);
+  has("artifacts/knowledgec", /`segb_read` frames it only \(`artifacts\/biome`\)/);
+  has("artifacts/plists-archives-dates", /`artifacts\/recent-items`/);
 });
 
 test("a skill that can reach secrets says the job runs with secret_output and cites a locator, never a value, a fragment or a hash", async () => {
@@ -211,7 +260,7 @@ test("no skill states an Apple version fact it cannot source, and the APFS time 
 const ROUTER = "macos/router";
 const FAMILY = ["windows-forensics", "linux-forensics", "memory-forensics", "macos-forensics", "ransomware-response"];
 // The 17 ids the pack had before the router, and the first-level leaves added since (EXTRA_IDS): other packs' `needs` and text name them, and every one still resolves.
-const EXTRA_IDS = ["security/keychains"];
+const EXTRA_IDS = ["security/keychains", "workflow/mac-apt", "security/tcc", "security/gatekeeper-xprotect", "artifacts/spotlight", "artifacts/biome", "artifacts/recent-items"];
 const BEFORE = [
   "accounts/attribution-remote", "accounts/users", "artifacts/fsevents", "artifacts/fsevents-dating", "artifacts/knowledgec",
   "artifacts/knowledgec-fields-time", "artifacts/plists", "artifacts/plists-archives-dates", "filesystem/apfs", "filesystem/apfs-encryption",
@@ -239,7 +288,8 @@ test("macos/router is the pack's only router, within 500 tokens, holds no rule, 
   assert.deepEqual([...named].sort(), [...skills.keys()].filter((id) => id !== ROUTER).sort());
   assert.equal(BEFORE.length, 18);
   for (const id of BEFORE) assert.ok(skills.has(id), `${id} is still a skill`);
-  assert.equal(skills.size, BEFORE.length + 1, "the router is the only skill added");
+  assert.equal(skills.size, BEFORE.length + NEW_IDS.length + 1, "the router and the six leaves of the second batch are the skills added");
+  for (const id of NEW_IDS) assert.ok(skills.has(id), `${id} is a skill`);
   // The generated index names it as the pack's router, which is the line the harness reads.
   assert.match(await readFile(join(SKILLS, "INDEX.md"), "utf8"), /^Router: `macos\/router`$/m);
 });
@@ -252,7 +302,7 @@ test("the pack index lists the entry lines of INDEX.md as the harness counts the
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => /^- `[^`]+`/.test(l));
   const parsed = await readPackIndex(PACK);
   assert.deepEqual(parsed.entries.map((e) => e.line), lines, "the harness reads every entry line of the file, and no other");
-  assert.equal(parsed.entries.length, BEFORE.length + 1);
+  assert.equal(parsed.entries.length, BEFORE.length + NEW_IDS.length + 1);
   assert.equal(parsed.router, ROUTER);
   assert.equal(lines.reduce((n, l) => n + estimateTokens(l), 0), parsed.tokens);
   assert.ok(parsed.entries.every((e) => e.tokens <= SKILL_BUDGET.entry), "every entry is within the entry budget");

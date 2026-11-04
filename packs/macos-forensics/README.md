@@ -8,21 +8,22 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Nineteen skills**, in seven families: a decision-rule leaf for each question,
+**Twenty-five skills**, in eight families: a decision-rule leaf for each question,
 second-level leaves a leaf points to ("only if") for the reference material, and the router
 `macos/router` (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf).
 
 | Family | Skills |
 | --- | --- |
 | Triage | `triage/system-profile`; `triage/clocks-hardware` (zone, epochs, hardware generation) |
-| Artefacts | `artifacts/plists`, `artifacts/plists-archives-dates`; `artifacts/fsevents`, `artifacts/fsevents-dating`; `artifacts/knowledgec`, `artifacts/knowledgec-fields-time` |
+| Artefacts | `artifacts/plists`, `artifacts/plists-archives-dates`; `artifacts/fsevents`, `artifacts/fsevents-dating`; `artifacts/knowledgec`, `artifacts/knowledgec-fields-time`; `artifacts/biome` (SEGB framing, not iOS meaning); `artifacts/recent-items` (shared file lists, bookmarks, MRUs, Safari history); `artifacts/spotlight` (store-version-aware, never `mdfind` on the examiner's index) |
 | Logs | `logs/unified`; `logs/unified-readers` (readers, staging, retention levels) |
 | Persistence | `persistence/mechanisms`; `persistence/login-items-quieter` |
 | Accounts | `accounts/users`; `accounts/attribution-remote` |
 | File system | `filesystem/apfs`; `filesystem/apfs-recovery`; `filesystem/apfs-encryption` |
-| Security | `security/keychains` (identification, and opening with the case's password) |
+| Security | `security/keychains` (identification, and opening with the case's password); `security/tcc` (privacy permission records); `security/gatekeeper-xprotect` (quarantine, provenance, signing; quarantine is not malicious) |
+| Workflow | `workflow/mac-apt` (running `mac_apt.py` and judging its log) |
 
-**Ten tools.** Each says what it read and what it did not, and none turns a failure
+**Eleven tools.** Each says what it read and what it did not, and none turns a failure
 into an empty result. Every answer carries `status` (`complete`, `partial` or `failed`)
 and `status_basis`; each tool has a clock of its own below its time limit and, once its
 sweep has started, ends on SIGTERM, SIGINT or SIGHUP with one JSON answer
@@ -101,12 +102,12 @@ a file whose secrets matter is read in a job run with `secret_output: true`.
 
 **One goal template**: `mac-compromise.md`.
 
-**Not in this pack.** A skill of its own for `mac_apt.py` (`macos_triage` and the `macos-artefacts` recipe run it; it is
-declared in `requires/host.json`, installed in the amd64 worker image only); Gatekeeper and
-XProtect, Spotlight, Biome and recent-item skills, and TCC and background-item skills
-(`macos_tcc` and `macos_login_items` have a naming edit in the persistence leaf, not a
-leaf of their own); APFS snapshot content access. A macOS examination that needs them
-needs other tools, and the skills say where they stop.
+**Not in this pack.** A parser for the Spotlight store or for a Gatekeeper or quarantine record (`artifacts/spotlight` and
+`security/gatekeeper-xprotect` give the method; whether the pinned `mac_apt.py` reads a Spotlight store was not tested here); a bookmark
+or alias decoder (`artifacts/recent-items` says what is and is not read); a decoder for a Biome payload (`segb_read` frames it only);
+a keychain value extractor beyond `keychain_open`; APFS snapshot content access. `mac_apt.py` is declared in `requires/host.json`
+and installed in the amd64 worker image only (`workflow/mac-apt` says how to run it and judge its log). A macOS examination that
+needs what is not here needs other tools, and the skills say where they stop.
 
 ## Install and use
 
