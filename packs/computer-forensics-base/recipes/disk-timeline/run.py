@@ -737,7 +737,11 @@ def run(image, out, zone=None):
         write_coverage(out, "complete", "log2timeline over every partition and volume of the image, and psort's timeline of it (the pipeline finished: see coverage_note)", [], extra)
         return 0, "coverage.json"
     if rows:
-        write_coverage(out, "partial", "Plaso wrote %s before it ended" % " and ".join(names or ["nothing usable"]), errors, extra)
+        kept = "Plaso wrote %s before it ended" % " and ".join(names or ["nothing usable"])
+        if LEFT["left_behind"] or LEFT["unproven"]:
+            kept += (", but a step left %d process(es) that were ended before the files were read (they may be cut short)" % LEFT["left_behind"]) if LEFT["left_behind"] else \
+                ", but nothing shows that no step left a process behind, so the files cannot be shown to be final"
+        write_coverage(out, "partial", kept, errors, extra)
     else:
         write_coverage(out, "failed", "nothing parsed", errors or ["log2timeline wrote no storage file"], extra)
     return 1, "coverage.json"

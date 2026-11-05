@@ -310,18 +310,99 @@ PAGES = []                 # objects with a hidden temporary file (_tmp) that a 
 CHILD = {"proc": None}     # the program being run, ended by its pid on a stop
 
 
+PIPE_GRACE = 1.0           # seconds the pipes of a program that has ended are given to reach end of file
+SUBREAPER = [False]
+
+
+def become_subreaper():
+    """On Linux ask the kernel to make this process the parent of every process a program leaves behind (PR_SET_CHILD_SUBREAPER = 36), so that
+    end_leftovers() can find one that left the tool's group or session. Once. Nothing is adopted elsewhere, and a leftover is then not found."""
+    if SUBREAPER[0] or not sys.platform.startswith("linux"):
+        return
+    SUBREAPER[0] = True
+    try:
+        import ctypes
+        ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)
+    except Exception:  # noqa: BLE001 - no libc symbol, a sandbox: the leftover is not found
+        pass
+
+
+def end_leftovers():
+    """Kill and reap what a program that has ended left behind: the children of this tool (it is a subreaper, and runs one program at a time, so
+    every child it has is a leftover) and what they started. Linux only; the tool itself is not touched. Never raises."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        me = os.getpid()
+        for _round in range(3):
+            table = {}
+            for name in os.listdir("/proc"):
+                if name.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % name, "rb") as fh:
+                            fields = fh.read().decode("utf-8", "replace").rsplit(")", 1)[1].split()
+                        table[int(name)] = (fields[0], int(fields[1]))
+                    except (OSError, ValueError, IndexError):
+                        continue
+            kids = [pid for pid, (_state, parent) in table.items() if parent == me]
+            if not kids:
+                return
+            group, grew = set(kids), True
+            while grew:
+                more = {pid for pid, (_state, parent) in table.items() if parent in group and pid not in group}
+                grew = bool(more)
+                group |= more
+            for pid in group:
+                if table[pid][0] not in ("Z", "X"):
+                    try:
+                        os.kill(pid, 9)
+                    except OSError:
+                        pass
+            end = time.monotonic() + 1.0
+            for pid in kids:
+                while time.monotonic() < end:
+                    try:
+                        if os.waitpid(pid, os.WNOHANG)[0] != 0:
+                            break
+                    except ChildProcessError:
+                        break
+                    time.sleep(0.005)
+    except Exception:  # noqa: BLE001 - a look for leftovers never stops the tool
+        pass
+
+
 def run_child(argv, timeout, **kwargs):
-    """subprocess.run with its output captured, with the child recorded so that a stop can end it by its pid."""
+    """subprocess.run with its output captured, with the child recorded so that a stop can end it by its pid. The wait has a clock all the way: at
+    `timeout` the program is killed, and a program that has ended while something it started still holds its pipes does not hold the tool (the
+    pipes are given PIPE_GRACE seconds, then let go). Both raise subprocess.TimeoutExpired, because what was read cannot be taken as the whole
+    output; what the program left behind is ended."""
+    become_subreaper()
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
     CHILD["proc"] = proc
+    deadline, ended = time.monotonic() + timeout, None
     try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.communicate()
-        raise
+        while True:
+            left = deadline - time.monotonic()
+            try:
+                if left <= 0:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                out, err = proc.communicate(timeout=min(0.2, left))
+                break
+            except subprocess.TimeoutExpired:
+                if proc.poll() is not None:
+                    ended = ended or time.monotonic()
+                if left <= 0 or (ended is not None and time.monotonic() - ended >= PIPE_GRACE):
+                    proc.kill()
+                    for pipe in (proc.stdout, proc.stderr):
+                        try:
+                            pipe.close()
+                        except (OSError, ValueError):
+                            pass
+                    proc.wait()
+                    raise
     finally:
         CHILD["proc"] = None
+        end_leftovers()
     return subprocess.CompletedProcess(argv, proc.returncode, out, err)
 
 
@@ -334,7 +415,7 @@ def end_child():
         except Exception:  # noqa: BLE001 - best effort
             pass
 
-TOOL = {"name": "file_type", "version": 13}
+TOOL = {"name": "file_type", "version": 14}
 BUDGET_SECONDS = 100          # under the manifest's 120
 LIBMAGIC_TIMEOUT = 10
 ERRORS_SHOWN = 50

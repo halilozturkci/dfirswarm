@@ -643,5 +643,115 @@ class DiskTimelineProcess(Process):
             self.assertFalse(alive(pid), "the process the step started in a session of its own survived the stop")
 
 
+# ---- a program that ends while something it started keeps its pipe open ----------------------------------------------------------------------
+# Every tool that reads a program's pipe answers on its own clock, within the manifest's, and not with a stream it did not see the end of: a
+# stand-in leaves `sleep 600` holding the pipe and exits. On the batch head image_layout, file_type and archive_extract (zstd) waited for ever.
+
+HOLD = 'sleep 600 &\necho $! >> "%s"\n'
+
+
+class PipeHolders(Process):
+    def holder_run(self, name, script, stdin_text, files, bins, limit, args=(), env=None):
+        root = self.path(name)
+        os.makedirs(root)
+        pids = os.path.join(root, "pids")
+        d = os.path.join(root, "bin")
+        os.makedirs(d)
+        for n, body in bins.items():
+            stand_in(d, n, body.replace("@PIDS@", pids))
+        for rel, data in files.items():
+            p = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as fh:
+                fh.write(data)
+        e = dict(os.environ, **path_env(d))
+        for k in ("JOB_ID", "OUT", "AGENT_ID", "SECRET_OUTPUT"):
+            e.pop(k, None)
+        e.update(env or {})
+        began = time.monotonic()
+        try:
+            proc = subprocess.run([sys.executable, script] + [a.replace("@ROOT@", root) for a in args], input=stdin_text.replace("@ROOT@", root),
+                                  capture_output=True, text=True, cwd=root, env=e, timeout=limit, start_new_session=True)
+        finally:
+            leftovers = []
+            if os.path.exists(pids):
+                with open(pids) as fh:
+                    leftovers = [int(x) for x in fh.read().split()]
+        took = time.monotonic() - began
+        try:
+            doc = json.loads(proc.stdout)
+        except ValueError:
+            doc = None
+        self.addCleanup(lambda: [os.kill(p, 9) for p in leftovers if alive(p)])
+        return proc, doc, took, leftovers, root
+
+    def ended(self, leftovers):
+        time.sleep(0.3)
+        self.assertTrue(leftovers)
+        for pid in leftovers:
+            self.assertFalse(alive(pid), "the process that held the pipe is still running")
+
+    @LINUX
+    def test_image_layout_answers_and_the_holder_is_ended(self):
+        mbr = bytearray(512)
+        mbr[510:512] = b"\x55\xaa"
+        proc, doc, took, left, _r = self.holder_run("il", tool_path("image_layout"), json.dumps({"image": "@ROOT@/disk.dd"}), {"disk.dd": bytes(mbr) + b"\0" * 4096},
+                                                    {"mmls": "echo 'DOS Partition Table'\n" + HOLD % "@PIDS@", "fsstat": "exit 1\n", "img_stat": "exit 1\n"}, 100)
+        self.assertLess(took, 40)
+        self.assertIsNotNone(doc, proc.stderr[-300:])
+        self.assertNotEqual(doc["status"], "complete", doc.get("status_basis"))
+        self.ended(left)
+
+    @LINUX
+    def test_file_type_answers_and_the_holder_is_ended(self):
+        proc, doc, took, left, _r = self.holder_run("ft", tool_path("file_type"), json.dumps({"path": "@ROOT@/d"}), {"d/a.bin": bytes(range(1, 200))},
+                                                    {"file": "echo data\n" + HOLD % "@PIDS@"}, 100)
+        self.assertLess(took, 30)
+        self.assertIsNotNone(doc, proc.stderr[-300:])
+        entry = doc["files"][0]
+        self.assertNotIn("libmagic (the installed", entry["type_source"] or "", "an output whose end was not seen was taken")
+        self.ended(left)
+
+    @LINUX
+    def test_chunk_needles_answers_partial_when_the_end_of_the_stream_was_not_seen(self):
+        proc, doc, took, left, _r = self.holder_run("cn", tool_path("chunk_needles"), json.dumps({"image": "@ROOT@/img.dd", "inode": 5, "offset": 2048, "needles": "needle"}),
+                                                    {"img.dd": b"\0" * 1024}, {"icat": "printf 'aaneedle'\n" + HOLD % "@PIDS@"}, 100)
+        self.assertLess(took, 20)
+        self.assertEqual(doc["status"], "partial", doc.get("status_basis"))
+        self.assertIn("kept its output pipe open", doc["status_basis"])
+        self.ended(left)
+
+    @LINUX
+    def test_icat_extract_answers_partial_when_the_end_of_the_stream_was_not_seen(self):
+        proc, doc, took, left, _r = self.holder_run("ie", tool_path("icat_extract"), json.dumps({"image": "@ROOT@/img.dd", "inode": 5, "output": "@ROOT@/out/f.bin", "max_seconds": 60}),
+                                                    {"img.dd": b"\0" * 1024}, {"icat": "printf 'abc'\n" + HOLD % "@PIDS@", "fls": "exit 1\n"}, 100)
+        self.assertLess(took, 20)
+        self.assertEqual(doc["status"], "partial", doc.get("status_basis"))
+        self.assertIn("kept its output pipe open", doc["problem"])
+        self.ended(left)
+
+    @LINUX
+    def test_archive_members_answers_partial_when_the_end_of_the_listing_was_not_seen(self):
+        target = json.dumps({"paths": ["@ROOT@/a.7z"]})
+        proc, doc, took, left, root = self.holder_run("am", recipe_path("archive-members", "run.py"), "", {"a.7z": b"7z\xbc\xaf\x27\x1c" + b"\0" * 64},
+                                                      {"7z": "printf 'Path = a.txt\\nSize = 1\\n\\n'\n" + HOLD % "@PIDS@"}, 100,
+                                                      args=["run", "--target", target, "--out", "@ROOT@/out"], env={"RECIPE_SECONDS": "120"})
+        self.assertLess(took, 20)
+        with open(os.path.join(root, "out", "coverage.json"), encoding="utf-8") as fh:
+            cov = json.load(fh)
+        self.assertEqual(cov["status"], "partial", cov)
+        self.assertTrue(any("kept its output pipe open" in x for x in cov["limits_hit"]), cov["limits_hit"])
+        self.ended(left)
+
+    @LINUX
+    def test_archive_extract_zstd_answers_on_its_clock_and_the_holder_is_ended(self):
+        proc, doc, took, left, _r = self.holder_run("zs", tool_path("archive_extract"), json.dumps({"path": "@ROOT@/a.zst", "out_dir": "@ROOT@/out", "max_seconds": 20}),
+                                                    {"a.zst": b"\x28\xb5\x2f\xfd" + b"\0" * 64}, {"zstd": "printf 'hello'\n" + HOLD % "@PIDS@"}, 100)
+        self.assertLess(took, 40)
+        self.assertIsNotNone(doc, proc.stderr[-300:])
+        self.assertNotEqual(doc["status"], "complete", doc.get("status_basis"))
+        self.ended(left)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -255,7 +255,7 @@ PAGES = []                 # objects with a hidden temporary file (_tmp) that a 
 CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
 PROGRESS = {"scanned": 0}
 
-TOOL = {"name": "chunk_needles", "version": 19}
+TOOL = {"name": "chunk_needles", "version": 20}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -1068,10 +1068,75 @@ def open_regular(path):
     return open(fd, "rb")
 
 
+PIPE_GRACE = 1.0           # seconds the pipes of a program that has ended are given to reach end of file
+SUBREAPER = [False]
+
+
+def become_subreaper():
+    """On Linux ask the kernel to make this process the parent of every process a program leaves behind (PR_SET_CHILD_SUBREAPER = 36), so that
+    end_leftovers() can find one that left the tool's group or session. Once. Nothing is adopted elsewhere, and a leftover is then not found."""
+    if SUBREAPER[0] or not sys.platform.startswith("linux"):
+        return
+    SUBREAPER[0] = True
+    try:
+        import ctypes
+        ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)
+    except Exception:  # noqa: BLE001 - no libc symbol, a sandbox: the leftover is not found
+        pass
+
+
+def end_leftovers():
+    """Kill and reap what a program that has ended left behind: the children of this tool (it is a subreaper, and runs one program at a time, so
+    every child it has is a leftover) and what they started. Linux only; the tool itself is not touched. Never raises."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        me = os.getpid()
+        for _round in range(3):
+            table = {}
+            for name in os.listdir("/proc"):
+                if name.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % name, "rb") as fh:
+                            fields = fh.read().decode("utf-8", "replace").rsplit(")", 1)[1].split()
+                        table[int(name)] = (fields[0], int(fields[1]))
+                    except (OSError, ValueError, IndexError):
+                        continue
+            kids = [pid for pid, (_state, parent) in table.items() if parent == me]
+            if not kids:
+                return
+            group, grew = set(kids), True
+            while grew:
+                more = {pid for pid, (_state, parent) in table.items() if parent in group and pid not in group}
+                grew = bool(more)
+                group |= more
+            for pid in group:
+                if table[pid][0] not in ("Z", "X"):
+                    try:
+                        os.kill(pid, 9)
+                    except OSError:
+                        pass
+            end = time.monotonic() + 1.0
+            for pid in kids:
+                while time.monotonic() < end:
+                    try:
+                        if os.waitpid(pid, os.WNOHANG)[0] != 0:
+                            break
+                    except ChildProcessError:
+                        break
+                    time.sleep(0.005)
+    except Exception:  # noqa: BLE001 - a look for leftovers never stops the tool
+        pass
+
+
+HELD = [False]            # icat has ended and something it started kept its pipe open: the end of the stream was not seen
+
+
 def read_some(pipe, chunk, deadline):
     """Up to `chunk` bytes from icat's pipe, waiting on the clock: b"" at the end of the stream, None when the clock ran out first. A blocking
     read would wait for an icat that stalls (a damaged image, a hung disk) for as long as it likes."""
     fd = pipe.fileno()
+    ended = None
     while True:
         left = deadline - time.monotonic()
         if left <= 0:
@@ -1079,6 +1144,12 @@ def read_some(pipe, chunk, deadline):
         ready, _, _ = select.select([fd], [], [], min(left, 0.2))
         if ready:
             return os.read(fd, chunk)
+        proc = CHILD["proc"]
+        if proc is not None and proc.poll() is not None:     # icat has ended and something it started holds its pipe: a moment's grace, then the stream is let go
+            ended = ended or time.monotonic()
+            if time.monotonic() - ended >= PIPE_GRACE:
+                HELD[0] = True
+                return None
 
 
 def scan_fh(fh, source, total=None):
@@ -1226,12 +1297,14 @@ else:
     except (OSError, ValueError) as exc:
         fail("the image is not a regular file that can be read: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__), image=image)
     with tempfile.TemporaryFile() as errf:
+        become_subreaper()
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
         CHILD["proc"] = proc
         hits, scanned, stopped = scan_fh(proc.stdout, source)
         if stopped is not None:
             proc.kill()                       # icat is blocked writing to a pipe nobody reads any more; its exit is not a failure
         rc = proc.wait()
+        end_leftovers()
         errf.seek(0)
         err_text = errf.read().decode("utf-8", "replace").strip()
     if rc != 0 and stopped is None:
@@ -1250,6 +1323,7 @@ answer = {
     "complete": stopped is None and secret.stopped_at is None and not lost,
     "status": "complete" if stopped is None and not lost else "partial",
     "status_basis": ("the whole stream was read and every occurrence in it is reported" if stopped is None
+                     else "icat ended, but something it started kept its output pipe open, so the end of the stream was not seen (see stopped): only occurrences that start before next_start are reported" if HELD[0]
                      else "the scan stopped at its clock before the end of the stream (see stopped): only occurrences that start before next_start are reported"),
     "match_policy": "every occurrence by its start offset in the scanned stream, overlapping ones included, case-sensitive; each needle as UTF-8 and as UTF-16LE",
     "context": {"bytes_each_side": context, "returned_inline": False,

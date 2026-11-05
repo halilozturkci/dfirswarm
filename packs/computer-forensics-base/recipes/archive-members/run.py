@@ -1019,6 +1019,67 @@ def list_zip(path, w, deadline, max_members, cov):
     return n
 
 
+PIPE_GRACE = 1.0           # seconds the pipes of a program that has ended are given to reach end of file
+SUBREAPER = [False]
+
+
+def become_subreaper():
+    """On Linux ask the kernel to make this process the parent of every process a program leaves behind (PR_SET_CHILD_SUBREAPER = 36), so that
+    end_leftovers() can find one that left the tool's group or session. Once. Nothing is adopted elsewhere, and a leftover is then not found."""
+    if SUBREAPER[0] or not sys.platform.startswith("linux"):
+        return
+    SUBREAPER[0] = True
+    try:
+        import ctypes
+        ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)
+    except Exception:  # noqa: BLE001 - no libc symbol, a sandbox: the leftover is not found
+        pass
+
+
+def end_leftovers():
+    """Kill and reap what a program that has ended left behind: the children of this tool (it is a subreaper, and runs one program at a time, so
+    every child it has is a leftover) and what they started. Linux only; the tool itself is not touched. Never raises."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        me = os.getpid()
+        for _round in range(3):
+            table = {}
+            for name in os.listdir("/proc"):
+                if name.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % name, "rb") as fh:
+                            fields = fh.read().decode("utf-8", "replace").rsplit(")", 1)[1].split()
+                        table[int(name)] = (fields[0], int(fields[1]))
+                    except (OSError, ValueError, IndexError):
+                        continue
+            kids = [pid for pid, (_state, parent) in table.items() if parent == me]
+            if not kids:
+                return
+            group, grew = set(kids), True
+            while grew:
+                more = {pid for pid, (_state, parent) in table.items() if parent in group and pid not in group}
+                grew = bool(more)
+                group |= more
+            for pid in group:
+                if table[pid][0] not in ("Z", "X"):
+                    try:
+                        os.kill(pid, 9)
+                    except OSError:
+                        pass
+            end = time.monotonic() + 1.0
+            for pid in kids:
+                while time.monotonic() < end:
+                    try:
+                        if os.waitpid(pid, os.WNOHANG)[0] != 0:
+                            break
+                    except ChildProcessError:
+                        break
+                    time.sleep(0.005)
+    except Exception:  # noqa: BLE001 - a look for leftovers never stops the tool
+        pass
+
+
 def list_7z(path, w, deadline, max_members, cov, out_dir):
     """7z's own listing, read as it streams (a listing of millions of members
     is never held whole), its stderr kept whole beside the list."""
@@ -1030,6 +1091,7 @@ def list_7z(path, w, deadline, max_members, cov, out_dir):
         program = next((found for found in (shutil.which(n) for n in SEVEN_Z_NAMES) if found), None)
         if program is None:
             raise FileNotFoundError("7z")
+        become_subreaper()
         proc = subprocess.Popen([program, "l", "-slt", "-ba", "--", path], stdout=subprocess.PIPE, stderr=err, env=env)
         CHILD["proc"] = proc
     except FileNotFoundError:
@@ -1056,13 +1118,18 @@ def list_7z(path, w, deadline, max_members, cov, out_dir):
         """7z's output a line at a time, waited for with the clock running: a 7z that stalls (a damaged archive, a stuck read) is stopped
         at the deadline and not waited on behind a read that returns nothing. A line past LINE_MAX is an error, not a name."""
         nonlocal stopped
-        fd, pending = proc.stdout.fileno(), b""
+        fd, pending, ended = proc.stdout.fileno(), b"", None
         while True:
             left = deadline - time.monotonic()
             if left <= 0:
                 stopped = "seconds: stopped after %d members (7z was still running)" % n
                 return
-            if not select.select([fd], [], [], min(left, 5))[0]:
+            if not select.select([fd], [], [], min(left, 0.2))[0]:
+                if proc.poll() is not None:                 # 7z has ended and something it started holds its pipe: a moment's grace, then the listing is let go
+                    ended = ended or time.monotonic()
+                    if time.monotonic() - ended >= PIPE_GRACE:
+                        stopped = "pipe: 7z ended, but something it started kept its output pipe open, so the end of the listing was not seen (after %d members)" % n
+                        return
                 continue
             block = os.read(fd, 65536)
             if not block:
@@ -1101,6 +1168,7 @@ def list_7z(path, w, deadline, max_members, cov, out_dir):
         cov["limits_hit"].append(stopped)
     proc.stdout.close()
     rc = proc.wait()
+    end_leftovers()
     err.close()
     size = os.path.getsize(err_path)
     text = open(err_path, "rb").read(65536).decode("utf-8", "replace").strip() if size else ""

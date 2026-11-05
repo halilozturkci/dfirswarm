@@ -2116,8 +2116,9 @@ class Decomp:
 
     MARKERS = {"gzip": b"\x1f\x8b", "bzip2": b"BZh", "xz": b"\xfd7zXZ\x00"}
 
-    def __init__(self, path, kind, max_ratio):
+    def __init__(self, path, kind, max_ratio, deadline=None):
         self.kind, self.max_ratio = kind, max_ratio
+        self.deadline = deadline   # the tool's clock (monotonic): the zstd program's pipe is read on it
         self.fh = open_regular(path)
         self.consumed = 0          # compressed bytes read from the file
         self.produced = 0          # decompressed bytes handed out
@@ -2302,7 +2303,17 @@ class Decomp:
             self.proc = spawn(["zstd", "-dc", "-q"], stdin=self.fh, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             ACTIVE.append(self.proc)
             fd = self.proc.stdout.fileno()
+            ended = None
             while True:
+                left = (self.deadline - time.monotonic()) if self.deadline is not None else 1.0
+                if left <= 0:
+                    raise Budget("max_seconds", "the time budget was reached while the zstd program was being read")
+                if not select.select([fd], [], [], min(left, 0.2))[0]:
+                    if self.proc.poll() is not None:        # the program has ended and something it started still holds the pipe: it is given a moment, then let go
+                        ended = ended or time.monotonic()
+                        if time.monotonic() - ended >= 1.0:
+                            raise EOFError("the zstd program ended, but something it started kept its output pipe open: the end of the stream was not seen, so the output may be short")
+                    continue
                 piece = os.read(fd, CHUNK)
                 if not piece:
                     break
@@ -3778,7 +3789,7 @@ def main():
                     if which is None:
                         raise ArchiveError("zstd: %s" % mod, format="zstd")
                     info["zstd_reader"] = which
-                dec = Decomp(path, fmt, a["max_ratio"])
+                dec = Decomp(path, fmt, a["max_ratio"], eng.deadline)
                 peek = b""
                 try:
                     peek = dec.read(512)
