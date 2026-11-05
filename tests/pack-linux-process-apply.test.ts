@@ -229,7 +229,11 @@ test("linux-target: a stop signal in the wrapper-read window ends the holder the
       child.kill("SIGTERM");
       assert.equal(await closed, 143);
       const line = JSON.parse(Buffer.concat(out).toString("utf8").trim().split("\n").pop() ?? "{}");
-      assert.equal(line.status, "partial");
+      // The stand-in wrapper wrote no summary: coverage.json says failed, and so does the line (it said "partial ... coverage.json says partial").
+      const coverage = JSON.parse(await readFile(join(cwd, "recipe-out", "coverage.json"), "utf8"));
+      assert.equal(coverage.status, "failed");
+      assert.equal(line.status, coverage.status);
+      assert.match(line.status_basis, /coverage\.json says failed/);
       for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `holder ${pid} is gone`);
     } finally {
       await reap(cwd);
