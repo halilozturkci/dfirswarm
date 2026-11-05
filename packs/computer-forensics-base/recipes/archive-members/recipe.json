@@ -1,7 +1,7 @@
 {
   "id": "archive-members",
-  "version": "1.2.9",
-  "description": "List the members of a tar (plain or compressed), zip or 7z archive without extracting any: path, type, size, time, mode, link target and where each member sits in the archive. A compressed tar is complete only when its whole stream has been read: a further tar, a further stream, bytes after the last stream or a failed integrity check make it partial, with the offset named.",
+  "version": "1.2.10",
+  "description": "List the members of a tar (plain or compressed), zip or 7z archive without extracting any: path, type, size, time, mode, link target and where each member sits in the archive. A compressed tar is complete only when its whole stream has been read: a further tar, a further stream, bytes after the last stream or a failed integrity check make it partial, with the offset named. If 7z has ended while something it started keeps its output pipe open (silent, or writing all the time), the listing is read for one second after 7z ended and then stops, the run is partial (limits_hit says the end of the listing was not seen), and what 7z left behind is ended, also when a stop signal arrives.",
   "object": "archive",
   "order": 30,
   "min_bytes": 22,
@@ -53,5 +53,5 @@
   ],
   "purpose": "inventory",
   "covers": "The archive's own list of members. It opens no member, searches no contents and lists no archive inside the archive: a member is extracted with the archive_extract tool, which takes the member number n of members.tsv (from_index) and writes each member under its own bounded, link-free rules, then catalogued on its own. A tar compressed with zstd is not listed here (archive_extract reads it where a zstd reader exists).",
-  "sha256": "57aa02b5eb93f3b26ac70f444f7a7ef68b58c01d62829f718ea0eb58d40aa5c5"
+  "sha256": "aa535a809191c5c681b6fb845ef3bd4c11e4d6b24c5b4d27dec0ce7cf0795196"
 }

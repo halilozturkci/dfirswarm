@@ -28,7 +28,7 @@ export type Case = {
   skipOk?: boolean;
   /** The leftovers that hold a pipe the tool reads and never end by themselves (HOLDERS in network-process-harness.ts): each must be answered, truthfully, within maxSeconds. */
   holders?: string[];
-  /** The most a run with a holder may take (default 15 seconds: the pipe grace, one settle, the work around them). */
+  /** The most a run with a holder may take (default 10 seconds: the pipe grace, one settle, the cut after the program ended, the work around them). */
   maxSeconds?: number;
   /** Where the verdict is read from: the answer itself (default) or a nested object. */
   group?: (answer: Json) => Json;
@@ -46,7 +46,7 @@ export async function expectLeft(c: Case, variant: string): Promise<void> {
       const began = Date.now();
       const { answer } = await c.invoke(cwd, bin, variant, "linux");
       const took = (Date.now() - began) / 1000;
-      assert.ok(took < (c.maxSeconds ?? 15), `${c.name} ${variant}: answered after ${took} seconds`);
+      assert.ok(took < (c.maxSeconds ?? 10), `${c.name} ${variant}: answered after ${took} seconds`);
       assert.equal(answer.status, "partial", `${c.name} ${variant}: ${answer.status_basis}`);
       if (!c.skipOk && "ok" in answer) assert.equal(answer.ok, false, `${c.name} ${variant}`);
       const g = group(c, answer);

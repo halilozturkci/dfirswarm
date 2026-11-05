@@ -45,6 +45,6 @@
   "example": "{\"path\": \"inputs/memory.raw\", \"plugins\": [\"windows.vadyarascan\"], \"views\": [\"plugins\", \"symbols\", \"yara\", \"fuse\"]}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 4,
-  "sha256": "691a5e79a4ff570dbfc5c5239fc0a9d13ba9d27d340a7b3098700283db706205"
+  "version": 5,
+  "sha256": "f25f290b7ef8a1bdcc52af89683658878d1d59e7eb227eff2990ea77a1408601"
 }

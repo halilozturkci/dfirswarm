@@ -237,3 +237,42 @@ test("linux-target: a stop signal in the wrapper-read window ends the holder the
     }
   });
 });
+
+// ---- the version probes (package_verify, audit_events) read the program on a pipe: a holder or a flood left by --version neither hangs the probe nor survives -----------------
+
+for (const holder of HOLDERS) {
+  for (const which of ["package_verify", "audit_events"] as const) {
+    test(`${which} version probe: a ${holder} left by --version is ended, the tool answers in time and says partial`, { timeout: 120000 }, async () => {
+      await withCwd(async (cwd, bin) => {
+        const dir = await stubDir(cwd);
+        const out = join(cwd, "out");
+        await mkdir(out, { recursive: true });
+        await writeFile(join(cwd, "late.txt"), "");
+        try {
+          let run;
+          const began = Date.now();
+          if (which === "audit_events") {
+            await writeFile(join(cwd, "work", "audit.log"), AUDIT_LOG);
+            await stub(bin, "ausearch", sh(`${pre(dir, holder)}case "$1" in --version) leave "${join(cwd, "late.txt")}"; echo "ausearch version 9.9.9"; exit 0;; esac\ncat "$2"\nexit 0\n`));
+            run = await exec(AUDIT, [], { paths: ["work/audit.log"], compare_ausearch: true }, cwd, bin, { STUB_DIR: dir, JOB_ID: "j-1", OUT: out, SECRET_OUTPUT: "1", STUB_LEFT: holder }, "linux");
+          } else {
+            const root = join(cwd, "work", "r");
+            await mkdir(join(root, "var/lib/dpkg/info"), { recursive: true });
+            await writeFile(join(root, "var/lib/dpkg/status"), "Package: a\nStatus: install ok installed\n");
+            await writeFile(join(root, "var/lib/dpkg/info/a.md5sums"), "d41d8cd98f00b204e9800998ecf8427e  usr/bin/a\n");
+            await stub(bin, "debsums", sh(`${pre(dir, holder)}case "$1" in --version) leave "${join(cwd, "late.txt")}"; echo "debsums version 9.9.9"; exit 0;; esac\nprintf '%s\\n' '/usr/bin/a                                        OK'\nexit 0\n`));
+            run = await exec(VERIFY, [], { root: "work/r", family: "debian" }, cwd, bin, { STUB_DIR: dir, JOB_ID: "j-1", OUT: out, SECRET_OUTPUT: "1", STUB_LEFT: holder }, "linux");
+          }
+          assert.ok(Date.now() - began < 12000, `took ${Date.now() - began} ms`);
+          assert.equal(run.code, 0, run.stderr + run.stdout);
+          const answer = JSON.parse(run.stdout);
+          assert.equal(answer.status, "partial", JSON.stringify(answer.status_basis));
+          assert.ok(answer.program_group.left_behind >= 1, JSON.stringify(answer.program_group));
+          for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `holder ${pid} is gone`);
+        } finally {
+          await reap(cwd);
+        }
+      });
+    });
+  }
+}

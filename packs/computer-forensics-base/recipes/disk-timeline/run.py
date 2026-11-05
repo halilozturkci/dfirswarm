@@ -40,6 +40,11 @@ import subprocess
 import sys
 import time
 
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
 
 # BEGIN SHARED STOP
 # The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
@@ -480,6 +485,131 @@ def write_coverage(out, status, covered, errors, extra=None, name="coverage.json
         raise
 
 
+# What a step leaves behind. This recipe carries no shared PROCESS block (its text is held equal in many files by tests, and the recipe starts one program at a time),
+# so the mechanism is its own and small: on Linux the recipe makes itself a subreaper (PR_SET_CHILD_SUBREAPER), so that a process log2timeline, psort or pinfo leaves
+# behind when it exits (a worker, a helper, one in a session of its own, one that holds none of the recipe's descriptors) becomes a child of the recipe, and settle_steps()
+# stops it and what it started, kills and reaps them, before the recipe reads, counts or lists the files the step wrote. What it ended makes the run partial, and so does a
+# host where none can be ruled out (not Linux, or a kernel that refuses). The same call ends everything below the recipe when a stop signal arrives.
+LEFT = {"left_behind": 0, "unproven": [], "subreaper": False, "tried": False}
+KNOWN_KIDS = {}            # the children the recipe already had when it asked to be a subreaper: pid -> start time (they are not a step's)
+SETTLE_SECONDS = 3         # the most one look for leftovers works, in seconds
+
+
+def _stat_row(pid):
+    """(state, parent pid, start time) of a process from /proc/<pid>/stat (the fields after the last ')'), or None."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            raw = fh.read().decode("utf-8", "replace")
+        rest = raw[raw.rfind(")") + 2:].split()
+        return rest[0], int(rest[1]), rest[19]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _table():
+    table = {}
+    for name in os.listdir("/proc"):
+        if name.isdigit():
+            row = _stat_row(int(name))
+            if row is not None:
+                table[int(name)] = row
+    return table
+
+
+def become_subreaper():
+    """Ask the kernel to make this process the parent of every process a step leaves behind. Once. Says in LEFT["unproven"] why none can be ruled out when it
+    cannot be done."""
+    if LEFT["tried"]:
+        return LEFT["subreaper"]
+    LEFT["tried"] = True
+    if sys.platform.startswith("linux") and ctypes is not None:
+        try:
+            LEFT["subreaper"] = ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
+        except Exception:  # noqa: BLE001 - no libc symbol, a sandbox: the caller falls back
+            LEFT["subreaper"] = False
+        if LEFT["subreaper"]:
+            try:
+                me = os.getpid()
+                KNOWN_KIDS.update({pid: row[2] for pid, row in _table().items() if row[1] == me})
+            except OSError:
+                LEFT["unproven"].append("the children the recipe already had could not be listed: one of them may be taken for a step's")
+        else:
+            LEFT["unproven"].append("this host refused PR_SET_CHILD_SUBREAPER: a process a step left behind is not adopted and may not be found")
+    else:
+        LEFT["unproven"].append("this host cannot adopt orphaned processes (no PR_SET_CHILD_SUBREAPER): a process a step left behind may not be found")
+    return LEFT["subreaper"]
+
+
+def settle_steps():
+    """End what a step left behind: the recipe's children that are no known child, with everything below them (stopped first, so that nothing forks on while they are
+    found, then killed, then reaped), for at most SETTLE_SECONDS. Returns how many live processes it ended; LEFT["left_behind"] has the total. Never raises."""
+    if not LEFT["subreaper"]:
+        return 0
+    ended, looked = 0, False
+    deadline = time.monotonic() + SETTLE_SECONDS
+    try:
+        me = os.getpid()
+        while True:
+            table = _table()
+            victims = {pid: row for pid, row in table.items() if row[1] == me and KNOWN_KIDS.get(pid) != row[2]}
+            if not victims:
+                if ended and not looked:
+                    looked = True
+                    time.sleep(0.05)               # a fork that was under way when the first one died
+                    continue
+                return ended
+            if time.monotonic() >= deadline:
+                LEFT["unproven"].append("%d processes a step left behind were still there after %d seconds: they were not all ended" % (len(victims), SETTLE_SECONDS))
+                return ended
+            group = dict(victims)
+            for _round in range(8):                # stop each one, then what it had started, until no new one turns up
+                for pid, (state, _ppid, start) in list(group.items()):
+                    if state not in ("Z", "X"):
+                        row = _stat_row(pid)
+                        if row is not None and row[2] == start:
+                            try:
+                                os.kill(pid, 19)   # SIGSTOP
+                            except OSError:
+                                pass
+                more = {pid: row for pid, row in _table().items() if row[1] in group and pid not in group}
+                if not more:
+                    break
+                group.update(more)
+            for pid, (state, _ppid, start) in group.items():
+                if state not in ("Z", "X"):
+                    row = _stat_row(pid)
+                    if row is not None and row[2] == start:
+                        try:
+                            os.kill(pid, 9)
+                            ended += 1
+                        except OSError:
+                            pass
+            for pid in victims:                    # reap: a zombie is not counted, and not left
+                while time.monotonic() < deadline:
+                    try:
+                        if os.waitpid(pid, os.WNOHANG)[0] != 0:
+                            break
+                    except ChildProcessError:
+                        break
+                    time.sleep(0.005)
+    except Exception as exc:  # noqa: BLE001 - never into the finally of the recipe: say it could not be proven
+        LEFT["unproven"].append("the look for what a step left behind failed (%s)" % type(exc).__name__)
+        return ended
+    finally:
+        LEFT["left_behind"] += ended
+
+
+def leftover_errors():
+    """The sentences for the errors of the run: a step left processes that were ended before the files were read, or none can be ruled out."""
+    errors = []
+    if LEFT["left_behind"]:
+        errors.append("log2timeline, psort or pinfo left %d process(es) running after it ended (a child that held one of the step's files, in the recipe's process group or, in a session of its own, "
+                      "outside it); they were killed and reaped before the files were read, counted or listed, so timeline.plaso, timeline.csv, the logs and the captured "
+                      "words are what they held at that moment and what the leftover would still have written is missing" % LEFT["left_behind"])
+    errors.extend(why + ": the files the steps wrote cannot be shown to be final" for why in LEFT["unproven"])
+    return errors
+
+
 def step(out, name, argv):
     # cwd=out: what a step writes where it stands lands in out, never in the
     # (read-only) directory the job started in.
@@ -490,6 +620,7 @@ def step(out, name, argv):
             return proc.wait()
         finally:
             CHILD["proc"] = None
+            settle_steps()                 # before the files are read: what the step left behind is ended
 
 
 def run(image, out, zone=None):
@@ -516,6 +647,7 @@ def run(image, out, zone=None):
                        name="coverage.refused.json")
         return 1, "coverage.refused.json"
     began = time.time()
+    become_subreaper()
     write_coverage(out, "partial", "started; log2timeline or psort did not finish (stopped before its end)", ["the run ended before Plaso did"], extra)
 
     def _stopped(signum):
@@ -526,6 +658,7 @@ def run(image, out, zone=None):
                 proc.wait(timeout=5)
             except Exception:  # noqa: BLE001 - best effort
                 pass
+        settle_steps()                       # what the step started and lost is a child of the recipe now: ended with it
         try:
             write_coverage(out, "partial", "the recipe was stopped by signal %d: the program running was ended, and what it had written is in out, not counted" % signum,
                            ["stopped by signal %d before Plaso finished" % signum], dict(extra, interrupted=True, signal=signum))
@@ -598,11 +731,17 @@ def run(image, out, zone=None):
         for rel, what in rows:
             handle.write("%s\t%s\n" % (rel, what))
     names = [r for r, _ in rows if r in ("timeline.plaso", "timeline.csv")]
+    errors.extend(leftover_errors())
+    extra["program_group"] = {"subreaper": LEFT["subreaper"], "left_behind": LEFT["left_behind"], "unproven": list(LEFT["unproven"])}
     if not errors and len(names) == 2:
         write_coverage(out, "complete", "log2timeline over every partition and volume of the image, and psort's timeline of it (the pipeline finished: see coverage_note)", [], extra)
         return 0, "coverage.json"
     if rows:
-        write_coverage(out, "partial", "Plaso wrote %s before it ended" % " and ".join(names or ["nothing usable"]), errors, extra)
+        kept = "Plaso wrote %s before it ended" % " and ".join(names or ["nothing usable"])
+        if LEFT["left_behind"] or LEFT["unproven"]:
+            kept += (", but a step left %d process(es) that were ended before the files were read (they may be cut short)" % LEFT["left_behind"]) if LEFT["left_behind"] else \
+                ", but nothing shows that no step left a process behind, so the files cannot be shown to be final"
+        write_coverage(out, "partial", kept, errors, extra)
     else:
         write_coverage(out, "failed", "nothing parsed", errors or ["log2timeline wrote no storage file"], extra)
     return 1, "coverage.json"
