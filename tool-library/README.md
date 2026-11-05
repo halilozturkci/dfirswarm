@@ -130,10 +130,10 @@ or `tools/`.
 | `csearch` | python3 | `sf6df06` | 2 | Search the kickoff catalog files (filelist/timeline/bodyfile/pslist/cmdline/netscan/malfind/dlllist/psscan) f… |
 | `destlist_v4` | python3 | `sd29252` | 1 | Read the DestList stream of a Windows jump list, version 4 (the 130-byte entry layout): for each entry its pl… |
 | `encoded_literal_scan` | python3 | `s3472f0` | 1 | Find a literal you know the start and end of (marker ... closer) hidden in base64, base32, hex, rot13 or as U… |
-| `esedb_query` | python3 | `maintainer` | 18 | Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as TABLES through esedbexport: list the tables… |
+| `esedb_query` | python3 | `maintainer` | 19 | Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as TABLES through esedbexport: list the tables… |
 | `evtx_filter` | python3 | `sd1d101` | 1 | Parse a local EVTX; return EventID/TimeCreated/EventData for matching IDs or a time prefix |
 | `evtx_query` | python3 | `sbe1801` | 11 | Query an EVTX event log and return filtered events with timestamp, event id, channel, computer, provider, Eve… |
-| `extract_stream` | python3 | `sfcc303` | 11 | Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream i… |
+| `extract_stream` | python3 | `sfcc303` | 12 | Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream i… |
 | `file_carver` | python3 | `s183904` | 12 | Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own struc… |
 | `fls_root` | python3 | `s9d8306` | 2 | Run fls on an EXT4 volume (default offset 503808, image inputs/Webserver.E01). Reads inode/recursive/image/of… |
 | `ftk_csv` | python3 | `s9d8303` | 1 | Query the UTF-16 FTK Imager CSV for path/date/deleted filters; return matching rows as JSON. |
@@ -162,7 +162,7 @@ or `tools/`.
 | `usn_journal` | python3 | `maintainer` | 7 | Parse an NTFS change journal ($UsnJrnl:$J) into records from v2, v3 and v4 entries: name, USN, timestamp (ISO… |
 | `utf16_urls` | python3 | `s5d1003` | 6 | String candidates for URLs, file: and Visited: entries and 192.168.x.x addresses in a file; not a browser par… |
 | `volrun` | python3 | `s69d306` | 2 | Run a Volatility 3 plugin against a memory image with typed arguments. Returns stdout/stderr. |
-| `yara_scan` | python3 | `maintainer` | 11 | Sweep a file or directory with a YARA rule file the caller names, and report where each rule matched: rule, f… |
+| `yara_scan` | python3 | `maintainer` | 12 | Sweep a file or directory with a YARA rule file the caller names, and report where each rule matched: rule, f… |
 
 ## Folded from later runs
 

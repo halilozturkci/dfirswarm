@@ -44,8 +44,8 @@
   "example": "{\"path\": \"inputs/capture.pcap\", \"out_dir\": \"work/<your id>/zeek\", \"logs\": [\"conn\", \"dns\", \"ssl\", \"files\"]}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 16,
-  "sha256": "7743603cef950597712f679c6ea91b847b5cf14b16b35212237a9e0a9116f3b0",
+  "version": 17,
+  "sha256": "2b2202ea5c6280cd068bf34785b1f5d3215dff1fbf9ce83ff8094f48a61ac9cd",
   "use": {
     "extensions": [
       ".pcap",

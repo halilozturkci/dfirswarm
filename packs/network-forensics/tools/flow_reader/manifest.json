@@ -32,7 +32,7 @@
   "example": "{\"inputs\": [\"inputs/nfcapd.202611010000\"], \"declared_format\": \"netflow_v9\"}",
   "by": "maintainer",
   "at": "2026-11-04T00:00:00.000Z",
-  "version": 3,
+  "version": 4,
   "use": {
     "extensions": [],
     "magic": [
@@ -42,5 +42,5 @@
       }
     ]
   },
-  "sha256": "fe7cd50c890949384313c157a143de3002531748e5f9611e4850eb830e267924"
+  "sha256": "204d6775b4e1440f8f7e43377dbe837edbf8630fcd3fca763839b4d9358128d0"
 }
