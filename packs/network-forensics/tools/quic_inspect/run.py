@@ -20,7 +20,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "quic_inspect", "version": 4}
+TOOL = {"name": "quic_inspect", "version": 5}
 PARSER = "quic_inspect/1"
 
 # BEGIN SHARED STOP
@@ -2711,10 +2711,15 @@ def program_group_problems():
     messages in a file; it writes no file of its own that a program wrote, so a host that cannot show that no process was left behind does not make it partial (program_group
     says so). A process settle() ended is a fact: it may have held the messages file, which is then cut where it was ended, so the answer is at most partial."""
     verdict = process_verdict()
-    if not verdict["left_behind"]:
-        return []
-    return ["a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
-            "stopped, killed and reaped them before the table and the messages file were kept, so what they would still have written is missing" % verdict["left_behind"]]
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+            "stopped, killed and reaped them before the table and the messages file were kept, so what they would still have written is missing" % verdict["left_behind"])
+    # a pipe cut at its byte cap is a fact whatever the host: a process that held the pipe after the program ended went on writing, and what it wrote is mixed into the bytes the
+    # program printed (no leftover need have been found: on a host that cannot adopt orphans none is). PIPE_CUT is one count for the run, a version probe's included.
+    if PIPE_CUT["cut"]:
+        found.append("a process that held a program's pipe after the program ended went on writing: the tool read no more than %d bytes of it and let the pipe go, so %s may contain bytes the program did not write (the cut is counted once for the whole run: a cut while the program's version was read makes the answer partial)" % (POST_EXIT_BYTES, "tshark's version line (the one thing this tool reads on a pipe through the shared process block)"))
+    return found
 
 
 def main():

@@ -13,7 +13,7 @@ import { basename, join } from "node:path";
 import { test } from "node:test";
 import { BEACON, CONNS, NET, TOOLS, TCP, body, exists, filesUnder, frameTcp4, frameUdp4, gone, pcapClassic, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
-import { FEW, PY_LEAVE, alive, exec, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
+import { CUT_FLOODERS, FEW, PY_LEAVE, alive, exec, floodTheVersionProbe, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
 
 type Row = { ts: number | string; uid?: string | null; oh?: string; op?: number | string; rh?: string; rp?: number | string; proto?: string; service?: string | null; duration?: number | string; ob?: number | string; rb?: number | string; state?: string; opk?: number | string; rpk?: number | string };
 
@@ -528,5 +528,54 @@ test("a process tshark leaves behind is ended before the answer and makes it par
       assert.equal(other.program_group.subreaper, false);
       assert.ok(other.program_group.unproven.length >= 1, host);
     }
+  });
+});
+
+// ---- a pipe cut at the byte cap of the shared block (PKG-P8c) ---------------------------------------------------------------------------------------
+// The version probe is the pipe conn_series reads through the block. A writer in a session of its own, started after tshark printed its version, floods that pipe: the block cuts it at 1 MiB (PIPE_CUT).
+// On Linux the tool also adopts and ends it (left_behind >= 1); where it cannot (darwin, prctl refused) nothing finds it and only the cut is left to say the pipe was mixed: that was `complete` on the
+// batch head. The sentence is looked for in the status_basis / problems, not in program_group.notes. A clean run stays complete on every host.
+
+for (const flood of CUT_FLOODERS) {
+  for (const host of ["linux", "refused", "darwin"] as const) {
+    test(`conn_series: a version probe cut at the byte cap (${flood}, ${host}) is partial and says a process went on writing`, { timeout: 120000 }, async () => {
+      
+      await withCwd(async (cwd, bin) => {
+        try {
+          const dir = await setupCapture(cwd, bin, [{ t: T0, src: C, dst: S, sport: 50000, dport: 443, proto: "tcp", flags: TCP.SYN, seq: 1000 }, { t: T0 + 1, src: C, dst: S, sport: 50000, dport: 443, proto: "tcp", flags: TCP.ACK, seq: 1001 }]);
+          await floodTheVersionProbe(bin, "tshark", "TShark (Wireshark) 4.4.0 stand-in");
+          const result = await exec(CONNS, [], { capture: "inputs/capture.pcap" }, cwd, bin, { STUB_DIR: dir, CUT_FLOOD: flood }, host);
+          assert.equal(result.code, 0, result.stderr + result.stdout);
+          const out = JSON.parse(result.stdout);
+          assert.equal(out.status, "partial", `${out.status_basis}`);
+          assert.equal(out.ok, false);
+          const said = JSON.stringify([out.status_basis, out.problems]);
+          assert.match(said, /a process that held a program's pipe after the program ended went on writing: the tool read no more than 1048576 bytes of it/);
+          assert.match(said, /tshark's version line/);
+          assert.match(JSON.stringify(out.program_group.notes), /went on writing/);
+          if (host === "linux") {
+            assert.ok(out.program_group.left_behind >= 1, JSON.stringify(out.program_group));
+            for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `flooder ${pid} is gone`);
+          } else {
+            assert.equal(out.program_group.left_behind, 0, "nothing was found: the cut alone makes it partial");
+          }
+        } finally {
+          await reap(cwd);
+        }
+      });
+    });
+  }
+}
+
+test("conn_series: a conn.log runs no program, so a flooder that nothing started changes nothing: the answer is complete (no cut)", async () => {
+  await withCwd(async (cwd, bin) => {
+    const dir = await setupCapture(cwd, bin, [{ t: T0, src: C, dst: S, sport: 50000, dport: 443, proto: "tcp", flags: TCP.SYN, seq: 1000 }]);
+    await floodTheVersionProbe(bin, "tshark", "TShark (Wireshark) 4.4.0 stand-in");
+    await put(cwd, "inputs/conn.log", tsv([{ ts: T0, uid: "CAAA" }]));
+    const result = await exec(CONNS, [], { conn_log: "inputs/conn.log" }, cwd, bin, { STUB_DIR: dir, CUT_FLOOD: "setsidyes" }, "refused");
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.equal(out.program_group.left_behind, 0);
+    assert.deepEqual(await pids(cwd), [], "the stand-in was never started");
   });
 });

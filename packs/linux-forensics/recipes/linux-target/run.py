@@ -1233,6 +1233,15 @@ def os_name(text, image=None):
     return value if value and len(value.split()) == 1 else None
 
 
+def detect_cut(status, basis):
+    """The status and basis of a detect answer that identified the OS, with a pipe cut at its byte cap said: a process that held target-query's pipe after it ended went on
+    writing, so the text read may carry bytes the program did not print. The name was accepted only as one word, so `applies` stands (the route is closed or open as the word
+    says) and the exit code is the same; the answer is `partial`, not `complete`, and says why. PIPE_CUT is one count for the run, and detect starts one program."""
+    if not PIPE_CUT["cut"]:
+        return status, basis
+    return "partial", "%s; a process that held target-query's pipe after it ended went on writing: the recipe read no more than %d bytes of it and let the pipe go, so the text read may contain bytes the program did not print" % (basis, POST_EXIT_BYTES)
+
+
 def detect_os(image):
     binary = shutil.which("target-query")
     if not binary:
@@ -1249,10 +1258,12 @@ def detect_os(image):
     first = (text.splitlines() or [""])[0][:80]
     name = os_name(text, image) if code == 0 else None
     if name == "linux":
-        answer({"applies": True, "status": "complete", "status_basis": "dissect.target's os function named the target; that is its own identification, not checked here against files in the image",
+        status, basis = detect_cut("complete", "dissect.target's os function named the target; that is its own identification, not checked here against files in the image")
+        answer({"applies": True, "status": status, "status_basis": basis,
                 "why": "dissect.target's os function named the target 'linux' (unverified here against the image's files)"})
     if name in NOT_LINUX:
-        answer({"applies": False, "status": "complete", "status_basis": "dissect.target's os function named an operating system this recipe knows is not Linux",
+        status, basis = detect_cut("complete", "dissect.target's os function named an operating system this recipe knows is not Linux")
+        answer({"applies": False, "status": status, "status_basis": basis,
                 "why": f"dissect.target's os function named the target {name!r}, not Linux"}, 1)
     why = (stderr or stdout).strip()
     if code == 0 and not why:
@@ -1301,6 +1312,11 @@ def group_problems(group, what):
                      "them before %s were counted and hashed, so what they would still have written is missing from %s" % (group["left_behind"], what, what))
     for why in group["unproven"]:
         found.append("%s: %s cannot be shown to be final" % (why, what))
+    # the wrapper's pipes are read through the shared block: one cut at the byte cap (PIPE_CUT, a count for the whole run) means a process that held them after the wrapper ended
+    # went on writing, and summary.json and runner.stderr in the output directory are written from those bytes. The wrapper's own artefacts/summary.json, which the receipt is read from, is not.
+    if PIPE_CUT["cut"]:
+        found.append("a process that held the wrapper's pipe after it ended went on writing: the recipe read no more than %d bytes of it and let the pipe go, so summary.json and runner.stderr "
+                     "in the output directory may contain bytes the wrapper did not write (the receipt is read from artefacts/summary.json, which the wrapper wrote itself)" % POST_EXIT_BYTES)
     return found
 
 

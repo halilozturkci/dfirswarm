@@ -110,11 +110,11 @@ def leave(*paths):
     if variant == "double":
         if os.fork() != 0:
             os._exit(0)
-    if variant in ("setsid", "double", "rewrite", "periodic", "hold", "chatty"):
+    if variant in ("setsid", "double", "rewrite", "periodic", "hold", "chatty", "flood"):
         os.setsid()
     open(os.environ["LEAVE_PIDS"], "a").write("%d\n" % os.getpid())
     if variant != "inherit":
-        keep = (1,) if variant in ("hold", "chatty") else ()
+        keep = (1,) if variant in ("hold", "chatty", "flood") else ()
         for fd in range(0, 256):
             if fd not in keep:
                 try:
@@ -124,6 +124,13 @@ def leave(*paths):
     if variant == "hold":
         time.sleep(40)
         os._exit(0)
+    if variant == "flood":
+        # PKG-P8c: at full speed, until the tool lets the pipe go (the write then fails). Started after the program printed its answer.
+        while True:
+            try:
+                os.write(1, b"junk line from a flooder\n" * 4096)
+            except OSError:
+                os._exit(0)
     if variant == "chatty":
         for _ in range(2000):
             try:
@@ -615,6 +622,9 @@ d = os.environ["FAKE_DIR"]
 mount = sys.argv[-1]
 for n in ("1", "2"):
     shutil.copy(os.path.join(d, "store-%s.json" % n), os.path.join(mount, "vss%s" % n))
+sys.stdout.flush()
+if os.environ.get("LEAVE_PROGRAM") == "vshadowmount":
+    leave()
 `;
 const UMOUNT = `
 import glob
@@ -726,4 +736,74 @@ test("vss_materialise reports only what programs printed on pipes: a host that c
     assert.equal(answer.program_group.subreaper, false);
     assert.ok(answer.program_group.notes.length + answer.program_group.unproven.length >= 1);
   }
+});
+
+// ---- a pipe cut at the byte cap of the shared block (PKG-P8c) --------------------------------------------------------------------------------------------------------
+// communicate_bounded reads at most 1 MiB more from the pipes of a program that has ended, then ends the holder and lets the pipes go (PIPE_CUT). A flooder in a session of its own, started after
+// the program printed its answer, is cut that way. On Linux the tool also adopts and ends it (left_behind >= 1); where it cannot (darwin, prctl refused) nothing finds it and only the cut is left to
+// say the pipe was mixed: that was `complete` on the batch head. The sentence is looked for in the status_basis, not in program_group.notes (where the head said it too).
+
+for (const host of ["linux", "darwin", "refused"] as const) {
+  test(`lnk_jumplist: lnkinfo's pipe cut at the byte cap (${host}) is partial for the run, and the link's own row says lnkinfo was not compared`, { skip: !LINUX, timeout: 120000 }, async () => {
+    await withCwd(async (cwd, bin) => {
+      const pids = join(cwd, "leftover.pids");
+      try {
+        await writeFile(join(cwd, "work", "report.lnk"), lnk({ local: { path: "C:\\case\\report.txt", serial: 0x1a2b3c4d, label: "SYSTEM" }, name: "Report" }));
+        await pystub(bin, "lnkinfo", `
+print("lnkinfo 20240101")
+sys.stdout.flush()
+leave()
+`);
+        const env = { PATH: `${bin}:${process.env.PATH ?? ""}`, LEAVE_PIDS: pids, LEAVE_VARIANT: "flood" };
+        const out = JSON.parse((await exec(join(WIN, "lnk_jumplist", "run.py"), [], cwd, env, JSON.stringify({ path: "work/report.lnk" }), host)).stdout) as Answer;
+        assert.equal(out.status, "partial", `${host}: ${out.status_basis}`);
+        assert.match(out.status_basis, /1 lnkinfo call\(s\) were cut at 1048576 bytes because a process that held lnkinfo's pipe after it ended went on writing/);
+        assert.match(out.status_basis, /the rows are lnk_parse's own reading/);
+        assert.equal(out.lnkinfo.checked, 0, "what a flooder mixed into lnkinfo's output was not compared");
+        assert.equal(out.lnkinfo.not_run, 1);
+        const row = out.rows.find((r: Answer) => r.row === "link");
+        assert.equal(row.integrity.lnkinfo.ran, false);
+        assert.match(row.integrity.lnkinfo.why, /lnkinfo's pipe was cut at 1048576 bytes/);
+        assert.equal(row.integrity.status, "ok", "lnk_parse's own reading of the link stands");
+        if (host === "linux") assert.ok(out.program_group.left_behind >= 1);
+        else assert.equal(out.program_group.left_behind, 0, "nothing was found: the cut alone makes it partial");
+      } finally {
+        await reap(pids);
+      }
+    });
+  });
+}
+
+test("lnk_jumplist: a clean lnkinfo is still compared and complete on every host", { skip: !LINUX }, async () => {
+  for (const host of ["linux", "darwin", "refused"] as const) {
+    await withCwd(async (cwd, bin) => {
+      await writeFile(join(cwd, "work", "report.lnk"), lnk({ local: { path: "C:\\case\\report.txt", serial: 0x1a2b3c4d, label: "SYSTEM" }, name: "Report" }));
+      await pystub(bin, "lnkinfo", `
+print("lnkinfo 20240101")
+`);
+      const env = { PATH: `${bin}:${process.env.PATH ?? ""}`, LEAVE_PIDS: join(cwd, "leftover.pids") };
+      const out = JSON.parse((await exec(join(WIN, "lnk_jumplist", "run.py"), [], cwd, env, JSON.stringify({ path: "work/report.lnk" }), host)).stdout) as Answer;
+      assert.equal(out.status, "complete", `${host}: ${out.status_basis}`);
+      assert.equal(out.lnkinfo.checked, 1);
+    });
+  }
+});
+
+for (const host of ["linux", "darwin", "refused"] as const) {
+  test(`vss_materialise: vshadowinfo's pipe cut at the byte cap (${host}) is partial and says so; the copies are intact`, { skip: !LINUX, timeout: 120000 }, async () => {
+    const { answer, run } = await vssRun("vshadowinfo", "flood", host);
+    assert.ok(run.ms < 30_000, `answered in ${run.ms} ms`);
+    assert.equal(answer.status, "partial", `${host}: ${answer.status_basis}`);
+    assert.match(answer.status_basis, /call\(s\) of vshadowinfo or fusermount were cut at 1048576 bytes because a process that held the program's pipe after it ended went on writing/);
+    assert.equal(answer.copies, 2);
+    if (host === "linux") assert.ok(answer.program_group.left_behind >= 1);
+    else assert.equal(answer.program_group.left_behind, 0, "nothing was found: the cut alone makes it partial");
+  });
+}
+
+test("vss_materialise: the vshadowmount daemon is left on purpose; a flood on its pipe is not a leftover and is not counted: the answer stays complete", { skip: !LINUX, timeout: 120000 }, async () => {
+  const { answer } = await vssRun("vshadowmount", "flood");
+  assert.equal(answer.status, "complete", answer.status_basis);
+  assert.equal(answer.copies, 2);
+  assert.doesNotMatch(String(answer.status_basis), /were cut at/);
 });

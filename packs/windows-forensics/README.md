@@ -82,7 +82,7 @@ a program left running after it ended (in the tool's group, in a session of its 
 file a program wrote, so they answer `partial` when `settle()` ended a leftover (the file is stable but may be short) and, on a host that is not Linux or where the kernel refuses
 `PR_SET_CHILD_SUBREAPER`, when the absence of one cannot be ruled out. `registry_recover` (regfexport's counts), `vss_materialise` (copies made from icat's pipe) and the lnkinfo read of
 `lnk_jumplist` report what a program printed on a pipe: they are not held to the second rule, but a process that holds the pipe is ended, and what came through it is not trusted
-(`vss_materialise` keeps no copy of it; `registry_recover` does not compare the counts). A writer that is no descendant of the program (started through a service manager) is not found.
+(`vss_materialise` keeps no copy of it; `registry_recover` does not compare the counts). A pipe cut at the block's byte cap (the holder kept writing after the program ended; the tool let the pipe go after 1 MiB) makes `lnk_jumplist` `partial` when it is lnkinfo's (the link keeps lnk_parse's reading, `integrity.lnkinfo.ran` is false with the reason) and `vss_materialise` `partial` when it is vshadowinfo's or fusermount's; the vshadowmount daemon is left on purpose and its pipe is not counted. A writer that is no descendant of the program (started through a service manager) is not found.
 
 **Three goal templates** in `goals/`, each with its own questions, definition of
 done and checks: `intrusion-triage.md`, `data-left-the-building.md`,

@@ -1421,6 +1421,9 @@ def mounted_at(directory):
         return None
 
 
+PIPE_CUTS = {"calls": 0}       # calls of run_program, other than the vshadowmount daemon's, whose pipe was cut at its byte cap (PIPE_CUT counts the daemon's too)
+
+
 def run_program(argv, seconds, leaves=False):
     """(exit code, stdout, stderr, timed out) of a program run in this tool's group, bounded by `seconds` and the tool's clock. `leaves` is for
     the one program that daemonises on purpose (vshadowmount: its FUSE daemon serves the mount until unmount() ends it): the process block's
@@ -1428,11 +1431,16 @@ def run_program(argv, seconds, leaves=False):
     seconds = max(0.5, min(seconds, remaining()))
     proc = spawn(argv, leaves=leaves, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     ACTIVE.append(proc)
+    cut_before = PIPE_CUT["cut"]
     try:
         out, err, timed = communicate_bounded(proc, seconds)
     finally:
         if proc in ACTIVE:
             ACTIVE.remove(proc)
+    if PIPE_CUT["cut"] > cut_before and not leaves:
+        # a program that must leave nothing (vshadowinfo, fusermount) had its pipe held after it ended by a process that went on writing: its output is mixed with that. The daemon of
+        # vshadowmount (leaves=True) is left on purpose and is not a leftover: its pipe being cut is not counted here (what the tool reads from that call is its exit and a message)
+        PIPE_CUTS["calls"] += 1
     return proc.returncode, out, err, timed
 
 
@@ -1888,6 +1896,10 @@ def main():
     verdict = process_verdict()
     if verdict["left_behind"]:
         reasons.append("%d process(es) that vshadowinfo, fls, icat or fusermount left running were ended (program_group.left_behind); the copy or the lookup of such a program is not kept as a copy (copy_status left_behind)" % verdict["left_behind"])
+    if PIPE_CUTS["calls"]:
+        reasons.append("%d call(s) of vshadowinfo or fusermount were cut at %d bytes because a process that held the program's pipe after it ended went on writing: what was read from that pipe "
+                       "(the store list, the identifiers and creation times, the unmount messages) may contain bytes the program did not write (process_notes says so; the vshadowmount daemon is left "
+                       "on purpose and is not counted)" % (PIPE_CUTS["calls"], POST_EXIT_BYTES))
     if problems["count"]:
         reasons.append("%d problem(s) are named under problems" % problems["count"])
     answer = {

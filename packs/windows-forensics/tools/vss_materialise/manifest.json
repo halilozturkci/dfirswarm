@@ -41,8 +41,8 @@
   "example": "{\"image\": \"inputs/disk.raw\", \"offset\": 1048576, \"stores\": [1, 2], \"paths\": [\"/Windows/System32/config/SYSTEM\"]}",
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
-  "version": 5,
-  "sha256": "837cf0f25279d5b992d71ba4a45b9844e425f7bc145bb97eea16371b63ac43bf",
+  "version": 6,
+  "sha256": "0863326118a7bfa146bc858baebc79e295941ddca9d5b4aac3f7ed9bd4f70bd8",
   "needs": [
     "fuse"
   ],

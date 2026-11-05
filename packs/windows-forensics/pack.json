@@ -1,7 +1,7 @@
 {
   "id": "windows-forensics",
   "name": "Windows Forensics Pack",
-  "version": "1.7.31",
+  "version": "1.7.32",
   "description": "Artefact-by-artefact method and tooling for a Windows examination: the file system and its journals, the hives, execution evidence, the event logs and the records inside a cleared one, accounts and remote access, persistence, PowerShell, browsers, shadow copies, memory, and the traces anti-forensics leaves.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -42,7 +42,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "617dec43b30845a8c7d062db3f6d892400d96796b91f363586beacfbdffd1721",
-      "README.md": "92a3e005009e2a420b175adf72ac1661f3ee70664d652e650de9bd6b020253d5",
+      "README.md": "06c16386e1d224be4270ade64b4aa1b918bca4efb97eb3305a25f91478f57d5b",
       "goals/data-left-the-building.md": "34c94782b1a636d54eac5d6d2397a482059374909b7f93ee96433f9c3668b68e",
       "goals/hidden-data.md": "14ee963bede22cf69b96033e483fad57ead72abd20e04ae7ccc1153de265fb78",
       "goals/intrusion-triage.md": "837d339c1f027f540d1f1fd1444a4d454c8736299767d30d8a45c450d86f073d",
@@ -120,8 +120,8 @@
       "tools/indx_carve/run.py": "7dd007006eba133692dfe84d10ce667540cbec101a3fb022f4f878023453b5ee",
       "tools/jumplist/manifest.json": "ace9eb9846adcda0d308e05a9679f96c41c6b1595beb963b271a1ee281d392da",
       "tools/jumplist/run.py": "88aee9ee7135e16ab240ad784c41aaa5c73b15d2f73940aad657666f446a4117",
-      "tools/lnk_jumplist/manifest.json": "305217170ef147fa6027f6d0cc137afeaf5508812e75e1929ad793e8ab1155fa",
-      "tools/lnk_jumplist/run.py": "5715975a95b613bf359ef85c65ae00e6223fb69525132a7ae9624a946ffef577",
+      "tools/lnk_jumplist/manifest.json": "fb6df0ddbaf08156a1e8bc70db1e1832e65edc6a20611692774af25bc96b1920",
+      "tools/lnk_jumplist/run.py": "75719019aca999c84958ea1d911c50d301ca06efc978010d930d3214b3cc52c5",
       "tools/lnk_parse/manifest.json": "21bb37be4dde27c345b928422b86c1625256f446f1afa8d78b22a1fb3f22ee6a",
       "tools/lnk_parse/run.py": "c39a6ab2e35a55a278a57d28b874b09448a2096535d3c9c19f98ffdf9c153bdb",
       "tools/mam_scan/manifest.json": "015c0872651c68f5649576a872d63b8dbe1f3bb1ab8a2f8ba135e1c5a2aaf21c",
@@ -152,8 +152,8 @@
       "tools/usn_journal/run.py": "b837c2166856323964db06a7766b91983ba0aa16e5cc2599fe116ab0a9fea44e",
       "tools/utf16_urls/manifest.json": "2b5efa016469113290a63dcac0c4f4db9a52d0093b65c79a4f7fed6ad6e4d8ee",
       "tools/utf16_urls/run.py": "ea024e04d1988dfa70be7a8a551b2e331de35c30dbbf1c009d2ca247dcaa9579",
-      "tools/vss_materialise/manifest.json": "61ff7fcffe19a45ffb4f9db41c15e02c64fdbf14a8fee9e685b2ec509788ae0c",
-      "tools/vss_materialise/run.py": "837cf0f25279d5b992d71ba4a45b9844e425f7bc145bb97eea16371b63ac43bf",
+      "tools/vss_materialise/manifest.json": "11fa599590cb4daa530188c56c3582da88a91ea2e718817eba41302da3013fda",
+      "tools/vss_materialise/run.py": "0863326118a7bfa146bc858baebc79e295941ddca9d5b4aac3f7ed9bd4f70bd8",
       "tools/vss_stores/manifest.json": "81c576c2937405c2e33622fbc2f4a5e883ebfb9327c8394c74f49dca1e86a15e",
       "tools/vss_stores/run.py": "c79a6f534d5a146231a79f3507d62f7d47cd96bf6f9f9ea5badc13a2c32b53cb",
       "tools/yara_scan/manifest.json": "6e760a3e5d0f56a70034f47823de6ac2ca2ed6deac64d699ee44c3c149708e72",

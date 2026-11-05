@@ -263,7 +263,6 @@ const DAMAGES: Damage[] = [
   { name: "a held tool that does not call what `apply` names", apply: (r) => { pick(r, (e) => e.class === "held").apply = "no_such_call"; }, expect: /never calls no_such_call\(\)/ },
   { name: "a held tool without `apply`", apply: (r) => { delete pick(r, (e) => e.class === "held").apply; }, expect: /held without `apply`/ },
   { name: "a pipe-only tool whose file has no program_group call", apply: (r) => { const e = pick(r, (e) => e.class === "pipe-only"); e.path = pick(r, (x) => x.class === "local-mechanism" && x.path.endsWith(".py") && !x.path.includes("tool-library")).path; e.apply = "none_such"; }, expect: /does not carry the shared PROCESS block|no call that makes a program_group/ },
-  { name: "a pipe cut that nobody reports", apply: (r) => { delete pick(r, (e) => !!e.pipe_cut_gap).pipe_cut_gap; }, expect: /a cut pipe leaves the status alone/ },
   { name: "a stale pipe_cut_gap", apply: (r) => { pick(r, (e) => e.class === "held" && !e.pipe_cut_gap && e.apply === "process_apply").pipe_cut_gap = "x"; }, expect: /pipe_cut_gap is stale/ },
   { name: "a no-program entry for a file that starts a program", apply: (r) => { const e = pick(r, (x) => x.class === "held"); e.class = "no-program"; e.reason = "wrongly"; }, expect: /listed as no-program but the file starts a program/ },
   { name: "a listed test that does not exist", apply: (r) => { (pick(r, (e) => e.class === "held").tests ??= []).push("tests/no-such-file.test.ts"); }, expect: /no-such-file\.test\.ts does not exist/ },
@@ -284,6 +283,31 @@ for (const damage of DAMAGES) {
     assert.ok(problems.some((p) => damage.expect.test(p)), `expected ${damage.expect} in:\n${problems.join("\n") || "(no problem found)"}`);
   });
 }
+
+// Every carrier that reads a pipe through the block reports a cut now (no `pipe_cut_gap` is left), so the check is proven on a scratch tree: the same tool text with every
+// PIPE_CUT renamed (the block's own use is excluded from what the tool does), listed as pipe-only without a `cut_through`, must fail.
+test("self-test: a pipe read through the block by a tool that never reads PIPE_CUT fails the check (scratch copy of audit_events)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "sweep-cut-"));
+  try {
+    const { mkdir } = await import("node:fs/promises");
+    const rel = "packs/linux-forensics/tools/audit_events/run.py";
+    const real = (await readFile(join(ROOT, rel), "utf8")).replaceAll("PIPE_CUT", "PIPE_CUX");
+    await mkdir(join(dir, "tests"), { recursive: true });
+    await mkdir(join(dir, "packs", "linux-forensics", "tools", "audit_events"), { recursive: true });
+    await mkdir(join(dir, "tool-library"), { recursive: true });
+    await writeFile(join(dir, "tests", "shared-blocks.json"), JSON.stringify({ families: { PROCESS: { variants: [{ carriers: 1 }] } } }));
+    await writeFile(join(dir, rel), real);
+    const entry: Entry = { path: rel, class: "pipe-only", apply: "program_group_problems", source: "x", tests: [] };
+    const problems = await checkRegistry({ entries: [entry] }, dir);
+    assert.ok(problems.some((p) => /a cut pipe leaves the status alone/.test(p)), problems.join(" | ") || "(no problem found)");
+    const gap = await checkRegistry({ entries: [{ ...entry, pipe_cut_gap: "named" }] }, dir);
+    assert.ok(!gap.some((p) => /a cut pipe leaves the status alone/.test(p)), "a named gap is accepted: " + gap.join(" | "));
+    const through = await checkRegistry({ entries: [{ ...entry, cut_through: "program_group_problems" }] }, dir);
+    assert.ok(!through.some((p) => /a cut pipe leaves the status alone/.test(p)), "a function that is called counts: " + through.join(" | "));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("self-test: a carrier the registry does not know is found in a scratch tree", async () => {
   const dir = await mkdtemp(join(tmpdir(), "sweep-tree-"));

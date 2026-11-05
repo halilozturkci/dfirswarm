@@ -37,7 +37,7 @@ import time
 from pathlib import Path
 
 TOOL = "package_verify"
-PARSER = "package_verify/4"
+PARSER = "package_verify/5"
 
 
 DEFAULT_LIMIT = 100
@@ -1674,6 +1674,10 @@ def program_group_problems(what, held=True):
     for why in verdict["unproven"]:
         if held or verdict["subreaper"]:
             found.append("%s: %s cannot be shown to be final" % (why, what))
+    # a pipe cut at its byte cap is a fact whatever the host: a process that held the pipe after the program ended went on writing, and what it wrote is mixed into the bytes the
+    # program printed (no leftover need have been found: on a host that cannot adopt orphans none is). PIPE_CUT is one count for the run, a version probe's included.
+    if PIPE_CUT["cut"]:
+        found.append("a process that held a program's pipe after the program ended went on writing: the tool read no more than %d bytes of it and let the pipe go, so %s may contain bytes the program did not write (the cut is counted once for the whole run: a cut while the program's version was read makes the answer partial)" % (POST_EXIT_BYTES, "the program's version line (read on a pipe through the shared process block)"))
     return found
 
 

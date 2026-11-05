@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.14.8",
+  "version": "1.14.9",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. Flow records in an nfcapd file (NetFlow v5, v9, IPFIX) are read with nfdump.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,7 +18,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "d49e4ebee76f2af3e44db82c20dc431633e4afea3267779dfe27f6f89aff1489",
+      "README.md": "94c33b01d909da7188cb457f248ae1184afa13b1322414885e13e758e069b87f",
       "goals/what-left-the-network.md": "8e6dd6ae10d2bd8380b567e8bffb3bc644ac90602eed83edbd3773fd8ebdc811",
       "recipes/network-capture/recipe.json": "4c98cbf98452303adf4ae3e3b05fc16670704d6913e03caffaa2b4358f80d673",
       "recipes/network-capture/run.py": "bd388006c8f3f02678f93b041f0c09891ea224adefeb622e681c5abeb1a991af",
@@ -49,8 +49,8 @@
       "tools/beacon_score/run.py": "e1f43f8e890e860e5fe369205aa4bcfc0be65446f8fbb6aa6719fdfc98d6ddb2",
       "tools/capture_transform/manifest.json": "b3c9eaccd71df49b31d04824a00cc2d7e2da5498f330da833be018718bd34ba3",
       "tools/capture_transform/run.py": "5ece04e42755cceb94fbc8b3144aba260445876d93f4737bf4541853b4a086e3",
-      "tools/conn_series/manifest.json": "62c654242715f3c497097bc6f35c06bc775e3ced107ea647a722b5c5bf9aaf49",
-      "tools/conn_series/run.py": "aad167de8a2257ff9d8a614592760bd68c850b03b2f1154971644b000079ffcf",
+      "tools/conn_series/manifest.json": "e89e7bc34b53af6c261b4947d6199dba911afb66fe4fee76a7ac24d0b42f4609",
+      "tools/conn_series/run.py": "ea9248fd3a563d72a07e87dff4d2a06e903b0cba2039cd271dcc75694427de01",
       "tools/flow_reader/manifest.json": "33551bd2a7c915871bd6c327adf683ce104d879a9d997d5c9b8ae9ac47aff38f",
       "tools/flow_reader/run.py": "204d6775b4e1440f8f7e43377dbe837edbf8630fcd3fca763839b4d9358128d0",
       "tools/network_log_summary/manifest.json": "1f95d2e7a512e99ae75e3a8773de0dcadac929f0de02813ca8f7f8f1a126cf21",
@@ -59,12 +59,12 @@
       "tools/pcap_extract/run.py": "3f5c26363521a6ef42a55519e888bc1e8de7a26804c3ccd30c6cec85a07b81d9",
       "tools/pcap_summary/manifest.json": "7152763e8488b35e90e5efaea6c28828a7bea59922b7b9c9ea242b9ba31f482a",
       "tools/pcap_summary/run.py": "c30625988f32371935e592784ba91f395653292609513e26df3b2cdc26c40ea4",
-      "tools/quic_inspect/manifest.json": "38b826b15ba0da76654033fd743997a5e63634c042da23a2f05a0dddd4c537af",
-      "tools/quic_inspect/run.py": "942fa35908ae85134b3b081c3908976db153af1ac43c7df82b233c406ac81ef3",
+      "tools/quic_inspect/manifest.json": "feb394b0f070731d2cdae2b0c94a5d9aaf79c5067d14f0ca5989b996488421fc",
+      "tools/quic_inspect/run.py": "df1476b9d60a27437245f7f113e8e3446032b83c7882bf95710ff03f37b08501",
       "tools/suricata_run/manifest.json": "aa2291504353232b2dc16c279f02623408b1e3a2a8fcbcf9ffc17c1a55372f1c",
       "tools/suricata_run/run.py": "963d48d805ee75f1d32249d3a816422c412aad271a5512fc1f392f52953e8346",
-      "tools/tls_decrypt/manifest.json": "61a3ae72da088b1bae8b5921b9c3601e4cac3e89c46ce712efebaad8d59b2aaa",
-      "tools/tls_decrypt/run.py": "b98f0b4c6e9d3f3de990e9a608b1ef1bf0bab0bd44fd6a4d4a58907198a88428",
+      "tools/tls_decrypt/manifest.json": "ce344ba8bab51fa72a18282781db69cd4c1dc80b26124157e94c993c6526c905",
+      "tools/tls_decrypt/run.py": "f1bf46306b9f7b62bb9d1ce1799cede0f7ed36285abdef0d08351c220e9f2916",
       "tools/zeek_run/manifest.json": "3c0c4024ed0770ce9bbda48ab851e7cb6c6251a24301a66e716ef3464c47ff08",
       "tools/zeek_run/run.py": "2b2202ea5c6280cd068bf34785b1f5d3215dff1fbf9ce83ff8094f48a61ac9cd"
     }

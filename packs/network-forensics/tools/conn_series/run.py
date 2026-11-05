@@ -15,7 +15,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "conn_series", "version": 4}
+TOOL = {"name": "conn_series", "version": 5}
 PARSER = "conn_series/1"
 
 
@@ -2736,10 +2736,15 @@ def program_group_problems():
     show that no process was left behind does not make it partial (program_group says so). A process settle() ended is a fact: it may have held the messages file, which is
     then cut where it was ended, so the answer is at most partial."""
     verdict = process_verdict()
-    if not verdict["left_behind"]:
-        return []
-    return ["a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
-            "stopped, killed and reaped them before the connections, the series file and the messages file were kept, so what they would still have written is missing" % verdict["left_behind"]]
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+            "stopped, killed and reaped them before the connections, the series file and the messages file were kept, so what they would still have written is missing" % verdict["left_behind"])
+    # a pipe cut at its byte cap is a fact whatever the host: a process that held the pipe after the program ended went on writing, and what it wrote is mixed into the bytes the
+    # program printed (no leftover need have been found: on a host that cannot adopt orphans none is). PIPE_CUT is one count for the run, a version probe's included.
+    if PIPE_CUT["cut"]:
+        found.append("a process that held a program's pipe after the program ended went on writing: the tool read no more than %d bytes of it and let the pipe go, so %s may contain bytes the program did not write (the cut is counted once for the whole run: a cut while the program's version was read makes the answer partial)" % (POST_EXIT_BYTES, "tshark's version line (the one thing this tool reads on a pipe through the shared process block)"))
+    return found
 
 
 def main():

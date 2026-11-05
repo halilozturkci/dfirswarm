@@ -16,7 +16,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, withCwd } from "./tool-library-harness.ts";
-import { alive, pids, reap, FEW, HOLDERS, VARIANTS, exec, sh, stubDir } from "./network-process-harness.ts";
+import { alive, pids, reap, CUT_FLOODERS, FEW, HOLDERS, VARIANTS, exec, sh, stubDir } from "./network-process-harness.ts";
 import { register, SAYS_UNPROVEN } from "./process-apply-cases.ts";
 import type { Case } from "./process-apply-cases.ts";
 
@@ -280,3 +280,158 @@ for (const holder of HOLDERS) {
     });
   }
 }
+
+// ---- a pipe cut at the byte cap of the shared block (PKG-P8c) -----------------------------------------------------------------------------------------
+// communicate_bounded reads at most 1 MiB more from the pipes of a program that has ended, then ends the holder and lets the pipes go (PIPE_CUT). A tool that reads a pipe through the block and
+// does not call process_apply must not answer `complete` over bytes a flooder may have mixed into it. The flooder here is a writer in a session of its own, started after the program printed
+// its answer. On Linux the tool also adopts and ends it (left_behind >= 1); where it cannot (darwin, prctl refused) nothing finds the flooder (left_behind 0) and only the cut is left to say so:
+// that is the case that was `complete` on the batch head. The sentence is looked for in the status_basis / problems / errors, not in program_group.notes (where the head said it too).
+
+const CUT_SAYS = /a process that held (a program's|target-query's|the wrapper's) pipe after (the program|it) ended went on writing: the (tool|recipe) read no more than 1048576 bytes of it/;
+const cutText = (a: Record<string, unknown>): string => JSON.stringify([a.status_basis, a.problems, a.errors]);
+
+async function stagePipeTool(cwd: string, bin: string, which: "package_verify" | "audit_events", holder: string | undefined): Promise<{ script: string; args: Record<string, unknown>; env: Record<string, string> }> {
+  const dir = await stubDir(cwd);
+  const out = join(cwd, "out");
+  await mkdir(out, { recursive: true });
+  const env = { STUB_DIR: dir, JOB_ID: "j-1", OUT: out, SECRET_OUTPUT: "1", ...(holder ? { STUB_LEFT: holder } : {}) };
+  // the program prints its version, and only then leaves the flooder
+  if (which === "audit_events") {
+    await writeFile(join(cwd, "work", "audit.log"), AUDIT_LOG);
+    await stub(bin, "ausearch", sh(`${pre(dir, holder)}case "$1" in --version) echo "ausearch version 9.9.9"; leave x; exit 0;; esac\ncat "$2"\nexit 0\n`));
+    return { script: AUDIT, args: { paths: ["work/audit.log"], compare_ausearch: true }, env };
+  }
+  const root = join(cwd, "work", "r");
+  await mkdir(join(root, "var/lib/dpkg/info"), { recursive: true });
+  await writeFile(join(root, "var/lib/dpkg/status"), "Package: a\nStatus: install ok installed\n");
+  await writeFile(join(root, "var/lib/dpkg/info/a.md5sums"), "d41d8cd98f00b204e9800998ecf8427e  usr/bin/a\n");
+  await stub(bin, "debsums", sh(`${pre(dir, holder)}case "$1" in --version) echo "debsums version 9.9.9"; leave x; exit 0;; esac\nprintf '%s\\n' '/usr/bin/a                                        OK'\nexit 0\n`));
+  return { script: VERIFY, args: { root: "work/r", family: "debian" }, env };
+}
+
+for (const which of ["package_verify", "audit_events"] as const) {
+  for (const holder of CUT_FLOODERS) {
+    for (const host of ["linux", "refused", "darwin"] as const) {
+      test(`${which}: a pipe cut at the byte cap (${holder}, ${host}) is partial and says a process went on writing`, { timeout: 120000 }, async () => {
+        await withCwd(async (cwd, bin) => {
+          try {
+            const staged = await stagePipeTool(cwd, bin, which, holder);
+            const run = await exec(staged.script, [], staged.args, cwd, bin, staged.env, host);
+            assert.equal(run.code, 0, run.stderr + run.stdout);
+            const answer = JSON.parse(run.stdout);
+            assert.equal(answer.status, "partial", JSON.stringify(answer.status_basis));
+            if ("ok" in answer) assert.equal(answer.ok, false);
+            assert.match(cutText(answer), CUT_SAYS);
+            assert.match(cutText(answer), /may contain bytes the program did not write/);
+            assert.match(JSON.stringify(answer.program_group.notes), /went on writing/);
+            if (host !== "linux") assert.equal(answer.program_group.left_behind, 0, "nothing was found: the cut alone makes it partial");
+            else assert.ok(answer.program_group.left_behind >= 1);
+            if (host === "linux") for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `flooder ${pid} is gone`);
+          } finally {
+            await reap(cwd);
+          }
+        });
+      });
+    }
+  }
+  test(`${which}: a clean run stays complete on every host (no cut, nothing found)`, { timeout: 120000 }, async () => {
+    for (const host of ["linux", "refused", "darwin"] as const) {
+      await withCwd(async (cwd, bin) => {
+        const staged = await stagePipeTool(cwd, bin, which, undefined);
+        const answer = JSON.parse((await exec(staged.script, [], staged.args, cwd, bin, staged.env, host)).stdout);
+        assert.equal(answer.status, "complete", `${host}: ${answer.status_basis}`);
+      });
+    }
+  });
+}
+
+// the recipe's detect step: target-query printed its answer on stdout, and a flood on stderr was cut. The name is one word, so `applies` stands; the answer is partial, not complete.
+for (const host of ["linux", "refused", "darwin"] as const) {
+  test(`linux-target detect: a pipe cut at the byte cap (setsiderr, ${host}) keeps applies and says partial, with the sentence`, { timeout: 120000 }, async () => {
+    await withCwd(async (cwd, bin) => {
+      const dir = await stubDir(cwd);
+      await stub(bin, "target-query", sh(`${pre(dir, "setsiderr")}echo linux\nleave x\nexit 0\n`));
+      const image = join(cwd, "inputs", "server.E01");
+      await writeFile(image, "image bytes\n");
+      await writeFile(join(cwd, "target.json"), JSON.stringify({ paths: [image], name: "server" }));
+      try {
+        const run = await exec(RECIPE, ["detect", "--target", join(cwd, "target.json")], undefined, cwd, bin, { STUB_DIR: dir, STUB_LEFT: "setsiderr" }, host);
+        const said = JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}");
+        assert.equal(run.code, 0, run.stderr + run.stdout);
+        assert.equal(said.applies, true);
+        assert.equal(said.status, "partial", said.status_basis);
+        assert.match(said.status_basis, /target-query's pipe after it ended went on writing: the recipe read no more than 1048576 bytes/);
+      } finally {
+        await reap(cwd);
+      }
+    });
+  });
+}
+test("linux-target detect: without a cut the answer is complete on every host", { timeout: 120000 }, async () => {
+  for (const host of ["linux", "refused", "darwin"] as const) {
+    await withCwd(async (cwd, bin) => {
+      const dir = await stubDir(cwd);
+      await stub(bin, "target-query", sh(`${pre(dir, undefined)}echo linux\nexit 0\n`));
+      const image = join(cwd, "inputs", "server.E01");
+      await writeFile(image, "image bytes\n");
+      await writeFile(join(cwd, "target.json"), JSON.stringify({ paths: [image], name: "server" }));
+      const said = JSON.parse((await exec(RECIPE, ["detect", "--target", join(cwd, "target.json")], undefined, cwd, bin, { STUB_DIR: dir }, host)).stdout.trim().split("\n").pop() ?? "{}");
+      assert.deepEqual([said.applies, said.status], [true, "complete"], host);
+    });
+  }
+});
+
+// the recipe's run step: a wrapper (a stand-in linux_triage) that wrote a clean, finished summary of its own, printed on its pipe and left a flooder holding the pipe. Its own verdict is clean,
+// so the cut is the only thing the receipt and the printed line have to go on.
+for (const host of ["linux", "refused", "darwin"] as const) {
+  test(`linux-target run: a wrapper pipe cut at the byte cap (${host}) is in the recipe's own verdict: partial, with the sentence, in the receipt and in the printed line`, { timeout: 120000 }, async () => {
+    await withCwd(async (cwd, bin) => {
+      const dir = await stubDir(cwd);
+      const recipeCopy = join(cwd, "recipes", "linux-target");
+      await mkdir(recipeCopy, { recursive: true });
+      await mkdir(join(cwd, "tools", "linux_triage"), { recursive: true });
+      await writeFile(join(recipeCopy, "run.py"), await readFile(RECIPE, "utf8"));
+      const summary = { state: "finished", execution_complete: true, started: 0, groups: [{ group: "identity", functions: [{ name: "hostname", status: "parsed", exit_code: 0 }] }],
+        program_group: { subreaper: true, left_behind: 0, unproven: [], notes: [] } };
+      await writeFile(join(cwd, "tools", "linux_triage", "run.py"),
+        `import json, os, subprocess, sys, time\nsys.stdin.read()\nos.makedirs("artefacts", exist_ok=True)\ns = json.loads(${JSON.stringify(JSON.stringify(summary))})\ns["started"] = time.time()\n` +
+        `json.dump(s, open("artefacts/summary.json", "w"))\nprint(json.dumps(s))\nsys.stdout.flush()\n` +
+        `subprocess.Popen(["setsid", "sh", "-c", 'echo $$ >> ${join(dir, "left.pids")}; exec yes y'], stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n` +
+        `while len(open(${JSON.stringify(join(dir, "left.pids"))}).read().split()) < 1: time.sleep(0.02)\n`);
+      const image = join(cwd, "inputs", "server.E01");
+      await writeFile(image, "image bytes\n");
+      await writeFile(join(cwd, "target.json"), JSON.stringify({ paths: [image], name: "server" }));
+      await writeFile(join(dir, "left.pids"), "");
+      try {
+        const run = await exec(join(recipeCopy, "run.py"), ["run", "--target", join(cwd, "target.json"), "--out", join(cwd, "recipe-out")], undefined, cwd, bin, {}, host);
+        const line = JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}");
+        const coverage = JSON.parse(await readFile(join(cwd, "recipe-out", "coverage.json"), "utf8"));
+        for (const said of [coverage, line]) {
+          assert.equal(said.status, "partial", JSON.stringify(said.status_basis));
+          assert.match(JSON.stringify([said.status_basis, said.errors]), /a process that held the wrapper's pipe after it ended went on writing: the recipe read no more than 1048576 bytes of it/);
+        }
+        assert.match(JSON.stringify(coverage.errors), /summary\.json and runner\.stderr in the output directory may contain bytes the wrapper did not write/);
+      } finally {
+        await reap(cwd);
+      }
+    });
+  });
+}
+test("linux-target run: the same wrapper without a flooder is complete", { timeout: 120000 }, async () => {
+  await withCwd(async (cwd, bin) => {
+    const recipeCopy = join(cwd, "recipes", "linux-target");
+    await mkdir(recipeCopy, { recursive: true });
+    await mkdir(join(cwd, "tools", "linux_triage"), { recursive: true });
+    await writeFile(join(recipeCopy, "run.py"), await readFile(RECIPE, "utf8"));
+    const summary = { state: "finished", execution_complete: true, started: 0, groups: [{ group: "identity", functions: [{ name: "hostname", status: "parsed", exit_code: 0 }] }],
+      program_group: { subreaper: true, left_behind: 0, unproven: [], notes: [] } };
+    await writeFile(join(cwd, "tools", "linux_triage", "run.py"),
+      `import json, os, sys, time\nsys.stdin.read()\nos.makedirs("artefacts", exist_ok=True)\ns = json.loads(${JSON.stringify(JSON.stringify(summary))})\ns["started"] = time.time()\njson.dump(s, open("artefacts/summary.json", "w"))\nprint(json.dumps(s))\n`);
+    const image = join(cwd, "inputs", "server.E01");
+    await writeFile(image, "image bytes\n");
+    await writeFile(join(cwd, "target.json"), JSON.stringify({ paths: [image], name: "server" }));
+    const run = await exec(join(recipeCopy, "run.py"), ["run", "--target", join(cwd, "target.json"), "--out", join(cwd, "recipe-out")], undefined, cwd, bin, {}, "linux");
+    const line = JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}");
+    assert.equal(line.status, "complete", JSON.stringify(line.status_basis));
+  });
+});

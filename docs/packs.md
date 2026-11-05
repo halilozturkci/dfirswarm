@@ -722,7 +722,10 @@ of this itself:
   handler is in, is a window a stop signal can land in. A tool that reads a
   pipe through the block and neither calls `process_apply` nor reads
   `PIPE_CUT` does not turn a cut pipe into `partial`; the cut is
-  in `program_group.notes`. And the mechanisms that are not the block: the
+  in `program_group.notes`. The registry lists no such tool now (it fails for
+  one); the pipe-only tools that read `PIPE_CUT` themselves count one cut for
+  the whole run, so a cut while a version was read makes the answer `partial`
+  too. And the mechanisms that are not the block: the
   `unified_log` tool, the disk-timeline recipe, `mem_fs`, five hand-written
   pipe readers in the base pack (`image_layout`, `file_type`, `icat_extract`,
   `chunk_needles`, the archive-members recipe), the shell recipes and

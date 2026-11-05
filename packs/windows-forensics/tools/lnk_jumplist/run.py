@@ -1995,6 +1995,7 @@ def lnkinfo_run(path, seconds):
     except OSError as exc:
         return None, "lnkinfo could not be started: %s" % describe(exc)
     ACTIVE.append(proc)
+    cut_before = PIPE_CUT["cut"]
     try:
         out, _err, timed_out = communicate_bounded(proc, max(1.0, seconds))
     finally:
@@ -2004,6 +2005,10 @@ def lnkinfo_run(path, seconds):
         return None, "lnkinfo did not answer in %d seconds" % max(1, int(seconds))
     if proc.returncode != 0:
         return None, "lnkinfo exited %d (it could not read the structure)" % proc.returncode
+    if PIPE_CUT["cut"] > cut_before:
+        # lnkinfo prints on a pipe, so it is not held to the unproven rule; but a process that held the pipe after lnkinfo ended went on writing, and its bytes are mixed into the text
+        # that would be compared with lnk_parse: that text is not used (the link keeps lnk_parse's reading, with `ran: false` and this reason) and the answer says so (finish)
+        return None, "lnkinfo's pipe was cut at %d bytes (a process that held it after lnkinfo ended went on writing): its output may contain bytes lnkinfo did not write and was not compared" % POST_EXIT_BYTES
     return lnkinfo_fields(out.decode("utf-8", "replace")), None
 
 
@@ -2729,6 +2734,12 @@ def main():
     if JLE["runs"]:
         for why in verdict["unproven"]:
             reasons.append(why + ": JLECmd's CSV cannot be shown to be final")
+    # lnkinfo's pipe is the only pipe this tool reads through the block (JLECmd's output goes to files): a cut at the byte cap means the independent read of the link(s) concerned
+    # was not used (integrity.lnkinfo.ran is false for them, with the reason). The rows themselves are lnk_parse's reading and are not touched; the answer is partial because the
+    # claim "agrees with lnkinfo" cannot be made for them. The cut is counted once for the whole run (PIPE_CUT), so this reason is given for every cut, not for a row.
+    if PIPE_CUT["cut"]:
+        reasons.append("%d lnkinfo call(s) were cut at %d bytes because a process that held lnkinfo's pipe after it ended went on writing: lnkinfo's output for those link(s) was not compared "
+                       "(integrity.lnkinfo says which); the rows are lnk_parse's own reading" % (PIPE_CUT["cut"], POST_EXIT_BYTES))
     if not run.counts["files"] and WALK["stopped"]:
         status, basis = "partial", "; ".join(reasons)
     elif not run.counts["files"] and not unread_count:

@@ -5,7 +5,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -78,6 +78,10 @@ leave() {
     fast)     ( while :; do printf x; sleep 0.001; done ) & echo $! >> "$STUB_DIR/left.pids" ;;
     yes)      ( exec yes y ) & echo $! >> "$STUB_DIR/left.pids" ;;
     errflood) ( exec yes e >&2 ) & echo $! >> "$STUB_DIR/left.pids" ;;
+    # a flood started after the program printed its answer, in a session of its own (PKG-P8c): the post-exit byte cap of the shared block cuts it. On Linux the tool adopts and ends it; on a host
+    # that cannot adopt (darwin, prctl refused) nothing finds it, and only the cut is left to say the pipe was mixed
+    setsidyes) setsid sh -c 'echo $$ >> "$STUB_DIR/left.pids"; exec yes y' </dev/null 2>/dev/null & ;;
+    setsiderr) setsid sh -c 'echo $$ >> "$STUB_DIR/left.pids"; exec yes e >&2' </dev/null >/dev/null & ;;
   esac
   # the program does not end before the leftover has started and written its pid (the tool settles the moment the program is gone)
   i=0
@@ -104,6 +108,8 @@ export const FEW = ["stdout", "setsid"];
 /** The same without the floods, for a tool whose program writes its standard output to a file the tool then reads whole (a flood of gigabytes in that file is the program's own output, read at the speed of the log parser, not a pipe held). */
 export const FILE_HOLDERS = ["sleeper", "slow", "stdin", "fast"];
 export const HOLDERS = ["sleeper", "slow", "stdin", "fast", "yes", "errflood"];
+/** The floods of PKG-P8c: a setsid writer on the program's standard output, and one on its standard error, both started after the program printed its answer. */
+export const CUT_FLOODERS = ["setsidyes", "setsiderr"];
 
 export async function stubDir(cwd: string): Promise<string> {
   const dir = join(cwd, "stub");
@@ -169,3 +175,11 @@ def leave_behind(d, variant, target):
         open(target, "ab").write(b"late\\n")
     os._exit(0)
 `;
+
+/** PKG-P8c: a shell in front of the stand-in `name` in `bin`. `--version` prints `version` and only then leaves the flood that CUT_FLOOD names (setsidyes or setsiderr: a writer in a session of
+ * its own, so it starts after the program printed its answer); every other call goes to the stand-in, renamed `<name>.real`. The version probe of a tool is the pipe it reads through the block. */
+export async function floodTheVersionProbe(bin: string, name: string, version: string): Promise<void> {
+  await rename(join(bin, name), join(bin, `${name}.real`));
+  await writeFile(join(bin, name), sh(`if [ "$1" = "--version" ]; then\n  echo '${version}'\n  STUB_LEFT="$CUT_FLOOD"; leave x\n  exit 0\nfi\nexec "$(dirname "$0")/${name}.real" "$@"\n`), { mode: 0o755 });
+  await chmod(join(bin, name), 0o755);
+}

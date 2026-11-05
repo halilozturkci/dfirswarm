@@ -20,7 +20,7 @@ import { basename, join } from "node:path";
 import { test } from "node:test";
 import { NET, TOOLS, TLSD, asJob, body, exists, filesUnder, frameTcp4, gone, ngBlock, ngInterface, ngPacket, ngSection, pcapClassic, put, refused, startDetached, stub, tool, TCP, ticks, u32, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
-import { FEW, PY_LEAVE, alive, exec, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
+import { CUT_FLOODERS, FEW, PY_LEAVE, alive, exec, floodTheVersionProbe, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
 
 const TLS = TLSD;
@@ -655,3 +655,41 @@ test("a process tshark leaves behind is ended before the answer and makes it par
     }
   });
 });
+
+// ---- a pipe cut at the byte cap of the shared block (PKG-P8c) ---------------------------------------------------------------------------------------
+// The version probe is the pipe tls_decrypt reads through the block. A writer in a session of its own, started after tshark printed its version, floods that pipe: the block cuts it at 1 MiB (PIPE_CUT).
+// On Linux the tool also adopts and ends it (left_behind >= 1); where it cannot (darwin, prctl refused) nothing finds it and only the cut is left to say the pipe was mixed: that was `complete` on the
+// batch head. The sentence is looked for in the status_basis / problems, not in program_group.notes. A clean run stays complete on every host.
+
+for (const flood of CUT_FLOODERS) {
+  for (const host of ["linux", "refused", "darwin"] as const) {
+    test(`tls_decrypt: a version probe cut at the byte cap (${flood}, ${host}) is partial and says a process went on writing`, { skip, timeout: 120000 }, async () => {
+      const fix = fixture!;
+      const built = scenario(flowsFrom(fix));
+      await withCwd(async (cwd, bin) => {
+        try {
+          const dir = await setup(cwd, bin, built, { "keys.log": keyLogOf(fix, "tls12", "tls13") });
+          await mkdir(join(cwd, "out"), { recursive: true });
+          await floodTheVersionProbe(bin, "tshark", "TShark (Wireshark) 4.2.0 stand-in");
+          const result = await exec(TLS, [], { ...base, keylog_file: "inputs/keys.log", write_payload: false }, cwd, bin, { STUB_DIR: dir, JOB_ID: "j000001", OUT: join(cwd, "out"), SECRET_OUTPUT: "1", CUT_FLOOD: flood }, host);
+          assert.equal(result.code, 0, result.stderr + result.stdout);
+          const out = JSON.parse(result.stdout);
+          assert.equal(out.status, "partial", `${out.status_basis}`);
+          assert.equal(out.ok, false);
+          const said = JSON.stringify([out.status_basis, out.problems]);
+          assert.match(said, /a process that held a program's pipe after the program ended went on writing: the tool read no more than 1048576 bytes of it/);
+          assert.match(said, /tshark's version line/);
+          assert.match(JSON.stringify(out.program_group.notes), /went on writing/);
+          if (host === "linux") {
+            assert.ok(out.program_group.left_behind >= 1, JSON.stringify(out.program_group));
+            for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `flooder ${pid} is gone`);
+          } else {
+            assert.equal(out.program_group.left_behind, 0, "nothing was found: the cut alone makes it partial");
+          }
+        } finally {
+          await reap(cwd);
+        }
+      });
+    });
+  }
+}
