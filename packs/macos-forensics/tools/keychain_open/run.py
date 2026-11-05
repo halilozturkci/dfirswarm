@@ -1761,6 +1761,20 @@ def run_keychain(args):
         basis = "the keychain was not opened (see outcome and reason): nothing is claimed about its content"
         if outcome in ("timed_out", "interrupted"):
             basis = ("the tool was stopped by %s" % signal_name(interrupted) if interrupted is not None else "the reader did not end within max_seconds (%s) and was ended" % max_seconds) + " before it had written an item"
+    verdict = process_verdict()
+    if st["ran"] and (verdict["left_behind"] or verdict["unproven"]):
+        # the items file is what the reader wrote; a process it left behind may have written to it after the reader ended (it held the descriptor), and where that cannot be ruled out the
+        # file cannot be shown to be final: at most partial, whatever the reader's summary says
+        if verdict["left_behind"]:
+            problems.append("the reader left %d process(es) running after it ended (a child that held the items file's descriptor, in the tool's process group or, after setsid, outside it); settle() killed and "
+                            "reaped them before the items file was counted and hashed, so what they would still have written is missing, and the file is what it held at that moment" % verdict["left_behind"])
+        for why in verdict["unproven"]:
+            problems.append(why + ": the items file cannot be shown to be final")
+        if status == "complete":
+            status = "partial"
+            basis = ("the reader unlocked the keychain and ended with a summary, but " +
+                     ("it left a process running after it ended, which was killed before the items file was counted and hashed, so the file may be short" if verdict["left_behind"] else
+                      "nothing proves that it left no process behind that writes the items file") + " (see problems)")
     result.update({"status": status, "status_basis": basis, "outcome": outcome})
     if reason:
         result["reason"] = reason
@@ -1769,6 +1783,7 @@ def run_keychain(args):
     notes = process_notes()
     if notes:
         result["process_notes"] = notes
+    process_apply(result)              # program_group: what settle() ended and why absence is unproven (a complete answer is already partial above)
     if interrupted is not None:
         result["interrupted"] = signal_name(interrupted)
     if st["ran"] and st["exit_code"] is not None:

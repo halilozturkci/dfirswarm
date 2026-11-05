@@ -3171,6 +3171,7 @@ OWN_NAMES.update((
     "view", "why", "selected", "unlock", "encryption_route", "limits", "max_seconds", "max_seconds_requested", "seconds_used", "max_output_bytes", "offset", "boundary", "error",
     "type", "reason", "note", "notes", "process_notes", "kept_earlier_larger_result", "declared_volumes", "long_lines", "stderr_first_line", "found", "where",
     "kept_earlier_larger_stdout", "kept_earlier_larger_stderr", "sections", "section_count",
+    "program_group", "subreaper", "left_behind", "unproven",
 ))
 FIELDS.update({
     "path": "path", "found": "path", "stdout_file": "path", "stderr_file": "path", "kept_earlier_larger_result": "path", "identifier": "text", "name": "text",
@@ -3632,6 +3633,12 @@ def run_apfs(args):
                 result["output_capped"] = True
             if run["pipes_held"]:
                 problems.append("something fsapfsinfo started held its pipes after it ended; the pipes were let go and what held them (and was ours) was ended")
+            verdict = process_verdict()
+            for reason in verdict["unproven"]:
+                problems.append(reason + ": the files this tool kept (stdout_file, stderr_file) cannot be shown to be final")
+            if verdict["left_behind"] and not (run["timed_out"] or run["capped"]):
+                problems.append("fsapfsinfo left %d process(es) running after it ended (in the tool's process group or, after setsid or setpgid, outside it); settle() killed and reaped them before the "
+                                "files were kept, hashed or counted, so what they would still have written is missing, and stdout_file and stderr_file are what they held at that moment" % verdict["left_behind"])
             if cap.counts["stdout"] > PARSE_BYTES:
                 result["parse_cut"] = True
                 problems.append("stdout is %d bytes; only the first %d were read for sections (all of it is in stdout_file)" % (cap.counts["stdout"], PARSE_BYTES))
@@ -3692,6 +3699,9 @@ def run_apfs(args):
     for p in problems:
         OWN_NAMES.add(p)
     OWN_NAMES.update((PROGRAM, "-o", "<path>"))
+    process_apply(result)             # program_group: what settle() ended and why absence is unproven; a complete answer becomes partial
+    for text in [*result["program_group"]["unproven"], *result["program_group"]["notes"]] + ([result["status_basis"]] if isinstance(result.get("status_basis"), str) else []):
+        OWN_NAMES.add(text)
     remove_temporaries()
     hold_signals()
     interrupted = emit_answer(result, interrupted, indent=2)
