@@ -3009,6 +3009,10 @@ def run_log(args):
         except Interrupted as stop:
             interrupted = stop.signum
             hold_signals()
+            try:
+                end_leftovers_on_stop()     # a stop that landed while the sweep in run_reader was still working: the orphans it had not yet reached are ended here
+            except Exception:  # noqa: BLE001 (the answer for the stop is still made)
+                pass
     finally:
         # The staged copy (up to 16 GiB, a million files: seconds to tens of seconds to remove) is removed with the stop signals held. A signal that landed
         # in this removal used to escape every handler: the answer then said the tool was stopped before the reader had run, with no counts, and the
