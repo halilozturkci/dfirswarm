@@ -640,6 +640,47 @@ output (Plaso's and Zircolite's `--logfile`) or run there (Hayabusa, Zeek, the
 disk-timeline recipe's Plaso steps), and its test runs it from a read-only
 directory with a stand-in that writes where the real program does.
 
+**What a program leaves behind.** A program can exit by itself and leave a
+process that goes on writing a file the tool then reports: one in a session of
+its own, or one that holds none of the tool's descriptors. The shared PROCESS
+block (`# BEGIN SHARED PROCESS`, in the general and the windows text, the same
+API in both) ends it for every tool that carries it, and a carrier writes none
+of this itself:
+
+- On Linux `spawn()` makes the tool a subreaper (`PR_SET_CHILD_SUBREAPER`,
+  through the `ctypes` the block already imports) before the first program, so
+  what a program leaves is a child of the tool. `settle()` ends it: stopped,
+  what it started stopped with it, killed, reaped, for at most 3 seconds with
+  the clock read for every process. It runs on its own when a program leaves
+  `ACTIVE` after it has ended or been killed (`ACTIVE.remove(proc)`: every
+  carrier does this before it reads what the program wrote), at the end of
+  `communicate_bounded`, and inside `kill_all` (the stop signal). It runs on the
+  caller's thread and joins nothing: a carrier with a reader thread settles
+  before it joins the reader.
+- It ends only a child of the tool that is no program's own: not a program
+  `spawn()` started (Popen reaps it and its `returncode` is never taken), not a
+  child the tool already had when the first program was spawned, and not one
+  kept on purpose (`spawn(argv, leaves=True)` for a program that leaves a
+  daemon the tool stops itself, as `vss_materialise`'s `vshadowmount` does, or
+  `process_keep(pid)`). A program must be started through `spawn()`: a child
+  started by `subprocess` directly while a program runs is taken for a
+  leftover. While another program is running in `ACTIVE` nothing is ended and
+  the answer is unproven. A process that is not a descendant of a program (a
+  service manager or a socket started it, another PID namespace) is not found.
+- `process_verdict()` is `{subreaper, left_behind, unproven[], notes}`;
+  `process_apply(answer)` attaches it as `answer["program_group"]` and turns a
+  `complete` answer into `partial` (`ok` and `complete` false where they are
+  there, a sentence in `status_basis`) when `left_behind` is above 0 or
+  `unproven` is not empty. A carrier calls it once where it prints its answer;
+  a carrier that does not call it still has its leftovers ended, and its answer
+  does not say so.
+- Where nothing is adopted (the kernel or a seccomp rule refuses the call, or
+  the host is not Linux) `settle()` ends only what the tool saw below a program
+  whose parent is gone, and `unproven` says so; on a host that is not Linux
+  that alone makes a complete answer partial while
+  `NONLINUX_UNPROVEN_DOWNGRADE = True` in the block (set it to `False` and it is
+  a note in `process_verdict()["notes"]` only).
+
 ---
 
 ## 8. Writing a pack that holds up
@@ -902,6 +943,9 @@ Every tool a pack bundles holds to this.
    the tool's own process group (never `start_new_session`): the harness ends
    a tool by killing its group, and a program outside it goes on writing after
    the tool is gone.
+   A program that exits and leaves a process behind is the shared PROCESS
+   block's to end, and the answer says it did (below, "What a program leaves
+   behind").
 6. **The manifest's description says exactly what is and is not measured.** A
    survey is described as a survey and a heuristic as a heuristic. A candidate
    is named a candidate; a score is not a verdict.

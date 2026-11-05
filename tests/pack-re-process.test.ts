@@ -183,7 +183,7 @@ const sha = (text: string): string => createHash("sha256").update(text).digest("
 // reverse-engineering packs and the tool library; the tests of each hold their copies equal). The process block is the one
 // with the poll() guard in kill_tree, the seen set in the walk, the libproc route on macOS, the bounded pipe read (communicate_bounded) and the
 // signal path that also ends everything below the tool (tests/pack-shared-process.test.ts holds those cases).
-const NETWORK_PROCESS_SHA = "318081f44222ce78d9fc6da2b1e1727401eb1a00fbc2c1702f7103b4d844def1";
+const NETWORK_PROCESS_SHA = "2c742d7a625062a8442fd509f152d06d4eb1b9813b69d57090212a2e33ddfc5c";
 const NETWORK_ZEEK = join(RE, "..", "network-forensics", "tools", "zeek_run", "run.py"); // the network pack's text is read, not pinned by a digest, so that a sweep of the block does not leave this test behind
 
 test("the tool and the recipes that start programs carry one process block, the network pack's text, and nothing in the pack starts a program in a session or a group of its own", async () => {

@@ -1,6 +1,6 @@
 {
   "id": "android-aleapp",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "A broad extraction of an Android full file-system acquisition (a tar, plain or compressed, or a zip, holding a userdata root): ALEAPP's artefact modules run over the whole of it and write a TSV report per artefact that has records, a timeline database and an HTML report, the searchable form of what the phone holds. The run reads ALEAPP's own log for one outcome per module (modules.tsv: completed, no_record, unsupported, errored, errors_logged or unknown) and says complete only when ALEAPP exited 0, wrote a TSV report, the log was recognised, says how many modules it parses and that many started, ends with its processing-completed line, no module errored, logged an error or is unknown, no line outside a module speaks of an error and stderr holds nothing the log shape does not explain.",
   "object": "Android full file-system archive",
   "order": 38,
@@ -25,7 +25,9 @@
   ],
   "runtime": "python3",
   "entry": "run.py",
-  "requires": ["aleapp"],
+  "requires": [
+    "aleapp"
+  ],
   "auto": [
     "kickoff"
   ],
@@ -50,5 +52,5 @@
     "coverage.json"
   ],
   "covers": "What ALEAPP's modules parse from the whole acquisition: one TSV per artefact that has records, its timeline and every file it wrote, kept under aleapp/, and modules.tsv with the outcome of each module its log names. A module that finds nothing writes no report (no_record), which does not show the artefact never existed, and a module whose own gate does not take the operating-system version (unsupported) read nothing of that artefact; files no module targets are not read; a module that errored or whose end the log does not show is not covered, however many reports the others wrote. The program is run in a process group of its own with a time limit of its own (--max-seconds, default 14100 seconds, under the 14400 of the limit): one that does not finish is ended with everything it started, what it wrote is kept, and the run says partial or failed, never complete; a stop signal ends the program and its children before the recipe ends. The report contains the phone's own content and is a sensitive output.",
-  "sha256": "3434e9ad3c93c5e26414f7d0dc384103dc0269a930aaa6f64e447309ee371063"
+  "sha256": "1e4e5b37b0bf1a0705fe49f6378d71f455c72daa8ebc7728052f88b8c6f7adce"
 }
