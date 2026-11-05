@@ -51,7 +51,7 @@ import time
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "image_verify", "version": 3}
+TOOL = {"name": "image_verify", "version": 4}
 STARTED = time.monotonic()               # the run's clock starts with the tool
 CHUNK = 1 << 20
 MAX_SECONDS_DEFAULT = 3000
@@ -2162,6 +2162,25 @@ def same_identity(path, identity):
 
 # ---- the programs -------------------------------------------------------------------------------------------------------
 
+LOGGED = [False]    # a program whose output went to files (ewfinfo, ewfverify) was started: the files the answer keeps and names are written by a program
+
+
+def program_reasons():
+    """Why the files a program wrote cannot be taken as final, from the shared block's verdict (partial_reasons): settle() ended a process that a program
+    left behind (it may have written to ewfinfo.stdout.txt, ewfverify.stdout.txt or a stderr file, and what it would still have written is missing), or
+    nothing can show that none was left (a host that is not Linux, a kernel that refuses PR_SET_CHILD_SUBREAPER). Only when a program wrote a file: the
+    version probe prints on a pipe, and a pipe is not held to the second."""
+    verdict = process_verdict()
+    reasons = []
+    if verdict["left_behind"]:
+        reasons.append("ewfinfo or ewfverify left %d process(es) running after it ended (a child that held an output file, in the tool's process group or, in a session of its own, outside it); "
+                       "settle() killed and reaped them before the output files were read, so ewfinfo.stdout.txt, ewfverify.stdout.txt and the stderr files are what they held "
+                       "at that moment and what the leftover would still have written is missing" % verdict["left_behind"])
+    if LOGGED[0]:
+        reasons.extend(why + ": the output files of ewfinfo and ewfverify cannot be shown to be final" for why in verdict["unproven"])
+    return reasons
+
+
 PROGRESS = {"phase": "starting", "budget": MAX_SECONDS_DEFAULT, "reserve": RESERVE_SECONDS, "segments_found": 0, "segments_hashed": 0, "dest": None, "last": None}
 
 
@@ -2186,6 +2205,7 @@ def run_logged(argv, stdout_path, stderr_path, seconds):
             proc = spawn(argv, stdout=out, stderr=err, env=env)
         except OSError as exc:
             return None, False, "the program could not be started: %s" % describe(exc)
+        LOGGED[0] = True
         ACTIVE.append(proc)
         try:
             return proc.wait(timeout=max(0.1, seconds)), False, None
@@ -2541,6 +2561,9 @@ def main():
             if identity is not None and not same_identity(segment, identity):
                 fail_reasons.append("segment %d changed (size, modification time or file) while the receipt was made" % n)
 
+    if not fail_reasons:
+        partial_reasons.extend(program_reasons())
+
     # ---- status
     if fail_reasons:
         status = "failed"
@@ -2605,6 +2628,7 @@ def main():
         "files": files,
         "python": sys.version.split()[0],
     }
+    process_apply(answer)            # program_group: what settle() ended and why absence is unproven (a complete answer is already partial above)
     if rows_error:
         answer["rows_file_error"] = rows_error
     if withheld_error:

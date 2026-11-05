@@ -49,7 +49,7 @@ import time
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "layer_describe", "version": 3}
+TOOL = {"name": "layer_describe", "version": 4}
 STARTED = time.monotonic()
 CHUNK = 1 << 20
 MAX_SECONDS_DEFAULT = 1500
@@ -2318,6 +2318,25 @@ def sha_and_text(path):
     return h.hexdigest(), total, first.decode("utf-8", "replace"), total > OUTPUT_READ_MAX
 
 
+LOGGED = [False]    # a program whose output went to files (mmls, fsstat, ewfinfo, qemu-img) was started: the files the descriptor hashes and names are written by a program
+
+
+def program_reasons():
+    """Why the files a program wrote cannot be taken as final, from the shared block's verdict (partial_reasons, so the descriptor says it too): settle() ended a
+    process that a program left behind (it may have written to the output file whose sha256 and size the descriptor holds, and what it would still have written is
+    missing), or nothing can show that none was left (a host that is not Linux, a kernel that refuses PR_SET_CHILD_SUBREAPER). Only when a program wrote a file:
+    a version probe prints on a pipe, and a pipe is not held to the second."""
+    verdict = process_verdict()
+    reasons = []
+    if verdict["left_behind"]:
+        reasons.append("a program left %d process(es) running after it ended (a child that held its output file, in the tool's process group or, in a session of its own, outside it); "
+                       "settle() killed and reaped them before the output was hashed and kept, so the sha256 and size of its stdout and stderr are those of what the file held "
+                       "at that moment and what the leftover would still have written is missing" % verdict["left_behind"])
+    if LOGGED[0]:
+        reasons.extend(why + ": the output files of the programs (and their sha256) cannot be shown to be final" for why in verdict["unproven"])
+    return reasons
+
+
 def run_program(label, argv, shown_argv, seconds):
     """One program in this tool's process group, its output staged in two private files and kept whole under content-addressed names.
     A dict: exit_code, timed_out, error, the output's sha256 and size and file name, and the start of stdout as `text`."""
@@ -2347,6 +2366,7 @@ def run_program(label, argv, shown_argv, seconds):
             result["error"] = "the program could not be started: %s" % describe(exc)
             proc = None
         if proc is not None:
+            LOGGED[0] = True
             ACTIVE.append(proc)
             try:
                 result["exit_code"] = proc.wait(timeout=max(0.1, seconds))
@@ -2806,6 +2826,10 @@ def main():
         if identity is not None and not same_identity(entries[index]["path"], identity):
             fail_reasons.append("source %d changed (size, modification time or file) while the descriptor was made" % index)
 
+    # ---- what the programs left behind, before the descriptor says its status
+    if not fail_reasons:
+        partial_reasons.extend(program_reasons())
+
     # ---- the descriptor
     for dep in missing_deps:
         dep.setdefault("declared", False)
@@ -2944,6 +2968,7 @@ def main():
     }
     if write_error:
         answer["write_error"] = scrub(write_error)
+    process_apply(answer)            # program_group: what settle() ended and why absence is unproven (a complete answer is already partial above)
     say(answer, 0)
 
 

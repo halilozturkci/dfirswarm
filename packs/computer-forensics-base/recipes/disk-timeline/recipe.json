@@ -1,7 +1,7 @@
 {
   "id": "disk-timeline",
-  "version": "1.1.9",
-  "description": "A broad extraction of a disk image: Plaso's log2timeline over every partition and volume with every parser it carries, then psort's CSV super timeline, the searchable form of what the image's artefacts say happened when. It takes hours on a large image, so it is offered, not run by itself. complete means the pipeline finished, not that every parser read every source: Plaso's own processing report (pinfo.txt, when pinfo is present) says what each parser did. An evidence timezone may be given in the target (\"timezone\") or RECIPE_TIMEZONE.",
+  "version": "1.1.10",
+  "description": "A broad extraction of a disk image: Plaso's log2timeline over every partition and volume with every parser it carries, then psort's CSV super timeline, the searchable form of what the image's artefacts say happened when. It takes hours on a large image, so it is offered, not run by itself. complete means the pipeline finished, not that every parser read every source: Plaso's own processing report (pinfo.txt, when pinfo is present) says what each parser did. An evidence timezone may be given in the target (\"timezone\") or RECIPE_TIMEZONE. If log2timeline, psort or pinfo exits and leaves a process running, the recipe (a subreaper on Linux, with its own small mechanism: it carries no shared process block) ends it before it reads the files, and the run is partial with program_group.left_behind in coverage.json; where that cannot be ruled out (a host that is not Linux, or PR_SET_CHILD_SUBREAPER refused) the run is at most partial (program_group.unproven). A stop signal ends what the step started and lost, not only the step.",
   "object": "disk image",
   "order": 12,
   "min_bytes": 65536,
@@ -86,5 +86,5 @@
     "pinfo.stderr"
   ],
   "covers": "What log2timeline's parsers read from every partition and volume of the image, written by psort as one CSV timeline; the storage file is kept for psort and pinfo. A parser that finds nothing adds no row, which does not show the artefact never existed. The run refuses an output directory that already holds a timeline from an earlier run. The status says the pipeline finished, not what the parsers covered.",
-  "sha256": "f210335ae057d7fb29609aef6e2dcb56607e2ae4f2a2ca3bdcdc3b2bba82540a"
+  "sha256": "654dd4c087b947f41a60975e69d473a9a2b5c377c767486a669338ce7b5aff95"
 }
