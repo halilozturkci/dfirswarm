@@ -655,8 +655,7 @@ of this itself:
   `ACTIVE` after it has ended or been killed (`ACTIVE.remove(proc)`: every
   carrier does this before it reads what the program wrote), at the end of
   `communicate_bounded`, and inside `kill_all` (the stop signal). It runs on the
-  caller's thread and joins nothing: a carrier with a reader thread settles
-  before it joins the reader.
+  caller's thread and joins nothing.
 - It ends only a child of the tool that is no program's own: not a program
   `spawn()` started (Popen reaps it and its `returncode` is never taken), not a
   child the tool already had when the first program was spawned, and not one
@@ -705,6 +704,47 @@ of this itself:
   reports the files the program wrote answers at most partial; a tool that
   reports only what the program printed (`ransomware_family_match`) is not
   held to it.
+- **Held and pipe-only.** A tool that reports files a program wrote, or that
+  it hashes or counts (a log, a derivative, an export, a kept standard output
+  or error file), is *held*: it calls `process_apply`, or the function of its
+  own that does the same (`program_group_problems` in the linux, memory and
+  mobile packs; the verdict read in the tool itself in `fuzzy_hash` and
+  `lnk_jumplist`), and is at most `partial` where the absence of a leftover
+  cannot be proven. A tool that reports only what a program printed on a pipe
+  is *pipe-only*: `partial` for a process `settle()` ended (and, through
+  `process_apply`, for a pipe cut at the byte cap), and not held to the
+  unproven rule. Both put `program_group` in an answer that ran a program.
+- **Not covered.** A writer that is not a descendant of a program (a service
+  manager, a socket, another PID namespace). The tool itself being killed (the
+  harness ends its group; a process in a session of its own survives, as it
+  always did). A flood that starts while the program is still alive: the byte
+  cap starts at the program's exit. The start of the interpreter, before a
+  handler is in, is a window a stop signal can land in. A tool that reads a
+  pipe through the block and neither calls `process_apply` nor reads
+  `PIPE_CUT` does not turn a cut pipe into `partial`; the cut is
+  in `program_group.notes`. And the mechanisms that are not the block: the
+  `unified_log` tool, the disk-timeline recipe, `mem_fs`, five hand-written
+  pipe readers in the base pack (`image_layout`, `file_type`, `icat_extract`,
+  `chunk_needles`, the archive-members recipe), the shell recipes and
+  `master_icat`, and five library-only tools that call `subprocess.run`
+  (`fls_root`, `hdfs_node_icat`, `icat_root`, `sigscan_e01`, `volrun`), which
+  end only their direct child and have no abandoned-child test.
+- **The registry is the arbiter, not this text.**
+  `tests/process-sweep-coverage.json` lists every file under `packs/` and
+  `tool-library/` (outside `tests/`) that starts a program: the 62 copies of
+  the block, the files with a mechanism of their own, the library twins and the
+  shell recipes. Each entry has its class (`held`, `pipe-only`, `no-program`,
+  `local-mechanism`, `twin`), where the class is stated, and the test files
+  that run a real abandoned child for it, or the gap. A new tool that starts a
+  program is added there in the same change.
+  `tests/process-sweep-coverage.test.ts` reads the sources and fails for a
+  carrier that is not listed, a held tool that does not call what its `apply`
+  names, a listed test that is missing or does not mention the tool, a twin that
+  differs from its pack file, a count of block carriers that differs from the
+  census, and a registry that cannot fail (it is tried on damaged copies). It
+  runs no program; the late-writer runs are in the per-pack suites
+  (`tests/pack-*-process-apply.test.ts`, `tests/pack-re-pipe-matrix.test.ts`,
+  the base pack's `test_process_apply.py` and `test_pipe_shapes.py`).
 
 ---
 
@@ -1182,6 +1222,17 @@ they are. `pack.sh seal` reads it by pack id and refuses a listed leaf only once
 grown past its ceiling; a pack of another id has no listed findings, and a leaf
 over 1,000 tokens in it is refused. New and changed skills
 are written to the budget; a finding is not added to the list to get a change in.
+
+### A tool that starts a program
+
+A tool or a recipe that starts a program carries the shared PROCESS block,
+starts every program through its `spawn()`, and calls `process_apply` (or says
+in `tests/process-sweep-coverage.json` what it does instead) where it prints
+its answer. What the block does and does not do is in section 7, "What a
+program leaves behind". Which tools are covered, and how, is decided by the
+registry `tests/process-sweep-coverage.json` and its test, not by a pack's
+changelog: a tool that starts a program and is not listed there, or is listed
+with a claim its code does not keep, fails `tests/process-sweep-coverage.test.ts`.
 
 ### Closing a pack's review
 
