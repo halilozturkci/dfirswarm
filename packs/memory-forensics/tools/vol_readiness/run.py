@@ -46,7 +46,7 @@ import os
 import signal
 import sys
 
-PARSER = "vol_readiness/1"
+PARSER = "vol_readiness/5"
 
 
 def _before_start(signum, _frame):
@@ -2569,6 +2569,11 @@ def run_engine(argv, seconds, on_out, on_err, out_cap, err_cap, cwd=None):
             out["note"] = note
         return out
     finally:
+        # settle() BEFORE the pipes are closed: a leftover that writes into a pipe at full speed dies of SIGPIPE the moment the tool closes its end, and settle() would then find
+        # nothing to count (left_behind 0, a complete answer over lines the leftover wrote). The program has ended here unless an exception is on its way (the tool kills it then).
+        if proc.poll() is not None:
+            reap_orphans(_pipe_inodes(proc))
+            settle()
         sel.close()
         for pipe in (proc.stdout, proc.stderr):
             try:
@@ -3001,6 +3006,23 @@ def image_problem(path):
     return None
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s%s" % (
+            verdict["left_behind"], what, what, "" if held else ", and the lines they wrote into the pipe before that cannot be told from the program's: the rows, counts or table of this run are not to be trusted"))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def main():
     GUARD["stopping"] = False
     STATE["last_word"] = last_word
@@ -3068,10 +3090,14 @@ def main():
     notes = process_notes()
     if notes:
         out["process_notes"] = notes
-    if unknown:
+    # every check reads what a program printed on a pipe: a process one of them left behind (ended by settle() before its output was judged) may have written some of it, so the
+    # answer is partial; a host that cannot adopt orphans does not make it partial (program_group says why)
+    group = program_group_problems("the programs' output", held=False)
+    out["program_group"] = process_verdict()
+    if unknown or group:
         out["status"] = "partial"
-        out["status_basis"] = ("%s could not be finished or read, so the verdict is unknown for %s" % (
-            ", ".join(unknown), "it" if len(unknown) == 1 else "them"))
+        out["status_basis"] = "; ".join(
+            (["%s could not be finished or read, so the verdict is unknown for %s" % (", ".join(unknown), "it" if len(unknown) == 1 else "them")] if unknown else []) + group)
     else:
         out["status"] = "complete"
         out["status_basis"] = "every requested view was checked to a definite end (ready or blocked)"

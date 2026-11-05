@@ -19,6 +19,8 @@ The tool points the program at the evidence root (and for rpm at the database in
 
 **Reading a result.** The `rpm -V` mask has one position per attribute: `S` size, `5` file digest, `T` mtime, `M` mode, `U` user, `G` group, `L` link target, `D` device, `P` capabilities; take the installed version's own definitions, and record unreadable and missing results. `S.5....T.` on `/usr/bin/ssh` says the size, digest and mtime differ from the database. It does not say the binary was maliciously replaced: expected upgrades, administrative changes, a restore and a repackaged file do the same. A `T`-only result is a timestamp difference, not a content edit. Compare the difference with the package-manager logs and trusted package contents before classifying it.
 
+**A program that left a process.** `package_verify` is `partial` (`program_group`) when debsums or rpm left a process running: a line it wrote into the pipe cannot be told from the program's.
+
 Shows: differences from the acquired database. Does not show: that an unlisted file is benign, that a matching file is the distribution's file (the database could have been changed with it), or when or by whom a difference arose. Record: the answer's scope, the program's version and exit status, and the paging file of the differences.
 
 Sensitive output: none beyond file paths.

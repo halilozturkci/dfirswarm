@@ -226,6 +226,8 @@ deleted records in their own free pages, which `sqlite_freespace` reads for the
 main file only. A WAL or a journal beside a database is evidence of its own and is
 copied with it; `sqlite_freespace` and `protobuf_peek` read neither.
 
+**What a program leaves behind.** The tools that run a program end, through the shared process block, what it left running after it exited, before they read, size or hash what it wrote. `heic_inspect`, `backup_decrypt` and the `android-aleapp`, `android-backup-apps` and `ios-ileapp` recipes carry it. A tool that reports files a program wrote answers at most `partial` where the host cannot show no process was left (not Linux, `PR_SET_CHILD_SUBREAPER` refused), and one that reports only what a program printed on a pipe does not; every one is `partial` for a process that was ended, and says so in `program_group` and its status basis. A process that is not a descendant of the program (started through a service manager) is not found.
+
 ## Install and use
 
     scripts/pack.sh install packs/computer-forensics-base

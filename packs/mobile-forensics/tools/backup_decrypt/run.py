@@ -69,7 +69,7 @@ import unicodedata
 from pathlib import Path
 from urllib.parse import quote
 
-PARSER = "backup_decrypt/3"
+PARSER = "backup_decrypt/4"
 TOOL = "backup_decrypt"
 VALUES_NAME = "backup-decrypt-values.jsonl"        # unused: the tool has no values mode, the shared block names it
 VALUES_FORMAT = "unused"
@@ -2332,6 +2332,22 @@ def capped(column):
     return "substr(CAST(%s AS TEXT), 1, %d)" % (column, CELL_CHARS)
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 RUN = {}
 
 
@@ -2414,6 +2430,7 @@ def main_inner():
                   "backup_facts": facts, "output_directory": shown_run,
                   "note": "Nothing was decrypted that is kept. The password is never printed, and the tool read none of it in this process.", **more}
         shutil.rmtree(str(run_dir), ignore_errors=True)
+        process_apply(answer)
         emit(dumps(wrap_up(answer), indent=2))
         raise SystemExit(1)
 
@@ -2523,6 +2540,9 @@ def main_inner():
         problems.append("the map holds more than %d rows: the rest is not read" % MAX_ROWS)
     if bad_line:
         problems.append("the child's account held a line that was too long or not JSON")
+    # the decrypted files are what the child wrote: a process it left behind (ended by settle() before they were measured), or one that cannot be ruled out (not Linux,
+    # PR_SET_CHILD_SUBREAPER refused), keeps the answer from `verified`
+    problems[0:0] = program_group_problems("the decrypted files and the map")
     expected = {"decrypted_verified", "no_blob_expected"}
     short = sum(n for k, n in counts.items() if k not in expected)
     if short:
@@ -2556,6 +2576,7 @@ def main_inner():
                 "and not a backup directory (Manifest.plist is not carried over). No key bag, class key or manifest key is printed: Manifest.plist's key material is a presence and a length. "
                 "The password is never in this answer. The files are sealed sensitive output of this secret job.",
     }
+    process_apply(answer)       # program_group; already partial above where it says so
     send(answer)
 
 

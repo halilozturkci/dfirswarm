@@ -65,7 +65,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 TOOL = "audit_events"
-PARSER = "audit_events/4"
+PARSER = "audit_events/5"
 
 
 DEFAULT_LIMIT = 100
@@ -2430,19 +2430,46 @@ def rotation_inventory(files):
     return gaps, overlaps, missing
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s%s" % (
+            verdict["left_behind"], what, what, "" if held else ", and the lines they wrote into the pipe before that cannot be told from the program's: the rows, counts or table of this run are not to be trusted"))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def read_bounded(proc, seconds, cap):
     """(stdout bytes, timed out, over the cap) of a program started with spawn: read with select, with a deadline and a cap; a program that
     ended while something it started holds the pipe is given PIPE_GRACE seconds and what it left behind is ended (reap_orphans)."""
     deadline = time.monotonic() + seconds
-    chunks, size, timed_out, over, exited = [], 0, False, False, None
+    chunks, size, timed_out, over, exited, release = [], 0, False, False, None, None
     fd = proc.stdout.fileno()
     while True:
         now = time.monotonic()
         if now >= deadline:
             timed_out = True
+            if proc.poll() is not None:
+                settle()        # the program had ended: what holds the pipe is a leftover, counted (program_group.left_behind) as it is ended
             kill_tree(proc)
             reap_orphans(_pipe_inodes(proc))
             break
+        if release is not None and now >= release:
+            break               # the holder was ended and the pipe still has no end: it is let go
+        if exited is None and proc.poll() is not None:
+            exited = now        # counted from the program's end whether bytes keep coming or not: a leftover that writes slowly does not hold the tool
+        if release is None and exited is not None and now - exited >= PIPE_GRACE:
+            reap_orphans(_pipe_inodes(proc))
+            settle()            # a process that holds the pipe is ended (program_group.left_behind), and the pipe gets its end
+            release = time.monotonic() + 1.0
         _sample(proc.pid)
         ready, _w, _x = select.select([fd], [], [], max(0.01, min(0.2, deadline - now)))
         if ready:
@@ -2452,16 +2479,12 @@ def read_bounded(proc, seconds, cap):
             size += len(chunk)
             if size > cap:
                 over = True
+                if proc.poll() is not None:
+                    settle()    # the program had ended: what floods the pipe is a leftover, counted as it is ended
                 kill_tree(proc)
                 reap_orphans(_pipe_inodes(proc))
                 break
             chunks.append(chunk)
-            continue
-        if proc.poll() is not None:
-            exited = exited or now
-            if now - exited >= PIPE_GRACE:
-                reap_orphans(_pipe_inodes(proc))
-                break
     return b"".join(chunks), timed_out, over
 
 
@@ -2635,6 +2658,9 @@ def main():
         pages[key] = items.settle()
         listed[key] = {"total": items.page.total, "shown": list(items)}
     parts = []
+    # ausearch (the second reader) reports what it printed on a pipe: a process it left behind (ended by settle() before its output was compared) makes the comparison one that
+    # cannot be trusted, so the answer is partial; the files this tool reads are its own, so a host that cannot adopt orphans does not make it partial (program_group says why)
+    group = program_group_problems("the second reader's output", held=False)
     if not read_all:
         bad = [f["index"] for f in files if f["read"] != "complete"]
         parts.append("file(s) %s were not read to their end (see rotation_inventory)" % ", ".join(str(i) for i in bad[:20]) if bad else "max_seconds passed")
@@ -2646,7 +2672,8 @@ def main():
     identity_complete = all(f["read"] for f in identity_files)
     if identity_files and not identity_complete:
         parts.append("an identity file was not read: its ids stay numeric")
-    outcome = status_of(read_all and lines_ok and not capped and identity_complete, False,
+    parts.extend(group)
+    outcome = status_of(read_all and lines_ok and not capped and identity_complete and not group, False,
                         "every line of every file given was read and parsed, in the order given", "; ".join(parts) or "partial", "")
     out = {"parser": PARSER, **outcome, "all_lines_parsed": lines_ok, "all_files_read": read_all,
            "paths_given": len(paths), "files_read": sum(1 for f in files if f["read"] == "complete"),
@@ -2664,7 +2691,7 @@ def main():
                                   "note": "the files are read in the order given; a rotation number missing from the names given (rotation_gaps) was not collected or not passed"},
            "stopped": stats["stopped"],
            "identity": {"given": identity_files, "names_from": "the supplied files only; this machine's /etc/passwd and /etc/group are never read" if identity_files else "none supplied: uids and gids stay numeric"},
-           "second_reader": second,
+           "second_reader": second, "program_group": process_verdict(),
            "text": text_file.summary(), "events": page.page, "pages": pages, "truncated": pages["events"]["truncated"],
            "limits": LIMITS_NOTE}
     if clock.out:

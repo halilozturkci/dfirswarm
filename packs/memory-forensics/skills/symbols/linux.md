@@ -22,4 +22,6 @@ A Linux ISF must be made for the exact kernel build, with its architecture. A ne
 **Does not show.** That the examination will work; that the running kernel is that banner's, when the image holds several; that any kernel version is supported; anything about macOS.
 
 Record: the banner (release word only in a post) and its offset, the architecture, the debug material's source, the converter, the table's identity and digest, the verdict of `isf_intake` and of `vol_readiness`.
+**A program that left a process.** A Volatility or dwarf2json that leaves a process running makes `vol_readiness` and `isf_intake` `partial` (`program_group`); `isf_intake` then keeps no table.
+
 Sensitive output: none here; a symbol table is not a secret, but it stays local-only: out of a thread and a report package, and out of a job's output except the one table `isf_intake` writes there (above).

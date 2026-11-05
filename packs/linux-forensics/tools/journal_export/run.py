@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "journal_export"
-PARSER = "journal_export/18"
+PARSER = "journal_export/19"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 240.0
 MAX_SECONDS = 270.0           # the most a caller may ask for (the manifest allows 300)
@@ -1824,6 +1824,22 @@ def output_file(name):
     fail("no free name for %s in %s" % (name, base))
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, seconds):
     """Run journalctl in this tool's process group (spawn, below: the harness ends a tool by killing its group), with a
     deadline that ends it and what it started. Every byte of stdout goes to `raw_sink` in order; each line within MAX_LINE
@@ -1837,6 +1853,7 @@ def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, secon
             fd = proc.stdout.fileno()
             end = time.monotonic() + seconds
             pending, size = [], 0
+            exited, release = None, None
             while True:
                 left = end - time.monotonic()
                 if left <= 0 and not timed_out:
@@ -1847,7 +1864,16 @@ def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, secon
                     continue
                 if left <= 0:
                     break
-                ready, _w, _x = select.select([fd], [], [], min(left, 0.5))
+                now = time.monotonic()
+                if release is not None and now >= release:
+                    break           # the holder was ended and the pipe still has no end: it is let go
+                if exited is None and proc.poll() is not None:
+                    exited = now    # counted from journalctl's end whether bytes keep coming or not: a leftover that writes slowly does not hold the tool to its deadline
+                if release is None and exited is not None and now - exited >= PIPE_GRACE:
+                    reap_orphans(_pipe_inodes(proc))
+                    settle()        # a process that holds the pipe is ended (program_group.left_behind), and the pipe gets its end
+                    release = time.monotonic() + 1.0
+                ready, _w, _x = select.select([fd], [], [], min(left, 0.2))
                 if not ready:
                     continue
                 chunk = os.read(fd, 1 << 20)
@@ -2023,11 +2049,14 @@ def main():
                 code, timed_out = run_journalctl(argv, sink.write, lambda raw: None, lambda size: None, err_path, max(1.0, seconds - (time.monotonic() - started)))
         except OSError as exc:
             fail("journalctl could not be run: %s" % describe(exc), argv=argv)
-        outcome = status_of(not timed_out, False,
+        # the output is journalctl's, copied from the pipe by this tool, and its stderr is a file journalctl wrote: a process it left behind (ended by settle() before the files were
+        # sized and hashed), or one that cannot be ruled out (not Linux, PR_SET_CHILD_SUBREAPER refused), keeps the answer from `complete`
+        group = program_group_problems("the output and the stderr file")
+        outcome = status_of(not timed_out and not group, False,
                             "journalctl --verify ran to its end; its exit code and whole output are kept (a clean result is not a complete journal)",
-                            "journalctl --verify did not finish within max_seconds: the output so far is kept", "")
+                            "; ".join((["journalctl --verify did not finish within max_seconds: the output so far is kept"] if timed_out else []) + group), "")
         print(json.dumps({
-            "parser": PARSER, "mode": "verify", **outcome, "path": path, "argv": argv, "exit_code": code, "timed_out": timed_out,
+            "parser": PARSER, "mode": "verify", **outcome, "program_group": process_verdict(), "problems": group, "path": path, "argv": argv, "exit_code": code, "timed_out": timed_out,
             "verify": {"output_file": out_shown, "output_bytes": os.path.getsize(out_path), "stderr_file": err_shown,
                        "stderr_bytes": size_and_sha256(err_path)[0], "stderr_sha256": size_and_sha256(err_path)[1]},
             "claims": "journalctl --verify checks the internal, structural consistency of the journal files it was given, and, "
@@ -2127,16 +2156,21 @@ def main():
         fail("journalctl refused this journal", exit_code=code, stderr_file=err_shown, stderr_bytes=stderr_size, stderr_sha256=stderr_digest, argv=argv)
     pages = {"records": page.finish()}
     capped = capped_why(pages, text)
-    complete = code == 0 and not timed_out and st["bad_count"] == 0 and not capped
+    # the native export is journalctl's output copied from the pipe by this tool, and its stderr is a file journalctl wrote: a process it left behind (ended by settle() before the
+    # files were sized and hashed), or one that cannot be ruled out (not Linux, PR_SET_CHILD_SUBREAPER refused), keeps the answer from `complete`
+    group = program_group_problems("the export and the stderr file")
+    complete = code == 0 and not timed_out and st["bad_count"] == 0 and not capped and not group
     outcome = status_of(
         complete, False,
         "journalctl exited 0 within the deadline and every line it wrote parsed; this says nothing about journal files that were not in "
         "what you collected, or entries rotated away or never written",
         "journalctl exited %s%s and %d line(s) did not parse%s: what was read is kept and the files are named"
-        % (code, " after the deadline" if timed_out else "", st["bad_count"], "; " + capped if capped else ""), "")
+        % (code, " after the deadline" if timed_out else "", st["bad_count"], "; " + capped if capped else "") + ("; " + "; ".join(group) if group else ""), "")
     print(json.dumps({
         "parser": PARSER,
         "mode": "export",
+        "program_group": process_verdict(),
+        "problems": group,
         "path": path,
         "argv": argv,
         "time_bounds": {**bounds, "interpretation": "as written, with its own zone"} if bounds else None,

@@ -37,7 +37,7 @@ import time
 from pathlib import Path
 
 TOOL = "package_verify"
-PARSER = "package_verify/3"
+PARSER = "package_verify/4"
 
 
 DEFAULT_LIMIT = 100
@@ -1660,6 +1660,23 @@ def inside(root, path):
         return False
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s%s" % (
+            verdict["left_behind"], what, what, "" if held else ", and the lines they wrote into the pipe before that cannot be told from the program's: the rows, counts or table of this run are not to be trusted"))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def read_bounded(proc, seconds, cap, on_line, stderr_sink):
     """Read a program's standard output line by line within a deadline and a cap, handing each line (bytes, no newline) to on_line; standard error is
     kept to MAX_STDERR bytes. (timed out, over the cap). A program that ended while something it started holds a pipe is given PIPE_GRACE seconds and
@@ -1667,20 +1684,23 @@ def read_bounded(proc, seconds, cap, on_line, stderr_sink):
     deadline = time.monotonic() + seconds
     out_fd, err_fd = proc.stdout.fileno(), proc.stderr.fileno()
     open_fds = {out_fd, err_fd}
-    carry, size, err_size, timed_out, over, exited = b"", 0, 0, False, False, None
+    carry, size, err_size, timed_out, over, exited, release = b"", 0, 0, False, False, None, None
     while open_fds:
         now = time.monotonic()
         if now >= deadline:
             timed_out = True
             break
+        if release is not None and now >= release:
+            break               # the holder was ended and the pipes still have no end: they are let go
+        if exited is None and proc.poll() is not None:
+            exited = now        # counted from the program's end whether bytes keep coming or not: a leftover that writes slowly does not hold the tool
+        if release is None and exited is not None and now - exited >= PIPE_GRACE:
+            reap_orphans(_pipe_inodes(proc))
+            settle()            # a process that holds a pipe is ended (program_group.left_behind), and the pipes get their end
+            release = time.monotonic() + 1.0
         _sample(proc.pid)
         ready, _w, _x = select.select(list(open_fds), [], [], max(0.01, min(0.2, deadline - now)))
         if not ready:
-            if proc.poll() is not None:
-                exited = exited or now
-                if now - exited >= PIPE_GRACE:
-                    reap_orphans(_pipe_inodes(proc))
-                    break
             continue
         for fd in ready:
             chunk = os.read(fd, 1 << 20)
@@ -2064,9 +2084,12 @@ def main():
             problems.append("the program's standard error was cut at %d bytes" % MAX_STDERR)
     if ran and out["program"].get("stderr", {}).get("by_kind", {}).get("missing file"):
         problems.append("%d file(s) the database lists are missing from the root (see program.stderr)" % out["program"]["stderr"]["by_kind"]["missing file"])
+    # debsums / rpm report what they printed on a pipe: a process they left behind (ended by settle() before the lines were totalled) may have written some of them, so the
+    # answer is partial; a host that cannot adopt orphans does not make it partial (program_group says why)
+    problems.extend(program_group_problems("the program's lines", held=False))
     outcome = status_of(not problems, not ran and not deadline_hit, "the program ran to its end, within its time, and every line it wrote was read",
                         "; ".join(problems) or "partial", "the program that does the check is not available: nothing was checked (%s)" % out["program"].get("why", ""))
-    out.update({**outcome, "safeguards": {
+    out.update({**outcome, "program_group": process_verdict(), "safeguards": {
         "runs": [exe] if exe else [],
         "never_runs": "this tool starts only the program named in `runs`, with the arguments shown in program.argv; debsums runs no maintainer script; for rpm see `rpm` below: whether %verifyscript is suppressed was not confirmed, so no more is claimed",
         "debian": "debsums runs no maintainer script",

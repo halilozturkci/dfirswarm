@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "linux_triage"
-PARSER = "linux_triage/13"
+PARSER = "linux_triage/14"
 DEFAULT_FUNCTION_SECONDS = 1800
 DEFAULT_TOTAL_SECONDS = 13800
 MAX_TOTAL_SECONDS = 14100       # the most a caller may ask for (the manifest allows 14400)
@@ -1369,6 +1369,22 @@ def coverage_of(groups):
     return counts
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def status_of(groups, kind):
     """(status, basis) for the run: complete only if the run ended and every selected function ran and produced records or
     nothing; failed if no function ran to an exit (all failed or none started); partial otherwise. A run that is still going
@@ -1384,13 +1400,16 @@ def status_of(groups, kind):
     if ran == 0:
         return "failed", "no selected function ran to an exit: %d failed, %d not attempted%s" % (
             counts.get("failed", 0), counts.get("not_attempted", 0) + counts.get("pending", 0), "; the run was stopped from outside" if kind == "terminated" else "")
-    clean = (kind == "finished" and not HASH["skipped"]
+    cut_by_leftover = sum(1 for g in groups for f in g["functions"] if f.get("left_behind"))
+    clean = (kind == "finished" and not HASH["skipped"] and not cut_by_leftover
              and all(counts.get(k, 0) == 0 for k in ("unsupported", "failed", "not_attempted", "unknown", "pending", "running")))
     if clean:
         return "complete", "every one of the %d selected functions ran to exit 0 and produced records or nothing: this is not coverage of the host" % total
     parts = ["%d %s" % (counts[k], k) for k in ("unsupported", "failed", "not_attempted", "unknown", "pending", "running") if counts.get(k)]
     if HASH["skipped"]:
         parts.append("%d count(s) or hash(es) the total deadline left no time for (not_hashed)" % len(HASH["skipped"]))
+    if cut_by_leftover:
+        parts.append("%d function(s) left a process running after they ended (ended by the shared process block: their file holds what was written until then)" % cut_by_leftover)
     return "partial", "%d of %d selected functions ran%s; %s: the files and the per-function statuses say which" % (
         ran, total, "; the run was stopped from outside" if kind == "terminated" else "", ", ".join(parts) or "none left")
 
@@ -1473,9 +1492,13 @@ def main():
 
     def state(kind):
         status, basis = status_of(groups, kind)
-        return {"state": kind, "status": status, "status_basis": basis, "parser": PARSER, "source": source, "out_dir": str(out),
-                "started": started_at, "updated": time.time(), "total_timeout_seconds": total, "timeout_seconds": per_function,
-                "groups": groups, "coverage": coverage_of(groups), "not_hashed": HASH["skipped"]}
+        result = {"state": kind, "status": status, "status_basis": basis, "parser": PARSER, "source": source, "out_dir": str(out),
+                  "started": started_at, "updated": time.time(), "total_timeout_seconds": total, "timeout_seconds": per_function,
+                  "groups": groups, "coverage": coverage_of(groups), "not_hashed": HASH["skipped"],
+                  # the families' files are what dissect.target wrote: a process it left behind (ended by settle() before the file was counted and hashed), or one that cannot
+                  # be ruled out (not Linux, PR_SET_CHILD_SUBREAPER refused), keeps the run from `complete`
+                  "problems": program_group_problems("the families' files and their stderr files")}
+        return process_apply(result)      # program_group; a complete state with a leftover becomes partial and says so
 
     CURRENT["out"], CURRENT["state"] = out, state
     STATE["last_word"] = last_word
@@ -1507,6 +1530,7 @@ def main():
                 begin = stdout.tell()
                 began = time.monotonic()
                 timed_out = False
+                left_before = process_verdict()["left_behind"]
                 with err_path.open("wb") as stderr:
                     # In this tool's own process group, never a session of its own: the harness ends a tool by killing its group.
                     try:
@@ -1526,6 +1550,7 @@ def main():
                         finally:
                             ACTIVE.remove(proc)
                 stdout.flush()
+                ended_here = process_verdict()["left_behind"] - left_before      # settle() ran when the function's program left ACTIVE
                 end = stdout.tell()
                 # A function that stopped in the middle of a line leaves it unterminated; the line is ended so that the next
                 # function's first record is not glued to it, and the entry says so (the byte count is the function's own).
@@ -1546,6 +1571,8 @@ def main():
                     entry["records_counted_to_the_end"] = False      # the total deadline passed: `records` is a lower bound
                 if unterminated:
                     entry["last_line_unterminated"] = True
+                if ended_here > 0:
+                    entry["left_behind"] = ended_here      # processes this function left running after it ended, ended by the shared block
                 if timed_out:
                     entry["deadline"] = "function"
                 if first_bad:

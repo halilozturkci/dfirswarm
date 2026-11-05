@@ -70,6 +70,14 @@ leave() {
     double)   ( STUB_LMODE=append setsid "$STUB_DIR/leftover.sh" "$t" </dev/null >/dev/null 2>&1 & ) ;;
     rewrite)  STUB_LMODE=rewrite setsid "$STUB_DIR/leftover.sh" "$t" </dev/null >/dev/null 2>&1 & ;;
     periodic) STUB_LMODE=periodic setsid "$STUB_DIR/leftover.sh" "$t" </dev/null >/dev/null 2>&1 & ;;
+    # what a program may leave on the pipes a tool reads (PKG-P6): a sleeper that holds every descriptor the program had, a slow writer on the program's standard output, and a holder of the standard input only
+    sleeper)  sleep 600 & echo $! >> "$STUB_DIR/left.pids" ;;
+    slow)     ( while :; do printf x; sleep 0.2; done ) & echo $! >> "$STUB_DIR/left.pids" ;;
+    stdin)    sleep 600 >/dev/null 2>&1 & echo $! >> "$STUB_DIR/left.pids" ;;
+    # full-speed writers: a leftover that floods a pipe dies of SIGPIPE the moment the tool closes its end, so the tool must look for it before it closes the pipes
+    fast)     ( while :; do printf x; sleep 0.001; done ) & echo $! >> "$STUB_DIR/left.pids" ;;
+    yes)      ( exec yes y ) & echo $! >> "$STUB_DIR/left.pids" ;;
+    errflood) ( exec yes e >&2 ) & echo $! >> "$STUB_DIR/left.pids" ;;
   esac
   # the program does not end before the leftover has started and written its pid (the tool settles the moment the program is gone)
   i=0
@@ -82,15 +90,20 @@ leave() {
 export const LEFTOVER_SH = `#!/bin/sh
 echo $$ >> "$STUB_DIR/left.pids"
 t="$1"
+# STUB_LSLEEP: how long the leftover lives before it writes (a program whose pipes the tool reads needs one that outlives the pipe grace)
 case "$STUB_LMODE" in
-  stdout) sleep 1; echo late-stdout;;
-  rewrite) sleep 1; : > "$t"; echo rewritten >> "$t";;
+  stdout) sleep "\${STUB_LSLEEP:-1}"; echo late-stdout;;
+  rewrite) sleep "\${STUB_LSLEEP:-1}"; : > "$t"; echo rewritten >> "$t";;
   periodic) while :; do echo tick >> "$t"; sleep 0.1; done;;
-  *) sleep 1; echo late >> "$t";;
+  *) sleep "\${STUB_LSLEEP:-1}"; echo late >> "$t";;
 esac
 `;
 export const VARIANTS = ["plain", "stdout", "setsid", "double", "rewrite", "periodic"];
 export const FEW = ["stdout", "setsid"];
+/** The leftovers that probe a reader of a pipe: none of them ever ends by itself. */
+/** The same without the floods, for a tool whose program writes its standard output to a file the tool then reads whole (a flood of gigabytes in that file is the program's own output, read at the speed of the log parser, not a pipe held). */
+export const FILE_HOLDERS = ["sleeper", "slow", "stdin", "fast"];
+export const HOLDERS = ["sleeper", "slow", "stdin", "fast", "yes", "errflood"];
 
 export async function stubDir(cwd: string): Promise<string> {
   const dir = join(cwd, "stub");

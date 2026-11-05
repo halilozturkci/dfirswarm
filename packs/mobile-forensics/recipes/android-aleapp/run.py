@@ -2036,6 +2036,22 @@ def write_index(out, rows):
         handle.write("aleapp.stderr\tALEAPP's standard error, whole\n")
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a recipe that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the recipe's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def child_files(directory):
     """How many files and links a program left in a directory this recipe gave it: kept, never deleted."""
     count = 0
@@ -2174,21 +2190,24 @@ def run(path, kind, out, seconds=LEAPP_SECONDS):
         problems.append("the log does not end with its processing-completed line")
     if rc == 0 and tsvs and not recognised:
         problems.append("the log has no module lines this recipe reads: per-module outcome is unknown for all of them")
+    # the reports, the logs and the files kept are what the program wrote: a process it left behind (ended by settle() before they were counted and read), or one that
+    # cannot be ruled out (not Linux, PR_SET_CHILD_SUBREAPER refused), keeps the run from `complete`
+    problems[0:0] = program_group_problems("the reports, the logs and the files ALEAPP kept")
     gated = counts["unsupported"]
     if rc == 0 and tsvs and not problems and not timed_out:
         write_coverage(out, "complete", "ALEAPP exited 0 over the %s and its log accounts for %d module(s): %d completed, %d with no record (no source file or no data)%s; %d TSV report(s)"
                        % (kind, len(modules), counts["completed"], counts["no_record"],
                           ", %d that do not take this operating-system version (see modules.tsv)" % gated if gated else "", tsvs), errors,
                        "ALEAPP exited 0, wrote %d TSV report(s) and its log accounts for every module it started as completed, no_record or unsupported" % tsvs,
-                       modules=receipt_json)
+                       modules=receipt_json, program_group=process_verdict())
     elif reports:
         write_coverage(out, "partial", "ALEAPP wrote %d report file(s); %d module(s) in its log: %d completed, %d no_record, %d unsupported, %d errored, %d errors_logged, %d unknown"
                        % (len(reports), len(modules), counts["completed"], counts["no_record"], gated, counts["errored"], counts["errors_logged"], counts["unknown"]),
                        (errors + problems) or ["ALEAPP wrote no TSV report"],
-                       basis_of("partial because ", (errors + problems) or ["ALEAPP wrote no TSV report"]), modules=receipt_json)
+                       basis_of("partial because ", (errors + problems) or ["ALEAPP wrote no TSV report"]), modules=receipt_json, program_group=process_verdict())
     else:
         write_coverage(out, "failed", "nothing parsed", (errors + problems) or ["ALEAPP wrote no report"],
-                       basis_of("nothing was parsed: ", (errors + problems) or ["ALEAPP wrote no report"]), modules=receipt_json)
+                       basis_of("nothing was parsed: ", (errors + problems) or ["ALEAPP wrote no report"]), modules=receipt_json, program_group=process_verdict())
     return 0 if rc == 0 and not timed_out else 1
 
 
@@ -2220,7 +2239,8 @@ def main():
     if rc == 2:
         return rc
     account = json.load(open(os.path.join(os.path.abspath(args.out), "coverage.json"), encoding="utf-8"))
-    print(json.dumps({"ok": rc == 0, "status": account.get("status"), "status_basis": account.get("status_basis")}))
+    print(json.dumps({"ok": rc == 0, "status": account.get("status"), "status_basis": account.get("status_basis"),
+                      **({"program_group": account["program_group"]} if "program_group" in account else {})}))
     return rc
 
 

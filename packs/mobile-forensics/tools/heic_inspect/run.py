@@ -47,7 +47,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-PARSER = "heic_inspect/4"
+PARSER = "heic_inspect/5"
 TOOL = "heic_inspect"
 VALUES_NAME = "heic-inspect-values.jsonl"       # the first free name of this and -2, -3 ... is used (see choose_values_name)
 VALUES_FORMAT = "JSON Lines: one metadata tag of the original per line (group, tag, value)"
@@ -2451,6 +2451,22 @@ print(json.dumps({"width": im.size[0], "height": im.size[1], "frames": frames}))
 '''
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def scrub_text(raw, cap=2000):
     text = raw[:cap].decode("utf-8", "replace")
     return scrub(" ".join(text.split()))
@@ -2706,6 +2722,9 @@ def main():
 
     # --- the answer -----------------------------------------------------------------------------------------------------------
     paging = result.finish()
+    # exiftool's output and the preview are files a program wrote: a process either left behind (ended by settle() before they were read, sized and hashed), or one that
+    # cannot be ruled out (not Linux, PR_SET_CHILD_SUBREAPER refused), keeps the answer from `complete`
+    problems_why.extend(program_group_problems("exiftool's output and the preview"))
     complete = not problems_why and (not convert or (preview is not None and preview["status"] == "written"))
     answer = {
         "path": shown(path), "parser": PARSER,
@@ -2729,6 +2748,7 @@ def main():
                 "default, the primary, and says when it cannot tell which.",
     }
     CLEANUP.clear()
+    process_apply(answer)       # program_group; a complete answer cannot have got here with a leftover
     send(answer)
 
 

@@ -17,6 +17,8 @@ Use when you cite a photo, video or attachment. Not for where the device was (`l
 
 **Conversion stays apart.** Keep the converted file next to the original's digest and the backend and its settings; never overwrite the original or let the preview's metadata stand in for it.
 
+**A program that left a process.** `heic_inspect` is `partial` (`program_group` in the answer) when exiftool or the backend left a process the tool had to end, or the host cannot show it did not: the metadata and the preview are what had been written by then.
+
 Shows: whether you hold an original or a derivative, the container's structure, and the clocks the file carries.
 
 Does not show: who took the picture, that the capture time is true, or that a picture was not edited.

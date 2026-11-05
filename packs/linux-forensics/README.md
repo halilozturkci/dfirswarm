@@ -73,6 +73,8 @@ absent, and a detect step that could not read the OS does not close the route.
 
 **Two goal templates**: `server-compromise.md`, `what-was-scheduled.md`.
 
+**What a program leaves behind.** The tools that run a program end, through the shared process block, what it left running after it exited, before they read, size or hash what it wrote. `linux_triage`, the `linux-target` recipe, `journal_export`, `package_verify` and `audit_events` carry it; the three that read a pipe let it go a second after the program ended. A tool that reports files a program wrote answers at most `partial` where the host cannot show no process was left (not Linux, `PR_SET_CHILD_SUBREAPER` refused), and one that reports only what a program printed on a pipe does not; every one is `partial` for a process that was ended, and says so in `program_group` and its status basis. A process that is not a descendant of the program (started through a service manager) is not found.
+
 ## Install and use
 
     scripts/pack.sh install packs/computer-forensics-base
