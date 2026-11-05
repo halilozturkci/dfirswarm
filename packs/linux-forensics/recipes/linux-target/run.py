@@ -47,6 +47,8 @@ try:
     DETECT_SECONDS = min(MAX_DETECT_SECONDS, max(1, int(os.environ.get("LINUX_TARGET_DETECT_SECONDS", "240"))))
 except ValueError:
     DETECT_SECONDS = 240
+# The wrapper (linux_triage) has deadlines of its own (13800 seconds by default, at most 14100); the recipe gives it this long, under the 14400 of the recipe's limit.
+WRAPPER_SECONDS = 14300
 # What dissect.target prints for a system it could not identify, rather than for one it identified.
 UNIDENTIFIED = {"default", "unknown", "none", "null", "unidentified", "n/a"}
 # Operating systems this recipe knows are not what it catalogues. Anything else that is not `linux` is not a no:
@@ -1194,6 +1196,43 @@ def detect_os(image):
     undetermined(why[-400:] + " (the OS was not identified: this route is not closed)")
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a recipe that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the recipe's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
+def combined_group(summary):
+    """The verdict of the whole run: the recipe's own (the wrapper it started and anything adopted from it) and the wrapper's, which ran dissect.target (the programs the files come from)
+    and reports its own in the summary. A wrapper whose summary carries none (it was stopped, or did not write one) leaves what it ran unproven."""
+    own = process_verdict()
+    theirs = summary.get("program_group") if isinstance(summary, dict) else None
+    if not isinstance(theirs, dict) or not isinstance(theirs.get("left_behind"), int) or not isinstance(theirs.get("unproven"), list):
+        return {**own, "wrapper": None, "unproven": own["unproven"] + ["linux_triage's summary carries no program_group: what dissect.target left behind is not known"]}
+    return {"subreaper": bool(own["subreaper"] and theirs.get("subreaper")), "left_behind": own["left_behind"] + theirs["left_behind"],
+            "unproven": own["unproven"] + ["linux_triage: " + str(why) for why in theirs["unproven"]], "notes": own["notes"], "wrapper": theirs}
+
+
+def group_problems(group, what):
+    found = []
+    if group["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (dissect.target under linux_triage, or one of this recipe's own); the shared process block stopped, killed and reaped "
+                     "them before %s were counted and hashed, so what they would still have written is missing from %s" % (group["left_behind"], what, what))
+    for why in group["unproven"]:
+        found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 FUNCTION_STATUSES = ("parsed", "empty", "unsupported", "failed", "not_attempted", "unknown")
 
 
@@ -1219,7 +1258,10 @@ def coverage_from(summary, proc_code, shown, state):
                 errors.append(f"{group.get('group')}: {fn.get('name')} was {status} when the receipt was written")
     wrapper = (summary or {}).get("state", "missing")
     done = wrapper == "finished" and proc_code == 0 and (summary or {}).get("execution_complete") is True
-    clean = done and not any(counts[k] for k in ("unsupported", "failed", "not_attempted", "unknown"))
+    group = combined_group(summary)
+    leftovers = group_problems(group, "the families' files and the receipt")
+    errors[0:0] = leftovers
+    clean = done and not leftovers and not any(counts[k] for k in ("unsupported", "failed", "not_attempted", "unknown"))
     total = sum(counts.values())
     ran = counts["parsed"] + counts["empty"] + counts["unsupported"] + counts["unknown"]
     if summary is None:
@@ -1231,6 +1273,7 @@ def coverage_from(summary, proc_code, shown, state):
     else:
         short = ", ".join(f"{counts[k]} {k}" for k in ("unsupported", "failed", "not_attempted", "unknown") if counts[k])
         status, basis = "partial", (f"{ran} of {total} selected functions ran" + (f"; {short}" if short else "")
+                                    + ("; " + "; ".join(leftovers) if leftovers else "")
                                     + ("" if done else "; the wrapper did not end cleanly") + ": the errors say which")
     return {
         "recipe": "linux-target",
@@ -1244,6 +1287,7 @@ def coverage_from(summary, proc_code, shown, state):
         "limits_hit": limits,
         "errors": errors,
         "wrapper": {"state": wrapper, "exit_code": proc_code, "execution_complete": (summary or {}).get("execution_complete")},
+        "program_group": group,
         "receipt_written": state,
     }
 
@@ -1341,11 +1385,17 @@ def run(image, shown, out):
         signal.signal(signum, terminated)
     try:
         # In this process's own group, never a session of its own: the harness ends a recipe by killing its group.
-        proc = spawn([sys.executable, str(tool)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(out))
+        proc = spawn([sys.executable, str(tool)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(out))
     except OSError as exc:
         answer({"ok": False, "status": "failed", "status_basis": "the wrapper could not be started", "error": f"linux_triage could not be started: {exc.strerror or exc}"}, 2)
     state["proc"] = proc
-    stdout, stderr = proc.communicate(json.dumps(request))
+    ACTIVE.append(proc)
+    try:
+        # bounded: the wrapper has deadlines of its own (13800 seconds by default), and a process that holds its pipes after it ended is let go after a second and ended
+        raw_out, raw_err, wrapper_timed_out = communicate_bounded(proc, WRAPPER_SECONDS, json.dumps(request).encode("utf-8"))
+    finally:
+        ACTIVE.remove(proc)             # settle(): what the wrapper left behind in its turn is ended before its files are read
+    stdout, stderr = raw_out.decode("utf-8", "replace"), raw_err.decode("utf-8", "replace")
     try:
         (out / "summary.json").write_text(stdout or json.dumps({"error": "linux_triage wrote no result"}) + "\n")
         if stderr:
@@ -1354,11 +1404,11 @@ def run(image, shown, out):
         answer({"ok": False, "status": "failed", "status_basis": "the recipe's own output could not be written", "error": f"could not write the wrapper's answer: {exc.strerror or exc}"}, 2)
     coverage = receipt(proc.returncode, "after the wrapper finished")
     if proc.returncode != 0:
-        coverage["errors"].append(f"linux_triage exited {proc.returncode}")
+        coverage["errors"].append(f"linux_triage exited {proc.returncode}" + (f": it did not end within {WRAPPER_SECONDS} seconds and was ended with everything it started" if wrapper_timed_out else ""))
         if coverage["status"] == "complete":
             coverage["status"], coverage["status_basis"] = "partial", f"linux_triage exited {proc.returncode}"
         write_json(out / "coverage.json", coverage)
-    answer({"ok": proc.returncode == 0, "status": coverage["status"], "status_basis": coverage["status_basis"], "functions": coverage["functions"]},
+    answer({"ok": proc.returncode == 0, "status": coverage["status"], "status_basis": coverage["status_basis"], "functions": coverage["functions"], "program_group": coverage["program_group"]},
            0 if proc.returncode == 0 else 2)
 
 

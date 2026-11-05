@@ -2680,6 +2680,22 @@ def regular_size(path, what):
     return st.st_size
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def answer(p, verdict, basis, status, status_basis, **more):
     out = {"parser": PARSER, "verdict": verdict, "verdict_basis": basis, "build_identity": shown(p["ident"], "name"),
            "inputs": {"path": shown(p["path"], "path"), "debug": shown(p["debug"], "path"), "kind": p["kind"]},
@@ -2692,6 +2708,13 @@ def answer(p, verdict, basis, status, status_basis, **more):
     notes = process_notes()
     if notes:
         out["process_notes"] = notes
+    # vol and dwarf2json report what they printed on a pipe (the table is that output, written by this tool): a process one of them left behind (ended by settle()) may have
+    # written some of it, so a complete answer is partial; a host that cannot adopt orphans does not make it partial (program_group says why)
+    group = program_group_problems("the programs' output", held=False)
+    out["program_group"] = process_verdict()
+    if group and out["status"] == "complete":
+        out["status"] = "partial"
+        out["status_basis"] = "%s; %s" % (out["status_basis"], "; ".join(group))
     out = sealed(out)
     out["boundary"] = boundary_summary()
     if BOUNDARY["backstop_replaced"]:
@@ -2798,6 +2821,11 @@ def main():
         produced = ""
     exact = produced in banners
     identity_ok = produced.startswith(prefix) or produced == prefix.rstrip()
+    left_over = program_group_problems("the table and the banners", held=False)
+    if left_over:
+        # the table is what the converter printed, and a process it (or vol) left behind may have written into the same pipe: the table is not kept, and nothing is said to be ready
+        drop_table()
+        answer(p, "unknown", "; ".join(left_over) + "; no table is kept", "partial", "; ".join(left_over), converter=converter_info)
     info = {"bytes": table.bytes, "banner_release": shown(banner_release(produced) or "", "release"), "banner_equals_a_banner_of_the_image": exact,
             "build_identity_agrees": identity_ok, "image_banners": len(banners), "kept": False}
     if exact and identity_ok:

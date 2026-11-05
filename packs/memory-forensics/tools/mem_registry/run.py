@@ -2811,6 +2811,22 @@ def read_hives(vol, p, plugin, deadline_cap):
     return hives, state["bad"] + state["extra"], None, log
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def main():
     GUARD["stopping"] = False
     STATE["last_word"] = last_word
@@ -3030,6 +3046,10 @@ def main():
     notes = process_notes()
     if notes:
         out["process_notes"] = notes
+    # vol reports what it printed on a pipe: a process it left behind (ended by settle() before its output was read to the end) may have written some of it, so the answer is
+    # partial; a host that cannot adopt orphans does not make it partial (program_group says why)
+    reasons.extend(program_group_problems("the plugin's output", held=False))
+    out["program_group"] = process_verdict()
     if reasons:
         out["status"] = "partial"
         out["status_basis"] = "; ".join(reasons)

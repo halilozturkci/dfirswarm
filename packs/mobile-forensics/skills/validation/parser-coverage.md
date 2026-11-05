@@ -19,6 +19,8 @@ Use when a parser's output will back a finding. Not for the general method of va
 
 **Validate a material row** against the record under it: open the source database with `sqlite_query` on a copy, find the row by its key, and compare the value and the time. Check one row of each kind you will cite. A module you did not validate is a lead.
 
+**A leftover process.** If the program left one, or the host cannot show it did not, the run is `partial` and `coverage.json` carries `program_group`.
+
 Shows: which parts of the input a parser read, and that a cited row matches its source.
 
 Does not show: that an artefact is absent, or that an unvalidated module is right.

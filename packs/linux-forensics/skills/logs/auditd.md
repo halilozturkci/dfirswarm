@@ -17,6 +17,8 @@ First read what auditd was set to record: the rules (`etc/audit/rules.d`, `audit
 
 `compare_ausearch`, in a job run as secret output, runs the installed `ausearch` on a sample of the first file and says `agree`, `disagree` or `not_run`: a second reader of 2,000 lines, not a check of the log.
 
+**ausearch as a second reader.** If `compare_ausearch` ran and ausearch left a process running, the answer is `partial` (`program_group`) and the comparison is not trusted; the log is read by this tool, not by ausearch.
+
 Shows: events that auditd's rules selected, with numeric fields and the lengths of their text. Does not show: that a command reached its aim, anything the rules left out, or an event lost to the backlog. Record: the rules and `auditd.conf` read, the files in the order given, `rotation_gaps`, `lost_and_daemon_records`, the event locators.
 
 Sensitive output: command lines, `exe`, `cwd` and path names are lengths in the answer. The text is in the file `write_text: true` writes in a job run with `secret_output: true`. Cite file and line, never the command or a hash of it.

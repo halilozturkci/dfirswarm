@@ -132,6 +132,8 @@ image's Python 3.11 were not checked, and the owner's image rebuild applies it),
 MemProcFS is AGPL-3.0, the same licence as this harness, which is why the one
 wrapper here is for that and not for the other.
 
+**What a program leaves behind.** The tools that run a program end, through the shared process block, what it left running after it exited, before they read, size or hash what it wrote. `vol_views`, `vol_readiness`, `isf_intake` and `mem_registry` carry it (`mem_fs` has its own search for what the engine holds, named in `clean_up`). A tool that reports files a program wrote answers at most `partial` where the host cannot show no process was left (not Linux, `PR_SET_CHILD_SUBREAPER` refused), and one that reports only what a program printed on a pipe does not; every one is `partial` for a process that was ended, and says so in `program_group` and its status basis. A process that is not a descendant of the program (started through a service manager) is not found.
+
 ## Install and use
 
     scripts/pack.sh install packs/computer-forensics-base

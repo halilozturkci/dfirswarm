@@ -2789,6 +2789,22 @@ def read_receipt(path, image):
     return {"verdict": "ready", "volatility": (receipt.get("volatility") or {}).get("version") if isinstance(receipt.get("volatility"), dict) else None}
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def main():
     GUARD["stopping"] = False
     STATE["last_word"] = last_word
@@ -2916,6 +2932,9 @@ def main():
         reasons.append("the engine's log says %d time(s) that pages were missing (scope.pages_missing_lines)" % log.missing)
     if judge.rows == 0 and not why:
         reasons.append("the plugin printed no row: the question had no answer in this image, or its pages or symbols were not readable (an empty output is not an absence)")
+    # with dump the files the plugin exported are what the answer lists and hashes: a process it left behind (ended by settle() before they were listed), or one that cannot be
+    # ruled out (not Linux, PR_SET_CHILD_SUBREAPER refused), keeps the answer from `complete`; the plugin's printed output is read from a pipe, which is held only to the first
+    reasons.extend(program_group_problems("the plugin's exported files" if export_dir is not None else "the plugin's output", held=export_dir is not None))
 
     # 4. Keep what was read: the judged output (always), the raw output and the exports (secret job only).
     out = {"parser": PARSER, "question": shown(asked, "name"), "plugin": plugin, "volatility": version, "offline": True,
@@ -3007,6 +3026,7 @@ def main():
     notes = process_notes()
     if notes:
         out["process_notes"] = notes
+    out["program_group"] = process_verdict()
     if reasons:
         out["status"] = "partial"
         out["status_basis"] = "; ".join(reasons)

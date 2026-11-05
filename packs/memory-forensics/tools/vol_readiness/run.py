@@ -2930,6 +2930,22 @@ def image_problem(path):
     return None
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def main():
     GUARD["stopping"] = False
     STATE["last_word"] = last_word
@@ -2997,10 +3013,14 @@ def main():
     notes = process_notes()
     if notes:
         out["process_notes"] = notes
-    if unknown:
+    # every check reads what a program printed on a pipe: a process one of them left behind (ended by settle() before its output was judged) may have written some of it, so the
+    # answer is partial; a host that cannot adopt orphans does not make it partial (program_group says why)
+    group = program_group_problems("the programs' output", held=False)
+    out["program_group"] = process_verdict()
+    if unknown or group:
         out["status"] = "partial"
-        out["status_basis"] = ("%s could not be finished or read, so the verdict is unknown for %s" % (
-            ", ".join(unknown), "it" if len(unknown) == 1 else "them"))
+        out["status_basis"] = "; ".join(
+            (["%s could not be finished or read, so the verdict is unknown for %s" % (", ".join(unknown), "it" if len(unknown) == 1 else "them")] if unknown else []) + group)
     else:
         out["status"] = "complete"
         out["status_basis"] = "every requested view was checked to a definite end (ready or blocked)"
