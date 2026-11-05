@@ -139,16 +139,26 @@ class TimelineSuper(Case):
         self.assertEqual(row["message_length"], 5000)
 
     def test_one_deadline_covers_every_stage(self):
-        spec = importlib.util.spec_from_file_location("ts", tool_path("timeline_super"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        # Run in a process of its own: the tool's block makes the process that spawns a program a subreaper, and the test runner must not become one
+        # (it would keep the zombies of the other tests' programs and change what they see).
         os.makedirs(self.path("o"))
-        started = time.monotonic()
-        stage = mod.Stage("sleeper", ["sleep", "30"], self.path("o")).run(time.monotonic() + 0.5)
-        self.assertTrue(stage.timed_out)
-        self.assertLess(time.monotonic() - started, 10)
-        spent = mod.Stage("late", ["sleep", "30"], self.path("o")).run(time.monotonic() - 1)
-        self.assertTrue(spent.timed_out and spent.exit is None)
+        code = chr(10).join([
+            "import importlib.util, sys, time",
+            "spec = importlib.util.spec_from_file_location('ts', sys.argv[1])",
+            "mod = importlib.util.module_from_spec(spec)",
+            "spec.loader.exec_module(mod)",
+            "started = time.monotonic()",
+            "stage = mod.Stage('sleeper', ['sleep', '30'], sys.argv[2]).run(time.monotonic() + 0.5)",
+            "took = time.monotonic() - started",
+            "spent = mod.Stage('late', ['sleep', '30'], sys.argv[2]).run(time.monotonic() - 1)",
+            "print(int(bool(stage.timed_out)), took, int(bool(spent.timed_out and spent.exit is None)))",
+        ])
+        done = subprocess.run([sys.executable, "-c", code, tool_path("timeline_super"), self.path("o")], capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        timed_out, took, spent_ok = done.stdout.split()
+        self.assertEqual(timed_out, "1")
+        self.assertLess(float(took), 10)
+        self.assertEqual(spent_ok, "1")
 
     def test_a_link_at_any_output_name_is_refused(self):
         for name in ("psort.stdout", "log2timeline.stderr", "timeline.invalid_lines.txt", "timeline.plaso", "psort.log.gz"):

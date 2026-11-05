@@ -25,8 +25,8 @@
   "example": "{\"path\": \"work/extracted/disk-container.img\", \"offset\": 209735680}",
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
-  "version": 3,
-  "sha256": "9a341b9a0eeae9e074fbea09d8de835e089bdbad4eebeee7088810503fed36de",
+  "version": 4,
+  "sha256": "0b9f9a1bb0e29a1533f4b1b5337ccca0f69d3b529028a6a3d90b14509f84a0ef",
   "use": {
     "extensions": [],
     "magic": [

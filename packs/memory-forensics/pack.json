@@ -1,7 +1,7 @@
 {
   "id": "memory-forensics",
   "name": "Memory Forensics Pack",
-  "version": "1.15.4",
+  "version": "1.15.5",
   "description": "Method and tooling for a memory image: what the container is before anything else, what can be read with no framework at all, processes and injection, network state, credential material, and the discipline that keeps a string in memory from becoming a claim about behaviour.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -64,20 +64,20 @@
       "skills/triage/what-you-have.md": "9c694ae5c0c695fc243b486390fdd95a728ccef2fd2c01f4dd772a1b8e012355",
       "tools/carve_handoff/manifest.json": "8516b664af82e5cb1597040bae8061eb789d46d41f41920da302a147d5a05637",
       "tools/carve_handoff/run.py": "3be8872bae7f408f84fe754b72e8e96f8b42a9bd0588958394e8810f011de56c",
-      "tools/isf_intake/manifest.json": "d64931e49ea8d1289f57ac9ce16d9bdf91101d8cc8f023b0b2d824056540bbc6",
-      "tools/isf_intake/run.py": "98e07af36eef03397bb686d4c18ac87f4331e2dadaa8b213839ca19e4b6d4443",
+      "tools/isf_intake/manifest.json": "6d4f808f36f1c3b57d0927c3781ec3b7314909f57dd916b0f49ede5808638983",
+      "tools/isf_intake/run.py": "a273b6a3307c664ebc73d39f3055bdfdc51abc7150b0bfdec3bd85509fd6e24e",
       "tools/mem_carve/manifest.json": "0f51c51c9ee84d517e29d2894c1ba1bb57d389b82090e0e3043d7024a0768673",
       "tools/mem_carve/run.py": "c5ae768971a392774f695f59218e1f13b5da551820509582d56a960481a42edf",
       "tools/mem_fs/manifest.json": "09d32408d80b3f38ad7fc3b7533a5601bb5d5cbc5d34ea49f6e84706c8e9a58b",
       "tools/mem_fs/run.py": "8b52d0c021b73e5307361dc10dcc620f1ccb6cdcde9bd2a08d7680ea043d469c",
       "tools/mem_profile/manifest.json": "1968370c5eb509980aab29a53f106bf07384e51a8a88cc117b7beea8d01002a5",
       "tools/mem_profile/run.py": "32ddba4117fa78390b1518f47d0e81dc1f4efcb236e2bc7c897ba0664c5ad283",
-      "tools/mem_registry/manifest.json": "d2dcd07b06f7751b4d4c547a71f9f76b0dfd6bf3398b3a6cd90ca14b8dc73c05",
-      "tools/mem_registry/run.py": "2a79bf96611693605bc729a799b5ee63809b9509d1a3242a74e9395ce6136d87",
-      "tools/vol_readiness/manifest.json": "70aaa16fbe4dc93964808244ee969954caa0d0384b321a28c743fffe148654ae",
-      "tools/vol_readiness/run.py": "add19e48ba1164ff0e2f24be56c21ce50190bb40063fa74d2943d914c9bf10c0",
-      "tools/vol_views/manifest.json": "2ca03833b4bf4ed7cce672b1b0f0dd4a87ff2aae909cb4f06e04c65eec62f9c0",
-      "tools/vol_views/run.py": "da84e27115186f25493f9883f9865b989442576383ccbc2e81fb4a69efaa50fc"
+      "tools/mem_registry/manifest.json": "130d79bc542140ab6834bd4ba9bf867fe0e3bba2e13b4e72b6624eab8fdc99da",
+      "tools/mem_registry/run.py": "6576542bd5e76b8fabc374d40066308e76adf90aabf883aa7f5f9ff378bddf6a",
+      "tools/vol_readiness/manifest.json": "630ae4c8631be0949db7662bfdcb6433024ea3b801c37dc704f791f9bf06fa0c",
+      "tools/vol_readiness/run.py": "b6a57ee9072ca504e36ccbff2f6410806762508307fbee3b3e33ec29790dcee5",
+      "tools/vol_views/manifest.json": "db022b32ec68e4ca6c47dacc1c710e950a41d70e45bcf6a9f352354c0b8a7526",
+      "tools/vol_views/run.py": "96d88bdd2d2247097075e468b0c96ecf292e2a8f6f58d0d83fe6d771bff6e676"
     }
   },
   "tools": [

@@ -35,7 +35,7 @@
   "example": "{\"backup\": \"inputs/backup\", \"password_ref\": \"inputs/backup-password.txt\"}",
   "by": "maintainer",
   "at": "2026-11-04T09:00:00.000Z",
-  "version": 1,
+  "version": 2,
   "use": {
     "names": [
       "Manifest.db",
@@ -44,5 +44,5 @@
   },
   "requires": [],
   "secret_output": "required",
-  "sha256": "cda68bb0271dda43bfa94b6835258c89e7659cf17e9b6eabb180017844141aae"
+  "sha256": "ce844adda4bd9519bfc5439058d03950c8a53cc9a16a0230ae2ceb35f63ae2e5"
 }

@@ -37,6 +37,6 @@
   "example": "{\"path\": \"inputs/memory.lime\", \"debug\": \"inputs/vmlinux-5.15.0-91-generic\", \"kind\": \"elf\", \"build_identity\": \"5.15.0-91-generic\", \"symbols_out\": \"work/s1/symbols\"}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 2,
-  "sha256": "98e07af36eef03397bb686d4c18ac87f4331e2dadaa8b213839ca19e4b6d4443"
+  "version": 3,
+  "sha256": "a273b6a3307c664ebc73d39f3055bdfdc51abc7150b0bfdec3bd85509fd6e24e"
 }

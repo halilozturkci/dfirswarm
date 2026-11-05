@@ -364,7 +364,7 @@ for (const scenario of ["fork_now", "fork_late", "fork_double", "never_exit"]) {
   });
 }
 
-test("a child the decompiler puts in a session of its own (setsid) cannot be ended: the answer is partial, says so, and no file is claimed", async () => {
+test("a child the decompiler puts in a session of its own (setsid) is adopted by the tool and ended by the process block: the answer is partial and says so", async () => {
   await withCwd(async (cwd, bin) => {
     await fakeProgram(cwd, bin);
     await put(cwd, "work/s.dll", asm("setsid_child"));
@@ -374,10 +374,12 @@ test("a child the decompiler puts in a session of its own (setsid) cannot be end
       child = await pidFile(join(cwd, "pids", "child.pid"), 3_000).catch(() => 0);
       assert.ok(child, "the child recorded its pid");
       assert.equal(a.status, "partial", JSON.stringify(a).slice(0, 400));
-      assert.match(a.status_basis, /session of its own cannot be ended/);
-      assert.ok(a.limits_hit.includes("process_left_running"));
-      assert.equal(a.reconstruction, null);
-      assert.deepEqual(await outputs(cwd), [], "the growing file was removed");
+      assert.match(a.status_basis, /left \d+ process/);
+      assert.ok(a.limits_hit.includes("process_left_behind"));
+      assert.equal(await gone(child, 3_000), true, "the child in a session of its own was left running");
+      assert.ok(a.reconstruction, "the file is kept, as after any ended leftover: stable, and the answer is partial");
+      const named = await outputs(cwd);
+      assert.equal(named.length > 0, true);
     } finally {
       if (child) { try { process.kill(child, "SIGKILL"); } catch { /* gone */ } }
     }

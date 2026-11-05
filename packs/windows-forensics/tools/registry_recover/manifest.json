@@ -38,7 +38,7 @@
   "example": "{\"hive\": \"work/extracted/NTUSER.DAT\", \"log1\": \"work/extracted/NTUSER.DAT.LOG1\", \"log2\": \"work/extracted/NTUSER.DAT.LOG2\", \"limit\": 20}",
   "by": "maintainer",
   "at": "2026-10-21T09:00:00.000Z",
-  "version": 4,
+  "version": 5,
   "use": {
     "magic": [
       {
@@ -69,5 +69,5 @@
       "write_values"
     ]
   },
-  "sha256": "ed87f8224c07d3eb1653233ad48433c6c0f63a51d1e1f9c0157598de0b45d228"
+  "sha256": "daffef756779764b4e28520e133ba44657e5f35d5883483f318a1d3e01fdf726"
 }
