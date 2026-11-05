@@ -106,6 +106,18 @@ matched feature.
 
 **One goal template**: `sample-triage.md`.
 
+## A program that leaves a process behind
+
+`clr_inspect` (with `decompile`), `unpack_safe`, `fuzzy_hash` and the `capa-floss` recipe report a file a program wrote. When the program ends, the shared process block
+ends what it left running (a child in the tool's group, in a session of its own, after a double fork, or holding no descriptor at all: the tool is a subreaper on Linux),
+and the answer is `partial`, with `program_group` (`subreaper`, `left_behind`, `unproven`, `notes`) and a line under `problems` or `errors`, when it ended one. On a host
+that is not Linux, or where the kernel refuses `PR_SET_CHILD_SUBREAPER`, a run that wrote a file is `partial` too, and `program_group.unproven` says why. `authenticode_verify` and
+`doc_structure`'s second reading report what a program printed on a pipe: they are `partial` for a process that was ended, not for a host that cannot adopt. The pipe of a
+program that has ended is read for one more second and then let go, so a process that keeps writing into it does not hold the call, and a program that exited is not reported as
+timed out. The `static-binary` recipe runs two tools of this pack that start no program: it carries `program_group` and is `partial` only for a process that was ended. A process
+that is no descendant of the program (started through a service manager or a socket) is found by none of them. A refusal, an early failure and a call that started no program
+carry no `program_group`.
+
 ## The line this pack will not cross
 
 Everything here is a claim about a file. "The binary contains the string

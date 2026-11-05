@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "unpack_safe", "version": 2}
+TOOL = {"name": "unpack_safe", "version": 3}
 PARSER = "unpack_safe/1"
 TOTAL_BUDGET = 150                 # seconds for the whole call; the manifest's own limit is 180
 DEFAULT_SECONDS = 120
@@ -1345,11 +1345,15 @@ class Steps:
                     break
         finally:
             before = LEFT["left_behind"]
-            ACTIVE.remove(proc)             # the process block's settle() ends what the program left, so the scan below finds none of it: it is counted here
+            ACTIVE.remove(proc)             # the process block's settle() ends what the program left (the tool is a subreaper), so it is counted here
             settled = LEFT["left_behind"] - before
-            # a process the program left behind would go on writing into the log, and into the derivative: whatever of the tool's group still holds the log
-            # (or the file named in `produced`) is ended, and waited for to be gone, before anything is read
-            ended, outside = end_holders([self.log.fileno()] + list(produced or []))
+            watched = [self.log.fileno()] + list(produced or [])
+            if SUB["on"]:
+                ended, outside = set(), holders_of(watched)    # what still holds the log or the derivative now is no descendant of the program: settle() found every one that is
+            else:
+                # no subreaper (not Linux, or the kernel refused): settle() sees only what a sample saw, so whatever of the tool's own group still holds the log (or
+                # the file named in `produced`) is ended, and waited for to be gone, before anything is read
+                ended, outside = end_holders(watched)
             if not (rec["timed_out"] or rec["stopped_by_watch"]):
                 rec["left_behind"] = len(ended) + settled
             rec["holders_outside"] = outside or []
@@ -1469,6 +1473,10 @@ def main():
     install_signal_handlers()
 
     def finish(status, basis, derivative=None, **extra):
+        if status == "complete":
+            verdict = process_verdict()
+            if verdict["left_behind"] or verdict["unproven"]:
+                extra.setdefault("limits_hit", []).append("process_left_behind" if verdict["left_behind"] else "process_not_ruled_out")
         version = next((r for r in steps.records if r["label"] == "upx --version"), None)
         line = next((l.strip() for l in (version or {}).get("text", "").splitlines() if l.strip()), "")
         answer = {
@@ -1480,8 +1488,17 @@ def main():
                     "Unpacking does not make the sample safe to run, and a derivative that UPX produced says nothing about whether the sample did anything.",
             **extra,
         }
+        if SUB["tried"]:
+            verdict = process_verdict()
+            if verdict["left_behind"]:
+                answer.setdefault("problems", []).append(
+                    "a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block stopped, "
+                    "killed and reaped them, so what they would still have written is missing from the log and the derivative" % verdict["left_behind"])
+            for why in verdict["unproven"]:
+                answer.setdefault("problems", []).append("%s: the log and the derivative cannot be shown to be final" % why)
+            process_apply(answer)       # program_group; a complete answer is partial when a program left a process, or that cannot be ruled out
         print_answer(answer)
-        raise SystemExit(0 if status in ("complete", "partial") else 1)
+        raise SystemExit(0 if answer["status"] in ("complete", "partial") else 1)
 
     version = steps.run("upx --version", [upx, "--version"], 10)
     tested = steps.run("upx -t", [upx, "-t", "--", path], max(1, deadline - time.monotonic()))

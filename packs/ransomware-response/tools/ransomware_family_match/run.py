@@ -3147,6 +3147,12 @@ def main():
         reasons.append("the time limit (max_seconds %d) ended the text rules: %d note files were not given to yara" % (max_seconds, counters["notes_not_scanned_by_clock"]))
     for note in process_notes():
         reasons.append(note)
+    # The text-rule hits are what yara printed on a pipe, so a host that cannot show that nothing was left does not make the answer partial (program_group says so);
+    # a process settle() ended is a fact: the pipe was let go at the grace, and what the process would still have printed is not in the hits.
+    group = process_verdict() if SUB["tried"] else None
+    if group and group["left_behind"]:
+        reasons.append("yara left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block stopped, "
+                       "killed and reaped them, so what they would still have printed is not in the text-rule hits" % group["left_behind"])
     if BOUNDARY["replaced"]:
         reasons.append("%d strings held an identifier-shaped text that the first rule missed and were replaced at the output (see boundary)" % BOUNDARY["replaced"])
     complete = "partial" if reasons else "complete"
@@ -3182,6 +3188,7 @@ def main():
         "sources_note": "the URL of each source is in reference/entries.json",
         "affiliate_or_actor": "this tool has no such field: a family match never names an affiliate or an actor",
         "paths_withheld": WITHHELD_PATHS[0],
+        **({"program_group": group} if group else {}),
         **({"unrecognised_parameters": unknown} if unknown else {}),
     })
     print_answer(answer, indent=2)

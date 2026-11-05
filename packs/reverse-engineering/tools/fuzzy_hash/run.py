@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "fuzzy_hash", "version": 10}
+TOOL = {"name": "fuzzy_hash", "version": 11}
 PARSER = "fuzzy_hash/3"
 DEFAULT_ENGINE_TIMEOUT = 120
 TOTAL_BUDGET = 270                       # seconds for the whole call: the manifest's own limit is 300
@@ -1292,11 +1292,15 @@ def run_engine(logs, argv, label, timeout):
         proc.wait()
     finally:
         before = LEFT["left_behind"]
-        ACTIVE.remove(proc)             # the process block's settle() ends what the engine left, so the scan below finds none of it: it is counted here
+        ACTIVE.remove(proc)             # the process block's settle() ends what the engine left (the tool is a subreaper), so it is counted here
         settled = LEFT["left_behind"] - before
-        # a process the engine left behind would go on writing into the log that is about to be read: whatever of the tool's group still holds the
-        # engine's output files is ended, and waited for to be gone, before they are read
-        ended, outside = end_holders([fh.fileno() for fh, _start in handles.values()])
+        watched = [fh.fileno() for fh, _start in handles.values()]
+        if SUB["on"]:
+            ended, outside = set(), holders_of(watched)      # what still holds the engine's output now is no descendant of the engine: settle() found every one that is
+        else:
+            # no subreaper (not Linux, or the kernel refused): settle() sees only what a sample saw, so whatever of the tool's own group still holds the engine's
+            # output files is ended, and waited for to be gone, before they are read
+            ended, outside = end_holders(watched)
         left = (len(ended) + settled if status == "ok" else 0) + len(outside or [])
     result["returncode"] = proc.returncode
     result["seconds"] = round(time.monotonic() - started, 3)
@@ -1525,6 +1529,20 @@ def main():
         "note": "SHA-256 establishes identity. ssdeep and TLSH measure byte similarity only; explain shared code or structure before assigning "
                 "a family. 'insufficient_input' is an engine's own answer for a file that is too short or too uniform, not a failure.",
     }
+    verdict = process_verdict()
+    if verdict["left_behind"]:
+        runner.problems.append("an engine left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                               "stopped, killed and reaped them, so what they would still have written is missing from the output that was read" % verdict["left_behind"])
+    if logs.kept:
+        # the logs hold the engines' whole output and are named in the answer: a host that cannot show that no engine left a process is not shown to have final logs
+        for why in verdict["unproven"]:
+            runner.problems.append("%s: the engines' logs cannot be shown to be final" % why)
+    result["problems"] = runner.problems
+    if runner.problems and result["status"] == "complete":
+        result["status"] = "partial"
+        result["status_basis"] = ("%d problem(s), the first of them: %s (each names the engine, its status or the call's %d-second budget; see `problems`)"
+                                  % (len(runner.problems), runner.problems[0][:300], TOTAL_BUDGET))
+    result["program_group"] = verdict
     print(json.dumps(result, indent=2))
 
 

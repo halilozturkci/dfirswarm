@@ -30,7 +30,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "clr_inspect", "version": 2}
+TOOL = {"name": "clr_inspect", "version": 3}
 PARSER = "clr_inspect/1"
 
 
@@ -2569,11 +2569,14 @@ def clr_structure(fd, size, info):
 
 # --- running the program ------------------------------------------------------------------------------------------------------------
 
+LATE_BYTES = 1 << 20      # the most that is read from the pipe of a program that has ended (a pipe holds 64 KiB, so that is its own last words and a flood's first)
+
+
 def run_program(argv, seconds, cap):
     """Start one program (merged stdout and stderr through a pipe) and read at most `cap` bytes of its output, until it ends, `seconds` have
     passed (the program and what it started are killed) or the cap is passed (the same). The record: exit_code, timed_out, capped, seconds,
-    output (bytes), launch_failed."""
-    rec = {"exit_code": None, "timed_out": False, "capped": False, "seconds": 0.0, "output": b"", "launch_failed": None}
+    output (bytes), launch_failed, flooded (a process the program left kept writing into the pipe after the program had ended)."""
+    rec = {"exit_code": None, "timed_out": False, "capped": False, "flooded": False, "seconds": 0.0, "output": b"", "launch_failed": None}
     started = time.monotonic()
     limit = max(0.5, seconds)
     try:
@@ -2582,12 +2585,20 @@ def run_program(argv, seconds, cap):
         rec["launch_failed"] = "the program could not be started: %s" % describe(exc)
         return rec
     ACTIVE.append(proc)
-    chunks, total, ended = [], 0, None
+    chunks, total, late, ended = [], 0, 0, None
     try:
         fd = proc.stdout.fileno()
         while True:
             now = time.monotonic()
-            if now - started >= limit:
+            if proc.poll() is not None:
+                # The program has ended. Whatever it started and left holding the pipe (a writer, a silent holder) gets PIPE_GRACE seconds, and never more
+                # than the call's own clock: a leftover that writes every few milliseconds must not hold this call to its whole time, and the program
+                # that ended is not a program that timed out.
+                ended = ended if ended is not None else now
+                if now - ended > PIPE_GRACE or now - started >= limit:
+                    reap_orphans(_pipe_inodes(proc))
+                    break
+            elif now - started >= limit:
                 rec["timed_out"] = True
                 kill_tree(proc)
                 break
@@ -2597,16 +2608,17 @@ def run_program(argv, seconds, cap):
                 if not data:
                     break
                 total += len(data)
+                late += len(data) if ended is not None else 0
                 if total > cap:
-                    rec["capped"] = True
-                    kill_tree(proc)
+                    if ended is None and proc.poll() is None:
+                        rec["capped"] = True
+                        kill_tree(proc)
+                    else:
+                        rec["flooded"] = True       # a program that has ended did not print past the cap: what is read after it is a process it left behind, writing
                     break
                 chunks.append(data)
-                continue
-            if proc.poll() is not None:
-                ended = ended if ended is not None else now
-                if now - ended > PIPE_GRACE:
-                    reap_orphans(_pipe_inodes(proc))
+                if late > LATE_BYTES:
+                    rec["flooded"] = True               # a pipe holds 64 KiB: more than this after the program has ended is something it left behind, writing
                     break
         try:
             proc.wait(timeout=max(0.2, limit - (time.monotonic() - started)))
@@ -2815,12 +2827,15 @@ def run_decompiler(argv, seconds, budget, out_path, err_path, home):
                 break
         finally:
             before = LEFT["left_behind"]
-            ACTIVE.remove(proc)             # the process block's settle() ends what the program left, so the scans below find none of it: it is counted here
+            ACTIVE.remove(proc)             # the process block's settle() ends what the program left (the tool is a subreaper), so it is counted here
             settled = LEFT["left_behind"] - before
-            reaped = reap_orphans()          # a process the program started and left behind would go on writing into the file that is about to be read
-            # and so would one that no sample saw (forked and left within a moment, or after 0.6 s): whatever of the tool's group still holds the output
-            # or the error file is ended, and waited for to be gone, before the file is measured
-            ended, outside = end_holders([out.fileno(), err.fileno()])
+            if SUB["on"]:
+                reaped, ended, outside = [], set(), holders_of([out.fileno(), err.fileno()])   # what still holds the files now is no descendant of the program: settle() found every one that is
+            else:
+                # no subreaper (not Linux, or the kernel refused): settle() sees only what a sample saw, so whatever of the tool's own group still holds the output or
+                # the error file is ended, and waited for to be gone, before the file is measured
+                reaped = reap_orphans()
+                ended, outside = end_holders([out.fileno(), err.fileno()])
             if not (rec["timed_out"] or rec["stopped_by_budget"] or rec["stopped_by_stderr"]):
                 rec["left_behind"] = len(set(ended) | set(reaped)) + settled
             rec["holders_outside"] = outside or []
@@ -2904,6 +2919,16 @@ def main():
     install_signal_handlers()
 
     def finish(status, basis, **extra):
+        ran_program = SUB["tried"]                  # a program was started: the answer says what the shared process block found of what it left behind
+        if ran_program:
+            verdict = process_verdict()
+            if status == "complete" and (verdict["left_behind"] or verdict["unproven"]):
+                limits_hit.append("process_left_behind" if verdict["left_behind"] else "process_not_ruled_out")
+            if verdict["left_behind"]:
+                problems.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process "
+                                "block stopped, killed and reaped them, so what they would still have written is missing from the files this tool kept" % verdict["left_behind"])
+            for why in verdict["unproven"]:
+                problems.append("%s: the files this tool kept cannot be shown to be final" % why)
         answer = {
             "tool": TOOL, "parser": PARSER, "status": status, "status_basis": basis, "file": original,
             "pe": {"format": info["format"], "machine": info["machine"]}, "clr": clr, "mode": "metadata and reconstruction" if decompile else "metadata only",
@@ -2912,8 +2937,10 @@ def main():
             "limits_hit": limits_hit, "problems": problems, "notes": notes + process_notes(),
             "coverage": {"read": READ, "not_read": NOT_READ}, "note": NOTE, **extra,
         }
+        if ran_program:
+            process_apply(answer)                   # program_group; a complete answer is partial when a program left a process, or that cannot be ruled out
         print_answer(build_answer(answer))
-        raise SystemExit(0 if status in ("complete", "partial") else 1)
+        raise SystemExit(0 if answer["status"] in ("complete", "partial") else 1)
 
     if clr is None:
         finish("partial", "the PE declares a CLR header and it cannot be read: " + "; ".join(problems))
