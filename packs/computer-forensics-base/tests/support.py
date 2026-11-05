@@ -73,6 +73,17 @@ def have(program):
     return which(program) is not None
 
 
+def drop_subreaper():
+    """A tool's process block makes the process that spawns a program a subreaper (PR_SET_CHILD_SUBREAPER). A test that runs a tool's code in the
+    runner's own process would leave the runner one, and the processes of later tests' tools would then be adopted by the runner and kept as
+    zombies instead of by init. Every case ends by clearing the flag."""
+    try:
+        import ctypes
+        ctypes.CDLL(None).prctl(36, 0, 0, 0, 0)
+    except Exception:  # noqa: BLE001 - not Linux, or no libc symbol: nothing to clear
+        pass
+
+
 class Case(unittest.TestCase):
     """A test case with a scratch run directory."""
 
@@ -80,6 +91,7 @@ class Case(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.dir = self._tmp.name
         self.addCleanup(self._tmp.cleanup)
+        self.addCleanup(drop_subreaper)
 
     def path(self, *parts):
         return os.path.join(self.dir, *parts)

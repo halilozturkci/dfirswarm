@@ -277,7 +277,7 @@ if os.environ.get("DOWNGRADE") == "0":
 code = run_prog(ns, ["sh", "-c", "(setsid sleep 90.116 & echo $! > %s/unseen.pid); sleep 0.3; exit 0" % W])
 verdict = ns["process_verdict"]()
 answer = ns["process_apply"]({"status": "complete", "ok": True, "complete": True, "status_basis": "all of it"})
-out = {"verdict": verdict, "answer": answer, "unseen_alive": alive(pid_of("unseen.pid")), "kids": children_of_me()}
+out = {"verdict": verdict, "answer": answer, "unseen_alive": alive(pid_of("unseen.pid")), "kids": children_of_me(), "process_notes": ns["process_notes"]()}
 os.kill(pid_of("unseen.pid"), signal.SIGKILL)
 print(json.dumps(out))
 `;
@@ -487,6 +487,7 @@ for (const fam of FAMILIES) {
     await withCase(fam, NONLINUX, { WRAP: wrap }, async (seen) => {
       assert.equal(seen.verdict.subreaper, false);
       assert.match(seen.verdict.unproven.join(" "), /cannot adopt orphaned processes/);
+      assert.deepEqual(seen.process_notes, [], "the sentence is in the verdict only: a tool that reads process_notes() is not made partial by it");
       assert.equal(seen.answer.status, "partial");
       assert.equal(seen.unseen_alive, true);
     });

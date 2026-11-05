@@ -66,5 +66,5 @@
     "http2.tsv and quic.tsv are not made when the installed tshark does not list the fields they need (the receipt says so)"
   ],
   "covers": "Capture metadata and, for every packet, the selected fields tshark can decode (packets.tsv), with DNS, HTTP and TLS listings and, only where the installed tshark lists their fields, HTTP/2 and QUIC. It does not assert that a missing protocol is absent when packets were truncated, encrypted, malformed or unsupported; coverage.json counts the truncated packets. http.tsv, dns.tsv, tls.tsv and http2.tsv can hold credentials, tokens and names in request URIs, query names and server names and are marked secret-bearing in the receipt (the mark is informational: nothing in the harness reads it); the directory is private (0700, files 0600). A field the installed tshark does not list is named in the step and left out of that listing.",
-  "sha256": "5a2628c66ec9323d95b3f2430a0f381ce0b92db1a9ca4bb493a326c0f04563c2"
+  "sha256": "39392d52e580b529b13e3ab3f4e61268369d6b6c64b48566aa97e86cebb2ed3e"
 }

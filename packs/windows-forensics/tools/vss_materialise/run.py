@@ -353,7 +353,7 @@ KEEP = {}                      # the processes left on purpose: pid -> identity 
 PRE_KIDS = {}                  # the children the tool already had when the first program was spawned: pid -> identity
 LEAVES = {}                    # the programs started with leaves=True that have not ended yet: pid -> Popen
 LEFT = {"left_behind": 0, "unproven": []}   # how many live processes settle() ended, and why nothing-left-behind cannot be proven
-SUB = {"tried": False, "on": False}        # whether the subreaper was asked for, and is on
+SUB = {"tried": False, "on": False, "note": None}        # whether the subreaper was asked for, and is on
 SETTLING = [False]             # settle() is running (the stop signal's own call goes through)
 LEFTOVER_SECONDS = 3              # the most one settle() works, in seconds; the clock is read for every process it ends, not once per pass
 SETTLE_LOOK = 0.05             # the pause before the look that follows an ending: a fork that was under way when the first process died
@@ -921,13 +921,12 @@ def become_subreaper():
             except TreeNotListed as exc:
                 _unproven(_note("the children the tool already had could not be listed (%s): one of them may be taken for a program's" % exc))
         else:
-            _unproven(_note("this host refused PR_SET_CHILD_SUBREAPER: a process a program left behind outside the walk is not adopted and may not be found"))
+            _unproven("this host refused PR_SET_CHILD_SUBREAPER: a process a program left behind outside the walk is not adopted and may not be found")
     else:
         reason = "this host cannot adopt orphaned processes (no PR_SET_CHILD_SUBREAPER): a process a program left behind may not be found"
+        SUB["note"] = reason              # in process_verdict()["notes"], never in process_notes(): a tool that reads only what a program printed is not made partial by it
         if NONLINUX_UNPROVEN_DOWNGRADE:
-            _unproven(_note(reason))
-        else:
-            _note(reason)
+            _unproven(reason)
     return SUB["on"]
 
 
@@ -1117,9 +1116,7 @@ def _settle(final):
         if time.monotonic() >= deadline:
             _unproven(_note("%d processes a program left behind were still there after %d seconds: they were not all ended" % (len(found), LEFTOVER_SECONDS)))
             return ended
-        before = LEFT["left_behind"]
         ended += (_end_children if SUB["on"] else _end_seen)(found, deadline)
-        LEFT["left_behind"] = before + (ended - (LEFT["left_behind"] - before) if False else 0) + 0
         if not SUB["on"]:
             return ended                           # nothing is adopted: one pass, the processes are not this tool's to reap
 
@@ -1148,7 +1145,7 @@ def settle(final=False):
 def process_verdict():
     """What an answer says about the programs the tool ran: {"subreaper": whether orphans were adopted, "left_behind": how many live processes
     settle() ended, "unproven": why 'nothing was left behind' cannot be claimed (empty when it can), "notes": process_notes()}."""
-    return {"subreaper": SUB["on"], "left_behind": LEFT["left_behind"], "unproven": list(LEFT["unproven"]), "notes": process_notes()}
+    return {"subreaper": SUB["on"], "left_behind": LEFT["left_behind"], "unproven": list(LEFT["unproven"]), "notes": process_notes() + ([SUB["note"]] if SUB["note"] else [])}
 
 
 def process_apply(answer):
@@ -1353,10 +1350,12 @@ def mounted_at(directory):
         return None
 
 
-def run_program(argv, seconds):
-    """(exit code, stdout, stderr, timed out) of a program run in this tool's group, bounded by `seconds` and the tool's clock."""
+def run_program(argv, seconds, leaves=False):
+    """(exit code, stdout, stderr, timed out) of a program run in this tool's group, bounded by `seconds` and the tool's clock. `leaves` is for
+    the one program that daemonises on purpose (vshadowmount: its FUSE daemon serves the mount until unmount() ends it): the process block's
+    settle() then keeps what that program left. Every other program here leaves nothing, and what it leaves is ended."""
     seconds = max(0.5, min(seconds, remaining()))
-    proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = spawn(argv, leaves=leaves, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     ACTIVE.append(proc)
     try:
         out, err, timed = communicate_bounded(proc, seconds)
@@ -1669,7 +1668,7 @@ def main():
         except OSError as exc:
             fail("the mount directory could not be made under %s: %s" % (base, exc.strerror or exc))
         RUN["mount"] = mount_dir
-        code, _o, err, timed = run_program(["vshadowmount", "-o", str(offset), image, str(mount_dir)], MOUNT_SECONDS)
+        code, _o, err, timed = run_program(["vshadowmount", "-o", str(offset), image, str(mount_dir)], MOUNT_SECONDS, leaves=True)
         if timed or code != 0:
             fail("vshadowmount %s" % ("did not return in time" if timed else "failed with exit status %s" % code), exit_status=code)
         sector_offset = offset // 512 if offset % 512 == 0 else None

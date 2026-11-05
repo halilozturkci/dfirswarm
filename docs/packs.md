@@ -661,8 +661,10 @@ of this itself:
   `spawn()` started (Popen reaps it and its `returncode` is never taken), not a
   child the tool already had when the first program was spawned, and not one
   kept on purpose (`spawn(argv, leaves=True)` for a program that leaves a
-  daemon the tool stops itself, as `vss_materialise`'s `vshadowmount` does, or
-  `process_keep(pid)`). A program must be started through `spawn()`: a child
+  daemon the tool stops itself, or `process_keep(pid)`; `vss_materialise`
+  starts `vshadowmount`, and no other program there, with `leaves=True`, so
+  the FUSE daemon serves the mount until `fusermount` ends it, and a stop
+  signal still ends it with everything else below the tool). A program must be started through `spawn()`: a child
   started by `subprocess` directly while a program runs is taken for a
   leftover. While another program is running in `ACTIVE` nothing is ended and
   the answer is unproven. A process that is not a descendant of a program (a
@@ -679,7 +681,14 @@ of this itself:
   whose parent is gone, and `unproven` says so; on a host that is not Linux
   that alone makes a complete answer partial while
   `NONLINUX_UNPROVEN_DOWNGRADE = True` in the block (set it to `False` and it is
-  a note in `process_verdict()["notes"]` only).
+  a sentence in `process_verdict()["notes"]` only; the sentence is never in
+  `process_notes()`, so a tool that puts `process_notes()` into its partial
+  reasons, as `ransomware_family_match` does, is made partial only by a tree
+  that could not be listed, on any host). The rule behind the constant: where the
+  absence of a leftover cannot be proven, a tool that runs a program and
+  reports the files the program wrote answers at most partial; a tool that
+  reports only what the program printed (`ransomware_family_match`) is not
+  held to it.
 
 ---
 

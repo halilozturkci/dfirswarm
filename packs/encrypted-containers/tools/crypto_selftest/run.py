@@ -1421,7 +1421,7 @@ KEEP = {}                      # the processes left on purpose: pid -> identity 
 PRE_KIDS = {}                  # the children the tool already had when the first program was spawned: pid -> identity
 LEAVES = {}                    # the programs started with leaves=True that have not ended yet: pid -> Popen
 LEFT = {"left_behind": 0, "unproven": []}   # how many live processes settle() ended, and why nothing-left-behind cannot be proven
-SUB = {"tried": False, "on": False}        # whether the subreaper was asked for, and is on
+SUB = {"tried": False, "on": False, "note": None}        # whether the subreaper was asked for, and is on
 SETTLING = [False]             # settle() is running (the stop signal's own call goes through)
 LEFTOVER_SECONDS = 3              # the most one settle() works, in seconds; the clock is read for every process it ends, not once per pass
 SETTLE_LOOK = 0.05             # the pause before the look that follows an ending: a fork that was under way when the first process died
@@ -1974,13 +1974,12 @@ def become_subreaper():
             except TreeNotListed as exc:
                 _unproven(_note("the children the tool already had could not be listed (%s): one of them may be taken for a program's" % exc))
         else:
-            _unproven(_note("this host refused PR_SET_CHILD_SUBREAPER: a process a program left behind outside the walk is not adopted and may not be found"))
+            _unproven("this host refused PR_SET_CHILD_SUBREAPER: a process a program left behind outside the walk is not adopted and may not be found")
     else:
         reason = "this host cannot adopt orphaned processes (no PR_SET_CHILD_SUBREAPER): a process a program left behind may not be found"
+        SUB["note"] = reason              # in process_verdict()["notes"], never in process_notes(): a tool that reads only what a program printed is not made partial by it
         if NONLINUX_UNPROVEN_DOWNGRADE:
-            _unproven(_note(reason))
-        else:
-            _note(reason)
+            _unproven(reason)
     return SUB["on"]
 
 
@@ -2170,9 +2169,7 @@ def _settle(final):
         if time.monotonic() >= deadline:
             _unproven(_note("%d processes a program left behind were still there after %d seconds: they were not all ended" % (len(found), LEFTOVER_SECONDS)))
             return ended
-        before = LEFT["left_behind"]
         ended += (_end_children if SUB["on"] else _end_seen)(found, deadline)
-        LEFT["left_behind"] = before + (ended - (LEFT["left_behind"] - before) if False else 0) + 0
         if not SUB["on"]:
             return ended                           # nothing is adopted: one pass, the processes are not this tool's to reap
 
@@ -2201,7 +2198,7 @@ def settle(final=False):
 def process_verdict():
     """What an answer says about the programs the tool ran: {"subreaper": whether orphans were adopted, "left_behind": how many live processes
     settle() ended, "unproven": why 'nothing was left behind' cannot be claimed (empty when it can), "notes": process_notes()}."""
-    return {"subreaper": SUB["on"], "left_behind": LEFT["left_behind"], "unproven": list(LEFT["unproven"]), "notes": process_notes()}
+    return {"subreaper": SUB["on"], "left_behind": LEFT["left_behind"], "unproven": list(LEFT["unproven"]), "notes": process_notes() + ([SUB["note"]] if SUB["note"] else [])}
 
 
 def process_apply(answer):

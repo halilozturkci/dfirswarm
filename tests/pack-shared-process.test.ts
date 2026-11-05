@@ -27,8 +27,8 @@ const END = "# END SHARED PROCESS";
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 /** The two texts, as a copy carries them (from BEGIN to END, the way the other suites cut them). */
-export const GENERAL_SHA = "2c742d7a625062a8442fd509f152d06d4eb1b9813b69d57090212a2e33ddfc5c";
-export const WINDOWS_SHA = "92724c45b77f43b9acf9bb8c08833cf42a80197607b30ffd76c7d7988beeeb5c";
+export const GENERAL_SHA = "fea3c983cc09dcdf5bfa8e48950b5fbc546c02fa23105eb8eb2962f9770ff4f2";
+export const WINDOWS_SHA = "303755370b9d3f6475806b330b2d37dfd45c41803c675103476f3965318aceb7";
 
 async function carriers(): Promise<string[]> {
   const found: string[] = [];

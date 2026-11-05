@@ -22,7 +22,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 10,
-  "sha256": "2982e74e09f0bcf5cfcb0ef4e3fb0069ee6189c6b2e4b275b1969b8dd87974b1",
+  "sha256": "5d03bbcb8f9c10180719d598bae1c48db0ab8dadb596315389f244b6bc0e77d1",
   "needs": [
     "fuse"
   ],

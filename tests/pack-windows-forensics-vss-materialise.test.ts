@@ -13,7 +13,7 @@ import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { chmodSync } from "node:fs";
 import { body, failed, tool } from "./windows-pack-harness.ts";
-import { assertStopped, runTool, scriptOf, stopAt, withDeadline } from "./windows-tool-contract.ts";
+import { assertStopped, runTool, scriptOf, startTool, stopAt, withDeadline } from "./windows-tool-contract.ts";
 
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -328,6 +328,135 @@ test("at the tool's deadline the lookups not made are named, the mount is gone a
     assert.equal(out.status, "partial");
     assert.equal(out.counts.not_attempted, 1);
     assert.match(log(env), /unmount/);
+  });
+});
+
+// --- a mount that daemonises -----------------------------------------------------------------------------------------------------------
+// The real vshadowmount forks a FUSE daemon and returns. The tool needs that daemon for every lookup and copy that follows, and the process
+// block's settle() ends what a program leaves behind, so the mount is the one program started with leaves=True. These stand-ins daemonise the
+// way a daemon does (a double fork, a session of its own, standard input, output and error on /dev/null), fls fails when the daemon is dead,
+// and fusermount3 ends it (as unmounting does); with FAKE_NOKILL it does not, so only a stop signal can.
+const DAEMON_MOUNT = `${PY}import os, shutil, signal, sys
+d = os.environ["FAKE_DIR"]
+mount = sys.argv[-1]
+open(os.path.join(d, "mount.log"), "a").write("mount %s\\n" % mount)
+r, w = os.pipe()
+if os.fork():
+    os.close(w)
+    os.read(r, 1)
+    os._exit(0)
+os.setsid()
+if os.fork():
+    os._exit(0)
+for fd in (0, 1, 2):
+    os.close(fd)
+os.open("/dev/null", os.O_RDWR)
+os.dup2(0, 1)
+os.dup2(0, 2)
+open(os.path.join(d, "daemon.pid"), "w").write(str(os.getpid()))
+for n in os.environ.get("FAKE_STORES", "1,2").split(","):
+    src = os.path.join(d, "store-%s.json" % n)
+    if os.path.exists(src):
+        shutil.copy(src, os.path.join(mount, "vss%s" % n))
+os.write(w, b"1")
+signal.alarm(120)
+while True:
+    signal.pause()
+`;
+const DAEMON_UMOUNT = `${PY}import glob, os, signal, sys
+d = os.environ["FAKE_DIR"]
+mount = sys.argv[-1]
+for f in glob.glob(os.path.join(mount, "vss*")):
+    os.unlink(f)
+open(os.path.join(d, "mount.log"), "a").write("unmount %s\\n" % mount)
+if not os.environ.get("FAKE_NOKILL"):
+    try:
+        os.kill(int(open(os.path.join(d, "daemon.pid")).read()), signal.SIGKILL)
+    except (OSError, ValueError):
+        pass
+`;
+const DAEMON_FLS = `${PY}import os, sys
+d = os.environ["FAKE_DIR"]
+try:
+    pid = int(open(os.path.join(d, "daemon.pid")).read())
+    state = open("/proc/%d/stat" % pid).read().rsplit(")", 1)[1].split()[0]
+except (OSError, ValueError, IndexError):
+    state = "X"
+if state in ("Z", "X"):
+    sys.stderr.write("fls: the mount is gone (its daemon has ended)\\n")
+    sys.exit(1)
+if os.environ.get("FAKE_SLOW"):
+    open(os.path.join(d, "fls.started"), "w").write("1")
+    import time
+    time.sleep(60)
+os.execv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fls.real"), sys.argv)
+`;
+
+function daemonStandIns(bin: string): void {
+  writeFileSync(join(bin, "fls.real"), FLS);
+  chmodSync(join(bin, "fls.real"), 0o755);
+  for (const [name, script] of [["vshadowmount", DAEMON_MOUNT], ["fusermount3", DAEMON_UMOUNT], ["fls", DAEMON_FLS]]) {
+    writeFileSync(join(bin, name), script);
+    chmodSync(join(bin, name), 0o755);
+  }
+}
+
+function state(pid: number): string | null {
+  try {
+    return readFileSync(`/proc/${pid}/stat`, "utf8").split(")").pop()!.trim().split(" ")[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+const daemonGone = async (pid: number, ms = 5000): Promise<boolean> => {
+  const until = Date.now() + ms;
+  for (;;) {
+    const s = state(pid);
+    if (s === null || s === "Z") return true;
+    if (Date.now() > until) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+};
+
+test("a mount whose program daemonises (a double fork, a session of its own, stdio on /dev/null) keeps its daemon for the lookups and copies, and the daemon is gone when the tool ends", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = { ...(await setup(cwd, bin, { 1: config("old system"), 2: config("new system") }, config("new system"))), FAKE_DAEMON: "1" };
+    daemonStandIns(bin);
+    let daemon = 0;
+    try {
+      const out = body<Answer>(await tool("vss_materialise", cwd, { ...ARGS, paths: [SYSTEM] }, env, bin));
+      daemon = Number(readFileSync(join(env.FAKE_DIR, "daemon.pid"), "utf8"));
+      assert.equal(out.status, "complete", JSON.stringify(out).slice(0, 600));
+      const rows = out.rows as Answer[];
+      assert.deepEqual(rows.map((r) => r.copy_status), ["copied", "copied"], "fls found the daemon dead: settle() ended the mount's daemon");
+      assert.equal(rows[0]!.sha256, sha("old system"));
+      assert.match(log(env), /^mount .*\nunmount /, "mounted once and unmounted");
+      assert.equal(out.mount.unmounted, true);
+      assert.equal(await daemonGone(daemon), true, "the daemon outlived the tool");
+    } finally {
+      if (daemon) try { process.kill(daemon, "SIGKILL"); } catch { /* gone */ }
+    }
+  });
+});
+
+test("a stop signal ends the mount's daemon with everything else below the tool, even when nothing unmounts it", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = { ...(await setup(cwd, bin, { 1: config("x") }, config("x"))), FAKE_DAEMON: "1", FAKE_NOKILL: "1", FAKE_SLOW: "1", PATH: `${bin}:${process.env.PATH}` };
+    daemonStandIns(bin);
+    const run = startTool("vss_materialise", cwd, { ...ARGS, stores: [1] }, env);
+    let daemon = 0;
+    try {
+      for (let i = 0; i < 400 && !existsSync(join(env.FAKE_DIR, "fls.started")); i++) await new Promise((r) => setTimeout(r, 25));
+      assert.ok(existsSync(join(env.FAKE_DIR, "fls.started")), "the tool reached its first lookup with the daemon alive");
+      daemon = Number(readFileSync(join(env.FAKE_DIR, "daemon.pid"), "utf8"));
+      assert.equal(await daemonGone(daemon, 100), false, "the daemon was alive while fls ran");
+      process.kill(run.pid, "SIGTERM");
+      await run.closed;
+      assert.equal(await daemonGone(daemon), true, "the stop signal left the daemon running");
+    } finally {
+      try { process.kill(run.pid, "SIGKILL"); } catch { /* gone */ }
+      if (daemon) try { process.kill(daemon, "SIGKILL"); } catch { /* gone */ }
+    }
   });
 });
 
