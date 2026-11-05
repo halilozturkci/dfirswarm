@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.13.3",
+  "version": "1.13.4",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -102,11 +102,11 @@
       "tools/encryption_extent/run.py": "7c1a6453c4e5a84c89035976e05298bf0a31a5cb418f81d407a570f1b17797c1",
       "tools/ransom_note_scan/manifest.json": "660fd4d540b7821f671643f674f86cced4d28fc869da5345822f8e1a2bf69d59",
       "tools/ransom_note_scan/run.py": "6a2b84451ef4a1c2ffe52dc82b726c2b76feec1313a73e333bf65f112e98afb2",
-      "tools/ransomware_family_match/manifest.json": "68f7aced6aeed0623ac56cd7a7267e79c05e5001636eebb146cae56dc1142ce5",
+      "tools/ransomware_family_match/manifest.json": "8dece185d760c87e14b12015d909a20627cf7366a33f3f1a25e4fc739cf0fe47",
       "tools/ransomware_family_match/reference/entries.json": "6b04bc8cf58dd4ab8999a76c3043c67cebba51dea9cff9cfd4c05de72beb6467",
       "tools/ransomware_family_match/reference/reference-manifest.json": "fe4268252acae595880630e832a938a77bb1577f7905e505fb106a6bdd08f4cf",
       "tools/ransomware_family_match/reference/rules.yar": "678bc6c9076d580975bd4713112c133e9e14783d73e244023b0cd389b8d38909",
-      "tools/ransomware_family_match/run.py": "a7201643b27f55570b0033113459cd9566c16175944065551bf67662da00249d",
+      "tools/ransomware_family_match/run.py": "5af40aa48fd8280a60b65a6ff2e0b732f2ddefa647c78804288e19d5eaf4fb7f",
       "tools/ransomware_scope_report/manifest.json": "6b6ad28aa83d7dbc03a8e2f826091563586a98fd7d1bf8e51d6bbd43d1cd9328",
       "tools/ransomware_scope_report/run.py": "5d950fe826a69421baf2d84b0f508a377dfbaca36dd47d8c4f46c1373d086381",
       "tools/recovery_validate/manifest.json": "06a0d4847abd52465acf09195b47a1a695e6a2c227f4edf33ae56442d4093e4d",

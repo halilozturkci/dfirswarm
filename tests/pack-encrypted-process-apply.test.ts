@@ -104,7 +104,7 @@ async function exec(tool: string, cwd: string, env: Record<string, string>, args
 /**
  * Python that forks a child which writes to `paths` (by name) LEAVE_DELAY seconds after the program is gone, the way LEAVE_VARIANT says. inherit keeps every descriptor of the
  * program (the output pipe or file included) and stays in its group; setsid and double close them all and leave the group; rewrite truncates the file; periodic never stops;
- * hold keeps standard output open and says nothing; chatty keeps it open and writes a line every 20 ms; stdin keeps only standard input.
+ * hold keeps standard output open and says nothing; chatty keeps it open and writes a line every 20 ms; flood keeps it open and writes as fast as it can for 30 s; stdin keeps only standard input.
  */
 const LEAVE = String.raw`
 import os, sys, time, json
@@ -115,17 +115,17 @@ def leave(*paths):
     variant = CFG.get("variant")
     if not variant:
         return
-    delay = float(CFG.get("delay", "1.2"))
+    delay = float(CFG.get("delay", "2.5"))
     if os.fork() != 0:
         return
     if variant == "double":
         if os.fork() != 0:
             os._exit(0)
-    if variant in ("setsid", "double", "rewrite", "periodic", "hold", "chatty", "stdin"):
+    if variant in ("setsid", "double", "rewrite", "periodic", "hold", "chatty", "stdin", "flood"):
         os.setsid()
     open(CFG["pids"], "a").write("%d\n" % os.getpid())
     if variant != "inherit":
-        keep = (1,) if variant in ("hold", "chatty") else (0,) if variant == "stdin" else ()
+        keep = (1,) if variant in ("hold", "chatty", "flood") else (0,) if variant == "stdin" else ()
         for fd in range(0, 256):
             if fd not in keep:
                 try:
@@ -134,6 +134,15 @@ def leave(*paths):
                     pass
     if variant in ("hold", "stdin"):
         time.sleep(40)
+        os._exit(0)
+    if variant == "flood":
+        junk = b"junk line from a leftover\n" * 2000
+        end = time.time() + 30
+        while time.time() < end:
+            try:
+                os.write(1, junk)
+            except OSError:
+                break
         os._exit(0)
     if variant == "chatty":
         for _ in range(2000):
@@ -190,7 +199,7 @@ async function inCase(c: Case, variant: string | null, host: Host, check: (o: Ou
     try {
       const s = await c.install(cwd, bin);
       const { LEAVE_DELAY: delay, ...rest } = s.env ?? {};
-      await writeFile(cfgPath(bin), JSON.stringify({ variant, program: c.program, pids, delay: delay ?? "1.2" }));
+      await writeFile(cfgPath(bin), JSON.stringify({ variant, program: c.program, pids, delay: delay ?? "2.5" }));
       const env: Record<string, string> = { PATH: `${bin}:${process.env.PATH ?? ""}`, ...rest };
       const run = await exec(c.tool, cwd, env, s.args, host);
       assert.doesNotMatch(run.stderr, /Traceback/, run.stderr);
@@ -222,6 +231,9 @@ const JOHN = `
 a = sys.argv[1:]
 if "--version" in a:
     print("John the Ripper 1.9.0-jumbo-1")
+    sys.stdout.flush()
+    if CFG.get("program") == "john-version":
+        leave()
     sys.exit(0)
 if "--show" in a:
     print("1 password hash cracked, 0 left")
@@ -236,7 +248,7 @@ sys.stdout.flush()
 if CFG.get("program") == "john":
     leave(pot, os.readlink("/proc/self/fd/1"))
 `;
-const recover = (program: "john" | "zip2john" | "john-show"): Case => ({
+const recover = (program: "john" | "zip2john" | "john-show" | "john-version"): Case => ({
   name: `password_recover (${program})`,
   tool: "password_recover",
   program,
@@ -264,6 +276,9 @@ const BDEINFO = `
 a = sys.argv[1:]
 if a[:1] == ["-V"]:
     print("bdeinfo 20221031")
+    sys.stdout.flush()
+    if CFG.get("program") == "bdeinfo-probe":
+        leave()
     sys.exit(0)
 print("bdeinfo 20221031\\n\\nBitLocker Drive Encryption information:\\n\\tEncryption method\\t\\t: AES-XTS 128-bit\\n\\tNumber of key protectors\\t: 1\\n\\nKey protector 0:\\n\\tType\\t\\t\\t\\t: TPM\\n")
 sys.stdout.flush()
@@ -283,10 +298,10 @@ function bitlockerVolume(): Buffer {
   });
   return b;
 }
-const metadata: Case = {
+const metadataFor = (program: string): Case => ({
   name: "crypto_metadata",
   tool: "crypto_metadata",
-  program: "bdeinfo",
+  program,
   install: async (cwd, bin) => {
     await writeFile(join(cwd, "work", "disk.img"), bitlockerVolume());
     await pystub(bin, "bdeinfo", BDEINFO);
@@ -297,7 +312,8 @@ const metadata: Case = {
     assert.equal(a.scheme, "BitLocker");
     assert.equal(a.reader.exit_code, 0);
   },
-};
+});
+const metadata = metadataFor("bdeinfo");
 
 // ---- crypto_selftest: each reader's output file, the version probes -------------------------------------------------------------------------------------------------
 
@@ -490,7 +506,7 @@ const tcrypt: Case = {
   watched: async () => [],
 };
 
-for (const variant of ["setsid", "double", "inherit", "hold", "chatty", "stdin"]) {
+for (const variant of ["setsid", "double", "inherit", "hold", "chatty", "stdin", "flood"]) {
   test(`tcrypt_header: cryptsetup leaves a process (${variant}): the answer comes within seconds, the process is gone, and a status that rests on a pipe a process held is partial`, { skip: !LINUX }, async () => {
     await inCase(tcrypt, variant, "linux", async (o) => {
       assert.ok(o.run.ms < 15_000, `answered in ${o.run.ms} ms`);
@@ -571,7 +587,7 @@ for (const tool of ["archive_metadata", "archive_probe"]) {
     });
   }
 
-  for (const variant of ["inherit", "hold", "chatty"]) {
+  for (const variant of ["inherit", "hold", "chatty", "flood"]) {
     test(`${tool}: a process that holds 7z's output pipe after 7z ended (${variant}) is let go one second later even if it never stops writing, the listing is marked, and the answer is partial`, { skip }, async () => {
       await inCase(c, variant, "linux", async (o) => {
         assert.ok(o.run.ms < 8000, `answered in ${o.run.ms} ms (the tool's own deadline is 20 s)`);
@@ -590,7 +606,7 @@ for (const tool of ["archive_metadata", "archive_probe"]) {
 
 // ---- the readers that wait for a pipe, with a stand-in that exits leaving a holder: each answers within its clock with a truthful status ------------------------------------
 
-for (const variant of ["hold", "chatty", "stdin", "inherit"]) {
+for (const variant of ["hold", "chatty", "stdin", "inherit", "flood"]) {
   test(`crypto_selftest: a version probe that leaves a process holding its pipe (${variant}) does not hold the tool: it answers within seconds, partial, and the process is gone`, { skip: !LINUX }, async () => {
     await inCase(slow(selftest("bdeinfo-version")), variant, "linux", async (o) => {
       assert.ok(o.run.ms < 60_000, `answered in ${o.run.ms} ms`);
@@ -608,4 +624,19 @@ for (const variant of ["hold", "chatty", "stdin", "inherit"]) {
       assert.deepEqual(await allGone(o.pids), [], "the leftover is gone");
     });
   });
+}
+
+// ---- the version probes of password_recover and crypto_metadata, and a flood after the program ended ------------------------------------------------------------------------
+
+for (const [c, name] of [[recover("john-version"), "john --version"], [metadataFor("bdeinfo-probe"), "bdeinfo -V"]] as Array<[Case, string]>) {
+  for (const variant of ["hold", "chatty", "stdin", "flood"]) {
+    test(`${c.name}: ${name} leaves a process holding its pipe (${variant}): the answer comes within seconds, partial, the process is gone`, { skip: !LINUX }, async () => {
+      await inCase(slow(c), variant, "linux", async (o) => {
+        assert.ok(o.run.ms < 12_000, `answered in ${o.run.ms} ms`);
+        assert.equal(o.answer.status, "partial", o.run.stdout.slice(0, 800));
+        assert.ok(o.answer.program_group.left_behind >= 1);
+        assert.deepEqual(await allGone(o.pids), [], "the leftover is gone");
+      });
+    });
+  }
 }

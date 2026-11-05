@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.14.4",
+  "version": "1.14.5",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,7 +18,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "09ab737e189fd9bb404e6275e6ce83309dc644b87f185e0d90fcb8d810f50f3c",
+      "README.md": "1d4ea15cae4018b362d8eaaa10ea84e0a282127e0dde849ce65acadef4c79f51",
       "goals/what-is-locked.md": "0c9e1377f093ab6fe998a9502df2c351ed6a150edce2029f02517173348f59f2",
       "requires/host.json": "d1864e00ecded97cdced4e21e3e8b045bd1f0f57068ffd58b7cdd2f09a33b94b",
       "requires/python.lock": "9f06e0e55ca7ab284d195939fbda51c285e6aac9138cd361bfa8501318ad5853",
@@ -42,24 +42,24 @@
       "skills/volumes/luks-filevault.md": "79f6d8b20108e89e9b173b7d0ae9a997527a39df791b7fbb0ad12052cab16bcc",
       "skills/volumes/luks.md": "edfec1f4d242ca50eeb32ca37af062ea35f5fdbe79f824cd694e9c67f4cd28ef",
       "skills/volumes/veracrypt-truecrypt.md": "8233543a86f6506ce64c1f2a7c60f3370df4cbec1ecf829bdeb80939294e4d36",
-      "tools/archive_metadata/manifest.json": "9828d1092decab29950272b81118106191d0881e3147c72b124c99cd000fc551",
-      "tools/archive_metadata/run.py": "8dd6d02badd151cbe8ce3fcf5de9e804218dfa15963e1a2d2197eac2616d4470",
-      "tools/archive_probe/manifest.json": "fd8e91356c75b1dce1c6d6326aa6326a5d31261691085c11aa317299b4db0ed2",
-      "tools/archive_probe/run.py": "91ae23943008782d73f766ce59d64db2d2d07e7ac6054a350a330b73abc3103c",
+      "tools/archive_metadata/manifest.json": "e52186255818687a35c88769a0d008a59b705a5a9ab951abcd5f2ab9389e420f",
+      "tools/archive_metadata/run.py": "78906ee1126969bc2144aa71e0cc99e3122aba5aefd391de3593677ae2881115",
+      "tools/archive_probe/manifest.json": "1e0aa6acbadd1cbb271e3ee272ffe46204949c0ca69703779b4b3e5687e87816",
+      "tools/archive_probe/run.py": "fa7819fe5af3b7c160ab29b2abaa5a1ae21fa55d610e23eef191b7cb8db57c0a",
       "tools/crypto_id/manifest.json": "0ce6b22b622f10bdcc0900b2766b12c90cb584bdb7e1fb7aee417d7af56cb105",
       "tools/crypto_id/run.py": "ba404d4b6cb64da3da51f20d83a38efa4588cf943519f700d815fd6fbcac3546",
-      "tools/crypto_metadata/manifest.json": "b7bc5c78152b2ccf4faca8a63411326853e54851ada7fded1aff43e4259880ef",
-      "tools/crypto_metadata/run.py": "7b750fe4548d0044bcfa08e70c6a9970a37c7bd64a8e21b9251816d262152907",
-      "tools/crypto_selftest/manifest.json": "01efff3ef3e1293e75774f24cc41cdb488a88d2d259c156e1772cf665b10ca33",
-      "tools/crypto_selftest/run.py": "3cf629a1c2de5dda7b13d4aca8d394844a7da8e9f86b1a34165ae6cb1d0f384b",
-      "tools/materialise_decrypted/manifest.json": "8e835b1e2bda32ca0b5b635cfe882850ebb1ad42d5c31f222d53efa9f43b883e",
-      "tools/materialise_decrypted/run.py": "7e49d2c6a88f33795d1483a4edb85721fd004b47ab3e7bd3b5185d75d49be316",
-      "tools/password_recover/manifest.json": "32ca8b6d079d3e8aadbde4b6523737f143e0818648608d7d62bc5ce17a95f5fb",
-      "tools/password_recover/run.py": "45fa2adf7ecb0fe192c28fb6ad466032116178657abb54a5307dac2a79b44eac",
+      "tools/crypto_metadata/manifest.json": "79d538eaabde6dbae57c35861bd761fd31e14e2df0947b4a8ed8d36dabfd9400",
+      "tools/crypto_metadata/run.py": "217de0ee88ca765f5d05ab4696d8506243de302b497226474fae3e78c3ec22e5",
+      "tools/crypto_selftest/manifest.json": "b48ad5bc4f7f524a78e27405ba3be305f480ea3924ad88688347cb4ea3f82850",
+      "tools/crypto_selftest/run.py": "ee3af28e287be02ca05e81265eed02928b95daaaa959c22ef4265d10b78bcf05",
+      "tools/materialise_decrypted/manifest.json": "c561acc17223b178cda8a653dd8d18210465b7697829fbaab4282b9a85907e06",
+      "tools/materialise_decrypted/run.py": "7824b1d49ba1c30dfb0087384579c59686d7386ab7121471e02d566867114f10",
+      "tools/password_recover/manifest.json": "7a2898b1dfcf5f1048443fac2686f00964e987780cb6a7bdb796ec96f440e4ff",
+      "tools/password_recover/run.py": "33da640749a081aeaba385f1aee0ed0cb8e50d3ed2af5ba3e952a5cc2e2fedda",
       "tools/recovery_key_scan/manifest.json": "b3a784908c22adeb601feb82f66f605418ade5ada1609c3399e24d26bdf16691",
       "tools/recovery_key_scan/run.py": "731c51f87741386ee4e7c81d6274f450a9a8e0bdb37bd052a82f061cef19dc3e",
-      "tools/tcrypt_header/manifest.json": "b4572ca5c9674c94d8b770802eb187c1957b6f0724655fccbf42a5ce0737177b",
-      "tools/tcrypt_header/run.py": "38d21daf8292f692119f0859f12366a955f81316f8a90e49f8027069dd74c2d5"
+      "tools/tcrypt_header/manifest.json": "d114f1f8d508a3657982764d28c46ce39eacbba411a37dccb89bcfdaf3158cc4",
+      "tools/tcrypt_header/run.py": "6447271da9d622a6489059bde9181ba122f9060eab64f38d75a1ac36bfee4355"
     }
   },
   "tools": [

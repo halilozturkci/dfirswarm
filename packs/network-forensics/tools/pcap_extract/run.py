@@ -58,7 +58,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "pcap_extract", "version": 11}
+TOOL = {"name": "pcap_extract", "version": 13}
 PARSER = "pcap_extract/5"
 
 
@@ -917,7 +917,7 @@ class SecretValues:
 # the tool started and lost (reap_orphans): a process that was seen below the tool, in the tool's own group, and whose parent has since
 # ended. Nothing else is ever ended: a process the tool never saw in its tree (the next stage of a pipeline the tool heads, a process a
 # launcher put in the group) is left alone, whoever leads the group. A program that has ended while something it started still
-# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds and goes on without them.
+# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds (and POST_EXIT_BYTES bytes) and goes on without them.
 # The walk below a program is bounded: MAX_ROUNDS rounds and WALK_SECONDS seconds. Each process is stopped (SIGSTOP) as the walk finds it,
 # so one that forks fast cannot outrun the walk; the walk is repeated for what the stopped ones had already forked, and the stopped set is
 # then killed. A tree that is still growing at the bound is left, and process_notes() says so.
@@ -952,6 +952,16 @@ class SecretValues:
 # below a program whose parent is gone, and the answer is unproven (NONLINUX_UNPROVEN_DOWNGRADE below is the one line that decides whether
 # that alone makes a complete answer partial on a host that is not Linux). Not reached by any of this: a process that is not a descendant of
 # a program (started through a service manager, a socket, another PID namespace), and the tool itself being killed (the harness ends its group).
+# What a program's pipes deliver after it ended (the byte cap). communicate_bounded reads the pipes itself (a selector, not
+# Popen.communicate) and looks at the program after every read. From the moment the program has ended, or been killed at its deadline, it
+# takes at most POST_EXIT_BYTES (1 MiB) more bytes from its two pipes together and at most PIPE_GRACE seconds, whichever comes first; a
+# program's own last words are in the pipe already (a pipe holds far less than the cap), so only what a process that went on holding the
+# pipe wrote can be cut. At the cap the tool stops reading, ends the holder (reap_orphans, settle) and lets the pipes go: PIPE_CUT["cut"]
+# counts the calls cut that way, process_notes() says so, and process_apply turns a complete answer partial. The bytes kept are the ones
+# read, not a whole stream: a caller that parses the output sees the program's output and at most 1 MiB of what a leftover wrote. While the
+# program is still alive nothing is capped here (a program's own output is its caller's to bound); the timing is unchanged.
+import select as _select
+import selectors as _selectors
 import time
 
 try:
@@ -1759,11 +1769,12 @@ def process_verdict():
 
 def process_apply(answer):
     """Put process_verdict() into `answer` as answer["program_group"] and, when a program left a process behind or that cannot be ruled out,
-    turn a complete answer into a partial one (status "partial", the ok and complete flags that are there false, a sentence in status_basis):
+    turn a complete answer into a partial one (status "partial", the ok and complete flags that are there false, a sentence in status_basis;
+    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT):
     what a program wrote while the tool read it is not a complete result. A carrier calls it once where it prints its answer. Returns `answer`."""
     verdict = process_verdict()
     answer["program_group"] = verdict
-    if (verdict["left_behind"] > 0 or verdict["unproven"]) and answer.get("status") == "complete":
+    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"]) and answer.get("status") == "complete":
         answer["status"] = "partial"
         for flag in ("ok", "complete"):
             if flag in answer:
@@ -1771,6 +1782,8 @@ def process_apply(answer):
         if verdict["left_behind"] > 0:
             sentence = "a program left %d process%s running after it ended; the tool ended them, and what they wrote before that is in the files named here" % (
                 verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es")
+        elif PIPE_CUT["cut"]:
+            sentence = "a process that held a program's pipe after it ended went on writing; the tool read no more than %d bytes of it and let the pipe go" % POST_EXIT_BYTES
         else:
             sentence = "the tool cannot prove that no program left a process behind (see program_group.unproven)"
         basis = answer.get("status_basis")
@@ -1779,51 +1792,109 @@ def process_apply(answer):
 
 
 PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
+POST_EXIT_BYTES = 1 << 20    # the most bytes (both pipes together) read from the pipes of a program that has ended
+PIPE_CUT = {"cut": 0}        # how many calls stopped reading at POST_EXIT_BYTES because a process still held the pipes and went on writing
 
 
 def communicate_bounded(proc, seconds, input=None):
     """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
     are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
-    inherited them) does not hold the tool: the pipes are given PIPE_GRACE seconds, what the program wrote is kept, what the tool
-    lost is killed (reap_orphans), and the pipes are let go. The pipes are read here and by nothing else, so letting them go is safe."""
+    inherited them) does not hold the tool: from the moment the program has ended (or was killed) the pipes are given PIPE_GRACE seconds
+    and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept, what the tool lost is killed (reap_orphans,
+    settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted (process_notes()); the return shape is the
+    same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them go is safe. `input` is written while
+    the program runs and is dropped once it has ended."""
     deadline = time.monotonic() + max(0.1, seconds)
-    out = err = b""
-    started, timed_out, note = False, False, None
-    while proc.poll() is None:
-        now = time.monotonic()
-        if now >= deadline:
-            timed_out = True
-            note = kill_tree(proc)
-            break
-        _sample(proc.pid)
-        try:
-            out, err = proc.communicate(None if started else input, timeout=max(0.01, min(0.2, deadline - now)))
-            settle()
-            return out or b"", err or b"", False
-        except subprocess.TimeoutExpired as exc:
-            started = True
-            out, err = exc.stdout or b"", exc.stderr or b""
+    bufs = (bytearray(), bytearray())
+    sel = _selectors.DefaultSelector()
+    pending = memoryview(input) if input and proc.stdin is not None else None
+    for index, stream in enumerate((proc.stdout, proc.stderr)):
+        if stream is not None:
+            sel.register(stream, _selectors.EVENT_READ, index)
+    if proc.stdin is not None:
+        if pending:
+            sel.register(proc.stdin, _selectors.EVENT_WRITE, 2)
+        else:
+            _close_pipe(proc.stdin)
+    timed_out, note, ended, extra, cut, sampled = False, None, None, 0, False, 0.0
     try:
-        out, err = proc.communicate(None if started else input, timeout=PIPE_GRACE)
-    except subprocess.TimeoutExpired as exc:
-        out, err = exc.stdout or b"", exc.stderr or b""
-        reap_orphans(_pipe_inodes(proc))
-        settle()
+        while True:
+            now = time.monotonic()
+            if ended is None:
+                if proc.poll() is not None:
+                    ended = now
+                elif now >= deadline:
+                    timed_out = True
+                    note = kill_tree(proc)
+                    ended = time.monotonic()
+                elif now - sampled >= 0.2:
+                    sampled = now
+                    _sample(proc.pid)
+            if ended is not None:
+                if pending is not None:
+                    sel.unregister(proc.stdin)
+                    _close_pipe(proc.stdin)
+                    pending = None
+                if not any(key.data != 2 for key in sel.get_map().values()) or extra >= POST_EXIT_BYTES or now - ended >= PIPE_GRACE:
+                    cut = extra >= POST_EXIT_BYTES and any(key.data != 2 for key in sel.get_map().values())
+                    break
+            wait = max(0.01, min(0.2, (deadline if ended is None else ended + PIPE_GRACE) - now))
+            if not sel.get_map():
+                try:
+                    proc.wait(timeout=wait)
+                except subprocess.TimeoutExpired:
+                    pass
+                continue
+            for key, _mask in sel.select(wait):
+                if key.data == 2:
+                    try:
+                        pending = pending[os.write(key.fd, pending[:_select.PIPE_BUF]):]
+                    except OSError:
+                        pending = None
+                    if not pending:
+                        sel.unregister(proc.stdin)
+                        _close_pipe(proc.stdin)
+                        pending = None
+                    continue
+                if ended is not None and extra >= POST_EXIT_BYTES:
+                    break
+                try:
+                    data = os.read(key.fd, 65536 if ended is None else min(65536, POST_EXIT_BYTES - extra))
+                except OSError:
+                    data = b""
+                if not data:
+                    sel.unregister(key.fileobj)
+                    continue
+                bufs[key.data].extend(data)
+                if ended is not None:
+                    extra += len(data)
+        if any(key.data != 2 for key in sel.get_map().values()):
+            reap_orphans(_pipe_inodes(proc))
+            settle()
+    finally:
+        sel.close()
         for pipe in (proc.stdin, proc.stdout, proc.stderr):
-            try:
-                if pipe is not None:
-                    pipe.close()
-            except (OSError, ValueError):
-                pass
+            _close_pipe(pipe)
+    if cut:
+        PIPE_CUT["cut"] += 1
+        _note("a process that held a program's pipe after the program ended went on writing: the tool read %d bytes more and let the pipe go" % POST_EXIT_BYTES)
     try:
         proc.wait(timeout=PIPE_GRACE)
     except subprocess.TimeoutExpired:
         pass
     settle()
-    err = err or b""
+    err = bytes(bufs[1])
     if note:
         err = err + (b"\n" if err else b"") + note.encode("utf-8", "replace")
-    return out or b"", err, timed_out
+    return bytes(bufs[0]), err, timed_out
+
+
+def _close_pipe(pipe):
+    try:
+        if pipe is not None:
+            pipe.close()
+    except (OSError, ValueError):
+        pass
 
 
 def kill_all():
@@ -2691,6 +2762,20 @@ def decryption_secrets(path, seconds=20.0):
     return 0, "no Decryption Secrets Block was found in the pcapng blocks scanned"
 
 
+def program_group_problems(what):
+    """Sentences for `errors` from the shared process block's verdict, for an answer that reports `what` (files a program wrote). A process settle() ended means
+    those files hold what it had written when it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) they cannot be shown
+    to be final. The answer is then partial, and a line under `errors` says why."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were indexed and hashed, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def basis_of(status, why=None):
     """The sentence `status` rests on. While a run is going the file says so; a finished run says what it found."""
     if status == "running":
@@ -2885,10 +2970,14 @@ def main():
         objects.mapping.close()
         objects.long_cells.close()
 
+    group_problems = program_group_problems("the exported objects, the index and the logs")     # a process tshark left behind (ended before the objects were indexed and hashed), or a host that cannot show there was none
+    for line in group_problems:
+        errors.append({"step": "programs", "error": "a process was left behind or its absence cannot be proven", "reason": line})
     ok = not errors
     secrets_blocks, secrets_note = decryption_secrets(path, max(1.0, min(20.0, deadline - time.monotonic())))
     state.update({
         "ok": ok,
+        "program_group": process_verdict(),
         "decryption_secrets_blocks": secrets_blocks,
         "decryption_secrets_note": secrets_note,
         "bytes": sum(r["bytes"] for r in objects.rows if isinstance(r.get("bytes"), int)),
@@ -2918,7 +3007,9 @@ def main():
     })
     done = "complete" if ok else "partial"
     receipt(done, basis=("every pass ran and exited 0, every exported file is indexed, and the association pass ran or was not needed" if ok else
-                         "%d pass(es) or step(s) did not finish or did not succeed (errors names each); what was exported is indexed" % len(errors)))
+                         "%d pass(es) or step(s) did not finish or did not succeed (errors names each); what was exported is indexed" % len(errors) +
+                         ("; a process tshark left behind was ended, or none can be ruled out, so the exported files are not shown to be final" if group_problems else "")))
+    process_apply(state)              # program_group (the same verdict the receipt holds); a complete answer cannot have got here with a leftover
     print(json.dumps(state, indent=2))
     return 0
 

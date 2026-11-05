@@ -82,8 +82,9 @@ every process a program left running after it ended (in the tool's group, in a s
 report a file a program wrote (the hash and pot files, the reader's output, the decrypted image), so they answer `partial` when `settle()` ended a leftover and, on a host that
 is not Linux or where the kernel refuses `PR_SET_CHILD_SUBREAPER`, when the absence of one cannot be ruled out (`materialise_decrypted` then keeps the image as an unverified
 `.partial` file, and claims no digest of it after a process was ended). `tcrypt_header`, `archive_metadata` and `archive_probe` report what a program printed on a pipe: they are
-not held to the second rule, but a process `settle()` ended makes them `partial`, and a process that holds the pipe after the program ended is let go one second later (the 7z
-listing is then `listed_with_warnings`). A writer that is no descendant of the program (started through a service manager) is not found. `crypto_id` and `recovery_key_scan`
+not held to the second rule, but a process `settle()` ended makes them `partial`. A process that holds the pipe after the program ended is let go after at most one second
+(`tcrypt_header` and the version probes: or 1 MiB of further output, whichever comes first, and the cut makes the answer `partial`; the 7z tools: one second, and the listing is then
+`listed_with_warnings`). A flood that starts while the program is still running is not capped by this. A writer that is no descendant of the program (started through a service manager) is not found. `crypto_id` and `recovery_key_scan`
 start no program.
 
 ## Three things the skills insist on

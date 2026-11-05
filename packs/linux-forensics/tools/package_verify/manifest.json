@@ -41,7 +41,7 @@
   "example": "{\"root\": \"work/extracted\", \"family\": \"debian\", \"packages\": [\"openssh-server\"]}",
   "by": "maintainer",
   "at": "2026-11-02T12:00:00.000Z",
-  "version": 2,
+  "version": 3,
   "use": {
     "names": [
       "*.md5sums",
@@ -49,5 +49,5 @@
       "Packages.db"
     ]
   },
-  "sha256": "070af98a07e8f253bd2c2703d9934c02cd128129f1f8333a8027024c48deea5f"
+  "sha256": "67de4d4ea8ae7f43a1a1ca402ff2c49957609c0a39e69fd0ac45d3a30a93f5f8"
 }
