@@ -1124,12 +1124,12 @@ def list_7z(path, w, deadline, max_members, cov, out_dir):
             if left <= 0:
                 stopped = "seconds: stopped after %d members (7z was still running)" % n
                 return
+            if proc.poll() is not None:                     # 7z has ended: what is left in its pipe is read, but a leftover that holds the pipe (silent, or writing all the time) is let go after PIPE_GRACE
+                ended = ended or time.monotonic()
+                if time.monotonic() - ended >= PIPE_GRACE:
+                    stopped = "pipe: 7z ended, but something it started kept its output pipe open, so the end of the listing was not seen (after %d members)" % n
+                    return
             if not select.select([fd], [], [], min(left, 0.2))[0]:
-                if proc.poll() is not None:                 # 7z has ended and something it started holds its pipe: a moment's grace, then the listing is let go
-                    ended = ended or time.monotonic()
-                    if time.monotonic() - ended >= PIPE_GRACE:
-                        stopped = "pipe: 7z ended, but something it started kept its output pipe open, so the end of the listing was not seen (after %d members)" % n
-                        return
                 continue
             block = os.read(fd, 65536)
             if not block:
@@ -1221,6 +1221,7 @@ def run(path, out_dir):
                 proc.wait(timeout=5)
             except Exception:  # noqa: BLE001 - best effort
                 pass
+        end_leftovers()
         try:
             w.close()
         except Exception:  # noqa: BLE001

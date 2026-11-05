@@ -44,6 +44,7 @@ from pathlib import Path
 # the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
 # first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
 # (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import select
 import signal
 import time
 
@@ -371,37 +372,53 @@ def end_leftovers():
         pass
 
 
+GRACE_BYTES = 1 << 20      # the most that is taken from the pipes once the program has ended
+MAX_OUTPUT = 256 << 20     # the most a program's output may be: more is not taken
+
+
 def run_child(argv, timeout, **kwargs):
     """subprocess.run with its output captured, with the child recorded so that a stop can end it by its pid. The wait has a clock all the way: at
-    `timeout` the program is killed, and a program that has ended while something it started still holds its pipes does not hold the tool (the
-    pipes are given PIPE_GRACE seconds, then let go). Both raise subprocess.TimeoutExpired, because what was read cannot be taken as the whole
-    output; what the program left behind is ended."""
+    `timeout` the program is killed. A program that has ended while something it started still holds its pipes does not hold the tool, whether that
+    leftover is silent or writes all the time: PIPE_GRACE seconds after the program ended (and at most GRACE_BYTES more bytes) the pipes are let go.
+    Both raise subprocess.TimeoutExpired, because what was read cannot be taken as the whole output. What the program left behind is ended."""
     become_subreaper()
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
     CHILD["proc"] = proc
-    deadline, ended = time.monotonic() + timeout, None
+    deadline, ended, after = time.monotonic() + timeout, None, 0
+    pipes = {proc.stdout.fileno(): bytearray(), proc.stderr.fileno(): bytearray()}
+    open_fds = set(pipes)
+    cut = False
     try:
-        while True:
-            left = deadline - time.monotonic()
-            try:
-                if left <= 0:
-                    raise subprocess.TimeoutExpired(argv, timeout)
-                out, err = proc.communicate(timeout=min(0.2, left))
+        while open_fds or proc.poll() is None:
+            now = time.monotonic()
+            if proc.poll() is not None:
+                ended = ended or now
+            if now >= deadline or (ended is not None and (now - ended >= PIPE_GRACE or after > GRACE_BYTES)) or sum(len(b) for b in pipes.values()) > MAX_OUTPUT:
+                cut = True
                 break
-            except subprocess.TimeoutExpired:
-                if proc.poll() is not None:
-                    ended = ended or time.monotonic()
-                if left <= 0 or (ended is not None and time.monotonic() - ended >= PIPE_GRACE):
-                    proc.kill()
-                    for pipe in (proc.stdout, proc.stderr):
-                        try:
-                            pipe.close()
-                        except (OSError, ValueError):
-                            pass
-                    proc.wait()
-                    raise
+            if not open_fds:
+                time.sleep(0.02)
+                continue
+            for fd in select.select(sorted(open_fds), [], [], 0.1)[0]:
+                data = os.read(fd, 65536)
+                if not data:
+                    open_fds.discard(fd)
+                    continue
+                pipes[fd] += data
+                if ended is not None:
+                    after += len(data)
+        if cut:
+            proc.kill()
+            proc.wait()
+            raise subprocess.TimeoutExpired(argv, timeout)
+        out, err = bytes(pipes[proc.stdout.fileno()]), bytes(pipes[proc.stderr.fileno()])
     finally:
         CHILD["proc"] = None
+        for pipe in (proc.stdout, proc.stderr):
+            try:
+                pipe.close()
+            except (OSError, ValueError):
+                pass
         end_leftovers()
     return subprocess.CompletedProcess(argv, proc.returncode, out, err)
 
@@ -414,6 +431,7 @@ def end_child():
             proc.wait(timeout=5)
         except Exception:  # noqa: BLE001 - best effort
             pass
+    end_leftovers()
 
 TOOL = {"name": "file_type", "version": 14}
 BUDGET_SECONDS = 100          # under the manifest's 120
@@ -538,6 +556,7 @@ def identify(head):
 
 
 _libmagic = {"state": None}
+LIBMAGIC_LOST = [0]         # files for which the `file` command did not finish (it timed out, or it ended and something it started held its pipes)
 
 
 def libmagic(path):
@@ -548,7 +567,11 @@ def libmagic(path):
         return None
     try:
         p = run_child([_libmagic["state"], "-b", "--", path], LIBMAGIC_TIMEOUT, env=dict(os.environ, LC_ALL="C"))
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired:
+        LIBMAGIC_LOST[0] += 1
+        _libmagic["state"] = False            # not asked again: every later file would wait for the same thing
+        return None
+    except OSError:
         return None
     text = p.stdout.decode("utf-8", "replace").strip()
     return text[:200] if p.returncode == 0 and text else None
@@ -879,6 +902,8 @@ def main():
     why_not_complete = []
     if stopped:
         why_not_complete.append(stopped)
+    if LIBMAGIC_LOST[0]:
+        why_not_complete.append("the file command did not finish for a file (it timed out, or it ended and something it started held its pipes) and was not asked again: the files it was not asked about are named by the signature table alone")
     if counts["errors"]:
         why_not_complete.append("%d entries could not be read or listed (errors)" % counts["errors"])
     if counts["discovered"] and not counts["examined"]:

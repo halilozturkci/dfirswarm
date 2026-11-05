@@ -1042,6 +1042,7 @@ def _stopped(signum):
             proc.wait(timeout=5)
         except Exception:  # noqa: BLE001 - best effort: the process is ended with the tool anyway
             pass
+    end_leftovers()
     try:
         secret.close()
     except Exception:  # noqa: BLE001
@@ -1130,26 +1131,26 @@ def end_leftovers():
 
 
 HELD = [False]            # icat has ended and something it started kept its pipe open: the end of the stream was not seen
+ICAT_ENDED = [None]       # when icat was first seen to have ended
 
 
 def read_some(pipe, chunk, deadline):
     """Up to `chunk` bytes from icat's pipe, waiting on the clock: b"" at the end of the stream, None when the clock ran out first. A blocking
     read would wait for an icat that stalls (a damaged image, a hung disk) for as long as it likes."""
     fd = pipe.fileno()
-    ended = None
     while True:
         left = deadline - time.monotonic()
         if left <= 0:
             return None
+        proc = CHILD["proc"]
+        if proc is not None and proc.poll() is not None:     # icat has ended: what is left in its pipe is read, but a leftover that holds the pipe (silent, or writing all the time) is let go after PIPE_GRACE
+            ICAT_ENDED[0] = ICAT_ENDED[0] or time.monotonic()
+            if time.monotonic() - ICAT_ENDED[0] >= PIPE_GRACE:
+                HELD[0] = True
+                return None
         ready, _, _ = select.select([fd], [], [], min(left, 0.2))
         if ready:
             return os.read(fd, chunk)
-        proc = CHILD["proc"]
-        if proc is not None and proc.poll() is not None:     # icat has ended and something it started holds its pipe: a moment's grace, then the stream is let go
-            ended = ended or time.monotonic()
-            if time.monotonic() - ended >= PIPE_GRACE:
-                HELD[0] = True
-                return None
 
 
 def scan_fh(fh, source, total=None):
@@ -1332,8 +1333,10 @@ answer = {
 }
 if stopped is not None:
     answer["next_start"] = stopped
-    answer["stopped"] = ("the %d-second time budget was used after %d bytes of the stream: the counts and hits are for the occurrences that start before offset %d; %s"
-                         % (max_seconds, scanned, stopped,
+    answer["stopped"] = (("icat ended but something it started kept its output pipe open, so the end of the stream was not seen after %d bytes: the counts and hits are for the occurrences that start before offset %d; %s"
+                          if HELD[0] else
+                          "the %d-second time budget was used after %d bytes of the stream: the counts and hits are for the occurrences that start before offset %d; %s")
+                         % (*((scanned, stopped) if HELD[0] else (max_seconds, scanned, stopped)),
                             "go on with ioc_scan path=%s start=%d and the same needles" % (path, stopped) if path else
                             "extract the inode (icat_extract) and go on with ioc_scan on the file, start=%d" % stopped))
 if lost:

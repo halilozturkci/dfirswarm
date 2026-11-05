@@ -2308,11 +2308,11 @@ class Decomp:
                 left = (self.deadline - time.monotonic()) if self.deadline is not None else 1.0
                 if left <= 0:
                     raise Budget("max_seconds", "the time budget was reached while the zstd program was being read")
+                if self.proc.poll() is not None:            # the program has ended: what is left in its pipe is read, but a leftover that holds the pipe (silent, or writing all the time) is let go after a second
+                    ended = ended or time.monotonic()
+                    if time.monotonic() - ended >= 1.0:
+                        raise EOFError("the zstd program ended, but something it started kept its output pipe open: the end of the stream was not seen, so the output may be short")
                 if not select.select([fd], [], [], min(left, 0.2))[0]:
-                    if self.proc.poll() is not None:        # the program has ended and something it started still holds the pipe: it is given a moment, then let go
-                        ended = ended or time.monotonic()
-                        if time.monotonic() - ended >= 1.0:
-                            raise EOFError("the zstd program ended, but something it started kept its output pipe open: the end of the stream was not seen, so the output may be short")
                     continue
                 piece = os.read(fd, CHUNK)
                 if not piece:

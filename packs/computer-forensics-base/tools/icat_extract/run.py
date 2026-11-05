@@ -816,6 +816,7 @@ def _stopped(signum):
             proc.wait(timeout=5)
         except Exception:  # noqa: BLE001 - best effort
             pass
+    end_leftovers()
     print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "image": image, "inode": str(inode), "offset": offset,
                       "bytes_written": RUN["size"], "path": output + part.name[len(dest.name):], "stderr_file": output + err_path.name[len(dest.name):],
                       "status_basis": "the tool was stopped by signal %d: icat was ended, and what had been written is kept under its partial name (its size and sha256 are not claimed)" % signum}), flush=True)
@@ -841,15 +842,15 @@ with os.fdopen(out_fd, "wb") as out, os.fdopen(err_fd, "wb") as errf:
             # Waited for with the clock running: an icat that stalls (a damaged image, a stuck read) is stopped at the
             # budget, not waited on for ever behind a read that returns nothing.
             left = max_seconds - (time.monotonic() - started)
+            if proc.poll() is not None:                 # icat has ended: what is left in its pipe is read, but a leftover that holds the pipe (silent, or writing all the time) is let go after PIPE_GRACE
+                ended = ended or time.monotonic()
+                if time.monotonic() - ended >= PIPE_GRACE:
+                    status, why = "partial", "icat ended, but something it started kept its output pipe open, so the end of the stream was not seen and the file may be short"
+                    break
             if left <= 0 or not select.select([pipe], [], [], min(left, 0.2))[0]:
                 if time.monotonic() - started > max_seconds:
                     status, why = "partial", "the time budget of %d seconds was reached; icat was stopped" % max_seconds
                     break
-                if proc.poll() is not None:
-                    ended = ended or time.monotonic()
-                    if time.monotonic() - ended >= 1.0:       # icat has ended and something it started holds its pipe: the end of the stream was not seen
-                        status, why = "partial", "icat ended, but something it started kept its output pipe open, so the end of the stream was not seen and the file may be short"
-                        break
                 continue
             block = os.read(pipe, BLOCK)
             if not block:
