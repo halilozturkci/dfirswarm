@@ -655,7 +655,7 @@ argv = sys.argv[1:]
 out = argv[argv.index("-o") + 1]
 log = open(os.path.join(out, "Log.20261104-120000.txt"), "a")
 def line(s):
-    log.write("x - " + s + "\\n")
+    log.write("x|MAIN|INFO|" + s + "\\n")
 line("Started macOS Artifact Parsing Tool, version 1.33.2")
 line("Running plugin TCC")
 line("Traceback (most recent call last):")

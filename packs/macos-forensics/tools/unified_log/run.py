@@ -2477,6 +2477,213 @@ def descendants(pid):
     return found
 
 
+# program-group: settle
+# Tool-local (outside the shared blocks); the same file check is in macos_triage and the macos-artefacts recipe, which look for what settle() of the shared PROCESS block cannot: a writer that is no descendant of the program.
+# After the program has ended and what it left in the tool's own process group was ended, the files of the run are looked at again: a file that grew, or a
+# process outside the group that still holds one open (Linux, /proc), is a process in a session of its own (setsid), which this tool cannot end.
+SETTLE_SECONDS = 1.0       # the files are looked at again after this long
+
+
+def tree_sizes(roots, limit=200000):
+    """{path: size} of the regular files named in `roots` or under the directories named there (links not followed), at most `limit` of them."""
+    found = {}
+    stack = []
+    for root in roots:
+        try:
+            if os.path.isfile(str(root)) and not os.path.islink(str(root)):
+                found[str(root)] = os.stat(str(root)).st_size
+            else:
+                stack.append(str(root))
+        except OSError:
+            pass
+    while stack and len(found) < limit:
+        here = stack.pop()
+        try:
+            with os.scandir(here) as it:
+                for entry in it:
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            found[entry.path] = entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return found
+
+
+def file_holders(roots):
+    """The pids (not this tool's) that hold a file under `roots` open, or None where that cannot be looked for (no /proc: not Linux). The roots are this call's own."""
+    if not os.path.isdir("/proc/self"):
+        return None
+    targets = tuple(os.path.realpath(str(r)).rstrip("/") for r in roots)
+    me = os.getpid()
+    found = []
+    limit = time.monotonic() + 10
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return None
+    for number, name in enumerate(names):
+        if not name.isdigit() or int(name) == me:
+            continue
+        if number % 64 == 0 and time.monotonic() > limit:
+            return None
+        try:
+            for fd in os.listdir("/proc/%s/fd" % name):
+                try:
+                    link = os.readlink("/proc/%s/fd/%s" % (name, fd))
+                    if any(link == t or link.startswith(t + "/") for t in targets):
+                        found.append(int(name))
+                        break
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return found
+
+
+def settle_check(roots):
+    """After the program's group was emptied: the sizes under `roots` are read, SETTLE_SECONDS pass, they are read again. Returns {"grew": the number of
+    files that are new or changed in size, "holders": the pids that still hold a file open or None, "settle_seconds": SETTLE_SECONDS}. Any of them
+    means something outside the program's group (a process in a session of its own) is still writing, and this tool cannot end it."""
+    before = tree_sizes(roots)
+    time.sleep(SETTLE_SECONDS)
+    after = tree_sizes(roots)
+    return {"grew": sum(1 for path, size in after.items() if before.get(path) != size), "holders": file_holders(roots), "settle_seconds": SETTLE_SECONDS}
+# program-group: settle end
+
+# program-group: subreaper
+# Tool-local (outside the shared blocks). unified_log is the one macOS carrier that starts a program without the shared PROCESS block (it has its own reader code and the macOS stop text), so it keeps its own subreaper and sweep; macos_triage and the macos-artefacts recipe use settle() of the block instead. The rule is the block's: where the absence of a leftover cannot be proven, the answer is at most partial.
+# A process that leaves the tool's group (setsid, setpgid) is out of reach of a group sweep. So, on Linux, this tool makes itself a CHILD SUBREAPER
+# (prctl PR_SET_CHILD_SUBREAPER) before it starts the program: every orphan of the program, whatever its session or group, is re-parented to this tool. When the
+# program has ended, the children of this tool that are not programs it is running are killed (each pid's start time and parent are read again just before the
+# signal) and reaped with waitpid until a round finds none, for at most CHILD_SECONDS, BEFORE any size, hash or log is read. Where the tool cannot become the
+# subreaper, or the process table cannot be read, the files cannot be proved final: `unchecked` says so and the caller answers at most partial.
+CHILD_SECONDS = 3.0        # the longest the tool works at finding, ending and reaping the orphans that came to it
+SUB = {"on": None, "why": None}
+PRE_KIDS = {}              # the children this tool already had when it became the subreaper (pid -> start time): not the program's, never touched
+
+
+def become_subreaper():
+    """Make this tool a child subreaper (Linux). Returns whether it is one; SUB["why"] says why not."""
+    if SUB["on"] is not None:
+        return SUB["on"]
+    if not sys.platform.startswith("linux"):
+        SUB["on"], SUB["why"] = False, "this is not Linux, where a process can be made the parent of its descendants' orphans"
+        return False
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(36, 1, 0, 0, 0) != 0:      # PR_SET_CHILD_SUBREAPER
+            SUB["on"], SUB["why"] = False, "prctl(PR_SET_CHILD_SUBREAPER) was refused (errno %d)" % ctypes.get_errno()
+        else:
+            SUB["on"], SUB["why"] = True, None
+            PRE_KIDS.update({pid: start for pid, start, _state in _my_children() or []})
+    except Exception as exc:  # noqa: BLE001
+        SUB["on"], SUB["why"] = False, "prctl(PR_SET_CHILD_SUBREAPER) could not be called (%s)" % type(exc).__name__
+    return SUB["on"]
+
+
+def _pp_stat(pid):
+    """(start time, state, parent pid) of `pid` from /proc/<pid>/stat (Linux), or None."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            text = fh.read(4096).decode("ascii", "replace")
+        tail = text[text.rindex(")") + 2:].split()
+        return (tail[19], tail[0], int(tail[1])) if len(tail) > 19 else None
+    except (OSError, ValueError):
+        return None
+
+
+def _my_children():
+    """[(pid, start time, state)] of the children of this tool, or None when /proc cannot be read in 10 seconds."""
+    me = os.getpid()
+    found = []
+    limit = time.monotonic() + 10
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return None
+    for number, name in enumerate(names):
+        if not name.isdigit():
+            continue
+        if number % 64 == 0 and time.monotonic() > limit:
+            return None
+        row = _pp_stat(int(name))
+        if row is not None and row[2] == me:
+            found.append((int(name), row[0], row[1]))
+    return found
+
+
+def end_children(keep=()):
+    """Kill and reap every child of this tool except the pids in `keep` (programs it is running now). Returns {"ended": live processes killed, "unreadable":
+    whether the table could not be read}. A zombie is only reaped (it had ended before; it is not counted)."""
+    ended, end = 0, time.monotonic() + CHILD_SECONDS
+    if not SUB["on"]:
+        return {"ended": 0, "unreadable": False}
+    keep = set(keep)
+    while True:
+        rows = _my_children()
+        if rows is None:
+            return {"ended": ended, "unreadable": True}
+        victims = [(pid, start, state) for pid, start, state in rows if pid not in keep and PRE_KIDS.get(pid) != start]
+        if not victims:
+            return {"ended": ended, "unreadable": False}
+        for pid, start, state in victims:
+            if state != "Z":
+                again = _pp_stat(pid)
+                if again is None or again[0] != start or again[2] != os.getpid():
+                    continue
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    ended += 1
+                except OSError:
+                    pass
+            reap_until = time.monotonic() + 1.0
+            while time.monotonic() < reap_until:
+                try:
+                    if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                        break
+                except ChildProcessError:
+                    break
+                time.sleep(0.01)
+        if time.monotonic() >= end:
+            rows = _my_children()
+            return {"ended": ended, "unreadable": rows is None or any(pid not in keep and PRE_KIDS.get(pid) != start for pid, start, _t in rows)}
+        time.sleep(0.02)
+
+
+def sweep_left(before):
+    """When a program has ended: end what is new in the tool's own group (end_group_orphans) and every orphan that came to this tool (end_children). Returns
+    {"ended": how many live processes were killed, "note": what the group sweep could not do, "unchecked": [the reasons the files cannot be proved final]}."""
+    group = end_group_orphans(before)
+    keep = [p.pid for p in globals().get("ACTIVE", [])]
+    kids = end_children(keep)
+    unchecked = []
+    if not SUB["on"]:
+        unchecked.append("the tool could not make itself the parent of orphaned processes (%s), so a process that left its process group could not be found" % SUB["why"])
+    elif kids["unreadable"]:
+        unchecked.append("the process table could not be read (or still held processes after %g seconds), so what the program left behind may not have been ended" % CHILD_SECONDS)
+    return {"ended": group["ended"] + kids["ended"], "note": group["note"], "unchecked": unchecked}
+
+
+def end_leftovers_on_stop():
+    """A stop signal: the same, without the answer."""
+    if BEFORE["members"] is not None:
+        end_group_orphans(BEFORE["members"])
+    end_children([p.pid for p in globals().get("ACTIVE", [])])
+# program-group: subreaper end
+
+BEFORE = {"members": None}    # (the stop hook of the shared text above is not used here: the unwind of the reader ends what is left)
+
+
+READER_GROUP = {"settle": None}   # what the second look at the reader's files found
+
+
 def _die_with_parent(parent):  # runs in the child between fork and exec
     try:
         import ctypes
@@ -2594,6 +2801,7 @@ def kill_reader(proc):
 
 def run_reader(argv, stdout, stderr, seconds):
     """(exit code, timed out): the reader runs for at most `seconds` and is killed when the time is up or a stop signal arrives."""
+    become_subreaper()                     # before the reader starts: every orphan it leaves comes to this tool
     before = group_members()
     proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, preexec_fn=functools.partial(_die_with_parent, os.getpid()) if sys.platform.startswith("linux") else None)
     hook = lambda: kill_reader(proc)       # noqa: E731 (a stop signal ends the reader before the exception unwinds)
@@ -2621,6 +2829,18 @@ def run_reader(argv, stdout, stderr, seconds):
     finally:
         if hook in STOP["hooks"]:
             STOP["hooks"].remove(hook)
+        # whatever the reader left in the tool's group (a child that closed its descriptors and writes later, a double fork) is ended and waited for to be gone
+        # BEFORE the output is counted, hashed or measured (a second look is harmless where the time-out or the stop already made one)
+        try:
+            late = sweep_left(before)
+            READER_GROUP["unchecked"] = late["unchecked"]
+            if late["ended"]:
+                READER_LEFT["ended"] = READER_LEFT.get("ended", 0) + late["ended"]
+            if late["note"] and not READER_LEFT.get("note"):
+                READER_LEFT["note"] = late["note"]
+            READER_GROUP["left_behind"] = late["ended"]
+        except Exception:  # noqa: BLE001 (the stop that may be handled goes on)
+            pass
 
 
 def run_log(args):
@@ -2778,6 +2998,10 @@ def run_log(args):
                         returncode, timed_out = run_reader(argv, out, err, reader_seconds)
                 else:
                     returncode, timed_out = run_reader(argv, subprocess.DEVNULL, err, reader_seconds)
+            if not timed_out:
+                # the reader's group is empty: its output and error files are looked at again after a moment; a file that grew, or a process outside the group that
+                # holds one open, is a process in a session of its own, which this tool cannot end
+                READER_GROUP["settle"] = settle_check([p for p in (output_path, stderr_path) if os.path.isfile(p)])
             hold_signals()      # the last statement of the sweep's try: a stop signal in the few bytecodes after the reader lands in the except below
         except OSError as exc:
             fail("the reader's output could not be created or started, and it did not run", out_dir=out_dir,
@@ -2842,6 +3066,23 @@ def run_log(args):
         status = "partial"
     else:
         status = "complete"
+    settled = READER_GROUP["settle"]
+    abandoned = [reason + ": the output cannot be shown to be final" for reason in READER_GROUP.get("unchecked", [])]
+    if READER_GROUP.get("left_behind") and not (timed_out or interrupted is not None):
+        abandoned.append("the reader left %d process(es) running (in the tool's process group or, after setsid or setpgid, outside it) after it ended; they were killed and waited for before the output was counted, hashed or measured, so what "
+                         "they would still have written is missing from it, and the output is what it held at that moment" % READER_GROUP["left_behind"])
+    if settled and settled["grew"]:
+        abandoned.append("%d file(s) of the reader (its output or its error stream) changed after the reader's group was empty: a process in a session of its own (setsid) is still writing, "
+                         "this tool cannot end it, and the counts, the preview and the sha256 may be short" % settled["grew"])
+    if settled and settled["holders"]:
+        abandoned.append("%d process(es) outside the reader's group hold its output or error file open (a process in a session of its own): this tool cannot end it, and the files may still be growing"
+                         % len(settled["holders"]))
+    if settled and settled["holders"] is None:
+        warnings.append("which processes hold the reader's files open could not be looked for here (no /proc): a process the reader left in a session of its own is seen only if a file grew within %g seconds" % settled["settle_seconds"])
+    if abandoned:
+        problems.extend(abandoned)
+        if status == "complete":
+            status = "partial"
     if coverage.get("counting_stopped_at_line") and interrupted is None:
         status = "partial"
         problems.append("counting the output stopped at line %d because its time ran out: the counts and the preview cover the lines before it" % coverage["counting_stopped_at_line"])
@@ -2864,9 +3105,16 @@ def run_log(args):
         warnings.append(READER_LEFT["note"])
     digest_text = None
     if output_exists:
+        size_before = os.path.getsize(output_path)
         digest_text = digest(output_path, (time.monotonic() + INTERRUPT_COUNT_SECONDS) if interrupted is not None else budget_end + DIGEST_SECONDS)
         if digest_text is None:
             problems.append("the sha256 of the output was not computed: the time for it ran out")
+            if status == "complete":
+                status = "partial"
+        if os.path.getsize(output_path) != size_before:
+            problems.append("the output file changed size while it was counted and hashed (%d bytes, then %d): a process in a session of its own is still writing, this tool cannot end it, "
+                            "and the counts and the sha256 do not describe the file as it is" % (size_before, os.path.getsize(output_path)))
+            digest_text = None
             if status == "complete":
                 status = "partial"
     if status == "complete":
@@ -2907,6 +3155,9 @@ def run_log(args):
         "stderr": stderr_path,
         "stderr_bytes": stderr_bytes,
         **({"reader_processes_left": dict(READER_LEFT)} if READER_LEFT else {}),
+        "reader_group": {"left_behind": READER_GROUP.get("left_behind", 0),
+                         **({"files_grown_after": settled["grew"], "files_held_open_by_others": None if settled["holders"] is None else len(settled["holders"]),
+                             "settle_seconds": settled["settle_seconds"]} if settled else {})},
         "timeout_seconds_used": timeout,
         "budget": {"seconds_for_reader": round(reader_seconds) if reader_seconds is not None else None, "staging_seconds": round(marks["staged"], 1),
                    "census_seconds": round(marks["census"], 1), "seconds_used": round(time.monotonic() - started, 1)},
