@@ -266,9 +266,70 @@ def open_regular(path):
         os.close(fd)
         raise
     return open(fd, "rb")
+PIPE_GRACE = 1.0           # seconds the pipes of a program that has ended are given to reach end of file
+SUBREAPER = [False]
+
+
+def become_subreaper():
+    """On Linux ask the kernel to make this process the parent of every process a program leaves behind (PR_SET_CHILD_SUBREAPER = 36), so that
+    end_leftovers() can find one that left the tool's group or session. Once. Nothing is adopted elsewhere, and a leftover is then not found."""
+    if SUBREAPER[0] or not sys.platform.startswith("linux"):
+        return
+    SUBREAPER[0] = True
+    try:
+        import ctypes
+        ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)
+    except Exception:  # noqa: BLE001 - no libc symbol, a sandbox: the leftover is not found
+        pass
+
+
+def end_leftovers():
+    """Kill and reap what a program that has ended left behind: the children of this tool (it is a subreaper, and runs one program at a time, so
+    every child it has is a leftover) and what they started. Linux only; the tool itself is not touched. Never raises."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        me = os.getpid()
+        for _round in range(3):
+            table = {}
+            for name in os.listdir("/proc"):
+                if name.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % name, "rb") as fh:
+                            fields = fh.read().decode("utf-8", "replace").rsplit(")", 1)[1].split()
+                        table[int(name)] = (fields[0], int(fields[1]))
+                    except (OSError, ValueError, IndexError):
+                        continue
+            kids = [pid for pid, (_state, parent) in table.items() if parent == me]
+            if not kids:
+                return
+            group, grew = set(kids), True
+            while grew:
+                more = {pid for pid, (_state, parent) in table.items() if parent in group and pid not in group}
+                grew = bool(more)
+                group |= more
+            for pid in group:
+                if table[pid][0] not in ("Z", "X"):
+                    try:
+                        os.kill(pid, 9)
+                    except OSError:
+                        pass
+            end = time.monotonic() + 1.0
+            for pid in kids:
+                while time.monotonic() < end:
+                    try:
+                        if os.waitpid(pid, os.WNOHANG)[0] != 0:
+                            break
+                    except ChildProcessError:
+                        break
+                    time.sleep(0.005)
+    except Exception:  # noqa: BLE001 - a look for leftovers never stops the tool
+        pass
+
+
 RUN = {"proc": None, "size": 0}      # the icat running and the bytes written, for a stop
 
-TOOL = {"name": "icat_extract", "version": 17}
+TOOL = {"name": "icat_extract", "version": 18}
 OFFSET_MAX = 1 << 40              # sectors: an explicit offset above this is not a volume offset (512 TiB at 512 bytes a sector)
 BLOCK = 1 << 20
 MAX_BYTES_DEFAULT = 32 * 1024 ** 3
@@ -755,6 +816,7 @@ def _stopped(signum):
             proc.wait(timeout=5)
         except Exception:  # noqa: BLE001 - best effort
             pass
+    end_leftovers()
     print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "image": image, "inode": str(inode), "offset": offset,
                       "bytes_written": RUN["size"], "path": output + part.name[len(dest.name):], "stderr_file": output + err_path.name[len(dest.name):],
                       "status_basis": "the tool was stopped by signal %d: icat was ended, and what had been written is kept under its partial name (its size and sha256 are not claimed)" % signum}), flush=True)
@@ -768,17 +830,24 @@ with os.fdopen(out_fd, "wb") as out, os.fdopen(err_fd, "wb") as errf:
     _stops = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
     signal.pthread_sigmask(signal.SIG_BLOCK, _stops)
     try:
+        become_subreaper()
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
         RUN["proc"] = proc
     finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, _stops)
     pipe = proc.stdout.fileno()
+    ended = None
     try:
         while True:
             # Waited for with the clock running: an icat that stalls (a damaged image, a stuck read) is stopped at the
             # budget, not waited on for ever behind a read that returns nothing.
             left = max_seconds - (time.monotonic() - started)
-            if left <= 0 or not select.select([pipe], [], [], min(left, 5))[0]:
+            if proc.poll() is not None:                 # icat has ended: what is left in its pipe is read, but a leftover that holds the pipe (silent, or writing all the time) is let go after PIPE_GRACE
+                ended = ended or time.monotonic()
+                if time.monotonic() - ended >= PIPE_GRACE:
+                    status, why = "partial", "icat ended, but something it started kept its output pipe open, so the end of the stream was not seen and the file may be short"
+                    break
+            if left <= 0 or not select.select([pipe], [], [], min(left, 0.2))[0]:
                 if time.monotonic() - started > max_seconds:
                     status, why = "partial", "the time budget of %d seconds was reached; icat was stopped" % max_seconds
                     break
@@ -809,6 +878,7 @@ with os.fdopen(out_fd, "wb") as out, os.fdopen(err_fd, "wb") as errf:
             proc.kill()
         proc.stdout.close()
         rc = proc.wait()
+        end_leftovers()
 if status == "complete" and rc != 0:
     status, why = "partial", "icat exited %d after %d bytes" % (rc, size)
 if os.path.getsize(err_path) == 0:

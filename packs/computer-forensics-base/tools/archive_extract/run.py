@@ -76,7 +76,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 17}
+TOOL = {"name": "archive_extract", "version": 18}
 STARTED = time.monotonic()               # the run's clock starts with the tool: the archive hash and the 7z banner are on it too
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
@@ -2116,8 +2116,9 @@ class Decomp:
 
     MARKERS = {"gzip": b"\x1f\x8b", "bzip2": b"BZh", "xz": b"\xfd7zXZ\x00"}
 
-    def __init__(self, path, kind, max_ratio):
+    def __init__(self, path, kind, max_ratio, deadline=None):
         self.kind, self.max_ratio = kind, max_ratio
+        self.deadline = deadline   # the tool's clock (monotonic): the zstd program's pipe is read on it
         self.fh = open_regular(path)
         self.consumed = 0          # compressed bytes read from the file
         self.produced = 0          # decompressed bytes handed out
@@ -2302,7 +2303,17 @@ class Decomp:
             self.proc = spawn(["zstd", "-dc", "-q"], stdin=self.fh, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             ACTIVE.append(self.proc)
             fd = self.proc.stdout.fileno()
+            ended = None
             while True:
+                left = (self.deadline - time.monotonic()) if self.deadline is not None else 1.0
+                if left <= 0:
+                    raise Budget("max_seconds", "the time budget was reached while the zstd program was being read")
+                if self.proc.poll() is not None:            # the program has ended: what is left in its pipe is read, but a leftover that holds the pipe (silent, or writing all the time) is let go after a second
+                    ended = ended or time.monotonic()
+                    if time.monotonic() - ended >= 1.0:
+                        raise EOFError("the zstd program ended, but something it started kept its output pipe open: the end of the stream was not seen, so the output may be short")
+                if not select.select([fd], [], [], min(left, 0.2))[0]:
+                    continue
                 piece = os.read(fd, CHUNK)
                 if not piece:
                     break
@@ -2622,6 +2633,7 @@ class Engine:
                             "archive's record shows the bytes are what the archive held, not that the archive is authentic or complete",
         }
         out.update(self.extra)
+        apply_program_verdict(out, bool(self.extra.get("listing_file")))
         return out
 
     def record(self, row):
@@ -3187,6 +3199,18 @@ def run_single(eng, path, kind, dec, from_index):
 
 
 # ---- 7z ----------------------------------------------------------------------------------------------------------------
+
+def apply_program_verdict(answer, files_written):
+    """program_group in the answer, from the shared block. A program that wrote files this tool keeps and names (7z's listing and stderr files) holds the answer to
+    the whole rule: a process that settle() ended after the program had ended, or a host where none can be ruled out (not Linux, PR_SET_CHILD_SUBREAPER refused),
+    makes a complete answer partial (process_apply). A program that only printed on a pipe (zstd -dc, whose output this tool writes into the member files itself) is
+    held to the first alone: an ended leftover could have written into the pipe, so the members' bytes are suspect; the second does not make the answer partial,
+    it is said in program_group.unproven."""
+    if files_written or process_verdict()["left_behind"]:
+        process_apply(answer)
+    else:
+        answer["program_group"] = process_verdict()
+
 
 def find_7z(names=SEVEN_Z_NAMES):
     for name in names:
@@ -3765,7 +3789,7 @@ def main():
                     if which is None:
                         raise ArchiveError("zstd: %s" % mod, format="zstd")
                     info["zstd_reader"] = which
-                dec = Decomp(path, fmt, a["max_ratio"])
+                dec = Decomp(path, fmt, a["max_ratio"], eng.deadline)
                 peek = b""
                 try:
                     peek = dec.read(512)
@@ -3800,6 +3824,7 @@ def main():
     except ArchiveError as exc:
         eng.finish_files()
         out = {"ok": False, "status": "failed", "error": scrub(str(exc)), "tool": TOOL, "archive": info, "out_dir": scrub(str(dest)), **exc.extra}
+        apply_program_verdict(out, False)
         eng.status = "failed"
         eng.stopped_by, eng.stop_text = "archive_unreadable", scrub(str(exc))
         eng.extra.update(exc.extra)

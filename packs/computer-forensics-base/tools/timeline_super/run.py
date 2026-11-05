@@ -50,7 +50,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "timeline_super", "version": 16}
+TOOL = {"name": "timeline_super", "version": 17}
 DEFAULT_TIMEOUT = 1800
 TIMEOUT_MAX = 3300                # the manifest's own limit is 3600: the rest is for the version calls and the counting
 TOOL_SECONDS = 3500               # the whole call, counting included, ends before the manifest's limit
@@ -1368,12 +1368,35 @@ class Stage:
 
 
 def version_of(program, out_dir):
+    """The first line `program --version` prints. The probe is a program of the shared block (spawn, ACTIVE, communicate_bounded), so a deadline or a stop signal ends
+    it with what it started, never only its own process as subprocess.run's timeout did."""
     try:
-        p = subprocess.run([program, "--version"], capture_output=True, text=True, timeout=VERSION_TIMEOUT, cwd=out_dir)
-    except (subprocess.TimeoutExpired, OSError):
+        proc = spawn([program, "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=out_dir)
+    except OSError:
         return None
-    text = ((p.stdout or "") + (p.stderr or "")).strip().splitlines()
+    ACTIVE.append(proc)
+    try:
+        out, err, timed_out = communicate_bounded(proc, VERSION_TIMEOUT)
+    finally:
+        ACTIVE.remove(proc)
+    if timed_out:
+        return None
+    text = (out.decode("utf-8", "replace") + err.decode("utf-8", "replace")).strip().splitlines()
     return text[0][:200] if text else None
+
+
+def program_problems():
+    """Why the files log2timeline and psort wrote (the storage file, the output, their logs and captured words) cannot be taken as final, from the shared block's
+    verdict: settle() ended a process that a program left behind before the output was read and counted, so what it would still have written is missing; or nothing
+    can show that none was left (a host that is not Linux, a kernel that refuses PR_SET_CHILD_SUBREAPER)."""
+    verdict = process_verdict()
+    reasons = []
+    if verdict["left_behind"]:
+        reasons.append("log2timeline or psort left %d process(es) running after it ended (a child that held one of its files, in the tool's process group or, in a session of its own, outside it); "
+                       "settle() killed and reaped them before the output was read and counted, so the storage file, the output and the captured words are what they held at that "
+                       "moment and what the leftover would still have written is missing" % verdict["left_behind"])
+    reasons.extend(why + ": the storage file and the output cannot be shown to be final" for why in verdict["unproven"])
+    return reasons
 
 
 def stamp_value(row):
@@ -1738,6 +1761,9 @@ def main():
     notes = process_notes()
     if notes:
         result["process_notes"] = notes
+    if result["stages"].get("export") or result["stages"]["collect"].get("command"):
+        result["problems"].extend(program_problems())
+    process_apply(result)             # program_group: what settle() ended and why absence is unproven; a complete answer becomes partial
     result["coverage_note"] = ("complete here means the programs exited 0, wrote their files and every output line parsed. It does not say every "
                                "parser read every source: read the storage file's processing report (Plaso's pinfo) before a negative rests on it. "
                                "A timestamp in this timeline is what a parser read, in UTC; it is a pointer to an artefact, which the artefact's own "
