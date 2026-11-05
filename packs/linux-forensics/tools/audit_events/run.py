@@ -2368,7 +2368,8 @@ def program_group_problems(what, held=True):
     found = []
     if verdict["left_behind"]:
         found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
-                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s%s" % (
+            verdict["left_behind"], what, what, "" if held else ", and the lines they wrote into the pipe before that cannot be told from the program's: the rows, counts or table of this run are not to be trusted"))
     for why in verdict["unproven"]:
         if held or verdict["subreaper"]:
             found.append("%s: %s cannot be shown to be final" % (why, what))

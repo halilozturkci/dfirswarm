@@ -1378,7 +1378,13 @@ def run(image, shown, out):
                     os.kill(pid, signal.SIGKILL)
                 except OSError:
                     pass
+        kill_all()                  # what the wrapper left running (it may have ended already), with anything this recipe started: the stop leaves nothing alive
         receipt(None, "after this process was terminated")
+        try:
+            sys.stdout.write(json.dumps({"ok": False, "status": "partial", "status_basis": "the recipe was stopped by %s before the wrapper finished: coverage.json says partial" % signal.Signals(signum).name}) + "\n")
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            pass
         os._exit(128 + signum)
 
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

@@ -43,7 +43,7 @@ import os
 import signal
 import sys
 
-PARSER = "mem_registry/1"
+PARSER = "mem_registry/4"
 
 
 def _before_start(signum, _frame):
@@ -2434,6 +2434,11 @@ def run_engine(argv, seconds, on_out, on_err, out_cap, err_cap, cwd=None, stop=N
             out["note"] = note
         return out
     finally:
+        # settle() BEFORE the pipes are closed: a leftover that writes into a pipe at full speed dies of SIGPIPE the moment the tool closes its end, and settle() would then find
+        # nothing to count (left_behind 0, a complete answer over lines the leftover wrote). The program has ended here unless an exception is on its way (the tool kills it then).
+        if proc.poll() is not None:
+            reap_orphans(_pipe_inodes(proc))
+            settle()
         sel.close()
         for pipe in (proc.stdout, proc.stderr):
             try:
@@ -2820,7 +2825,8 @@ def program_group_problems(what, held=True):
     found = []
     if verdict["left_behind"]:
         found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
-                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s%s" % (
+            verdict["left_behind"], what, what, "" if held else ", and the lines they wrote into the pipe before that cannot be told from the program's: the rows, counts or table of this run are not to be trusted"))
     for why in verdict["unproven"]:
         if held or verdict["subreaper"]:
             found.append("%s: %s cannot be shown to be final" % (why, what))

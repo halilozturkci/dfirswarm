@@ -74,6 +74,10 @@ leave() {
     sleeper)  sleep 600 & echo $! >> "$STUB_DIR/left.pids" ;;
     slow)     ( while :; do printf x; sleep 0.2; done ) & echo $! >> "$STUB_DIR/left.pids" ;;
     stdin)    sleep 600 >/dev/null 2>&1 & echo $! >> "$STUB_DIR/left.pids" ;;
+    # full-speed writers: a leftover that floods a pipe dies of SIGPIPE the moment the tool closes its end, so the tool must look for it before it closes the pipes
+    fast)     ( while :; do printf x; sleep 0.001; done ) & echo $! >> "$STUB_DIR/left.pids" ;;
+    yes)      ( exec yes y ) & echo $! >> "$STUB_DIR/left.pids" ;;
+    errflood) ( exec yes e >&2 ) & echo $! >> "$STUB_DIR/left.pids" ;;
   esac
   # the program does not end before the leftover has started and written its pid (the tool settles the moment the program is gone)
   i=0
@@ -97,7 +101,9 @@ esac
 export const VARIANTS = ["plain", "stdout", "setsid", "double", "rewrite", "periodic"];
 export const FEW = ["stdout", "setsid"];
 /** The leftovers that probe a reader of a pipe: none of them ever ends by itself. */
-export const HOLDERS = ["sleeper", "slow", "stdin"];
+/** The same without the floods, for a tool whose program writes its standard output to a file the tool then reads whole (a flood of gigabytes in that file is the program's own output, read at the speed of the log parser, not a pipe held). */
+export const FILE_HOLDERS = ["sleeper", "slow", "stdin", "fast"];
+export const HOLDERS = ["sleeper", "slow", "stdin", "fast", "yes", "errflood"];
 
 export async function stubDir(cwd: string): Promise<string> {
   const dir = join(cwd, "stub");

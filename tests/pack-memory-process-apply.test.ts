@@ -172,9 +172,9 @@ exit 0
 register(isf);
 
 // A converter that left a process is not trusted: its table is a pipe a leftover could have written into, so no table is kept and nothing is ready.
-test("isf_intake: a table whose converter left a process behind is not kept, and the verdict is unknown", { timeout: 120000 }, async () => {
+for (const leaving of ["setsid", "yes", "fast"]) test(`isf_intake: a table whose converter left a process behind (${leaving}) is not kept, and the verdict is unknown`, { timeout: 120000 }, async () => {
   await withCwd(async (cwd, bin) => {
-    const { answer } = await isf.invoke(cwd, bin, "setsid", "linux");
+    const { answer } = await isf.invoke(cwd, bin, leaving, "linux");
     assert.equal(answer.status, "partial");
     assert.equal(answer.verdict, "unknown");
     assert.equal(answer.table, undefined, "no table is described as kept");

@@ -11,7 +11,8 @@
  * that expect `partial` and program_group: the answer was `complete`.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, withCwd } from "./tool-library-harness.ts";
@@ -192,8 +193,8 @@ for (const holder of HOLDERS) {
         assert.ok(Date.now() - began < 25000, `took ${Date.now() - began} ms`);
         // a writer on the pipe adds its bytes to the name target-query printed: the name is then not one the recipe recognises, and it says "unknown" (exit 2), which closes no route
         const said = JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}");
-        assert.equal(run.code, holder === "slow" ? 2 : 0, run.stderr + run.stdout);
-        assert.equal(said.applies, holder === "slow" ? "unknown" : true);
+        assert.equal(run.code, ["slow", "fast", "yes"].includes(holder) ? 2 : 0, run.stderr + run.stdout);
+        assert.equal(said.applies, ["slow", "fast", "yes"].includes(holder) ? "unknown" : true);
         for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `holder ${pid} is gone`);
       } finally {
         await reap(cwd);
@@ -201,3 +202,38 @@ for (const holder of HOLDERS) {
     });
   });
 }
+
+// ---- a stop that arrives after the wrapper ended, while a holder keeps its pipes (the read window): the holder is ended and the recipe prints its line --------------------------
+
+test("linux-target: a stop signal in the wrapper-read window ends the holder the wrapper left and still prints one JSON line", { timeout: 120000 }, async () => {
+  await withCwd(async (cwd, bin) => {
+    const dir = await stubDir(cwd);
+    // a copy of the recipe beside a stand-in wrapper that leaves a holder of its pipes and exits at once
+    const recipeCopy = join(cwd, "recipes", "linux-target");
+    await mkdir(recipeCopy, { recursive: true });
+    await mkdir(join(cwd, "tools", "linux_triage"), { recursive: true });
+    await writeFile(join(recipeCopy, "run.py"), await readFile(RECIPE, "utf8"));
+    await writeFile(join(cwd, "tools", "linux_triage", "run.py"),
+      `import subprocess, sys\nsys.stdin.read()\nk = subprocess.Popen(["sleep", "600"])\nopen(${JSON.stringify(join(dir, "left.pids"))}, "a").write("%d\\n" % k.pid)\nprint("{}")\n`);
+    const image = join(cwd, "inputs", "server.E01");
+    await writeFile(image, "image bytes\n");
+    await writeFile(join(cwd, "target.json"), JSON.stringify({ paths: [image], name: "server" }));
+    const child = spawn("python3", [join(recipeCopy, "run.py"), "run", "--target", join(cwd, "target.json"), "--out", join(cwd, "recipe-out")], { cwd, detached: true, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` } });
+    const out: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    const closed = new Promise<number | null>((r) => child.on("close", (code) => r(code)));
+    try {
+      for (let i = 0; i < 100 && (await pids(cwd)).length === 0; i++) await new Promise((r) => setTimeout(r, 50));
+      assert.ok((await pids(cwd)).length >= 1, "the wrapper left a holder");
+      await new Promise((r) => setTimeout(r, 300));            // the wrapper has exited; the recipe is in the pipe grace
+      child.kill("SIGTERM");
+      assert.equal(await closed, 143);
+      const line = JSON.parse(Buffer.concat(out).toString("utf8").trim().split("\n").pop() ?? "{}");
+      assert.equal(line.status, "partial");
+      for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `holder ${pid} is gone`);
+    } finally {
+      await reap(cwd);
+      try { process.kill(-(child.pid as number), "SIGKILL"); } catch { /* gone */ }
+    }
+  });
+});

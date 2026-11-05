@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ROOT, runPySnippet } from "./tool-library-harness.ts";
-import { FEW, HOLDERS, LEAVE_SH, PY_LEAVE, VARIANTS, exec, sh, stubDir } from "./network-process-harness.ts";
+import { FEW, FILE_HOLDERS, HOLDERS, LEAVE_SH, PY_LEAVE, VARIANTS, exec, sh, stubDir } from "./network-process-harness.ts";
 import { register } from "./process-apply-cases.ts";
 import type { Case } from "./process-apply-cases.ts";
 
@@ -112,12 +112,13 @@ def hold_behind(d, variant, target):
     os.write(w, b"1")
     os.close(w)
     while True:
-        if variant == "slow":
+        if variant in ("slow", "fast", "yes", "errflood"):
             try:
-                os.write(1, b"x")
+                os.write(2 if variant == "errflood" else 1, b"y\n" * (4096 if variant in ("yes", "errflood") else 1))
             except OSError:
                 pass
-        time.sleep(0.2)
+        if variant != "yes" and variant != "errflood":
+            time.sleep(0.2 if variant == "slow" else 0.001)
 def _x(b):
     return bytes(c ^ 0x5A for c in b)
 class IncorrectPassphraseError(ValueError):
@@ -145,7 +146,7 @@ class EncryptedBackup:
         d = os.environ.get("STUB_DIR")
         v = os.environ.get("STUB_LEFT")
         if v and d and not os.path.exists(os.path.join(d, "left.pids")):
-            if v in ("sleeper", "slow", "stdin"):
+            if v in ("sleeper", "slow", "stdin", "fast", "yes", "errflood"):
                 hold_behind(d, v, output_filename)
             else:
                 leave_behind(d, v, output_filename)
@@ -244,7 +245,7 @@ function recipe(name: string, program: string, marker: string | "ab", leaves: "r
     name: `${name} recipe`,
     variants: VARIANTS,
     holdsFiles: true,
-  holders: HOLDERS,
+  holders: FILE_HOLDERS,
     skipOk: true,
     invoke: async (cwd, bin, left, host) => {
       const dir = await stubDir(cwd);
