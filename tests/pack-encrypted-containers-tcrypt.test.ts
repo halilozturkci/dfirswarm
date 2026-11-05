@@ -309,3 +309,57 @@ test("a password_file readable by group or other is refused, as the manifest say
     assert.match(a.error, /password_file must be mode 0600/);
   });
 });
+
+// A program that floods its pipe (a leftover that writes at full speed) or prints a megabyte of empty lines is read to the shared cap (1 MiB) and not parsed whole:
+// parse_fields read all of it, line by line, through twelve patterns, which cost seconds of CPU on a `yes` flood.
+const HEADER_LINES = [
+  "TCRYPT header information for /dev/stub", "Version:       5", "Driver req.:   0", "Flags:         0", "Sector size:   512", "MK offset:     0",
+  "Volume size:   10485760", "PBKDF:         PBKDF2", "PBKDF2 hash:   sha512", "Cipher chain:  aes-twofish-serpent", "Cipher mode:   xts-plain64", "MK bits:       192",
+];
+const FLOOD_STUB = (kind: "yes" | "empty", pidFile: string): string => `#!/usr/bin/env python3
+import os, subprocess, sys
+if "--version" in sys.argv[1:]:
+    print("cryptsetup 2.6.1")
+    sys.exit(0)
+sys.stdin.read()
+sys.stdout.write(${JSON.stringify(HEADER_LINES.join("\n") + "\n")})
+sys.stdout.flush()
+${kind === "yes"
+  ? `subprocess.Popen(["setsid", "sh", "-c", "echo $$ >> ${pidFile}; exec yes"], stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+import time
+time.sleep(0.5)`
+  : `try:
+    sys.stdout.write("\\n" * (1024 * 1024))
+    sys.stdout.flush()
+except BrokenPipeError:
+    os._exit(0)`}
+`;
+
+for (const kind of ["yes", "empty"] as const) {
+  test(`tcrypt_header: a ${kind === "yes" ? "setsid yes leftover that floods the pipe" : "megabyte of empty lines"} is not parsed whole: the answer comes fast and the header fields are still read`, async () => {
+    await scratch(async ({ cwd, out, bin }) => {
+      const pidFile = join(cwd, "pids");
+      await writeFile(join(bin, "cryptsetup"), FLOOD_STUB(kind, pidFile));
+      await chmod(join(bin, "cryptsetup"), 0o755);
+      await writeFile(join(cwd, "real.img"), "volume bytes");
+      await writeFile(join(cwd, "password.txt"), `${CANARY}\n`, { mode: 0o600 });
+      const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}` };
+      const started = Date.now();
+      const run = await runTool(cwd, { source: "real.img", password_file: "password.txt" }, env);
+      const ms = Date.now() - started;
+      const a = answer<{ status: string; decrypted: boolean; fields: Record<string, string> }>(run);
+      try {
+        assert.equal(a.decrypted, true, run.stdout.slice(0, 600));
+        assert.equal(a.fields.cipher_chain, "aes-twofish-serpent");
+        assert.equal(a.fields.key_size_bits, "192");
+        assert.ok(ms < 3000, `answered in ${ms} ms`);
+      } finally {
+        if (kind === "yes") {
+          for (const pid of (await readFile(pidFile, "utf8").catch(() => "")).split("\n").filter(Boolean)) {
+            try { process.kill(Number(pid), "SIGKILL"); } catch { /* already gone */ }
+          }
+        }
+      }
+    });
+  });
+}

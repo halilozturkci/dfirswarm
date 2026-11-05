@@ -245,6 +245,24 @@ test("a LUKS1 volume: the key slot table from the reader agrees with the header,
   });
 });
 
+test("a LUKS1 reader that prints megabytes of empty lines after its report is not parsed line by line: the answer comes fast and the report is still read", async () => {
+  // luks1_rows and bde_rows ran every line of what the reader wrote (up to the 8 MiB cap) through their patterns: seconds of CPU for a flood of empty lines.
+  const flood = `head -c 6000000 /dev/zero | tr '\\000' '\\n'\n`;
+  await withCwd(async (cwd, bin) => {
+    LOGPATH = join(cwd, "argv.log");
+    const volUuid = uuid();
+    await stub(bin, "cryptsetup", stubCryptsetup(LUKS1_DUMP(volUuid, [0, 2])) + flood);
+    const vol = await volume(cwd, "v.img", luks1(volUuid, [0, 2]));
+    const started = Date.now();
+    const a = body(await asJob(SCRIPT, cwd, { path: vol }, bin));
+    const ms = Date.now() - started;
+    assert.equal(a.scheme, "LUKS1");
+    assert.equal(a.fields.cipher, "aes");
+    assert.equal(a.records.filter((r: Json) => r.state === "enabled").length, 2);
+    assert.ok(ms < 4000, `answered in ${ms} ms`);
+  });
+});
+
 test("a LUKS1 reader that disagrees with the header is partial, with the disagreement named", async () => {
   await withCwd(async (cwd, bin) => {
     LOGPATH = join(cwd, "argv.log");

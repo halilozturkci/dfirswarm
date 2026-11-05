@@ -2808,6 +2808,17 @@ def luks2_rows(doc, add, counts):
                             "requirements": [word(f) for f in config["requirements"][:16]] if isinstance(config.get("requirements"), list) else None}
 
 
+READER_PARSED_BYTES = 64 * 1024     # a LUKS1 dump or a bdeinfo report is a few kilobytes; a flood the output cap kept (8 MiB) is not run through the patterns line by line
+
+
+def head_of(text):
+    """The first READER_PARSED_BYTES of a reader's text, cut at a line end (a line the cut ended is not read)."""
+    if len(text) <= READER_PARSED_BYTES:
+        return text
+    text = text[:READER_PARSED_BYTES]
+    return text[:max(text.rfind("\n"), 0)]
+
+
 LUKS1_LINES = (("version", re.compile(r"Version:\s+([0-9]{1,3})")), ("payload_offset_sectors", re.compile(r"Payload offset:\s+([0-9]{1,20})")),
                ("key_bits", re.compile(r"MK bits:\s+([0-9]{1,6})")), ("mk_iterations", re.compile(r"MK iterations:\s+([0-9]{1,12})")))
 LUKS1_NAMES = (("cipher", re.compile(r"Cipher name:\s+(\S{1,40})")), ("cipher_mode", re.compile(r"Cipher mode:\s+(\S{1,80})")),
@@ -2820,11 +2831,13 @@ def luks1_rows(text, add, counts):
     fields = {}
     slot = None
     seen = set()
-    lines = text.splitlines()
+    lines = head_of(text).splitlines()
     counts["slot"] = 0
     for line in lines:
         tick()
         line = line.strip()
+        if not line:
+            continue
         if len(line) > 4096:
             continue
         for key, pattern in LUKS1_LINES:
@@ -2881,9 +2894,11 @@ def bde_rows(text, add, counts):
     fields = {}
     protector = None
     counts["protector"] = 0
-    lines = text.splitlines()
+    lines = head_of(text).splitlines()
     for line in lines:
         tick()
+        if not line.strip():
+            continue
         if len(line) > 600:
             continue
         header = re.fullmatch(r"Key protector ([0-9]{1,4}):?", line.strip())
