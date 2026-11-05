@@ -1,7 +1,7 @@
 {
   "id": "macos-forensics",
   "name": "macOS Forensics Pack",
-  "version": "1.9.3",
+  "version": "1.9.4",
   "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, TCC privacy permissions, quarantine and XProtect evidence, Spotlight stores, Biome framing, recent items, accounts and the limits of attribution, keychains opened with the case's password, what APFS retains, and running mac_apt (the macos_triage tool and a recipe) and judging its log. Whether the pinned mac_apt reads a Spotlight store was not tested; no parser here reads a Spotlight store, a quarantine record or a Biome payload.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -86,8 +86,8 @@
       "tools/safari_history/run.py": "470e29cd5b7f238b558906d56cde2f8cc768551caf0663822f7f7fca33f62863",
       "tools/segb_read/manifest.json": "90856552ad8fdada0db58d1a7ba63df931fc94a6364be862e4269c4c8abfba4f",
       "tools/segb_read/run.py": "d8c9551094f62a521a035a4b9ac4655033c888d6bc6922a3e1afd967689f3d4a",
-      "tools/unified_log/manifest.json": "b76899f4adf889912a197aecef455ef038b4a638f522c8998dbe6f6e67747850",
-      "tools/unified_log/run.py": "3c1eb251f2856035d2a9edbd0e23a537d5d65a0c29b9db07bd6481255d011343"
+      "tools/unified_log/manifest.json": "b8372d5bf128e1881706d9589d74f88451f660680482e4d0b93bc012742ad4ef",
+      "tools/unified_log/run.py": "53b35509906489f115c958a6e3d9f9c8856c101c95758a771c70258823ba68b5"
     }
   },
   "tools": [

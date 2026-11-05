@@ -3472,6 +3472,23 @@ def table_files(export):
     return files
 
 
+def program_group_shape_ok(group):
+    """The record of what esedbexport left behind, as the manifest holds it: left_behind a whole number >= 0, unproven a list of strings, notes (when
+    present) a list of strings. Anything else is an edited or damaged manifest: the export is made again, never read."""
+    if not isinstance(group, dict):
+        return False
+    left = group.get("left_behind")
+    if not isinstance(left, int) or isinstance(left, bool) or left < 0:
+        return False
+    for key in ("unproven", "notes"):
+        if key == "notes" and key not in group:
+            continue
+        value = group.get(key)
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            return False
+    return True
+
+
 def reusable(record, base, digest, path):
     """An earlier export is trusted only when this tool wrote its manifest, it finished, and its files are the files it lists."""
     try:
@@ -3479,8 +3496,8 @@ def reusable(record, base, digest, path):
             return False
         if record.get("exporter_exit_status") != 0 or record.get("timed_out"):
             return False
-        if not isinstance(record.get("program_group"), dict):
-            return False                   # made by a version that did not record what esedbexport left behind: made again
+        if not program_group_shape_ok(record.get("program_group")):
+            return False                   # made by a version that did not record what esedbexport left behind, or an edited record: made again
         export = base / "db.export"
         if export.is_symlink() or not export.is_dir():
             return False

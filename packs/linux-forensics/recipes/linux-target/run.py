@@ -1450,9 +1450,10 @@ def run(image, shown, out):
                 except OSError:
                     pass
         kill_all()                  # what the wrapper left running (it may have ended already), with anything this recipe started: the stop leaves nothing alive
-        receipt(None, "after this process was terminated")
+        stopped = receipt(None, "after this process was terminated")
+        said = stopped.get("status") if isinstance(stopped, dict) and stopped.get("status") in ("partial", "failed") else "partial"      # the line says what coverage.json says: failed when the wrapper left no summary
         try:
-            sys.stdout.write(json.dumps({"ok": False, "status": "partial", "status_basis": "the recipe was stopped by %s before the wrapper finished: coverage.json says partial" % signal.Signals(signum).name}) + "\n")
+            sys.stdout.write(json.dumps({"ok": False, "status": said, "status_basis": "the recipe was stopped by %s before the wrapper finished: coverage.json says %s" % (signal.Signals(signum).name, said)}) + "\n")
             sys.stdout.flush()
         except (OSError, ValueError):
             pass

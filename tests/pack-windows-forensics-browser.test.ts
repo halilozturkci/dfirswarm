@@ -586,6 +586,53 @@ test("esedb_query reuses an export only when its manifest is this version's and 
   });
 });
 
+test("esedb_query makes the export again when the program_group of its manifest has the wrong shape, and answers JSON", async () => {
+  // reusable() only checked that program_group was a dict: "unproven": 5 crashed export_doubt() with a TypeError and no JSON.
+  const shapes: Array<[string, unknown]> = [
+    ["unproven a number", { left_behind: "x", unproven: 5 }],
+    ["left_behind a string", { left_behind: "x", unproven: [] }],
+    ["unproven a number and left_behind fine", { left_behind: 0, unproven: 5 }],
+    ["unproven a string", { left_behind: 0, unproven: "no proof" }],
+    ["unproven holds a number", { left_behind: 0, unproven: ["a", 7] }],
+    ["unproven missing", { left_behind: 0 }],
+    ["left_behind negative", { left_behind: -1, unproven: [] }],
+    ["left_behind a boolean", { left_behind: true, unproven: [] }],
+    ["left_behind a float", { left_behind: 1.5, unproven: [] }],
+    ["notes a string", { left_behind: 0, unproven: [], notes: "x" }],
+    ["notes holds an object", { left_behind: 0, unproven: [], notes: [{}] }],
+    ["a list", []],
+    ["null", null],
+  ];
+  for (const [label, group] of shapes) {
+    await withCwd(async (cwd, bin) => {
+      await stub(bin, "esedbexport", ESEDBEXPORT(`printf 'Id\\tName\\n1\\ta\\n' > "$root.export/T.0"`));
+      await writeFile(join(cwd, "work", "SRUDB.dat"), "ESE stand-in");
+      const env = { COUNT_FILE: join(cwd, "count") };
+      const one = body<Answer>(await tool("esedb_query", cwd, { path: "work/SRUDB.dat" }, env, bin));
+      const manifest = join(cwd, "work", "s1", "esedb-export", (one.db_sha256 as string).slice(0, 16), "export-manifest.json");
+      const record = JSON.parse(await readFile(manifest, "utf8")) as Answer;
+      record.program_group = group;
+      await writeFile(manifest, JSON.stringify(record));
+      const again = body<Answer>(await tool("esedb_query", cwd, { path: "work/SRUDB.dat" }, env, bin));
+      assert.equal(again.export_reused, false, `${label}: the export is made again`);
+      assert.equal(again.program_group.left_behind, 0, label);
+    });
+  }
+  // A well-formed record (with notes) is still reused.
+  await withCwd(async (cwd, bin) => {
+    await stub(bin, "esedbexport", ESEDBEXPORT(`printf 'Id\\tName\\n1\\ta\\n' > "$root.export/T.0"`));
+    await writeFile(join(cwd, "work", "SRUDB.dat"), "ESE stand-in");
+    const env = { COUNT_FILE: join(cwd, "count") };
+    const one = body<Answer>(await tool("esedb_query", cwd, { path: "work/SRUDB.dat" }, env, bin));
+    const manifest = join(cwd, "work", "s1", "esedb-export", (one.db_sha256 as string).slice(0, 16), "export-manifest.json");
+    const record = JSON.parse(await readFile(manifest, "utf8")) as Answer;
+    record.program_group = { left_behind: 0, unproven: [], notes: ["a note"] };
+    await writeFile(manifest, JSON.stringify(record));
+    const again = body<Answer>(await tool("esedb_query", cwd, { path: "work/SRUDB.dat" }, env, bin));
+    assert.equal(again.export_reused, true);
+  });
+});
+
 test("esedb_query withholds the secrets of a URL in a cell, and writes them only on request, in a job", async () => {
   await withCwd(async (cwd, bin) => {
     const TOKEN = "tk-7e6d5c4b3a29-planted";

@@ -887,18 +887,31 @@ test("no pack or library tool uses a module-level name it never binds", async ()
   const { spawnSync } = await import("node:child_process");
   const scan = `
 import builtins, glob, symtable, sys
+# The module attributes Python binds in every module are not in builtins; a
+# tool may read them (__file__ to find its own directory).
+known = set(dir(builtins)) | {"__file__", "__name__", "__doc__", "__package__", "__spec__", "__loader__"}
+paths = sys.argv[1:] or sorted(glob.glob("packs/*/tools/*/*.py") + glob.glob("tool-library/*/*.py"))
 bad = []
-for p in sorted(glob.glob("packs/*/tools/*/*.py") + glob.glob("tool-library/*/*.py")):
+for p in paths:
     src = open(p, encoding="utf-8", errors="replace").read()
     st = symtable.symtable(src, p, "exec")
     for s in st.get_symbols():
-        if s.is_referenced() and not (s.is_assigned() or s.is_imported() or s.is_parameter()) and s.get_name() not in dir(builtins):
+        if s.is_referenced() and not (s.is_assigned() or s.is_imported() or s.is_parameter()) and s.get_name() not in known:
             bad.append("%s: %s" % (p, s.get_name()))
 print("\\n".join(bad))
 `;
   const r = spawnSync("python3", ["-c", scan], { cwd: join(LIB, ".."), encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), "", `unbound names:\n${r.stdout}`);
+
+  // The scan still sees a real unbound name and lets the module attributes by.
+  await withCwd(async (cwd) => {
+    const probe = join(cwd, "probe.py");
+    await writeFile(probe, "import os\nHERE = os.path.dirname(__file__)\nprint(__name__, __doc__, __package__, __spec__, __loader__)\nprint(never_bound_name)\n");
+    const n = spawnSync("python3", ["-c", scan, probe], { cwd: join(LIB, ".."), encoding: "utf8" });
+    assert.equal(n.status, 0, n.stderr);
+    assert.equal(n.stdout.trim(), `${probe}: never_bound_name`);
+  });
 });
 
 test("catalog_search finds the filesystem the catalogue names by its sector, and asks which when there are several", async () => {

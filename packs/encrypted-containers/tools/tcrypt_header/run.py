@@ -2232,16 +2232,26 @@ def kill_active():
     kill_all()
 
 
+# cryptsetup's tcryptDump prints a block of a few hundred bytes and the labels above are all in its first lines. A program that floods its pipe (a leftover
+# that writes at full speed, 1 MiB of it kept by the shared cap) is not parsed whole: only the first FIELDS_PARSED_BYTES, cut at a line end, are read.
+FIELDS_PARSED_BYTES = 64 * 1024
+
+
 def parse_fields(text):
-    out = {}
+    if len(text) > FIELDS_PARSED_BYTES:
+        text = text[:FIELDS_PARSED_BYTES]
+        cut = text.rfind("\n")
+        if cut >= 0:
+            text = text[:cut]       # a line the cut ended is not read
+    found = {}
     for line in text.splitlines():
         line = line.strip()
         for key, pattern in FIELD_PATTERNS:
             m = re.match(pattern, line)
             if m:
-                out[key] = withhold(m.group(1).strip())
+                found[key] = m.group(1).strip()      # the last line of a label wins, as before; judged once, below
                 break
-    return out
+    return {key: withhold(value) for key, value in found.items()}
 
 
 def read_small_file(path, limit, what):

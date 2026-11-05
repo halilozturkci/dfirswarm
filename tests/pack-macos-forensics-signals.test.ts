@@ -122,6 +122,69 @@ time.sleep(120)
   });
 }
 
+// ---- a stop signal that lands while the tool's own sweep is still working ends the orphans it had not yet reached ------------------------------------
+
+test("unified_log, SIGTERM during the sweep of a storm of setsid orphans: every orphan is gone when the answer is printed", async () => {
+  // The iterator exits 0 at once and leaves a setsid parent that forks 400 setsid sleepers. The tool's sweep ends them one by one (seconds); a stop that
+  // lands in it used to leave the ones it had not yet reached running, writing into the output after the answer. end_leftovers_on_stop() was never called.
+  await withCwd(async (cwd) => {
+    const pidFile = join(cwd, "out", "u", "storm.pids");
+    const bin = await ulStandin(cwd, `
+with open(out, "w") as f:
+    f.write(json.dumps({"timestamp": "2026-02-14T09:30:00.000000+0000", "eventMessage": "m", "process": "sudo", "subsystem": "s"}) + "\\n")
+pids = os.path.join(os.path.dirname(out), "storm.pids")
+if os.fork() == 0:
+    os.setsid()
+    for _ in range(400):
+        if os.fork() == 0:
+            os.setsid()
+            with open(pids, "a") as p:
+                p.write("%d\\n" % os.getpid())
+            time.sleep(6)
+            with open(out + ".late", "a") as late:
+                late.write("late\\n")
+            os._exit(0)
+    os._exit(0)
+deadline = time.time() + 20
+while time.time() < deadline and len(open(pids).read().split()) < 400:
+    time.sleep(0.01)
+os._exit(0)
+`);
+    const path = await dbCopy(cwd, 20, 1000);
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const pidsNow = async (): Promise<number[]> => (await readFile(pidFile, "utf8").catch(() => "")).split("\n").filter(Boolean).map(Number);
+    let storm: number[] = [];
+    let seen: number | undefined;
+    try {
+      const run = await runAndSignal(UL, cwd, { path, out_dir: "out/u" }, "SIGTERM", async () => {
+          if ((await pidsNow()).length < 400) return false;
+          seen ??= Date.now();                     // the storm is all there: the iterator ends and the sweep begins; the signal lands half a second into it
+          return Date.now() - seen > 500;
+        },
+        { JOB_ID: "j-1", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" }, bin);
+      assert.equal(run.signalled, true, `${run.stderr}${run.stdout.slice(0, 600)} pids=${(await pidsNow()).length}`);
+      assert.equal(run.code, 128 + 15, `${run.stderr}${run.stdout.slice(0, 300)}`);
+      assert.equal(oneAnswer(run.stdout, "SIGTERM", 15).interrupted, "SIGTERM");
+      storm = await pidsNow();
+      const alive = storm.filter((pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      assert.equal(alive.length, 0, `${alive.length} of ${storm.length} orphans are still running after the answer`);
+    } finally {
+      for (const pid of storm.length ? storm : await pidsNow()) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch { /* gone */ }
+      }
+    }
+  });
+});
+
 // ---- a stop signal in the few bytecodes after the sweep is a stop of the run, not of start-up ---------------------------------------------------
 
 /**
