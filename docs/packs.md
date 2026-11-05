@@ -676,6 +676,22 @@ of this itself:
   `unproven` is not empty. A carrier calls it once where it prints its answer;
   a carrier that does not call it still has its leftovers ended, and its answer
   does not say so.
+- What the pipes of a program that has ended may deliver is capped.
+  `communicate_bounded` reads the pipes itself and looks at the program after
+  every read. From the moment the program has ended (or was killed at its
+  deadline) it takes at most `PIPE_GRACE` (1 second) and `POST_EXIT_BYTES`
+  (1 MiB, both pipes together) more, whichever is used up first. Then it ends
+  the process that still holds the pipe (`reap_orphans`, `settle()`) and lets
+  the pipes go. The program's own last words are in the pipe already (a pipe
+  holds far less than 1 MiB), so what is cut is what a leftover wrote. A call
+  cut at the byte cap is counted in `PIPE_CUT["cut"]`, said in
+  `process_notes()` and, through `process_apply`, makes a complete answer
+  partial; the return value is the same three-tuple, and the bytes kept are the
+  program's output plus at most 1 MiB of the leftover's. While the program is
+  still alive the block caps nothing (its output is its caller's to bound; no
+  output cap is known that every carrier could take), so a holder that floods a
+  pipe while the program still runs is read until the program has ended. A
+  reader that decodes or parses the output still bounds it itself.
 - Where nothing is adopted (the kernel or a seccomp rule refuses the call, or
   the host is not Linux) `settle()` ends only what the tool saw below a program
   whose parent is gone, and `unproven` says so; on a host that is not Linux

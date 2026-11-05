@@ -44,11 +44,17 @@ const SHAPES: Record<string, string> = {
   writer10: `( while :; do echo tick; sleep 0.01; done ) & echo $! >> "$PIDF"; echo out; exit 0`,
   writer700: `( while :; do echo tick; sleep 0.7; done ) & echo $! >> "$PIDF"; echo out; exit 0`,
   flood: `( sleep 0.2; exec yes ) & echo $! >> "$PIDF"; echo out; exit 0`,
+  // full-speed writers that start at once (the program's words are printed after them): a leftover that writes this fast dies of SIGPIPE the moment a pipe is closed,
+  // so a reader that closes before settle() looks counts none and reads as clean
+  writer1: `( while :; do printf x; sleep 0.001; done ) & echo $! >> "$PIDF"; echo out; exit 0`,
+  yesout: `yes & echo $! >> "$PIDF"; echo out; exit 0`,
+  yeserr: `yes >&2 & echo $! >> "$PIDF"; echo out; exit 0`,
   never: `echo $$ >> "$PIDF"; echo out; sleep 600`,
   nonzero: `sleep 600 & echo $! >> "$PIDF"; echo out; exit 3`,
   quiet: `echo out; exit 0`,
 };
-const LEAVING = ["silent", "stderr", "stdin", "writer10", "writer700", "flood", "nonzero"];
+const LEAVING = ["silent", "stderr", "stdin", "writer10", "writer700", "flood", "nonzero", "writer1", "yesout", "yeserr"];
+const FAST = ["writer1", "yesout", "yeserr"];
 
 const DRIVER = `
 import importlib.util, json, os, subprocess, sys, time
@@ -87,6 +93,7 @@ elif kind == "run_child":
     res = {"exit_code": code, "timed_out": timed}
 res["elapsed"] = round(time.monotonic() - started, 3)
 res["left_behind"] = m.LEFT["left_behind"]
+res["cut"] = m.PIPE_CUT["cut"] if hasattr(m, "PIPE_CUT") else 0
 pids = [int(x) for x in open(pidf).read().split()] if os.path.exists(pidf) else []
 def up(pid):
     try:
@@ -103,7 +110,7 @@ res["pids"] = pids
 print(json.dumps(res))
 `;
 
-type Probe = { exit_code: number | null; timed_out: boolean; out?: number; capped?: boolean; flooded?: boolean; elapsed: number; left_behind: number; alive: number[]; pids: number[] };
+type Probe = { exit_code: number | null; timed_out: boolean; out?: number; capped?: boolean; flooded?: boolean; elapsed: number; left_behind: number; alive: number[]; pids: number[]; cut?: number };
 
 async function probe(file: string, kind: string, shape: string, seconds: number, cwd: string): Promise<Probe> {
   await writeFile(join(cwd, "driver.py"), DRIVER);
@@ -157,6 +164,15 @@ function matrix(tool: string, kind: string, shapes = Object.keys(SHAPES)): void 
             return;
           }
           p = await probe(FILES[tool], kind, shape, LIMIT, cwd);
+          if (FAST.includes(shape)) {
+            // the program printed its words and ended while a leftover wrote at full speed: not a timeout, in time, the leftover dead, and the call knows something was left
+            // (counted by settle(), or said as a flood or a cut at the byte cap), never clean
+            assert.equal(p.timed_out, false, `${JSON.stringify(p)}`);
+            assert.ok(p.elapsed < 6, `answered at ${p.elapsed} s for a clock of ${LIMIT} s (${shape})`);
+            assert.deepEqual(p.alive, [], `the leftover is dead afterwards: ${JSON.stringify(p)}`);
+            assert.ok(p.left_behind >= 1 || p.flooded === true || p.capped === true || (p.cut ?? 0) >= 1, `a leftover that wrote at full speed was counted: ${JSON.stringify(p)}`);
+            return;
+          }
           // the program ended: the answer says so, with its exit code, and does not say it timed out
           assert.equal(p.timed_out, false, `${JSON.stringify(p)}`);
           assert.equal(p.exit_code, shape === "nonzero" ? 3 : 0, `${JSON.stringify(p)}`);
@@ -221,12 +237,15 @@ const parse = (r: { stdout: string; stderr: string }): Json => {
   assert.doesNotMatch(r.stderr, /Traceback/);
   return JSON.parse(r.stdout);
 };
-const HOLDERS = ["silent", "writer10", "flood"] as const;
+const HOLDERS = ["silent", "writer10", "flood", "writer1", "yesout"] as const;
+const STRICT = ["silent", "writer10"];
 const HOLD: Record<string, string> = {
   silent: `sleep 600 & echo $! >> "$PIDF"`,
   // a leftover starts writing after the program has printed its words and ended: the words are the program's, the lines after them are not
   writer10: `( sleep 0.1; while :; do echo tick; sleep 0.01; done ) & echo $! >> "$PIDF"`,
   flood: `( sleep 0.2; exec yes ) & echo $! >> "$PIDF"`,
+  writer1: `( while :; do printf x; sleep 0.001; done ) & echo $! >> "$PIDF"`,
+  yesout: `yes & echo $! >> "$PIDF"`,
 };
 
 for (const shape of HOLDERS) {
@@ -244,10 +263,12 @@ exit 2`);
         const a = parse(value);
         assert.ok(ms < 12000, `${ms} ms`);
         assert.doesNotMatch(a.status_basis, /did not finish/);
-        assert.equal(a.verifier.exit_code, 1);
-        assert.equal(a.status, "partial", "a process was left and ended");
-        if (shape === "flood") assert.match(a.status_basis, /kept writing into its output/);
-        else assert.equal(a.verification, "unsigned");
+        assert.notEqual(a.status, "complete", "a process was left and ended");
+        if (STRICT.includes(shape)) {
+          assert.equal(a.verifier.exit_code, 1);
+          assert.equal(a.status, "partial");
+          assert.equal(a.verification, "unsigned");
+        }
         if (shape === "silent") assert.ok(a.program_group.left_behind >= 1);
       } finally {
         await reapPids(undefined, cwd);
@@ -302,6 +323,7 @@ exit 0`);
         assert.equal(a.qemu_img.checked + a.qemu_img.failed >= 1, true);
         assert.equal(a.disks[0].qemu_img.timed_out, false, "qemu-img ended 0: it did not time out");
         assert.equal(a.disks[0].qemu_img.exit_code, 0);
+        assert.notEqual(a.status, "complete", "a process was left and ended");
         if (shape === "silent") {
           assert.equal(a.qemu_img.failed, 0, "qemu-img's JSON was read whole");
           assert.equal(a.status, "partial");

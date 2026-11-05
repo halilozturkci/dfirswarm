@@ -107,7 +107,7 @@ pack when it is loaded; the skills point to its tools without depending on it.
 
 ## A program that leaves a process behind
 
-`ransomware_family_match` reports only what `yara` printed on a pipe. The pipe of a `yara` that has ended is read for one more second and then let go, so a process it left
+`ransomware_family_match` reports only what `yara` printed on a pipe. The pipe of a `yara` that has ended is read for at most one more second and 1 MiB and then let go (what still holds it is ended first), so a process it left
 running does not hold the call, and a `yara` that exited is not reported as timed out. A process the shared process block had to end makes the answer `partial` (a line in
 `partial_reasons`), because what it would still have printed is not in the hits; a host that cannot adopt orphans (not Linux, or the kernel refuses
 `PR_SET_CHILD_SUBREAPER`) does not, and `program_group.unproven` says it. A call that ran `yara` carries `program_group` (`subreaper`, `left_behind`, `unproven`, `notes`).
