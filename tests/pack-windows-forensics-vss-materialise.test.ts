@@ -420,7 +420,7 @@ const daemonGone = async (pid: number, ms = 5000): Promise<boolean> => {
 
 test("a mount whose program daemonises (a double fork, a session of its own, stdio on /dev/null) keeps its daemon for the lookups and copies, and the daemon is gone when the tool ends", async () => {
   await withCwd(async (cwd, bin) => {
-    const env = { ...(await setup(cwd, bin, { 1: config("old system"), 2: config("new system") }, config("new system"))), FAKE_DAEMON: "1" };
+    const env: Record<string, string> = { ...(await setup(cwd, bin, { 1: config("old system"), 2: config("new system") }, config("new system"))), FAKE_DAEMON: "1" };
     daemonStandIns(bin);
     let daemon = 0;
     try {
@@ -441,7 +441,7 @@ test("a mount whose program daemonises (a double fork, a session of its own, std
 
 test("a stop signal ends the mount's daemon with everything else below the tool, even when nothing unmounts it", async () => {
   await withCwd(async (cwd, bin) => {
-    const env = { ...(await setup(cwd, bin, { 1: config("x") }, config("x"))), FAKE_DAEMON: "1", FAKE_NOKILL: "1", FAKE_SLOW: "1", PATH: `${bin}:${process.env.PATH}` };
+    const env: Record<string, string> = { ...(await setup(cwd, bin, { 1: config("x") }, config("x"))), FAKE_DAEMON: "1", FAKE_NOKILL: "1", FAKE_SLOW: "1", PATH: `${bin}:${process.env.PATH}` };
     daemonStandIns(bin);
     const run = startTool("vss_materialise", cwd, { ...ARGS, stores: [1] }, env);
     let daemon = 0;
