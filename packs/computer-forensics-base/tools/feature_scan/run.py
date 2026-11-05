@@ -41,7 +41,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "feature_scan", "version": 16}
+TOOL = {"name": "feature_scan", "version": 17}
 STARTED = time.monotonic()
 DEFAULT_TIMEOUT = 900
 TIMEOUT_MAX = 1000                # the tool's own limit is 1200 seconds: the counting of what bulk_extractor wrote needs the rest
@@ -1876,7 +1876,17 @@ def main():
     feature_total = len(features)
     del features[FEATURES_SHOWN:]
     exit_ok = code == 0 and not timed_out
-    status = "complete" if exit_ok and not not_counted and secret.write_error is None and not disk_note else ("partial" if n_written or exit_ok else "failed")
+    # What bulk_extractor left behind (settle() ended it before out_dir was walked): a process that held a file of out_dir, or its stdout or stderr, may have written to it
+    # after the program ended, and what it would still have written is missing; where nothing can show that none was left, the files are not shown to be final either.
+    verdict = process_verdict()
+    left_text = None
+    if verdict["left_behind"]:
+        left_text = ("bulk_extractor left %d process(es) running after it ended (a child that held a file of out_dir or its stdout or stderr, in the tool's process group or, in a session of its own, "
+                     "outside it); settle() killed and reaped them before out_dir was walked and counted, so the files listed are what they held at that moment and what the leftover "
+                     "would still have written is missing" % verdict["left_behind"])
+    elif verdict["unproven"]:
+        left_text = "; ".join(verdict["unproven"]) + ": the files bulk_extractor wrote cannot be shown to be final"
+    status = "complete" if exit_ok and not not_counted and secret.write_error is None and not disk_note and not left_text else ("partial" if n_written or exit_ok else "failed")
     result = {
         "tool": TOOL,
         "path": path,
@@ -1886,6 +1896,7 @@ def main():
                           "stderr names no full disk or quota, and a 64 KiB write beside its files worked when it ended. Not checked: that each file bulk_extractor wrote "
                           "is whole, since it writes them itself and a disk that had room again by the end would not show a cut") if status == "complete" else
                          "bulk_extractor exited 0, but %s: its files may be cut short, and nothing here can tell which" % disk_note if exit_ok and disk_note else
+                         "bulk_extractor exited 0, but %s" % left_text if exit_ok and left_text and not not_counted else
                          "bulk_extractor exited 0, but the clock ran out while what it wrote was being counted: what was not counted is named (not_counted)" if exit_ok else
                          "bulk_extractor did not exit 0 or ran out of time, and what it had written is listed" if status == "partial" else
                          "bulk_extractor did not exit 0 and wrote nothing"),
@@ -1933,8 +1944,11 @@ def main():
         result["problem"] = "bulk_extractor did not finish within %d seconds; what it had written is listed and is partial" % timeout
     elif code != 0:
         result["problem"] = "bulk_extractor exited %s; read %s" % (code, stderr_file)
+    process_apply(result)         # program_group: what settle() ended and why absence is unproven (a complete answer is already partial above)
+    if left_text:
+        result["problem"] = left_text if "problem" not in result else "%s; %s" % (result["problem"], left_text)
     print_answer(result, indent=2)
-    raise SystemExit(0 if status == "complete" else 1)
+    raise SystemExit(0 if result["status"] == "complete" else 1)
 
 
 if __name__ == "__main__":

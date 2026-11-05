@@ -44,7 +44,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "browser_storage", "version": 3}
+TOOL = {"name": "browser_storage", "version": 4}
 PARSER = "browser_storage/1"
 READER = "0.3.18"                        # the one ccl_chromium_reader this tool is written against; any other is refused
 STARTED = time.monotonic()               # the run's clock starts with the tool
@@ -2945,6 +2945,17 @@ def run_reader(py, spec, seconds, pass_fd):
     return proc.returncode, out, timed_out
 
 
+def apply_program_verdict(answer, files_written):
+    """program_group in the answer, from the shared block. The reader's child writes the values file (a descriptor it is handed, write_values) and prints its
+    document on a pipe. When it wrote the values file, the whole rule holds: a process settle() ended after the child had ended, or a host where none can be ruled
+    out (not Linux, PR_SET_CHILD_SUBREAPER refused), makes a complete answer partial (process_apply). When it only printed on the pipe, a process settle() ended
+    still makes the answer partial, and a host that cannot rule one out is said in program_group.unproven and does not change the status."""
+    if files_written or process_verdict()["left_behind"]:
+        process_apply(answer)
+    else:
+        answer["program_group"] = process_verdict()
+
+
 def cut_text(text, limit):
     return text if len(text) <= limit else text[:limit] + "..."
 
@@ -3183,6 +3194,13 @@ def main():
         else:
             answer["previews"] = [shape_plain_preview(p, preview_chars) for p in doc.get("previews", [])]
         answer["records_not_decoded"] = doc.get("decode_errors") or None
+    verdict = process_verdict()
+    if verdict["left_behind"]:
+        reasons.append("the reader's process left %d process(es) running after it ended (in the tool's process group or, in a session of its own, outside it); settle() killed and reaped "
+                       "them before the document was read%s" % (verdict["left_behind"], ", so the values file is what they held at that moment and what the leftover would still have "
+                                                                "written is missing" if write_values else ""))
+    if write_values:
+        reasons.extend(why + ": the values file cannot be shown to be final" for why in verdict["unproven"])
     answer["status"] = "failed" if all_failed else ("complete" if not reasons else "partial")
     answer["complete"] = answer["status"] == "complete"
     answer["status_basis"] = (
@@ -3207,6 +3225,7 @@ def main():
     notes = process_notes()
     if notes:
         answer["process_notes"] = notes
+    apply_program_verdict(answer, write_values)    # program_group: what settle() ended and why absence is unproven (a complete answer is already partial above)
     say(answer, 0 if answer["status"] == "complete" else 1)
 
 
