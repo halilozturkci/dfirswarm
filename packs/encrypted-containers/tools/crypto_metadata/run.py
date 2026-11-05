@@ -3108,6 +3108,9 @@ def finish(answer, page, problems=(), counts=None, fields=None):
         if answer.get("status") == "complete":
             answer["status"] = "partial"
             answer["status_basis"] += "; but the bytes and the reader do not agree (see inconsistencies)"
+    # the reader's stdout and stderr are files this tool redirected it to and read back: a process it left behind (ended by settle() before they were read) or the
+    # host's inability to rule one out makes a complete answer partial; program_group says which
+    process_apply(answer)
     answer["confidence"] = ("high: the signature, this tool's read of the fixed fields and the reader agree" if answer.get("status") == "complete"
                             else "medium: the signature and the fixed fields are read; the reader's listing is missing or in doubt" if answer.get("supported")
                             else "low: no scheme was read")

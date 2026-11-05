@@ -2890,6 +2890,9 @@ def main():
                         "a program or module that is missing is unavailable, never parsed",
                         "the john entry is an inventory of helpers on PATH; whether a skill uses them is not decided here"]
     answer["names_withheld"] = NAMES["strings"]
+    # each reader's verdict is read from a file it wrote (stdout redirected to the tool's scratch directory): a process any program left behind (ended by settle()
+    # before that file was read) or the host's inability to rule one out makes a complete answer partial; program_group says which
+    process_apply(answer)
     if stop_wanted() and answer.get("status") == "complete":
         answer["status"], answer["status_basis"] = "partial", "%s before the answer was complete" % stop_cause()
     sealed = seal(answer)

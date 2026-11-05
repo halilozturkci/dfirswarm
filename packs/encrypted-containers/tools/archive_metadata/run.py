@@ -2407,12 +2407,15 @@ def find_7z():
     return None
 
 
-def pipe_lines(proc):
+def pipe_lines(proc, held=None):
     """Lines of `proc`'s stdout (bytes, split on \\n, decoded utf-8 with replacement), read as 7z writes them. A read
-    ends when 7z itself has ended and PIPE_GRACE seconds have passed with nothing more to read: a child 7z forks that
-    inherits the pipe (ffmpeg-style helpers, a decompression filter) and keeps writing or just keeps the write end
-    open does not hold this read open to its own end of file, the way `communicate_bounded` does not for a captured
-    run. What held the pipe past that point is ended (reap_orphans), not merely ignored."""
+    ends PIPE_GRACE seconds after 7z itself has ended, whether or not something is still writing: a child 7z forks that
+    inherits the pipe (ffmpeg-style helpers, a decompression filter) and keeps writing, or just keeps the write end
+    open, does not hold this read open to its own end of file, the way `communicate_bounded` does not for a captured
+    run. The clock runs from the moment 7z is seen to have ended and no byte restarts it (a writer that never stops
+    held the first version of this loop to the tool's own deadline). What held the pipe past that point is ended
+    (reap_orphans, settle), not merely ignored, and `held` (a list) gets True: the lines read after 7z ended may be
+    the holder's, not 7z's."""
     fd = proc.stdout.fileno()
     buf = b""
     grace_until = None
@@ -2422,24 +2425,39 @@ def pipe_lines(proc):
         ready, _, _ = select.select([fd], [], [], 0.2)
         if ready:
             chunk = os.read(fd, 65536)
-            if chunk:
-                buf += chunk
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
-                    yield line.decode("utf-8", "replace")
-                continue
-            # EOF: every writer, including one that outlived 7z, has let go.
-            break
+            if not chunk:
+                break                      # EOF: every writer, including one that outlived 7z, has let go.
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                yield line.decode("utf-8", "replace")
         if proc.poll() is not None:
             if grace_until is None:
                 grace_until = time.monotonic() + PIPE_GRACE
-            elif time.monotonic() >= grace_until:
+            if time.monotonic() >= grace_until:
+                if held is not None:
+                    held.append(True)
                 break
     if buf:
         yield buf.decode("utf-8", "replace")
     reap_orphans(_pipe_inodes(proc))
     if proc.poll() is not None:
         settle()      # what 7z left behind that holds no descriptor of the tool (the process block's settle() ends it)
+
+
+def apply_leftovers(answer):
+    """program_group: what settle() ended, and why the absence of a leftover cannot be proven. 7z's listing is what it printed on a pipe, so a
+    host that cannot adopt orphans does not make this tool less than complete; a process that settle() ended is another matter: it may have held
+    the pipe, and the lines it wrote are not told from 7z's. A complete answer is then partial."""
+    verdict = process_verdict()
+    answer["program_group"] = verdict
+    if verdict["left_behind"] > 0 and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        sentence = "7z (or a probe) left %d process%s running after it ended; the tool ended %s, and a line one of them wrote to the pipe cannot be told from 7z's" % (
+            verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es", "it" if verdict["left_behind"] == 1 else "them")
+        basis = answer.get("status_basis")
+        answer["status_basis"] = "%s; %s" % (basis, sentence) if isinstance(basis, str) and basis else sentence
+    return answer
 
 
 def list_with_7z(path, limit, counts_only=False):
@@ -2463,6 +2481,7 @@ def list_with_7z(path, limit, counts_only=False):
         return {**info, "status": "unavailable", "reason": "7z could not be started: %s" % describe(exc)}, None
     ACTIVE.append(proc)
     timed_out = []
+    held = []                     # pipe_lines says so when something that outlived 7z held the pipe
     timer = threading.Timer(seconds, lambda: (timed_out.append(True), kill_tree(proc)))
     timer.start()
     archive, current, in_members, diagnostics, encrypted_message = {}, {}, False, [], False
@@ -2495,7 +2514,7 @@ def list_with_7z(path, limit, counts_only=False):
         current = {}
 
     try:
-        for raw in pipe_lines(proc):
+        for raw in pipe_lines(proc, held):
             if stop_wanted():
                 timed_out.append(True)
                 kill_tree(proc)
@@ -2545,6 +2564,8 @@ def list_with_7z(path, limit, counts_only=False):
             ACTIVE.remove(proc)
     info["exit_code"] = code
     info["members_seen"] = seen
+    if held:
+        info["pipe_held"] = True
     if diagnostics:
         info["diagnostics"] = diagnostics
     if archive:
@@ -2558,7 +2579,8 @@ def list_with_7z(path, limit, counts_only=False):
                           % (odd["sections"], odd["orphan_lines"], odd["repeated_keys"], odd["stray_lines"])}, members
     if code in (0, 1) and archive.get("Type"):
         # Exit 0 can still come with a warning (data after the end of the archive: a second archive appended, or junk): not "without warnings".
-        return {**info, "status": "listed" if code == 0 and not warned else "listed_with_warnings"}, members
+        return {**info, "status": "listed" if code == 0 and not warned and not held else "listed_with_warnings",
+                **({"reason": "something 7z started held its output pipe after 7z ended and was ended after %d second(s) (settle() or reap_orphans): the lines read after 7z ended may be that process's, so the listing is not taken as 7z's alone" % PIPE_GRACE} if held else {})}, members
     if archive.get("Type") and seen["members"]:
         # 7z exits 2 on a header error and still prints a listing: it is a listing with errors, to be compared and never believed whole.
         return {**info, "status": "listed_with_errors", "reason": "7z listed %d members and exited with %s" % (seen["members"], code)}, members
@@ -3105,6 +3127,7 @@ def finish(answer, page, members_listed, size):
         answer.update(paged)
     answer["extraction"] = "this tool never extracts; archive_extract (the computer-forensics-base pack) extracts, within its own bounds"
     answer["names_withheld"] = NAMES["strings"]
+    apply_leftovers(answer)
     if stop_wanted() and answer.get("status") == "complete":
         answer["status"], answer["status_basis"] = "partial", "%s before the answer was complete" % stop_cause()
     sealed = seal(answer)

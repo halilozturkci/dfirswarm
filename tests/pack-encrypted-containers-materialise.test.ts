@@ -426,7 +426,11 @@ test("a reader that forks: a sleeper it leaves behind is ended when it returns, 
       { JOB_ID: "j1", OUT: join(cwd, "out"), SECRET_OUTPUT: "1", PYTHONPATH: await mods(cwd), STANDIN_EXPECT_FILE: join(cwd, "expect.txt"), STANDIN_MODE: "fork_return",
         STANDIN_PID_FILE: join(cwd, "reader.pid"), STANDIN_FORK_PID_FILE: join(cwd, "fork.pid") });
     assert.equal(await proc.closed, 0);
-    assert.equal(JSON.parse(proc.stdout()).status, "complete");
+    // the reader returned and left a sleeper holding the descriptors it inherited: the tool ends it, and the image is no longer a complete result (an unverified .partial)
+    const left = JSON.parse(proc.stdout());
+    assert.equal(left.status, "partial", left.status_basis);
+    assert.ok(left.program_group.left_behind >= 1);
+    assert.equal(left.output.verified, false);
     assert.ok(await gone(await pidOf(join(cwd, "fork.pid"))), "the forked sleeper outlived the tool");
   });
   await withCwd(async (cwd) => {

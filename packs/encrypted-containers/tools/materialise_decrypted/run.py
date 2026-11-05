@@ -2702,6 +2702,22 @@ def main():
             os.fsync(fh.fileno())
         finally:
             fh.close()
+        digest_note = "not computed: the reader child was ended before it reported"
+        verdict = process_verdict()
+        if verdict["left_behind"] > 0 and status != "failed":
+            # a process the reader child (or a probe) left behind may have written to the output through the descriptor it inherited; settle() ended it before this point, but
+            # what it wrote is in the file, so the reader's own count and digest are not the file's: the size is read from the file, the digest is not claimed, the file is not whole
+            try:
+                count = os.stat(partial).st_size
+            except OSError:
+                pass
+            digest, digest_note = None, "not claimed: a process the reader left behind was ended after it reported, and may have changed the file"
+        if status == "complete" and (verdict["left_behind"] > 0 or verdict["unproven"]):
+            status = "partial"
+            basis = "%s; but %s: the file is kept as .partial and is not verified" % (
+                basis, ("the reader (or a probe) left %d process%s running after it ended, which the tool ended; what it wrote through the descriptors it inherited is in the file" % (
+                    verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es")) if verdict["left_behind"] > 0 else
+                "the tool cannot prove that no process the reader started is left to write the file (see program_group.unproven)")
         answer.update(extra)
         job_dir = "store/jobs/%s/out/materialised/" % re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ["JOB_ID"])
         provenance = {"tool": "materialise_decrypted", "parser": PARSER, "operation": operation, "reader": answer["reader"],
@@ -2718,9 +2734,9 @@ def main():
             answer["output"] = {"path": job_dir + final.name, "bytes": count, "mode": "0600", "provenance": job_dir + prov.name}
         elif status == "partial":
             provenance["output"] = {"file": partial.name, "bytes": count, "sha256": digest, "complete": False, "verified": False}
-            prov = write_provenance(out_dir, partial.name, provenance)
             if digest is None:
-                provenance["output"]["sha256_note"] = "not computed: the reader child was ended before it reported"
+                provenance["output"]["sha256_note"] = digest_note
+            prov = write_provenance(out_dir, partial.name, provenance)
             answer["output"] = {"path": job_dir + partial.name, "bytes": count, "verified": False, "mode": "0600", "provenance": job_dir + prov.name}
             partial = None                     # kept
         else:
@@ -2982,6 +2998,7 @@ def finish(answer):
     answer["note"] = ("The key is read from a sealed file inside this tool and never appears in a command line, an environment, an answer, a file name or a "
                       "key of this JSON. The decrypted bytes are in the file named in `output`, mode 0600, in this job's sealed output. A key that did not "
                       "work says nothing about whether the evidence can be opened another way.")
+    process_apply(answer)       # program_group: what settle() ended and why the absence of a leftover is unproven (a complete answer is already partial where the file is placed)
     if stop_wanted() and answer.get("status") == "complete":
         answer["status"], answer["status_basis"] = "partial", "%s before the answer was complete" % stop_cause()
     sealed = seal(answer)

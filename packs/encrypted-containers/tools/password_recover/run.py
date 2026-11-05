@@ -2359,6 +2359,9 @@ def main():
                       "This answer carries no value, no hash, no salt and no length of either. Report in the ledger WHERE the "
                       "candidate list and the authority to try it came from, and hand any recovered value to the operator "
                       "through the channel the case contract names."}
+    # john, its pot, log and session, and the hash the helper wrote are files programs wrote: a process one of them left behind (ended by settle() before they were
+    # counted and read) or the host's inability to rule one out makes a complete answer partial, and program_group says which. A failed or partial answer is not changed.
+    process_apply(answer)
     emit(seal(answer))
 
 

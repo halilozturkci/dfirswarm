@@ -250,8 +250,11 @@ test("archive_probe's 7z listing ends when 7z itself ends, not when a forked gra
     const wall = (Date.now() - t0) / 1000;
     assert.equal(code, 0);
     const a = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Json;
-    assert.equal(a.status, "complete");
-    assert.equal(a.listing.status, "listed");
+    // the grandchild held 7z's pipe after 7z ended and was ended: the lines read after 7z ended may be its, so the listing is not 7z's alone (partial, marked), where it was complete
+    assert.equal(a.status, "partial");
+    assert.equal(a.listing.status, "listed_with_warnings");
+    assert.equal(a.listing.pipe_held, true);
+    assert.ok(a.program_group.left_behind >= 1);
     assert.equal(a.listing.via, "7z");
     // The fix: the tool does not wait out max_seconds (30s) or the 7z-level SEVENZIP_TIMEOUT (60s) for the pipe to
     // reach EOF on its own; it ends within roughly PIPE_GRACE of 7z's own exit.

@@ -2313,19 +2313,20 @@ def main():
         ACTIVE.remove(proc)
     if timed_out:
         emit(seal({"status": "partial", "status_basis": "the time budget (%s seconds) was reached before cryptsetup answered" % seconds,
-                  "parser": PARSER, "source": shown(source), "header": header, "versions": {"cryptsetup": version}}))
+                  "parser": PARSER, "source": shown(source), "header": header, "versions": {"cryptsetup": version}, "program_group": process_verdict()}))
         return
 
     text = out.decode("utf-8", "replace")
     fields = parse_fields(text)
     code = proc.returncode
+    verdict = process_verdict()
     # cryptsetup's exit codes: 0 success, 2 no permission or bad passphrase (the answer for a password that does not
     # open a header); any other code (1 wrong parameters, 3 out of memory, 4 wrong device specified, 5 device
     # already exists or busy, a signal's negative code) is not a statement about the password at all.
     if code not in (0, 2) or (code == 0 and not fields):
         emit(seal({"status": "failed", "parser": PARSER, "source": shown(source), "header": header, "offset": offset,
                    "versions": {"cryptsetup": version or "not reported by this build"}, "decrypted": None, "fields": {},
-                   "exit_code": code, "stderr_present": bool(err.strip()),
+                   "exit_code": code, "stderr_present": bool(err.strip()), "program_group": verdict,
                    "status_basis": ("cryptsetup exited %s: that is not the answer for a password that does not open a header (2), so "
                                     "nothing is said about the password" % code) if code != 0 else
                                    "cryptsetup exited 0 but printed none of the header fields this tool reads: nothing is said about the header"}))
@@ -2342,7 +2343,14 @@ def main():
                 "other derived secret.",
         "status": "complete",
         "status_basis": "cryptsetup ran to completion" if decrypted else "cryptsetup did not decrypt a header with the material given",
+        "program_group": verdict,
     }
+    # The fields are what cryptsetup printed on a pipe, so a host that cannot adopt orphans does not make this answer less than complete (the tool reports no file a
+    # program wrote). A process cryptsetup left behind and settle() ended may have held that pipe, and a line it wrote is not told from cryptsetup's: partial.
+    if verdict["left_behind"] > 0:
+        answer["status"] = "partial"
+        answer["status_basis"] += ("; but cryptsetup (or its version probe) left %d process%s running after it ended, which the tool ended, and a line one of them wrote to the pipe "
+                                   "cannot be told from cryptsetup's" % (verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es"))
     emit(seal(answer))
 
 
