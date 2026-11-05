@@ -1704,6 +1704,14 @@ def main():
         if head != b"[]":
             reasons.append("no detection was read from the engine's result file (%d bytes; it is empty, or not a list of detections): zero detections here is not a statement that no rule matched" % size_read)
     reasons += cut
+    # The result file, the engine's own stdout and stderr and its log are what the engine wrote, and the detections are read from the first: a process it left behind may still have written to any of them.
+    # settle() ended such a process before they were read, so they are stable but may be short; where one cannot be ruled out (not Linux, or PR_SET_CHILD_SUBREAPER refused) they cannot be shown to be final.
+    verdict = process_verdict()
+    if verdict["left_behind"]:
+        reasons.append("the engine left %d process(es) running after it ended (in the tool's process group or in a session of its own); they were ended before its result file was read, so what they would "
+                       "still have written is missing and the result may be short" % verdict["left_behind"])
+    for why in verdict["unproven"]:
+        reasons.append(why + ": the engine's result file cannot be shown to be final")
     complete = not reasons
     answer = {
         "parser": PARSER,
@@ -1744,6 +1752,7 @@ def main():
                 "know is kept and counted under unknown_levels, never dropped by min_level. "
                 + ("" if complete else "The run is PARTIAL: see status_basis; the detections are what its result file held."),
     }
+    process_apply(answer)             # program_group: what settle() ended and why the absence of a leftover is unproven (a complete answer is already partial above)
     print_answer(answer, indent=2)
 
 

@@ -3103,7 +3103,8 @@ OWN_NAMES.update((
     "contains_secret_values", "count", "db", "db_bytes", "db_sha256", "duplicate_columns_renamed", "error", "export_complete", "export_dir",
     "export_dir_sensitive", "export_file", "export_file_line_ending", "export_manifest", "export_reused", "export_status", "export_timeout_seconds",
     "exporter_argv", "exporter_exit_status", "exporter_version", "files", "finding_id", "format", "hint", "inline_budget_bytes", "kind", "length",
-    "limit", "locators", "locators_page", "marker", "matched", "not_covered", "note", "parameter", "parser", "path", "reason", "requested", "returned",
+    "limit", "locators", "locators_page", "marker", "matched", "not_covered", "note", "notes", "parameter", "parser", "path", "program_group", "process_problems",
+    "reason", "requested", "returned", "left_behind", "subreaper", "unproven",
     "row", "row_chars", "row_count", "row_ordinals", "rows", "rows_complete", "rows_not_inline", "rows_read", "rows_read_cut", "rows_read_cut_count",
     "rows_stopped", "rows_with_a_cell_shown_cut", "rule", "secret_values", "shown", "signal", "status", "status_basis", "stderr_file",
     "stderr_first_lines", "stdout_file", "table", "table_count", "tables", "tables_in_partial_export", "timed_out", "total_length", "truncated", "url",
@@ -3352,12 +3353,38 @@ def sha256_of(path):
 
 
 def exporter_version():
+    """The exporter's version line, or None. A program like the export itself: started through the process block, ended with what it started at its time limit,
+    and settled when it has ended."""
     try:
-        p = subprocess.run(["esedbexport", "-V"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=10)
-        lines = p.stdout.decode("utf-8", "replace").strip().splitlines()
-        return lines[0].strip() if p.returncode == 0 and lines else None
-    except (OSError, subprocess.TimeoutExpired):
+        proc = spawn(["esedbexport", "-V"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except OSError:
         return None
+    ACTIVE.append(proc)
+    try:
+        out, _err, timed_out = communicate_bounded(proc, 10)
+    finally:
+        if proc in ACTIVE:
+            ACTIVE.remove(proc)
+    lines = out.decode("utf-8", "replace").strip().splitlines()
+    return lines[0].strip() if proc.returncode == 0 and not timed_out and lines else None
+
+
+def export_doubt(record, reused):
+    """Sentences for why the export's files cannot be shown to be final, as the run that made the export (this one, or the earlier one a reused export comes from)
+    recorded it: esedbexport left a process behind that settle() ended before the files were sized (they are stable, but may be short), or the absence of one could
+    not be proven (the host is not Linux, or the kernel refuses PR_SET_CHILD_SUBREAPER). Empty when the export's files are shown to be final."""
+    made = record.get("program_group")
+    if not isinstance(made, dict):
+        made = {"left_behind": 0, "unproven": ["the export's manifest has no record of what esedbexport left behind"]}
+    out = []
+    where = " (recorded by the call that made this export)" if reused else ""
+    left = made.get("left_behind")
+    if isinstance(left, int) and left > 0:
+        out.append("esedbexport left %d process(es) running after it ended (in the tool's process group or in a session of its own)%s; they were ended before the export's files were sized, so what they "
+                   "would still have written is missing and a table may be short" % (left, where))
+    for why in made.get("unproven") or []:
+        out.append("%s%s: the export's files cannot be shown to be final" % (why, where))
+    return out
 
 
 def table_files(export):
@@ -3381,6 +3408,8 @@ def reusable(record, base, digest, path):
             return False
         if record.get("exporter_exit_status") != 0 or record.get("timed_out"):
             return False
+        if not isinstance(record.get("program_group"), dict):
+            return False                   # made by a version that did not record what esedbexport left behind: made again
         export = base / "db.export"
         if export.is_symlink() or not export.is_dir():
             return False
@@ -3438,6 +3467,7 @@ def make_export(path, digest, timeout, root):
             with open(out_file, "wb") as so, open(err_file, "wb") as se:
                 proc = spawn(argv, stdout=so, stderr=se)
                 rc, timed_out = wait_for(proc, timeout)
+            made = process_verdict()         # right after esedbexport ended and was settled: what it left behind, before the files are sized
             export = target + ".export"
             files = {}
             if os.path.isdir(export):
@@ -3455,6 +3485,7 @@ def make_export(path, digest, timeout, root):
                 "stdout_file": out_file.name,
                 "stderr_file": err_file.name,
                 "files": files,
+                "program_group": {"left_behind": made["left_behind"], "unproven": made["unproven"]},
             }
             manifest_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
         except OSError as exc:
@@ -3558,6 +3589,7 @@ def main():
     export = base / "db.export"
     shown = "%s/%s" % (shown_root, digest)
     complete = record["exporter_exit_status"] == 0 and not record["timed_out"]
+    doubt = export_doubt(record, reused)
     logs = {"stdout_file": "%s/%s" % (shown, record["stdout_file"]), "stderr_file": "%s/%s" % (shown, record["stderr_file"])}
     try:
         stderr_text = (base / record["stderr_file"]).read_text(encoding="utf-8", errors="replace")
@@ -3597,9 +3629,16 @@ def main():
                        "the exporter's own output is in stdout_file and stderr_file" % ("was stopped by its time limit" if record["timed_out"] else "exited with status %s" % record["exporter_exit_status"]),
             "stderr_first_lines": stderr_text.strip().splitlines()[:10],
         })
+    elif doubt:
+        common.update({"status": "partial", "status_basis": "esedbexport exited 0 and wrote the tables listed, but " + "; ".join(doubt), "complete": False, "process_problems": doubt})
     else:
         common.update({"status": "complete", "status_basis": "esedbexport exited 0 and wrote the tables listed", "complete": True})
+    if doubt and not complete:
+        common["process_problems"] = doubt
+    process_apply(common)                                    # program_group: what settle() ended in this call and why the absence of a leftover is unproven
     OWN_NAMES.add(common["status_basis"])                    # made of the tool's own words and the exporter's exit status
+    OWN_NAMES.update(doubt)
+    OWN_NAMES.update([*common["program_group"]["unproven"], *common["program_group"]["notes"]])
 
     if table is None:
         sizes = {name: 0 for name in names}
@@ -3725,7 +3764,7 @@ def main():
         basis = stopped + "; the rows after it were not read (the whole table is in export_file)"
     elif rows_cut:
         basis = "%d row(s) were longer than %d characters and were read only that far (rows_read_cut)" % (len(rows_cut), ROW_READ_CHARS)
-    elif not complete:
+    elif not complete or common["status"] != "complete":
         basis = common["status_basis"]
     else:
         basis = "esedbexport exited 0 and every row of the table file was read"

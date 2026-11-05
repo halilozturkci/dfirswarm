@@ -1221,6 +1221,7 @@ def main():
                        "partial_file": os.path.relpath(partial, Path.cwd().resolve()), "partial_bytes": size,
                        "note": "What icat wrote before it stopped is kept as partial_file; it is not an extraction."})
         answer["status_basis"] = "icat %s: what it wrote is kept as partial_file and is not an extraction" % ("did not finish in time" if timed_out else "exited with status %d" % rc)
+        process_apply(answer)             # program_group (a failed answer is never made anything else)
         print_answer(answer, indent=2)
         raise SystemExit(1)
     if not_hashed:
@@ -1229,6 +1230,16 @@ def main():
     else:
         answer.update({"status": "complete", "output": output, "size": size, "sha256": h.hexdigest(),
                        "status_basis": "icat exited 0 and the whole output (%d bytes) was digested" % size})
+    # The output is a file icat wrote: what a process it left behind would still write into it is not in the size and the digest. settle() ended such a process before the output was
+    # sized and read, so the file is stable, but it may be short; where it cannot be ruled out that one was left (not Linux, or PR_SET_CHILD_SUBREAPER refused), the file cannot be shown to be final.
+    verdict = process_verdict()
+    if answer["status"] == "complete" and (verdict["left_behind"] or verdict["unproven"]):
+        answer["status"] = "partial"
+        answer["status_basis"] = ("icat exited 0 and the output (%d bytes) was digested, but " % size) + (
+            "icat left %d process(es) running after it ended (in the tool's process group or in a session of its own); they were ended before the output was sized and digested, so what they would still have "
+            "written is missing and the stream may be short" % verdict["left_behind"] if verdict["left_behind"] else
+            "nothing proves that it left no process behind that writes the output (%s)" % "; ".join(verdict["unproven"]))
+    process_apply(answer)                 # program_group: what settle() ended and why the absence of a leftover is unproven
     print_answer(answer, indent=2)
 
 

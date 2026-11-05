@@ -1696,8 +1696,13 @@ def main():
     rule_page, string_page = rule_rows.finish(), string_rows.finish()
     error_page, skipped_page = scan_errors.finish(), not_attempted.finish()
     rules_digest = sha256_of(rules, time.monotonic() + max(1.0, left() - 1))
+    # yara's standard error goes to a file the tool keeps (stderr_file) and reads for the scan errors, and a process yara left behind may print match lines on the pipe after yara ended or write to that
+    # file: settle() ended such a process before the pipe was waited for and before the file was read (the file is stable, the match list may be short); where one cannot be ruled out (not Linux,
+    # or PR_SET_CHILD_SUBREAPER refused) the file cannot be shown to be final.
+    verdict = process_verdict()
+    unsettled = bool(verdict["left_behind"] or verdict["unproven"])
     complete = (not never_ran and rc == 0 and not timed_out[0] and error_page["matched"] == 0 and skipped_page["matched"] == 0 and not walk_cut
-                and not stderr_unread and rules_digest is not None)
+                and not stderr_unread and rules_digest is not None and not unsettled)
     if complete:
         status = "complete"
     elif never_ran or timed_out[0] or (rc == 0 and not timed_out[0]) or rule_page["matched"] or string_page["matched"]:
@@ -1719,6 +1724,11 @@ def main():
         reasons.append("%d entr(ies) yara does not scan (not_attempted)" % skipped_page["matched"])
     if stderr_unread or rules_digest is None:
         reasons.append("the tool's clock ran out while its standard error was read or the rules file hashed")
+    if verdict["left_behind"]:
+        reasons.append("yara left %d process(es) running after it ended (in the tool's process group or in a session of its own); they were ended before its output was waited for and its standard error "
+                       "read, so what they would still have printed or written is missing" % verdict["left_behind"])
+    for why in verdict["unproven"]:
+        reasons.append(why + ": yara's standard error file and the match list cannot be shown to be final")
     answer = {
         "parser": PARSER,
         "status": status,
@@ -1756,6 +1766,7 @@ def main():
         "note": "A rule match says the rule's condition held, not that the file is malicious. Rules that `include` other files are not hashed beyond the file named. "
                 + ("" if complete else "The run did not complete: what is listed is what was read before it stopped."),
     }
+    process_apply(answer)             # program_group: what settle() ended and why the absence of a leftover is unproven
     print_answer(answer, indent=2)
     if status == "failed":
         raise SystemExit(1)

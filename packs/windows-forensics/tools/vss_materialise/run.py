@@ -1505,6 +1505,8 @@ def find_file(volume, sector_offset, parts, seconds):
             return "listing_too_large", None
         if state == "timeout":
             return "timeout", None
+        if state == "left_behind":
+            return "left_behind", None
         if state != "ok":
             return "read_failed", None
         out = b"".join(sink.parts)
@@ -1531,7 +1533,10 @@ def icat_argv(volume, sector_offset, inode):
 
 def stream_file(argv, sink, limit, seconds):
     """Run `argv` (icat, or fls) and copy its output into `sink` (a file object, or None to hash only), reading at most `limit` bytes: the program is
-    killed with what it started at the limit. Returns (state, bytes, sha256 or None). state is ok, too_large, read_failed, timeout or write_failed:<errno>."""
+    killed with what it started at the limit. Returns (state, bytes, sha256 or None). state is ok, too_large, read_failed, timeout, left_behind or write_failed:<errno>.
+    The copy is what the program printed on its pipe: when the program has ended and something it started still holds the pipe, that is ended after PIPE_GRACE (settle())
+    so that the read reaches end of file, and the bytes are not taken for the program's: the state is left_behind and the caller keeps nothing of them."""
+    ended_before = process_verdict()["left_behind"]
     proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     ACTIVE.append(proc)
     digest = hashlib.sha256()
@@ -1539,6 +1544,7 @@ def stream_file(argv, sink, limit, seconds):
     state = "ok"
     stop_at = time.monotonic() + max(0.5, min(seconds, remaining()))
     fd = proc.stdout.fileno()
+    gone, settled = None, False        # when the program was first seen to have ended while its pipe was still open, and whether what it left was looked for
     try:
         while True:
             left = stop_at - time.monotonic()
@@ -1546,6 +1552,14 @@ def stream_file(argv, sink, limit, seconds):
                 state = "timeout"
                 kill_tree(proc)
                 break
+            if proc.poll() is not None:
+                gone = gone or time.monotonic()
+                if time.monotonic() - gone > PIPE_GRACE and not settled:
+                    settled = True
+                    settle()
+                elif settled and time.monotonic() - gone > PIPE_GRACE + 1.0:
+                    state = "left_behind"          # the pipe is still held and could not be freed: the bytes are not shown to be the program's
+                    break
             ready, _, _ = select.select([fd], [], [], min(0.2, left))
             if not ready:
                 continue
@@ -1573,6 +1587,8 @@ def stream_file(argv, sink, limit, seconds):
         code, timed_wait = wait_for(proc, 5)
         if proc in ACTIVE:
             ACTIVE.remove(proc)
+    if state == "ok" and process_verdict()["left_behind"] > ended_before:
+        state = "left_behind"                      # settle() ended a process the program left: what came through the pipe cannot be told from what the program printed
     if state == "ok" and (code != 0 or timed_wait):
         state = "read_failed"
     return state, total, digest.hexdigest() if state == "ok" else None
@@ -1705,7 +1721,7 @@ def main():
                         row["found"] = False
                         row["copy_status"] = "not_in_store"
                         counts["not_found"] += 1
-                    elif state in ("timeout", "read_failed", "not_regular", "listing_too_large"):
+                    elif state in ("timeout", "read_failed", "not_regular", "listing_too_large", "left_behind"):
                         row["copy_status"] = state
                         counts["failed"] += 1
                         problem("the path could not be resolved in this store: %s%s" % (state, " (a directory listing over %d bytes was not taken)" % MAX_LISTING if state == "listing_too_large" else ""), store=number)
@@ -1795,6 +1811,12 @@ def main():
         reasons.append("%d credential file(s) were found and not copied (copy_credentials)" % counts["credential_not_copied"])
     if mount_info.get("mount_made") and not mount_info.get("unmounted"):
         reasons.append("the mount could not be shown to be gone")
+    # The copies are what icat printed on a pipe and the tool wrote itself, so a host that cannot adopt orphans does not make them less than complete (program_group.unproven says it); a process that
+    # fls, icat, vshadowinfo or fusermount left behind was ended by settle(), and what came through the pipe after the program ended is not taken for a copy (copy_status left_behind). The vshadowmount
+    # daemon, which is left on purpose and unmounted by this tool, is not counted.
+    verdict = process_verdict()
+    if verdict["left_behind"]:
+        reasons.append("%d process(es) that vshadowinfo, fls, icat or fusermount left running were ended (program_group.left_behind); the copy or the lookup of such a program is not kept as a copy (copy_status left_behind)" % verdict["left_behind"])
     if problems["count"]:
         reasons.append("%d problem(s) are named under problems" % problems["count"])
     answer = {
@@ -1816,6 +1838,7 @@ def main():
         "problem_count": problems["count"],
         "problems": probs.page,
         "process_notes": process_notes(),
+        "program_group": verdict,
         "note": "A copy is the file as icat read it from the store as vshadowmount presented it; it is tagged with the store number, the identifier and the creation time "
                 "vshadowinfo printed. relation_to_live compares the copy with the same path in the volume as it is now (same, differs, absent_in_live). A path absent from a "
                 "store is a fact about that snapshot. Listing a snapshot is not examining it.",

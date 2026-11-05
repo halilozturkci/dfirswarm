@@ -1982,6 +1982,7 @@ JLECMD_COLUMNS = ("EntryNumber", "Path", "LastModified", "PinStatus", "AppId")  
 JLECMD_TIME = re.compile(r"^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d:\d\d)\.(\d{7})Z?$")
 JLECMD_PIN = {"pinned": True, "unpinned": False}
 JLECMD_ROWS_SHOWN = 20
+JLE = {"runs": 0, "left_behind": 0}      # JLECmd runs made, and how many processes settle() ended after them (the CSV a program writes is read: it is held to the process rules; lnkinfo's pipe is not)
 
 
 def jlecmd_why(why):
@@ -2047,6 +2048,7 @@ def jlecmd_run(source, directory, seconds):
                         resource.setrlimit(resource.RLIMIT_FSIZE, (JLECMD_BYTES, hard))
                 except (ImportError, ValueError, OSError):
                     saved = None
+                before = process_verdict()["left_behind"]
                 proc = spawn(argv, stdout=out, stderr=err)
             except OSError as exc:
                 return None, "JLECmd could not be started: %s" % describe(exc)
@@ -2056,12 +2058,17 @@ def jlecmd_run(source, directory, seconds):
                         resource.setrlimit(resource.RLIMIT_FSIZE, saved)
                     except (ValueError, OSError):
                         pass
+            JLE["runs"] += 1
             ACTIVE.append(proc)
             try:
                 _o, _e, timed_out = communicate_bounded(proc, max(1.0, seconds))
             finally:
                 if proc in ACTIVE:
                     ACTIVE.remove(proc)
+            left = process_verdict()["left_behind"] - before
+        if left > 0:
+            JLE["left_behind"] += left
+            return None, "JLECmd left %d process(es) running after it ended; they were ended before its CSV was read, so the CSV may be short and was not compared" % left
         if timed_out:
             return None, "JLECmd did not answer in %d seconds (it and what it started were ended)" % max(1, int(seconds))
         names = sorted(os.listdir(work))
@@ -2642,6 +2649,15 @@ def main():
         reasons.append("lnkinfo disagrees with lnk_parse on %d link(s)" % run.integrity["disagrees"])
     if run.jlecmd["disagreed"]:
         reasons.append("JLECmd disagrees with the DestList read on %d jump list(s) (%d DestList entries differ; integrity.jlecmd in the rows says how)" % (run.jlecmd["disagreed"], run.jlecmd["entries_disagreed"]))
+    # What JLECmd wrote (its CSV) is read and compared: a process it left behind was ended before the CSV was read, and the jump list was not compared; where one cannot be ruled out (not Linux,
+    # or PR_SET_CHILD_SUBREAPER refused) the CSV cannot be shown to be final. lnkinfo prints on a pipe and is not held to it.
+    verdict = process_verdict()
+    if JLE["left_behind"]:
+        reasons.append("JLECmd left process(es) running after it ended (%d in all) and they were ended before its CSV was read: the second read of the DestList was not made for the jump list(s) concerned "
+                       "(integrity.jlecmd says which)" % JLE["left_behind"])
+    if JLE["runs"]:
+        for why in verdict["unproven"]:
+            reasons.append(why + ": JLECmd's CSV cannot be shown to be final")
     if not run.counts["files"] and WALK["stopped"]:
         status, basis = "partial", "; ".join(reasons)
     elif not run.counts["files"] and not unread_count:
@@ -2659,7 +2675,8 @@ def main():
             basis += "; JLECmd, the second reader of a DestList, was not run for %d jump list(s)%s (jlecmd.why_not_run says why)" % (
                 run.jlecmd["not_run"], " and gave no result for %d of them" % run.jlecmd["failed"] if run.jlecmd["failed"] else "")
     receipt = {"parser": PARSER, "status": status, "status_basis": basis, "path": path, "counts": run.counts, "kinds": kinds, "integrity": run.integrity,
-               "container_problems": run.container_problems, "lnkinfo": run.lnkinfo, "jlecmd": run.jlecmd, "skipped": unread_count, "walk_entries": WALK["entries"]}
+               "container_problems": run.container_problems, "lnkinfo": run.lnkinfo, "jlecmd": run.jlecmd, "skipped": unread_count, "walk_entries": WALK["entries"],
+               "program_group": verdict}
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".receipt-")
     TEMPS.append(tmp)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:

@@ -3035,6 +3035,7 @@ OWN_NAMES.update((
     'time_note', 'time_raw', 'time_semantics', 'unit', 'unresolved', 'unresolved_ids',
     'unresolved_ids_total', 'unresolved_note', 'user', 'user_id', 'user_name', 'user_resolved',
     'user_sid', 'value', 'vfuprov', 'why', 'work',
+    'program_group', 'subreaper', 'left_behind', 'unproven',
 ))
 
 FIELDS.update({
@@ -3966,6 +3967,16 @@ def main():
                 reasons.append("the database is in state '%s' (not a clean shutdown) and no log or checkpoint file is beside it: rows that only the logs hold are missing" % header["state"])
             elif not replayed:
                 reasons.append("the database is in state '%s' (not a clean shutdown); log files are beside it, but no backend said it replayed them" % header["state"])
+        # The CSV files, the console and the JSON Lines are what SrumECmd and target-query wrote, and the rows are read from them: a process either left behind may still have written to them.
+        # settle() ended such a process when its program ended, before anything was read, so the files are stable but may be short; where one cannot be ruled out (not Linux, or
+        # PR_SET_CHILD_SUBREAPER refused) they cannot be shown to be final.
+        verdict = process_verdict()
+        if backends and (verdict["left_behind"] or verdict["unproven"]):
+            if verdict["left_behind"]:
+                reasons.append(own("a backend left %d process(es) running after it ended (in the tool's process group or in a session of its own); they were ended before its files were read, so what they "
+                                   "would still have written is missing and the rows may be short" % verdict["left_behind"]))
+            for why in verdict["unproven"]:
+                reasons.append(own(why + ": the backends' files cannot be shown to be final"))
         counts = {b["name"]: {t: s.rows for t, s in stats[b["name"]].items()} for b in ran}
         if len(ran) == 2:
             comparison = compare(counts)
@@ -4013,6 +4024,9 @@ def main():
                   "note": own("SrumECmd's option names, CSV names and columns and console lines were read from the strings of its dll and it was never run; "
                               "the dissect.target record shape is an assumption; "
                               "esedb_query reads the raw tables")}
+        process_apply(answer)             # program_group: what settle() ended and why the absence of a leftover is unproven (a complete answer is already partial above)
+        for text in [*answer["program_group"]["unproven"], *answer["program_group"]["notes"]]:
+            own(text)
         emit(answer, indent=1)
         close_values()
         if status == "failed":

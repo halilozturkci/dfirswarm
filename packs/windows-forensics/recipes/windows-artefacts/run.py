@@ -35,6 +35,10 @@ its group ends them; SIGTERM, SIGINT and SIGHUP end the running tool, write the 
 receipt the family being read is `interrupted` (its counts are the calls that had ended), every family not yet started is
 `not_attempted` with its inputs and calls counted, and the status text says only that.
 
+Leftovers. The shared process block's settle() ends, when a program has ended, every process it left behind (in the group, in a session of its own, or with no descriptor of ours), before the
+files of the call are sized or counted. A dissect-target call that left one ends `partial` (its row in results.jsonl carries `process`), coverage.json carries `program_group` at its top level, and a
+receipt that would be `complete` is `partial` when a leftover was ended or, on a host that is not Linux or where the kernel refuses PR_SET_CHILD_SUBREAPER, when none can be ruled out.
+
 Logs. The files beside a hive named for its logs (.LOG1, .LOG2, and a legacy single .LOG when there is no pair) are looked at with lstat:
 a symbolic link (dangling or not), a directory or a pipe is never followed, opened or handed to registry_recover. The hive is read
 without it, the row names it under `log_files_not_used`, and the hive's call ends `partial` at best.
@@ -1328,6 +1332,22 @@ NOT_RUN = {
 }
 
 
+def probe(argv, seconds):
+    """The standard output of a short program (target-query --help or --version), run like every other program of this recipe: in this process's group, ended with what it started
+    at its time limit, and settled when it has ended. '' when it could not be started."""
+    try:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError:
+        return ""
+    ACTIVE.append(proc)
+    try:
+        out, _err, _timed_out = communicate_bounded(proc, seconds)
+    finally:
+        if proc in ACTIVE:
+            ACTIVE.remove(proc)
+    return out.decode("utf-8", "replace")
+
+
 def dissect_stage(paths, out, deadline, limits):
     """The functions of dissect.target that read what no tool of this pack does, one call each, over a target that is one directory.
     Returns the family's receipt entry. Every call's whole stdout and stderr are kept in files; nothing here reads a record."""
@@ -1339,17 +1359,9 @@ def dissect_stage(paths, out, deadline, limits):
     if len(paths) != 1 or not os.path.isdir(paths[0]):
         fam.update(status="not_attempted", reason="dissect.target opens one target, and this target is not exactly one directory, so none of its functions was run")
         return fam
-    help_text = ""
-    try:
-        help_text = subprocess.run([binary, "--help"], capture_output=True, timeout=60, text=True, errors="replace").stdout
-    except (OSError, subprocess.SubprocessError):
-        pass
+    help_text = probe([binary, "--help"], 60)
     fam["inputs"] = 1
-    fam["version_output"] = None
-    try:
-        fam["version_output"] = subprocess.run([binary, "--version"], capture_output=True, timeout=60, text=True, errors="replace").stdout.strip()[:300] or None
-    except (OSError, subprocess.SubprocessError):
-        pass
+    fam["version_output"] = probe([binary, "--version"], 60).strip()[:300] or None
     json_flag = ["--json"] if "--json" in help_text else []
     fam["records_format"] = "one JSON object per line" if json_flag else "the program's default text form (this version lists no --json)"
     fdir = out / "dissect-target"
@@ -1365,6 +1377,7 @@ def dissect_stage(paths, out, deadline, limits):
             argv = [binary, "-f", name] + json_flag + [paths[0]]
             out_file, err_file = fdir / (name + ".out"), fdir / (name + ".stderr")
             timed_out, code = False, None
+            ended_before = process_verdict()["left_behind"]
             with out_file.open("wb") as o, err_file.open("wb") as e:
                 try:
                     proc = spawn(argv, stdout=o, stderr=e)
@@ -1400,10 +1413,22 @@ def dissect_stage(paths, out, deadline, limits):
                 state = "empty"
             else:
                 state = "parsed"
+            # The .out and .stderr files are what target-query wrote: a process it left behind was ended by settle() before they were sized and counted, so they are stable but may be short; where one
+            # cannot be ruled out (not Linux, or PR_SET_CHILD_SUBREAPER refused) they cannot be shown to be final. Either way the call is at best partial.
+            verdict = process_verdict()
+            left = verdict["left_behind"] - ended_before
+            process = None
+            if left > 0:
+                process = "target-query left %d process(es) running after it ended; they were ended before its files were sized, so the files may be short" % left
+            elif verdict["unproven"]:
+                process = verdict["unproven"][0] + ": the files of this call cannot be shown to be final"
+            if process and state in ("parsed", "empty"):
+                state = "partial"
+                limits.append("dissect-target: %s: %s" % (name, process))
             fam["counts"][state] += 1
             results.write(json.dumps({"input": paths[0], "tool": "target-query", "function": name, "argv": argv[:-1] + ["<target>"], "exit_code": code, "timed_out": timed_out,
                                       "state": state, "records": records, "stdout_bytes": size, "stdout_file": "dissect-target/" + out_file.name,
-                                      "stderr_file": "dissect-target/" + err_file.name}) + "\n")
+                                      "stderr_file": "dissect-target/" + err_file.name, **({"process": process} if process else {})}) + "\n")
     c = fam["counts"]
     total = sum(c.values())
     if c["not_attempted"] == total:
@@ -1490,6 +1515,7 @@ def main_run(paths, shown, out):
 
     def stopped(signum, _frame):
         kill_all()
+        receipt["program_group"] = process_verdict()
         # Every family gets a state: the one in flight is `interrupted` (its counts are the calls that had ended), a family not started is `not_attempted`
         # with its inputs and calls counted, and the ones the recipe does not run keep their reason.
         for fid in FAMILIES:
@@ -1622,6 +1648,7 @@ def main_run(paths, shown, out):
         receipt["status"] = "complete"
         receipt["status_basis"] = "every family with an input in the target was read by its tool and ended parsed or empty (%d); the families not run are named: this is not coverage of the host" % len(statuses)
     receipt["covered"] = "the files of %s found in %s by name and first bytes, each read by the tool of this pack for it" % (", ".join(sorted(k for k in FAMILIES if receipt["families"][k]["inputs"])) or "no family", shown) + ("; and the dissect.target functions listed in the receipt over the target directory" if receipt["families"]["dissect-target"]["inputs"] else "")
+    process_apply(receipt)      # program_group at the top of coverage.json: what settle() ended and why the absence of a leftover is unproven; a complete receipt becomes partial
     write_receipt("after the last family")
     answer({"ok": receipt["status"] != "failed", "status": receipt["status"], "status_basis": receipt["status_basis"],
             "families": {k: v["status"] for k, v in receipt["families"].items()}}, 0 if receipt["status"] != "failed" else 2)

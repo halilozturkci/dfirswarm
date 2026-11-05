@@ -2583,6 +2583,7 @@ def regfexport_counts(path, seconds):
     hive_bytes = os.path.getsize(path)
     memory = REGFEXPORT_MEMORY_BASE + REGFEXPORT_MEMORY_PER_HIVE_BYTE * hive_bytes
     output_ceiling = REGFEXPORT_OUTPUT_FLOOR + REGFEXPORT_OUTPUT_PER_HIVE_BYTE * hive_bytes
+    ended_before = process_verdict()["left_behind"]
     try:
         proc, memory_applied = start_with_memory_limit([program, str(path)], memory)
         if proc is None:
@@ -2593,8 +2594,9 @@ def regfexport_counts(path, seconds):
     keys = values = printed = 0
     carry = b"\n"          # the first line of the output has a line break before it, as every other has
     end = time.monotonic() + max(seconds, 1.0)
-    timed_out = over_output = False
+    timed_out = over_output = held = False
     fd = proc.stdout.fileno()
+    gone, settled = None, False        # when regfexport was first seen to have ended while its pipe was still open, and whether what it left was looked for
     try:
         while True:
             left = end - time.monotonic()
@@ -2602,8 +2604,18 @@ def regfexport_counts(path, seconds):
                 kill_tree(proc)
                 timed_out = True
                 break
+            if proc.poll() is not None:
+                # regfexport has ended and something it started still holds its pipe (silent, or writing on): after PIPE_GRACE that is not part of the program. It is ended here (settle() joins and
+                # waits for nothing) so that the pipe reaches end of file; a pipe that stays open a second longer is let go and the counts are not trusted.
+                gone = gone or time.monotonic()
+                if time.monotonic() - gone > PIPE_GRACE and not settled:
+                    settled = True
+                    settle()
+                elif settled and time.monotonic() - gone > PIPE_GRACE + 1.0:
+                    held = True
+                    break
             # Wait for output for at most the time left: a program that prints nothing must not hold the tool past its clock.
-            ready, _w, _x = select.select([fd], [], [], min(left, 1.0))
+            ready, _w, _x = select.select([fd], [], [], min(left, 0.25 if gone else 1.0))
             if not ready:
                 continue
             chunk = os.read(fd, 1 << 16)
@@ -2627,12 +2639,16 @@ def regfexport_counts(path, seconds):
             proc.stdout.close()
         except OSError:
             pass
-    finished = not timed_out and not over_output and code == 0
+    left_behind = process_verdict()["left_behind"] - ended_before
+    finished = not timed_out and not over_output and code == 0 and not left_behind and not held
     result = {"ran": True, "exit_code": code, "finished": finished, "keys": keys, "values": values, "output_bytes": printed,
               "limits": {"address_space_bytes": memory_applied, "output_bytes": output_ceiling},
               "counted_by": "the lines of its output that start 'Key path: ' and 'Value: ' (a value whose text holds such a line is counted too)"}
     if not finished:
-        if over_output:
+        if left_behind or held:
+            result["why_not_finished"] = ("regfexport left %s running after it ended%s: what they printed cannot be told from what regfexport printed, so its counts are partial and are not compared"
+                                          % ("%d process(es)" % left_behind if left_behind else "something holding its output open", "; they were ended" if left_behind else " (it could not be ended)"))
+        elif over_output:
             result["why_not_finished"] = ("regfexport printed more than %d bytes (%d bytes were read from a hive of %d) and was stopped: its counts are partial and are not compared"
                                           % (output_ceiling, printed, hive_bytes))
         elif timed_out:

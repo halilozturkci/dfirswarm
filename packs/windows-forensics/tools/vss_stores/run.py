@@ -1226,6 +1226,14 @@ def main():
         problems.append("vshadowinfo reports %d store(s) and %d could be read from its output" % (claimed, len(stores)))
     if head == b"EVF\x09\x0d\x0a\xff\x00":
         problems.append("the image starts with the EWF (E01) signature: vshadowinfo reads raw data, so expose the image raw first")
+    # stdout_file and stderr_file are what vshadowinfo wrote, and the list is read from the first of them: a process it left behind may still have written to either. settle() ended such a process
+    # before the files were read, so they are stable but may be short; where one cannot be ruled out (not Linux, or PR_SET_CHILD_SUBREAPER refused) they cannot be shown to be final.
+    verdict = process_verdict()
+    if verdict["left_behind"]:
+        problems.append("vshadowinfo left %d process(es) running after it ended (in the tool's process group or in a session of its own); they were ended before its output files were read, so what they "
+                        "would still have written is missing and the list may be short" % verdict["left_behind"])
+    for why in verdict["unproven"]:
+        problems.append(why + ": stdout_file and stderr_file cannot be shown to be final")
 
     if problems and (rc != 0 or timed_out or (claimed is None and not parse_stopped)):
         status = "failed"
@@ -1278,6 +1286,7 @@ def main():
         out["note"] = ("This is a failure, not a finding: no statement about shadow copies on this volume follows from it, and "
                        "'no stores' must not be reported. Check the offset (BYTES, not sectors), that this is a raw volume or image, and the "
                        "stderr file; then ask again.")
+        process_apply(out)
         print_answer(out, indent=2)
         raise SystemExit(1)
     if not stores:
@@ -1295,6 +1304,7 @@ def main():
                        "may be unavailable in a worker), then run the ordinary toolkit against %s/vssN as if it were a volume. The mount is yours alone: "
                        "copy what you derive from it into your own directory and record it. A hive or a log read there is the state at "
                        "the store's creation time, not at acquisition: cite both times." % mount_dir)
+    process_apply(out)                # program_group: what settle() ended and why the absence of a leftover is unproven (a complete answer is already partial above)
     print_answer(out, indent=2)
 
 

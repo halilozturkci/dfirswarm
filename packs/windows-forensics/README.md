@@ -76,6 +76,14 @@ its kind, length and what it grants, never by its value. `yara_scan`, in a job r
 theirs, and so can `browser_history` and `utf16_urls` (`write_url_secrets`), in a job run with
 `secret_output: true`.
 
+**A program that leaves a process behind.** The tools that run a program share one process block, and its `settle()` ends, before anything is sized, hashed or read, every process
+a program left running after it ended (in the tool's group, in a session of its own, or holding no descriptor at all); the answer carries `program_group` (`subreaper`, `left_behind`,
+`unproven`, `notes`). `extract_stream`, `vss_stores`, `esedb_query`, `sigma_hunt`, `srum_reader`, `yara_scan`, `lnk_jumplist` (for JLECmd's CSV) and the windows-artefacts recipe report a
+file a program wrote, so they answer `partial` when `settle()` ended a leftover (the file is stable but may be short) and, on a host that is not Linux or where the kernel refuses
+`PR_SET_CHILD_SUBREAPER`, when the absence of one cannot be ruled out. `registry_recover` (regfexport's counts), `vss_materialise` (copies made from icat's pipe) and the lnkinfo read of
+`lnk_jumplist` report what a program printed on a pipe: they are not held to the second rule, but a process that holds the pipe is ended, and what came through it is not trusted
+(`vss_materialise` keeps no copy of it; `registry_recover` does not compare the counts). A writer that is no descendant of the program (started through a service manager) is not found.
+
 **Three goal templates** in `goals/`, each with its own questions, definition of
 done and checks: `intrusion-triage.md`, `data-left-the-building.md`,
 `hidden-data.md`. Pass one with `--goal-file`, or write your own beside them.
