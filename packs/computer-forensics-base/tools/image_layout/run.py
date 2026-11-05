@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import select
 import time
 from pathlib import Path
 
@@ -40,7 +41,6 @@ from pathlib import Path
 # the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
 # first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
 # (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
-import select
 import signal
 import time
 
