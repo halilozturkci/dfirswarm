@@ -28,7 +28,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "capture_transform", "version": 3}
+TOOL = {"name": "capture_transform", "version": 4}
 PARSER = "capture_transform/1"
 
 # BEGIN SHARED STOP
@@ -1740,6 +1740,20 @@ def main():
         fail("unexpected failure: %s" % describe(exc) if isinstance(exc, Exception) else "interrupted: %s" % type(exc).__name__)
 
 
+def program_group_problems(what):
+    """Sentences for `problems` from the shared process block's verdict, for an answer that reports `what` (files a program wrote). A process settle() ended means
+    those files hold what it had written when it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) they cannot be shown
+    to be final. process_apply() then keeps the answer from `complete`, and a line under `problems` says why."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def transform(p, started, deadline, out_dir, work, binaries, inputs, input_paths):
     operation = p["operation"]
     problems = []
@@ -1921,14 +1935,18 @@ def transform(p, started, deadline, out_dir, work, binaries, inputs, input_paths
         notes.append("text2pcap made the packets from a text dump: their timestamps (and headers, if an option asked) are synthetic. The file is not evidence that traffic occurred.")
     if zero:
         notes.append("%d derivative(s) hold no packet (%s): the operation selected none." % (len(zero), ", ".join(zero[:5])))
+    group_problems = program_group_problems("the derivatives and the logs")     # a process the program left behind (ended before the outputs were counted and hashed), or a host that cannot show there was none
+    problems.extend(group_problems)
     ok = not problems
     if ok:
         basis = "%s ran, exited 0, and its %d output(s) were counted by capinfos and placed whole; %s" % (
             runs[0]["program"], len(placed_rows),
             "packets in and out are accounted for" if packets_in is not None else "the packets come from a text dump")
     else:
-        basis = "; ".join(problems[:5]) + (" (and %d more, all in problems)" % (len(problems) - 5) if len(problems) > 5 else "") + ": the derivatives are placed whole"
-    answer_out(json.dumps({
+        basis = "; ".join(problems[:5]) + (" (and %d more, all in problems)" % (len(problems) - 5) if len(problems) > 5 else "") + (
+            ": the derivatives are placed as they were when a process the program left behind was ended, and are not shown to be whole (problems)" if group_problems else
+            ": the derivatives are placed whole")
+    answer = {
         "tool": TOOL, "parser": PARSER, "status": "complete" if ok else "partial", "status_basis": basis,
         "operation": operation, "label": LABEL, "out_dir": out_dir,
         "settings": {k: p[k] for k in ("packets", "seconds", "window", "window_seconds", "format", "order", "bpf_filter", "link_type", "ethernet_type", "ip_protocol",
@@ -1942,7 +1960,9 @@ def transform(p, started, deadline, out_dir, work, binaries, inputs, input_paths
         "problems": problems, "notes": notes,
         "ok": ok,
         "originals_untouched": "the inputs were opened for reading only; their size and SHA-256 are in inputs",
-    }, indent=2))
+    }
+    process_apply(answer)             # program_group; a complete answer becomes partial when a program left a process or its absence cannot be proven
+    answer_out(json.dumps(answer, indent=2))
     return 0
 
 

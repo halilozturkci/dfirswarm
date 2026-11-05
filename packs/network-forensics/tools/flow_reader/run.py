@@ -22,7 +22,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "flow_reader", "version": 2}
+TOOL = {"name": "flow_reader", "version": 3}
 PARSER = "flow_reader/1"
 
 # BEGIN SHARED STOP
@@ -2135,6 +2135,20 @@ def main():
         fail("unexpected failure: %s" % describe(exc) if isinstance(exc, Exception) else "interrupted: %s" % type(exc).__name__)
 
 
+def program_group_problems(what):
+    """Sentences for `problems` from the shared process block's verdict, for an answer that reports `what` (files a program wrote). A process settle() ended means
+    those files hold what it had written when it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) they cannot be shown
+    to be final. process_apply() then keeps the answer from `complete`, and a line under `problems` says why."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def answer(p, started, deadline, nfdump, digests, page, work, info_dir):
     PROGRESS["stage"] = "reading the version of nfdump"
     code, out, err, timed_out = preflight([nfdump, "-V"], max(1.0, min(PREFLIGHT_SECONDS, deadline - time.monotonic())))
@@ -2153,6 +2167,8 @@ def answer(p, started, deadline, nfdump, digests, page, work, info_dir):
         problems.extend("file %d: %s" % (f["number"], x) for x in f["problems"])
     if not_read:
         problems.append("the tool's own clock (max_seconds) ran out: %d of %d input(s) were not read" % (not_read, len(p["inputs"])))
+    # nfdump's output is read from the files it wrote (its stdout and stderr are files here): a process it left behind may have written to them
+    problems.extend(program_group_problems("the files nfdump wrote (its records and messages)"))
     PROGRESS["stage"] = "placing the records"
     shown = page.finish()
     cleanup()
@@ -2168,7 +2184,7 @@ def answer(p, started, deadline, nfdump, digests, page, work, info_dir):
                  "printed, and each file's own flow count equals the records read (%d)" % (len(files), tally.records))
     else:
         basis = "; ".join(problems[:5]) + (" (and %d more, all in problems)" % (len(problems) - 5) if len(problems) > 5 else "")
-    answer_out(json.dumps({
+    result = {
         "tool": TOOL, "parser": PARSER, "status": status, "status_basis": basis,
         "declared_format": p["declared"], "backend": {"program": "nfdump", "version": version, "run_as": "a reader: nfcapd and nfpcapd are never run and nothing listens on a port"},
         "time_zone": "UTC", "settings": {"max_records": p["max_records"], "limit": p["limit"], "max_seconds": p["max_seconds"]},
@@ -2177,7 +2193,9 @@ def answer(p, started, deadline, nfdump, digests, page, work, info_dir):
         "totals": tally.summary(), "semantics": SEMANTICS, "not_provided": NOT_PROVIDED,
         "problems": problems, "ok": status == "complete",
         "originals_untouched": "the inputs were opened for reading only; their size and SHA-256 are in files",
-    }, indent=2))
+    }
+    process_apply(result)             # program_group; a complete answer becomes partial when a program left a process or its absence cannot be proven
+    answer_out(json.dumps(result, indent=2))
     return 1 if status == "failed" else 0
 
 

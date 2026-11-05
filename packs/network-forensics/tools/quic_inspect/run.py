@@ -20,7 +20,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "quic_inspect", "version": 2}
+TOOL = {"name": "quic_inspect", "version": 3}
 PARSER = "quic_inspect/1"
 
 # BEGIN SHARED STOP
@@ -2635,6 +2635,17 @@ def attempt_rows(model):
     return pairs
 
 
+def program_group_problems():
+    """Sentences for `problems` from the shared process block's verdict. This tool reports what tshark printed on a pipe (the table is built from it) and keeps tshark's
+    messages in a file; it writes no file of its own that a program wrote, so a host that cannot show that no process was left behind does not make it partial (program_group
+    says so). A process settle() ended is a fact: it may have held the messages file, which is then cut where it was ended, so the answer is at most partial."""
+    verdict = process_verdict()
+    if not verdict["left_behind"]:
+        return []
+    return ["a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+            "stopped, killed and reaped them before the table and the messages file were kept, so what they would still have written is missing" % verdict["left_behind"]]
+
+
 def main():
     started = time.monotonic()
     STATE["last_word"] = last_word
@@ -2803,6 +2814,7 @@ def examine(p, started, deadline, binary, place, work, rows_page, attempts_page,
     except OSError as exc:
         problems.append("tshark's messages could not be kept (%s)" % hide(describe(exc)))
     cleanup()
+    problems.extend(program_group_problems())
     ok = not problems and counts["rows"] > 0
     if counts["rows"] == 0:
         notes.append("tshark dissected no datagram in scope as QUIC: this says nothing about QUIC traffic tshark did not recognise (see udp_443_not_dissected_as_quic), and nothing is inferred from ssl.log")
@@ -2826,7 +2838,7 @@ def examine(p, started, deadline, binary, place, work, rows_page, attempts_page,
         "udp_443_not_dissected_as_quic": other["count"],
         "listing": {"lines": counts["lines"], "bytes": run["bytes"]}, "logs": logs, "diagnostics": diag,
         "contains_secret_values": bool(p["keylog"] or blocks["decryption_secrets_blocks"]),
-        "problems": problems, "notes": notes, "ok": ok,
+        "problems": problems, "notes": notes, "ok": ok, "program_group": process_verdict(),
         "relies_on": "tshark's QUIC dissection (fields read from `tshark -G fields` of this build); the meaning of the field values was not verified against a real capture here",
     }, indent=2))
     return 0

@@ -14,6 +14,7 @@ Use when a conclusion rests on engine output. Not for reading one fingerprint or
 3. **No alert is a statement about the ruleset.** Rules that failed to load, were commented out or target protocols the traffic did not carry cover nothing. When `rule_load.known` is false nothing shows a rule loaded.
 4. **A missing log is not a missing event.** A Zeek log exists only when a loaded script wrote it; compare `logs_requested_not_written` with `logs_empty`, and read `engine_diagnostics` before concluding.
 5. Two engines, or two versions, that disagree are a finding about the engines until the cause is found.
+6. **A process the engine left behind makes the answer `partial`.** If the engine exits 0 and leaves a process running, the tool ends it before it reads the logs (`program_group.left_behind`) and answers `partial`; so does a host that cannot show there was none (`program_group.unproven`, not Linux). The logs are what the engine had written when the process was ended: say so, and do not call the run complete.
 
 Shows: what this engine, configuration and rules produced on this input. Does not show: what another build or ruleset would, or that traffic outside the rules was benign. Record: versions, digests, the dry-run receipt, checksum mode, what the rules target.
 Sensitive output: EVE and Zeek logs carry URLs and names; run as a job with `secret_output: true`.

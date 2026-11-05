@@ -20,6 +20,7 @@ import { basename, join } from "node:path";
 import { test } from "node:test";
 import { NET, TOOLS, TLSD, asJob, body, exists, filesUnder, frameTcp4, gone, ngBlock, ngInterface, ngPacket, ngSection, pcapClassic, put, refused, startDetached, stub, tool, TCP, ticks, u32, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
+import { FEW, PY_LEAVE, alive, exec, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
 
 const TLS = TLSD;
@@ -30,6 +31,7 @@ import json, os, re, sys, time
 d = os.environ["STUB_DIR"]
 args = sys.argv[1:]
 open(os.path.join(d, "calls.log"), "a").write(json.dumps(args) + "\\n")
+${PY_LEAVE}
 plan = json.load(open(os.path.join(d, "plan.json")))
 mode = os.environ.get("STUB_MODE", "")
 prefs = os.environ.get("STUB_PREFS", "tls")
@@ -62,6 +64,9 @@ def decryptable(stream):
     if not s: return False
     return all(re.search(r"^%s %s " % (label, s["random"]), secret_text, re.M) for label in s["need"])
 sys.stderr.write(os.environ.get("STUB_STDERR", ""))
+sys.stderr.flush()
+if os.environ.get("STUB_LEFT") and "-T" in args and "-z" not in args:
+    leave_behind(d, os.environ["STUB_LEFT"], os.readlink("/proc/self/fd/2"))
 if mode == "hang-listing" and "-T" in args:
     import subprocess
     child = subprocess.Popen(["sleep", "300"]); open(os.path.join(d, "child.pid"), "w").write(str(child.pid))
@@ -600,5 +605,53 @@ test("with the real tshark: the TLS 1.2 and TLS 1.3 sessions decrypt with their 
     const out = body(await asJob(TLS, cwd, { ...base, keylog_file: "inputs/keys.log" }));
     assert.match(out.tshark, /TShark/);
     assert.deepEqual(out.flows.map((f: Json) => f.status), ["decrypted", "decrypted"]);
+  });
+});
+
+// ---- a process tshark leaves behind (the shared process block's settle()) ---------------------------------------------------------------------
+// tls_decrypt reports what tshark printed on a pipe and writes the payload files itself; it is not held to the rule that a host which cannot show the absence of a leftover makes the
+// answer partial, but a process settle() ended is a fact, and the answer is then partial and says so.
+
+test("a process tshark leaves behind is ended before the answer and makes it partial; a clean run says program_group; a host that cannot show there was none does not make it partial", { skip }, async () => {
+  const fix = fixture!;
+  const built = scenario(flowsFrom(fix));
+  const job = (cwd: string, dir: string, extra: Record<string, string>) => ({ STUB_DIR: dir, JOB_ID: "j000001", OUT: join(cwd, "out"), SECRET_OUTPUT: "1", ...extra });
+  const args = { ...base, keylog_file: "inputs/keys.log", write_payload: false };
+  for (const variant of ["stderr", "plain", "setsid", "double"]) {
+    await withCwd(async (cwd, bin) => {
+      try {
+        const dir = await setup(cwd, bin, built, { "keys.log": keyLogOf(fix, "tls12", "tls13") });
+        await mkdir(join(cwd, "out"), { recursive: true });
+        const result = await exec(TLS, [], args, cwd, bin, job(cwd, dir, { STUB_LEFT: variant, STUB_STDERR: "tshark: a message\n" }), "linux");
+        assert.equal(result.code, 0, result.stderr + result.stdout);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, "partial", `${variant}: ${out.status_basis}`);
+        assert.equal(out.ok, false);
+        assert.ok(out.program_group.left_behind >= 1, JSON.stringify(out.program_group));
+        assert.match(JSON.stringify(out.problems), /left \d+ process\(es\) running after it ended/);
+
+        const left = await pids(cwd);
+        assert.ok(left.length >= 1, `${variant}: the stand-in left a process`);
+        for (const pid of left) assert.equal(alive(pid), false, `${variant}: leftover ${pid} is gone`);
+        const now = await snapshot(cwd);
+        await sleep(1600);
+        assert.deepEqual(await snapshot(cwd), now, `${variant}: nothing changed after the answer`);
+      } finally {
+        await reap(cwd);
+      }
+    });
+  }
+  await withCwd(async (cwd, bin) => {
+    const dir = await setup(cwd, bin, built, { "keys.log": keyLogOf(fix, "tls12", "tls13") });
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const out = JSON.parse((await exec(TLS, [], args, cwd, bin, job(cwd, dir, {}), "linux")).stdout);
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.deepEqual([out.program_group.left_behind, out.program_group.unproven, out.program_group.subreaper], [0, [], true]);
+    for (const host of ["darwin", "refused"] as const) {
+      const other = JSON.parse((await exec(TLS, [], { ...args, out_dir: `out/${host}` }, cwd, bin, job(cwd, dir, {}), host)).stdout);
+      assert.equal(other.status, "complete", `${host}: a tool that reports only what tshark printed is not held: ${other.status_basis}`);
+      assert.equal(other.program_group.subreaper, false);
+      assert.ok(other.program_group.unproven.length >= 1, host);
+    }
   });
 });

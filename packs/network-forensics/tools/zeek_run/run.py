@@ -50,7 +50,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "zeek_run", "version": 15}
+TOOL = {"name": "zeek_run", "version": 16}
 PARSER = "zeek_run/5"
 
 
@@ -2250,6 +2250,20 @@ def answer_out(text):
         signal.pthread_sigmask(signal.SIG_UNBLOCK, held)
 
 
+def program_group_problems(what):
+    """Sentences for `problems` from the shared process block's verdict, for an answer that reports `what` (files a program wrote). A process settle() ended means
+    those files hold what it had written when it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) they cannot be shown
+    to be final. process_apply() then keeps the answer from `complete`, and a line under `problems` says why."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 DRY_LIST_NAME = "network-forensics.dry-run.zeek"
 DRY_MARK = "network-forensics-dry-run"
 DRY_LIST_SCRIPT = ("# Written by zeek_run (network-forensics pack) for dry_run: it prints each script Zeek loads, once, and reads no capture.\n"
@@ -2443,10 +2457,11 @@ def dry_run_receipt(c):
                 os.chmod(full, 0o700 if os.path.isdir(full) else 0o600)
         except OSError:
             pass
+    problems.extend(program_group_problems("the listing and the logs"))
     ok = not problems
     basis = ("Zeek exited 0, listed the scripts it loaded, and every requested policy is among them; no capture was read" if ok else
              "; ".join(problems[:6]) + (" (and %d more, all in problems)" % (len(problems) - 6) if len(problems) > 6 else "") + ": no capture was read")
-    answer_out(json.dumps({
+    answer = {
         "tool": TOOL, "parser": PARSER, "dry_run": True,
         "status": "complete" if ok else "partial", "status_basis": basis,
         "out_dir": out_dir,
@@ -2494,7 +2509,9 @@ def dry_run_receipt(c):
         "out_dir_contains_secret_values": True,
         "out_dir_note": ("The directory holds Zeek's help, its output while it loaded the policy and the scripts this tool wrote. It is private (mode 0700, files 0600). "
                          "Run this tool as a job with secret_output: true so the job output is sealed."),
-    }, indent=2))
+    }
+    process_apply(answer)
+    answer_out(json.dumps(answer, indent=2))
     return 0
 
 
@@ -2722,6 +2739,8 @@ def main():
     if zeek_version is None:
         problems.append({"why": "`zeek --version` %s, so the version of the engine that wrote these logs is not recorded" %
                          ("did not finish" if version_timed_out else "exited %s" % version_code)})
+    group_problems = program_group_problems("the logs")      # a process Zeek left behind (ended before the logs were read), or a host that cannot show there was none
+    problems.extend({"why": line} for line in group_problems)
     ok = code == 0 and not problems and not total_malformed
     if ok:
         basis = "Zeek exited 0, every log it wrote was read through, and every line fit its header"
@@ -2735,7 +2754,9 @@ def main():
             reasons.append("the tool's own clock for reading the logs ran out (%d log(s) read in part, %d not read)" % (len(logs_cut), len(logs_not_read)))
         if total_malformed:
             reasons.append("%d record(s) did not fit their header (each is kept raw in a malformed-<log>.jsonl file)" % total_malformed)
-        basis = "; ".join(reasons) + ": the logs are whole in out_dir and the records that were read are in the answer"
+        basis = "; ".join(reasons) + (": the logs are in out_dir, but a process Zeek left behind was ended, or none can be ruled out, so they are not shown to be final (problems), and the records that were read are in the answer"
+                                      if group_problems else
+                                      ": the logs are whole in out_dir and the records that were read are in the answer")
     answer = {
         "tool": TOOL, "parser": PARSER,
         "status": "complete" if ok else "partial", "status_basis": basis,
@@ -2792,6 +2813,7 @@ def main():
                  "engine_diagnostics."),
     }
     log_names.close()
+    process_apply(answer)             # program_group: what settle() ended and why the absence of a leftover is unproven; a complete answer becomes partial
     answer_out(json.dumps(answer, indent=2))
     return 0
 

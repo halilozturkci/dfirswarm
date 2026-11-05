@@ -14,6 +14,7 @@ Use when you export objects (HTTP bodies, SMB files, TFTP, mail) from a capture 
 - `index.tsv` ties an HTTP object to a frame only when its bytes equal exactly one listed response body: `matched_by_content` (frame, stream, time, endpoints). `ambiguous` lists the frames; `unmapped` makes no claim and does not show the object was absent from the capture. Other protocols are indexed and unmapped.
 - `display_filter` reaches the export passes only, is not echoed, and may not limit an export on every build: check one object you rely on against the capture. `decryption_secrets_blocks` above 0 means tshark applied keys the pcapng carries, so objects can be decrypted content.
 - tshark is the only engine here: agreement with the recipe's listings is one program agreeing with itself. Use `tcpflow` where the object matters.
+- A process tshark leaves behind after it exits is ended before the objects are indexed and hashed, and the answer is `partial` (`program_group.left_behind`, a line under `errors`); so it is where that cannot be ruled out (not Linux). The objects are what tshark had written by then.
 - Open objects only with trusted parsers in quarantine.
 
 Shows: files tshark exported, their size and digest, and a frame for an exact content match. Does not show: that the endpoint received or opened a file. Record: capture hash, tshark version, receipt, frame and stream, object hash (never a credential's).

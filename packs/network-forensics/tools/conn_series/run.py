@@ -15,7 +15,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "conn_series", "version": 2}
+TOOL = {"name": "conn_series", "version": 3}
 PARSER = "conn_series/1"
 
 
@@ -2659,6 +2659,18 @@ def time_left(deadline, floor=0.0):
     return deadline - time.monotonic() - floor
 
 
+def program_group_problems():
+    """Sentences for `problems` from the shared process block's verdict. In capture mode this tool reports what tshark printed on a pipe and writes the series file itself
+    from it; the only file a program wrote that it keeps is tshark's messages (a conn.log given as the source is no program's output of this run), so a host that cannot
+    show that no process was left behind does not make it partial (program_group says so). A process settle() ended is a fact: it may have held the messages file, which is
+    then cut where it was ended, so the answer is at most partial."""
+    verdict = process_verdict()
+    if not verdict["left_behind"]:
+        return []
+    return ["a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+            "stopped, killed and reaped them before the connections, the series file and the messages file were kept, so what they would still have written is missing" % verdict["left_behind"]]
+
+
 def main():
     started = time.monotonic()
     STATE["last_word"] = last_word
@@ -2852,6 +2864,7 @@ def examine(p, started, deadline, path, place, work, rows_page, digest):
         except OSError as exc:
             problems.append("tshark's messages could not be kept (%s)" % hide(describe(exc)))
     cleanup()
+    problems.extend(program_group_problems())
     ok = not problems
     if cc["kept"] == 0:
         notes.append("no connection matched: this says nothing about connections the source did not record, or that the filters and the window excluded")
@@ -2881,7 +2894,7 @@ def examine(p, started, deadline, path, place, work, rows_page, digest):
         "counts": {**{k: v for k, v in cc.items()}, **({"capture": capture_counts} if capture_counts else {}), **({"log": {k: v for k, v in counts.items() if k != "timed_out"}} if p["conn_log"] else {})},
         "time_semantics": TIME_SEMANTICS["conn_log" if p["conn_log"] else "capture"],
         "resources": {"seconds": round(time.monotonic() - started, 1), "max_rss_kb": usage.ru_maxrss, "connections_kept": cc["kept"], "cap": MAX_CONNECTIONS},
-        "logs": logs, "problems": problems, "notes": notes, "ok": ok,
+        "logs": logs, "problems": problems, "notes": notes, "ok": ok, "program_group": process_verdict(),
         "relies_on": "Zeek's documented conn.log fields (ts, uid, id.*, proto, service, duration, orig_bytes, resp_bytes, conn_state, orig_pkts, resp_pkts) or tshark's -T fields output; a log from a Zeek that writes other formats is read as far as its fields match",
     }, indent=2))
     return 0

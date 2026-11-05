@@ -46,7 +46,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "suricata_run", "version": 14}
+TOOL = {"name": "suricata_run", "version": 15}
 PARSER = "suricata_run/5"
 
 
@@ -2303,6 +2303,20 @@ def write_new(path, data):
         return describe(exc)
 
 
+def program_group_problems(what):
+    """Sentences for `problems` from the shared process block's verdict, for an answer that reports `what` (files a program wrote). A process settle() ended means
+    those files hold what it had written when it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) they cannot be shown
+    to be final. process_apply() then keeps the answer from `complete`, and a line under `problems` says why."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def dry_run_receipt(c):
     """dry_run: the engine receipt without a capture. Nothing here opens a capture, listens on a port or writes outside out_dir. Five parts: the
     identities of the rules and the configuration, the effective configuration (the -T test, the dump of the configuration where the build has the
@@ -2389,12 +2403,13 @@ def dry_run_receipt(c):
                 os.chmod(full, 0o700 if os.path.isdir(full) else 0o600)
         except OSError:
             pass
+    problems.extend(program_group_problems("the configuration dump, the test output and the help"))
     ok = not problems
     generated = c["generated"]
     basis = ("the engine's configuration test passed, every rule loaded, the rules file was read whole%s, and no capture was read" %
              ("" if has_dump else " (this build has no --dump-config: named in effective_configuration.dump_config)") if ok else
              "; ".join(problems[:6]) + (" (and %d more, all in problems)" % (len(problems) - 6) if len(problems) > 6 else "") + ": no capture was read")
-    answer_out(json.dumps({
+    answer = {
         "tool": TOOL, "parser": PARSER, "dry_run": True,
         "status": "complete" if ok else "partial", "status_basis": basis,
         "out_dir": out_dir,
@@ -2440,7 +2455,9 @@ def dry_run_receipt(c):
         "out_dir_contains_secret_values": True,
         "out_dir_note": ("The directory holds the engine's build information, help, test output and the configuration, which can quote rule text. It is private (mode 0700, "
                          "files 0600). Run this tool as a job with secret_output: true so the job output is sealed."),
-    }, indent=2))
+    }
+    process_apply(answer)             # program_group; a complete answer becomes partial when a program left a process or its absence cannot be proven
+    answer_out(json.dumps(answer, indent=2))
     return 0
 
 
@@ -2707,10 +2724,13 @@ def main():
     if read_cut:
         problems.append("eve.json was read only to line %d (stopped at byte %d): the tool's own clock for reading it ran out; the file is whole in out_dir, "
                         "and the events, alerts and counts here are those of the lines read" % (read_cut["lines_read"], read_cut["stopped_at_byte"]))
+    group_problems = program_group_problems("eve.json and the output files")     # a process Suricata left behind (ended before eve.json was read), or a host that cannot show there was none
+    problems.extend(group_problems)
     ok = not problems
     basis = ("the engine exited 0, its configuration test passed, every rule loaded and every EVE line was read as an event" if ok else
-             "; ".join(problems[:6]) + (" (and %d more, all in problems)" % (len(problems) - 6) if len(problems) > 6 else "") + ": eve.json is whole in out_dir")
-    answer_out(json.dumps({
+             "; ".join(problems[:6]) + (" (and %d more, all in problems)" % (len(problems) - 6) if len(problems) > 6 else "") +
+             (": eve.json is in out_dir, but not shown to be final (a process the engine left behind was ended, or none can be ruled out)" if group_problems else ": eve.json is whole in out_dir"))
+    answer = {
         "tool": TOOL, "parser": PARSER,
         "status": "complete" if ok else "partial", "status_basis": basis,
         "path": path, "out_dir": out_dir, "eve_json": eve,
@@ -2761,7 +2781,9 @@ def main():
                  "stdout and stderr are named above. An alert is a rule match on the traffic as the engine reassembled it, not a finding: the rules are "
                  "the caller's, and no ruleset ships with this pack. Checksum validation defaults to none because capture offload commonly leaves "
                  "invalid TCP checksums; use all to test integrity. JA3 and JA4 are pivots, not unique identities of a program."),
-    }, indent=2))
+    }
+    process_apply(answer)
+    answer_out(json.dumps(answer, indent=2))
     return 0
 
 

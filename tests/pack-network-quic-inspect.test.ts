@@ -16,12 +16,14 @@ import { basename, join } from "node:path";
 import { test } from "node:test";
 import { NET, QUICI, TOOLS, asJob, body, exists, filesUnder, frameUdp4, gone, pcapClassic, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
+import { FEW, PY_LEAVE, alive, exec, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
 
 const TSHARK = `#!/usr/bin/env python3
 import json, os, re, sys, time
 d = os.environ["STUB_DIR"]
 args = sys.argv[1:]
 open(os.path.join(d, "calls.log"), "a").write(json.dumps(args) + "\\n")
+${PY_LEAVE}
 mode = os.environ.get("STUB_MODE", "")
 prefs = os.environ.get("STUB_PREFS", "tls")
 missing = [m for m in os.environ.get("STUB_MISSING", "").split(",") if m]
@@ -42,6 +44,9 @@ def opt(flag):
     return args[args.index(flag) + 1] if flag in args else None
 capture = opt("-r")
 sys.stderr.write(os.environ.get("STUB_STDERR", ""))
+sys.stderr.flush()
+if os.environ.get("STUB_LEFT") and "-T" in args and "!quic" not in " ".join(args):
+    leave_behind(d, os.environ["STUB_LEFT"], os.readlink("/proc/self/fd/2"))
 if mode == "hang-listing" and "-T" in args:
     import subprocess
     child = subprocess.Popen(["sleep", "300"]); open(os.path.join(d, "child.pid"), "w").write(str(child.pid))
@@ -512,5 +517,47 @@ test("with the real tshark: the headers of the built datagrams are read as built
     assert.match(out.tshark, /TShark/);
     const first = out.datagrams.find((r: Json) => r.frame === 1);
     assert.equal(first.packets[0].type, "initial");
+  });
+});
+
+// ---- a process tshark leaves behind (the shared process block's settle()) ---------------------------------------------------------------------
+// quic_inspect reports what tshark printed on a pipe and keeps tshark's messages file; it is not held to the rule that a host which cannot show the absence of a leftover makes
+// the answer partial, but a process settle() ended is a fact, and the answer is then partial and says so.
+
+test("a process tshark leaves behind is ended before the answer and makes it partial; a clean run says program_group; a host that cannot show there was none does not make it partial", async () => {
+  for (const variant of ["stderr", "plain", "setsid", "double"]) {
+    await withCwd(async (cwd, bin) => {
+      try {
+        const dir = await setup(cwd, bin, everything());
+        const result = await exec(QUICI, [], { ...base, limit: 50 }, cwd, bin, { STUB_DIR: dir, STUB_LEFT: variant, STUB_STDERR: "tshark: a message\n" }, "linux");
+        assert.equal(result.code, 0, result.stderr + result.stdout);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, "partial", `${variant}: ${out.status_basis}`);
+        assert.equal(out.ok, false);
+        assert.ok(out.program_group.left_behind >= 1, JSON.stringify(out.program_group));
+        assert.match(JSON.stringify(out.problems), /left \d+ process\(es\) running after it ended/);
+
+        const left = await pids(cwd);
+        assert.ok(left.length >= 1, `${variant}: the stand-in left a process`);
+        for (const pid of left) assert.equal(alive(pid), false, `${variant}: leftover ${pid} is gone`);
+        const now = await snapshot(cwd);
+        await sleep(1600);
+        assert.deepEqual(await snapshot(cwd), now, `${variant}: nothing changed after the answer`);
+      } finally {
+        await reap(cwd);
+      }
+    });
+  }
+  await withCwd(async (cwd, bin) => {
+    const dir = await setup(cwd, bin, everything());
+    const out = JSON.parse((await exec(QUICI, [], { ...base, limit: 50 }, cwd, bin, { STUB_DIR: dir }, "linux")).stdout);
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.deepEqual([out.program_group.left_behind, out.program_group.unproven, out.program_group.subreaper], [0, [], true]);
+    for (const host of ["darwin", "refused"] as const) {
+      const other = JSON.parse((await exec(QUICI, [], { ...base, limit: 49 }, cwd, bin, { STUB_DIR: dir }, host)).stdout);
+      assert.equal(other.status, "complete", `${host}: a tool that reports only what tshark printed is not held: ${other.status_basis}`);
+      assert.equal(other.program_group.subreaper, false);
+      assert.ok(other.program_group.unproven.length >= 1, host);
+    }
   });
 });

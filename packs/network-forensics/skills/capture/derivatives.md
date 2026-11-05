@@ -13,6 +13,7 @@ Use when you must change what a capture holds to work with it. Not for judging t
 - `editcap` removes duplicates and splits by time or count: removing duplicates can delete genuine retransmissions or the same packet seen by two sensors, so say what rule was used and what it removed.
 - `mergecap` interleaves captures by timestamp: it does not correct unsynchronised clocks and cannot order input that is unordered inside. Record each input's clock source first.
 - `tcpdump -r IN 'FILTER' -w OUT` is offline filtering only; record the filter text. Never capture live. A filter that selects a host drops the rest of the conversation's context.
+- A process a program leaves behind after it exits is ended before the derivative is counted, hashed and placed, and the answer is `partial` (`program_group.left_behind`; so too where that cannot be ruled out, not Linux): the derivative is what the program had written by then.
 - `text2pcap` builds a capture from a hex dump with headers and times it makes up. Label the result synthetic: it shows what the dump contained, never that traffic occurred.
 
 Shows: which packets your working copy holds and how they were chosen. Does not show: that a packet you filtered out was irrelevant. Record: command, filter, hashes, counts, what each step removed.
