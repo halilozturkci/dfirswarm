@@ -63,7 +63,7 @@ started = time.monotonic()
 res = {}
 if kind == "run_program":
     rec = m.run_program(argv, seconds, 1 << 16)
-    res = {"exit_code": rec["exit_code"], "timed_out": rec["timed_out"], "capped": rec["capped"], "flooded": rec["flooded"], "out": len(rec["output"])}
+    res = {"exit_code": rec["exit_code"], "timed_out": rec["timed_out"], "capped": rec["capped"], "flooded": rec.get("flooded", False), "out": len(rec["output"])}
 elif kind == "preflight":
     code, out, err, timed = m.preflight(argv, seconds)
     res = {"exit_code": code, "timed_out": timed, "out": len(out)}
