@@ -1267,6 +1267,20 @@ def field_names(tshark, wanted, seconds):
     return found, None
 
 
+def program_group_problems(what):
+    """Sentences for the status basis from the shared process block's verdict, for a receipt that reports `what` (files a program wrote: capinfos's and tshark's output).
+    A process settle() ended means those files hold what it had written when it was ended; where the absence of one cannot be proven (not Linux,
+    PR_SET_CHILD_SUBREAPER refused) they cannot be shown to be final. The status is then partial, whatever the steps did."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the recipe's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were counted, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 PROGRESS = {"stage": "checking its arguments"}
 
 
@@ -1461,7 +1475,8 @@ def main():
     unfinished = [s["step"] for s in data["steps"] if s["status"] in ("not_attempted", "running", "failed", "timed_out")]
     # A listing made without a field the installed tshark lacks is a listing with a column fewer than asked for: that is not a complete answer.
     narrowed = {s["step"]: s["fields_missing"] for s in data["steps"] if s.get("fields_missing") and s["status"] == "ok"}
-    data.update(status="complete" if not data["errors"] and not unfinished and not narrowed and not uncounted else "partial", finished=True, elapsed_seconds=round(time.monotonic() - started, 3))
+    group = program_group_problems("capture.txt and the listings")      # a process capinfos or tshark left behind (ended before the rows were counted), or a host that cannot show there was none
+    data.update(status="complete" if not data["errors"] and not unfinished and not narrowed and not uncounted and not group else "partial", finished=True, elapsed_seconds=round(time.monotonic() - started, 3))
     reasons = []
     if data["errors"] or unfinished:
         reasons.append("%d error(s) and %d step(s) that did not finish (coverage.json names each)" % (len(data["errors"]), len(unfinished)))
@@ -1470,11 +1485,13 @@ def main():
     if narrowed:
         reasons.append("%d listing(s) were made without a field the installed tshark does not list (%s): a column of each is missing"
                        % (len(narrowed), "; ".join("%s: %s" % (name, ", ".join(fields)) for name, fields in sorted(narrowed.items()))))
+    reasons.extend(group)
     data["status_basis"] = "every step ran and exited 0 and every listing was written" if not reasons else "; ".join(reasons)
     if narrowed:
         data["listings_without_fields"] = narrowed
+    process_apply(data)               # program_group (the status is already partial where it says so)
     receipt.write()
-    print(json.dumps({"ok": not data["errors"], "status": data["status"], "status_basis": data["status_basis"]}))
+    print(json.dumps({"ok": not data["errors"], "status": data["status"], "status_basis": data["status_basis"], "program_group": data["program_group"]}))
     return 0 if not data["errors"] else 2
 
 

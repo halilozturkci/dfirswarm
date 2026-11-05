@@ -13,6 +13,7 @@ import { basename, join } from "node:path";
 import { test } from "node:test";
 import { BEACON, CONNS, NET, TOOLS, TCP, body, exists, filesUnder, frameTcp4, frameUdp4, gone, pcapClassic, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
+import { FEW, PY_LEAVE, alive, exec, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
 
 type Row = { ts: number | string; uid?: string | null; oh?: string; op?: number | string; rh?: string; rp?: number | string; proto?: string; service?: string | null; duration?: number | string; ob?: number | string; rb?: number | string; state?: string; opk?: number | string; rpk?: number | string };
 
@@ -254,6 +255,7 @@ import json, os, sys, time
 d = os.environ["STUB_DIR"]
 args = sys.argv[1:]
 open(os.path.join(d, "calls.log"), "a").write(json.dumps(args) + "\\n")
+${PY_LEAVE}
 missing = [m for m in os.environ.get("STUB_MISSING", "").split(",") if m]
 NAMES = ["frame.number", "frame.time_epoch", "frame.len", "ip.src", "ip.dst", "ipv6.src", "ipv6.dst", "tcp.srcport", "tcp.dstport", "udp.srcport", "udp.dstport", "tcp.flags", "tcp.seq_raw"]
 if args[:1] == ["--version"]:
@@ -268,6 +270,8 @@ if os.environ.get("STUB_MODE") == "hang-listing" and "-T" in args:
     open(os.path.join(d, "started"), "w").write("1")
     time.sleep(300)
 cols = [args[i + 1] for i, a in enumerate(args) if a == "-e"]
+if os.environ.get("STUB_LEFT") and "-T" in args:
+    leave_behind(d, os.environ["STUB_LEFT"], os.readlink("/proc/self/fd/2"))
 for f in json.load(open(os.path.join(d, "plan.json"))):
     print("\\t".join(str(f.get(c, "")) for c in cols))
 `;
@@ -481,5 +485,48 @@ test("with the real tshark: a capture of two TCP connections and a UDP exchange 
     const out = body(await tool(CONNS, cwd, { capture: "inputs/capture.pcap" }, {}));
     assert.equal(out.observations_total, 3);
     assert.equal(out.counts.capture.syn_retransmissions, 1);
+  });
+});
+
+// ---- a process tshark leaves behind (the shared process block's settle()) ---------------------------------------------------------------------
+// conn_series reports what tshark printed on a pipe and writes its series file itself, so it is not held to the rule that a host which cannot show the absence of a leftover
+// makes the answer partial; but a process settle() ended is a fact, and the answer is then partial and says so.
+
+test("a process tshark leaves behind is ended before the answer and makes it partial; a clean run says program_group; a host that cannot show there was none does not make it partial", async () => {
+  const pkts: Pkt[] = [{ t: T0, src: C, dst: S, sport: 50000, dport: 443, proto: "tcp", flags: TCP.SYN, seq: 1000 }, { t: T0 + 1, src: C, dst: S, sport: 50000, dport: 443, proto: "tcp", flags: TCP.ACK, seq: 1001 }];
+  for (const variant of ["stderr", "plain", "setsid", "double"]) {
+    await withCwd(async (cwd, bin) => {
+      try {
+        const dir = await setupCapture(cwd, bin, pkts);
+        const result = await exec(CONNS, [], { capture: "inputs/capture.pcap" }, cwd, bin, { STUB_DIR: dir, STUB_LEFT: variant }, "linux");
+        assert.equal(result.code, 0, result.stderr + result.stdout);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, "partial", `${variant}: ${out.status_basis}`);
+        assert.equal(out.ok, false);
+        assert.ok(out.program_group.left_behind >= 1, JSON.stringify(out.program_group));
+        assert.match(JSON.stringify(out.problems), /left \d+ process\(es\) running after it ended/);
+
+        const left = await pids(cwd);
+        assert.ok(left.length >= 1, `${variant}: the stand-in left a process`);
+        for (const pid of left) assert.equal(alive(pid), false, `${variant}: leftover ${pid} is gone`);
+        const now = await snapshot(cwd);
+        await sleep(1600);
+        assert.deepEqual(await snapshot(cwd), now, `${variant}: nothing changed after the answer`);
+      } finally {
+        await reap(cwd);
+      }
+    });
+  }
+  await withCwd(async (cwd, bin) => {
+    const dir = await setupCapture(cwd, bin, pkts);
+    const out = JSON.parse((await exec(CONNS, [], { capture: "inputs/capture.pcap" }, cwd, bin, { STUB_DIR: dir }, "linux")).stdout);
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.deepEqual([out.program_group.left_behind, out.program_group.unproven, out.program_group.subreaper], [0, [], true]);
+    for (const host of ["darwin", "refused"] as const) {
+      const other = JSON.parse((await exec(CONNS, [], { capture: "inputs/capture.pcap", limit: 49 }, cwd, bin, { STUB_DIR: dir }, host)).stdout);
+      assert.equal(other.status, "complete", `${host}: a tool that reports only what tshark printed is not held: ${other.status_basis}`);
+      assert.equal(other.program_group.subreaper, false);
+      assert.ok(other.program_group.unproven.length >= 1, host);
+    }
   });
 });

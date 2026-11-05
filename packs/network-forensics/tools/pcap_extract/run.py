@@ -58,7 +58,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "pcap_extract", "version": 11}
+TOOL = {"name": "pcap_extract", "version": 12}
 PARSER = "pcap_extract/5"
 
 
@@ -2691,6 +2691,20 @@ def decryption_secrets(path, seconds=20.0):
     return 0, "no Decryption Secrets Block was found in the pcapng blocks scanned"
 
 
+def program_group_problems(what):
+    """Sentences for `errors` from the shared process block's verdict, for an answer that reports `what` (files a program wrote). A process settle() ended means
+    those files hold what it had written when it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) they cannot be shown
+    to be final. The answer is then partial, and a line under `errors` says why."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were indexed and hashed, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def basis_of(status, why=None):
     """The sentence `status` rests on. While a run is going the file says so; a finished run says what it found."""
     if status == "running":
@@ -2885,10 +2899,14 @@ def main():
         objects.mapping.close()
         objects.long_cells.close()
 
+    group_problems = program_group_problems("the exported objects, the index and the logs")     # a process tshark left behind (ended before the objects were indexed and hashed), or a host that cannot show there was none
+    for line in group_problems:
+        errors.append({"step": "programs", "error": "a process was left behind or its absence cannot be proven", "reason": line})
     ok = not errors
     secrets_blocks, secrets_note = decryption_secrets(path, max(1.0, min(20.0, deadline - time.monotonic())))
     state.update({
         "ok": ok,
+        "program_group": process_verdict(),
         "decryption_secrets_blocks": secrets_blocks,
         "decryption_secrets_note": secrets_note,
         "bytes": sum(r["bytes"] for r in objects.rows if isinstance(r.get("bytes"), int)),
@@ -2918,7 +2936,9 @@ def main():
     })
     done = "complete" if ok else "partial"
     receipt(done, basis=("every pass ran and exited 0, every exported file is indexed, and the association pass ran or was not needed" if ok else
-                         "%d pass(es) or step(s) did not finish or did not succeed (errors names each); what was exported is indexed" % len(errors)))
+                         "%d pass(es) or step(s) did not finish or did not succeed (errors names each); what was exported is indexed" % len(errors) +
+                         ("; a process tshark left behind was ended, or none can be ruled out, so the exported files are not shown to be final" if group_problems else "")))
+    process_apply(state)              # program_group (the same verdict the receipt holds); a complete answer cannot have got here with a leftover
     print(json.dumps(state, indent=2))
     return 0
 

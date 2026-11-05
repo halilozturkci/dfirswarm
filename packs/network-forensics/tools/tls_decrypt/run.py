@@ -22,7 +22,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "tls_decrypt", "version": 2}
+TOOL = {"name": "tls_decrypt", "version": 3}
 PARSER = "tls_decrypt/1"
 
 # BEGIN SHARED STOP
@@ -2632,6 +2632,17 @@ def finish_row(flow, status, reason, p, version, keylog_sessions):
     return row
 
 
+def program_group_problems():
+    """Sentences for `problems` from the shared process block's verdict. This tool reports what tshark printed on a pipe and writes the payload files itself from it; the
+    only file a program wrote that it keeps is tshark's messages, so a host that cannot show that no process was left behind does not make it partial (program_group says
+    so). A process settle() ended is a fact: it may have held the messages file, which is then cut where it was ended, so the answer is at most partial."""
+    verdict = process_verdict()
+    if not verdict["left_behind"]:
+        return []
+    return ["a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+            "stopped, killed and reaped them before the flows, the payload files and the messages file were kept, so what they would still have written is missing" % verdict["left_behind"]]
+
+
 def main():
     started = time.monotonic()
     STATE["last_word"] = last_word
@@ -2824,6 +2835,7 @@ def examine(p, started, deadline, binary, out_dir, work):
     cleanup()
     if p["write_payload"] and payload_failed:
         problems.append("%d decrypted flow(s) gave no payload file" % payload_failed)
+    problems.extend(program_group_problems())
     ok = not problems and bool(flows)
     if not flows:
         notes.append("no TCP frame matched the scope: nothing was judged")
@@ -2842,7 +2854,7 @@ def examine(p, started, deadline, binary, out_dir, work):
         "status_counts": totals,
         "payloads": payloads, "payload_requested": p["write_payload"], "payload_flows_not_attempted": payload_not_attempted,
         "contains_secret_values": bool(payloads), "logs": logs, "diagnostics": diag, "listing": {"lines": counts["lines"], "bytes": run["bytes"]},
-        "problems": problems, "notes": notes, "ok": ok,
+        "problems": problems, "notes": notes, "ok": ok, "program_group": process_verdict(),
         "relies_on": ("tshark's tls dissector fields (record.content_type, handshake.type, handshake.random, app_data_proto) and `-z follow,%s,raw,N`; they were read from "
                       "`tshark -G fields` of this build, and their meaning was not verified against a real capture here" % prefix),
     }, indent=2))
