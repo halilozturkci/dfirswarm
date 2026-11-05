@@ -2537,6 +2537,16 @@ def assemble(state):
             continue
         lines.append("%s\tleft by an earlier run in this directory; kept, and not part of this result" % name)
     coverage["outputs"] = {k: v for k, v in {"matches": state.get("matches"), **{e["id"]: e.get("file") for e in engines.values()}}.items() if v}
+    if SUB["tried"]:
+        # The engines' files are what a program wrote: a process settle() ended, or a host that cannot show there was none, means they are not shown to be final.
+        verdict = process_verdict()
+        if verdict["left_behind"]:
+            coverage["errors"].append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process "
+                                      "block stopped, killed and reaped them, so what they would still have written is missing from the engines' files" % verdict["left_behind"])
+        for why in verdict["unproven"]:
+            coverage["errors"].append("%s: the engines' files cannot be shown to be final" % why)
+        process_apply(coverage)
+        status = coverage["status"]
     return status, coverage, lines
 
 
@@ -2651,7 +2661,6 @@ def run(path, out_dir, fmt, budget):
 
     STATE["last_word"] = last_word
     install_signal_handlers()
-    own_subreaper()
     for engine in ENGINES:
         state["engines"][engine["id"]] = {"id": engine["id"], "program": engine["program"], "status": "failed", "reason": "%s has not run" % engine["program"],
                                           "argv": [engine["program"]] + engine["argv"] + ["<sample>"], "seconds": engine["seconds"], "file": None, "stderr_file": None,
@@ -2732,45 +2741,15 @@ def run_engines(state, sample, budget, started, unfinished):
         unfinished()
 
 
-SUBREAPER = [False]
-
-
-def own_subreaper():
-    """On Linux, ask the kernel to make this process the parent of any process an engine leaves behind (PR_SET_CHILD_SUBREAPER = 36), so that
-    one that called setsid or double-forked and outlived its parent can still be found and ended. macOS has no such call: there an orphan
-    of an engine that exited by itself is not found (the tree is walked, and killed, only while its parent is alive)."""
-    if sys.platform.startswith("linux") and ctypes is not None:
-        try:
-            SUBREAPER[0] = ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
-        except Exception:  # noqa: BLE001
-            SUBREAPER[0] = False
-
-
 SWEPT = [0]    # how many processes the process block's settle() had ended when sweep_orphans last looked
 
 
 def sweep_orphans():
-    """End every process still below this one (an engine has exited, so none should be) and reap what can be reaped; how many were ended,
-    counting what the process block's settle() ended when the engine left ACTIVE (it ends them first, so they are not below this one by now)."""
+    """Look once more for what an engine left behind (the process block's settle(); the tool is a subreaper, spawn() asked for it) and return how many live
+    processes it has ended since the last look, counting the ones it ended when the engine left ACTIVE."""
+    settle()
     ended = LEFT["left_behind"] - SWEPT[0]
     SWEPT[0] = LEFT["left_behind"]
-    if not SUBREAPER[0]:
-        return ended
-    for _ in range(4):
-        victims = descendants(os.getpid())
-        if not victims:
-            break
-        for pid in victims:
-            try:
-                os.kill(pid, signal.SIGKILL)
-                ended += 1
-            except OSError:
-                pass
-        for pid in victims:
-            try:
-                os.waitpid(pid, 0)
-            except OSError:
-                pass
     return ended
 
 

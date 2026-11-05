@@ -1379,6 +1379,16 @@ def assemble(state):
             continue
         lines.append("%s\tleft by an earlier run in this directory; kept, and not part of this result" % name)
     coverage["outputs"] = {k: v for k, v in names.items()}
+    if SUB["tried"]:
+        # The two tools it runs (pe_info, entropy_map) are this pack's own Python and start no program (tests/pack-re-process.test.ts bans it), so there is nothing a host
+        # that cannot adopt orphans could have missed: program_group says what the host could prove, and only a process settle() actually ended makes the result partial.
+        verdict = process_verdict()
+        coverage["program_group"] = verdict
+        if verdict["left_behind"]:
+            coverage["errors"].append("a tool the recipe ran left %d process(es) running after it ended; the shared process block stopped, killed and reaped them, so what they would "
+                                      "still have written is missing from the files of this run" % verdict["left_behind"])
+            if status == "complete":
+                status = coverage["status"] = "partial"
     return status, coverage, lines
 
 

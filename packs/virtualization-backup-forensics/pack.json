@@ -1,7 +1,7 @@
 {
   "id": "virtualization-backup-forensics",
   "name": "Virtualization and Backup Forensics Pack",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "description": "Method and tooling for the control plane of virtualization and backup: what hypervisor management records and VM configuration files say, whether a snapshot or disk chain is complete and which markers a consolidation or an unclean close may leave, what a backup catalogue, job record and retention setting show, and which recovery points survive. It reads exports and configuration files offline; it never runs hypervisor or backup software, reads no guest content, and supports only the products its tools list.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,7 +18,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "1f0e441b7676af8bf6c0862e60624424952f116041e05d7f605a94d1c5692f74",
+      "README.md": "2575edf64835e5443e2d6bb46e667cb1a129afe726a0da69002595d587e433f6",
       "goals/what-recovery-survives.md": "f3900b9667ad619f3efa79f0deecdc3c5a654ca5108a06e50a9ce83865c62c5f",
       "requires/host.json": "064c01d7d1d7182f054ad3b8b4682b7f588d74d0baf9177aabf86fa9716b7ebe",
       "requires/python.txt": "fa9a8f44dea09e8f1cdc03b90e14051ddf8ab2526fd075e952166541f7ec5bb3",
@@ -39,8 +39,8 @@
       "tools/backup_audit_normalise/manifest.json": "39c37e97aae9f7aff9c80bed231459e717a33245a85a1edd5efbfe20594734ad",
       "tools/backup_audit_normalise/presets/proxmox-backup-client-snapshot-list.json": "09357c591462951708819c1f5c70ba255764d54583f9f1eaa0067029ad9e88de",
       "tools/backup_audit_normalise/run.py": "44af7c8baa8faedd5d332eeb3d6bc49d3e9aa6de231aadfbee2da58c2c42cb2a",
-      "tools/snapshot_chain_check/manifest.json": "43b30ab5eeae663bfea35b66afc4f621603462ffacc146f29d6bcf260fa057f2",
-      "tools/snapshot_chain_check/run.py": "ab4215ee42e7c91ed4a855ad64299372be7e116c33de6219efc3e5dd4b33317f",
+      "tools/snapshot_chain_check/manifest.json": "28d48c1ce2de8329c87932ad62e496edf1d68d26fffde65f289194199fc88707",
+      "tools/snapshot_chain_check/run.py": "d4c741d6a882a95b3f3230d64d4c1260b3f859de37a6f9af56ffb52924593e76",
       "tools/virtualization_inventory/manifest.json": "c6f5850acfb6bfe8cde565edf9fd30184710fb383988a004e13790f6c64a0b33",
       "tools/virtualization_inventory/run.py": "848b96ad600704fa7c8bd30aa54274be800ea0407012e3a924f50a8678cd147d"
     }

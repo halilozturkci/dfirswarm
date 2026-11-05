@@ -50,7 +50,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-TOOL = {"name": "doc_structure", "version": 10}
+TOOL = {"name": "doc_structure", "version": 11}
 PARSER = "doc_structure/1"
 NOTE = ("Static structure only. A structure shows what the file holds, not what an application would do with it: an action, a macro, "
         "a field or an external target does not show that anything ran or was fetched. Record what was read and what was not before "
@@ -7543,10 +7543,13 @@ def unsupported_variants(container, body, encryption_items):
     return found
 
 
+LATE_BYTES = 1 << 20      # the most that is read from the pipe of a program that has ended (a pipe holds 64 KiB, so that is its own last words and a flood's first)
+
+
 def run_program(argv, seconds, cap):
     """One program, its output (stdout and stderr) read through a pipe up to `cap` bytes; at `seconds` or past the cap it and what it started
-    are ended. The record: exit_code, timed_out, capped, seconds, output (bytes), launch_failed."""
-    rec = {"exit_code": None, "timed_out": False, "capped": False, "seconds": 0.0, "output": b"", "launch_failed": None}
+    are ended. The record: exit_code, timed_out, capped, seconds, output (bytes), launch_failed, flooded (a process the program left kept writing into the pipe after the program had ended)."""
+    rec = {"exit_code": None, "timed_out": False, "capped": False, "flooded": False, "seconds": 0.0, "output": b"", "launch_failed": None}
     started = time.monotonic()
     limit = max(0.5, seconds)
     try:
@@ -7555,12 +7558,20 @@ def run_program(argv, seconds, cap):
         rec["launch_failed"] = "the program could not be started: %s" % describe(exc)
         return rec
     ACTIVE.append(proc)
-    chunks, total, ended = [], 0, None
+    chunks, total, late, ended = [], 0, 0, None
     try:
         fd = proc.stdout.fileno()
         while True:
             now = time.monotonic()
-            if now - started >= limit:
+            if proc.poll() is not None:
+                # The program has ended. Whatever it started and left holding the pipe (a writer, a silent holder) gets PIPE_GRACE seconds, and never more
+                # than the call's own clock: a leftover that writes every few milliseconds must not hold this call to its whole time, and the program
+                # that ended is not a program that timed out.
+                ended = ended if ended is not None else now
+                if now - ended > PIPE_GRACE or now - started >= limit:
+                    reap_orphans(_pipe_inodes(proc))
+                    break
+            elif now - started >= limit:
                 rec["timed_out"] = True
                 kill_tree(proc)
                 break
@@ -7570,16 +7581,17 @@ def run_program(argv, seconds, cap):
                 if not data:
                     break
                 total += len(data)
+                late += len(data) if ended is not None else 0
                 if total > cap:
-                    rec["capped"] = True
-                    kill_tree(proc)
+                    if ended is None and proc.poll() is None:
+                        rec["capped"] = True
+                        kill_tree(proc)
+                    else:
+                        rec["flooded"] = True       # a program that has ended did not print past the cap: what is read after it is a process it left behind, writing
                     break
                 chunks.append(data)
-                continue
-            if proc.poll() is not None:
-                ended = ended if ended is not None else now
-                if now - ended > PIPE_GRACE:
-                    reap_orphans(_pipe_inodes(proc))
+                if late > LATE_BYTES:
+                    rec["flooded"] = True               # a pipe holds 64 KiB: more than this after the program has ended is something it left behind, writing
                     break
         try:
             proc.wait(timeout=max(0.2, limit - (time.monotonic() - started)))
@@ -7588,11 +7600,15 @@ def run_program(argv, seconds, cap):
             kill_tree(proc)
             proc.wait()
     finally:
+        # What the program left behind is ended (settle(), through ACTIVE.remove) while the pipe is still open: a leftover that writes at full speed would otherwise die of
+        # SIGPIPE the moment the pipe is closed, before settle() looked, and the call would count none and read as clean.
+        if proc.poll() is not None:
+            reap_orphans(_pipe_inodes(proc))
+        ACTIVE.remove(proc)
         try:
             proc.stdout.close()
         except (OSError, ValueError):
             pass
-        ACTIVE.remove(proc)
     rec["exit_code"] = proc.returncode
     rec["seconds"] = round(time.monotonic() - started, 3)
     rec["output"] = b"".join(chunks)
@@ -7791,6 +7807,11 @@ def second_reading(path, container, variants, hard_end):
         out["status"] = "not_finished"
         out["basis"] = "%s was ended: %s" % (name, "it ran past its time" if ran["timed_out"] else "it printed more than %d bytes" % SECOND_OUTPUT_BYTES)
         (limits if ran["timed_out"] else problems).append("%s: the second reading by %s was ended" % ("time" if ran["timed_out"] else "output", name))
+        return out, problems, limits
+    if ran["flooded"]:
+        out["status"] = "not_finished"
+        out["basis"] = "%s ended, and a process it left running kept writing into its output (more than %d bytes after it had ended): the pipe was let go, and what had been read is not a reading" % (name, LATE_BYTES)
+        problems.append("output: a process %s left running flooded its output pipe after it ended: no second reading" % name)
         return out, problems, limits
     text = ran["output"].decode("utf-8", "replace")
     if pdf:
@@ -8070,6 +8091,12 @@ def main():
             ctx.problem(text)
         for text in second_limits:
             ctx.limit_hit(text)
+        verdict = process_verdict()
+        if verdict["left_behind"]:
+            # The second reading reports what a program printed on a pipe, so a host that cannot show that nothing was left does not make it partial (program_group says so);
+            # a process settle() ended is a fact: the pipe was let go at the grace, and what the process would still have printed is not in the reading.
+            ctx.problem("the program of the second reading left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); "
+                        "the shared process block stopped, killed and reaped them, so what they would still have printed is not in the second reading" % verdict["left_behind"])
     spill = Spill(ctx, max(cfg["limit"], SPILL_FLOOR))
     if stop is not None:
         emit({**head_out, **body, "status": "failed", "status_basis": stop.message, "error": stop.message,
@@ -8108,6 +8135,8 @@ def main():
               "withheld": COUNTS, "secret_values": values.summary(), "note": NOTE}
     if second_out is not None:
         result["second_reading"] = second_out
+    if SUB["tried"]:
+        result["program_group"] = process_verdict()      # only a call that started a program has one; an answer that read the file alone has no program to account for
     if ctx.names.shown:
         result["withheld_names_file"] = ctx.names.shown
         result["withheld_names_note"] = ("The real name behind every name withheld here is in this file (mode 0600, always written when a name is withheld): "

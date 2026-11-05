@@ -29,7 +29,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "authenticode_verify", "version": 3}
+TOOL = {"name": "authenticode_verify", "version": 4}
 PARSER = "authenticode_verify/1"
 
 
@@ -2564,11 +2564,14 @@ def certificate_table(fd, size, info):
 
 # --- running the program ------------------------------------------------------------------------------------------------------------
 
+LATE_BYTES = 1 << 20      # the most that is read from the pipe of a program that has ended (a pipe holds 64 KiB, so that is its own last words and a flood's first)
+
+
 def run_program(argv, seconds, cap):
     """Start one program (merged stdout and stderr through a pipe) and read at most `cap` bytes of its output, until it ends, `seconds` have
     passed (the program and what it started are killed) or the cap is passed (the same). The record: exit_code, timed_out, capped, seconds,
-    output (bytes), launch_failed."""
-    rec = {"exit_code": None, "timed_out": False, "capped": False, "seconds": 0.0, "output": b"", "launch_failed": None}
+    output (bytes), launch_failed, flooded (a process the program left kept writing into the pipe after the program had ended)."""
+    rec = {"exit_code": None, "timed_out": False, "capped": False, "flooded": False, "seconds": 0.0, "output": b"", "launch_failed": None}
     started = time.monotonic()
     limit = max(0.5, seconds)
     try:
@@ -2577,12 +2580,20 @@ def run_program(argv, seconds, cap):
         rec["launch_failed"] = "the program could not be started: %s" % describe(exc)
         return rec
     ACTIVE.append(proc)
-    chunks, total, ended = [], 0, None
+    chunks, total, late, ended = [], 0, 0, None
     try:
         fd = proc.stdout.fileno()
         while True:
             now = time.monotonic()
-            if now - started >= limit:
+            if proc.poll() is not None:
+                # The program has ended. Whatever it started and left holding the pipe (a writer, a silent holder) gets PIPE_GRACE seconds, and never more
+                # than the call's own clock: a leftover that writes every few milliseconds must not hold this call to its whole time, and the program
+                # that ended is not a program that timed out.
+                ended = ended if ended is not None else now
+                if now - ended > PIPE_GRACE or now - started >= limit:
+                    reap_orphans(_pipe_inodes(proc))
+                    break
+            elif now - started >= limit:
                 rec["timed_out"] = True
                 kill_tree(proc)
                 break
@@ -2592,17 +2603,17 @@ def run_program(argv, seconds, cap):
                 if not data:
                     break
                 total += len(data)
+                late += len(data) if ended is not None else 0
                 if total > cap:
-                    rec["capped"] = True
-                    kill_tree(proc)
+                    if ended is None and proc.poll() is None:
+                        rec["capped"] = True
+                        kill_tree(proc)
+                    else:
+                        rec["flooded"] = True       # a program that has ended did not print past the cap: what is read after it is a process it left behind, writing
                     break
                 chunks.append(data)
-                continue
-            if proc.poll() is not None:
-                # the program has ended and its pipe is still open: something it started holds it; give it a moment, then let go
-                ended = ended if ended is not None else now
-                if now - ended > PIPE_GRACE:
-                    reap_orphans(_pipe_inodes(proc))
+                if late > LATE_BYTES:
+                    rec["flooded"] = True               # a pipe holds 64 KiB: more than this after the program has ended is something it left behind, writing
                     break
         try:
             proc.wait(timeout=max(0.2, limit - (time.monotonic() - started)))
@@ -2611,11 +2622,15 @@ def run_program(argv, seconds, cap):
             kill_tree(proc)
             proc.wait()
     finally:
+        # What the program left behind is ended (settle(), through ACTIVE.remove) while the pipe is still open: a leftover that writes at full speed would otherwise die of
+        # SIGPIPE the moment the pipe is closed, before settle() looked, and the call would count none and read as clean.
+        if proc.poll() is not None:
+            reap_orphans(_pipe_inodes(proc))
+        ACTIVE.remove(proc)
         try:
             proc.stdout.close()
         except (OSError, ValueError):
             pass
-        ACTIVE.remove(proc)
     rec["exit_code"] = proc.returncode
     rec["seconds"] = round(time.monotonic() - started, 3)
     rec["output"] = b"".join(chunks)
@@ -3052,6 +3067,17 @@ def main():
     install_signal_handlers()
 
     def finish(status, basis, verification="not_checked", verification_basis=None, signatures=None, **extra):
+        ran_program = SUB["tried"]
+        verdict = process_verdict() if ran_program else None
+        if verdict and verdict["left_behind"]:
+            # The verification is what osslsigncode printed on a pipe, so a host that cannot show that nothing was left does not make it partial (program_group says so);
+            # a process settle() ended is a fact: the pipe was let go at the grace, and what the process would still have printed is not in the reading.
+            problems.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process "
+                            "block stopped, killed and reaped them, so what they would still have printed is not in the output that was read" % verdict["left_behind"])
+            if status == "complete":
+                status = "partial"
+                basis = "%s; osslsigncode left %d process(es) running after it ended, which the tool ended: the output was read before that" % (basis, verdict["left_behind"])
+                limits_hit.append("process_left_behind")
         answer = {
             "tool": TOOL, "parser": PARSER, "status": status, "status_basis": basis, "file": original,
             "pe": {"format": info["format"], "machine": info["machine"], "clr_header_declared": info["clr_declared"]},
@@ -3066,6 +3092,8 @@ def main():
             "limits_hit": limits_hit, "problems": problems, "notes": notes + process_notes(),
             "coverage": {"read": READ, "not_read": NOT_READ}, "note": NOTE, **extra,
         }
+        if verdict is not None:
+            answer["program_group"] = verdict
         print_answer(build_answer(answer))
         raise SystemExit(0 if status in ("complete", "partial") else 1)
 
@@ -3107,6 +3135,10 @@ def main():
     if ran["capped"]:
         limits_hit.append("program_output_bytes")
         finish("partial", "`osslsigncode verify` printed more than %d bytes and was ended: what it had printed is not read as a verification" % MAX_PROGRAM_OUTPUT)
+    if ran["flooded"]:
+        limits_hit.append("program_output_bytes")
+        finish("partial", "`osslsigncode verify` ended, and a process it left running kept writing into its output (more than %d bytes after the program had ended): the pipe was let go, "
+                          "and what had been read is not read as a verification" % LATE_BYTES)
     if ran["exit_code"] not in (0, 1):
         finish("failed", "`osslsigncode verify` ended with exit status %s (its words are not kept): nothing was verified" % ran["exit_code"])
     reading = read_output(ran["output"].decode("utf-8", "replace"))

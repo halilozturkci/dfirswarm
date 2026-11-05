@@ -5551,6 +5551,14 @@ def main():
                     partial.append("qemu-img was not run on %d eligible image(s) (%s; first %s)" % (skipped[why], "qemu_img_max_images (%d) was reached" % qemu_max if why != "max_seconds" else "max_seconds was near", skipped_first[why]))
             if qemu_report["checked"] == 0 and not failed_runs:
                 qemu_report["note"] += "; no parsed image was eligible"
+        if SUB["tried"]:
+            # qemu-img's second reading is what it printed on a pipe, so a host that cannot show that nothing was left does not make the answer partial (program_group says so);
+            # a process settle() ended is a fact: the pipe was let go at the grace, and what the process would still have printed is not in the second reading.
+            if PIPE_CUT["cut"] and not process_verdict()["left_behind"]:
+                partial.append("a process that held qemu-img's pipe after it ended went on writing: the tool read %d bytes of it and let the pipe go, so the second reading is not trusted" % POST_EXIT_BYTES)
+            if process_verdict()["left_behind"]:
+                partial.append("qemu-img left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block stopped, "
+                               "killed and reaped them, so what they would still have printed is not in the second reading" % process_verdict()["left_behind"])
 
     # ---- disks page ------------------------------------------------------------------------------------------------
     listed = 0
@@ -5614,7 +5622,7 @@ def main():
                        "format as qcow2 over a file that is raw (or any file this tool does not read as a disk) is `parent_unreadable`: the file found is not the format the child "
                        "declares, and no identity of it is compared."),
         "walk": files.skipped_summary(), "walk_truncated": files.truncated, "partial_reasons": partial, "lock_directories_total": files.lock_dirs_total,
-        "qemu_img": qemu_report,
+        "qemu_img": qemu_report, **({"program_group": process_verdict()} if SUB["tried"] else {}),
         "text": values.summary(), "withheld": withheld_summary(shown),
         "truncated": any(p["truncated"] for p in result_pages.values()),
         "limits": {"max_files": max_files, "max_entries": max_entries, "max_depth": max_depth, "max_snapshots": max_snapshots, "max_chain_depth": max_chain, "descriptor_read_cap": MAX_DESCRIPTOR},

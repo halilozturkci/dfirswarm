@@ -84,6 +84,13 @@ events, Hyper-V's binary configuration, Nutanix, oVirt and XenServer. A declared
 mapping can read a CSV, JSON Lines, JSON array or XML export of any of them, and
 says it is declared.
 
+## A program that leaves a process behind
+
+With `qemu_img`, `snapshot_chain_check` reports what `qemu-img info` printed on a pipe. The pipe of a `qemu-img` that has ended is read for at most one more second and 1 MiB and then let go (what still holds it is ended first), so a
+process it left running does not hold the call, and a `qemu-img` that exited is not reported as timed out. A process the shared process block had to end makes the answer
+`partial` (a line in `partial_reasons`); a host that cannot adopt orphans (not Linux, or the kernel refuses `PR_SET_CHILD_SUBREAPER`) does not, and `program_group.unproven` says
+it. A call that ran `qemu-img` carries `program_group` (`subreaper`, `left_behind`, `unproven`, `notes`). The other tools of the pack start no program.
+
 ## Install and use
 
     scripts/pack.sh install packs/computer-forensics-base
