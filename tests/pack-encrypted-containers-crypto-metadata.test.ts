@@ -351,7 +351,22 @@ test("Core Storage and APFS: the reader's counts, and the container flag this to
 test("a missing reader is unavailable and named, with the structure this tool read; never an empty list", async () => {
   await withCwd(async (cwd) => {
     const vol = await volume(cwd, "v.img", luks1(uuid()));
-    const a = body(await asJob(SCRIPT, cwd, { path: vol }, undefined, { PATH: "/usr/bin:/bin" }));
+    // Hermetic: the tool looks for cryptsetup on PATH and then in /usr/sbin:/sbin:/usr/local/sbin (EXTRA_PATH), and a runner may
+    // have it in any of them. So the tool runs from a copy whose EXTRA_PATH names an empty directory, with a PATH that holds only
+    // the interpreter (a link to python3) and nothing else.
+    const empty = join(cwd, "no-reader");
+    const only = join(cwd, "python-only");
+    await mkdir(empty, { recursive: true });
+    await mkdir(only, { recursive: true });
+    const py = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" }).stdout.trim();
+    assert.ok(py.startsWith("/"), "the interpreter is found");
+    await symlink(py, join(only, "python3"));
+    const source = await readFile(SCRIPT, "utf8");
+    const line = 'EXTRA_PATH = "/usr/sbin:/sbin:/usr/local/sbin"';
+    assert.equal(source.split(line).length, 2, "the tool names its extra search path once");
+    const copy = join(cwd, "crypto_metadata_no_reader.py");
+    await writeFile(copy, source.replace(line, `EXTRA_PATH = ${JSON.stringify(empty)}`));
+    const a = body(await asJob(copy, cwd, { path: vol }, undefined, { PATH: only }));
     assert.equal(a.status, "unavailable");
     assert.equal(a.reader.program, "cryptsetup");
     assert.equal(a.reader.status, "unavailable");
