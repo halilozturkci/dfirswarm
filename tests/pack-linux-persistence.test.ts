@@ -272,7 +272,8 @@ test("linux_persistence honours max_seconds on a directory of many units, says w
     await mkdir(sys, { recursive: true });
     for (let i = 0; i < 20000; i++) await writeFile(join(sys, `u${String(i).padStart(5, "0")}.service`), "[Service]\nExecStart=/bin/x\n");
     const started = Date.now();
-    const out = body(await tool(PERSIST, cwd, { root: R, max_seconds: 1, limit: 3 }));
+    // A tenth of a second, not one: a fast host reads 20000 small units inside a whole second and the answer is then complete.
+    const out = body(await tool(PERSIST, cwd, { root: R, max_seconds: 0.1, limit: 3 }));
     const took = (Date.now() - started) / 1000;
     assert.ok(took < 4.5, `took ${took}s`);
     assert.equal(out.status, "partial");

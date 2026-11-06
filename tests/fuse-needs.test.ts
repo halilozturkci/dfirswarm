@@ -30,7 +30,7 @@ test("the manifests of the tools that mount declare needs fuse, and packNeeds re
   const needs = packNeeds([join(ROOT, "packs/memory-forensics"), join(ROOT, "packs/windows-forensics"), join(ROOT, "packs/network-forensics")]);
   const by = Object.fromEntries(needs.map((n) => [n.id, n.mounts]));
   assert.deepEqual(by["memory-forensics"], ["mem_fs"]);
-  assert.deepEqual(by["windows-forensics"], ["vss_stores"]);
+  assert.deepEqual(by["windows-forensics"], ["vss_materialise", "vss_stores"]);
   assert.equal(by["network-forensics"], undefined);
 });
 
