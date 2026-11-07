@@ -42,7 +42,8 @@ test("a census of 10 million rows is aggregated into the index in bounded memory
     assert.equal(out.files, 10_000_000);
     assert.equal(out.candidates, 1_000_000);
     assert.ok(out.census_bytes > 500_000_000, `${out.census_bytes} bytes of census`);
-    assert.ok(out.rss_kb < 120_000, `the tool's resident size was ${out.rss_kb} KB, over the bound of 120,000 KB`);
+    const rssKb = process.platform === "darwin" ? out.rss_kb / 1024 : out.rss_kb;   // ru_maxrss is in bytes on macOS, in KB on Linux
+    assert.ok(rssKb < 120_000, `the tool's resident size was ${rssKb} KB, over the bound of 120,000 KB`);
     assert.ok((await stat(join(dir, out.index))).size < 1_000_000, "the index holds sums, not rows");
   } finally {
     await rm(dir, { recursive: true, force: true });

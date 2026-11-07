@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ZEEK, asJob, body, everythingUnder, exists, filesUnder, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 
@@ -579,7 +580,7 @@ test("a stop signal during the run prints partial JSON with the stage and the lo
   }
 });
 
-test("every answer carries status and status_basis, a reporter message over 500 characters says where the whole is, and a run whose logs are whole is complete", async () => {
+test("every answer carries status and status_basis, a reporter message over 500 characters says where the whole is, and a run whose logs are whole is complete", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, {
       "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
@@ -598,7 +599,7 @@ function conn(rows: number): string {
   return tsvLog("conn", CONN_FIELDS, CONN_TYPES, Array.from({ length: rows }, (_, i) => [`1700000000.${String(i % 1000000).padStart(6, "0")}`, `C${i}xAbCdEfGhIjKl`, "10.0.0.5", "50000", "203.0.113.7", "443", "tcp", "0.25", "120", "3400", "T", "(empty)"]));
 }
 
-test("the logs are read under the tool's own clock: a log still being read when it runs out is read in part and said so, a log never reached is named, and both are whole on disk", async () => {
+test("the logs are read under the tool's own clock: a log still being read when it runs out is read in part and said so, a log never reached is named, and both are whole on disk", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const text = conn(150_000);
     await stage(cwd, bin, { "conn.log": text, "dns.log": tsvLog("dns", ["ts", "uid"], ["time", "string"], [["1700000000.1", "CabcdefGHIJKLMNOP"]]) });
@@ -779,7 +780,7 @@ test("dry_run refuses a path, reads no capture and names no interface", async ()
   });
 });
 
-test("dry_run writes only under out_dir and gives the receipt: identities, the effective configuration, the script-load status, the log outputs and what is not covered", async () => {
+test("dry_run writes only under out_dir and gives the receipt: identities, the effective configuration, the script-load status, the log outputs and what is not covered", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stageDry(cwd, bin, { writesLog: true });
     const before = await filesUnder(cwd);

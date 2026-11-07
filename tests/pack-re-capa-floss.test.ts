@@ -19,6 +19,7 @@ import { RE, childrenOf, gone, pidFile, put, startDetached, stub, withCwd } from
 import type { Json } from "./pack-re-harness.ts";
 import { buildPe } from "./pack-re-harness.ts";
 import { canaries, needles } from "./pack-re-canary-shapes.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const RECIPE_DIR = join(RE, "recipes", "capa-floss");
 const CAPA_FLOSS = join(RECIPE_DIR, "run.py");
@@ -71,7 +72,7 @@ test("detect: a PE and an ELF are offered; Mach-O, a Java class, a coincident MZ
   });
 });
 
-test("both engines ran and exited 0: complete, with each engine's argv, version output, exit code and size, and matches.tsv from the rules mapping", async () => {
+test("both engines ran and exited 0: complete, with each engine's argv, version output, exit code and size, and matches.tsv from the rules mapping", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await engines(bin);
     await sample(cwd);
@@ -474,7 +475,7 @@ const oneSentence = (basis: unknown, where: string): void => {
   assert.ok(typeof basis === "string" && basis.length > 10 && !basis.includes("\n"), `${where}: ${JSON.stringify(basis)}`);
 };
 
-test("coverage.json and the recipe's answer carry a status_basis that names the engine that decided: complete, one engine missing, both failed, one timed out", async () => {
+test("coverage.json and the recipe's answer carry a status_basis that names the engine that decided: complete, one engine missing, both failed, one timed out", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await sample(cwd);
     await engines(bin);

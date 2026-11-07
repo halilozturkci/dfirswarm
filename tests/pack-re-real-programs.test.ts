@@ -13,7 +13,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { ENTROPY, FUZZY, PE_INFO, RE, body, buildElf, buildPe, put, tool, withCwd } from "./pack-re-harness.ts";
@@ -156,7 +157,9 @@ test("r2: the byte-range copy `r2 -N -n -q -c \"wtf FILE SIZE @ OFFSET\" SAMPLE`
 test("upx: `upx -t` recognises a file this machine's upx packed, `upx -l` lists it, and `upx -d -o` restores the original bytes into a named copy", { skip: needs("upx", "true") }, async (t) => {
   record(t, "upx", ["--version"]);
   await withCwd(async (cwd) => {
-    const real = spawnSync("sh", ["-c", "command -v true"], { encoding: "utf8" }).stdout.trim();
+    // `command -v true` prints just "true" where the shell has it built in (dash on a CI runner), which is not a file: the file is searched on PATH
+    const real = (process.env.PATH ?? "").split(":").map((d) => join(d || ".", "true")).find((f) => isAbsolute(f) && existsSync(f));
+    assert.ok(real, "a true executable is on PATH");
     await copyFile(real, join(cwd, "original.bin"));
     const original = await readFile(join(cwd, "original.bin"));
     const packed = spawnSync("upx", ["-q", "-o", join(cwd, "packed.bin"), join(cwd, "original.bin")], { cwd, encoding: "utf8", timeout: 120_000 });

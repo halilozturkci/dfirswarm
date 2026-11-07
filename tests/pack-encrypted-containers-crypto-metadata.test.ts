@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { type Json, asJob, body, everythingUnder, filesUnder, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const SCRIPT = join(ROOT, "packs", "encrypted-containers", "tools", "crypto_metadata", "run.py");
 
@@ -186,7 +187,7 @@ async function volume(cwd: string, name: string, content: Buffer, before = 0): P
 
 const everything = (cwd: string, answer: string): Promise<string> => everythingUnder(cwd, answer, ["out", "work"]);
 
-test("a LUKS2 volume at an offset: the keyslots, segments, digests and tokens as records, nothing secret, the slice removed", async () => {
+test("a LUKS2 volume at an offset: the keyslots, segments, digests and tokens as records, nothing secret, the slice removed", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     LOGPATH = join(cwd, "argv.log");
     const label = "lbl" + hex(6);
@@ -223,7 +224,7 @@ test("a LUKS2 volume at an offset: the keyslots, segments, digests and tokens as
   });
 });
 
-test("a LUKS1 volume: the key slot table from the reader agrees with the header, salts and digests are not read", async () => {
+test("a LUKS1 volume: the key slot table from the reader agrees with the header, salts and digests are not read", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     LOGPATH = join(cwd, "argv.log");
     const volUuid = uuid();
@@ -275,7 +276,7 @@ test("a LUKS1 reader that disagrees with the header is partial, with the disagre
   });
 });
 
-test("BitLocker: the key protectors by type, identifiers and the description only by presence, the clear key flagged", async () => {
+test("BitLocker: the key protectors by type, identifiers and the description only by presence, the clear key flagged", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     LOGPATH = join(cwd, "argv.log");
     const guid = uuid();
@@ -324,7 +325,7 @@ test("bdeinfo that prints a method but neither a protector count nor a protector
   });
 });
 
-test("Core Storage and APFS: the reader's counts, and the container flag this tool reads itself", async () => {
+test("Core Storage and APFS: the reader's counts, and the container flag this tool reads itself", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     LOGPATH = join(cwd, "argv.log");
     await stub(bin, "fvdeinfo", `#!/bin/sh\nif [ "$1" = "-V" ]; then echo "fvdeinfo 20221030"; exit 0; fi\ncat <<'EOF'\nCore Storage information:\n\tNumber of physical volumes\t: 1\n\tNumber of logical volume groups\t: 1\n\tEncryption method\t: AES-XTS\n\tVolume key\t: ${hex(32)}\nEOF\n`);
@@ -419,7 +420,7 @@ test("a forged LUKS2 header size or a cut-short header is partial and no reader 
   });
 });
 
-test("a forged keyslot count is paged losslessly: the page is the limit, the whole is in the file the answer names", async () => {
+test("a forged keyslot count is paged losslessly: the page is the limit, the whole is in the file the answer names", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     LOGPATH = join(cwd, "argv.log");
     await stub(bin, "cryptsetup", stubCryptsetup(luks2Json(CANARY_SALT, CANARY_DIGEST, 5000)));
@@ -470,7 +471,7 @@ test("an offset past the end, hostile parameters and special files are JSON refu
   });
 });
 
-test("a call that is not a job still answers: the files go under work/<agent>", async () => {
+test("a call that is not a job still answers: the files go under work/<agent>", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     LOGPATH = join(cwd, "argv.log");
     await stub(bin, "cryptsetup", stubCryptsetup(LUKS1_DUMP("u", [0])));

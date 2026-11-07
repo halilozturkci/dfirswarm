@@ -18,6 +18,7 @@ import { ownPathsToOut } from "../extensions/protocol.ts";
 import { withCwd } from "./tool-library-harness.ts";
 import { peakRssPrelude } from "./peak-rss.ts";
 import { AGENT, WIN, body, everyFileUnder, exists, failed, stub, stubModule, tool, type Run } from "./windows-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const root = process.getuid?.() === 0;
 const LNK_MAGIC = Buffer.from("4c0000000114020000000000c000000000000046", "hex");
@@ -459,7 +460,7 @@ test("extract_stream never replaces what an earlier run kept: the next partial a
   });
 });
 
-test("extract_stream writes only in the agent's own places, in a job only under $OUT, and answers a directory it cannot make as JSON", async () => {
+test("extract_stream writes only in the agent's own places, in a job only under $OUT, and answers a directory it cannot make as JSON", { skip: NO_ADOPTION }, async () => {
   // Outside a job it wrote anywhere inside the run; and the manifest's example, work/extracted/168-128-4.bin, is a place
   // the harness leaves read-only in a job.
   await withCwd(async (cwd, bin) => {

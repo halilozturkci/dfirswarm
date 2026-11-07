@@ -18,6 +18,7 @@ import { test } from "node:test";
 import { WIN, body, exists, failed, py, pythonCanImport, stub, stubModule, tool, type Run } from "./windows-pack-harness.ts";
 import { withCwd } from "./tool-library-harness.ts";
 import { CHUNK_BYTES, EVTX_CARVE_STUB, EVTX_QUERY_STUB, eventXml, evtxChunk, evtxFileHeader, type ChunkRecord } from "./windows-stub-evtx.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const root = process.getuid ? process.getuid() === 0 : false;
 
@@ -585,7 +586,7 @@ ${tail}
 const hb = (title: string, level: string | undefined, id: number, time = "2026-09-01T10:00:00Z"): string =>
   JSON.stringify({ RuleTitle: title, ...(level === undefined ? {} : { Level: level }), Timestamp: time, EventID: 4688, Channel: "Security", Computer: "WS01", RecordID: id, Details: { Cmd: "x" } });
 
-test("sigma_hunt ranks the level words Hayabusa writes (crit, med, info), and keeps a level it does not know instead of dropping it", async () => {
+test("sigma_hunt ranks the level words Hayabusa writes (crit, med, info), and keeps a level it does not know instead of dropping it", { skip: NO_ADOPTION }, async () => {
   // rank() was 0 for any word but the five full names, so a `crit` or `med` detection was filtered out
   // by min_level without a word.
   await withCwd(async (cwd, bin) => {
@@ -611,7 +612,7 @@ test("sigma_hunt ranks the level words Hayabusa writes (crit, med, info), and ke
   });
 });
 
-test("sigma_hunt marks a run whose engine exited non-zero partial, and never reads an earlier run's result in its place", async () => {
+test("sigma_hunt marks a run whose engine exited non-zero partial, and never reads an earlier run's result in its place", { skip: NO_ADOPTION }, async () => {
   // It accepted any result file in out_dir whatever the engine's exit status, so an engine that failed
   // could be answered with the file an earlier invocation left.
   await withCwd(async (cwd, bin) => {
@@ -650,7 +651,7 @@ test("sigma_hunt counts a line of the engine's result it cannot read, keeps it w
   });
 });
 
-test("sigma_hunt reads Hayabusa's pretty-printed objects as a stream, and records the ruleset's digest", async () => {
+test("sigma_hunt reads Hayabusa's pretty-printed objects as a stream, and records the ruleset's digest", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await writeFile(join(cwd, "work", "Security.evtx"), "evtx");
     // Objects written one after another across lines (Hayabusa's default JSON timeline), not one per line.
@@ -698,7 +699,7 @@ test("sigma_hunt's merge sort orders detections by level and time across runs of
   });
 });
 
-test("sigma_hunt refuses an out_dir this run cannot write and names the places that work, and runs in one that it can", async () => {
+test("sigma_hunt refuses an out_dir this run cannot write and names the places that work, and runs in one that it can", { skip: NO_ADOPTION }, async () => {
   // work/hunt is not under the agent's own work/<id>/, which is all the harness lets a VM write: the tool looked for an
   // engine, made the directory, and failed with a permission error (or a traceback) after that.
   await withCwd(async (cwd, bin) => {
@@ -717,7 +718,7 @@ test("sigma_hunt refuses an out_dir this run cannot write and names the places t
   });
 });
 
-test("sigma_hunt in a job writes under $OUT and refuses any other out_dir", async () => {
+test("sigma_hunt in a job writes under $OUT and refuses any other out_dir", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stub(bin, "hayabusa", HAYABUSA_STUB([hb("A", "high", 1)]));
     await writeFile(join(cwd, "work", "Security.evtx"), "evtx");

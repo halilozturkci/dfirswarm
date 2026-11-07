@@ -14,6 +14,7 @@ import { withCwd } from "./tool-library-harness.ts";
 import { chmodSync } from "node:fs";
 import { body, failed, tool } from "./windows-pack-harness.ts";
 import { assertStopped, runTool, scriptOf, startTool, stopAt, withDeadline } from "./windows-tool-contract.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -418,7 +419,7 @@ const daemonGone = async (pid: number, ms = 5000): Promise<boolean> => {
   }
 };
 
-test("a mount whose program daemonises (a double fork, a session of its own, stdio on /dev/null) keeps its daemon for the lookups and copies, and the daemon is gone when the tool ends", async () => {
+test("a mount whose program daemonises (a double fork, a session of its own, stdio on /dev/null) keeps its daemon for the lookups and copies, and the daemon is gone when the tool ends", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const env: Record<string, string> = { ...(await setup(cwd, bin, { 1: config("old system"), 2: config("new system") }, config("new system"))), FAKE_DAEMON: "1" };
     daemonStandIns(bin);

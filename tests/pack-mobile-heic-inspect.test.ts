@@ -14,6 +14,7 @@ import { chmod, mkdir, readFile, readdir, stat, symlink, writeFile } from "node:
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, withCwd } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const TOOL = process.env.HEIC_INSPECT ?? join(ROOT, "packs", "mobile-forensics", "tools", "heic_inspect", "run.py");
 const AGENT = { AGENT_ID: "s1" };
@@ -343,7 +344,7 @@ test("a file that is not a HEIF container, a FIFO, a link, a directory and a mis
 
 // --- the conversion ---------------------------------------------------------------------------------------------------------------
 
-test("a preview from heif-convert: the identity of the original and the derivative, the backend and its settings recorded, one program with no shell", async () => {
+test("a preview from heif-convert: the identity of the original and the derivative, the backend and its settings recorded, one program with no shell", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stubConvert(bin, 4032, 3024);
     await stubExiftool(bin, CANARIES);

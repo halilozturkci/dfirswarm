@@ -24,6 +24,7 @@ import type { Pkt } from "./pack-network-harness.ts";
 import { EXTRACT, asJob, body, drop, everythingUnder, exists, filesUnder, frameTcp4, gone, ngBlock, ngInterface, ngPacket, ngSection, pcapClassic, pidFile, refused, startDetached, stub, ticks, tool, TCP, u32, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 import { runPySnippet } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 const BODY_A = Buffer.from("A".repeat(200));
@@ -790,7 +791,7 @@ test("Decryption Secrets Blocks in a pcapng are counted and said: tshark applies
   });
 });
 
-test("every answer carries status and status_basis: a finished run, a refusal, and a run stopped by a signal (partial JSON on stdout, the receipt says interrupted)", async () => {
+test("every answer carries status and status_basis: a finished run, a refusal, and a run stopped by a signal (partial JSON on stdout, the receipt says interrupted)", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const { dir } = await stage(cwd, bin, { spawns: ["http"], export: { http: { "a.html": BODY_A } } });
     const refusal = refused(await tool(EXTRACT, cwd, { path: "work/missing.pcap", out_dir: "work/r" }, env(cwd), bin));

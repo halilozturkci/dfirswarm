@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPySnippet, withCwd } from "./tool-library-harness.ts";
 import { peakRssPrelude } from "./peak-rss.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const PACK = process.env.MOBILE_PACK ?? join(ROOT, "packs", "mobile-forensics");
 const RECIPES = join(PACK, "recipes");
@@ -1497,7 +1498,7 @@ function pair(value: { status?: unknown; status_basis?: unknown }, label: string
   assert.ok((value.status_basis as string).length > 20 && !(value.status_basis as string).includes("\n"), `${label}: status_basis is a sentence: ${String(value.status_basis)}`);
 }
 
-test("every answer and every coverage.json of the five recipes carries a status of complete, partial or failed and a status_basis, on every exit path", async () => {
+test("every answer and every coverage.json of the five recipes carries a status of complete, partial or failed and a status_basis, on every exit path", { skip: NO_ADOPTION }, async () => {
   // Their answers said `refused` and `unsupported` beside the contract's three words, and none wrote a status_basis (docs/packs.md).
   await withCwd(async (cwd, bin) => {
     const none = join(cwd, "work", "nothing.bin");
@@ -1624,7 +1625,7 @@ async function appsStandin(bin: string, cwd: string, extra = ""): Promise<void> 
 
 const APPS_MEMBERS = [["apps/com.example/_manifest", 40], ["apps/com.example/db/x.db", 100], ["apps/com.example/db/x.db-wal", 30], ["apps/com.example/sp/p.xml", 20], ["apps/com.example/a/base.apk", 50], ["shared/0/pic.jpg", 10]];
 
-test("android-backup-apps lays an adb backup out and runs ALEAPP over the layout with -t fs: complete, a derivative, versions 1 to 5, no password option", async () => {
+test("android-backup-apps lays an adb backup out and runs ALEAPP over the layout with -t fs: complete, a derivative, versions 1 to 5, no password option", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await appsStandin(bin, cwd);
     for (const version of [1, 2, 3, 4, 5]) {
@@ -1933,7 +1934,7 @@ os.makedirs(os.path.join(path, "ab"))
 open(os.path.join(path, "ab", "ab" + "c" * 38), "wb").write(b"blob")
 `;
 
-test("ios-ileapp reads an unencrypted iOS backup directory with -t itunes, passes no password option and no terminal, and says which route it took", async () => {
+test("ios-ileapp reads an unencrypted iOS backup directory with -t itunes, passes no password option and no terminal, and says which route it took", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     // The stand-in sees the whole argv: write it verbatim, one word per line.
     await mkdir(bin, { recursive: true });

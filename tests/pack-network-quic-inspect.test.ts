@@ -17,6 +17,7 @@ import { test } from "node:test";
 import { NET, QUICI, TOOLS, asJob, body, exists, filesUnder, frameUdp4, gone, pcapClassic, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 import { CUT_FLOODERS, FEW, PY_LEAVE, alive, exec, floodTheVersionProbe, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
+import { NO_SETSID } from "./host-gates.ts";
 
 const TSHARK = `#!/usr/bin/env python3
 import json, os, re, sys, time
@@ -569,7 +570,7 @@ test("a process tshark leaves behind is ended before the answer and makes it par
 
 for (const flood of CUT_FLOODERS) {
   for (const host of ["linux", "refused", "darwin"] as const) {
-    test(`quic_inspect: a version probe cut at the byte cap (${flood}, ${host}) is partial and says a process went on writing`, { timeout: 120000 }, async () => {
+    test(`quic_inspect: a version probe cut at the byte cap (${flood}, ${host}) is partial and says a process went on writing`, { timeout: 120000, skip: NO_SETSID }, async () => {
       
       await withCwd(async (cwd, bin) => {
         try {

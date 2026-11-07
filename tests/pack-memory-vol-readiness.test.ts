@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, withCwd } from "./tool-library-harness.ts";
 import { MEM, SHAPES, json, rng, runTool } from "./memory-f1-support.ts";
+import { interpreterDir } from "./host-gates.ts";
 
 const VOL = join(MEM, "vol_readiness", "run.py");
 const PY = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" }).stdout.trim();
@@ -257,7 +258,7 @@ test("a missing vol is blocked for the plugins and symbols views; the answer doe
     await writeFile(join(cwd, "inputs", "mem.raw"), Buffer.alloc(4096));
     const empty = join(cwd, "empty");
     await mkdir(empty);
-    const run = await runTool(VOL, cwd, { path: "inputs/mem.raw", views: ["plugins", "symbols", "yara"] }, { PATH: `${empty}:/usr/bin:/bin` });
+    const run = await runTool(VOL, cwd, { path: "inputs/mem.raw", views: ["plugins", "symbols", "yara"] }, { PATH: `${await interpreterDir(empty)}:/usr/bin:/bin` });
     const out = json<Answer>(run);
     for (const v of ["plugins", "symbols", "yara"]) assert.equal(out.checks[v].verdict, "blocked", v);
     assert.equal(out.verdict, "blocked");

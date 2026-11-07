@@ -14,6 +14,7 @@ import { test } from "node:test";
 import { BEACON, CONNS, NET, TOOLS, TCP, body, exists, filesUnder, frameTcp4, frameUdp4, gone, pcapClassic, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 import { CUT_FLOODERS, FEW, PY_LEAVE, alive, exec, floodTheVersionProbe, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
+import { NO_SETSID } from "./host-gates.ts";
 
 type Row = { ts: number | string; uid?: string | null; oh?: string; op?: number | string; rh?: string; rp?: number | string; proto?: string; service?: string | null; duration?: number | string; ob?: number | string; rb?: number | string; state?: string; opk?: number | string; rpk?: number | string };
 
@@ -538,7 +539,7 @@ test("a process tshark leaves behind is ended before the answer and makes it par
 
 for (const flood of CUT_FLOODERS) {
   for (const host of ["linux", "refused", "darwin"] as const) {
-    test(`conn_series: a version probe cut at the byte cap (${flood}, ${host}) is partial and says a process went on writing`, { timeout: 120000 }, async () => {
+    test(`conn_series: a version probe cut at the byte cap (${flood}, ${host}) is partial and says a process went on writing`, { timeout: 120000, skip: NO_SETSID }, async () => {
       
       await withCwd(async (cwd, bin) => {
         try {

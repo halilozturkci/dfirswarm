@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { IS_ROOT, JOURNAL, asJob as plainJob, body, everythingBut, exists, filesUnder, gone, lines, pidFile, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 /** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
 const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
   plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
@@ -89,7 +90,7 @@ function nativeJournal(): string {
   );
 }
 
-test("journal_export keeps the whole native export, with the cursor and both clocks, and offers the projection as well", async () => {
+test("journal_export keeps the whole native export, with the cursor and both clocks, and offers the projection as well", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const native = nativeJournal();
     const env = await journalFixture(cwd, bin, native);
@@ -291,7 +292,7 @@ test("journal_export rejects arguments that are not an object and a field of the
   });
 });
 
-test("journal_export asks journalctl to be quiet and reads its `-- No entries --` notice as an empty selection, not as a broken export", async () => {
+test("journal_export asks journalctl to be quiet and reads its `-- No entries --` notice as an empty selection, not as a broken export", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     // A real journalctl prints this line on stdout when nothing matches and --quiet is not given.
     const env = await journalFixture(cwd, bin, "-- No entries --\n");
@@ -339,7 +340,7 @@ time.sleep(60)
   });
 });
 
-test("journal_export never writes over an earlier output of the same job", async () => {
+test("journal_export never writes over an earlier output of the same job", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const env = await journalFixture(cwd, bin, nativeJournal());
     await writeFile(join(cwd, "verify.txt"), "PASS: first\n");

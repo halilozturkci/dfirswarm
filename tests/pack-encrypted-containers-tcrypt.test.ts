@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy } from "./tool-library-harness.ts";
+import { interpreterDir } from "./host-gates.ts";
 
 const SCRIPT = join(ROOT, "packs", "encrypted-containers", "tools", "tcrypt_header", "run.py");
 const AGENT = { AGENT_ID: "s1" };
@@ -131,7 +132,7 @@ test("a missing cryptsetup answers unavailable, naming the program", async () =>
     await writeFile(join(cwd, "password.txt"), "whatever\n", { mode: 0o600 });
     // /usr/bin:/bin holds python3 (so the tool itself starts) but not cryptsetup, which a non-root PATH does not
     // usually carry even when cryptsetup-bin is installed (it lands in a sbin directory).
-    const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: "/usr/bin:/bin" };
+    const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${await interpreterDir(join(cwd, "py"))}:/usr/bin:/bin` };
     const a = answer<{ status: string; status_basis: string }>(await runTool(cwd, { source: "real.img", password_file: "password.txt" }, env));
     assert.equal(a.status, "unavailable");
     assert.match(a.status_basis, /cryptsetup is not on PATH/);

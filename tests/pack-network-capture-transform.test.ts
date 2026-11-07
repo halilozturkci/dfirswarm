@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { TOOLS, TRANSFORM, asJob, body, exists, filesUnder, frameTcp4, gone, pcapClassic, put, refused, startDetached, stub, TCP, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 
@@ -147,7 +148,7 @@ async function leftovers(cwd: string, out: string): Promise<string[]> {
   return (await readdir(join(cwd, out)).catch(() => [])).filter((n) => n.startsWith(".capture_transform-"));
 }
 
-test("split: the parts together hold every packet, the original is untouched, and nothing is written outside out_dir and the page directory", async () => {
+test("split: the parts together hold every packet, the original is untouched, and nothing is written outside out_dir and the page directory", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await programs(cwd, bin);
     const o = await original(cwd, "a.pcap", stubCap("pcap", SEVEN));
@@ -205,7 +206,7 @@ test("a time shift is refused, an unknown parameter is named, and each operation
   });
 });
 
-test("merge: chronological interleaves, append keeps the order given, and the interface counts of the inputs and the output are read back", async () => {
+test("merge: chronological interleaves, append keeps the order given, and the interface counts of the inputs and the output are read back", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await programs(cwd, bin);
     const a = await original(cwd, "a.pcapng", stubCap("pcapng", [[1, "a1"], [5, "a5"]]));
@@ -225,7 +226,7 @@ test("merge: chronological interleaves, append keeps the order given, and the in
   });
 });
 
-test("filter: the packets the recorded BPF filter dropped are counted with the reason, the derivative says it is not the capture, and a filter that matches nothing is a named zero-packet derivative", async () => {
+test("filter: the packets the recorded BPF filter dropped are counted with the reason, the derivative says it is not the capture, and a filter that matches nothing is a named zero-packet derivative", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await programs(cwd, bin);
     const o = await original(cwd, "a.pcap", stubCap("pcap", [[1, "tcp-a"], [2, "udp-b"], [3, "tcp-c"], [4, "udp-d"], [5, "tcp-e"]]));
@@ -267,7 +268,7 @@ test("dedup: the three ways to name the window reach editcap, and the removed du
   });
 });
 
-test("convert: the format reaches editcap, pcapng to pcap names what is lost, and the counts agree", async () => {
+test("convert: the format reaches editcap, pcapng to pcap names what is lost, and the counts agree", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await programs(cwd, bin);
     const o = await original(cwd, "a.pcapng", stubCap("pcapng", SEVEN));
@@ -282,7 +283,7 @@ test("convert: the format reaches editcap, pcapng to pcap names what is lost, an
   });
 });
 
-test("hexdump: the result is labelled synthetic, the text dump is no capture, and options that fabricate headers reach text2pcap", async () => {
+test("hexdump: the result is labelled synthetic, the text dump is no capture, and options that fabricate headers reach text2pcap", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await programs(cwd, bin);
     const dump = await original(cwd, "dump.txt", "0000 de ad be ef\n0004 00 01\n\n0000 ff ff\n");
@@ -358,7 +359,7 @@ test("an output never replaces a file that is there: a second run takes -2, a di
   });
 });
 
-test("the answer pages: the first rows inline, the whole list in a file that holds as many rows as the answer counts, and a job keeps everything under $OUT", async () => {
+test("the answer pages: the first rows inline, the whole list in a file that holds as many rows as the answer counts, and a job keeps everything under $OUT", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await programs(cwd, bin);
     const packets: Array<[number, string]> = Array.from({ length: 40 }, (_, i) => [i + 1, `p${i}`]);
@@ -460,7 +461,7 @@ test("a program that outlives the tool's own clock is killed with what it starte
   });
 });
 
-test("the manifest names the parameters the script reads, its example runs, its TOOL version is its version, and it declares secret output", async () => {
+test("the manifest names the parameters the script reads, its example runs, its TOOL version is its version, and it declares secret output", { skip: NO_ADOPTION }, async () => {
   const manifest: Json = JSON.parse(await readFile(join(TOOLS, "capture_transform", "manifest.json"), "utf8"));
   const script = await readFile(TRANSFORM, "utf8");
   assert.equal(manifest.sha256, sha(script));

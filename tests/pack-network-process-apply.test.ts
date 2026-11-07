@@ -25,6 +25,7 @@ import { ROOT } from "./tool-library-harness.ts";
 
 import { VARIANTS, FEW, alive, exec, pids, reap, sh, sleep, snapshot, stubDir } from "./network-process-harness.ts";
 import type { Host, Run } from "./network-process-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 type Case = {
   name: string;
@@ -89,8 +90,9 @@ async function expectUnproven(c: Case, host: Host): Promise<void> {
 }
 
 function register(c: Case): void {
-  for (const variant of c.variants) test(`${c.name}: a ${variant} leftover is ended, the answer is partial and the files do not change after it`, () => expectLeft(c, variant));
-  test(`${c.name}: a clean run is complete, nothing left, nothing unproven`, () => expectClean(c));
+  // The first two need a host that adopts the orphans of a program; the darwin and refused cases below run everywhere, with the host patched.
+  for (const variant of c.variants) test(`${c.name}: a ${variant} leftover is ended, the answer is partial and the files do not change after it`, { skip: NO_ADOPTION }, () => expectLeft(c, variant));
+  test(`${c.name}: a clean run is complete, nothing left, nothing unproven`, { skip: NO_ADOPTION }, () => expectClean(c));
   for (const host of ["darwin", "refused"] as const) test(`${c.name}: where the absence of a leftover cannot be proven (${host}) a clean run is partial and says why`, () => expectUnproven(c, host));
 }
 

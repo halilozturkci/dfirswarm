@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { FUZZY, TOOLS, asJob, body, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const TLSH_DIGEST = "T1" + "A1B2C3D4E5".repeat(7); // T1 and 70 hexadecimal digits: the digest of 128 buckets and a one-byte checksum
 const SSDEEP_DIGEST = "96:aBcDeF0123456789+/aBcDeF0123456789+/:XyZ0123456789+/";
@@ -46,7 +47,7 @@ function sha256(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
 }
 
-test("valid digests are accepted, SHA-256 is computed from the bytes, and each engine's argv and version are recorded", async () => {
+test("valid digests are accepted, SHA-256 is computed from the bytes, and each engine's argv and version are recorded", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await engines(bin);
     const data = Buffer.from("some bytes ".repeat(500));
@@ -99,7 +100,7 @@ echo 'not-a-digest,"x"'`,
   });
 });
 
-test("TNULL is the engine saying the file is too short or too uniform, and that is not a failure", async () => {
+test("TNULL is the engine saying the file is too short or too uniform, and that is not a failure", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await engines(bin, { tlsh: `printf 'TNULL\\t%s\\n' "$2"` });
     await put(cwd, "work/tiny.bin", "abc");
@@ -315,7 +316,7 @@ const oneSentence = (basis: unknown, where: string): void => {
   assert.ok(typeof basis === "string" && basis.length > 10 && !basis.includes("\n"), `${where}: ${JSON.stringify(basis)}`);
 };
 
-test("every answer carries a status_basis that names what decided the status: complete, an engine that printed junk, an engine that timed out, an input too short", async () => {
+test("every answer carries a status_basis that names what decided the status: complete, an engine that printed junk, an engine that timed out, an input too short", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await put(cwd, "work/sample.bin", "x".repeat(2000));
     await engines(bin);

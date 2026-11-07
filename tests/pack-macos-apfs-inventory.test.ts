@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { APFS, FSAPFS_OK, body, fsapfsStub, leader, ok, signalled, tool } from "./macos-late-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const alive = (pid: number): boolean => {
   try {
@@ -40,7 +41,7 @@ async function image(cwd: string, size = 8192): Promise<string> {
   return "work/c.img";
 }
 
-test("a container with two volumes: sections under the reader's labels, the version recorded, and the limits said", async () => {
+test("a container with two volumes: sections under the reader's labels, the version recorded, and the limits said", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await fsapfsStub(bin, FSAPFS_OK);
     const a = ok(await tool(APFS, cwd, { path: await image(cwd) }, { }, bin));

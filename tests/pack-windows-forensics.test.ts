@@ -36,6 +36,7 @@ import {
   type Run,
 } from "./windows-pack-harness.ts";
 import { hive } from "./windows-hive.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 // --- lnk_parse ------------------------------------------------------------------
 
@@ -746,7 +747,7 @@ echo "other $last"
 echo '0x40:3:$k: abc'
 `;
 
-test("yara_scan reports the rule, file, string identifier, offset and length of a match and never the matched bytes", async () => {
+test("yara_scan reports the rule, file, string identifier, offset and length of a match and never the matched bytes", { skip: NO_ADOPTION }, async () => {
   // `-s` prints the matched bytes, and they went into the answer: a rule that found `password=` put
   // the password in stdout and in the job log.
   await withCwd(async (cwd, bin) => {
@@ -773,7 +774,7 @@ test("yara_scan reports the rule, file, string identifier, offset and length of 
   });
 });
 
-test("yara_scan writes the matched bytes only on write_matches, only in a job, only to a 0600 file under $OUT, with the finding ids of the answer", async () => {
+test("yara_scan writes the matched bytes only on write_matches, only in a job, only to a 0600 file under $OUT, with the finding ids of the answer", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stub(bin, "yara", YARA_STUB());
     await writeFile(join(cwd, "work", "rules.yar"), "rule pw { condition: true }");
@@ -1077,7 +1078,7 @@ test("vss_stores reports a count mismatch between the stores vshadowinfo claims 
   });
 });
 
-test("vss_stores reads a complete report, and quotes every operand of the mount command it suggests", async () => {
+test("vss_stores reads a complete report, and quotes every operand of the mount command it suggests", { skip: NO_ADOPTION }, async () => {
   // The suggested command interpolated the image path into a shell string without quoting.
   await withCwd(async (cwd, bin) => {
     await stub(bin, "vshadowinfo", vshadowinfoStub(SHADOW_REPORT(2, 2)));
@@ -1093,7 +1094,7 @@ test("vss_stores reads a complete report, and quotes every operand of the mount 
   });
 });
 
-test("vss_stores says zero stores only when vshadowinfo ran, exited 0 and reported zero itself, and words it as a bounded negative", async () => {
+test("vss_stores says zero stores only when vshadowinfo ran, exited 0 and reported zero itself, and words it as a bounded negative", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await writeFile(join(cwd, "work", "disk.raw"), Buffer.alloc(4096));
     await stub(bin, "vshadowinfo", vshadowinfoStub(SHADOW_REPORT(0, 0)));
@@ -1892,7 +1893,7 @@ printf '%s\\n' "$@" > "$ICAT_ARGS"
 ${body}
 `;
 
-test("extract_stream writes the stream to a named file under the run with its size and sha256, and prints none of it", async () => {
+test("extract_stream writes the stream to a named file under the run with its size and sha256, and prints none of it", { skip: NO_ADOPTION }, async () => {
   // It printed the whole stream as base64 on stdout (a 30 second limit, no digest, no size), and a large stream
   // could not be returned at all.
   await withCwd(async (cwd, bin) => {

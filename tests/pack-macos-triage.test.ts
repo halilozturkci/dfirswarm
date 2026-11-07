@@ -20,6 +20,7 @@ import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { MAC, body, filesUnder, leader, ok, secretJob, signalled, tool } from "./macos-late-harness.ts";
 import type { Json } from "./macos-late-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const TRIAGE = join(MAC, "macos_triage", "run.py");
 
@@ -96,7 +97,7 @@ const pidsOf = async (file: string): Promise<number[]> => (await readFile(file, 
 const real = (cwd: string, shown: string): string => join(cwd, "out", shown.replace(/^store\/jobs\/[^/]+\/out\//, ""));
 const status = (a: Json, name: string): string => a.plugins.find((p: Json) => p.plugin === name)?.status;
 
-test("explicit plugins that the log shows run to their end are parsed and the run is complete; the argv and the version are recorded", async () => {
+test("explicit plugins that the log shows run to their end are parsed and the run is complete; the argv and the version are recorded", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, `open(os.path.join(HERE, "argv.txt"), "w").write(repr(argv))\n${OK_TWO}`);
     const a = ok(await run(cwd, bin, { path: await e01(cwd), input_type: "e01", plugins: ["tcc", "BashSessions"], formats: ["csv", "jsonl"] }));
@@ -172,7 +173,7 @@ test("an error line inside a plugin's run, with the plugin's end line present, i
   });
 });
 
-test("a plugin whose run holds only lines saying nothing was found is empty; a warning alone does not fail it", async () => {
+test("a plugin whose run holds only lines saying nothing was found is empty; a warning alone does not fail it", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, `start()\nplugin("QUARANTINE", ["No quarantine entries found"])\nplugin("TCC", ["rows"])\nplugin("WARNED", ["fine"])\nfinish()\n`);
     const a = ok(await run(cwd, bin, { path: await e01(cwd), input_type: "E01", plugins: ["QUARANTINE", "TCC", "WARNED"] }));
@@ -291,7 +292,7 @@ test("arguments: an unknown one (a password among them), a bad input type, bad p
   });
 });
 
-test("a FileVault password is only a sealed file passed as -pf: the file is checked and never read, a loose mode is refused, and its content is nowhere", async () => {
+test("a FileVault password is only a sealed file passed as -pf: the file is checked and never read, a loose mode is refused, and its content is nowhere", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, `open(os.path.join(HERE, "argv.txt"), "w").write(repr(argv))\n${OK_TWO}`);
     const canary = "Vault-Canary-0f1e2d3c4b5a69788796";
@@ -442,7 +443,7 @@ open(${JSON.stringify(pids)}, "a").write("%d\\n" % c.pid)
   });
 });
 
-test("everything is written under the run directory: cwd, TMPDIR and HOME of the program are inside it; a rerun makes a directory of its own and keeps the first", async () => {
+test("everything is written under the run directory: cwd, TMPDIR and HOME of the program are inside it; a rerun makes a directory of its own and keeps the first", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await mkdir(join(cwd, "out"), { recursive: true });
     await stand(bin, `

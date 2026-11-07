@@ -11,6 +11,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 import { alive, pids, reap, sleep, snapshot } from "./network-process-harness.ts";
 import type { Host, Run } from "./network-process-harness.ts";
 
@@ -97,11 +98,12 @@ export async function expectUnproven(c: Case, host: Host): Promise<void> {
 }
 
 export function register(c: Case): void {
-  for (const variant of c.variants) test(`${c.name}: a ${variant} leftover is ended, the answer is partial and the files do not change after it`, { timeout: 120000 }, () => expectLeft(c, variant));
+  // The first three need a host that adopts the orphans of a program; the darwin and refused cases below run everywhere, with the host patched.
+  for (const variant of c.variants) test(`${c.name}: a ${variant} leftover is ended, the answer is partial and the files do not change after it`, { timeout: 120000, skip: NO_ADOPTION }, () => expectLeft(c, variant));
   for (const holder of c.holders ?? []) {
-    test(`${c.name}: a ${holder} that holds the pipes after the program ended does not hold the tool: it answers in time, partial, and the holder is ended`, { timeout: 120000 }, () => expectLeft(c, holder));
+    test(`${c.name}: a ${holder} that holds the pipes after the program ended does not hold the tool: it answers in time, partial, and the holder is ended`, { timeout: 120000, skip: NO_ADOPTION }, () => expectLeft(c, holder));
   }
-  test(`${c.name}: a clean run is complete, nothing left, nothing unproven`, () => expectClean(c));
+  test(`${c.name}: a clean run is complete, nothing left, nothing unproven`, { skip: NO_ADOPTION }, () => expectClean(c));
   for (const host of ["darwin", "refused"] as const) {
     test(`${c.name}: where the absence of a leftover cannot be proven (${host}) a clean run ${c.holdsFiles ? "is partial and says why" : "keeps its status and says why in program_group"}`, () => expectUnproven(c, host));
   }

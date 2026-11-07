@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { FS, fsStub, json, rng, runTool, shimDir } from "./memory-f1-support.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const PAGE = 4096;
 type Range = { kind: string; offset: number; length: number; why?: string; [k: string]: unknown };
@@ -159,7 +160,7 @@ test("zero pages are found when the mount gives short reads that end inside a pa
   });
 });
 
-test("a read that fails with EIO at an injected offset gives an unavailable range, and the export is not complete", async () => {
+test("a read that fails with EIO at an injected offset gives an unavailable range, and the export is not complete", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const data = filled(4, 6);
     const env = await fsStub(cwd, bin, { tree: { "d/eio.bin": data, "d/ok.bin": filled(2, 7), "sys/x": "" } });

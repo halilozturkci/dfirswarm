@@ -3,7 +3,7 @@
  * extension and the note name), not from a run of the tool; the notes and values files are synthetic, with canaries in them.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,6 +11,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { PACK, filesUnder, tool } from "./ransomware-pack-harness.ts";
+
+/** Three cases below read notes with the real yara and its real offsets; where the host has none they skip, naming it (a skip is not a pass). */
+const REAL_YARA: string | false = spawnSync("sh", ["-c", "command -v yara"]).status === 0 ? false : "yara is not installed on this machine";
 
 const DIR = join(PACK, "ransomware_family_match");
 const MATCH = join(DIR, "run.py");
@@ -245,7 +248,7 @@ test("the shipped reference set is dated, sourced and reviewed, and has no field
   assert.ok(!text.includes("affiliate") && !text.includes("threat actor"), "the set says nothing about who runs a family");
 });
 
-test("a canary in a note, in a note name, in an extension and in the values file is printed nowhere, and a text rule's offset is found", async () => {
+test("a canary in a note, in a note name, in an extension and in the values file is printed nowhere, and a text rule's offset is found", { skip: REAL_YARA }, async () => {
   await withCwd(async (cwd) => {
     await mkdir(join(cwd, "ev", "dir-c4n4ryV1ctimId99"), { recursive: true });
     const noteA = join(cwd, "ev", "info.txt");
@@ -392,7 +395,7 @@ test("a stop signal ends the tool with one JSON answer, exit 128 + the signal, a
   });
 });
 
-test("a hostile values file is read without a crash: bad rows, a very long row, a link as the file, a note that is too large, a note that is a link", async () => {
+test("a hostile values file is read without a crash: bad rows, a very long row, a link as the file, a note that is too large, a note that is a link", { skip: REAL_YARA }, async () => {
   await withCwd(async (cwd) => {
     const note = join(cwd, "akira_readme.txt");
     await writeFile(note, "x\n");
@@ -430,7 +433,7 @@ test("a hostile values file is read without a crash: bad rows, a very long row, 
   });
 });
 
-test("max_notes hands the rest to a name match only and says so; nothing is silently skipped", async () => {
+test("max_notes hands the rest to a name match only and says so; nothing is silently skipped", { skip: REAL_YARA }, async () => {
   await withCwd(async (cwd) => {
     const notes = [];
     for (let i = 1; i <= 5; i++) {

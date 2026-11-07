@@ -155,7 +155,8 @@ test("10,000 notes are grouped within bounds: 5 templates, 2,000 notes each, ids
     assert.equal(answer.pages.template_group_members!.matched, 10000);
     assert.equal(answer.template_groups[0]!.directories.length, 20);
     assert.ok(answer.template_groups[0]!.directories_total >= 20);
-    assert.ok(Number(rss) < 500_000, `the tool's resident size was ${rss} KB`);
+    const rssKb = process.platform === "darwin" ? Number(rss) / 1024 : Number(rss);   // ru_maxrss is in bytes on macOS, in KB on Linux
+    assert.ok(rssKb < 500_000, `the tool's resident size was ${rssKb} KB`);
   });
 });
 

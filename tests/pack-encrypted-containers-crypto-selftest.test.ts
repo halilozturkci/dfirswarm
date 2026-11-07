@@ -8,7 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -59,7 +59,22 @@ test("every reader that parses the sample it should read is parsed, the others a
     assert.equal(pair("fvdeinfo", /Core/).result, "not parsed");
     assert.equal(pair("fsapfsinfo", /APFS/).result, "parsed");
     assert.equal(a.summary.parsed >= 3, true);
-    const missing = body(await asJob(SCRIPT, cwd, {}, undefined, { PATH: "/usr/bin:/bin" }));
+    // Hermetic: the tool looks on PATH and then in EXTRA_PATH (/usr/sbin:/sbin:/usr/local/sbin), and a runner may have a real
+    // cryptsetup, bdeinfo or the like in any of them. So it runs from a copy whose EXTRA_PATH names an empty directory, with a
+    // PATH that holds only the interpreter (a link to python3).
+    const empty = join(cwd, "no-reader");
+    const only = join(cwd, "python-only");
+    await mkdir(empty, { recursive: true });
+    await mkdir(only, { recursive: true });
+    const py = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" }).stdout.trim();
+    assert.ok(py.startsWith("/"), "the interpreter is found");
+    await symlink(py, join(only, "python3"));
+    const source = await readFile(SCRIPT, "utf8");
+    const line = 'EXTRA_PATH = "/usr/sbin:/sbin:/usr/local/sbin"';
+    assert.equal(source.split(line).length, 2, "the tool names its extra search path once");
+    const copy = join(cwd, "crypto_selftest_no_reader.py");
+    await writeFile(copy, source.replace(line, `EXTRA_PATH = ${JSON.stringify(empty)}`));
+    const missing = body(await asJob(copy, cwd, {}, undefined, { PATH: only }));
     for (const p of ["cryptsetup", "bdeinfo", "fvdeinfo", "fsapfsinfo"]) {
       const r = missing.records.find((x: Json) => x.program === p);
       assert.equal(r.result, "unavailable");

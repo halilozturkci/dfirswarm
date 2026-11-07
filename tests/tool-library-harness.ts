@@ -5,7 +5,7 @@
  */
 import { spawn } from "node:child_process";
 import type { Writable } from "node:stream";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -111,7 +111,9 @@ export async function runPySnippet(
 }
 
 export async function withCwd(fn: (cwd: string, bin: string) => Promise<void>): Promise<void> {
-  const cwd = await mkdtemp(join(tmpdir(), "lib-eval-"));
+  // The real path: on macOS tmpdir() is /var/folders/..., and /var is a link to /private/var. A tool that refuses a link in its output path
+  // (ab_layout, backup_materialise) or prints a path it resolved (heic_inspect, marshal_inspect) then disagrees with the name the test holds.
+  const cwd = await realpath(await mkdtemp(join(tmpdir(), "lib-eval-")));
   const bin = join(cwd, "bin");
   try {
     await mkdir(bin, { recursive: true });

@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
 import { peakRssPrelude } from "./peak-rss.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const MAC = join(ROOT, "packs", "macos-forensics", "tools");
 const PLIST = join(MAC, "plist_read", "run.py");
@@ -1344,7 +1345,7 @@ test("unified_log counts the whole stream, not the preview: malformed lines afte
   });
 });
 
-test("unified_log keeps a record with none of an entry's fields apart from the entries, and says so", async () => {
+test("unified_log keeps a record with none of an entry's fields apart from the entries, and says so", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const bin = await ulBin(cwd);
     const answer = JSON.parse((await ul(cwd, bin, { path: await logarchive(cwd), out_dir: "work/u3" }, "trailer")).stdout) as UlAnswer;
@@ -1393,7 +1394,7 @@ test("unified_log refuses a link in the tree it would stage, and names it", asyn
   });
 });
 
-test("unified_log refuses a member present in both trees with different bytes, and stages one that is identical", async () => {
+test("unified_log refuses a member present in both trees with different bytes, and stages one that is identical", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const bin = await ulBin(cwd);
     const path = await dbCopy(cwd);
@@ -1473,7 +1474,7 @@ test("unified_log records the reader's version, and declares the reader it needs
 
 const NOT_ROOT = process.getuid?.() !== 0;
 
-test("unified_log as a job writes only under $OUT: an out_dir outside it is refused with a reason, a read-only parent is a JSON error", async () => {
+test("unified_log as a job writes only under $OUT: an out_dir outside it is refused with a reason, a read-only parent is a JSON error", { skip: NO_ADOPTION }, async () => {
   // The manifest's own example, out_dir work/ulog, ended in a traceback in a job: work/ is read-only there, and the harness maps only work/<id>/ to $OUT.
   await withCwd(async (cwd) => {
     const bin = await ulBin(cwd);

@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { TOOLS, asJob, body, exists, filesUnder, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const UNPACK = join(TOOLS, "unpack_safe", "run.py");
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
@@ -55,7 +56,7 @@ exit 2`);
 
 const packed = (extra = ""): string => `UPXOK expand=3000 ${extra}`;
 
-test("a UPX file is unpacked into a new file under the tool-output directory: its own SHA-256, no execute bit, the original untouched, the version recorded", async () => {
+test("a UPX file is unpacked into a new file under the tool-output directory: its own SHA-256, no execute bit, the original untouched, the version recorded", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await fakeUpx(bin);
     const data = packed();
@@ -91,7 +92,7 @@ test("a rerun makes a new file and replaces nothing", async () => {
   });
 });
 
-test("in a job the derivative and the log are under $OUT", async () => {
+test("in a job the derivative and the log are under $OUT", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await fakeUpx(bin);
     await put(cwd, "work/sample.exe", packed());
@@ -279,7 +280,7 @@ test("a call that spends max_seconds in upx -l or upx -t is partial with limits_
   });
 });
 
-test("a stage directory with extra files from upx is removed, and the log is mode 0600", async () => {
+test("a stage directory with extra files from upx is removed, and the log is mode 0600", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await fakeUpx(bin);
     await put(cwd, "work/extra.exe", "UPXOK EXTRA expand=100");

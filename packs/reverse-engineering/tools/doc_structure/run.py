@@ -50,8 +50,16 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-TOOL = {"name": "doc_structure", "version": 11}
+TOOL = {"name": "doc_structure", "version": 12}
 PARSER = "doc_structure/1"
+if sys.version_info[:2] < (3, 11):
+    # The blocks below compile possessive quantifiers, which Python has from 3.11: older, the import would end in a traceback before main() could say
+    # why. So the refusal is said here, as JSON, before they are reached (main() keeps the same check for the name MIN_PYTHON).
+    _why = ("doc_structure needs Python 3.11 or later (its PDF lexer uses possessive quantifiers, which Python has from 3.11): this is Python %d.%d; "
+            "nothing was read" % tuple(sys.version_info[:2]))
+    sys.stdout.write(json.dumps({"error": _why, "status": "failed", "status_basis": _why, "tool": TOOL,
+                                 "python": "%d.%d.%d" % tuple(sys.version_info[:3])}) + "\n")
+    raise SystemExit(1)
 NOTE = ("Static structure only. A structure shows what the file holds, not what an application would do with it: an action, a macro, "
         "a field or an external target does not show that anything ran or was fetched. Record what was read and what was not before "
         "drawing an absence conclusion. A string out of the file is shown with each backslash written twice and each control character as \\xNN.")

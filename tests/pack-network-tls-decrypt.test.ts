@@ -22,6 +22,7 @@ import { NET, TOOLS, TLSD, asJob, body, exists, filesUnder, frameTcp4, gone, ngB
 import type { Json } from "./pack-network-harness.ts";
 import { CUT_FLOODERS, FEW, PY_LEAVE, alive, exec, floodTheVersionProbe, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_SETSID } from "./host-gates.ts";
 
 const TLS = TLSD;
 const BUILDER = join(ROOT, "tests", "network-tls-fixture.py");
@@ -663,7 +664,7 @@ test("a process tshark leaves behind is ended before the answer and makes it par
 
 for (const flood of CUT_FLOODERS) {
   for (const host of ["linux", "refused", "darwin"] as const) {
-    test(`tls_decrypt: a version probe cut at the byte cap (${flood}, ${host}) is partial and says a process went on writing`, { skip, timeout: 120000 }, async () => {
+    test(`tls_decrypt: a version probe cut at the byte cap (${flood}, ${host}) is partial and says a process went on writing`, { skip: skip || NO_SETSID, timeout: 120000 }, async () => {
       const fix = fixture!;
       const built = scenario(flowsFrom(fix));
       await withCwd(async (cwd, bin) => {

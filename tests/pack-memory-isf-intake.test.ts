@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, withCwd } from "./tool-library-harness.ts";
 import { MEM, SHAPES, rng, runTool } from "./memory-f1-support.ts";
+import { interpreterDir } from "./host-gates.ts";
 
 const ISF = join(MEM, "isf_intake", "run.py");
 const PY = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" }).stdout.trim();
@@ -186,7 +187,7 @@ test("a converter that fails is a failure with its log judged and no table; a mi
     assert.deepEqual(await files(join(cwd, "work", "s1", "symbols")), []);
     const empty = join(cwd, "empty");
     await mkdir(empty);
-    run = await runTool(ISF, cwd, args, { PATH: `${empty}:/usr/bin:/bin` });
+    run = await runTool(ISF, cwd, args, { PATH: `${await interpreterDir(empty)}:/usr/bin:/bin` });
     out = parse(run);
     assert.equal(out.status, "failed");
     assert.match(out.error, /dwarf2json is not on PATH/);
@@ -195,7 +196,7 @@ test("a converter that fails is a failure with its log judged and no table; a mi
     await mkdir(bin2);
     await writeFile(join(bin2, "dwarf2json"), "#!/bin/sh\nexit 0\n");
     await chmod(join(bin2, "dwarf2json"), 0o755);
-    run = await runTool(ISF, cwd, args, { PATH: `${bin2}:/usr/bin:/bin` });
+    run = await runTool(ISF, cwd, args, { PATH: `${await interpreterDir(bin2)}:/usr/bin:/bin` });
     assert.match(parse(run).error, /no `vol` on PATH/);
   });
 });

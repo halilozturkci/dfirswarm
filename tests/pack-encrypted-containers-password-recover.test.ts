@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const SCRIPT = join(ROOT, "packs", "encrypted-containers", "tools", "password_recover", "run.py");
 const AGENT = { AGENT_ID: "s1" };
@@ -155,7 +156,7 @@ test("a helper that exits non-zero and writes no hash answers failed", async () 
 
 // --- the full, gated run: stand-in helper and john, format inferred from the extension --------------------------------------
 
-test("a gated run with stand-in helper and john: no candidate value on an argv or in an env dump, pot/session/log under $OUT mode 0600, the canary never reaches stdout, stderr or the answer, and the recovered count is read from john --show", async () => {
+test("a gated run with stand-in helper and john: no candidate value on an argv or in an env dump, pot/session/log under $OUT mode 0600, the canary never reaches stdout, stderr or the answer, and the recovered count is read from john --show", { skip: NO_ADOPTION }, async () => {
   await scratch(async ({ cwd, out, bin, argvLog }) => {
     await stub(bin, "john", argvLog, JOHN);
     await stub(bin, "zip2john", argvLog, HELPER_OK);
@@ -208,7 +209,7 @@ test("a gated run with stand-in helper and john: no candidate value on an argv o
 
 // --- hash_file: an existing hash from another sealed job, no helper run -----------------------------------------------------
 
-test("hash_file skips the helper entirely", async () => {
+test("hash_file skips the helper entirely", { skip: NO_ADOPTION }, async () => {
   await scratch(async ({ cwd, out, bin, argvLog }) => {
     await stub(bin, "john", argvLog, JOHN);
     await writeFile(join(cwd, "existing.hash"), "$pkzip$0*...already-extracted...\n");
@@ -339,7 +340,7 @@ test("an empty candidate list answers failed, not a vacuous complete", async () 
   });
 });
 
-test("versions.helper says 'not reported by this build' when the helper reports none, never a claim of a pin", async () => {
+test("versions.helper says 'not reported by this build' when the helper reports none, never a claim of a pin", { skip: NO_ADOPTION }, async () => {
   await scratch(async ({ cwd, out, bin, argvLog }) => {
     await stub(bin, "john", argvLog, JOHN);
     await stub(bin, "zip2john", argvLog, HELPER_NO_VERSION);
