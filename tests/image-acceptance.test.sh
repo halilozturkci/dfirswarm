@@ -14,6 +14,18 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/image-acceptance.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
+# GNU timeout is not on a Mac. The same bound, as a function, only where the program is absent (124 on a timeout, the
+# whole process group ended).
+command -v timeout >/dev/null 2>&1 || timeout() {
+  python3 -c 'import os, signal, subprocess, sys
+p = subprocess.Popen(sys.argv[2:], start_new_session=True)
+try:
+    sys.exit(p.wait(timeout=float(sys.argv[1])))
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL)
+    p.wait()
+    sys.exit(124)' "$@"
+}
 S="$ROOT/scripts/image-acceptance.sh"
 
 mkdir -p "$TMP/bin" "$TMP/etc" "$TMP/packs/p/tools"

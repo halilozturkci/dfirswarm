@@ -16,7 +16,7 @@ import time
 import unittest
 import zlib
 
-from support import Case, have, run_tool, stand_in, tool_path
+from support import CLEAN, Case, have, run_tool, stand_in, tool_path
 
 SIGNATURE = b"EVF\x09\x0d\x0a\xff\x00"
 MMLS_512 = """DOS Partition Table
@@ -120,7 +120,7 @@ class LayerDescribe(Case):
         res = self.run_it(parts)
         self.assertEqual(res.code, 0, res.stderr)
         a = res.json
-        self.assertEqual((a["container"]["layer"], a["media"]["bytes"], a["status"]), ("split_raw", 3 << 20, "complete"), a["status_basis"])
+        self.assertEqual((a["container"]["layer"], a["media"]["bytes"], a["status"]), ("split_raw", 3 << 20, CLEAN), a["status_basis"])
         self.assertEqual([s["index"] for s in a["sources"]], [0, 1, 2])
         name = a["descriptor"]["file"]
         path = self.path("out", "layers", name)
@@ -172,7 +172,7 @@ class LayerDescribe(Case):
         a = self.run_it([self.raw()], hash_sources=False).json
         self.assertIsNone(a["sources"][0]["sha256"])
         self.assertIn("hashing was not asked for", a["sources"][0]["not_hashed"])
-        self.assertEqual(a["status"], "complete", a["status_basis"])
+        self.assertEqual(a["status"], CLEAN, a["status_basis"])
 
     @unittest.skipUnless(have("mmls") and have("fsstat") and have("img_stat"), "the Sleuth Kit is not installed")
     def test_a_4096_byte_sector_image_is_described_in_4096_byte_sectors_by_the_real_sleuth_kit(self):
@@ -190,7 +190,7 @@ class LayerDescribe(Case):
             self.assertIn("-b", d["programs"][-1]["argv"] if d["programs"] else [])
             if sector == 4096 and have("mke2fs"):
                 self.assertEqual(rows[0]["filesystem"].get("fs_type"), "Ext4", a)
-                self.assertEqual(a["status"], "complete", a["status_basis"])
+                self.assertEqual(a["status"], CLEAN, a["status_basis"])
 
     @unittest.skipUnless(have("ewfacquire") and have("ewfinfo") and have("mmls"), "ewf-tools or the Sleuth Kit is not installed")
     def test_a_real_e01_set_is_described_and_a_set_with_its_last_segment_missing_names_it(self):

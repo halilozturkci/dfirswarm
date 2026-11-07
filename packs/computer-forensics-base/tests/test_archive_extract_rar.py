@@ -26,7 +26,7 @@ import time
 import unittest
 import zlib
 
-from support import Case, run_tool, stand_in, tool_path
+from support import CLEAN, Case, run_tool, stand_in, tool_path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURE = os.path.join(HERE, "fixtures", "rar", "rar5-subdirs.rar")
@@ -219,7 +219,7 @@ class Detection(RarBase):
         bindir = self.stand_in_reader(
             "printf '%s' '" + record("a.txt", 5, "3610A686") + "'", "printf hello", name="7z")
         r = run_tool("archive_extract", {"path": "inputs/v5.rar", "out_dir": "work/out"}, self.dir, only_path=bindir)
-        self.assertEqual(r.json["status"], "complete", r.stdout)
+        self.assertEqual(r.json["status"], CLEAN, r.stdout)
         self.assertIn("RAR codec", r.json["archive"]["program"]["note"])
         self.assertEqual(os.path.basename(r.json["archive"]["program"]["path"]), "7z")
 
@@ -230,7 +230,7 @@ class Detection(RarBase):
         stand_in(first, "7z", 'exit 2')
         second = self.stand_in_reader("printf '%s' '" + record("a.txt", 5, "3610A686") + "'", "printf hello")
         r = self.extract("inputs/v5.rar", "work/out", path_dirs=[first, second])
-        self.assertEqual(r.json["status"], "complete", r.stdout)
+        self.assertEqual(r.json["status"], CLEAN, r.stdout)
         self.assertEqual(os.path.basename(r.json["archive"]["program"]["path"]), "7zz")
 
 
@@ -246,7 +246,7 @@ class StandInReader(RarBase):
 
     def test_the_stand_in_listing_and_bytes_give_complete_and_the_reader_was_given_no_password(self):
         r = self.run_with(record("a.txt", 5, "3610A686"), "printf hello")
-        self.assertEqual(r.json["status"], "complete", r.stdout)
+        self.assertEqual(r.json["status"], CLEAN, r.stdout)
         args = self.read("args.log")
         self.assertIn("x -so -y -bd -spd -scsUTF-8", args)
         self.assertFalse([t for t in args.split() if t.startswith("-p")], "no password switch is ever given")
@@ -286,7 +286,7 @@ class StandInReader(RarBase):
 
     def test_nothing_to_extract_starts_no_extraction(self):
         r = self.run_with(dir_record("d") + dir_record("d/e"), "touch %s; exit 9" % self.path("x-was-run"))
-        self.assertEqual(r.json["status"], "complete", r.stdout)
+        self.assertEqual(r.json["status"], CLEAN, r.stdout)
         self.assertFalse(os.path.exists(self.path("x-was-run")), "a list file with no name would not mean nothing: no extraction was started")
         self.assertIn("not started", r.json["extract_exit"])
 
@@ -309,7 +309,7 @@ class StandInReader(RarBase):
 
     def test_a_name_that_would_be_a_wildcard_or_a_path_outside_comes_out_under_a_harmless_name(self):
         r = self.run_with(record("../../x*?[a].txt", 5, "3610A686"), "printf hello")
-        self.assertEqual(r.json["status"], "complete", r.stdout)
+        self.assertEqual(r.json["status"], CLEAN, r.stdout)
         row = self.rows("work/out")[0]
         self.assertTrue(row["path"].startswith("extracted/"), row["path"])
         self.assertNotIn("..", row["path"].split("/"))

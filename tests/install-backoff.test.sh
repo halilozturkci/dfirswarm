@@ -26,7 +26,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
 
 cat > "$TMP/server.py" <<'PY'
-import json, sys, threading, time
+import json, os, socketserver, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BODY = b"hello world\n"
@@ -68,14 +68,24 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(BODY)
 
 
-srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
-open(PORTFILE, "w").write(str(srv.server_address[1]))
+class S(ThreadingHTTPServer):
+    # HTTPServer.server_bind asks socket.getfqdn for the server's name, a reverse DNS lookup that
+    # can take many seconds on a CI host; nothing here uses the name.
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
+
+srv = S(("127.0.0.1", 0), H)
+with open(PORTFILE + ".tmp", "w") as f:
+    f.write(str(srv.server_address[1]))
+os.rename(PORTFILE + ".tmp", PORTFILE)
 srv.serve_forever()
 PY
-python3 "$TMP/server.py" "$TMP/hits.jsonl" "$TMP/port" >/dev/null 2>&1 &
+python3 "$TMP/server.py" "$TMP/hits.jsonl" "$TMP/port" >/dev/null 2>"$TMP/server.err" &
 SERVER_PID=$!
-for _ in $(seq 1 50); do [[ -s "$TMP/port" ]] && break; sleep 0.1; done
-[[ -s "$TMP/port" ]] || fail "the stand-in server did not start"
+for _ in $(seq 1 300); do [[ -s "$TMP/port" ]] && break; kill -0 "$SERVER_PID" 2>/dev/null || break; sleep 0.1; done
+[[ -s "$TMP/port" ]] || fail "the stand-in server did not start (alive: $(kill -0 "$SERVER_PID" 2>/dev/null && echo yes || echo no)): $(head -c 600 "$TMP/server.err")"
 PORT="$(cat "$TMP/port")"
 WANT="$(printf 'hello world\n' | sha256sum | cut -d' ' -f1)"
 

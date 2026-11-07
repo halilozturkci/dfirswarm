@@ -118,7 +118,8 @@ for r in archive-members disk-volumes memory-windows; do
   entry="$CFB/recipes/$r/$(jq -r .entry "$rj")"
   rt="$(jq -r .runtime "$rj")"
   v="$("$rt" "$entry" detect --target "{\"paths\": [\"$T/a.zip\"], \"name\": \"inputs/a.zip\"}" 2>/dev/null)"; rc=$?
-  [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || fail "$r detect should exit 0 or 1, not $rc: $v"
+  # Exit 2 with "applies": "unknown" is the protocol's "cannot tell" (a reader that is not in the image): not a failure.
+  [[ "$rc" -eq 0 || "$rc" -eq 1 || ( "$rc" -eq 2 && "$(jq -r '.applies' <<<"$v" 2>/dev/null)" == unknown ) ]] || fail "$r detect should exit 0 or 1 (or 2 with applies unknown), not $rc: $v"
   jq -e 'has("why")' <<<"$v" >/dev/null || fail "$r detect should say why: $v"
 done
 python3 "$CFB/recipes/archive-members/run.py" run --target "{\"paths\": [\"$T/a.zip\"]}" --out "$T/out" >/dev/null || fail "archive-members should catalogue a zip"

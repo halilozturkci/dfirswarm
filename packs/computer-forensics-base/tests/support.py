@@ -16,6 +16,13 @@ import unittest
 PACK_DIR = os.path.abspath(os.environ.get("PACK_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+# What a clean run of a tool that runs a program says on this host. The tools end what a program leaves behind only where the kernel
+# lets them adopt it (Linux, PR_SET_CHILD_SUBREAPER); elsewhere the absence of a leftover cannot be proven, and a run that is clean
+# in every other way is `partial`, saying so (test_process_apply.py holds that, on a patched host). A test that needs a program run to
+# end `complete` expects this.
+CLEAN = "complete" if sys.platform.startswith("linux") else "partial"
+
+
 def tool_path(name):
     return os.path.join(PACK_DIR, "tools", name, "run.py")
 

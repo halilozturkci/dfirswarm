@@ -51,7 +51,7 @@ for (const [rel, text] of Object.entries(fixtureFiles())) {
   await writeFile(to, text);
 }
 TS
-sed -i "s|\$FIXTURE|$ROOT/tests/sensitive-access-fixture.ts|" "$TMP/write-fixture.ts"
+sed "s|\$FIXTURE|$ROOT/tests/sensitive-access-fixture.ts|" "$TMP/write-fixture.ts" > "$TMP/write-fixture.sed" && mv "$TMP/write-fixture.sed" "$TMP/write-fixture.ts"  # no sed -i: BSD sed takes the next word as a suffix
 node --experimental-strip-types --no-warnings "$TMP/write-fixture.ts" "$S" || fail "the fixture was not written"
 rm -f "$TMP/write-fixture.ts"
 

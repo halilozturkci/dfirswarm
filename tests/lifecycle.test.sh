@@ -154,7 +154,8 @@ kill "$LIVE_PID" 2>/dev/null || true
 pass "a run found with nothing alive is recorded as ended (cause unknown, last trace time) with the same words in the trace, a second stop keeps them, and a live run's stop still gives stopped"
 
 # --- the harness a VM run started with ---------------------------------------------
-for f in freeze_harness vm_build_spec vm_token_validity vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do
+pack_tools_as_jobs=""  # vm_build_spec reads it (set -u)
+for f in freeze_harness vm_build_spec vm_token_validity vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models inputs_bound_dirs inputs_mount_dirs harness_commit harness_dirty; do
   eval "$(fn "$f")"
 done
 mkdir -p "$TMP/hub/runs" "$TMP/sandbox/.pi-sessions"
@@ -237,7 +238,7 @@ jq -e --slurpfile t "$tokens_file" '.input.seat_tokens == $t[0] and .input.token
 pass "the keeper, the hub's stop and the watchdog run from the frozen copy; the hub gets one 32-hex token per seat (0600, in its own directory) beside the collector's"
 
 # The spec names the tokens file and never holds a token.
-for f in vm_build_spec vm_token_validity vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do eval "$(fn "$f")"; done
+for f in vm_build_spec vm_token_validity vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models inputs_bound_dirs inputs_mount_dirs; do eval "$(fn "$f")"; done
 extra_env=() agent_ids=() AGENT_MODELS=()
 sandbox="$TMP/sandbox" swarm_id=s1 hard=0 wall=10 n=0 vm_image=img vm_cpus=1 vm_memory=1024 vm_disk=8192 \
   playwright=0 pack_dirs="" compact_prompt="" self_compact=0 forging=0 inbox_page_chars="" quarantine=0 local_only=0 \

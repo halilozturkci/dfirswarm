@@ -9,7 +9,7 @@ import subprocess
 import sys
 import unittest
 
-from support import Case, recipe_path, stand_in
+from support import CLEAN, Case, recipe_path, stand_in
 
 SCAN = 32 * 1024 * 1024
 
@@ -45,7 +45,7 @@ class DiskTimeline(Case):
         bin_dir, image = self.stubs(SCAN)
         self.run_recipe(bin_dir, image, self.path("out"))
         cov = json.loads(self.read("out/coverage.json"))
-        self.assertEqual(cov["status"], "complete", cov["errors"])
+        self.assertEqual(cov["status"], CLEAN, cov["errors"])
         self.assertNotIn("plaso_signals_not_read", cov)
 
 

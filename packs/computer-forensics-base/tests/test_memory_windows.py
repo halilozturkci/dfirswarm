@@ -10,7 +10,7 @@ import subprocess
 import time
 import unittest
 
-from support import Case, recipe_path, stand_in
+from support import CLEAN, Case, recipe_path, stand_in
 
 
 class MemoryWindowsStop(Case):
@@ -109,7 +109,7 @@ class MemoryWindowsStop(Case):
         stdout, stderr = proc.communicate(timeout=60)
         self.assertEqual(proc.returncode, 0, stdout + stderr)
         cov = json.loads(self.read("out/coverage.json"))
-        self.assertEqual((cov["status"], len(cov["steps"])), ("complete", 12))
+        self.assertEqual((cov["status"], len(cov["steps"])), (CLEAN, 12))
         self.assertNotIn("interrupted", cov)
 
 

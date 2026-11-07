@@ -15,7 +15,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Short, for the collector's socket path: a trace no collector chained is
 # not the run this test continues.
 TMP="$(mktemp -d /tmp/rsm.XXXXXX)"
-trap 'chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
+LIVE=()
+trap 'for p in ${LIVE[@]+"${LIVE[@]}"}; do kill "$p" 2>/dev/null || true; done; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
 HELLO="$ROOT/prompts/goals/hello.md"
@@ -27,6 +28,15 @@ sandbox_of() { jq -r --arg l "$1" '.runs[] | select(.label == $l) | .sandbox' "$
 id_of() { jq -r --arg l "$1" '.runs[] | select(.label == $l) | .id' "$TMP/runs/registry.json"; }
 state_of() { jq -r --arg id "$1" '.runs[] | select(.id == $id) | .state' "$TMP/runs/registry.json"; }
 set_state() { local t; t="$(mktemp)"; jq --arg id "$1" --arg s "$2" '(.runs[] | select(.id == $id) | .state) = $s' "$TMP/runs/registry.json" > "$t" && mv "$t" "$TMP/runs/registry.json"; }
+
+# A stop finds a run with nothing alive and records it as ended (cause unknown), not stopped.
+# These runs are not started (--no-start), so a stand-in collector gives the stop something
+# alive to stop; the stop ends it.
+alive() { # <sandbox>
+  bash -c 'exec -a "trace-collector.mjs $0" sleep 300' "$1" >/dev/null 2>&1 &
+  LIVE+=("$!"); printf '%s
+' "$!" > "$1/collector.pid"
+}
 
 echo "# the kickoff keeps its options for a resume"
 out="$(kick --cap-usd 5 --wall-clock 30 --label r1)" || fail "the kickoff was refused: $out"
@@ -55,6 +65,7 @@ a0="$(jq -r '.agents[0].id' "$sb/team.json")"; a1="$(jq -r '.agents[1].id' "$sb/
 mkdir -p "$sb/.pi-sessions/$a0"
 note="name $a0, slice: the logs; NEXT ACTION: read from line 5000; $(printf 'x%.0s' $(seq 1 3000))"
 jq -nc --arg n "$note" '{type: "custom_message", id: "h1", parentId: null, timestamp: "2026-09-28T10:00:00.000Z", customType: "self-compact-handoff", content: "", details: {note: $n}, display: true}' > "$sb/.pi-sessions/$a0/s.jsonl"
+alive "$sb"
 out="$(swarm stop "$id")" || fail "stop failed: $out"
 [[ "$(state_of "$id")" == stopped && -f "$sb/done/STOPPED" && -f "$sb/custody.json" ]] || fail "the stop did not end the run as stopped with a verdict: $out"
 first_at="$(jq -r '.at' "$sb/custody.json")"

@@ -25,7 +25,7 @@ import unittest
 import zipfile
 import zlib
 
-from support import Case, recipe_path, run_tool, stand_in, tool_path
+from support import CLEAN, Case, recipe_path, run_tool, stand_in, tool_path
 
 SEVEN_Z = next((p for p in ("7z", "7zz", "7za") if shutil.which(p)), None)
 
@@ -772,7 +772,7 @@ class Extract(Case):
         for row in rows:
             if row["type"] == "file" and row["size_declared"]:
                 self.assertIs(row["crc_verified"], True, row)
-        self.assertEqual(r.json["status"], "complete")
+        self.assertEqual(r.json["status"], CLEAN)
         self.assertIn("7-Zip", r.json["archive"]["program"]["banner"] + "7-Zip")
 
     @unittest.skipUnless(SEVEN_Z, "no 7z program on this host")

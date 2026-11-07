@@ -14,7 +14,7 @@ import sys
 import tracemalloc
 import unittest
 
-from support import Case, run_tool, stand_in, tool_path
+from support import CLEAN, Case, run_tool, stand_in, tool_path
 
 SECRET_ADDRESS = "alice.hidden@example.test"
 CARD = "4111111111111111"
@@ -238,7 +238,7 @@ class FeatureScanProcess(Case):
         proc = self.scan_with('while [ $# -gt 0 ]; do case "$1" in -o) OUTDIR="$2"; shift;; esac; shift; done\nmkdir -p "$OUTDIR"\n'
                               'python3 -c \'import sys; sys.stdout.write("10\\t" + "A" * (3 << 20) + "\\tctx\\n20\\tb\\tctx\\n")\' > "$OUTDIR/email.txt"\nexit 0\n')
         said = json.loads(proc.stdout)
-        self.assertEqual(said["status"], "complete", said)
+        self.assertEqual(said["status"], CLEAN, said)
         email = [f for f in said["features"] if f["feature"] == "email"][0]
         self.assertEqual((email["lines"], email["lines_longer_than_a_block"]), (2, 1))
 

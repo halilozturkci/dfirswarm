@@ -14,7 +14,7 @@ import time
 import unittest
 import zlib
 
-from support import Case, have, run_tool, stand_in, tool_path
+from support import CLEAN, Case, have, run_tool, stand_in, tool_path
 
 SIGNATURE = b"EVF\x09\x0d\x0a\xff\x00"
 MD5 = "0123456789abcdef0123456789abcdef"
@@ -88,7 +88,7 @@ class ImageVerify(Case):
         res = self.run_it(self.first(paths))
         self.assertEqual(res.code, 0, res.stderr)
         a = res.json
-        self.assertEqual((a["status"], a["verification"], a["complete"]), ("complete", "digests_agree", True), a["status_basis"])
+        self.assertEqual((a["status"], a["verification"], a["complete"]), (CLEAN, "digests_agree", CLEAN == "complete"), a["status_basis"])
         self.assertEqual([r["index"] for r in a["segments"]], [1, 2, 3])
         self.assertTrue(all(len(r["sha256"]) == 64 for r in a["segments"]))
         self.assertEqual(a["segments"][-1]["ends_with"], "done")
@@ -104,7 +104,7 @@ class ImageVerify(Case):
     def test_an_explicit_ordered_list_gives_the_same_answer(self):
         paths = self.build()
         a = self.run_it({"segments": paths}).json
-        self.assertEqual(a["status"], "complete", a["status_basis"])
+        self.assertEqual(a["status"], CLEAN, a["status_basis"])
 
     def test_a_version_that_cannot_be_read_makes_the_receipt_partial_and_names_it(self):
         paths = self.build()
@@ -334,7 +334,7 @@ class ImageVerify(Case):
         with open(raw, "wb") as fh:
             fh.write(segment(1, True))
         a = self.run_it({"path": os.fsdecode(raw)}).json
-        self.assertEqual(a["status"], "complete", a["status_basis"])
+        self.assertEqual(a["status"], CLEAN, a["status_basis"])
         json.dumps(a, ensure_ascii=True)
 
     def test_a_name_shaped_like_a_token_is_not_printed(self):
@@ -395,7 +395,7 @@ class ImageVerify(Case):
         self.assertEqual(made.returncode, 0, made.stderr)
         first = base + ".E01"
         a = run_tool("image_verify", {"path": first, "out_dir": self.path("out", "real")}, self.dir).json
-        self.assertEqual(a["status"], "complete", a["status_basis"])
+        self.assertEqual(a["status"], CLEAN, a["status_basis"])
         self.assertGreaterEqual(a["segments_total"], 2)
         self.assertEqual(a["segments"][-1]["ends_with"], "done")
         # one byte of the media stream flipped in the middle of the second segment: the section chain is intact, the data is not
