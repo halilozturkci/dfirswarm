@@ -30,7 +30,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "clr_inspect", "version": 5}
+TOOL = {"name": "clr_inspect", "version": 6}
 PARSER = "clr_inspect/1"
 
 
@@ -2754,14 +2754,15 @@ def own_dir(path):
     return None
 
 
-def create_exclusive(directory, name, mode=0o600):
-    """A new file named `name` (or `stem-N.ext`) in `directory`, created with O_EXCL and O_NOFOLLOW, never an existing one: (path, name)."""
+def link_exclusive(directory, name, source):
+    """Give the file `source` a new name `name` (or `stem-N.ext`) in `directory` with one link(2), which fails when the name exists, so a file of
+    another call is never replaced and no empty placeholder is left for a call at the same time to take the name from (a name made and then
+    unlinked before the link was free for the other call): (path, name)."""
     stem, dot, ext = name.rpartition(".")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     for n in range(1, 1000):
         candidate = name if n == 1 else "%s-%d.%s" % (stem, n, ext)
         try:
-            os.close(os.open(str(directory / candidate), flags, mode))
+            os.link(str(source), str(directory / candidate))
         except FileExistsError:
             continue
         return directory / candidate, candidate
@@ -3125,14 +3126,10 @@ def main():
     body = nbytes - len(header)
     if body <= 0:
         drop("failed", "`ilspycmd` exited with status %s and wrote nothing: no reconstruction exists (its error text, %d bytes, is not kept)" % (ran["exit_code"], err_bytes))
-    final, final_name = create_exclusive(directory, "clr-inspect.reconstruction.cs")
-    log_path, log_name = create_exclusive(directory, "clr-inspect.log")
     try:
-        os.unlink(final)
-        os.link(out_path, final)
+        final, final_name = link_exclusive(directory, "clr-inspect.reconstruction.cs", out_path)
         LINKED.append(str(final))
-        os.unlink(log_path)
-        os.link(err_path, log_path)
+        log_path, log_name = link_exclusive(directory, "clr-inspect.log", err_path)
         LINKED.append(str(log_path))
     except OSError as exc:
         drop("failed", "the reconstruction could not be linked under its final name: %s" % describe(exc))

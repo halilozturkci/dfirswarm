@@ -15,6 +15,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -1200,7 +1201,23 @@ for (const [recipeName, program, marker] of [
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
       await build(TAR, tar, JSON.stringify([[marker, 16]]));
-      const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+      // A process that was sent SIGKILL is gone when it is a zombie (dead, its parent has not yet collected it) or has left the table: a kill(0) alone also says "running" for a zombie
+      // and for a process in the middle of dying, which the host's init reaps a moment after the recipe has exited. It is given up to 3 seconds to be gone.
+      const running = (pid: number): boolean => {
+        try { process.kill(pid, 0); } catch { return false; }
+        try {
+          const stat = readFileSync(`/proc/${pid}/stat`, "latin1");
+          const state = stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3);
+          return state !== "Z" && state !== "X";
+        } catch { return true; }
+      };
+      const alive = (pid: number): boolean => {
+        for (let i = 0; i < 60; i++) {
+          if (!running(pid)) return false;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+        }
+        return true;
+      };
       const pidOf = async (file: string): Promise<number[]> => (await readFile(file, "utf8")).trim().split("\n").map(Number).filter(Boolean);
       // The program writes a report and then waits for a long time with a child of its own that also waits.
       const stall = `${REPORT}\n${LOG.header(1)}\n${LOG.found(1, 1, "Messages", "messages", 2)}\n(sleep 600 & echo $! >> "$out/../pids.txt"; wait) &\necho $$ >> "$out/../pids.txt"\nsleep 600`;

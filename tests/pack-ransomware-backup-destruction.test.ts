@@ -354,6 +354,7 @@ test("hostile parameters give a JSON refusal and never a traceback, 100,000-deep
     for (const [label, input] of cases) {
       const child = spawnSync("python3", [CORRELATE], { cwd, input, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" }, timeout: 60000 });
       assert.doesNotMatch(child.stderr, /Traceback/, label);
+      assert.ok(child.stdout, `${label}: no answer (status ${child.status}, signal ${child.signal}, error ${child.error?.message})`);
       const doc = JSON.parse(child.stdout) as J;
       if (label === "a lone surrogate") {
         assert.ok(["failed", "partial"].includes(doc.status), label);

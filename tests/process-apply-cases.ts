@@ -9,6 +9,7 @@
  *             is not held to that (it keeps its status, program_group says why)
  */
 import assert from "node:assert/strict";
+import { statfsSync } from "node:fs";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { NO_ADOPTION } from "./host-gates.ts";
@@ -48,6 +49,12 @@ export async function expectLeft(c: Case, variant: string): Promise<void> {
       const { answer } = await c.invoke(cwd, bin, variant, "linux");
       const took = (Date.now() - began) / 1000;
       assert.ok(took < (c.maxSeconds ?? 10), `${c.name} ${variant}: answered after ${took} seconds`);
+      // (a `complete` over a leftover that was running is the tool's; one over a leftover that was gone by itself before the tool looked is not: the message says which pids were there, and what the disk had)
+      if (answer.status !== "partial") {
+        const seen = (await pids(cwd)).map((pid) => `${pid}:${alive(pid) ? "running" : "gone"}`).join(",");
+        const room = ((): string => { try { const s = statfsSync(cwd); return `${Math.round((Number(s.bavail) * s.bsize) / 1048576)} MiB free`; } catch { return "free space unknown"; } })();
+        assert.fail(`${c.name} ${variant}: expected partial, got ${answer.status} (${answer.status_basis}); leftover pids ${seen || "none recorded"}; ${room}; program_group ${JSON.stringify(group(c, answer))}`);
+      }
       assert.equal(answer.status, "partial", `${c.name} ${variant}: ${answer.status_basis}`);
       if (!c.skipOk && "ok" in answer) assert.equal(answer.ok, false, `${c.name} ${variant}`);
       const g = group(c, answer);

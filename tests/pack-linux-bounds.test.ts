@@ -15,7 +15,7 @@ import { test } from "node:test";
 import { runPySnippet } from "./tool-library-harness.ts";
 import { AUTH, CRON, JOURNAL, RECIPE, SHELL, UTMP, asJob as plainJob, body, filesUnder, lines, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
-import { NO_ADOPTION } from "./host-gates.ts";
+import { NO_ADOPTION, SLOW_BIG_TREES } from "./host-gates.ts";
 /** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
 const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
   plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
@@ -774,7 +774,7 @@ test("auth_log: a directory of 100,000 empty log files ends at max_seconds, list
   });
 });
 
-test("shell_history: 100,000 homes each with a history file are listed 200 inline, whole in a page, in under a megabyte of answer", async () => {
+test("shell_history: 100,000 homes each with a history file are listed 200 inline, whole in a page, in under a megabyte of answer", { skip: SLOW_BIG_TREES }, async () => {
   await withCwd(async (cwd) => {
     const root = join(cwd, "work", "homes");
     for (let i = 0; i < 100_000; i++) {

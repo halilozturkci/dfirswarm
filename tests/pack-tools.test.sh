@@ -799,7 +799,8 @@ ulog x.logarchive a > "$UL/a.json" || fail "unified_log could not run unifiedlog
 "$PY" -c '
 import json, sys
 r = json.load(open(sys.argv[1]))
-assert r["engine"] == "unifiedlog_iterator" and r["status"] == "complete" and r["entry_count"] == 3, r
+# (a host that cannot adopt the orphans of a program, macOS, answers partial and says why: the engine, the entries and the file are what this case is about)
+assert r["engine"] == "unifiedlog_iterator" and r["status"] == ("complete" if sys.platform == "linux" else "partial") and r["entry_count"] == 3, r
 first = json.loads(open(sys.argv[2] + "/" + r["output"]).readline())
 assert first["input"] == "x.logarchive" and first["argv"][first["argv"].index("--format") + 1] == "jsonl", first
 ' "$UL/a.json" "$UL/run" || fail "unified_log did not give unifiedlog_iterator the .logarchive and keep its JSONL"

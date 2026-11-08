@@ -17,6 +17,13 @@ export const NO_ADOPTION: string | false =
     ? false
     : "this host cannot adopt orphaned processes (PR_SET_CHILD_SUBREAPER is Linux's): the tool answers partial here, which the darwin cases of the process-apply suites cover";
 
+/**
+ * The skip reason of a case that makes or walks a hundred thousand files or more and bounds the time it takes (the 600,000 files of recovery_key_scan, the 100,000 homes of shell_history):
+ * on a hosted macOS runner (APFS) making them takes longer than the case, and the file around it, are given (they were cut at 120 and 300 seconds), which says nothing of the tool.
+ * The Linux jobs run them.
+ */
+export const SLOW_BIG_TREES: string | false = process.platform === "darwin" ? "a tree of 100,000 files or more takes minutes to make and walk on a macOS runner's file system: the Linux jobs run this case" : false;
+
 /** The skip reason of a case that needs another Linux-only facility, named by what. */
 export const onlyLinux = (what: string): string | false => (process.platform === "linux" ? false : what + " is Linux's");
 

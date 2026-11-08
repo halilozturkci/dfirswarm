@@ -105,6 +105,18 @@ leave() {
     [ "$(cat "$STUB_DIR/left.pids" 2>/dev/null | wc -l)" -gt "$n0" ] && break
     sleep 0.02; i=$((i + 1))
   done
+  # and the leftover is what it is meant to be before the program ends: a forked shell has written its pid, but has not yet become the \`sleep\` or \`yes\` that holds the pipe
+  # (a leftover that is still a shell when the tool looks for it, or that dies of its own before it, proves nothing of the tool). Where /proc has no comm (macOS) nothing is waited for.
+  case "$STUB_LEFT" in
+    sleeper|stdin|yes|errflood)
+      for p in $(tail -n +$((n0 + 1)) "$STUB_DIR/left.pids" 2>/dev/null); do
+        j=0
+        while [ "$j" -lt 100 ]; do
+          c=$(cat "/proc/$p/comm" 2>/dev/null) || break
+          case "$c" in sh|dash|bash) sleep 0.02; j=$((j + 1));; *) break;; esac
+        done
+      done;;
+  esac
 }
 `;
 export const LEFTOVER_SH = `#!/bin/sh

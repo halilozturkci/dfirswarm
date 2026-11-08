@@ -193,7 +193,8 @@ test("container_inventory reads hostile JSON without a traceback: deep nesting, 
     assert.match(by(ids[3]).errors.join(" "), /Config is not an object/);
     assert.match(by(ids[4]).errors[0], /larger than the 8388608/);
     assert.equal(by(ids[5]).config_version, "unreadable", "an integer past the interpreter's digit limit is a parse failure, named");
-    assert.equal(out.read_errors.total >= 3, true);
+    // (the deep file is a read error when the parser stops at its depth; a parser that reads it makes the top-level error of a list, which is the file's own error)
+    assert.equal(out.read_errors.total >= (/nested deeper/.test(by(ids[0]).errors[0]) ? 3 : 2), true, JSON.stringify(out.read_errors));
   });
 });
 

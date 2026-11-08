@@ -515,7 +515,7 @@ test("four calls at once, each running the program, all finish well inside the m
     for (let i = 0; i < 4; i++) await put(cwd, `work/a${i}.dll`, asm("ok"));
     const t0 = Date.now();
     const outs = await Promise.all([0, 1, 2, 3].map((i) => job(cwd, bin, { path: `work/a${i}.dll`, decompile: true })));
-    for (const o of outs) assert.equal(parse(o).status, "complete");
+    for (const o of outs) assert.equal(parse(o).status, "complete", o.stdout.slice(0, 800));
     assert.ok(Date.now() - t0 < 60_000);
     assert.equal((await outputs(cwd)).length, 8, "four reconstructions and four logs, none replaced");
   });

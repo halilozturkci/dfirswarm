@@ -244,8 +244,9 @@ chmod +x "$T/bin3/log2timeline" "$T/bin3/psort"
 dt3() { # dt3 <out> : run with the bin3 stubs and whatever environment is set
   PATH="$T/bin3:$PATH" python3 "$DT" run --target "{\"paths\": [\"$T/x.E01\"]}" --out "$1" >/dev/null
 }
-dt3 "$T/dt-clean" || fail "disk-timeline with Plaso saying nothing wrong should be complete: $(cat "$T/dt-clean/coverage.json")"
-jq -e '.status == "complete" and (has("plaso_signals") | not)' "$T/dt-clean/coverage.json" >/dev/null || fail "a clean run is complete: $(cat "$T/dt-clean/coverage.json")"
+# (a host that cannot adopt orphaned processes answers partial, exit 1, for a clean run, and says so in its errors: the signals are what this case is about)
+dt3 "$T/dt-clean" || { [[ "$(uname -s)" != Linux ]] && jq -e '.status == "partial"' "$T/dt-clean/coverage.json" >/dev/null; } || fail "disk-timeline with Plaso saying nothing wrong should be complete: $(cat "$T/dt-clean/coverage.json")"
+jq -e --arg want "$([[ "$(uname -s)" == Linux ]] && echo complete || echo partial)" '.status == $want and (has("plaso_signals") | not)' "$T/dt-clean/coverage.json" >/dev/null || fail "a clean run is complete: $(cat "$T/dt-clean/coverage.json")"
 PSORT_STDERR="[ERROR] Worker killed" dt3 "$T/dt-killed" && fail "a worker Plaso reported killed should not be complete"
 jq -e '.status == "partial" and ([.errors[] | select(test("psort.stderr: 1 line.*error.*Worker killed"))] | length == 1) and .plaso_signals[0].file == "psort.stderr"' "$T/dt-killed/coverage.json" >/dev/null || fail "the killed worker is named, with where it was said: $(cat "$T/dt-killed/coverage.json")"
 PSORT_STDOUT="Events extracted: 0" PSORT_EMPTY=1 dt3 "$T/dt-zero" && fail "a timeline of no events should not be complete"

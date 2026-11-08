@@ -113,17 +113,20 @@ ILEAPP="$PACK/recipes/ios-ileapp/run.py"
 ALEAPP="$PACK/recipes/android-aleapp/run.py"
 target() { python3 -c 'import json,sys; print(json.dumps({"paths":[sys.argv[1]]}))' "$1"; }
 # `! cmd` never stops a set -e script: a refusal is checked by hand.
+# A host that cannot adopt the orphans of a program (not Linux) answers partial, with exit 1, for a clean run of a recipe that runs a program, and says why in its errors.
+if [[ "$(uname -s)" == Linux ]]; then WANT=complete; else WANT=partial; fi
+runs() { "$@" >/dev/null || { [[ "$?" -eq 1 && "$WANT" == partial ]]; }; }
 refuses() { if "$@" >/dev/null 2>&1; then echo "FAIL: should have refused: $*" >&2; exit 1; fi; }
 python3 "$ILEAPP" detect --target "$IOS_TARGET" --probe-out "$WORK/p1" | grep -q '"applies": true'
 python3 "$ILEAPP" detect --target "$(target "$WORK/ios.zip")" | grep -q '"applies": true'
 refuses python3 "$ILEAPP" detect --target "$(target "$WORK/android.tar")"
 refuses python3 "$ILEAPP" detect --target "$AB_TARGET"
-PATH="$WORK/bin:$PATH" python3 "$ILEAPP" run --target "$IOS_TARGET" --out "$WORK/ileapp-out" >/dev/null
-jq -e '.status == "complete" and (.errors | length) == 0' "$WORK/ileapp-out/coverage.json" >/dev/null
+PATH="$WORK/bin:$PATH" runs python3 "$ILEAPP" run --target "$IOS_TARGET" --out "$WORK/ileapp-out"
+jq -e --arg want "$WANT" '.status == $want and ($want != "complete" or (.errors | length) == 0)' "$WORK/ileapp-out/coverage.json" >/dev/null
 grep -q $'^ileapp/_TSV Exports/Messages (tar).tsv\tiLEAPP artefact report' "$WORK/ileapp-out/index.tsv"
 grep -q $'^ileapp/_Timeline/tl.db\t' "$WORK/ileapp-out/index.tsv"
 [[ -f "$WORK/ileapp-out/ileapp/_HTML/index.html" && ! -e "$WORK/ileapp-out/ileapp-run" ]]
-PATH="$WORK/bin:$PATH" python3 "$ILEAPP" run --target "$(target "$WORK/ios.zip")" --out "$WORK/ileapp-zip" >/dev/null
+PATH="$WORK/bin:$PATH" runs python3 "$ILEAPP" run --target "$(target "$WORK/ios.zip")" --out "$WORK/ileapp-zip"
 [[ -f "$WORK/ileapp-zip/ileapp/_TSV Exports/Messages (zip).tsv" ]]
 # No iLEAPP in the image: failed, and why.
 refuses env PATH=/usr/bin:/bin "$PY3" "$ILEAPP" run --target "$IOS_TARGET" --out "$WORK/ileapp-none"
@@ -139,8 +142,8 @@ PY
 jq -e '.status == "partial"' "$WORK/ileapp-cut/coverage.json" >/dev/null
 python3 "$ALEAPP" detect --target "$(target "$WORK/android.tar")" | grep -q '"applies": true'
 refuses python3 "$ALEAPP" detect --target "$IOS_TARGET"
-PATH="$WORK/bin:$PATH" python3 "$ALEAPP" run --target "$(target "$WORK/android.tar")" --out "$WORK/aleapp-out" >/dev/null
-jq -e '.status == "complete"' "$WORK/aleapp-out/coverage.json" >/dev/null
+PATH="$WORK/bin:$PATH" runs python3 "$ALEAPP" run --target "$(target "$WORK/android.tar")" --out "$WORK/aleapp-out"
+jq -e --arg want "$WANT" '.status == $want' "$WORK/aleapp-out/coverage.json" >/dev/null
 grep -q $'^aleapp/_TSV Exports/Messages (tar).tsv\tALEAPP artefact report' "$WORK/aleapp-out/index.tsv"
 BAA="$PACK/recipes/android-backup-apps/run.py"
 python3 "$BAA" detect --target "$AB_TARGET" | grep -q '"applies": true'

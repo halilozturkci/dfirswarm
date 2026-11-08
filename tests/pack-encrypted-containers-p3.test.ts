@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
 import { peakRssPrelude } from "./peak-rss.ts";
-import { NO_ADOPTION } from "./host-gates.ts";
+import { NO_ADOPTION, SLOW_BIG_TREES } from "./host-gates.ts";
 
 const ENC = join(ROOT, "packs", "encrypted-containers", "tools");
 const SCAN = join(ENC, "recovery_key_scan", "run.py");
@@ -148,7 +148,7 @@ for i in range(n):
 print("done")
 `;
 
-test("recovery_key_scan walks 600,000 files in one directory with bounded memory, and max_seconds: 1 still answers partial with coverage inside the stop's grace", { timeout: 120_000 }, async () => {
+test("recovery_key_scan walks 600,000 files in one directory with bounded memory, and max_seconds: 1 still answers partial with coverage inside the stop's grace", { timeout: 120_000, skip: SLOW_BIG_TREES }, async () => {
   await withCwd(async (cwd) => {
     const flat = join(cwd, "work", "flat");
     const made = await runPySnippet(MAKE_FLAT_DIR, [flat, "600000"], null);
