@@ -17,8 +17,8 @@
   "example": "{\"path\": \"inputs/memory.raw\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 10,
-  "sha256": "32ddba4117fa78390b1518f47d0e81dc1f4efcb236e2bc7c897ba0664c5ad283",
+  "version": 11,
+  "sha256": "50f9b34ed29fa0e40379e4d90069cfb30f1b13851370daffada1803d53eab85e",
   "use": {
     "extensions": [
       ".vmem",

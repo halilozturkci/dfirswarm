@@ -25,7 +25,7 @@ const PINS: Record<string, string> = {
   windows: "74c974d75fdd178bc86ebd2f724b41c9292864c5d4b310dcde05ae7fa58e2fd6",
   macos: "f3e800e7d94bf70b19f7c6a192bfb604282684a3c5a9e5c392a96240c96ffed1",
   encrypted: "cb1cd7b46f1e0068532f6039cebc91fc124bb9bc6190e99626c5f8a76b818e62",
-  page: "d62d778d19bb357ad67a63bf2dcb007ed4582eec5992eb37690554048ced5713",
+  page: "b339c021341a2ad88f8cfca6a799888108a7bf64f93bd49f989a4d98a1012145",
 };
 
 async function carriers(marker: string): Promise<string[]> {
@@ -200,5 +200,57 @@ test("a page whose temporary file cannot be flushed (disk full, a quota) is stil
     const ran = spawnSync("python3", ["-c", PAGE_CASE, join(ROOT, "packs", "memory-forensics", "tools", tool, "run.py")], { encoding: "utf8", timeout: 60_000 });
     assert.equal(ran.status, 0, ran.stderr);
     assert.deepEqual(JSON.parse(ran.stdout), { raised: null, left: false, tmp_cleared: true }, tool);
+  }
+});
+
+// --- a stop that lands inside a write of the page's own file ------------------------------------------------------------------------
+
+/**
+ * keep_partial() runs from the stop handler, in the main thread, between two bytecodes of add(): the file object may be inside its own write, and flush() on
+ * it then raises RuntimeError ("reentrant call inside <_io.BufferedWriter>"), which is not an OSError. That used to leave the tool with exit 143 and no
+ * document at all (found in CI on Node 24, and 1 run in 12 here). The page now keeps the file it can name, cut back to its last whole line.
+ */
+const REENTRANT_CASE = String.raw`
+from __future__ import annotations
+import errno, hashlib, json, os, re, sys, tempfile, time
+from pathlib import Path
+src = open(sys.argv[1]).read()
+block = re.search(r"^# BEGIN SHARED PAGE\n.*?^# END SHARED PAGE\n", src, re.S | re.M).group(0)
+ns = {"errno": errno, "hashlib": hashlib, "json": json, "os": os, "re": re, "time": time, "Path": Path, "GUARD": {"depth": 0}, "checkpoint": lambda: None}
+exec(compile(block, "page-block", "exec"), ns)
+os.chdir(tempfile.mkdtemp())
+page = ns["LosslessPage"]("t", "k", 1)
+for i in range(50):
+    page.add({"i": i})
+real = page._out
+real.flush()
+with open(page._tmp, "ab") as fh:
+    fh.write(b'{"i": 50, "cut')           # a line cut where the stop fell
+class Busy:
+    def flush(self):
+        raise RuntimeError("reentrant call inside <_io.BufferedWriter name='x'>")
+    close = flush
+page._out = Busy()
+named = page.keep_partial()
+text = Path(named).read_bytes()
+other = ns["LosslessPage"]("u", "k", 1)
+for i in range(50):
+    other.add({"i": i})
+tmp = str(other._tmp)
+other._out = Busy()
+other.abort()                              # a stop inside a write, and the page dropped: nothing is raised and the hidden file goes
+print(json.dumps({"name": str(named), "ends_in_newline": text.endswith(b"\n"), "lines": text.count(b"\n"), "hidden_left": [n for n in os.listdir(Path(named).parent) if n.startswith(".")], "aborted_file_left": os.path.exists(tmp)}))
+`;
+
+test("a stop that lands inside a write of the page's own file still keeps the whole lines under a .partial name, and raises nothing", () => {
+  for (const tool of ["mem_carve", "mem_fs", "mem_profile", "mem_registry", "vol_readiness", "carve_handoff", "vol_views", "isf_intake"]) {
+    const ran = spawnSync("python3", ["-c", REENTRANT_CASE, join(ROOT, "packs", "memory-forensics", "tools", tool, "run.py")], { encoding: "utf8", timeout: 60_000 });
+    assert.equal(ran.status, 0, `${tool}: ${ran.stderr}`);
+    const got = JSON.parse(ran.stdout);
+    assert.match(got.name, /\.jsonl\.partial$/, tool);
+    assert.equal(got.ends_in_newline, true, tool);
+    assert.equal(got.lines, 50, `${tool}: the 50 rows that were flushed, and not the cut one`);
+    assert.deepEqual(got.hidden_left, [], tool);
+    assert.equal(got.aborted_file_left, false, `${tool}: abort() of a page whose file cannot be flushed`);
   }
 });

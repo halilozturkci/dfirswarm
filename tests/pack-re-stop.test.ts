@@ -289,7 +289,7 @@ async function handlersIn(pid: number): Promise<void> {
   }
 }
 
-async function runSignalled(c: Carrier, cwd: string, bin: string, spec: { argv: string[]; stdin: string }, signal: (typeof SIGNALS)[number], delayMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
+async function runSignalled(c: Carrier, cwd: string, bin: string, spec: { argv: string[]; stdin: string }, signal: (typeof SIGNALS)[number], delayMs: number): Promise<{ code: number | null; killedBy: string | null; stdout: string; stderr: string }> {
   const child = spawn("python3", [c.script, ...spec.argv], { cwd, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, AGENT_ID: "s1" }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   const out: Buffer[] = [];
   const err: Buffer[] = [];
@@ -297,7 +297,8 @@ async function runSignalled(c: Carrier, cwd: string, bin: string, spec: { argv: 
   child.stderr.on("data", (b: Buffer) => err.push(b));
   child.stdin.on("error", () => undefined);
   child.stdin.end(spec.stdin);
-  const closed = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
+  let killedBy: string | null = null;
+  const closed = new Promise<number | null>((resolve) => child.on("close", (code, by) => { killedBy = by; resolve(code); }));
   await handlersIn(child.pid as number);
   await new Promise((resolve) => setTimeout(resolve, delayMs));
   try {
@@ -311,7 +312,7 @@ async function runSignalled(c: Carrier, cwd: string, bin: string, spec: { argv: 
   } catch {
     /* none */
   }
-  return { code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") };
+  return { code, killedBy, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") };
 }
 
 for (const c of CARRIERS) {
@@ -332,7 +333,7 @@ for (const c of CARRIERS) {
             stopped += 1;
             assert.ok(answer.status === "interrupted" || answer.status === "failed", `${where}: ${ran.stdout.slice(0, 300)}`);
           } else {
-            assert.ok(ran.code === 0 || ran.code === 1, `${where}: exit ${ran.code}`);       // it had finished (or refused) before the signal
+            assert.ok(ran.code === 0 || ran.code === 1, `${where}: exit ${ran.code}${ran.killedBy ? `, killed by ${ran.killedBy} with its answer ${ran.stdout.length} bytes long` : ""}`);       // it had finished (or refused) before the signal
           }
           assert.deepEqual(await hidden(cwd), [], `${where}: a hidden file was left`);
           await rm(join(cwd, "catalog"), { recursive: true, force: true });

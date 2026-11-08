@@ -31,7 +31,18 @@ if cap:
 try:
     g["main"]()
 finally:
-    sys.stderr.write("MAXRSS_KB=%d\\n" % (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // (1024 if sys.platform == "darwin" else 1)))
+    # The peak of THIS process. VmHWM is the high-water mark of the memory map the program has now. ru_maxrss also carries the largest the process
+    # had before its exec, and a child node starts with CLONE_VM shares node's map until then: it reports the peak of the node process, which has
+    # just made the 10 MiB file (a growth of 6 to 14 MiB over a run that read the same bytes: seen in CI, and in 1 run of 40 here). Without /proc/self/status (macOS) ru_maxrss is all there is.
+    ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // (1024 if sys.platform == "darwin" else 1)
+    peak = None
+    try:
+        for status_line in open("/proc/self/status"):
+            if status_line.startswith("VmHWM:"):
+                peak = int(status_line.split()[1])
+    except (OSError, ValueError):
+        pass
+    sys.stderr.write("MAXRSS_KB=%d\\n" % (ru if peak is None else peak))
 `;
 
 type Result = { code: number | null; answer: Json; rssKb: number };

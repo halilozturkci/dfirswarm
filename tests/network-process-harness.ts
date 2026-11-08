@@ -117,6 +117,12 @@ leave() {
         done
       done;;
   esac
+  # what each leftover of this call is as the program ends (state letter and parent, or gone): a case that finds a leftover gone, and the tool's answer complete, prints it
+  # (stub/ is left out of the snapshots a case compares)
+  for p in $(tail -n +$((n0 + 1)) "$STUB_DIR/left.pids" 2>/dev/null); do
+    s=$(sed 's/^[^)]*) //' "/proc/$p/stat" 2>/dev/null | cut -d' ' -f1,2)
+    echo "$p as the program ends: \${s:-gone or no /proc}" >> "$STUB_DIR/left.log"
+  done
 }
 `;
 export const LEFTOVER_SH = `#!/bin/sh

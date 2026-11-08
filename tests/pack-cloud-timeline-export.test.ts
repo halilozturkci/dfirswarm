@@ -223,11 +223,12 @@ test("the clock is one: a run that reaches time_limit_seconds is partial and pub
     const rows: Json[] = [];
     for (let i = 0; i < 200_000; i++) rows.push(row(`k${i}`, `2026-02-${String(1 + (i % 27)).padStart(2, "0")}T${String(i % 24).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:${String((i * 7) % 60).padStart(2, "0")}Z`, { pad: "benign words ".repeat(20) }));
     await put(cwd, "work/ev/a.jsonl", jsonl(rows));
+    // the smallest limit the tool takes (1 s): the whole input takes 4 to 5 s on a Linux runner and 4.2 s on a hosted Mac, so a limit near those lets a fast host finish `complete` and says nothing of the clock
     const t0 = Date.now();
-    const out = body(await tool(TL, cwd, { path: "work/ev/a.jsonl", time_limit_seconds: 4, chunk_rows: 20000 }));
+    const out = body(await tool(TL, cwd, { path: "work/ev/a.jsonl", time_limit_seconds: 1, chunk_rows: 20000 }));
     const took = Date.now() - t0;
     assert.equal(out.status, "partial", out.status_basis);
-    assert.ok(took < 4000 + 12_000, `took ${took} ms`);
+    assert.ok(took < 1000 + 12_000, `took ${took} ms`);
     assert.ok(!(await exists(join(cwd, DIR, "timeline.jsonl"))));
     assert.ok(await exists(join(cwd, DIR, "coverage.partial.json")));
     if (await exists(join(cwd, DIR, "timeline.partial.jsonl"))) {

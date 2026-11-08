@@ -1126,6 +1126,26 @@ def place_visibly(tmp, wanted):
     return fallback
 
 
+def _whole_lines_only(path):
+    """Cut the kept file back to its last newline, so that the .partial file a stop keeps holds whole lines only. Best effort: a file that cannot be opened is left as it is."""
+    try:
+        with open(path, "rb+") as fh:
+            size = fh.seek(0, 2)
+            end = size
+            while end > 0:
+                start = max(0, end - 65536)
+                fh.seek(start)
+                at = fh.read(end - start).rfind(b"\n")
+                if at >= 0:
+                    if start + at + 1 < size:
+                        fh.truncate(start + at + 1)
+                    return
+                end = start
+            fh.truncate(0)
+    except OSError:
+        pass
+
+
 PAGES = []
 
 
@@ -1223,7 +1243,7 @@ class LosslessPage:
         try:
             if out is not None:
                 out.close()
-        except OSError:
+        except (OSError, RuntimeError, ValueError):
             pass
         finally:
             if tmp is not None:
@@ -1244,12 +1264,13 @@ class LosslessPage:
             try:
                 self._out.flush()
                 self._out.close()
-            except OSError:
-                pass
+            except (OSError, RuntimeError, ValueError):
+                pass                            # a stop that landed inside a write of this very file: its buffer cannot be flushed (RuntimeError: reentrant call)
             self._out = None
         if not os.path.lexists(self._tmp):      # a stop between choosing the name and creating the file
             self._tmp = None
             return None
+        _whole_lines_only(self._tmp)            # what the file holds ends at a line end, whether the stop fell between a line and its newline or inside a flush
         placed = place_visibly(self._tmp, self.path.with_name(self.path.name + ".partial"))
         self._tmp = None
         return placed
@@ -2647,17 +2668,23 @@ RAW = {"file": None}       # the raw output while it is being written (secret jo
 def last_word(signum):
     kept = []
     for page in list(PAGES):
-        if page.placed:
-            kept.append(page.shown)         # a finished list is whole: it is named
-        else:
-            named = page.keep_partial()     # whole lines only; a visible name ending in .partial, never the hidden one
-            if named is not None:
-                kept.append(str(named))
+        try:
+            if page.placed:
+                kept.append(page.shown)         # a finished list is whole: it is named
+            else:
+                named = page.keep_partial()     # whole lines only; a visible name ending in .partial, never the hidden one
+                if named is not None:
+                    kept.append(str(named))
+        except Exception:  # noqa: BLE001 - one file that cannot be kept never costs the one answer
+            pass
     raw = RAW["file"]
     if raw is not None:
-        named = raw.stop()
-        if named:
-            kept.append(named)
+        try:
+            named = raw.stop()
+            if named:
+                kept.append(named)
+        except Exception:  # noqa: BLE001
+            pass
     answer = {"error": "stopped by signal %d before the question was answered" % signum, "status": "failed", "interrupted": True,
               "status_basis": "the tool was stopped by signal %d; the programs it had started were ended, and what had been read is not an "
                               "answer%s" % (signum, "; files that were being written are kept and named in kept_results" if kept else ""),
@@ -2721,7 +2748,7 @@ class RawOutput:
         try:
             if self.fh is not None:
                 self.fh.close()
-        except OSError:
+        except (OSError, RuntimeError, ValueError):
             pass
         self.fh = None
         if self.tmp is not None:
@@ -2740,8 +2767,8 @@ class RawOutput:
                 self.fh.flush()
                 self.fh.close()
                 self.fh = None
-        except OSError:
-            pass
+        except (OSError, RuntimeError, ValueError):
+            self.fh = None                      # a stop that landed inside a write of this file: what was flushed is kept
         placed = place_visibly(self.tmp, self.dir / (self.name + ".partial")) if os.path.lexists(self.tmp) else None
         self.tmp = None
         return "%s/%s" % (self.shown_dir, placed.name) if placed else None

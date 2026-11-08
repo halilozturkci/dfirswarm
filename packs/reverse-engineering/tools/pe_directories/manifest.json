@@ -68,6 +68,6 @@
   "example": "{\"path\": \"work/extracted/sample.dll\"}",
   "by": "maintainer",
   "at": "2026-10-14T09:00:00.000Z",
-  "version": 8,
-  "sha256": "4d8ac74be79d397b7b56b429a50a956b61ffc868067564c0a6b5f9a2367d4e67"
+  "version": 9,
+  "sha256": "85d29bfd5584be61392b378346aba89157f6aaddbe3daaf382cdd9ac5cd05bba"
 }

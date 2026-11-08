@@ -43,7 +43,7 @@ import xml.parsers.expat
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "pe_directories", "version": 8}
+TOOL = {"name": "pe_directories", "version": 9}
 PARSER = "pe_directories/1"
 NOTE = ("Static structure only. A directory shows what the file declares to its loader and tools, not what the code does: an export, a delay-load "
         "import, a TLS callback or a resource is a declaration, and a strong-name flag or a PDB path is a claim. Read `status`, `problems` and `coverage` "
@@ -1411,8 +1411,9 @@ def build_answer(result, spill=None, seconds=None):
 def emit(result, spill=None, indent=2):
     """The last step of every call: the answer (build_answer), written."""
     answer = build_answer(result, spill)
+    text = json.dumps(answer, indent=indent)    # made before PRINTING is set: a stop signal while a large answer is still being serialized finds no document yet and writes its own (it used to find PRINTING set and end with none)
     PRINTING[0] = True
-    print(json.dumps(answer, indent=indent))
+    print(text)
 
 
 def fail(message, **extra):
@@ -3379,10 +3380,33 @@ def main():
     emit(result, spill)
 
 
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees what the
+    call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole answer already
+    printed: a harness that stops a call at the moment it finishes (tests/pack-re-stop.test.ts, 1 run in 8) saw that. A signal before this point is
+    answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    os._exit(code)
+
+
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
 if __name__ == "__main__":
+    exit_code = 0
     try:
         main()
-    except SystemExit:
-        raise
+    except SystemExit as stop:
+        exit_code = _code(stop)
     except Exception as exc:  # never a traceback and never a clean answer for a failure
-        fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, shown_path(str(exc)))))
+        try:
+            fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, shown_path(str(exc)))))
+        except SystemExit as stop:
+            exit_code = _code(stop)
+    _leave(exit_code)

@@ -1131,6 +1131,26 @@ def place_visibly(tmp, wanted):
     return fallback
 
 
+def _whole_lines_only(path):
+    """Cut the kept file back to its last newline, so that the .partial file a stop keeps holds whole lines only. Best effort: a file that cannot be opened is left as it is."""
+    try:
+        with open(path, "rb+") as fh:
+            size = fh.seek(0, 2)
+            end = size
+            while end > 0:
+                start = max(0, end - 65536)
+                fh.seek(start)
+                at = fh.read(end - start).rfind(b"\n")
+                if at >= 0:
+                    if start + at + 1 < size:
+                        fh.truncate(start + at + 1)
+                    return
+                end = start
+            fh.truncate(0)
+    except OSError:
+        pass
+
+
 PAGES = []
 
 
@@ -1228,7 +1248,7 @@ class LosslessPage:
         try:
             if out is not None:
                 out.close()
-        except OSError:
+        except (OSError, RuntimeError, ValueError):
             pass
         finally:
             if tmp is not None:
@@ -1249,12 +1269,13 @@ class LosslessPage:
             try:
                 self._out.flush()
                 self._out.close()
-            except OSError:
-                pass
+            except (OSError, RuntimeError, ValueError):
+                pass                            # a stop that landed inside a write of this very file: its buffer cannot be flushed (RuntimeError: reentrant call)
             self._out = None
         if not os.path.lexists(self._tmp):      # a stop between choosing the name and creating the file
             self._tmp = None
             return None
+        _whole_lines_only(self._tmp)            # what the file holds ends at a line end, whether the stop fell between a line and its newline or inside a flush
         placed = place_visibly(self._tmp, self.path.with_name(self.path.name + ".partial"))
         self._tmp = None
         return placed
@@ -2681,7 +2702,7 @@ class SecretFile:
         try:
             if self.fh is not None:
                 self.fh.close()
-        except OSError:
+        except (OSError, RuntimeError, ValueError):
             pass
         self.fh = None
         if self.tmp is not None:
@@ -2700,7 +2721,7 @@ class SecretFile:
                 self.fh.flush()
                 self.fh.close()
                 self.fh = None
-        except OSError:
+        except (OSError, RuntimeError, ValueError):
             pass
         placed = place_visibly(self.tmp, self.dir / (self.name + ".partial")) if os.path.lexists(self.tmp) else None
         self.tmp = None
