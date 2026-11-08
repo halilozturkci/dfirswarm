@@ -231,8 +231,9 @@ jobs:
     # 34 min over 60 runs and 35 min 30 s on a green run of 2026-10-27, the
     # longest job of the run once the Linux job was split. The typecheck runs
     # in the first. A limit is there to stop a hang: every test has its own
-    # 5-minute limit (scripts/test-node.ts).
-    timeout-minutes: 45
+    # 5-minute limit (scripts/test-node.ts). 60 min, as the Node 24 job: the
+    # batch of 2026-11 added tests and a part took 38 min.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -287,8 +288,9 @@ jobs:
     needs: select
     runs-on: ubuntu-24.04
     # Two parts, as the Node 22.19 job: one job took 19 to 32 min over 60 runs
-    # and 34 min 36 s on a green run of 2026-10-27.
-    timeout-minutes: 45
+    # and 34 min 36 s on a green run of 2026-10-27. The batch of 2026-11 added
+    # tests: part 1 of 2 took 44.5 min on 2026-11-08 and met the old 45 min limit.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
