@@ -32,7 +32,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-TOOL = {"name": "macho_directories", "version": 3}
+TOOL = {"name": "macho_directories", "version": 4}
 PARSER = "macho_directories/1"
 NOTE = ("Static structure only. A symbol, a bind opcode, a build version or a signature blob shows what the file declares to its loader and tools, not what the code does: "
         "a linked library, an rpath or an undefined symbol is a declaration, and a signature blob is a claim that nothing here verifies. Read `status`, `problems` and "
