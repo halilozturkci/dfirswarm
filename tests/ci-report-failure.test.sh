@@ -40,7 +40,7 @@ NONE='[]'
 ONE='[{"number":41,"title":"CI failure: CI"},{"number":42,"title":"CI failure: image boot"}]'
 
 out="$(run schedule refs/heads/main "$BAD" "$NONE")" || fail "a failed scheduled run: $out"
-[[ "$(calls | wc -l)" == 1 ]] && calls | grep -q '^issue create --title CI failure: CI --label ci-failure --body ' || fail "no issue was created for a failure with none open: $(cat "$TMP/gh.log")"
+[[ "$(calls | wc -l | tr -d ' ')" == 1 ]] && calls | grep -q '^issue create --title CI failure: CI --label ci-failure --body ' || fail "no issue was created for a failure with none open: $(cat "$TMP/gh.log")"
 calls | grep -q 'Run: https://example.test/runs/7' || fail "the issue does not carry the run's URL"
 calls | grep -q 'Event: schedule' || fail "the issue does not carry the event"
 calls | grep -q 'Failed jobs: test (failure), node-24 (cancelled)' || fail "the issue does not name the failed jobs, a cancelled one included: $(cat "$TMP/gh.log")"
@@ -56,7 +56,7 @@ pass "a failure with the workflow's issue open comments on it, never on another 
 
 out="$(run schedule refs/heads/main "$OK" "$ONE")" || fail "a green run: $out"
 calls | grep -q '^issue close 41 --comment The CI run is green again: https://example.test/runs/7' || fail "a green run did not close the open issue: $(cat "$TMP/gh.log")"
-[[ "$(calls | wc -l)" == 1 ]] || fail "a green run did more than close: $(calls)"
+[[ "$(calls | wc -l | tr -d ' ')" == 1 ]] || fail "a green run did more than close: $(calls)"
 pass "a green run closes the open issue"
 
 out="$(run schedule refs/heads/main "$OK" "$NONE")" || fail "a green run with nothing open: $out"

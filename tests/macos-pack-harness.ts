@@ -4,6 +4,7 @@
  * output, a runner that can signal a tool and measure its CPU and memory, and a reader of every file a run left behind.
  */
 import assert from "node:assert/strict";
+import { PYTHON3 } from "./host-gates.ts";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -231,7 +232,7 @@ export function ul(cwd: string, bin: string, args: Record<string, unknown>, env:
  * the state ends the test after `limitMs`.
  */
 export async function runAndSignal(script: string, cwd: string, args: unknown, signal: NodeJS.Signals, ready: () => Promise<boolean>, env: Record<string, string> = {}, bin?: string, limitMs = 60_000): Promise<Run & { signalled: boolean; signal: string | null }> {
-  const child = spawn("python3", [script], { cwd, env: { ...process.env, ...AGENT, ...env, ...(bin ? { PATH: bin } : {}) } });
+  const child = spawn(PYTHON3, [script], { cwd, env: { ...process.env, ...AGENT, ...env, ...(bin ? { PATH: bin } : {}) } });
   const so: Buffer[] = [];
   const se: Buffer[] = [];
   child.stdout.on("data", (c: Buffer) => so.push(c));
@@ -268,7 +269,7 @@ sys.stderr.write("MEASURED=%f,%f,%f,%d\\n" % (r.ru_utime + r.ru_stime, rss, time
 sys.stderr.buffer.write(p.stderr)
 `;
   const out = await new Promise<Run>((resolve, reject) => {
-    const child = spawn("python3", ["-c", code, script], { cwd, env: { ...process.env, ...AGENT, ...env } });
+    const child = spawn(PYTHON3, ["-c", code, script], { cwd, env: { ...process.env, ...AGENT, ...env } });
     const so: Buffer[] = [];
     const se: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => so.push(c));

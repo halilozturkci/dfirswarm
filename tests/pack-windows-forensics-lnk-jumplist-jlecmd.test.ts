@@ -17,6 +17,7 @@ import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { WIN, body, everyFileUnder, stub, tool } from "./windows-pack-harness.ts";
 import { FILETIME_A, cfb, destList, lnk, pathWithOnlyPython } from "./windows-t1-fixtures.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -77,7 +78,7 @@ const gone = (pid: number): boolean => {
   }
 };
 
-test("JLECmd agrees: every entry says agree, the receipt counts it, the status is complete and the call is the one the build documents", async () => {
+test("JLECmd agrees: every entry says agree, the receipt counts it, the status is complete and the call is the one the build documents", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await writeFile(join(cwd, "work", NAME), AUTO());
     await stub(bin, "JLECmd", jlecmd(csvText(GOOD), join(cwd, "args.txt")));
@@ -145,7 +146,7 @@ test("JLECmd disagrees: a path, a time, a pin state, an entry it lacks, an entry
   });
 });
 
-test("a JLECmd that is absent, fails, writes nothing, writes an odd CSV or is not understood is not_run with the reason, the status says so, and nothing is called agree", async () => {
+test("a JLECmd that is absent, fails, writes nothing, writes an odd CSV or is not understood is not_run with the reason, the status says so, and nothing is called agree", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await writeFile(join(cwd, "work", NAME), AUTO());
     const why = async (script: string | null): Promise<Answer> => {
@@ -199,7 +200,7 @@ test("JLECmd's output cap: a CSV or a stream of output past the cap ends the run
   });
 });
 
-test("JLECmd runs under the tool's own clock: it is ended before max_seconds, a clock too short does not start it, and no child survives", async () => {
+test("JLECmd runs under the tool's own clock: it is ended before max_seconds, a clock too short does not start it, and no child survives", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await writeFile(join(cwd, "work", NAME), AUTO());
     const pidFile = join(cwd, "jlecmd.pid");
@@ -280,7 +281,7 @@ const AUTO_TIMES = (first: bigint): Buffer =>
     { name: "DestList", data: destList(4, [{ number: 1, host: "WKS", filetime: first, pin: -1, path: entryPath(1) }, { number: 2, host: "WKS", filetime: FILETIME_A + 20_000_000n, pin: 0, path: entryPath(2) }]) },
   ]);
 
-test("an entry whose DestList FILETIME has no date is compared, not skipped: 0 must be JLECmd's 1601 instant, a value past year 9999 is not_compared and not listed as compared", async () => {
+test("an entry whose DestList FILETIME has no date is compared, not skipped: 0 must be JLECmd's 1601 instant, a value past year 9999 is not_compared and not listed as compared", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const run = async (first: bigint, theirs: string): Promise<{ out: Answer; rows: Row[] }> => {
       await writeFile(join(cwd, "work", NAME), AUTO_TIMES(first));

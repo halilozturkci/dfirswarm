@@ -24,6 +24,7 @@ import { withCwd } from "./tool-library-harness.ts";
 import { parseSecretDeclaration } from "../scripts/output-hygiene.ts";
 import { MAC, PYTHON, body, filesUnder, plainJob, runAndSignal, secretJob, tool } from "./macos-pack-harness.ts";
 import type { Json, Run } from "./macos-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const KEYCHAIN = join(MAC, "keychain_open", "run.py");
 const sha = (data: Buffer | string): string => createHash("sha256").update(data).digest("hex");
@@ -259,7 +260,7 @@ test("every refused input is JSON, names no path, and makes nothing", async () =
 
 // ---- the outcomes ---------------------------------------------------------------------------------------------------------------------------
 
-test("an unlocked keychain is opened: complete, every item in a 0600 file, counts and the file's own size, lines and sha256 in the answer", async () => {
+test("an unlocked keychain is opened: complete, every item in a 0600 file, counts and the file's own size, lines and sha256 in the answer", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const reader = await standin(cwd);
     const kc = await keychain(cwd, "login.keychain-db", { password: "correct horse", items: ITEMS });
@@ -301,7 +302,7 @@ test("an unlocked keychain is opened: complete, every item in a 0600 file, count
   });
 });
 
-test("a SystemKey file opens System.keychain, with or without a password file", async () => {
+test("a SystemKey file opens System.keychain, with or without a password file", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const reader = await standin(cwd);
     const kc = await keychain(cwd, "System.keychain", { system_key: "system-key-bytes", items: { dump_generic_passwords: [{ account: "a", service: "s", password: "v" }] } });

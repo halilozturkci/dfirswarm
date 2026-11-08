@@ -68,7 +68,7 @@ grep -q 'the vault key is' "$X/.pi-sessions/a0/s1.jsonl" || fail "masking cut th
 grep -rq "operator's own file" "$X" && fail "the link was followed"
 grep -q "$KEY" "$SB/.pi-sessions/a0/s1.jsonl" || fail "the session in the run was edited"
 [[ -f "$SB/package.sessions.private.json" ]] && jq -e '.map | keys | map(startswith("hidden-") or startswith("path:")) | any' "$SB/package.sessions.private.json" >/dev/null || fail "the private sidecar is missing"
-[[ "$(stat -c %a "$SB/package.sessions.private.json")" == 600 ]] || fail "the private sidecar is not 0600"
+[[ "$(stat -c %a "$SB/package.sessions.private.json" 2>/dev/null || stat -f %Lp "$SB/package.sessions.private.json")" == 600 ]] || fail "the private sidecar is not 0600"
 grep -q 'sessions/sessions.tar.gz' "$PK/MANIFEST.txt" || fail "the archive is not under MANIFEST.txt"
 pass "one archive and a manifest; the value is absent and its keyed id present; links and FIFOs left; the sidecar stays outside"
 

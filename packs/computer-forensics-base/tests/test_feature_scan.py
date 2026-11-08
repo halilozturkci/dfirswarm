@@ -14,7 +14,7 @@ import sys
 import tracemalloc
 import unittest
 
-from support import CLEAN, Case, run_tool, stand_in, tool_path
+from support import CLEAN, CLEAN_CODE, Case, run_tool, stand_in, tool_path
 
 SECRET_ADDRESS = "alice.hidden@example.test"
 CARD = "4111111111111111"
@@ -46,7 +46,7 @@ class FeatureScan(Case):
 
     def test_no_value_comes_back_and_the_shape_does(self):
         r = self.scan()
-        self.assertEqual(r.code, 0, r.stdout)
+        self.assertEqual(r.code, CLEAN_CODE, r.stdout)
         for secret in (SECRET_ADDRESS, CARD, "bob@example.test"):
             self.assertNotIn(secret, r.stdout, "a feature value came back inline")
         by = {f["feature"]: f for f in r.json["features"]}
@@ -87,7 +87,7 @@ class FeatureScan(Case):
         out = self.path("job-out")
         os.makedirs(out)
         r = self.scan(write_values=True, top=1, env={"JOB_ID": "j000009", "OUT": out, "SECRET_OUTPUT": "1"}, out_dir=self.path("job-out/features"))
-        self.assertEqual(r.code, 0, r.stdout)
+        self.assertEqual(r.code, CLEAN_CODE, r.stdout)
         self.assertNotIn(SECRET_ADDRESS, r.stdout)
         self.assertEqual(r.json["secret_values"]["values_file"], "store/jobs/j000009/out/feature-scan-values.jsonl")
         path = os.path.join(out, "feature-scan-values.jsonl")
@@ -158,7 +158,7 @@ class FeatureScan(Case):
 
     def test_what_bulk_extractor_wrote_is_private_and_the_answer_says_it_holds_values(self):
         r = self.scan()
-        self.assertEqual(r.code, 0, r.stdout)
+        self.assertEqual(r.code, CLEAN_CODE, r.stdout)
         out_dir = self.path("work/features")
         self.assertEqual(stat.S_IMODE(os.stat(out_dir).st_mode), 0o700)
         modes = {n: stat.S_IMODE(os.stat(os.path.join(out_dir, n)).st_mode) for n in os.listdir(out_dir)}
@@ -173,7 +173,7 @@ class FeatureScan(Case):
         os.makedirs(out)
         env = {"JOB_ID": "j000014", "OUT": out, "SECRET_OUTPUT": "1"}
         first = self.scan(write_values=True, env=env, out_dir=self.path("job-out/f1"))
-        self.assertEqual(first.code, 0, first.stdout)
+        self.assertEqual(first.code, CLEAN_CODE, first.stdout)
         again = self.scan(write_values=True, env=env, out_dir=self.path("job-out/f2"))
         self.assertEqual((again.code, again.stderr), (1, ""))
         self.assertIn("values file already exists", again.json["error"])

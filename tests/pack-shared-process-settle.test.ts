@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { gone, put, stub, withCwd } from "./pack-network-harness.ts";
 import { ROOT, runPy } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const BEGIN = "# BEGIN SHARED PROCESS";
 const END = "# END SHARED PROCESS";
@@ -379,7 +380,7 @@ async function withCase(
 
 for (const fam of FAMILIES) {
   for (const wrap of fam.wraps) {
-    test(`${fam.family}/${wrap}: a late writer in a session of its own that holds no descriptor is ended before the file is measured, and the file stays as it was`, async () => {
+    test(`${fam.family}/${wrap}: a late writer in a session of its own that holds no descriptor is ended before the file is measured, and the file stays as it was`, { skip: NO_ADOPTION }, async () => {
       await withCase(fam, LATE, { WRAP: wrap }, async (seen) => {
         assert.equal(seen.code, 0);
         assert.equal(seen.size_at, 6, "what the program wrote");
@@ -403,7 +404,7 @@ for (const fam of FAMILIES) {
     ["a zombie the program's exit leaves is reaped and is not counted as a process left running", ZOMBIE, (s) => { assert.deepEqual(s.kids, {}); assert.equal(s.verdict.left_behind, 0); assert.deepEqual(s.verdict.unproven, []); }],
   ];
   for (const [name, code, assertSeen] of table) {
-    test(`${fam.family}: ${name}`, async () => {
+    test(`${fam.family}: ${name}`, { skip: NO_ADOPTION }, async () => {
       await withCase(fam, code, { WRAP: wrap }, async (seen, ran) => {
         assert.ok(seen, `no answer: ${ran.stderr}`);
         assert.equal(seen.code ?? 0, 0);
@@ -414,7 +415,7 @@ for (const fam of FAMILIES) {
     });
   }
 
-  test(`${fam.family}: while a second program is running nothing is ended and the answer is unproven; when it ends, its own leftovers go`, async () => {
+  test(`${fam.family}: while a second program is running nothing is ended and the answer is unproven; when it ends, its own leftovers go`, { skip: NO_ADOPTION }, async () => {
     await withCase(fam, SECOND_PROGRAM, { WRAP: wrap }, async (seen) => {
       assert.equal(seen.mid.orphan, true, "a leftover was ended while another program was running: it cannot be told from that program's child");
       assert.equal(seen.mid.other, true, "the second program was ended");
@@ -427,7 +428,7 @@ for (const fam of FAMILIES) {
     });
   });
 
-  test(`${fam.family}: Popen.returncode is what the program exited with, whatever settle did around it`, async () => {
+  test(`${fam.family}: Popen.returncode is what the program exited with, whatever settle did around it`, { skip: NO_ADOPTION }, async () => {
     await withCase(fam, RETURNCODE, {}, async (seen) => {
       assert.deepEqual([seen.seven.returncode, seen.seven.again, seen.seven.poll], [7, 7, 7]);
       assert.deepEqual([seen.killed.returncode, seen.killed.again, seen.killed.poll], [-9, -9, -9]);
@@ -437,7 +438,7 @@ for (const fam of FAMILIES) {
     });
   });
 
-  test(`${fam.family}: a program started with leaves=True (or a pid process_keep names) keeps what it leaves; a later program's leftovers are still ended`, async () => {
+  test(`${fam.family}: a program started with leaves=True (or a pid process_keep names) keeps what it leaves; a later program's leftovers are still ended`, { skip: NO_ADOPTION }, async () => {
     await withCase(fam, LEAVES, { WRAP: wrap }, async (seen) => {
       assert.equal(seen.first.alive, true, "the daemon the program left on purpose was ended");
       assert.equal(seen.first.verdict.left_behind, 0);
@@ -450,7 +451,7 @@ for (const fam of FAMILIES) {
     });
   });
 
-  test(`${fam.family}: a program that leaves 1500 processes in sessions of its own is cleared within the bound, with every one counted`, async () => {
+  test(`${fam.family}: a program that leaves 1500 processes in sessions of its own is cleared within the bound, with every one counted`, { skip: NO_ADOPTION }, async () => {
     await withCase(fam, STORM, { WRAP: wrap }, async (seen) => {
       assert.equal(seen.code, 0);
       assert.ok(seen.took < 3 + 4, `took ${seen.took} s`);
@@ -460,7 +461,7 @@ for (const fam of FAMILIES) {
     });
   });
 
-  test(`${fam.family}: the clock is read for every process: with a bound of 0.05 s a storm is cut at it and the answer says some are still running`, async () => {
+  test(`${fam.family}: the clock is read for every process: with a bound of 0.05 s a storm is cut at it and the answer says some are still running`, { skip: NO_ADOPTION }, async () => {
     await withCase(fam, STORM, { WRAP: wrap, LEFTOVER_SECONDS: "0.05" }, async (seen) => {
       assert.equal(seen.code, 0);
       assert.ok(seen.took < 3, `took ${seen.took} s: the bound did not hold`);
@@ -469,7 +470,7 @@ for (const fam of FAMILIES) {
     });
   });
 
-  test(`${fam.family}: where the kernel refuses the subreaper nothing is adopted: what the tool saw below the program is ended, what it did not is left and unproven, and a complete answer becomes partial`, async () => {
+  test(`${fam.family}: where the kernel refuses the subreaper nothing is adopted: what the tool saw below the program is ended, what it did not is left and unproven, and a complete answer becomes partial`, { skip: NO_ADOPTION }, async () => {
     await withCase(fam, REFUSED, { WRAP: wrap }, async (seen) => {
       assert.equal(seen.subreaper, false);
       assert.equal(seen.unseen_alive, true, "what the tool never saw cannot be found without the subreaper");
@@ -483,7 +484,7 @@ for (const fam of FAMILIES) {
     });
   });
 
-  test(`${fam.family}: on a host that is not Linux the same, and the one constant NONLINUX_UNPROVEN_DOWNGRADE decides whether that alone makes an answer partial`, async () => {
+  test(`${fam.family}: on a host that is not Linux the same, and the one constant NONLINUX_UNPROVEN_DOWNGRADE decides whether that alone makes an answer partial`, { skip: NO_ADOPTION }, async () => {
     await withCase(fam, NONLINUX, { WRAP: wrap }, async (seen) => {
       assert.equal(seen.verdict.subreaper, false);
       assert.match(seen.verdict.unproven.join(" "), /cannot adopt orphaned processes/);
@@ -500,7 +501,7 @@ for (const fam of FAMILIES) {
     });
   });
 
-  test(`${fam.family}: SIGTERM while settle is ending a program's leftovers ends them, gives the last word, and touches nothing else`, async () => {
+  test(`${fam.family}: SIGTERM while settle is ending a program's leftovers ends them, gives the last word, and touches nothing else`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd) => {
       const decoy = bystander();
       let ran: Ran | undefined;
@@ -520,7 +521,7 @@ for (const fam of FAMILIES) {
     });
   });
 
-  test(`${fam.family}: the tool does not need to lead its group, and does not end the processes beside it`, async () => {
+  test(`${fam.family}: the tool does not need to lead its group, and does not end the processes beside it`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd) => {
       const sibling = spawn("sleep", ["300"], { stdio: "ignore" });      // in this test's group, which the tool shares
       let ran: Ran | undefined;
@@ -539,7 +540,7 @@ for (const fam of FAMILIES) {
     });
   });
 
-  test(`${fam.family}: two tools running at once do not end each other's programs or leftovers`, async () => {
+  test(`${fam.family}: two tools running at once do not end each other's programs or leftovers`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (a) => {
       await withCwd(async (b) => {
         const slow = HEAD + String.raw`
@@ -567,7 +568,7 @@ print(json.dumps({"code": code, "done": os.path.exists(W + "/done"), "alive_at_e
     });
   });
 
-  test(`${fam.family}: a clean run is untouched: nothing left, nothing unproven, no child of the tool but the programs it started, and settle adds little to a program`, async () => {
+  test(`${fam.family}: a clean run is untouched: nothing left, nothing unproven, no child of the tool but the programs it started, and settle adds little to a program`, { skip: NO_ADOPTION }, async () => {
     await withCase(fam, CLEAN_COST, {}, async (seen) => {
       assert.equal(seen.verdict.left_behind, 0);
       assert.deepEqual(seen.verdict.unproven, []);
@@ -577,14 +578,14 @@ print(json.dumps({"code": code, "done": os.path.exists(W + "/done"), "alive_at_e
     });
   });
 
-  test(`${fam.family}: the children of the tool are the same from the kernel's own list as from a scan of /proc`, async () => {
+  test(`${fam.family}: the children of the tool are the same from the kernel's own list as from a scan of /proc`, { skip: NO_ADOPTION }, async () => {
     await withCase(fam, SHORTCUT, {}, async (seen) => {
       assert.equal(seen.same, true, JSON.stringify(seen));
       assert.deepEqual(seen.listed, seen.pids);
     });
   });
 
-  test(`${fam.family}: process_apply attaches program_group, and turns complete into partial only when something was left or cannot be ruled out`, async () => {
+  test(`${fam.family}: process_apply attaches program_group, and turns complete into partial only when something was left or cannot be ruled out`, { skip: NO_ADOPTION }, async () => {
     await withCase(fam, APPLY, {}, async (seen) => {
       assert.equal(seen.clean.status, "complete");
       assert.equal(seen.clean.status_basis, "x");
@@ -647,7 +648,7 @@ for (const [label, script] of [
   ["the windows pack's tool", join(ROOT, "packs", "windows-forensics", "tools", "extract_stream", "run.py")],
   ["its tool-library twin", join(ROOT, "tool-library", "extract_stream", "run.py")],
 ] as const) {
-  test(`repro 2 (${label}): extract_stream with an icat that leaves a late writer for its output file answers over a file that no longer changes`, async () => {
+  test(`repro 2 (${label}): extract_stream with an icat that leaves a late writer for its output file answers over a file that no longer changes`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       const output = join(cwd, "work", "s1", "stream.bin");
       await put(cwd, "pids/.keep", "");
@@ -678,14 +679,14 @@ exit 0`);
   });
 }
 
-test("repro 3: fuzzy_hash with an ssdeep that leaves a late writer for its own log by name, holding no descriptor, answers over a log that no longer grows", async () => {
+test("repro 3: fuzzy_hash with an ssdeep that leaves a late writer for its own log by name, holding no descriptor, answers over a log that no longer grows", { skip: NO_ADOPTION }, async () => {
   const FUZZY = join(ROOT, "packs", "reverse-engineering", "tools", "fuzzy_hash", "run.py");
   const TLSH = "T1" + "A1B2C3D4E5".repeat(7);
   const SSDEEP = "96:aBcDeF0123456789+/aBcDeF0123456789+/:XyZ0123456789+/";
   await withCwd(async (cwd, bin) => {
     await put(cwd, "pids/.keep", "");
     await stub(bin, "ssdeep", `if [ "$1" = "-V" ]; then echo "2.14.1"; exit 0; fi
-LOG=$(readlink /proc/$$/fd/1)
+LOG=$(readlink /proc/$$/fd/1 2>/dev/null || lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p')
 echo 'ssdeep,1.1--blocksize:hash:hash,filename'
 echo "${SSDEEP},\\"$(basename "$3")\\""
 (setsid sh -c 'echo $$ > "${cwd}/pids/late.pid"; sleep 1.5; echo late >> "'"$LOG"'"' </dev/null >/dev/null 2>&1 &)

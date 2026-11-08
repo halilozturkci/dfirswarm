@@ -111,7 +111,7 @@ sweep_outputs() { # every file of the run (but coverage.json, which is whole or 
 }
 disk_probe() { # a full disk cuts a step's output while the program still exits 0: a small write beside the outputs says whether it is still full
   local p="$out/.disk_probe.tmp"
-  if ! head -c 4096 /dev/zero > "$p" 2>/dev/null || [[ "$(wc -c < "$p" 2>/dev/null)" != 4096 ]]; then
+  if ! head -c 4096 /dev/zero > "$p" 2>/dev/null || [[ "$(wc -c < "$p" 2>/dev/null | tr -d ' ')" != 4096 ]]; then
     notes+=("the disk under the output directory refused a probe write of 4 KiB: files of the run may be cut short, and nothing here can tell which")
     WRITE_FAILED=1
   fi
@@ -145,7 +145,12 @@ CHILD=""
 alive() { # alive <pid>: running, and not a zombie waiting to be reaped
   kill -0 "$1" 2>/dev/null || return 1
   local st
-  st="$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "/proc/$1/status" 2>/dev/null)"
+  if [[ -r "/proc/$1/status" ]]; then
+    st="$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "/proc/$1/status" 2>/dev/null)"
+  else                                  # no /proc (macOS): ps tells the state
+    st="$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')"
+    st="${st:0:1}"
+  fi
   [[ "$st" != Z ]]
 }
 # The step runs under a small perl wrapper (one process, its own group): it sets the alarm, runs the program with its output on a pipe, and
@@ -184,6 +189,14 @@ sub members {
       push @m, $e if defined $f[2] && $f[2] == $$;
     }
     closedir $d;
+  } elsif (open(my $p, "-|", "ps", "-A", "-o", "pid=,pgid=")) {     # no /proc (macOS): ps lists the group
+    for my $line (<$p>) {
+      my ($e, $g) = $line =~ /^[[:space:]]*([0-9]+)[[:space:]]+([0-9]+)/;
+      next unless defined $g;
+      next if $e == $$;
+      push @m, $e if $g == $$;
+    }
+    close $p;
   }
   return @m;
 }

@@ -19,6 +19,7 @@ import { withCwd } from "./tool-library-harness.ts";
 import { WIN, body, everyFileUnder, failed, stub, tool } from "./windows-pack-harness.ts";
 import { SHAPES, leaked, plant } from "./windows-canary.ts";
 import { pathWithOnlyPython } from "./windows-t1-fixtures.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -102,7 +103,7 @@ const gone = (pid: number): boolean => {
 };
 const byBackend = (out: Answer, backend: string): Answer[] => out.tables.filter((t: Answer) => t.backend === backend);
 
-test("SrumECmd alone: rows carry their backend, ids are resolved or kept and counted, units come from the column names, the call is the one the help strings document", async () => {
+test("SrumECmd alone: rows carry their backend, ids are resolved or kept and counted, units come from the column names, the call is the one the help strings document", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const { db, hive } = await layout(cwd);
     await stub(bin, "SrumECmd", srumecmd(NET_CSV(), join(cwd, "args.txt"), { console: CONSOLE_CLEAN }));
@@ -205,7 +206,7 @@ test("SrumECmd on a non-Windows host says unsupported_platform: no rows, the sta
   });
 });
 
-test("both backends: agreeing row counts say agree, differing counts say disagree and make the status partial, an unmatched table is not_compared and never agree", async () => {
+test("both backends: agreeing row counts say agree, differing counts say disagree and make the status partial, an unmatched table is not_compared and never agree", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const { root } = await layout(cwd);
     const two = NET_GOOD.slice(0, 2);
@@ -312,7 +313,7 @@ test("a malformed CSV is named, not swallowed: a ragged row, a time that is not 
   });
 });
 
-test("the database state: a dirty one with no log beside it is partial, one with logs that no backend says it replayed is partial, one SrumECmd says it replayed is complete; a file that is not ESE is refused", async () => {
+test("the database state: a dirty one with no log beside it is partial, one with logs that no backend says it replayed is partial, one SrumECmd says it replayed is complete; a file that is not ESE is refused", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stub(bin, "SrumECmd", srumecmd(NET_CSV(), join(cwd, "args.txt"), { console: CONSOLE_CLEAN }));
     let { db } = await layout(cwd, 2);
@@ -410,7 +411,7 @@ test("a backend that ran and gave nothing usable is never complete: no output, a
   });
 });
 
-test("the status basis names the real database state: a dirty database whose logs SrumECmd replayed is complete and says dirty, not clean", async () => {
+test("the status basis names the real database state: a dirty database whose logs SrumECmd replayed is complete and says dirty, not clean", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const { db } = await layout(cwd, 2, ["edb.log"]);
     await stub(bin, "SrumECmd", srumecmd(NET_CSV(), join(cwd, "a.txt"), { console: "Transaction logs in 'x' replayed into the copies" }));
@@ -424,7 +425,7 @@ test("the status basis names the real database state: a dirty database whose log
   });
 });
 
-test("a backend that was run and failed or timed out while the other gave rows makes the status partial, said in the basis", async () => {
+test("a backend that was run and failed or timed out while the other gave rows makes the status partial, said in the basis", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const { root } = await layout(cwd);
     await stub(bin, "target-query", targetQuery(dissectRecords("network_usage", 2)));

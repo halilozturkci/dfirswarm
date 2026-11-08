@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { WIN, stub } from "./windows-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 import {
   assertJsonAnswer, assertStopped, fuzzTool, manifestOf, rerunSmaller, runTool, stopAt, typeConfused, withDeadline, scriptOf, type StopRun, type StopSignal,
 } from "./windows-tool-contract.ts";
@@ -206,7 +207,7 @@ echo '0x0:5:$a: hello'
 
 // --- sigma_hunt: the engine's result ------------------------------------------------------------------------------------------------------------
 
-test("sigma_hunt: a lone surrogate, fields of the wrong type and an empty directory are answered, counted and partial where they must be", async () => {
+test("sigma_hunt: a lone surrogate, fields of the wrong type and an empty directory are answered, counted and partial where they must be", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stub(bin, "hayabusa", hayabusaWriting([hb("Rule \\ud800 X", "high", 1, { Cmd: "a\\udfffb" }), hb("Rule B", "high", 2)]));
     const ok = assertJsonAnswer(await runTool("sigma_hunt", cwd, hunt(cwd), path(bin)), "surrogate") as Answer;
@@ -260,7 +261,7 @@ test("yara_scan and sigma_hunt: arguments of the wrong type (250 sets each, a to
 
 // --- secret output --------------------------------------------------------------------------------------------------------------------------------
 
-test("yara_scan declares write_matches and sigma_hunt declares required; both refuse as JSON before anything is created outside a secret-output job", async () => {
+test("yara_scan declares write_matches and sigma_hunt declares required; both refuse as JSON before anything is created outside a secret-output job", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const yara = JSON.parse(readFileSync(join(WIN, "yara_scan", "manifest.json"), "utf8")) as Answer;
     assert.deepEqual(yara.secret_output, { when_args: ["write_matches"] });

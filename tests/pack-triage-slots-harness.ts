@@ -16,6 +16,7 @@
  * the independent check at the serialisation boundary alone must keep every canary out of every channel.
  */
 import assert from "node:assert/strict";
+import { PYTHON3 } from "./host-gates.ts";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -216,7 +217,7 @@ mod.main()
 
 async function runBare(script: string, cwd: string, args: Json, env: Record<string, string>) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn("python3", ["-c", BARE_PY, script], { cwd, env: { ...process.env, AGENT_ID: "s1", ...env } });
+    const child = spawn(PYTHON3, ["-c", BARE_PY, script], { cwd, env: { ...process.env, AGENT_ID: "s1", ...env } });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));
@@ -241,7 +242,7 @@ export async function drive(which: "id" | "index", bare: boolean) {
     await mkdir(join(cwd, "inputs"), { recursive: true });
     await mkdir(join(cwd, "captured"), { recursive: true });
     const build = await new Promise<number | null>((resolve) => {
-      const child = spawn("python3", ["-c", SLOTS_PY, "build", which, String(N), "7"], { cwd, stdio: ["ignore", "inherit", "inherit"] });
+      const child = spawn(PYTHON3, ["-c", SLOTS_PY, "build", which, String(N), "7"], { cwd, stdio: ["ignore", "inherit", "inherit"] });
       child.on("close", resolve);
     });
     assert.equal(build, 0, "the fixture trees were built");
@@ -289,7 +290,7 @@ export async function drive(which: "id" | "index", bare: boolean) {
     }
     return { results, outcomes };
   } finally {
-    await new Promise((resolve) => spawn("python3", ["-c", SLOTS_PY, "unlock", cwd], { stdio: "ignore" }).on("close", resolve));
+    await new Promise((resolve) => spawn(PYTHON3, ["-c", SLOTS_PY, "unlock", cwd], { stdio: "ignore" }).on("close", resolve));
     await rm(cwd, { recursive: true, force: true }).catch(() => {});
   }
 }

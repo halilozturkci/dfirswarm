@@ -4,6 +4,8 @@
  * Python function for the stand-ins written in Python), and what a run leaves under the working directory.
  */
 import { spawn } from "node:child_process";
+import { NO_SETSID, PYTHON3 } from "./host-gates.ts";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -40,11 +42,25 @@ export type Host = "linux" | "darwin" | "refused";
 export const WRAPPERS: Record<Host, string | undefined> = { linux: undefined, darwin: DARWIN, refused: REFUSED };
 export type Run = { code: number | null; stdout: string; stderr: string };
 
+/**
+ * The stand-ins start a leftover "in a session of its own" with the setsid command (util-linux). macOS has none, so where the host lacks it a stand-in of the
+ * same name is put first on PATH: it makes the session with os.setsid() and runs the command, which is what the util-linux one does for a process that is not a
+ * group leader (a background job of a shell is not).
+ */
+export function setsidShim(bin: string): void {
+  if (!NO_SETSID) return;
+  mkdirSync(bin, { recursive: true });
+  const shim = join(bin, "setsid");
+  writeFileSync(shim, `#!${PYTHON3}\nimport os, sys\nos.setsid()\nos.execvp(sys.argv[1], sys.argv[1:])\n`);
+  chmodSync(shim, 0o755);
+}
+
 export function exec(script: string, argv: string[], stdin: unknown, cwd: string, bin: string, env: Record<string, string>, host: Host): Promise<Run> {
+  setsidShim(bin);
   return new Promise((resolve, reject) => {
     const wrapper = WRAPPERS[host];
     const args = wrapper ? ["-c", wrapper, script, ...argv] : [script, ...argv];
-    const child = spawn("python3", args, { cwd, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, AGENT_ID: "s1", ...env }, detached: true });
+    const child = spawn(PYTHON3, args, { cwd, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, AGENT_ID: "s1", ...env }, detached: true });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));

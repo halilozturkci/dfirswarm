@@ -529,7 +529,8 @@ carve work/c.bin >/dev/null || fail "file_carver refused an output under work/"
 # mem_carve writes only inside an agent's own directory, the one its VM may write.
 memc work/m >/dev/null 2>&1 && fail "mem_carve wrote into work/ itself rather than an agent's directory"
 memc work/a1/m >/dev/null || fail "mem_carve refused an extract_to under work/<agent>/"
-plaso work/p >/dev/null || fail "timeline_super refused an out_dir under work/"
+# a host that cannot adopt orphaned processes (not Linux) answers partial (exit 1) for a clean run: what matters here is that the out_dir was accepted
+plaso work/p >/dev/null || { [[ "$(uname -s)" != Linux && -d "$OUT/run/work/p" ]]; } || fail "timeline_super refused an out_dir under work/"
 [[ -s "$OUT/run/work/c.bin" && -n "$(ls "$OUT/run/work/a1/m")" && -f "$OUT/run/work/p/timeline.plaso" ]] || fail "outputs under work/ were not written"
 cmp -s "$BASE/tools/file_carver/run.py" "$ROOT/tool-library/file_carver/run.py" || fail "the tool-library copy of file_carver has drifted from the pack's"
 pass "file_carver, mem_carve and timeline_super write under the run directory and never under inputs/"

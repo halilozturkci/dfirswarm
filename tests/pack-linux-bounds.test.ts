@@ -15,6 +15,7 @@ import { test } from "node:test";
 import { runPySnippet } from "./tool-library-harness.ts";
 import { AUTH, CRON, JOURNAL, RECIPE, SHELL, UTMP, asJob as plainJob, body, filesUnder, lines, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 /** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
 const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
   plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
@@ -297,7 +298,7 @@ test("utmp_parse does not claim a byte order supported by records when every rec
 
 // ---- the linux-target recipe ----
 
-test("the linux-target recipe does not replace the receipt of an earlier run in the same --out", async () => {
+test("the linux-target recipe does not replace the receipt of an earlier run in the same --out", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await writeFile(join(bin, "target-query"), "#!/bin/sh\nexit 0\n");
     const { chmod } = await import("node:fs/promises");

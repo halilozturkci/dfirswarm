@@ -17,6 +17,7 @@ import { test } from "node:test";
 import { FLOW, NET, TOOLS, asJob, body, exists, filesUnder, frameTcp4, gone, pcapClassic, put, refused, startDetached, stub, TCP, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const FIX = join(ROOT, "tests", "fixtures", "network-flow");
 
@@ -106,7 +107,7 @@ const withFlows = (n: number): Json => ({ replace: { stdout: `Ident: x\nFlows: $
 
 // ---- the supported forms ---------------------------------------------------------------------------------------------------------
 
-test("NetFlow v5, v5 with sampling, v9 and IPFIX files built from the specifications are read: exporters, times, counters, direction and the translated fields", async () => {
+test("NetFlow v5, v5 with sampling, v9 and IPFIX files built from the specifications are read: exporters, times, counters, direction and the translated fields", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await setup(cwd, bin);
     const v5 = body(await call(cwd, bin, { inputs: [input("nfcapd.v5")], declared_format: "netflow_v5" }));
@@ -330,7 +331,7 @@ test("times and counters: a last before its first, a cut-off ident and the total
 
 // ---- bounds, paging, placing --------------------------------------------------------------------------------------------------------
 
-test("a file with more records than max_records is read to the bound and the answer is partial; the whole read is in the file the answer names, with as many rows as it counts", async () => {
+test("a file with more records than max_records is read to the bound and the answer is partial; the whole read is in the file the answer names, with as many rows as it counts", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await setup(cwd, bin, { "nfcapd.many": { as: "nfcapd.v5", json: { many: 30_000 }, I: { many: 30_000 } } }, [["nfcapd.v5", "nfcapd.many"]]);
     const t0 = Date.now();

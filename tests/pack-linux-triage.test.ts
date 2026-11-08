@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { AGENT, IS_ROOT, RECIPE, TRIAGE, asJob, body, exists, lines, refused, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 async function targetQueryStub(bin: string): Promise<void> {
   const path = join(bin, "target-query");
@@ -244,7 +245,7 @@ test("the linux-target recipe says it could not tell, with exit 2, where it did 
   });
 });
 
-test("the linux-target recipe's coverage follows what each function produced, not the exit codes, and survives an early end", async () => {
+test("the linux-target recipe's coverage follows what each function produced, not the exit codes, and survives an early end", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, { ...Object.fromEntries(ALL_FUNCTIONS.map((f) => [f, { records: 2 }])), "webserver.logs": { records: 0, stderr: "WARNING | webserver.logs: plugin not available" } });
     await writeFile(join(cwd, "target.json"), JSON.stringify({ paths: [join(cwd, "inputs", "server.E01")], name: "server" }));
@@ -368,7 +369,7 @@ time.sleep(60)
   });
 });
 
-test("the linux-target recipe says could-not-tell for a target or an answer it cannot read, and ignores an earlier run's summary", async () => {
+test("the linux-target recipe says could-not-tell for a target or an answer it cannot read, and ignores an earlier run's summary", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, Object.fromEntries(ALL_FUNCTIONS.map((f) => [f, { records: 1 }])));
     await writeFile(join(cwd, "target.json"), JSON.stringify({ paths: [join(cwd, "inputs", "server.E01")], name: "server" }));
@@ -421,7 +422,7 @@ test("linux_triage finds a function's name in a line as a word, not inside anoth
   });
 });
 
-test("linux_triage answers in JSON where it cannot make its directory, and in a job writes only under the job's output", async () => {
+test("linux_triage answers in JSON where it cannot make its directory, and in a job writes only under the job's output", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, {});
     if (!IS_ROOT) {
@@ -443,7 +444,7 @@ test("linux_triage answers in JSON where it cannot make its directory, and in a 
   });
 });
 
-test("linux_triage and the recipe give every answer a status and say on what it rests", async () => {
+test("linux_triage and the recipe give every answer a status and say on what it rests", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, { users: { exit: 1 }, bashhistory: { exit: 1 }, "webserver.logs": { exit: 1 } });
     const failed = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/f", groups: ["users", "history", "web"] }, env, bin));
@@ -465,7 +466,7 @@ test("linux_triage and the recipe give every answer a status and say on what it 
   });
 });
 
-test("the linux-target recipe makes what it makes under its own output directory, whatever directory it was started in", async () => {
+test("the linux-target recipe makes what it makes under its own output directory, whatever directory it was started in", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, Object.fromEntries(ALL_FUNCTIONS.map((f) => [f, { records: 1 }])));
     // The census starts a recipe in the host's working directory, which is not the output directory's parent.
@@ -499,7 +500,7 @@ test("the linux-target recipe makes what it makes under its own output directory
   });
 });
 
-test("linux_triage refuses a source that is the analysis machine's root however it is spelled, or lies outside the run directory, and runs nothing", async () => {
+test("linux_triage refuses a source that is the analysis machine's root however it is spelled, or lies outside the run directory, and runs nothing", { skip: NO_ADOPTION }, async () => {
   const { symlink, readdir } = await import("node:fs/promises");
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, {});
@@ -519,7 +520,7 @@ test("linux_triage refuses a source that is the analysis machine's root however 
   });
 });
 
-test("linux_triage holds out_dir to work/<agent>/ outside a job: an escape through .. or a link, another place, and another agent's directory are refused", async () => {
+test("linux_triage holds out_dir to work/<agent>/ outside a job: an escape through .. or a link, another place, and another agent's directory are refused", { skip: NO_ADOPTION }, async () => {
   const { symlink, readdir } = await import("node:fs/promises");
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, {});

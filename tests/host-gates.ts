@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -30,3 +31,12 @@ export async function interpreterDir(dir: string): Promise<string> {
 
 /** The skip reason of a case whose stand-in starts a writer with the setsid command (util-linux): macOS does not have it. */
 export const NO_SETSID: string | false = spawnSync("sh", ["-c", "command -v setsid"]).status === 0 ? false : "the setsid command (util-linux) is not on this host";
+
+/** What a clean run of a tool that runs a program answers on this host: `complete` where the tool can adopt orphans (Linux), `partial` (saying why) where it cannot. */
+export const CLEAN: "complete" | "partial" = process.platform === "linux" ? "complete" : "partial";
+
+/** The skip reason of a case that reads another process's command line, environment or descriptors from /proc, which macOS does not have. */
+export const NO_PROC: string | false = existsSync("/proc/self") ? false : "this host has no /proc: the case reads another process's command line, environment or descriptors from it";
+
+/** The skip reason of a case that makes a namespace with the unshare command (util-linux), which macOS does not have. */
+export const NO_UNSHARE: string | false = spawnSync("sh", ["-c", "command -v unshare"]).status === 0 ? false : "the unshare command (util-linux) is not on this host";

@@ -187,7 +187,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --build-info) echo 'This is Suricata version 7.0.0-stand-in RELEASE'; exit 0;;
     --help) echo 'USAGE: suricata [OPTIONS]'; echo '  -T   test configuration file'; echo '  --dump-config   show the running configuration'; exit 0;;
-    --dump-config) echo 'vars.address-groups.HOME_NET = [192.168.0.0/16]'; leave "/proc/$$/fd/1"; exit 0;;
+    --dump-config) echo 'vars.address-groups.HOME_NET = [192.168.0.0/16]'; leave "$(readlink /proc/$$/fd/1 2>/dev/null || lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p')"; exit 0;;
     -T) mode=test;;
   esac
   shift
@@ -300,7 +300,7 @@ emit(rec[os.path.basename(path)][kind], path)
 `;
 const NFDUMP_STUB = sh(`python3 "$STUB_DIR/nfdump.py" "$@"
 rc=$?
-case "$*" in *"-o json"*) leave "$(readlink /proc/$$/fd/1)";; esac
+case "$*" in *"-o json"*) leave "$(readlink /proc/$$/fd/1 2>/dev/null || lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p')";; esac
 exit $rc
 `);
 register({
@@ -335,7 +335,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 printf '"frame.number"\\t"frame.time_epoch"\\n"1"\\t"1700000000.1"\\n'
-case "$filter" in packets) leave "$(readlink /proc/$$/fd/1)";; esac
+case "$filter" in packets) leave "$(readlink /proc/$$/fd/1 2>/dev/null || lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p')";; esac
 exit 0
 `);
 const RECIPE_CAPINFOS = `#!/bin/sh

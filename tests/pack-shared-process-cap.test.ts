@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const FAMILIES: { family: string; script: string }[] = [
   { family: "general", script: join(ROOT, "packs", "network-forensics", "tools", "zeek_run", "run.py") },
@@ -57,7 +58,7 @@ elapsed = time.monotonic() - t
 ns["ACTIVE"].remove(proc)
 applied = ns["process_apply"]({"status": "complete", "ok": True})
 print(json.dumps({"elapsed": elapsed, "out_len": len(out), "head": out[:7].decode("latin-1"), "timed_out": timed_out,
-    "cut": ns.get("PIPE_CUT", {"cut": 0})["cut"], "left": ns["LEFT"]["left_behind"], "rss_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+    "cut": ns.get("PIPE_CUT", {"cut": 0})["cut"], "left": ns["LEFT"]["left_behind"], "rss_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1048576 if sys.platform == "darwin" else 1024),
     "applied": applied, "text": out.decode("latin-1") if case == "echo" else None,
     "big_ok": out == b"".join(bytes([65 + i % 26]) * (1 << 20) for i in range(50)) if case == "big" else None,
     "returncode": proc.returncode}))
@@ -119,7 +120,7 @@ for (const { family, script } of FAMILIES) {
     }
   });
 
-  test(`${family}: a large legitimate output of a program that exits cleanly is returned whole and the answer stays complete`, async () => {
+  test(`${family}: a large legitimate output of a program that exits cleanly is returned whole and the answer stays complete`, { skip: NO_ADOPTION }, async () => {
     const r = await runCase(script, "big");
     assert.equal(r.out_len, 50 * 1024 * 1024);
     assert.equal(r.big_ok, true);
@@ -129,7 +130,7 @@ for (const { family, script } of FAMILIES) {
     assert.ok(r.elapsed < 10, `${r.elapsed.toFixed(1)} s`);
   });
 
-  test(`${family}: the input reaches the program whole, a program that never ends is killed at its deadline, a program that closed its pipes is waited for`, async () => {
+  test(`${family}: the input reaches the program whole, a program that never ends is killed at its deadline, a program that closed its pipes is waited for`, { skip: NO_ADOPTION }, async () => {
     const echo = await runCase(script, "echo");
     let sum = 0;
     for (let i = 0; i < 3000000; i += 1) sum += (i * 7) % 256;

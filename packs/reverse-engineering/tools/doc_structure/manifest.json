@@ -112,6 +112,6 @@
   "example": "{\"path\": \"work/extracted/invoice.doc\"}",
   "by": "maintainer",
   "at": "2026-10-14T09:00:00.000Z",
-  "version": 12,
-  "sha256": "4441cc962d38a0828cb229108cdd7bf68416387efff313a3de624ffdfb806c71"
+  "version": 13,
+  "sha256": "42fa4449fc9dddc9f5f4d0cb4386751d5da31b0cf044ca83d88997028abcb3ee"
 }

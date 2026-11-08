@@ -4,6 +4,7 @@
  * the keyed archives, Buffer the SEGB files), a runner that can signal a tool, and a reader of every file a run left behind.
  */
 import assert from "node:assert/strict";
+import { PYTHON3 } from "./host-gates.ts";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ export function leader(script: string, cwd: string, args: unknown, env: Record<s
   return new Promise((resolve, reject) => {
     const e: NodeJS.ProcessEnv = { ...process.env, AGENT_ID: "s1", ...env };
     if (bin) e.PATH = `${bin}:${e.PATH ?? ""}`;
-    const child = spawn("python3", [script], { cwd, env: e, detached: true });
+    const child = spawn(PYTHON3, [script], { cwd, env: e, detached: true });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));
@@ -41,7 +42,7 @@ export function signalled(script: string, cwd: string, args: unknown, signal: No
   return new Promise((resolve, reject) => {
     const e: NodeJS.ProcessEnv = { ...process.env, AGENT_ID: "s1", ...env };
     if (bin) e.PATH = `${bin}:${e.PATH ?? ""}`;
-    const child = spawn("python3", [script], { cwd, env: e });
+    const child = spawn(PYTHON3, [script], { cwd, env: e });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));

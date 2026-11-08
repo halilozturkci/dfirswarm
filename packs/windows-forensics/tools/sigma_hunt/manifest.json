@@ -37,8 +37,8 @@
   "example": "{\"path\": \"work/extracted/winevt\", \"min_level\": \"high\", \"out_dir\": \"work/<your id>/hunt\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 14,
-  "sha256": "334354c7135b8e3fdbcb29c877f69500166b51eaec37afc01933d32b0905e4a9",
+  "version": 15,
+  "sha256": "9d8277afd1f468c92eaeea057211f42869a0c003b1e1215a4612eadbfa07edc5",
   "use": {
     "extensions": [
       ".evtx"

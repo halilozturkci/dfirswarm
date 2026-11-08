@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy } from "./tool-library-harness.ts";
-import { interpreterDir } from "./host-gates.ts";
+import { interpreterDir, NO_ADOPTION } from "./host-gates.ts";
 
 const SCRIPT = join(ROOT, "packs", "encrypted-containers", "tools", "tcrypt_header", "run.py");
 const AGENT = { AGENT_ID: "s1" };
@@ -337,7 +337,7 @@ except BrokenPipeError:
 `;
 
 for (const kind of ["yes", "empty"] as const) {
-  test(`tcrypt_header: a ${kind === "yes" ? "setsid yes leftover that floods the pipe" : "megabyte of empty lines"} is not parsed whole: the answer comes fast and the header fields are still read`, async () => {
+  test(`tcrypt_header: a ${kind === "yes" ? "setsid yes leftover that floods the pipe" : "megabyte of empty lines"} is not parsed whole: the answer comes fast and the header fields are still read`, { skip: NO_ADOPTION }, async () => {
     await scratch(async ({ cwd, out, bin }) => {
       const pidFile = join(cwd, "pids");
       await writeFile(join(bin, "cryptsetup"), FLOOD_STUB(kind, pidFile));

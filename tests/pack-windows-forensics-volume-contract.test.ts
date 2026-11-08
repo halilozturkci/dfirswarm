@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { WIN, stub } from "./windows-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 import {
   assertJsonAnswer, assertStopped, fuzzTool, manifestOf, runTool, standIn, stopAt, typeConfused, withDeadline, type Moment, type StopSignal,
 } from "./windows-tool-contract.ts";
@@ -67,7 +68,7 @@ test("extract_stream: a digest the clock cuts gives not_hashed and partial, and 
   });
 });
 
-test("extract_stream: a small output is digested whole and complete, with a status_basis", async () => {
+test("extract_stream: a small output is digested whole and complete, with a status_basis", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const env = setup(cwd);
     await stub(join(cwd, "bin"), "icat", "printf 'hello'");
@@ -169,7 +170,7 @@ test("extract_stream: the output, its standard error file and a .partial are mod
   });
 });
 
-test("vss_stores: its stdout and stderr files are mode 0600, and a rerun takes the next free name", async () => {
+test("vss_stores: its stdout and stderr files are mode 0600, and a rerun takes the next free name", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const env = setup(cwd);
     await vshadow(cwd, 2);

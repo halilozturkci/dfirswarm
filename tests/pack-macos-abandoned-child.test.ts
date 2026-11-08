@@ -16,6 +16,7 @@ import { withCwd } from "./tool-library-harness.ts";
 import { MAC, filesUnder } from "./macos-late-harness.ts";
 import { PYTHON, UL, logarchive, ulStandin } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const TRIAGE = join(MAC, "macos_triage", "run.py");
 const RECIPE = join(MAC, "..", "recipes", "macos-artefacts", "run.py");
@@ -113,7 +114,7 @@ const reap = async (pidFile: string): Promise<void> => {
   for (const pid of (await readFile(pidFile, "utf8").catch(() => "")).split(/\s+/).filter(Boolean).map(Number)) if (alive(pid)) process.kill(pid, "SIGKILL");
 };
 
-test("macos_triage: a child the program leaves (descriptors closed, writes 0.6 s after the exit) is ended before anything is measured: partial, and the files do not change afterwards", async () => {
+test("macos_triage: a child the program leaves (descriptors closed, writes 0.6 s after the exit) is ended before anything is measured: partial, and the files do not change afterwards", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await mkdir(join(cwd, "out"), { recursive: true });
     await stand(bin, child(0.6, false, join(cwd, "pids.txt")));
@@ -133,7 +134,7 @@ test("macos_triage: a child the program leaves (descriptors closed, writes 0.6 s
   });
 });
 
-test("macos_triage: a clean program that leaves nothing is complete, and nothing changes a second later", async () => {
+test("macos_triage: a clean program that leaves nothing is complete, and nothing changes a second later", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await mkdir(join(cwd, "out"), { recursive: true });
     await stand(bin, `${OK_ONE}open(os.path.join(out, "mac_apt.db"), "wb").write(b"x" * 100)\n`);
@@ -156,7 +157,7 @@ test("macos_triage: a traceback on stderr with exit 0 and a clean log is partial
   });
 });
 
-test("macos_triage: the finish hint on the console is not an error word", async () => {
+test("macos_triage: the finish hint on the console is not an error word", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await mkdir(join(cwd, "out"), { recursive: true });
     await stand(bin, `${OK_ONE}print("Review the Log file and report any ERRORs or EXCEPTIONS to the developers")\n`);
@@ -236,7 +237,7 @@ test("unified_log: a child the reader leaves is ended before the output is count
   });
 });
 
-test("unified_log: a clean reader that leaves nothing is complete and the group fields say so", async () => {
+test("unified_log: a clean reader that leaves nothing is complete and the group fields say so", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const bin = await ulStandin(cwd, `open(out, "w").write(json.dumps({"timestamp": "2026-01-01T00:00:00", "eventMessage": "one", "processImagePath": "/usr/bin/p"}) + chr(10))`);
     const a = JSON.parse((await lead([PYTHON, UL], cwd, { PATH: bin }, JSON.stringify({ path: await logarchive(cwd), out_dir: "work/o" }))).stdout) as Json;

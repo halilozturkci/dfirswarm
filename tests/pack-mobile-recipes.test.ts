@@ -218,7 +218,7 @@ for (const [recipeName, program, marker, label, otherMarker] of [
   ["ios-ileapp", "ileapp", "private/var/mobile/Library/SMS/sms.db", "iLEAPP", "data/system/packages.xml"],
   ["android-aleapp", "aleapp", "data/system/packages.xml", "ALEAPP", "private/var/mobile/Library/SMS/sms.db"],
 ] as const) {
-  test(`${recipeName} is complete only when its log accounts for every module and none errored (exit 0 and a TSV are not enough)`, async () => {
+  test(`${recipeName} is complete only when its log accounts for every module and none errored (exit 0 and a TSV are not enough)`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
       await build(TAR, tar, JSON.stringify([[marker, 16], ["data/data/com.example/databases/x.db", 4]]));
@@ -284,7 +284,7 @@ for (const [recipeName, program, marker, label, otherMarker] of [
     });
   });
 
-  test(`${recipeName} keeps every file the program leaves in its scratch tree, runs it from a directory under the output (a relative one too) and never writes the run directory`, async () => {
+  test(`${recipeName} keeps every file the program leaves in its scratch tree, runs it from a directory under the output (a relative one too) and never writes the run directory`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
       await build(TAR, tar, JSON.stringify([[marker, 16]]));
@@ -356,7 +356,7 @@ echo "log beside the report" > "$out/run-log.txt"; pwd > "$out/../cwd-seen.txt";
     return { result, coverage: await coverage(join(cwd, out)), tsv };
   }
 
-  test(`${recipeName} reads the log as the program prints it: a count with thousands separators, records beside "No data found", a version gate`, async () => {
+  test(`${recipeName} reads the log as the program prints it: a count with thousands separators, records beside "No data found", a version gate`, { skip: NO_ADOPTION }, async () => {
     // Lines of this shape are those of real iLEAPP v2026.4.1 runs: the unified-log module prints "Found 167,304 records"
     // and, in the same module, "No data found for ..." for its other artefacts; a module gated by the OS version says so.
     await withCwd(async (cwd, bin) => {
@@ -410,7 +410,7 @@ ${[LOG.header(2), LOG.found(1, 2, "Messages", "messages", 2), `echo "OSError: [E
     });
   });
 
-  test(`${recipeName} reads stderr into the same account, and a line on stderr that nothing explains is a problem`, async () => {
+  test(`${recipeName} reads stderr into the same account, and a line on stderr that nothing explains is a problem`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
       await build(TAR, tar, JSON.stringify([[marker, 16]]));
@@ -473,7 +473,7 @@ ${[LOG.header(2), LOG.found(1, 2, "Messages", "messages", 2), `echo "OSError: [E
     });
   });
 
-  test(`${recipeName} lists what it wrote with the log files, labels the program's copies of the acquisition as copies, and counts only a report as a report`, async () => {
+  test(`${recipeName} lists what it wrote with the log files, labels the program's copies of the acquisition as copies, and counts only a report as a report`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
       await build(TAR, tar, JSON.stringify([[marker, 16]]));
@@ -494,7 +494,7 @@ ${[LOG.header(2), LOG.found(1, 2, "Messages", "messages", 2), `echo "OSError: [E
     });
   });
 
-  test(`${recipeName} reads a log line to a bound, not whole`, async () => {
+  test(`${recipeName} reads a log line to a bound, not whole`, { skip: NO_ADOPTION }, async () => {
     // A line of 96 MiB in the log (a module that prints a blob) was read whole before it was cut.
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");

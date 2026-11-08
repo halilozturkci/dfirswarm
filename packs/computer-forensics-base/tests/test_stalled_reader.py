@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import unittest
 import zipfile
 
 from support import PACK_DIR, Case, tool_path
@@ -23,6 +24,7 @@ PRINTER_OWNERS = {"print_answer", "_guarded_write", "_unstick"}
 LAST_WORDS = {"_stopped", "last_word", "_early_last_word", "interrupted_answer", "_unexpected", "unexpected", "_cannot_write", "_on_signal", "_unexpected_recipe", "_unexpected_tool"}
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "the test shrinks the pipe to 4096 bytes with F_SETPIPE_SZ, which is Linux's: a pipe on macOS cannot be made small enough to stall on a few thousand bytes")
 class StalledReader(Case):
     def scenarios(self):
         """tool -> args producing an answer far larger than 4096 bytes."""

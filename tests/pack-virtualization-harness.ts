@@ -11,6 +11,7 @@
  * anything about a file a real product wrote, and the suites say so where it matters.
  */
 import assert from "node:assert/strict";
+import { PYTHON3 } from "./host-gates.ts";
 import { spawn } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -478,7 +479,7 @@ print(json.dumps({"virtual-size": size, "filename": sys.argv[-1], "format": fmt,
  * outlives it; one started in the tool's own group is ended with it.
  */
 export function startDetached(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, bin?: string): { pid: number; closed: Promise<number | null>; stdout: () => string; killGroup: () => void; signal: (s: NodeJS.Signals) => void } {
-  const child = spawn("python3", [script], { cwd, env: { ...process.env, ...(bin ? { PATH: `${bin}:${process.env.PATH ?? ""}` } : {}), ...AGENT, ...env }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(PYTHON3, [script], { cwd, env: { ...process.env, ...(bin ? { PATH: `${bin}:${process.env.PATH ?? ""}` } : {}), ...AGENT, ...env }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   const chunks: Buffer[] = [];
   child.stdout.on("data", (c: Buffer) => chunks.push(c));
   child.stderr.on("data", () => undefined);

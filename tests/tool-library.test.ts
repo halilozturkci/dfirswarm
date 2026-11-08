@@ -10,6 +10,7 @@ import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import { test } from "node:test";
 import { failingStub, LIB, runPy, runPySnippet, runSh, withCwd } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 type LibraryManifest = {
   name: string;
@@ -660,7 +661,7 @@ test("icat writers refuse an output that resolves under inputs/, and do not run 
   }
 });
 
-test("extract_stream writes the stream to a named file with its size and sha256, and an icat failure is JSON that keeps what it wrote as a .partial file", async () => {
+test("extract_stream writes the stream to a named file with its size and sha256, and an icat failure is JSON that keeps what it wrote as a .partial file", { skip: NO_ADOPTION }, async () => {
   // It used to print the stream as base64 on stdout (a 30 second limit, no digest, no size, the stream through a pipe whose
   // status was base64's). The library copy is the Windows pack's tool, which streams to a file under the agent's own place.
   await withCwd(async (cwd, bin) => {

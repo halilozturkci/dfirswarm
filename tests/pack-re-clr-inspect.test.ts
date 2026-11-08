@@ -19,6 +19,7 @@ import { parseSecretDeclaration } from "../scripts/output-hygiene.ts";
 import { buildPeDirs } from "./pack-re-doc-fixtures.ts";
 import { TOOLS, buildElf, buildPe, gone, pidFile, put, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const CLR = join(TOOLS, "clr_inspect", "run.py");
 const CANARY = "AKIAIOSFODNN7EXAMPLE";
@@ -56,7 +57,7 @@ case "$name" in
   fork_double) ( ( while :; do printf '// late line\n'; sleep 0.05; done ) & echo $! > "${cwd}/pids/child.pid" ) & cat "${cwd}/body.cs"; sleep 0.3; exit 0;;
   setsid_child) setsid sh -c 'echo $$ > "${cwd}/pids/child.pid"; while :; do printf "// late line\n"; sleep 0.05; done' </dev/null & cat "${cwd}/body.cs"; sleep 0.5; exit 0;;
   never_exit) sleep 120 & echo $! > "${cwd}/pids/child.pid"; cat "${cwd}/body.cs"; exit 0;;
-  hardlink) cat "${cwd}/body.cs"; ln "$(readlink /proc/$$/fd/1)" hl; ( exec >&- 2>&-; sleep 1; printf x >> hl ) & exit 0;;
+  hardlink) cat "${cwd}/body.cs"; ln "$(readlink /proc/$$/fd/1 2>/dev/null || lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p')" hl; ( exec >&- 2>&-; sleep 1; printf x >> hl ) & exit 0;;
 esac
 exit 3`);
 }
@@ -182,7 +183,7 @@ for (const [label, secret] of [["outside a job", undefined], ["in a job not run 
   });
 }
 
-test("decompile in a secret job: the reconstruction is a labelled file under $OUT, mode 0600, never inline; the answer names its size, lines and sha256", async () => {
+test("decompile in a secret job: the reconstruction is a labelled file under $OUT, mode 0600, never inline; the answer names its size, lines and sha256", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await fakeProgram(cwd, bin);
     await put(cwd, "work/a.dll", asm("ok"));
@@ -313,7 +314,7 @@ test("a file that changes while the program reads it is failed and the reconstru
   });
 });
 
-test("a process the program leaves behind when it ends is ended with it before the file is read, and the answer is partial, not complete", async () => {
+test("a process the program leaves behind when it ends is ended with it before the file is read, and the answer is partial, not complete", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await fakeProgram(cwd, bin);
     await put(cwd, "work/d.dll", asm("daemon"));
@@ -364,7 +365,7 @@ for (const scenario of ["fork_now", "fork_late", "fork_double", "never_exit"]) {
   });
 }
 
-test("a child the decompiler puts in a session of its own (setsid) is adopted by the tool and ended by the process block: the answer is partial and says so", async () => {
+test("a child the decompiler puts in a session of its own (setsid) is adopted by the tool and ended by the process block: the answer is partial and says so", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await fakeProgram(cwd, bin);
     await put(cwd, "work/s.dll", asm("setsid_child"));
@@ -387,7 +388,7 @@ test("a child the decompiler puts in a session of its own (setsid) is adopted by
   });
 });
 
-test("a hard link to the output made by the decompiler (a by-name writer with no descriptor open) makes the answer partial, process_left_running, and the file is removed", async () => {
+test("a hard link to the output made by the decompiler (a by-name writer with no descriptor open) makes the answer partial, process_left_running, and the file is removed", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await fakeProgram(cwd, bin);
     await put(cwd, "work/hl.dll", asm("hardlink"));
@@ -402,7 +403,7 @@ test("a hard link to the output made by the decompiler (a by-name writer with no
   });
 });
 
-test("a clean run leaves the file unchanged one second after a complete answer", async () => {
+test("a clean run leaves the file unchanged one second after a complete answer", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await fakeProgram(cwd, bin);
     await put(cwd, "work/ok.dll", asm("ok"));
@@ -508,7 +509,7 @@ test("a link, a directory and a missing file are refused as JSON; hostile parame
   });
 });
 
-test("four calls at once, each running the program, all finish well inside the manifest's limit", async () => {
+test("four calls at once, each running the program, all finish well inside the manifest's limit", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await fakeProgram(cwd, bin);
     for (let i = 0; i < 4; i++) await put(cwd, `work/a${i}.dll`, asm("ok"));

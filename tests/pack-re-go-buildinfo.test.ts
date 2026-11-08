@@ -814,7 +814,7 @@ test("P3 millions of unaligned copies of the magic are counted with a bounded me
       "p = subprocess.run(['python3', sys.argv[1]], input=json.dumps({'path': 'work/many.bin', 'max_seconds': 40}).encode(), capture_output=True)",
       "a = json.loads(p.stdout)",
       "b = a['builds'][0]",
-      "print(json.dumps({'rss_mb': resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss // 1024, 'count': b['unaligned_copies']['count'], 'status': a['status']}))",
+      "print(json.dumps({'rss_mb': resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss // (1048576 if sys.platform == 'darwin' else 1024), 'count': b['unaligned_copies']['count'], 'status': a['status']}))",
     ].join("\n");
     const r = spawnSync("python3", ["-c", script, GO_BUILDINFO], { cwd, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" }, timeout: 120_000 });
     assert.equal(r.status, 0, r.stderr);

@@ -13,6 +13,7 @@ import { withCwd } from "./tool-library-harness.ts";
 import { MAC } from "./macos-late-harness.ts";
 import { PYTHON, UL, logarchive, ulStandin } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const TRIAGE = join(MAC, "macos_triage", "run.py");
 const RECIPE = join(MAC, "..", "recipes", "macos-artefacts", "run.py");
@@ -170,16 +171,16 @@ async function scenario(tool: Tool, variant: string, fork: number, leader = true
 }
 
 for (const tool of ["triage", "recipe", "ul"] as const) {
-  test(`${tool}: a child that leaves the tool's group (setsid, setpgid, double fork, periodic writer) at 0, 0.6 or 1.5 s is found, ended and reaped: partial, files unchanged afterwards`, { timeout: 170_000 }, async () => {
+  test(`${tool}: a child that leaves the tool's group (setsid, setpgid, double fork, periodic writer) at 0, 0.6 or 1.5 s is found, ended and reaped: partial, files unchanged afterwards`, { skip: NO_ADOPTION, timeout: 170_000 }, async () => {
     await Promise.all(VARIANTS.flatMap((v) => FORKS.map((f) => scenario(tool, v, f))));
   });
 }
 
-test("a tool that does not lead its process group (plain child, double-fork child, 3 s) is partial and never complete: triage, recipe and unified_log", { timeout: 120_000 }, async () => {
+test("a tool that does not lead its process group (plain child, double-fork child, 3 s) is partial and never complete: triage, recipe and unified_log", { skip: NO_ADOPTION, timeout: 120_000 }, async () => {
   await Promise.all((["triage", "recipe", "ul"] as const).flatMap((tool) => ["setsid", "double"].map((v) => scenario(tool, v, 0, false))));
 });
 
-test("a clean program that leaves nothing is still complete in a tool that is the subreaper, and a clean run is not made partial by the scan", async () => {
+test("a clean program that leaves nothing is still complete in a tool that is the subreaper, and a clean run is not made partial by the scan", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, CLEAN);
     await mkdir(join(cwd, "out"), { recursive: true });
@@ -250,7 +251,7 @@ log("Finished in time = 00:00:02")
   });
 });
 
-test("a child the tool already had before the program started (a bystander) is not the program's and is left alone", { timeout: 60_000 }, async () => {
+test("a child the tool already had before the program started (a bystander) is not the program's and is left alone", { skip: NO_ADOPTION, timeout: 60_000 }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, CLEAN);
     await mkdir(join(cwd, "out"), { recursive: true });

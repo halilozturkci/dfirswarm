@@ -198,7 +198,7 @@ const extract: Case = {
     await pystub(bin, "icat", `
 sys.stdout.buffer.write(b"0123456789ab")
 sys.stdout.buffer.flush()
-leave(os.readlink("/proc/self/fd/1"))
+leave((os.readlink("/proc/self/fd/1") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(1, 50, bytes(1024)).split(bytes(1))[0].decode()))
 `);
     return { args: { image: NOW, inode: "5-128-1", offset: 0, output: "work/s1/stream.bin" } };
   },
@@ -219,7 +219,7 @@ const stores: Case = {
 print("vshadowinfo 20240101\\n\\nVolume Shadow Snapshot information:")
 print("\\tNumber of stores:\\t0\\n")
 sys.stdout.flush()
-leave(os.readlink("/proc/self/fd/1"))
+leave((os.readlink("/proc/self/fd/1") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(1, 50, bytes(1024)).split(bytes(1))[0].decode()))
 `);
     return { args: { image: NOW } };
   },
@@ -355,7 +355,7 @@ print("r " + a[-1])
 sys.stdout.flush()
 sys.stderr.write("warning: rule r is slow\\n")
 sys.stderr.flush()
-leave(os.readlink("/proc/self/fd/2"))
+leave((os.readlink("/proc/self/fd/2") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(2, 50, bytes(1024)).split(bytes(1))[0].decode()))
 `;
 const yara: Case = {
   name: "yara_scan",
@@ -387,7 +387,7 @@ fn = a[a.index("-f") + 1]
 print('{"x":1}')
 sys.stdout.flush()
 if fn == "bam":
-    leave(os.readlink("/proc/self/fd/1"))
+    leave((os.readlink("/proc/self/fd/1") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(1, 50, bytes(1024)).split(bytes(1))[0].decode()))
 `;
 const recipe: Case = {
   name: "windows-artefacts recipe",

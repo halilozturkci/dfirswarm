@@ -44,7 +44,7 @@
   "example": "{\"capture\": \"inputs/capture.pcapng\", \"keylog_file\": \"inputs/keys.log\"}",
   "by": "maintainer",
   "at": "2026-11-04T00:00:00.000Z",
-  "version": 5,
+  "version": 6,
   "use": {
     "extensions": [
       ".pcap",
@@ -75,5 +75,5 @@
     ]
   },
   "secret_output": "required",
-  "sha256": "df1476b9d60a27437245f7f113e8e3446032b83c7882bf95710ff03f37b08501"
+  "sha256": "8de7cc93fb0e7adce826f75fd2e6424ab9458dd21f69519a4914aba68efcb6f0"
 }

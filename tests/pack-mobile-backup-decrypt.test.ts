@@ -19,6 +19,7 @@ import { chmod, lstat, mkdir, readFile, readdir, stat, symlink, writeFile } from
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
+import { NO_ADOPTION, NO_PROC } from "./host-gates.ts";
 
 const TOOL = process.env.BACKUP_DECRYPT ?? join(ROOT, "packs", "mobile-forensics", "tools", "backup_decrypt", "run.py");
 
@@ -190,7 +191,7 @@ const SPEC = (password: string, extra: Record<string, unknown> = {}): Record<str
   ...extra,
 });
 
-test("backup_decrypt decrypts a backup, verifies the lengths against the Manifest, and writes every file 0600 under its id", async () => {
+test("backup_decrypt decrypts a backup, verifies the lengths against the Manifest, and writes every file 0600 under its id", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     await setup(cwd);
     const password = canaryText();
@@ -221,7 +222,7 @@ test("backup_decrypt decrypts a backup, verifies the lengths against the Manifes
   });
 });
 
-test("the password reaches no argv, environment, output channel, path or file, though the library quotes it in its exception text", async () => {
+test("the password reaches no argv, environment, output channel, path or file, though the library quotes it in its exception text", { skip: NO_PROC }, async () => {
   await withCwd(async (cwd) => {
     await setup(cwd);
     const password = canaryText();
@@ -410,7 +411,7 @@ test("max_bytes and max_files are lossless limits: the rows past them are listed
   });
 });
 
-test("the child is ended at the tool's own clock, a stop signal ends the tool and the child with one JSON, and four runs at once do not disturb each other", async () => {
+test("the child is ended at the tool's own clock, a stop signal ends the tool and the child with one JSON, and four runs at once do not disturb each other", { skip: NO_PROC }, async () => {
   await withCwd(async (cwd) => {
     await setup(cwd);
     const password = canaryText();

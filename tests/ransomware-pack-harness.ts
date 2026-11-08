@@ -4,6 +4,7 @@
  * read, and a way to make a read fail with EIO wherever the suite runs.
  */
 import assert from "node:assert/strict";
+import { PYTHON3 } from "./host-gates.ts";
 import { spawn } from "node:child_process";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -90,7 +91,7 @@ def load(p, n="m"):
 export function runPatched(script: string, patch: string, args: string, cwd: string, out: string, env: Record<string, string> = {}): Promise<Run> {
   const code = LOAD + `m = load(sys.argv[1])\n${patch}\nsys.stdin = io.StringIO(sys.argv[2])\ntry:\n    m.main()\nexcept SystemExit:\n    pass\n`;
   return new Promise((resolve, reject) => {
-    const child = spawn("python3", ["-c", code, script, args], { cwd, env: { ...process.env, AGENT_ID: "s1", JOB_ID: "j000001", OUT: out, ...env } });
+    const child = spawn(PYTHON3, ["-c", code, script, args], { cwd, env: { ...process.env, AGENT_ID: "s1", JOB_ID: "j000001", OUT: out, ...env } });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => stdout.push(c));

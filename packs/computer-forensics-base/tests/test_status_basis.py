@@ -1,6 +1,7 @@
 """Every answer of a tool carries `status` and `status_basis` (docs/packs.md, "The tool contract"): what the status rests on, in one sentence."""
 import json
 import os
+import sys
 import unittest
 
 from support import Case, run_tool
@@ -66,6 +67,7 @@ class StatusBasis(Case):
                 self.assertTrue(isinstance(basis, str) and len(basis) > 20 and "\n" not in basis, where)
                 self.assertNotIn("Traceback", r.stderr, where)
 
+    @unittest.skipIf(sys.platform == "darwin", "APFS refuses a file name that is not UTF-8, so the file cannot be made")
     def test_a_name_that_is_not_utf8_is_a_name_not_a_crash(self):
         name = os.fsdecode(b"name-\xff.bin")
         open(os.path.join(self.dir, name), "wb").write(b"x")

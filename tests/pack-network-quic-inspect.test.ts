@@ -47,7 +47,7 @@ capture = opt("-r")
 sys.stderr.write(os.environ.get("STUB_STDERR", ""))
 sys.stderr.flush()
 if os.environ.get("STUB_LEFT") and "-T" in args and "!quic" not in " ".join(args):
-    leave_behind(d, os.environ["STUB_LEFT"], os.readlink("/proc/self/fd/2"))
+    leave_behind(d, os.environ["STUB_LEFT"], (os.readlink("/proc/self/fd/2") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(2, 50, bytes(1024)).split(bytes(1))[0].decode()))
 if mode == "hang-listing" and "-T" in args:
     import subprocess
     child = subprocess.Popen(["sleep", "300"]); open(os.path.join(d, "child.pid"), "w").write(str(child.pid))

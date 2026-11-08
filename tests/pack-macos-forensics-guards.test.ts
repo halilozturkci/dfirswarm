@@ -23,6 +23,7 @@ import { runPySnippet, withCwd } from "./tool-library-harness.ts";
 import { CREATED, FS, KC, MAC, PLIST, UL, body, fsDir, fsPage, fsRecord, gz, kcDb, ok, runAndSignal, tool, ul, ulStandin, logarchive } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
 import { prng } from "./windows-canary.ts";
+import { CLEAN } from "./host-gates.ts";
 
 const ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const rnd = (r: () => number, n: number, alpha = ALNUM): string => Array.from({ length: n }, () => alpha[Math.floor(r() * alpha.length)]).join("");
@@ -363,7 +364,7 @@ test("unified_log with Apple's log: a predicate on message text is warned about,
     assert.equal(answer.status, "failed");
     assert.equal(answer.predicate_names_message_text, true);
     const accepted = await ul(cwd, bin, { path, out_dir: "out/p4", predicate: 'process == "sudo" AND messageType == "Error"' }, {}, true);
-    assert.equal(body(accepted).status, "complete", accepted.stdout);
+    assert.equal(JSON.parse(accepted.stdout).status, CLEAN, accepted.stdout);
   });
 });
 

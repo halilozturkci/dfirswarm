@@ -11,6 +11,7 @@ import { runPySnippet, withCwd } from "./tool-library-harness.ts";
 import { CREATED, REMOVED, FS, KC, PLIST, body, fsDir, fsPage, fsRecord, gz, kcDb, logarchive, measured, ok, reachable, secretJob, tool, ul, ulStandin } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
 import { prng } from "./windows-canary.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const rs = (r: () => number, n: number): string => Array.from({ length: n }, () => ALNUM[Math.floor(r() * ALNUM.length)]).join("");
@@ -176,7 +177,7 @@ sys.stderr.write("warning: skipped a chunk\\n")
 
 // ---- the status every answer carries -----------------------------------------------------------------------------------------------------------
 
-test("every answer of the four tools carries status in complete, partial or failed and a status_basis sentence, whatever happened", async () => {
+test("every answer of the four tools carries status in complete, partial or failed and a status_basis sentence, whatever happened", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const seen: Array<[string, Json]> = [];
     const note = (name: string, run: { stdout: string; stderr: string }): void => {

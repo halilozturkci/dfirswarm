@@ -68,7 +68,7 @@
   "example": "{\"conn_log\": \"inputs/conn.log\", \"window_start\": \"2026-11-03T00:00:00+00:00\", \"window_end\": \"2026-11-04T00:00:00+00:00\"}",
   "by": "maintainer",
   "at": "2026-11-04T00:00:00.000Z",
-  "version": 5,
+  "version": 6,
   "use": {
     "names": [
       "conn.log",
@@ -106,5 +106,5 @@
     ]
   },
   "secret_output": "required",
-  "sha256": "ea9248fd3a563d72a07e87dff4d2a06e903b0cba2039cd271dcc75694427de01"
+  "sha256": "8dd7175d6cb032295d37252632f5c4e27aa9fedf14027bf175f2816bb5326518"
 }

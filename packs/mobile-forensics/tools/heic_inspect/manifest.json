@@ -58,7 +58,7 @@
   "example": "{\"path\": \"inputs/IMG_0001.heic\"}",
   "by": "maintainer",
   "at": "2026-11-03T08:00:00.000Z",
-  "version": 5,
+  "version": 6,
   "use": {
     "extensions": [
       ".heic",
@@ -81,5 +81,5 @@
       "write_values"
     ]
   },
-  "sha256": "d519dd18dd4bfd70ab59bb0dff7024aea72d9d42ad885a7bcd6205aacf725fef"
+  "sha256": "33bf004ea02c268ccf72bc10f0f9ab7fd7ed9d16536a01073a7f98687d582250"
 }

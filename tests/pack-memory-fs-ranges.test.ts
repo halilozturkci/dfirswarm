@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { FS, fsStub, json, rng, runTool, shimDir } from "./memory-f1-support.ts";
-import { NO_ADOPTION } from "./host-gates.ts";
+import { NO_ADOPTION, NO_UNSHARE } from "./host-gates.ts";
 
 const PAGE = 4096;
 type Range = { kind: string; offset: number; length: number; why?: string; [k: string]: unknown };
@@ -206,7 +206,7 @@ test("a file that ends before the size the mount reports is partial with an unav
   });
 });
 
-test("a ranges file that cannot be written whole is a problem of the file, named, and the answer is not complete", async () => {
+test("a ranges file that cannot be written whole is a problem of the file, named, and the answer is not complete", { skip: NO_UNSHARE }, async () => {
   await withCwd(async (cwd, bin) => {
     // 200 pages, every other one zero: about 100 runs of about 60 bytes each, more than the 4 KiB tmpfs the ranges directory is on
     const data = Buffer.concat(Array.from({ length: 200 }, (_, i) => (i % 2 ? Buffer.alloc(PAGE) : filled(1, 100 + i))));
@@ -249,7 +249,7 @@ test("the ranges directory cannot be confused with an export, and a second expor
   });
 });
 
-test("a stop in the middle of an export answers with one JSON, and the ranges file of the file being copied ends in its summary and names what was not copied", async () => {
+test("a stop in the middle of an export answers with one JSON, and the ranges file of the file being copied ends in its summary and names what was not copied", { skip: NO_UNSHARE }, async () => {
   await withCwd(async (cwd, bin) => {
     const data = Buffer.concat([filled(20, 40), Buffer.alloc(20 * PAGE), filled(20, 41)]);
     const env = await fsStub(cwd, bin, { tree: { "slow.bin": data, "sys/x": "" } });
@@ -335,7 +335,7 @@ test("a file longer than the mount reports is partial, naming both sizes", async
   });
 });
 
-test("when every ranges file is cut, the basis says the files were copied whole and the ranges files were not", async () => {
+test("when every ranges file is cut, the basis says the files were copied whole and the ranges files were not", { skip: NO_UNSHARE }, async () => {
   await withCwd(async (cwd, bin) => {
     const data = Buffer.concat(Array.from({ length: 200 }, (_, i) => (i % 2 ? Buffer.alloc(PAGE) : filled(1, 100 + i))));
     const env = await fsStub(cwd, bin, { tree: { "full.bin": data, "sys/x": "" } });

@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { type Json, asJob, body, filesUnder, gone, pidFile, refused, startDetached, tool, withCwd } from "./pack-network-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_ADOPTION, NO_PROC } from "./host-gates.ts";
 
 const SCRIPT = join(ROOT, "packs", "encrypted-containers", "tools", "materialise_decrypted", "run.py");
 const XOR = 0x5a;
@@ -149,7 +150,7 @@ test("refused outside a secret_output job, before anything is read, its own stdi
   });
 });
 
-test("AES Crypt: decrypted to a 0600 file under the job's output, with provenance and nothing of the key in any channel", async () => {
+test("AES Crypt: decrypted to a 0600 file under the job's output, with provenance and nothing of the key in any channel", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     for (const [shape, make] of SHAPES) {
       const secret = make();
@@ -216,7 +217,7 @@ test("AES Crypt: a container cut short is partial and no plaintext is written", 
   });
 });
 
-test("BitLocker: the volume at an offset is unlocked with a recovery password and written as a raw image, with the volume header check", async () => {
+test("BitLocker: the volume at an offset is unlocked with a recovery password and written as a raw image, with the volume header check", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const secret = SHAPES[0][1]();
     const volume = ntfsLike(64 * 1024);
@@ -328,7 +329,7 @@ test("hostile parameters are JSON refusals", async () => {
   });
 });
 
-test("SIGTERM during the write: one document, exit 143, the .partial file left at 0600, and the key in neither the command line nor the environment of the running tool", async () => {
+test("SIGTERM during the write: one document, exit 143, the .partial file left at 0600, and the key in neither the command line nor the environment of the running tool", { skip: NO_PROC }, async () => {
   await withCwd(async (cwd) => {
     const secret = SHAPES[0][1]();
     await writeFile(join(cwd, "disk.img"), xor(ntfsLike(8 * 1024 * 1024)));

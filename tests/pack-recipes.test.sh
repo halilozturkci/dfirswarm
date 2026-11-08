@@ -174,10 +174,12 @@ printf "datetime,message\n2024-04-01T00:00:00,x\n" > "$w"
 PSORT
 chmod +x "$T/bin/log2timeline" "$T/bin/psort"
 mkdir -p "$T/ro"; chmod a-w "$T/ro"
+# a host that cannot adopt orphaned processes (not Linux) answers partial for a clean run, and says so: the exit is 1 and the status partial
+if [[ "$(uname -s)" == Linux ]]; then want_rc=0; want_status=complete; else want_rc=1; want_status=partial; fi
 (cd "$T/ro" && PATH="$T/bin:$PATH" python3 "$DT" run --target "{\"paths\": [\"$T/x.E01\"]}" --out "$T/dt" >/dev/null); rc=$?
 chmod u+w "$T/ro"
-[[ "$rc" -eq 0 ]] || fail "disk-timeline should run with log2timeline and psort from a read-only directory: $(cat "$T/dt/coverage.json" 2>/dev/null; cat "$T/dt/"*.stderr 2>/dev/null)"
-jq -e '.status == "complete"' "$T/dt/coverage.json" >/dev/null || fail "disk-timeline should say complete: $(cat "$T/dt/coverage.json")"
+{ if [[ "$want_rc" -eq 0 ]]; then [[ "$rc" -eq 0 ]]; else [[ "$rc" -ne 0 ]]; fi; } || fail "disk-timeline should run with log2timeline and psort from a read-only directory: $(cat "$T/dt/coverage.json" 2>/dev/null; cat "$T/dt/"*.stderr 2>/dev/null)"
+jq -e --arg s "$want_status" '.status == $s' "$T/dt/coverage.json" >/dev/null || fail "disk-timeline should say $want_status: $(cat "$T/dt/coverage.json")"
 [[ "$(cut -f1 "$T/dt/index.tsv" | tr '\n' ' ')" == "timeline.plaso timeline.csv " ]] || fail "disk-timeline should index the storage file and the timeline: $(cat "$T/dt/index.tsv")"
 [[ -s "$T/dt/log2timeline.log.gz" && -s "$T/dt/psort.log.gz" ]] || fail "disk-timeline should give each Plaso step its log in --out (--logfile): $(ls "$T/dt")"
 [[ -z "$(ls -A "$T/ro")" ]] || fail "disk-timeline wrote in the directory it was run from: $(ls -A "$T/ro")"

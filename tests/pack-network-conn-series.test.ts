@@ -272,7 +272,7 @@ if os.environ.get("STUB_MODE") == "hang-listing" and "-T" in args:
     time.sleep(300)
 cols = [args[i + 1] for i, a in enumerate(args) if a == "-e"]
 if os.environ.get("STUB_LEFT") and "-T" in args:
-    leave_behind(d, os.environ["STUB_LEFT"], os.readlink("/proc/self/fd/2"))
+    leave_behind(d, os.environ["STUB_LEFT"], (os.readlink("/proc/self/fd/2") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(2, 50, bytes(1024)).split(bytes(1))[0].decode()))
 for f in json.load(open(os.path.join(d, "plan.json"))):
     print("\\t".join(str(f.get(c, "")) for c in cols))
 `;

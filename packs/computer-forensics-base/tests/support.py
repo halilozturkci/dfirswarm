@@ -21,6 +21,14 @@ PACK_DIR = os.path.abspath(os.environ.get("PACK_DIR") or os.path.dirname(os.path
 # in every other way is `partial`, saying so (test_process_apply.py holds that, on a patched host). A test that needs a program run to
 # end `complete` expects this.
 CLEAN = "complete" if sys.platform.startswith("linux") else "partial"
+# The exit code of a tool that answers `partial` (1), and of one that answers `complete` (0).
+CLEAN_CODE = 0 if CLEAN == "complete" else 1
+
+if sys.platform == "darwin" and os.path.isdir("/tmp"):
+    # macOS's per-user temporary directory (/var/folders/xx/<30 random characters>/T) is token-shaped, and the tools withhold a token-shaped
+    # part of a path from their answers, so a test that follows a path an answer names would be sent to `<token-shaped text withheld>`. A
+    # short name under /tmp is not a token.
+    tempfile.tempdir = "/tmp"
 
 
 def tool_path(name):

@@ -361,6 +361,7 @@ test("the harness ends a tool by killing its process group, and that ends Surica
 // --- D-network-F1 ----------------------------------------------------------------------------------------------------------
 
 import { createRng, planted } from "./pack-network-canaries.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 test("a line nested 100,000 deep is counted as not read, named with its line, and the other events are still read", async () => {
   await withCwd(async (cwd, bin) => {
@@ -390,7 +391,7 @@ test("a line is refused for its nesting at 65 levels and read at 64, whatever th
   });
 });
 
-test("every EVE line that was not read as an event is in a file with its line number, however many there are: the answer shows ten and says where the rest are", async () => {
+test("every EVE line that was not read as an event is in a file with its line number, however many there are: the answer shows ten and says where the rest are", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const bad = Array.from({ length: 25 }, (_, i) => (i % 2 ? "not json " + i : "[1,2]"));
     await stage(cwd, bin, { eve: [ALERT(1), ...bad, ev({ foo: 1 }), ""].join("\n"), loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
@@ -479,7 +480,7 @@ test("a bad home_net entry is named by its position and length, never echoed", a
   });
 });
 
-test("eve.json is read under the tool's own clock: it is read in part when the clock runs out, and says so (partial, eve_read_to_the_end false), the file whole on disk", async () => {
+test("eve.json is read under the tool's own clock: it is read in part when the clock runs out, and says so (partial, eve_read_to_the_end false), the file whole on disk", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const eve = Array.from({ length: 120_000 }, (_, i) => ALERT(i % 100)).join("\n") + "\n";
     await stage(cwd, bin, { eve, loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n", loadRun: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
@@ -621,7 +622,7 @@ test("dry_run refuses a path, reads no capture and starts no run over one", asyn
   });
 });
 
-test("dry_run writes only under out_dir and gives each part of the receipt: identities, the effective configuration, the rule-load status, the log outputs and what is not covered", async () => {
+test("dry_run writes only under out_dir and gives each part of the receipt: identities, the effective configuration, the rule-load status, the log outputs and what is not covered", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stageDry(cwd, bin, { stderr: LOADED_LINE(8) });
     const rules = await dryInputs(cwd);
@@ -690,7 +691,7 @@ test("dry_run writes only under out_dir and gives each part of the receipt: iden
   });
 });
 
-test("dry_run names a build without --dump-config, and a dump that fails makes the receipt partial", async () => {
+test("dry_run names a build without --dump-config, and a dump that fails makes the receipt partial", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stageDry(cwd, bin, { noDump: true, stderr: LOADED_LINE(8) });
     const rules = await dryInputs(cwd);
@@ -809,7 +810,7 @@ test("dry_run: a refused write of the sid-range file is named and the file is no
   });
 });
 
-test("dry_run: skipped rules, or fewer rules loaded than the file has, are a partial receipt that names both numbers; an exact match is complete", async () => {
+test("dry_run: skipped rules, or fewer rules loaded than the file has, are a partial receipt that names both numbers; an exact match is complete", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const rules = await dryInputs(cwd);
     await stageDry(cwd, bin, { stderr: LOADED_LINE(3, 0, 4) });

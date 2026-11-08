@@ -19,6 +19,7 @@ import { ROOT, withCwd } from "./tool-library-harness.ts";
 import { alive, pids, reap, CUT_FLOODERS, FEW, HOLDERS, VARIANTS, exec, sh, stubDir } from "./network-process-harness.ts";
 import { register, SAYS_UNPROVEN } from "./process-apply-cases.ts";
 import type { Case } from "./process-apply-cases.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const PACK = process.env.LINUX_PACK ?? join(ROOT, "packs", "linux-forensics");
 const TRIAGE = join(PACK, "tools", "linux_triage", "run.py");
@@ -39,7 +40,7 @@ const pre = (dir: string, left: string | undefined): string => `export STUB_DIR=
 
 /** target-query: one line on its standard output (the family file the tool keeps); the first call leaves a process that holds or writes that file. */
 const triageStub = (dir: string, left: string | undefined): string => sh(`${pre(dir, left)}case "$*" in *" -j "*) echo '{"fn":"x"}';; *) echo value;; esac
-[ -e "$STUB_DIR/left.pids" ] || leave "$(readlink /proc/$$/fd/1)"
+[ -e "$STUB_DIR/left.pids" ] || leave "$(readlink /proc/$$/fd/1 2>/dev/null || lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p')"
 exit 0
 `);
 
@@ -89,7 +90,7 @@ const journalStub = (dir: string, left: string | undefined): string => sh(`${pre
   *--verify*) echo "PASS: system.journal";;
   *) echo '${ENTRY}';;
 esac
-leave "$(readlink /proc/$$/fd/2)"
+leave "$(readlink /proc/$$/fd/2 2>/dev/null || lsof -a -p $$ -d 2 -Fn 2>/dev/null | sed -n 's/^n//p')"
 exit 0
 `);
 
@@ -384,7 +385,7 @@ test("linux-target detect: without a cut the answer is complete on every host", 
 // the recipe's run step: a wrapper (a stand-in linux_triage) that wrote a clean, finished summary of its own, printed on its pipe and left a flooder holding the pipe. Its own verdict is clean,
 // so the cut is the only thing the receipt and the printed line have to go on.
 for (const host of ["linux", "refused", "darwin"] as const) {
-  test(`linux-target run: a wrapper pipe cut at the byte cap (${host}) is in the recipe's own verdict: partial, with the sentence, in the receipt and in the printed line`, { timeout: 120000 }, async () => {
+  test(`linux-target run: a wrapper pipe cut at the byte cap (${host}) is in the recipe's own verdict: partial, with the sentence, in the receipt and in the printed line`, { skip: NO_ADOPTION, timeout: 120000 }, async () => {
     await withCwd(async (cwd, bin) => {
       const dir = await stubDir(cwd);
       const recipeCopy = join(cwd, "recipes", "linux-target");
@@ -417,7 +418,7 @@ for (const host of ["linux", "refused", "darwin"] as const) {
     });
   });
 }
-test("linux-target run: the same wrapper without a flooder is complete", { timeout: 120000 }, async () => {
+test("linux-target run: the same wrapper without a flooder is complete", { skip: NO_ADOPTION, timeout: 120000 }, async () => {
   await withCwd(async (cwd, bin) => {
     const recipeCopy = join(cwd, "recipes", "linux-target");
     await mkdir(recipeCopy, { recursive: true });

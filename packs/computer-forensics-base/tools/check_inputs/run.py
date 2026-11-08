@@ -272,7 +272,7 @@ def print_answer(answer, **dumps_kwargs):
     _reconcile(answer)
     _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
 
-TOOL = {"name": "check_inputs", "version": 13}
+TOOL = {"name": "check_inputs", "version": 14}
 MANIFEST = "inputs.json"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SPECIALS = {"fifo": stat.S_ISFIFO, "socket": stat.S_ISSOCK, "char": stat.S_ISCHR, "block": stat.S_ISBLK}
@@ -391,7 +391,11 @@ class Receipts:
                 self.count += 1
             except OSError as exc:
                 self.error = "the receipts stopped being written after %d rows (%s)" % (self.count, exc.strerror or exc)
-                self.fh = None
+                fh, self.fh = self.fh, None
+                try:
+                    fh.close()           # closed here, where a refusal is caught: a buffer the file object still holds would be flushed (and refused again) when it is collected
+                except OSError:
+                    pass
 
     def finish(self):
         if self.fh:
@@ -401,6 +405,10 @@ class Receipts:
                 self.fh.close()
             except OSError as exc:
                 self.error = "the receipts were not synced (%s)" % (exc.strerror or exc)
+                try:
+                    self.fh.close()      # a refused flush leaves the buffer in the file object: it would be flushed again, and refused again, when it is collected
+                except OSError:
+                    pass
 
 
 # A job sees the run's directories, not the run's inputs.json: the job service gives a job that sees all of inputs/ a copy

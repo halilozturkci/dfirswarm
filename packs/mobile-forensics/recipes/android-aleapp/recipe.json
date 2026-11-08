@@ -1,6 +1,6 @@
 {
   "id": "android-aleapp",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "description": "A broad extraction of an Android full file-system acquisition (a tar, plain or compressed, or a zip, holding a userdata root): ALEAPP's artefact modules run over the whole of it and write a TSV report per artefact that has records, a timeline database and an HTML report, the searchable form of what the phone holds. The run reads ALEAPP's own log for one outcome per module (modules.tsv: completed, no_record, unsupported, errored, errors_logged or unknown) and says complete only when ALEAPP exited 0, wrote a TSV report, the log was recognised, says how many modules it parses and that many started, ends with its processing-completed line, no module errored, logged an error or is unknown, no line outside a module speaks of an error and stderr holds nothing the log shape does not explain.",
   "object": "Android full file-system archive",
   "order": 38,
@@ -52,5 +52,5 @@
     "coverage.json"
   ],
   "covers": "What ALEAPP's modules parse from the whole acquisition: one TSV per artefact that has records, its timeline and every file it wrote, kept under aleapp/, and modules.tsv with the outcome of each module its log names. A module that finds nothing writes no report (no_record), which does not show the artefact never existed, and a module whose own gate does not take the operating-system version (unsupported) read nothing of that artefact; files no module targets are not read; a module that errored or whose end the log does not show is not covered, however many reports the others wrote. The program is run in a process group of its own with a time limit of its own (--max-seconds, default 14100 seconds, under the 14400 of the limit): one that does not finish is ended with everything it started, what it wrote is kept, and the run says partial or failed, never complete; a stop signal ends the program and its children before the recipe ends. The report contains the phone's own content and is a sensitive output.  A process that ALEAPP left running after it exited (one that holds a file the tool keeps, in the tool's process group or in a session of its own, or one that holds no descriptor and writes by name) is stopped, killed and reaped by the shared process block's settle() before the reports, the logs and the files are counted and read; one found, or a host where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused), makes the run partial (coverage.json and the printed line carry program_group, and the status basis says why), and the reports are then what the leftover had written when it was ended. A refusal carries no program_group. A process that is no descendant of the program (started through a service manager) is not found.",
-  "sha256": "536ad9a13a9b1994da062c88cc626531481d7360bb35e78f8cc09c708b28f037"
+  "sha256": "28600897efb5a3300ff8e2e8c44706b6a9ed9bf2ffe0eec3a6af1f52769c3f5d"
 }

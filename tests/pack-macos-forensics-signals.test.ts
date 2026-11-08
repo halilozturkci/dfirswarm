@@ -12,6 +12,7 @@ import { test } from "node:test";
 import { runPySnippet, withCwd } from "./tool-library-harness.ts";
 import { CREATED, FS, KC, PLIST, UL, dbCopy, fsPage, fsRecord, gz, kcDb, logarchive, runAndSignal, ulStandin } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const SIGNALS = [["SIGTERM", 15], ["SIGINT", 2], ["SIGHUP", 1]] as const;
 
@@ -124,7 +125,7 @@ time.sleep(120)
 
 // ---- a stop signal that lands while the tool's own sweep is still working ends the orphans it had not yet reached ------------------------------------
 
-test("unified_log, SIGTERM during the sweep of a storm of setsid orphans: every orphan is gone when the answer is printed", async () => {
+test("unified_log, SIGTERM during the sweep of a storm of setsid orphans: every orphan is gone when the answer is printed", { skip: NO_ADOPTION }, async () => {
   // The iterator exits 0 at once and leaves a setsid parent that forks 400 setsid sleepers. The tool's sweep ends them one by one (seconds); a stop that
   // lands in it used to leave the ones it had not yet reached running, writing into the output after the answer. end_leftovers_on_stop() was never called.
   await withCwd(async (cwd) => {

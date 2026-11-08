@@ -309,7 +309,7 @@ sweep_outputs() { # every file of the run (but coverage.json, which is whole or 
 }
 disk_probe() { # a full disk cuts a step's output while the program still exits 0: a small write beside the outputs says whether it is still full
   local p="$out/.disk_probe.tmp"
-  if ! head -c 4096 /dev/zero > "$p" 2>/dev/null || [[ "$(wc -c < "$p" 2>/dev/null)" != 4096 ]]; then
+  if ! head -c 4096 /dev/zero > "$p" 2>/dev/null || [[ "$(wc -c < "$p" 2>/dev/null | tr -d ' ')" != 4096 ]]; then
     notes+=("the disk under the output directory refused a probe write of 4 KiB: files of the run may be cut short, and nothing here can tell which")
     WRITE_FAILED=1
   fi
@@ -352,7 +352,12 @@ CHILD=""
 alive() { # alive <pid>: running, and not a zombie waiting to be reaped
   kill -0 "$1" 2>/dev/null || return 1
   local st
-  st="$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "/proc/$1/status" 2>/dev/null)"
+  if [[ -r "/proc/$1/status" ]]; then
+    st="$(sed -n 's/^State:[[:space:]]*\(.\).*/\1/p' "/proc/$1/status" 2>/dev/null)"
+  else                                  # no /proc (macOS): ps tells the state
+    st="$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')"
+    st="${st:0:1}"
+  fi
   [[ "$st" != Z ]]
 }
 # The step runs under a small perl wrapper (one process, its own group): it sets the alarm, runs the program with its output on a pipe, and
@@ -391,6 +396,14 @@ sub members {
       push @m, $e if defined $f[2] && $f[2] == $$;
     }
     closedir $d;
+  } elsif (open(my $p, "-|", "ps", "-A", "-o", "pid=,pgid=")) {     # no /proc (macOS): ps lists the group
+    for my $line (<$p>) {
+      my ($e, $g) = $line =~ /^[[:space:]]*([0-9]+)[[:space:]]+([0-9]+)/;
+      next unless defined $g;
+      next if $e == $$;
+      push @m, $e if $g == $$;
+    }
+    close $p;
   }
   return @m;
 }
@@ -698,7 +711,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$target" ]] || { final; echo '{"ok": false, "error": "--target is required"}'; exit 2; }
-img="$(target_field "$target" paths0)"
+HELPER_FAILED=0
+img="$(target_field "$target" paths0)" || HELPER_FAILED=1     # a helper that could not even start (the macOS bash keeps a here document over 512 bytes in a temporary file, which a file-size limit or a full disk refuses) says nothing about the image
 shown="$(target_field "$target" name)"
 DESC_TMP=""
 descriptor_ref="$(target_field "$target" descriptor)"
@@ -719,6 +733,11 @@ if [[ -n "$descriptor_ref" ]]; then
   dsz="$(desc_get "$DESC_TMP" sector_size)"
   if [[ "$dsz" != 512 ]]; then TSK_B=(-b "$dsz"); fi
   [[ -n "$shown" && "$shown" != "$(target_field "$target" paths0)" ]] || shown="$img"
+fi
+if (( HELPER_FAILED )) && [[ -z "$img" ]]; then
+  final
+  echo '{"applies": "unknown", "ok": false, "status": "failed", "error": "the recipe could not read the target", "why": "a write was refused (a file-size limit or a full disk) or python3 could not be run, so the target could not be read: nothing was asked of the image", "status_basis": "the recipe could not read the target, so nothing was run and nothing is said about the image"}'
+  exit 2
 fi
 [[ -n "$img" && -f "$img" ]] || { final; echo '{"applies": "unknown", "why": "the target is not a regular file, so it cannot be told what it is", "ok": false, "error": "the target is not a readable file"}'; exit 2; }
 

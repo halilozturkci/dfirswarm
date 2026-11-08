@@ -43,6 +43,6 @@
   "example": "{\"path\": \"work/extracted/sample.exe\", \"max_output_bytes\": 268435456}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 4,
-  "sha256": "27505e6e70e3da780c52737ba757d17c5fe2e8642e90f7778cf682641aba8e9c"
+  "version": 5,
+  "sha256": "b826c983ed28e9c58355d42c363397ba0366304aeee5ae7259f932817bd0e34c"
 }

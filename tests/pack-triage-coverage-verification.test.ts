@@ -31,7 +31,7 @@ if cap:
 try:
     g["main"]()
 finally:
-    sys.stderr.write("MAXRSS_KB=%d\\n" % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    sys.stderr.write("MAXRSS_KB=%d\\n" % (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // (1024 if sys.platform == "darwin" else 1)))
 `;
 
 type Result = { code: number | null; answer: Json; rssKb: number };

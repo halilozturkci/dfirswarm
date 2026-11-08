@@ -225,7 +225,7 @@ if "--version" in sys.argv[1:]:
 print("x.zip:$pkzip$1*fakehash*")
 sys.stdout.flush()
 if CFG.get("program") == "zip2john":
-    leave(os.readlink("/proc/self/fd/1"))
+    leave((os.readlink("/proc/self/fd/1") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(1, 50, bytes(1024)).split(bytes(1))[0].decode()))
 `;
 const JOHN = `
 a = sys.argv[1:]
@@ -239,14 +239,14 @@ if "--show" in a:
     print("1 password hash cracked, 0 left")
     sys.stdout.flush()
     if CFG.get("program") == "john-show":
-        leave(os.readlink("/proc/self/fd/1"))
+        leave((os.readlink("/proc/self/fd/1") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(1, 50, bytes(1024)).split(bytes(1))[0].decode()))
     sys.exit(0)
 pot = [x.split("=", 1)[1] for x in a if x.startswith("--pot=")][0]
 open(pot, "a").write("hash0:" + os.environ["CANARY"] + "\\n")
 print("Loaded 1 password hash")
 sys.stdout.flush()
 if CFG.get("program") == "john":
-    leave(pot, os.readlink("/proc/self/fd/1"))
+    leave(pot, (os.readlink("/proc/self/fd/1") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(1, 50, bytes(1024)).split(bytes(1))[0].decode()))
 `;
 const recover = (program: "john" | "zip2john" | "john-show" | "john-version"): Case => ({
   name: `password_recover (${program})`,
@@ -283,7 +283,7 @@ if a[:1] == ["-V"]:
 print("bdeinfo 20221031\\n\\nBitLocker Drive Encryption information:\\n\\tEncryption method\\t\\t: AES-XTS 128-bit\\n\\tNumber of key protectors\\t: 1\\n\\nKey protector 0:\\n\\tType\\t\\t\\t\\t: TPM\\n")
 sys.stdout.flush()
 if CFG.get("program") == "bdeinfo":
-    leave(os.readlink("/proc/self/fd/1"))
+    leave((os.readlink("/proc/self/fd/1") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(1, 50, bytes(1024)).split(bytes(1))[0].decode()))
 `;
 function bitlockerVolume(): Buffer {
   const offsets = [4096, 8192, 12288];
@@ -322,12 +322,12 @@ a = sys.argv[1:]
 if a[:1] == ["-V"]:
     print("bdeinfo 20221031")
     if CFG.get("program") == "bdeinfo-version":
-        leave(os.readlink("/proc/self/fd/1"))
+        leave((os.readlink("/proc/self/fd/1") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(1, 50, bytes(1024)).split(bytes(1))[0].decode()))
     sys.exit(0)
 print("Key protector 0:")
 sys.stdout.flush()
 if CFG.get("program") == "bdeinfo":
-    leave(os.readlink("/proc/self/fd/1"))
+    leave((os.readlink("/proc/self/fd/1") if os.path.isdir("/proc/self") else __import__("fcntl").fcntl(1, 50, bytes(1024)).split(bytes(1))[0].decode()))
 `;
 const selftest = (program: "bdeinfo" | "bdeinfo-version"): Case => ({
   name: `crypto_selftest (${program})`,

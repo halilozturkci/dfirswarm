@@ -3,6 +3,7 @@
  * the test lays out, and random secret-shaped canaries built from pieces (no literal of a real-looking secret is in the repository).
  */
 import { spawn } from "node:child_process";
+import { PYTHON3 } from "./host-gates.ts";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ROOT } from "./tool-library-harness.ts";
@@ -29,7 +30,7 @@ export function runTool(script: string, cwd: string, args: unknown, env: Record<
   if (bin) e.PATH = `${bin}:${e.PATH ?? ""}`;
   const t0 = Date.now();
   return new Promise((resolve, reject) => {
-    const child = spawn("python3", [script], { cwd, env: e });
+    const child = spawn(PYTHON3, [script], { cwd, env: e });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));

@@ -60,7 +60,7 @@
   "example": "{\"capture\": \"inputs/capture.pcapng\", \"keylog_file\": \"inputs/keys.log\", \"out_dir\": \"work/<your id>/tls\"}",
   "by": "maintainer",
   "at": "2026-11-04T00:00:00.000Z",
-  "version": 5,
+  "version": 6,
   "use": {
     "extensions": [
       ".pcap",
@@ -91,5 +91,5 @@
     ]
   },
   "secret_output": "required",
-  "sha256": "f1bf46306b9f7b62bb9d1ce1799cede0f7ed36285abdef0d08351c220e9f2916"
+  "sha256": "4c0ec8a21724401d1d96c1712b71e51e584eaa6a04b465bbd4214f9854ead12e"
 }

@@ -1722,6 +1722,15 @@ def _holds_pipe(pid, inodes):
     return False
 
 
+def _same_ident(pid, before, listed):
+    """Whether `pid` is still the process `before` was read from. `listed` is the identity the table just read gave it: when it is the same
+    kind of identity (a start time from /proc, from libproc or from ps) the two are compared; when it is not (macOS: a process is seen
+    through libproc and listed through ps, and the two give different texts for one start time) the pid is read again the way `before` was."""
+    if listed is not None and listed[0] == before[0]:
+        return listed == before
+    return same_process(pid, before)
+
+
 def reap_orphans(inodes=None):
     """Kill what this tool started and lost: a process of the tool's own group that is no longer below the tool (its parent ended and
     init adopted it, so the walk from a program's pid cannot find it) and that the tool knows to be its own: it was seen below the tool
@@ -1758,7 +1767,7 @@ def reap_orphans(inodes=None):
         holder = False
         if pid in SEEN:
             before = SEEN_IDENT.get(pid)
-            if before is not None and listed is not None and before != listed:
+            if before is not None and not _same_ident(pid, before, listed):
                 continue                           # the pid is another process's now: one the tool never saw
         elif inodes and on_linux and _holds_pipe(pid, inodes):
             holder = True
@@ -1930,7 +1939,7 @@ def _exempt(pid, ident, active):
     if pid in active:
         return True
     for table in (SPAWNED, KEEP, PRE_KIDS):
-        if pid in table and (table[pid] is None or table[pid] == ident):
+        if pid in table and (table[pid] is None or (table[pid] == ident if ident is None or table[pid][0] == ident[0] else same_process(pid, table[pid]))):
             return True
     return False
 
@@ -1951,10 +1960,10 @@ def _victims_seen(active):
     found = []
     for pid in candidates:
         row, listed = table.get(pid), table.ident.get(pid)
-        if row is None or listed != SEEN_IDENT[pid] or row[0] == me:
+        if row is None or not _same_ident(pid, SEEN_IDENT[pid], listed) or row[0] == me:
             continue
         parent = row[0]
-        if parent in table and SEEN_IDENT.get(parent) is not None and table.ident.get(parent) == SEEN_IDENT[parent]:
+        if parent in table and SEEN_IDENT.get(parent) is not None and _same_ident(parent, SEEN_IDENT[parent], table.ident.get(parent)):
             continue                               # its parent is a live process of a program's tree: the program has not ended
         found.append((pid, "S", listed))
     return found

@@ -42,7 +42,7 @@
   ],
   "by": "maintainer",
   "at": "2026-09-22T14:00:00.000Z",
-  "version": 17,
-  "sha256": "76c712e487f206e6801f4c75b040aafbc2df1badf58a06e509e04e915f2044a0",
+  "version": 18,
+  "sha256": "f9e351e52eb3e145e5211b3488c0fb78837f28abb46fc9f7c8a0f554d6471f91",
   "secret_output": "required"
 }

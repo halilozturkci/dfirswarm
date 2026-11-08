@@ -13,7 +13,7 @@ import sys
 import time
 import unittest
 
-from support import PACK_DIR, Case, run_tool, stand_in, tool_path
+from support import CLEAN, CLEAN_CODE, PACK_DIR, Case, run_tool, stand_in, tool_path
 
 GOOD = [{"datetime": "2023-11-14T22:13:20.000000+00:00", "parser": "filestat", "data_type": "fs:stat", "message": "m1", "timestamp_desc": "Modification Time"},
         {"timestamp": 1700000100000000, "parser": "winreg", "data_type": "windows:registry:key_value", "message": "m2"}]
@@ -48,9 +48,9 @@ class TimelineSuper(Case):
 
     def test_a_clean_run_is_complete_and_names_both_exits_and_versions(self):
         r = self.go(self.plaso())
-        self.assertEqual(r.code, 0, r.stdout)
+        self.assertEqual(r.code, CLEAN_CODE, r.stdout)
         j = r.json
-        self.assertEqual((j["status"], j["collect_exit"], j["export_exit"], j["events"], j["invalid_lines"]), ("complete", 0, 0, 2, 0))
+        self.assertEqual((j["status"], j["collect_exit"], j["export_exit"], j["events"], j["invalid_lines"]), (CLEAN, 0, 0, 2, 0))
         self.assertEqual(j["versions"]["log2timeline"], "plaso - log2timeline version 20990101")
         self.assertEqual(j["versions"]["psort"], "plaso - psort version 20990101")
         self.assertEqual(j["first_event"], "2023-11-14T22:13:20.000000+00:00")
@@ -81,8 +81,8 @@ class TimelineSuper(Case):
         store = self.write("work/old/timeline.plaso", b"storage")
         r = run_tool("timeline_super", {"mode": "export", "storage_file": store, "out_dir": "work/narrow",
                                         "psort_filter": "date > '2026-02-01'"}, self.dir, [bin_dir])
-        self.assertEqual(r.code, 0, r.stdout)
-        self.assertEqual(r.json["status"], "complete")
+        self.assertEqual(r.code, CLEAN_CODE, r.stdout)
+        self.assertEqual(r.json["status"], CLEAN)
         self.assertIsNone(r.json["collect_exit"])
         self.assertEqual([c for c in self.calls_made() if c.startswith("log2timeline")], [])
         export = [c for c in self.calls_made() if c.startswith("psort") and "--version" not in c]
@@ -182,7 +182,7 @@ class TimelineSuper(Case):
             os.utime(self.path("work/tl/" + name), (old, old))
         storage = self.write("old.plaso", b"storage")
         r = self.go(bin_dir, resume=True, mode="export", storage_file=storage)
-        self.assertEqual(r.json["status"], "complete", r.stdout)
+        self.assertEqual(r.json["status"], CLEAN, r.stdout)
         self.assertEqual([os.path.basename(x) for x in r.json["logs"]], ["psort.log.gz"])
         self.assertEqual(sorted(os.path.basename(x) for x in r.json["captured_output"]), ["psort.stderr", "psort.stdout"])
         self.assertIn("log2timeline.log.gz", r.json["preexisting"])
@@ -297,7 +297,7 @@ class TimelineSuper(Case):
         self.assertIn("under $OUT", r.json["error"])
         self.assertFalse(os.path.exists(self.path("work")))
         r = run_tool("timeline_super", {"source": src}, self.dir, [bin_dir], env=env)
-        self.assertEqual((r.code, r.json["status"]), (0, "complete"), r.stdout)
+        self.assertEqual((r.code, r.json["status"]), (CLEAN_CODE, CLEAN), r.stdout)
         self.assertEqual(r.json["out_dir"], os.path.join(os.path.realpath(out), "timeline"))
         self.assertTrue(os.path.isfile(os.path.join(out, "timeline", "timeline.jsonl")))
 
@@ -333,7 +333,7 @@ class TimelineSuper(Case):
         r = self.go(bin_dir, resume=True, lines=None)
         for name, data in kept.items():
             self.assertEqual(self.read(self.path("work/tl/" + name), "rb"), data, name + " was overwritten")
-        self.assertEqual(r.json["status"], "complete", r.stdout)
+        self.assertEqual(r.json["status"], CLEAN, r.stdout)
         self.assertTrue(r.json["output"].endswith("timeline.2.jsonl"))
         self.assertTrue(r.json["storage_file"].endswith("timeline.2.plaso"))
         self.assertEqual(self.read(r.json["output"]).count("\n"), 2)

@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, withCwd } from "./tool-library-harness.ts";
 import { MEM, SHAPES, rng, runTool } from "./memory-f1-support.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const VIEWS = join(MEM, "vol_views", "run.py");
 const READY = join(MEM, "vol_readiness", "run.py");
@@ -217,7 +218,7 @@ test("pid and dump are passed only as options the plugin lists; dump needs write
   });
 });
 
-test("write_values: refused outside a job and in one that is not secret output, before the image is looked at; in a secret job the raw output and the exported files are kept 0600 with their digests in manifest.jsonl, and the answer holds none of it", { timeout: 120 * SECOND }, async () => {
+test("write_values: refused outside a job and in one that is not secret output, before the image is looked at; in a secret job the raw output and the exported files are kept 0600 with their digests in manifest.jsonl, and the answer holds none of it", { skip: NO_ADOPTION, timeout: 120 * SECOND }, async () => {
   await withCwd(async (cwd, bin) => {
     const canary = SHAPES.ghp(rng(41));
     const stdout = HEADER + row(4, "System") + `77\t4\tcmd.exe\t0x1\t1\t1\tx --token ${canary}\n`;

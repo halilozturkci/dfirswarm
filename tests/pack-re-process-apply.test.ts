@@ -30,6 +30,7 @@ import { buildPdf, buildPeDirs } from "./pack-re-doc-fixtures.ts";
 import type { PdfObj } from "./pack-re-doc-fixtures.ts";
 import { qcow2 } from "./pack-virtualization-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const CLR = join(TOOLS, "clr_inspect", "run.py");
 const UNPACK = join(TOOLS, "unpack_safe", "run.py");
@@ -108,7 +109,7 @@ async function expectUnproven(c: Case, host: Host): Promise<void> {
 
 function register(c: Case): void {
   for (const variant of c.variants) test(`${c.name}: a ${variant} leftover is ended, the answer is partial and the files do not change after it`, () => expectLeft(c, variant));
-  test(`${c.name}: a clean run is complete, nothing left, nothing unproven`, () => expectClean(c));
+  test(`${c.name}: a clean run is complete, nothing left, nothing unproven`, { skip: NO_ADOPTION }, () => expectClean(c));
   for (const host of ["darwin", "refused"] as const) {
     test(`${c.name}: where the absence of a leftover cannot be proven (${host}) a clean run is ${c.holdsFiles ? "partial and says why" : "still complete, with the reason in program_group"}`, () => expectUnproven(c, host));
   }
@@ -160,7 +161,7 @@ register({
     await stub(bin, "ilspycmd", sh(`STUB_DIR="${dir}"; STUB_LEFT="${left ?? ""}"; export STUB_DIR STUB_LEFT
 case "$1" in --version) echo "ilspycmd: 11.2.0.10050"; exit 0;; esac
 echo "namespace Demo { }"
-leave "$(readlink /proc/$$/fd/1)"
+leave "$(readlink /proc/$$/fd/1 2>/dev/null || lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p')"
 exit 0
 `));
     await put(cwd, "work/a.dll", buildPeDirs({ clr: {} }).file);
@@ -208,7 +209,7 @@ register({
     await stub(bin, "ssdeep", sh(`if [ "$1" = "-V" ]; then echo "2.14.1"; exit 0; fi
 echo 'ssdeep,1.1--blocksize:hash:hash,filename'
 echo "${SSDEEP_DIGEST},\\"$(basename "$3")\\""
-leave "$(readlink /proc/$$/fd/1)"
+leave "$(readlink /proc/$$/fd/1 2>/dev/null || lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p')"
 exit 0
 `));
     await stub(bin, "tlsh", sh(`if [ "$1" = "-version" ]; then echo "tlsh 4.12.0"; exit 0; fi
@@ -243,7 +244,7 @@ register({
     await writeFile(join(dir, "floss.json"), FLOSS_JSON);
     await stub(bin, "capa", sh(`if [ "$1" = "--version" ]; then echo "stand-in 0.0"; exit 0; fi
 cat "$STUB_DIR/capa.json"
-leave "$(readlink /proc/$$/fd/1)"
+leave "$(readlink /proc/$$/fd/1 2>/dev/null || lsof -a -p $$ -d 1 -Fn 2>/dev/null | sed -n 's/^n//p')"
 exit 0
 `));
     await stub(bin, "floss", sh(`if [ "$1" = "--version" ]; then echo "stand-in 0.0"; exit 0; fi

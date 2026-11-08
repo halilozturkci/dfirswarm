@@ -21,14 +21,15 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ZEEK, gone, pidFile, put, stub, withCwd } from "./pack-network-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const BEGIN = "# BEGIN SHARED PROCESS";
 const END = "# END SHARED PROCESS";
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 /** The two texts, as a copy carries them (from BEGIN to END, the way the other suites cut them). */
-export const GENERAL_SHA = "59e621d3dd1311165cae558c84903ed638ceda9ff188f6f9678ce0ba0e410931";
-export const WINDOWS_SHA = "472e280fb5239b9a51ba2d6cdd3eaeb86fb4cf4e5fce47e4474b6bad329761cb";
+export const GENERAL_SHA = "80256d11fb0fbb7604f195ef4c66022d598a888486f6384bc295d3d2f6c92b33";
+export const WINDOWS_SHA = "f5e7f38978e383174cf6c3edeab50a503b0fb11f098e684c80a8a88d88ab3fcf";
 
 async function carriers(): Promise<string[]> {
   const found: string[] = [];
@@ -187,7 +188,7 @@ for (const [family, script] of FAMILIES) {
     });
   });
 
-  test(`${family}: a tool that does not lead its group still ends what its program left (the tool is a subreaper), and nothing beside it: not the tool's group, not a process it did not start`, async () => {
+  test(`${family}: a tool that does not lead its group still ends what its program left (the tool is a subreaper), and nothing beside it: not the tool's group, not a process it did not start`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd) => {
       // not detached: the tool is in this test's own group, which holds the decoy and the test runner
       const decoy = spawn("sleep", ["300"], { stdio: "ignore" });
