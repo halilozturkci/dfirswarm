@@ -26,6 +26,7 @@ import { withCwd } from "./tool-library-harness.ts";
 import { REGIPY, WIN, py, stub } from "./windows-pack-harness.ts";
 import { hive } from "./windows-hive.ts";
 import { BASE_BLOCK, FILETIME_A, cfb, destList, differingPages, hvleLog, lnk, pathWithOnlyPython, withSequences } from "./windows-t1-fixtures.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -436,7 +437,7 @@ except SystemExit:
 
 // ---- dissect.target ---------------------------------------------------------------------------------------------------------
 
-test("dissect.target: not installed, or a target that is not one directory, is not_attempted with the reason; installed, each function is its own call with its whole output kept", async () => {
+test("dissect.target: not installed, or a target that is not one directory, is not_attempted with the reason; installed, each function is its own call with its whole output kept", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await collection(join(cwd, "c"));
     // Not installed (PATH holds python3 and the recipe's own needs, nothing else).

@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { TOOLS, asJob, body, exists, filesUnder, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
-import { NO_ADOPTION } from "./host-gates.ts";
+import { NO_ADOPTION, NO_SETSID } from "./host-gates.ts";
 
 const UNPACK = join(TOOLS, "unpack_safe", "run.py");
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
@@ -294,7 +294,7 @@ test("a stage directory with extra files from upx is removed, and the log is mod
 
 /** A upx stand-in that forks a child which keeps appending to the derivative. The child's pid is recorded (PIDS) and killed at the end. */
 for (const marker of ["FORKNOW", "FORKLATE", "FORKDOUBLE", "NEVEREXIT"]) {
-  test(`a child upx abandons (${marker}) is ended before the derivative is hashed: partial, and no derivative that later differs from the answer`, async () => {
+  test(`a child upx abandons (${marker}) is ended before the derivative is hashed: partial, and no derivative that later differs from the answer`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       await fakeUpx(bin);
       await put(cwd, "work/f.exe", packed(marker));
@@ -331,7 +331,7 @@ test("a hard link to the derivative (a by-name writer with no descriptor open) m
   });
 });
 
-test("a child upx puts in a session of its own (setsid) cannot be ended: partial, says so, and no derivative is claimed", async () => {
+test("a child upx puts in a session of its own (setsid) cannot be ended: partial, says so, and no derivative is claimed", { skip: NO_SETSID }, async () => {
   await withCwd(async (cwd, bin) => {
     await fakeUpx(bin);
     await put(cwd, "work/s.exe", packed("SETSIDKID"));

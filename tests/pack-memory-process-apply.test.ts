@@ -16,6 +16,7 @@ import { ROOT, withCwd } from "./tool-library-harness.ts";
 import { FEW, HOLDERS, VARIANTS, exec, sh, stubDir } from "./network-process-harness.ts";
 import { register } from "./process-apply-cases.ts";
 import type { Case } from "./process-apply-cases.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const MEM = process.env.MEM_TOOLS_DIR ?? join(ROOT, "packs", "memory-forensics", "tools");
 const VIEWS = join(MEM, "vol_views", "run.py");
@@ -172,7 +173,7 @@ exit 0
 register(isf);
 
 // A converter that left a process is not trusted: its table is a pipe a leftover could have written into, so no table is kept and nothing is ready.
-for (const leaving of ["setsid", "yes", "fast"]) test(`isf_intake: a table whose converter left a process behind (${leaving}) is not kept, and the verdict is unknown`, { timeout: 120000 }, async () => {
+for (const leaving of ["setsid", "yes", "fast"]) test(`isf_intake: a table whose converter left a process behind (${leaving}) is not kept, and the verdict is unknown`, { skip: NO_ADOPTION, timeout: 120000 }, async () => {
   await withCwd(async (cwd, bin) => {
     const { answer } = await isf.invoke(cwd, bin, leaving, "linux");
     assert.equal(answer.status, "partial");
@@ -182,3 +183,21 @@ for (const leaving of ["setsid", "yes", "fast"]) test(`isf_intake: a table whose
     assert.deepEqual(kept, [], "nothing is left in the symbols directory");
   });
 });
+
+// Where nothing is adopted (darwin, prctl refused) a leftover that floods the converter's pipe is not found, and the table is what the converter printed with what the leftover wrote mixed into it:
+// the pipe cut at its byte cap is a fact whatever the host, so the table is not kept and nothing is ready (the host that adopts finds the leftover and says the same).
+for (const host of ["darwin", "refused"] as const) {
+  for (const leaving of ["yes"]) {   // (a writer that is slower than the cap, "fast", cannot be told from the converter on a host that cannot adopt it: the answer carries program_group.unproven and says so)
+    test(`isf_intake: a table whose converter's pipe a leftover flooded (${leaving}, ${host}) is not kept, and the verdict is unknown`, { timeout: 120000 }, async () => {
+      await withCwd(async (cwd, bin) => {
+        const { answer } = await isf.invoke(cwd, bin, leaving, host);
+        assert.equal(answer.status, "partial", JSON.stringify(answer.status_basis));
+        assert.equal(answer.verdict, "unknown");
+        assert.equal(answer.table, undefined, "no table is described as kept");
+        assert.equal(answer.program_group.left_behind, 0, "nothing was found: the flood alone says the pipe was mixed");
+        const kept = await readdir(join(cwd, "work", "s1", "symbols")).catch(() => []);
+        assert.deepEqual(kept, [], "nothing is left in the symbols directory");
+      });
+    });
+  }
+}

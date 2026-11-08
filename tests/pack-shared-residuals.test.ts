@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_PROC } from "./host-gates.ts";
 
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 const rel = (...parts: string[]): string => join(ROOT, ...parts);
@@ -582,7 +583,7 @@ function processCase(file: string, name: string, work: string, extra: string[] =
 }
 
 for (const file of PROCESS_CARRIERS) {
-  test(`${file}: a listed pid whose start time changed before the kill is not signalled; an unchanged one is`, async () => {
+  test(`${file}: a listed pid whose start time changed before the kill is not signalled; an unchanged one is`, { skip: NO_PROC }, async () => {
     await scratch(async (dir) => {
       const r = processCase(file, "identity", dir);
       assert.equal(r.status, 0, `${file}: ${r.signal ?? ""} ${r.stderr}`);
@@ -590,7 +591,7 @@ for (const file of PROCESS_CARRIERS) {
     });
   });
 
-  test(`${file}: a pid seen below the tool that another process has taken is not ended by reap_orphans`, async () => {
+  test(`${file}: a pid seen below the tool that another process has taken is not ended by reap_orphans`, { skip: NO_PROC }, async () => {
     await scratch(async (dir) => {
       const r = processCase(file, "reap", dir);
       assert.equal(r.status, 0, `${file}: ${r.signal ?? ""} ${r.stderr}`);
@@ -599,7 +600,7 @@ for (const file of PROCESS_CARRIERS) {
   });
 
   for (const [label, body] of [["fails", "#!/bin/sh\nexit 1\n"], ["sleeps past PS_WAIT", "#!/bin/sh\nexec sleep 30\n"]] as const) {
-    test(`${file}: with no /proc and no libproc a ps that ${label} is not read as an empty tree: the answer says the tree could not be listed`, async () => {
+    test(`${file}: with no /proc and no libproc a ps that ${label} is not read as an empty tree: the answer says the tree could not be listed`, { skip: NO_PROC }, async () => {
       await scratch(async (dir) => {
         await writeFile(join(dir, "ps"), body, { mode: 0o755 });
         const r = processCase(file, "unlisted", dir, [label === "fails" ? "1" : "2"]);
@@ -615,7 +616,7 @@ for (const file of PROCESS_CARRIERS) {
     });
   }
 
-  test(`${file}: a fast forker below the program on the deadline path leaves no descendant (5 tries)`, async () => {
+  test(`${file}: a fast forker below the program on the deadline path leaves no descendant (5 tries)`, { skip: NO_PROC }, async () => {
     await scratch(async (dir) => {
       const r = processCase(file, "forker", dir);
       assert.equal(r.status, 0, `${file}: ${r.signal ?? ""} ${r.stderr}`);

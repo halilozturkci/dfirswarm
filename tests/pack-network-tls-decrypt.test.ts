@@ -22,7 +22,7 @@ import { NET, TOOLS, TLSD, asJob, body, exists, filesUnder, frameTcp4, gone, ngB
 import type { Json } from "./pack-network-harness.ts";
 import { CUT_FLOODERS, FEW, PY_LEAVE, alive, exec, floodTheVersionProbe, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
-import { NO_SETSID } from "./host-gates.ts";
+import { NO_SETSID, NO_ADOPTION } from "./host-gates.ts";
 
 const TLS = TLSD;
 const BUILDER = join(ROOT, "tests", "network-tls-fixture.py");
@@ -613,7 +613,7 @@ test("with the real tshark: the TLS 1.2 and TLS 1.3 sessions decrypt with their 
 // tls_decrypt reports what tshark printed on a pipe and writes the payload files itself; it is not held to the rule that a host which cannot show the absence of a leftover makes the
 // answer partial, but a process settle() ended is a fact, and the answer is then partial and says so.
 
-test("a process tshark leaves behind is ended before the answer and makes it partial; a clean run says program_group; a host that cannot show there was none does not make it partial", { skip }, async () => {
+test("a process tshark leaves behind is ended before the answer and makes it partial; a clean run says program_group; a host that cannot show there was none does not make it partial", { skip: NO_ADOPTION || skip }, async () => {
   const fix = fixture!;
   const built = scenario(flowsFrom(fix));
   const job = (cwd: string, dir: string, extra: Record<string, string>) => ({ STUB_DIR: dir, JOB_ID: "j000001", OUT: join(cwd, "out"), SECRET_OUTPUT: "1", ...extra });

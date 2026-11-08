@@ -14,7 +14,7 @@ import { test } from "node:test";
 import { BEACON, CONNS, NET, TOOLS, TCP, body, exists, filesUnder, frameTcp4, frameUdp4, gone, pcapClassic, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 import { CUT_FLOODERS, FEW, PY_LEAVE, alive, exec, floodTheVersionProbe, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
-import { NO_SETSID } from "./host-gates.ts";
+import { NO_SETSID, NO_ADOPTION } from "./host-gates.ts";
 
 type Row = { ts: number | string; uid?: string | null; oh?: string; op?: number | string; rh?: string; rp?: number | string; proto?: string; service?: string | null; duration?: number | string; ob?: number | string; rb?: number | string; state?: string; opk?: number | string; rpk?: number | string };
 
@@ -493,7 +493,7 @@ test("with the real tshark: a capture of two TCP connections and a UDP exchange 
 // conn_series reports what tshark printed on a pipe and writes its series file itself, so it is not held to the rule that a host which cannot show the absence of a leftover
 // makes the answer partial; but a process settle() ended is a fact, and the answer is then partial and says so.
 
-test("a process tshark leaves behind is ended before the answer and makes it partial; a clean run says program_group; a host that cannot show there was none does not make it partial", async () => {
+test("a process tshark leaves behind is ended before the answer and makes it partial; a clean run says program_group; a host that cannot show there was none does not make it partial", { skip: NO_ADOPTION }, async () => {
   const pkts: Pkt[] = [{ t: T0, src: C, dst: S, sport: 50000, dport: 443, proto: "tcp", flags: TCP.SYN, seq: 1000 }, { t: T0 + 1, src: C, dst: S, sport: 50000, dport: 443, proto: "tcp", flags: TCP.ACK, seq: 1001 }];
   for (const variant of ["stderr", "plain", "setsid", "double"]) {
     await withCwd(async (cwd, bin) => {

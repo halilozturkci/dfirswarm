@@ -388,7 +388,7 @@ test("P3 the manifest says a stop by signal is answered with status interrupted"
   assert.match(text, /a stop by signal \(status `interrupted`\)/);
 });
 
-test("a process an engine leaves behind is ended before its output is read: the engine is failed, the log stops growing, nothing is left running", async () => {
+test("a process an engine leaves behind is ended before its output is read: the engine is failed, the log stops growing, nothing is left running", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await mkdir(join(cwd, "pids"), { recursive: true });
     await engines(bin, {

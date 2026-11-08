@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { TOOLS, asJob as plainJob, body, filesUnder, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+import { NO_RAW_NAMES } from "./host-gates.ts";
 
 const LAYERS = join(TOOLS, "container_layers", "run.py");
 const asJob = (cwd: string, args: unknown, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
@@ -152,7 +153,7 @@ test("container_layers tells a native whiteout (a character device 0/0) from an 
   });
 });
 
-test("container_layers does not follow a link, a link loop or a link out of a layer, and shows a name that is not UTF-8 as an escape", async () => {
+test("container_layers does not follow a link, a link loop or a link out of a layer, and shows a name that is not UTF-8 as an escape", { skip: NO_RAW_NAMES }, async () => {
   await withCwd(async (cwd) => {
     const a = join(cwd, W, "a");
     await mkdir(join(a, "d"), { recursive: true });

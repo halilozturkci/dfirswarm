@@ -114,7 +114,8 @@ export async function runPySnippet(
 export async function withCwd(fn: (cwd: string, bin: string) => Promise<void>): Promise<void> {
   // The real path: on macOS tmpdir() is /var/folders/..., and /var is a link to /private/var. A tool that refuses a link in its output path
   // (ab_layout, backup_materialise) or prints a path it resolved (heic_inspect, marshal_inspect) then disagrees with the name the test holds.
-  const cwd = await realpath(await mkdtemp(join(tmpdir(), "lib-eval-")));
+  // (macOS: its per-user temporary directory, /var/folders/xx/<28 characters>/T, holds a part that looks like a token, and the tools withhold such a part of a path from their answers: a test that compares a path would then differ; /tmp does not)
+  const cwd = await realpath(await mkdtemp(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "lib-eval-")));
   const bin = join(cwd, "bin");
   try {
     await mkdir(bin, { recursive: true });

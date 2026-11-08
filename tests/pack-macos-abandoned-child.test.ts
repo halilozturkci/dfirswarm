@@ -16,7 +16,7 @@ import { withCwd } from "./tool-library-harness.ts";
 import { MAC, filesUnder } from "./macos-late-harness.ts";
 import { PYTHON, UL, logarchive, ulStandin } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
-import { NO_ADOPTION } from "./host-gates.ts";
+import { NO_ADOPTION, NO_MAC_APT } from "./host-gates.ts";
 
 const TRIAGE = join(MAC, "macos_triage", "run.py");
 const RECIPE = join(MAC, "..", "recipes", "macos-artefacts", "run.py");
@@ -190,7 +190,7 @@ finish()
 
 // ---- the abandoned child in the recipe --------------------------------------------------------------------------------------------------------
 
-test("the recipe: a child the program leaves is ended before index.tsv records sizes: partial, and the recorded size is the final size", async () => {
+test("the recipe: a child the program leaves is ended before index.tsv records sizes: partial, and the recorded size is the final size", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, child(0.6, false, join(cwd, "pids.txt")));
     const path = await e01(cwd);

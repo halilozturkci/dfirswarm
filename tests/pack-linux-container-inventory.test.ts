@@ -183,7 +183,8 @@ test("container_inventory reads hostile JSON without a traceback: deep nesting, 
     const rows = await entries(cwd, out);
     const by = (id: string): Json => rows.find((r) => r.container_id === id) as Json;
     assert.equal(by(ids[0]).config_version, "unreadable");
-    assert.match(by(ids[0]).errors[0], /nested deeper/);
+    // (a parser that reads 100,000 levels without a RecursionError, as the newer interpreters do, reads a list: the file is still unreadable, for the other reason)
+    assert.match(by(ids[0]).errors[0], /nested deeper|the top level is not an object/);
     assert.equal(by(ids[1]).environment.count, 1);
     assert.ok(by(ids[1]).environment.bytes > 6 * 1024 * 1024);
     assert.equal(by(ids[2]).name, "/two");

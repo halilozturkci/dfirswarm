@@ -16,6 +16,7 @@ import type { Json } from "./macos-pack-harness.ts";
 const wholeLines = (text: string): number => text.split("\n").length - 1;       // lines that end in a newline: a row cut off at the end is not a row
 const nonBlank = (text: string): number => text.split("\n").filter((l) => l.trim() !== "").length;
 
+const FS_RECORDS = 6000;
 type Kind = "knowledgec_query" | "fsevents_parse" | "plist_read" | "unified_log";
 const SCRIPT: Record<Kind, string> = { knowledgec_query: KC, fsevents_parse: FS, plist_read: PLIST, unified_log: UL };
 const KINDS: Kind[] = ["knowledgec_query", "fsevents_parse", "plist_read", "unified_log"];
@@ -24,7 +25,7 @@ const KINDS: Kind[] = ["knowledgec_query", "fsevents_parse", "plist_read", "unif
 async function setup(kind: Kind, cwd: string, target: string): Promise<{ args: unknown; env: Record<string, string> }> {
   if (kind === "knowledgec_query") return { args: { db: await kcDb(cwd, "k.db", 3000), out_file: target }, env: {} };
   if (kind === "fsevents_parse") {
-    const records = Array.from({ length: 6000 }, (_, i) => fsRecord(`Users/alice/Library/Caches/app${i % 40}/file-${i}.tmp`, BigInt(i + 1), CREATED, BigInt(i + 1)));
+    const records = Array.from({ length: FS_RECORDS }, (_, i) => fsRecord(`Users/alice/Library/Caches/app${i % 40}/file-${i}.tmp`, BigInt(i + 1), CREATED, BigInt(i + 1)));
     await fsDir(cwd, "fse", { "0000000000000001": fsPage("2SLD", records) });
     return { args: { path: "work/fse", out_file: target }, env: {} };
   }
@@ -129,7 +130,8 @@ async function checkPaged(kind: PagedKind, answer: Json, cwd: string, where: str
   const said = kind === "fsevents_parse" ? answer.record_count : kind === "plist_read" ? answer.file_count : answer.entry_count;
   assert.equal(typeof said, "number", `${where}: no count in ${JSON.stringify(answer).slice(0, 300)}`);
   assert.equal(wholeLines(file), said, `${where}: ${said} counted, ${wholeLines(file)} lines in the result file`);
-  if (kind === "fsevents_parse") assert.notEqual(answer.status, "complete", `${where}: complete with a cut result file`);
+  // `complete` is only for a result file that holds every record of the fixture (how many bytes that is depends on the host's rows: a limit of 1 MiB cuts it on one host and not on another)
+  if (kind === "fsevents_parse" && answer.status === "complete") assert.equal(said, FS_RECORDS, `${where}: complete with a cut result file`);
 }
 
 for (const kind of PAGED) {

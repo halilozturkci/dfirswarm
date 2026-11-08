@@ -102,7 +102,7 @@ test("a configuration is written by key, tested with -T before the run, and reco
     assert.equal(out.checksum_mode, "none");
     assert.deepEqual(out.rule_load.configuration_test, { loaded: 2, failed: 0, from: "suricata-test.stderr" });
     assert.equal(out.rule_load.run, null, "a number the engine did not print is not a zero");
-    assert.equal(out.ok, true);
+    assert.equal(out.ok, CLEAN === "complete");
     // The configuration the engine tested is the one it ran.
     assert.equal(await readFile(join(cwd, "stub/seen-config-run.yaml"), "utf8"), config);
     const all = body(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s2", checksum_mode: "all" }, env(cwd), bin));
@@ -361,7 +361,7 @@ test("the harness ends a tool by killing its process group, and that ends Surica
 // --- D-network-F1 ----------------------------------------------------------------------------------------------------------
 
 import { createRng, planted } from "./pack-network-canaries.ts";
-import { NO_ADOPTION } from "./host-gates.ts";
+import { NO_ADOPTION, CLEAN } from "./host-gates.ts";
 
 test("a line nested 100,000 deep is counted as not read, named with its line, and the other events are still read", async () => {
   await withCwd(async (cwd, bin) => {

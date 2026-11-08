@@ -19,7 +19,7 @@ import { chmod, lstat, mkdir, readFile, readdir, stat, symlink, writeFile } from
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
-import { NO_ADOPTION, NO_PROC } from "./host-gates.ts";
+import { NO_ADOPTION, NO_PROC, NO_CASE_SENSITIVE_FS } from "./host-gates.ts";
 
 const TOOL = process.env.BACKUP_DECRYPT ?? join(ROOT, "packs", "mobile-forensics", "tools", "backup_decrypt", "run.py");
 
@@ -518,7 +518,7 @@ test("only the library's IncorrectPassphraseError is a wrong secret; any other f
   });
 });
 
-test("a file id met twice is duplicate_id and the first file is kept (os.link, not os.replace); a stop names the output directory", async () => {
+test("a file id met twice is duplicate_id and the first file is kept (os.link, not os.replace); a stop names the output directory", { skip: NO_CASE_SENSITIVE_FS }, async () => {
   await withCwd(async (cwd) => {
     await setup(cwd);
     const password = canaryText();

@@ -118,8 +118,8 @@ def main():
         d = out_dir()
         d.mkdir(parents=True, exist_ok=True)
         tmp = d / ".stub-held"
+        TEMPS.append(str(tmp))      # (before the file exists: a stop that lands between the two still finds it)
         tmp.write_text("held")
-        TEMPS.append(str(tmp))
         time.sleep(40)
         os.unlink(tmp)
         say({"status": "complete", "status_basis": "waited"})

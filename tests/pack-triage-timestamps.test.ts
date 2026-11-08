@@ -217,7 +217,7 @@ test("mixed clocks: an archive that varies against a tree flattened to one date 
   });
 });
 
-test("names join by NFC and case folding, and a name two delivered files share stays ambiguous", async () => {
+test("names join by NFC and case folding, and a name two delivered files share stays ambiguous", { skip: NO_CASE_SENSITIVE_FS }, async () => {
   await withCwd(async (cwd) => {
     const t = BigInt(Date.parse("2026-03-03T03:03:03Z")) / 1000n;
     const decomposed = "café.txt";      // e + combining acute, as macOS writes it
@@ -307,11 +307,8 @@ test("the tool's own clock ends the read of a decompression bomb partial, with J
     const run = await runPySnippet(`
 import sys, tarfile, zlib, io
 out = open(sys.argv[1], "wb")
-header = io.BytesIO()
-with tarfile.open(fileobj=header, mode="w") as tf:
-    info = tarfile.TarInfo("big.bin"); info.size = 3 << 30
-    tf.addfile(info)
-head = header.getvalue()[:512]
+info = tarfile.TarInfo("big.bin"); info.size = 3 << 30
+head = info.tobuf(tarfile.USTAR_FORMAT, "utf-8", "surrogateescape")[:512]   # (addfile() wants the 3 GiB body since Python 3.14: the header block is all that is needed)
 c = zlib.compressobj(1, zlib.DEFLATED, 31)
 out.write(c.compress(head))
 chunk = b"\\0" * (1 << 24)
@@ -406,6 +403,7 @@ print(json.dumps([[n, *make(n, r)] for n in picked]))
 
 // ---- clocks 1 and 4: the collector's own records (PKG-TRI-10) ---------------------------------------------------------------------------
 import { KAPE_COPY_HEADER, kapeCopyRow, put, uac3, veloUploadsRow, veloLogRow } from "./pack-triage-harness.ts";
+import { NO_CASE_SENSITIVE_FS } from "./host-gates.ts";
 
 async function setNs(path: string, value: bigint): Promise<void> {
   const run = await runPySnippet("import os,sys; os.utime(sys.argv[1], ns=(int(sys.argv[2]), int(sys.argv[2])))", [path, String(value)], null);
@@ -471,7 +469,7 @@ test("a copy-log row's ModifiedOnUtc is compared with the delivered mtime only w
   });
 });
 
-test("an ambiguous join stays ambiguous: two delivered files that differ only by case are both candidates and neither is compared", async () => {
+test("an ambiguous join stays ambiguous: two delivered files that differ only by case are both candidates and neither is compared", { skip: NO_CASE_SENSITIVE_FS }, async () => {
   await withCwd(async (cwd) => {
     await put(cwd, "k/run_CopyLog.csv", [KAPE_COPY_HEADER, kapeCopyRow("C:\\Users\\a\\Note.TXT", "C\\Users\\a\\Note.TXT")].join("\n") + "\n");
     await put(cwd, "k/C/Users/a/note.txt", "x");

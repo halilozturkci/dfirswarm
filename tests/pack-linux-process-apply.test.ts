@@ -196,7 +196,7 @@ for (const holder of HOLDERS) {
         const said = JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}");
         assert.equal(run.code, ["slow", "fast", "yes"].includes(holder) ? 2 : 0, run.stderr + run.stdout);
         assert.equal(said.applies, ["slow", "fast", "yes"].includes(holder) ? "unknown" : true);
-        for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `holder ${pid} is gone`);
+        if (!NO_ADOPTION) for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `holder ${pid} is gone`);
       } finally {
         await reap(cwd);
       }
@@ -235,7 +235,7 @@ test("linux-target: a stop signal in the wrapper-read window ends the holder the
       assert.equal(coverage.status, "failed");
       assert.equal(line.status, coverage.status);
       assert.match(line.status_basis, /coverage\.json says failed/);
-      for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `holder ${pid} is gone`);
+      if (!NO_ADOPTION) for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `holder ${pid} is gone`);
     } finally {
       await reap(cwd);
       try { process.kill(-(child.pid as number), "SIGKILL"); } catch { /* gone */ }
@@ -247,7 +247,7 @@ test("linux-target: a stop signal in the wrapper-read window ends the holder the
 
 for (const holder of HOLDERS) {
   for (const which of ["package_verify", "audit_events"] as const) {
-    test(`${which} version probe: a ${holder} left by --version is ended, the tool answers in time and says partial`, { timeout: 120000 }, async () => {
+    test(`${which} version probe: a ${holder} left by --version is ended, the tool answers in time and says partial`, { skip: NO_ADOPTION, timeout: 120000 }, async () => {
       await withCwd(async (cwd, bin) => {
         const dir = await stubDir(cwd);
         const out = join(cwd, "out");
@@ -325,9 +325,10 @@ for (const which of ["package_verify", "audit_events"] as const) {
             assert.match(cutText(answer), CUT_SAYS);
             assert.match(cutText(answer), /may contain bytes the program did not write/);
             assert.match(JSON.stringify(answer.program_group.notes), /went on writing/);
-            if (host !== "linux") assert.equal(answer.program_group.left_behind, 0, "nothing was found: the cut alone makes it partial");
+            // (the host "linux" is this machine: a machine that cannot adopt orphans, macOS, finds nothing here, and the cut alone makes it partial, as on the other hosts)
+            if (host !== "linux" || NO_ADOPTION) assert.equal(answer.program_group.left_behind, 0, "nothing was found: the cut alone makes it partial");
             else assert.ok(answer.program_group.left_behind >= 1);
-            if (host === "linux") for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `flooder ${pid} is gone`);
+            if (host === "linux" && !NO_ADOPTION) for (const pid of await pids(cwd)) assert.equal(alive(pid), false, `flooder ${pid} is gone`);
           } finally {
             await reap(cwd);
           }

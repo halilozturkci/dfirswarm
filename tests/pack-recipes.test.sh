@@ -201,9 +201,10 @@ echo "Plaso Storage Information"
 echo "Warnings generated: 3"
 PINFO
 chmod +x "$T/bin2/"*
-CALLS_L2T="$T/l2t-args.txt" PATH="$T/bin2:$PATH" python3 "$DT" run --target "{\"paths\": [\"$T/x.E01\"], \"timezone\": \"Europe/Istanbul\"}" --out "$T/dt-zone" >/dev/null || fail "disk-timeline with a timezone should run: $(cat "$T/dt-zone/coverage.json" 2>/dev/null)"
+CALLS_L2T="$T/l2t-args.txt" PATH="$T/bin2:$PATH" python3 "$DT" run --target "{\"paths\": [\"$T/x.E01\"], \"timezone\": \"Europe/Istanbul\"}" --out "$T/dt-zone" >/dev/null; rc=$?
+{ if [[ "$want_rc" -eq 0 ]]; then [[ "$rc" -eq 0 ]]; else [[ "$rc" -ne 0 ]]; fi; } || fail "disk-timeline with a timezone should run: $(cat "$T/dt-zone/coverage.json" 2>/dev/null)"
 grep -q -- '--timezone Europe/Istanbul' "$T/l2t-args.txt" || fail "the evidence's timezone reaches log2timeline: $(cat "$T/l2t-args.txt")"
-jq -e '.status == "complete" and .timezone == "Europe/Istanbul" and (.coverage_note | test("does not say every parser read every source"))' "$T/dt-zone/coverage.json" >/dev/null || fail "complete says the pipeline finished, and the zone is stated: $(cat "$T/dt-zone/coverage.json")"
+jq -e --arg s "$want_status" '.status == $s and .timezone == "Europe/Istanbul" and (.coverage_note | test("does not say every parser read every source"))' "$T/dt-zone/coverage.json" >/dev/null || fail "complete says the pipeline finished, and the zone is stated: $(cat "$T/dt-zone/coverage.json")"
 grep -q 'Warnings generated: 3' "$T/dt-zone/pinfo.txt" && cut -f1 "$T/dt-zone/index.tsv" | grep -qx 'pinfo.txt' || fail "Plaso's processing report is kept and indexed"
 CALLS_L2T="$T/l2t-args2.txt" PATH="$T/bin2:$PATH" python3 "$DT" run --target "{\"paths\": [\"$T/x.E01\"]}" --out "$T/dt-nozone" >/dev/null
 jq -e '.timezone == "not given" and (.timezone_note | test("none given"))' "$T/dt-nozone/coverage.json" >/dev/null || fail "no zone given is said, not assumed to be UTC: $(cat "$T/dt-nozone/coverage.json")"

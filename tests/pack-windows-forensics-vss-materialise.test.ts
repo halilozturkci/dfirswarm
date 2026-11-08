@@ -440,7 +440,7 @@ test("a mount whose program daemonises (a double fork, a session of its own, std
   });
 });
 
-test("a stop signal ends the mount's daemon with everything else below the tool, even when nothing unmounts it", async () => {
+test("a stop signal ends the mount's daemon with everything else below the tool, even when nothing unmounts it", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const env: Record<string, string> = { ...(await setup(cwd, bin, { 1: config("x") }, config("x"))), FAKE_DAEMON: "1", FAKE_NOKILL: "1", FAKE_SLOW: "1", PATH: `${bin}:${process.env.PATH}` };
     daemonStandIns(bin);

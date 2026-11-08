@@ -17,7 +17,7 @@ import { test } from "node:test";
 import { NET, QUICI, TOOLS, asJob, body, exists, filesUnder, frameUdp4, gone, pcapClassic, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 import { CUT_FLOODERS, FEW, PY_LEAVE, alive, exec, floodTheVersionProbe, pids, reap, snapshot, sleep } from "./network-process-harness.ts";
-import { NO_SETSID } from "./host-gates.ts";
+import { NO_SETSID, NO_ADOPTION } from "./host-gates.ts";
 
 const TSHARK = `#!/usr/bin/env python3
 import json, os, re, sys, time
@@ -525,7 +525,7 @@ test("with the real tshark: the headers of the built datagrams are read as built
 // quic_inspect reports what tshark printed on a pipe and keeps tshark's messages file; it is not held to the rule that a host which cannot show the absence of a leftover makes
 // the answer partial, but a process settle() ended is a fact, and the answer is then partial and says so.
 
-test("a process tshark leaves behind is ended before the answer and makes it partial; a clean run says program_group; a host that cannot show there was none does not make it partial", async () => {
+test("a process tshark leaves behind is ended before the answer and makes it partial; a clean run says program_group; a host that cannot show there was none does not make it partial", { skip: NO_ADOPTION }, async () => {
   for (const variant of ["stderr", "plain", "setsid", "double"]) {
     await withCwd(async (cwd, bin) => {
       try {

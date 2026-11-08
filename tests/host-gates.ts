@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +47,40 @@ export const NO_TMPFS_NAMESPACE: string | false = (() => {
   try {
     const r = spawnSync("unshare", ["-rm", "sh", "-c", 'mount -t tmpfs -o size=4k tmpfs "$1"', "sh", dir], { encoding: "utf8" });
     return r.status === 0 ? false : "this host does not allow a tmpfs mount in a user and mount namespace (unshare -rm): " + (r.stderr || "").trim().slice(0, 120);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
+/** The machine type the interpreter reports (what a tool reads with platform.machine()): `x86_64` on an amd64 host, `arm64` or `aarch64` on an Apple Silicon or an arm64 Linux host. */
+export const MACHINE: string = spawnSync(PYTHON3, ["-c", "import platform; print(platform.machine().lower())"], { encoding: "utf8" }).stdout.trim();
+
+/**
+ * The skip reason of a case that needs the mac_apt recipe to apply: the recipe answers "does not apply here" on an arm64 host (mac_apt 1.33.2 is installed in the amd64 worker image only, its statx helper has
+ * no syscall number for aarch64). That is the recipe's own answer; a case that needs the recipe to run mac_apt states what the host holds.
+ */
+export const NO_MAC_APT: string | false =
+  MACHINE === "aarch64" || MACHINE === "arm64" ? "this host is " + MACHINE + ": the macos-triage recipe answers 'does not apply here' (mac_apt is installed in the amd64 worker image only)" : false;
+
+/** The skip reason of a case that keeps two files whose names differ only by case (macOS: the file system folds case, so the second name is the first). */
+export const NO_CASE_SENSITIVE_FS: string | false = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "case-probe-"));
+  try {
+    writeFileSync(join(dir, "a"), "x");
+    return existsSync(join(dir, "A")) ? "the temporary file system folds case: two names that differ only by case are one file here" : false;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
+/** The skip reason of a case that needs a file name that is not UTF-8 (macOS' APFS refuses one with EILSEQ). */
+export const NO_RAW_NAMES: string | false = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "name-probe-"));
+  try {
+    writeFileSync(Buffer.concat([Buffer.from(dir + "/"), Buffer.from([0xff, 0xfe, 0x41])]), "x");
+    return false;
+  } catch {
+    return "this file system refuses a name that is not UTF-8 (EILSEQ): the case runs on Linux";
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

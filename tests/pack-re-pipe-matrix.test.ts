@@ -21,6 +21,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { alive, sleep } from "./network-process-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 import { RE, TOOLS, buildPe, put, stub, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 import { qcow2 } from "./pack-virtualization-harness.ts";
@@ -151,7 +152,8 @@ const LIMIT = 20;
 /** One reader, every shape. `kind` names how the reader is called. */
 function matrix(tool: string, kind: string, shapes = Object.keys(SHAPES)): void {
   for (const shape of shapes) {
-    test(`${tool} ${kind}: ${shape}`, async () => {
+    // a leftover that holds the program's pipes is found and ended only where the tool can adopt orphans (macOS answers that it cannot prove there was none: the darwin cases of the process-apply suites)
+    test(`${tool} ${kind}: ${shape}`, { skip: LEAVING.includes(shape) ? NO_ADOPTION : false }, async () => {
       await withCwd(async (cwd) => {
         let p: Probe | undefined;
         try {
@@ -238,6 +240,8 @@ const parse = (r: { stdout: string; stderr: string }): Json => {
   return JSON.parse(r.stdout);
 };
 const HOLDERS = ["silent", "writer10", "flood", "writer1", "yesout"] as const;
+/** The holders that write at full speed: they die of SIGPIPE when the pipe is cut, and the cut says partial on every host; the others are found only where the tool adopts orphans. */
+const FLOODS = ["flood", "yesout"];
 const STRICT = ["silent", "writer10"];
 const HOLD: Record<string, string> = {
   silent: `sleep 600 & echo $! >> "$PIDF"`,
@@ -249,7 +253,7 @@ const HOLD: Record<string, string> = {
 };
 
 for (const shape of HOLDERS) {
-  test(`authenticode_verify end to end, a ${shape} holder on osslsigncode: the verification is read, nothing is said to have timed out, the holder is dead`, async () => {
+  test(`authenticode_verify end to end, a ${shape} holder on osslsigncode: the verification is read, nothing is said to have timed out, the holder is dead`, { skip: FLOODS.includes(shape) ? false : NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       await mkdir(join(cwd, "stub"), { recursive: true });
       await stub(bin, "osslsigncode", `case "$1" in
@@ -279,7 +283,7 @@ exit 2`);
 }
 
 for (const shape of HOLDERS) {
-  test(`ransomware_family_match end to end, a ${shape} holder on yara: the hits are read, the answer is in time, the holder is dead`, async () => {
+  test(`ransomware_family_match end to end, a ${shape} holder on yara: the hits are read, the answer is in time, the holder is dead`, { skip: FLOODS.includes(shape) ? false : NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       await mkdir(join(cwd, "stub"), { recursive: true });
       await stub(bin, "yara", `if [ "$1" = "--version" ]; then echo 4.5.0; exit 0; fi
@@ -309,7 +313,7 @@ exit 0`);
 }
 
 for (const shape of HOLDERS) {
-  test(`snapshot_chain_check end to end, a ${shape} holder on qemu-img: the reading is taken, the answer is in time, the holder is dead`, async () => {
+  test(`snapshot_chain_check end to end, a ${shape} holder on qemu-img: the reading is taken, the answer is in time, the holder is dead`, { skip: FLOODS.includes(shape) ? false : NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       await mkdir(join(cwd, "stub"), { recursive: true });
       await stub(bin, "qemu-img", `${HOLD[shape]}

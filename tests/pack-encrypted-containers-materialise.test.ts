@@ -415,7 +415,7 @@ test("a reader that hangs in a library call is ended at the tool's clock: before
   });
 });
 
-test("a reader that forks: a sleeper it leaves behind is ended when it returns, and with it when it hangs and ignores SIGTERM", async () => {
+test("a reader that forks: a sleeper it leaves behind is ended when it returns, and with it when it hangs and ignores SIGTERM", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     // as a job runs it: the tool heads its own process group, so what the reader left behind is the tool's to end
     const secret = SHAPES[0][1]();

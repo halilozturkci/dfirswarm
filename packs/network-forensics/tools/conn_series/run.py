@@ -15,7 +15,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "conn_series", "version": 6}
+TOOL = {"name": "conn_series", "version": 7}
 PARSER = "conn_series/1"
 
 
@@ -2978,7 +2978,7 @@ def examine(p, started, deadline, path, place, work, rows_page, digest):
         "coverage": {**coverage, "note": "carried only as given: window_end and sensor_coverage_confirmed together; this tool never decides that the sensor kept recording"},
         "counts": {**{k: v for k, v in cc.items()}, **({"capture": capture_counts} if capture_counts else {}), **({"log": {k: v for k, v in counts.items() if k != "timed_out"}} if p["conn_log"] else {})},
         "time_semantics": TIME_SEMANTICS["conn_log" if p["conn_log"] else "capture"],
-        "resources": {"seconds": round(time.monotonic() - started, 1), "max_rss_kb": usage.ru_maxrss, "connections_kept": cc["kept"], "cap": MAX_CONNECTIONS},
+        "resources": {"seconds": round(time.monotonic() - started, 1), "max_rss_kb": usage.ru_maxrss // (1024 if sys.platform == "darwin" else 1), "connections_kept": cc["kept"], "cap": MAX_CONNECTIONS},
         "logs": logs, "problems": problems, "notes": notes, "ok": ok, "program_group": process_verdict(),
         "relies_on": "Zeek's documented conn.log fields (ts, uid, id.*, proto, service, duration, orig_bytes, resp_bytes, conn_state, orig_pkts, resp_pkts) or tshark's -T fields output; a log from a Zeek that writes other formats is read as far as its fields match",
     }, indent=2))

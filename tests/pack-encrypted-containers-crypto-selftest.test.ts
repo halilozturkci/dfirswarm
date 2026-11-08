@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { type Json, asJob, body, filesUnder, gone, pidFile, refused, startDetached, stub, withCwd } from "./pack-network-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
+import { CLEAN } from "./host-gates.ts";
 
 const SCRIPT = join(ROOT, "packs", "encrypted-containers", "tools", "crypto_selftest", "run.py");
 const SAMPLES = (cwd: string): string => join(cwd, "out", "tool-output", "crypto_selftest-samples");
@@ -49,7 +50,7 @@ test("every reader that parses the sample it should read is parsed, the others a
     await stub(bin, "fvdeinfo", `#!/bin/sh\nif [ "$1" = "-V" ]; then echo "fvdeinfo 20221030"; exit 0; fi\necho "no idea"; exit 0\n`);
     await stub(bin, "bdeinfo", `#!/bin/sh\nif [ "$1" = "-V" ]; then echo "bdeinfo 20221031"; exit 0; fi\necho "failed" >&2; exit 1\n`);
     const a = body(await asJob(SCRIPT, cwd, {}, bin, { PATH: `${bin}:/usr/bin:/bin` }));
-    assert.equal(a.status, "complete", a.status_basis);
+    assert.equal(a.status, CLEAN, a.status_basis);   // (a host that cannot adopt orphans cannot show that the programs left none: partial, which the answer says)
     const pair = (program: string, format: RegExp): Json => a.records.find((r: Json) => r.kind === "pair" && r.program === program && format.test(r.format));
     assert.equal(pair("cryptsetup", /LUKS1/).result, "parsed");
     assert.equal(pair("cryptsetup", /LUKS2/).result, "parsed");

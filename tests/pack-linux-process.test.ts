@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { JOURNAL, RECIPE, TRIAGE, TOOLS, body, gone, pidFile, refused, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_PROC } from "./host-gates.ts";
 
 const BEGIN = "# BEGIN SHARED PROCESS";
 const END = "# END SHARED PROCESS";
@@ -318,7 +319,7 @@ print(sorted(found))
   }
 });
 
-test("the linux-target recipe's stop handler signals a pid only while it is the process it listed: a changed start time is not killed, the listed one is", () => {
+test("the linux-target recipe's stop handler signals a pid only while it is the process it listed: a changed start time is not killed, the listed one is", { skip: NO_PROC }, () => {
   // The identity check is called directly. A process is listed with process_identity; a pid whose identity has changed since (another
   // process took the number, here simulated by a listed identity with another start time) is not signalled, a pid that is gone is not,
   // and the process that was listed is.
@@ -356,7 +357,7 @@ finally:
   );
 });
 
-test("the linux-target recipe's stop handler still signals a listed child whose parent has ended and left it to init", () => {
+test("the linux-target recipe's stop handler still signals a listed child whose parent has ended and left it to init", { skip: NO_PROC }, () => {
   // The wrapper dies on SIGTERM and its children are re-parented; they are the processes that were listed and must still be signalled.
   const program = String.raw`
 import importlib.util, os, signal, subprocess, sys, time

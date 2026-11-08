@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { DOC_PROBE, ENTROPY, FUZZY, PE_INFO, RECIPE, RE, asJob, buildPe, buildZip, put, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
+import { PYTHON3 } from "./host-gates.ts";
 
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
 
@@ -149,7 +150,7 @@ for (const [name, script, write] of [["capa-floss", CAPA_FLOSS, "catalog"], ["st
           await symlink(target, join(cwd, "link"));
           out = join("link", "inner");
         }
-        const r = spawnSync("python3", [script, "run", "--target", JSON.stringify({ paths: ["inputs/s.exe"] }), "--out", out], { cwd, encoding: "utf8", env: { ...process.env, PATH: "/usr/bin:/bin" } });
+        const r = spawnSync(PYTHON3, [script, "run", "--target", JSON.stringify({ paths: ["inputs/s.exe"] }), "--out", out], { cwd, encoding: "utf8", env: { ...process.env, PATH: "/usr/bin:/bin" } });
         assert.doesNotMatch(r.stderr, /Traceback/, r.stderr);
         const a = JSON.parse(r.stdout) as Json;
         assert.equal(a.ok, false);
@@ -166,7 +167,7 @@ for (const [name, script, write] of [["capa-floss", CAPA_FLOSS, "catalog"], ["st
       const target = join(cwd, "elsewhere");
       await mkdir(target, { recursive: true });
       await symlink(target, join(cwd, "catalog"));
-      const r = spawnSync("python3", [script, "run", "--target", JSON.stringify({ paths: ["inputs/mach"] }), "--out", "catalog"], { cwd, encoding: "utf8", env: { ...process.env, PATH: "/usr/bin:/bin" } });
+      const r = spawnSync(PYTHON3, [script, "run", "--target", JSON.stringify({ paths: ["inputs/mach"] }), "--out", "catalog"], { cwd, encoding: "utf8", env: { ...process.env, PATH: "/usr/bin:/bin" } });
       assert.doesNotMatch(r.stderr, /Traceback/, r.stderr);
       const a = JSON.parse(r.stdout) as Json;
       assert.match(JSON.stringify(a), /symbolic link/);

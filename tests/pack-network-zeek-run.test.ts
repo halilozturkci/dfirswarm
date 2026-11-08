@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ZEEK, asJob, body, everythingUnder, exists, filesUnder, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
-import { NO_ADOPTION } from "./host-gates.ts";
+import { NO_ADOPTION, CLEAN } from "./host-gates.ts";
 
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 
@@ -89,7 +89,7 @@ test("files.log without a hash column is said so; with one, the hashes are count
     assert.equal(out.files_log.records, 1);
     assert.equal(out.files_log.records_with_a_hash, 0);
     assert.doesNotMatch(out.note + JSON.stringify(out), /a hash per reassembled object/);
-    assert.equal(out.ok, true);
+    assert.equal(out.ok, CLEAN === "complete");
     // Version, command, checksum switch and policy script are recorded.
     assert.match(out.zeek_version, /8\.0\.10/);
     assert.equal(out.checksum_validation, false);

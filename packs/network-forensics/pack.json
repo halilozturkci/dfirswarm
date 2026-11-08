@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.14.11",
+  "version": "1.14.12",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. Flow records in an nfcapd file (NetFlow v5, v9, IPFIX) are read with nfdump.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -49,8 +49,8 @@
       "tools/beacon_score/run.py": "e1f43f8e890e860e5fe369205aa4bcfc0be65446f8fbb6aa6719fdfc98d6ddb2",
       "tools/capture_transform/manifest.json": "cd3f85e8259fbeb28c3606cc0d4f962ae60adbd0cf419e255660fb7000453031",
       "tools/capture_transform/run.py": "8b11b7a0bbb02cdb27efe6ae048fa5582bc6f9144ed04a67f99e53d71a6541a5",
-      "tools/conn_series/manifest.json": "1e22504295e273df0b298c56c93cde46d0651f0342a702376c6ed923384f4b8b",
-      "tools/conn_series/run.py": "8dd7175d6cb032295d37252632f5c4e27aa9fedf14027bf175f2816bb5326518",
+      "tools/conn_series/manifest.json": "5bc854896b4bc9b5626e0b45db698b290f116a21afc2ff8b10dbf1997c370e9b",
+      "tools/conn_series/run.py": "9f59058a3cca244fad5c1b448990ae58dd605883dbee71a6cb7a276eef14eaf4",
       "tools/flow_reader/manifest.json": "6d78513e734c0fff2579e39cf0f1a524b169e38313e54c93ae79820202cfc11a",
       "tools/flow_reader/run.py": "5d80a3d60ff50c9dade219dea7fe5fd3daadd2210d4dd9a9d83898c35b3cfbab",
       "tools/network_log_summary/manifest.json": "1f95d2e7a512e99ae75e3a8773de0dcadac929f0de02813ca8f7f8f1a126cf21",

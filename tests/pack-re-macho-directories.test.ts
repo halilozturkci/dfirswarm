@@ -883,7 +883,8 @@ test("agreement with otool -l and otool -L on binaries present on this machine (
       const libs = spawnSync("otool", ["-L", p], { encoding: "utf8" }).stdout.split("\n").filter((l) => l.startsWith("\t")).map((l) => l.trim().split(" (")[0]);
       const ours = rowsOf(out, "libraries").filter((r) => r.kind !== "id").map((r) => r.name);
       for (const l of libs) assert.ok(ours.includes(l), `${p}: ${l}`);
-      const cmds = (spawnSync("otool", ["-l", p], { encoding: "utf8" }).stdout.match(/^Load command \d+/gm) ?? []).length;
+      // (a universal binary: the tool reads every slice, so otool is asked for every slice too; without -arch it prints the one of the host)
+      const cmds = (spawnSync("otool", ["-arch", "all", "-l", p], { encoding: "utf8" }).stdout.match(/^Load command \d+/gm) ?? []).length;
       assert.equal(out.tables.load_commands.matched, cmds, p);
     }
   });

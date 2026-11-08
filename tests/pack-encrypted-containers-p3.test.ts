@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
 import { peakRssPrelude } from "./peak-rss.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const ENC = join(ROOT, "packs", "encrypted-containers", "tools");
 const SCAN = join(ENC, "recovery_key_scan", "run.py");
@@ -228,7 +229,7 @@ const FORKING_7Z = [
   "exit 0",
 ].join("\n");
 
-test("archive_probe's 7z listing ends when 7z itself ends, not when a forked grandchild lets go of the pipe; the grandchild is reaped", { timeout: 60_000 }, async () => {
+test("archive_probe's 7z listing ends when 7z itself ends, not when a forked grandchild lets go of the pipe; the grandchild is reaped", { skip: NO_ADOPTION, timeout: 60_000 }, async () => {
   const { spawn } = await import("node:child_process");
   await withCwd(async (cwd, bin) => {
     const path = join(bin, "7z");

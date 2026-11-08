@@ -13,7 +13,7 @@ import { withCwd } from "./tool-library-harness.ts";
 import { MAC } from "./macos-late-harness.ts";
 import { PYTHON, UL, logarchive, ulStandin } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
-import { NO_ADOPTION } from "./host-gates.ts";
+import { NO_ADOPTION, NO_MAC_APT } from "./host-gates.ts";
 
 const TRIAGE = join(MAC, "macos_triage", "run.py");
 const RECIPE = join(MAC, "..", "recipes", "macos-artefacts", "run.py");
@@ -192,7 +192,7 @@ test("a clean program that leaves nothing is still complete in a tool that is th
   });
 });
 
-test("a FIFO at the name of the log never blocks the read: the answer comes inside the clock, the log is unreadable and the run is not complete (triage and recipe)", { timeout: 120_000 }, async () => {
+test("a FIFO at the name of the log never blocks the read: the answer comes inside the clock, the log is unreadable and the run is not complete (triage and recipe)", { skip: NO_MAC_APT, timeout: 120_000 }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, `os.mkfifo(LOG)\nopen(DB, "wb").write(b"x" * 100)\n`);
     await mkdir(join(cwd, "out"), { recursive: true });

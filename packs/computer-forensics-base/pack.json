@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.16.6",
+  "version": "1.16.7",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -97,7 +97,7 @@
       "tests/test_ioc_scan.py": "bc1c0808d4af23ad16eea57601d15055789582ba93bc616015207cfb51626d0e",
       "tests/test_layer_describe.py": "e4adccc6c51a68994a9eaa79c7117a42f9125d9a55c9e13038560ed9e51f2fa4",
       "tests/test_manifests.py": "3d1b4dbdacdc8a11553320ca621c6f9b859570f03f2292f49a368c326a04a50f",
-      "tests/test_memory_windows.py": "06f3e8e448de78f6209e1480541ae54612f80785599dead26313a7d69a34df40",
+      "tests/test_memory_windows.py": "c73761d610da536041470bb75fcb825d35428056f0499182fd85be4319da554c",
       "tests/test_pipe_shapes.py": "a844b766059f609e1171979d608844fd6a776eb40638146d1e58f4a8e78a29b3",
       "tests/test_process_apply.py": "76f4f9fbb6e723d5a958c39a7a25f93ce2725d920cb2f02cf061d4cbc66c5e9d",
       "tests/test_recipe_matrix.py": "59016ac129ac208537ab8803c94cd03498f21ca413bd77b60bde36c0906db7da",

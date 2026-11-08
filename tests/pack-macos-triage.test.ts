@@ -20,7 +20,7 @@ import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { MAC, body, filesUnder, leader, ok, secretJob, signalled, tool } from "./macos-late-harness.ts";
 import type { Json } from "./macos-late-harness.ts";
-import { NO_ADOPTION } from "./host-gates.ts";
+import { NO_ADOPTION, NO_MAC_APT } from "./host-gates.ts";
 
 const TRIAGE = join(MAC, "macos_triage", "run.py");
 
@@ -423,7 +423,7 @@ time.sleep(300)
   });
 });
 
-test("a program that ends while a child holds its descriptors does not hold the tool, and the child is ended", async () => {
+test("a program that ends while a child holds its descriptors does not hold the tool, and the child is ended", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const pids = join(cwd, "pids.txt");
     await stand(bin, `
@@ -552,7 +552,7 @@ function gptDisk(guid: string): Buffer {
   return disk;
 }
 
-test("recipe detect: what it applies to, what it does not, and what it cannot tell", async () => {
+test("recipe detect: what it applies to, what it does not, and what it cannot tell", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, OK_TWO);
     const w = (name: string, data: Buffer | string) => writeFile(join(cwd, "work", name), data);
@@ -597,7 +597,7 @@ test("recipe detect: what it applies to, what it does not, and what it cannot te
   });
 });
 
-test("recipe run: coverage.json says complete for named plugins the log accounts for; FAST is partial; every file it wrote is marked secret_bearing", async () => {
+test("recipe run: coverage.json says complete for named plugins the log accounts for; FAST is partial; every file it wrote is marked secret_bearing", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, `open(os.path.join(HERE, "argv.txt"), "w").write(repr(argv))\nopen(os.path.join(out, "mac_apt.db"), "w").write("db")\n${OK_TWO}`);
     const path = await e01(cwd);
@@ -622,7 +622,7 @@ test("recipe run: coverage.json says complete for named plugins the log accounts
   });
 });
 
-test("recipe run: a traceback behind an exit 0, a cut log, a log with no start line and no macOS installation are never complete", async () => {
+test("recipe run: a traceback behind an exit 0, a cut log, a log with no start line and no macOS installation are never complete", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     const path = await e01(cwd);
     const cases: Array<[string, string, string, RegExp]> = [
@@ -644,7 +644,7 @@ test("recipe run: a traceback behind an exit 0, a cut log, a log with no start l
   });
 });
 
-test("recipe run: a hang is ended at its limit with its children, coverage.json says partial, and the log written so far is read", async () => {
+test("recipe run: a hang is ended at its limit with its children, coverage.json says partial, and the log written so far is read", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     const pids = join(cwd, "pids.txt");
     await stand(bin, `start()\nplugin("TCC", ["x"])\nlog("Running plugin SLOW")\nimport subprocess\nc = subprocess.Popen(["sleep", "300"])\nopen(${JSON.stringify(pids)}, "a").write("%d %d\\n" % (os.getpid(), c.pid))\ntime.sleep(300)\n`);
@@ -657,7 +657,7 @@ test("recipe run: a hang is ended at its limit with its children, coverage.json 
   });
 });
 
-test("recipe run: SIGTERM ends mac_apt and its child, exit 143, and coverage.json (written first) says partial", async () => {
+test("recipe run: SIGTERM ends mac_apt and its child, exit 143, and coverage.json (written first) says partial", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     const pids = join(cwd, "pids.txt");
     await stand(bin, `start()\nplugin("TCC", ["x"])\nimport subprocess\nc = subprocess.Popen(["sleep", "300"])\nopen(${JSON.stringify(pids)}, "a").write("%d %d\\n" % (os.getpid(), c.pid))\ntime.sleep(300)\n`);
@@ -675,7 +675,7 @@ test("recipe run: SIGTERM ends mac_apt and its child, exit 143, and coverage.jso
   });
 });
 
-test("recipe run: a rerun in the same output directory refuses and leaves every file as it was; nothing is written outside the output directory", async () => {
+test("recipe run: a rerun in the same output directory refuses and leaves every file as it was; nothing is written outside the output directory", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, `open("stray.txt", "w").write("in cwd")\n${OK_TWO}`);
     const path = await e01(cwd);
@@ -718,7 +718,7 @@ test("the recipe and the tool carry one copy of the log reader, and the recipe's
 
 // ---- the error vocabulary does not rest on an uppercase level word that was never observed; the recipe's files are exclusive ---------------------
 
-test("a lowercase error line or a failure sentence inside a plugin's run is failed, in the tool and the recipe, whatever the logger name is", async () => {
+test("a lowercase error line or a failure sentence inside a plugin's run is failed, in the tool and the recipe, whatever the logger name is", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     const path = await e01(cwd);
     let n = 0;
@@ -745,7 +745,7 @@ test("a lowercase error line or a failure sentence inside a plugin's run is fail
   });
 });
 
-test("the recipe creates its files exclusively: any name it writes that already exists refuses the run (exit 2) with nothing touched, and a planted link is not followed", async () => {
+test("the recipe creates its files exclusively: any name it writes that already exists refuses the run (exit 2) with nothing touched, and a planted link is not followed", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, OK_TWO);
     const path = await e01(cwd);
@@ -775,7 +775,7 @@ test("the recipe creates its files exclusively: any name it writes that already 
 
 // ---- a name created by another process after the start check -----------------------------------------------------------------------------------
 
-test("the recipe: a name another process creates after the start check (a file, or a dangling link) is refused with JSON and exit 2, nothing foreign is touched and coverage.json stays partial", async () => {
+test("the recipe: a name another process creates after the start check (a file, or a dangling link) is refused with JSON and exit 2, nothing foreign is touched and coverage.json stays partial", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     const path = await e01(cwd);
     for (const name of ["plugins.tsv", "index.tsv"]) {
@@ -805,7 +805,7 @@ test("the recipe: a name another process creates after the start check (a file, 
   });
 });
 
-test("the recipe: a link planted at coverage.json or a scratch directory name between the start check and its use is refused and never followed", async () => {
+test("the recipe: a link planted at coverage.json or a scratch directory name between the start check and its use is refused and never followed", { skip: NO_MAC_APT }, async () => {
   await withCwd(async (cwd, bin) => {
     await stand(bin, OK_TWO);
     const path = await e01(cwd);

@@ -108,7 +108,7 @@ async function expectUnproven(c: Case, host: Host): Promise<void> {
 }
 
 function register(c: Case): void {
-  for (const variant of c.variants) test(`${c.name}: a ${variant} leftover is ended, the answer is partial and the files do not change after it`, () => expectLeft(c, variant));
+  for (const variant of c.variants) test(`${c.name}: a ${variant} leftover is ended, the answer is partial and the files do not change after it`, { skip: NO_ADOPTION }, () => expectLeft(c, variant));
   test(`${c.name}: a clean run is complete, nothing left, nothing unproven`, { skip: NO_ADOPTION }, () => expectClean(c));
   for (const host of ["darwin", "refused"] as const) {
     test(`${c.name}: where the absence of a leftover cannot be proven (${host}) a clean run is ${c.holdsFiles ? "partial and says why" : "still complete, with the reason in program_group"}`, () => expectUnproven(c, host));

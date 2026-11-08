@@ -335,7 +335,7 @@ test("a process the program leaves behind when it ends is ended with it before t
 
 /** A decompiler stand-in that forks a child which keeps appending to the reconstruction. The child's pid is recorded and killed at the end. */
 for (const scenario of ["fork_now", "fork_late", "fork_double", "never_exit"]) {
-  test(`a child the decompiler abandons (${scenario}) is ended before the file is hashed: partial, and the file is the answer's bytes and hash one second later`, async () => {
+  test(`a child the decompiler abandons (${scenario}) is ended before the file is hashed: partial, and the file is the answer's bytes and hash one second later`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       await fakeProgram(cwd, bin);
       await put(cwd, "work/c.dll", asm(scenario));

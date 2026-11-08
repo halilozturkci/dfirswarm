@@ -37,7 +37,7 @@ import os
 import signal
 import sys
 
-PARSER = "isf_intake/5"
+PARSER = "isf_intake/6"
 
 
 def _before_start(signum, _frame):
@@ -2451,7 +2451,7 @@ def run_engine(argv, seconds, on_out, on_err, out_cap, err_cap, cwd=None):
             os.set_blocking(pipe.fileno(), False)
             sel.register(pipe, selectors.EVENT_READ, name)
             open_streams += 1
-        ended_at = None
+        ended_at, late, flooded = None, 0, False
         while open_streams:
             now = time.monotonic()
             if now >= deadline:
@@ -2478,8 +2478,16 @@ def run_engine(argv, seconds, on_out, on_err, out_cap, err_cap, cwd=None):
                     state = "capped"
                     break
                 sinks[key.data](chunk)
-            if state != "ok":
+                if ended_at is not None:
+                    late += len(chunk)
+                    if late > POST_EXIT_BYTES:
+                        flooded = True      # a pipe holds far less than this: what comes after the program ended is a process it left, writing into the pipe (the same cut as communicate_bounded's)
+                        break
+            if state != "ok" or flooded:
                 break
+        if flooded:
+            PIPE_CUT["cut"] += 1
+            _note("a process that held a program's pipe after the program ended went on writing: the tool read %d bytes more and let the pipe go" % POST_EXIT_BYTES)
         if state == "ok" and proc.poll() is None:
             try:
                 proc.wait(timeout=max(0.1, deadline - time.monotonic()))
@@ -2779,6 +2787,11 @@ def program_group_problems(what, held=True):
     for why in verdict["unproven"]:
         if held or verdict["subreaper"]:
             found.append("%s: %s cannot be shown to be final" % (why, what))
+    # a pipe cut at its byte cap is a fact whatever the host: a process that held the pipe after the program ended went on writing, and what it wrote is mixed into the bytes the
+    # program printed (no leftover need have been found: on a host that cannot adopt orphans none is)
+    if PIPE_CUT["cut"]:
+        found.append("a process that held a program's pipe after the program ended went on writing: the tool read no more than %d bytes of it and let the pipe go, so %s may contain bytes the program did not write" % (
+            POST_EXIT_BYTES, what))
     return found
 
 

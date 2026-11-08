@@ -94,7 +94,7 @@ async function runCase(script: string, name: string): Promise<Result> {
 }
 
 for (const { family, script } of FAMILIES) {
-  test(`${family}: a holder that floods the pipe at full speed is cut off at the byte cap: seconds and memory stay small, the cut is said`, async () => {
+  test(`${family}: a holder that floods the pipe at full speed is cut off at the byte cap: seconds and memory stay small, the cut is said`, { skip: NO_ADOPTION }, async () => {
     const r = await runCase(script, "flood");
     assert.equal(r.head.startsWith("HEADER"), true, "the program's own output is kept");
     assert.ok(r.elapsed < 5, `the call took ${r.elapsed.toFixed(1)} s`);
@@ -108,7 +108,7 @@ for (const { family, script } of FAMILIES) {
     assert.equal(r.returncode, 0);
   });
 
-  test(`${family}: a silent holder and a slow writer are let go about a second after the program ended, with no cut`, async () => {
+  test(`${family}: a silent holder and a slow writer are let go about a second after the program ended, with no cut`, { skip: NO_ADOPTION }, async () => {
     for (const name of ["silent", "slow"]) {
       const r = await runCase(script, name);
       assert.equal(r.head.startsWith("HEADER"), true, name);
