@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, readdir, stat, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { MACHO_DIRECTORIES, body, buildFat, filesUnder, put, refused, startDetached, tool, withCwd } from "./pack-re-harness.ts";
+import { MACHO_DIRECTORIES, body, buildFat, filesUnder, put, refused, startDetached, termHandlerIn, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 
 const CPU_X86_64 = 0x01000007, CPU_ARM64 = 0x0100000c, CPU_X86 = 7, CPU_PPC = 18;
@@ -821,8 +821,44 @@ test("SIGTERM during a read answers with one JSON document and exit 143", async 
     await put(cwd, "work/big.macho", withSymbols(syms));
     const run1 = startDetached(MACHO_DIRECTORIES, cwd, { path: "work/big.macho", limit: 20000 });
     try {
+      await termHandlerIn(run1.pid);          // counted from the handler, not from the spawn: an interpreter still loading has nothing to answer with
       await new Promise((r) => setTimeout(r, 300));
       run1.signal("SIGTERM");
+      run1.signal("SIGTERM");
+      const code = await run1.closed;
+      if (code === 0) return;               // finished before the signal: nothing to hold
+      assert.equal(code, 143);
+      const docs = run1.stdout().trim().split("\n").filter(Boolean);
+      assert.equal(docs.length, 1, "one document");
+      assert.equal((JSON.parse(docs[0]!) as Json).status, "failed");
+    } finally {
+      try { run1.signal("SIGKILL"); } catch { /* gone */ }
+    }
+  });
+});
+
+test("a second SIGTERM that lands while the first is being answered does not take the document away (exit 143, one document)", async () => {
+  // A signal handler can be entered again between two bytecodes of itself. Two stops sent one after the other are usually both pending when the first is
+  // handled, so on a loaded host the second came in after the first had marked the answer as begun and before it had written it: no document at all.
+  // Here the second stop is sent from inside the first handler, at the moment the handler builds its document, so every host gets that order.
+  await withCwd(async (cwd) => {
+    const syms = Array.from({ length: 60000 }, (_, i) => ({ name: `symbol_name_${i}_${"x".repeat(40)}` }));
+    await put(cwd, "work/big.macho", withSymbols(syms));
+    await put(cwd, "shim/sitecustomize.py", [
+      "import json, os, signal, sys",
+      "_dumps, _sent = json.dumps, []",
+      "def _dumps_then_stop_again(*a, **k):",
+      "    if not _sent and sys._getframe(1).f_code.co_name == '_stopped_by_signal':",
+      "        _sent.append(1)",
+      "        os.kill(os.getpid(), signal.SIGTERM)",
+      "    return _dumps(*a, **k)",
+      "json.dumps = _dumps_then_stop_again",
+      "",
+    ].join("\n"));
+    const run1 = startDetached(MACHO_DIRECTORIES, cwd, { path: "work/big.macho", limit: 20000 }, { PYTHONPATH: join(cwd, "shim") });
+    try {
+      await termHandlerIn(run1.pid);
+      await new Promise((r) => setTimeout(r, 300));
       run1.signal("SIGTERM");
       const code = await run1.closed;
       if (code === 0) return;               // finished before the signal: nothing to hold

@@ -142,13 +142,21 @@ if os.fork() == 0:
             os.setsid()
             with open(pids, "a") as p:
                 p.write("%d\\n" % os.getpid())
-            time.sleep(6)
+            time.sleep(40)
             with open(out + ".late", "a") as late:
                 late.write("late\\n")
             os._exit(0)
     os._exit(0)
-deadline = time.time() + 20
-while time.time() < deadline and len(open(pids).read().split()) < 400:
+def storm_size():
+    # the file is not there until the first sleeper has written to it: a missing file is a storm of none yet, not a crash of the reader
+    # (which ended the reader at once on a fast host, so the tool's sweep killed the setsid parent before it had forked all 400)
+    try:
+        with open(pids) as f:
+            return len(f.read().split())
+    except OSError:
+        return 0
+deadline = time.time() + 60
+while time.time() < deadline and storm_size() < 400:
     time.sleep(0.01)
 os._exit(0)
 `);

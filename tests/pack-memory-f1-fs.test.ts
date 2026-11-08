@@ -89,19 +89,21 @@ test("mem_fs ends with one JSON answer on SIGTERM, stops its engine, and leaves 
     await image(cwd);
     // The signal is sent when the engine has started (it writes its pid file), not after a time: the engine never mounts, so the tool is waiting for it.
     const started = (file: string) => async () => (await readFile(file, "utf8").catch(() => "")).trim() !== "";
-    const run = await runTool(FS, cwd, { path: "inputs/memory.raw", mount: "work/s1/m", mode: "list", timeout_seconds: 60 }, env, bin, "SIGTERM", 0, started(pidFile));
+    // The deadline is 120 s: an answer that came after the signal and not after the deadline is the point. The clean-up has its own bounds (documented in the tool: 100 s
+    // at most, of which the reads of the process table alone can take 12 s on a loaded runner), so the time asserted is that bound and not a number from a quiet machine.
+    const run = await runTool(FS, cwd, { path: "inputs/memory.raw", mount: "work/s1/m", mode: "list", timeout_seconds: 120 }, env, bin, "SIGTERM", 0, started(pidFile));
     assert.ok(!run.gateTimedOut, "the engine started");
     assert.equal(run.code, 143, run.stderr);
     assert.doesNotMatch(run.stderr, /Traceback/);
     const out = json<Fs>(run);
     assert.equal(out.status, "interrupted");
     assert.equal(out.signal, 15);
-    assert.ok(run.ms < 15_000);
+    assert.ok(run.ms < 100_000, `the answer took ${run.ms} ms after the engine started: ${JSON.stringify((out as { timings?: unknown }).timings)}`);
     const pid = Number(await readFile(pidFile, "utf8"));
     assert.throws(() => process.kill(pid, 0), "the engine is gone");
     assert.deepEqual(await readdir(join(cwd, "work", "s1", "m")), []);
     const pidFile2 = join(cwd, "engine2.pid");
-    const hup = await runTool(FS, cwd, { path: "inputs/memory.raw", mount: "work/s1/m2", mode: "list", timeout_seconds: 60 }, { ...env, STUB_PID: pidFile2 }, bin, "SIGINT", 0, started(pidFile2));
+    const hup = await runTool(FS, cwd, { path: "inputs/memory.raw", mount: "work/s1/m2", mode: "list", timeout_seconds: 120 }, { ...env, STUB_PID: pidFile2 }, bin, "SIGINT", 0, started(pidFile2));
     assert.ok(!hup.gateTimedOut, "the engine started");
     assert.equal(hup.code, 130);
     assert.doesNotMatch(hup.stderr, /Traceback|KeyboardInterrupt/);

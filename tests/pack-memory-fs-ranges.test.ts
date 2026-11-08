@@ -282,7 +282,11 @@ for (const [signal, number] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 12
         const env = await fsStub(cwd, bin, { tree: { "small.bin": filled(1, 50), "sys/x": "" }, sparse: { "d/huge.bin": 3 * 2 ** 30 } });
         await image(cwd);
         const { out, job } = await jobDir(cwd);
-        const run = await runTool(FS, cwd, args(out, ["d/huge.bin", "small.bin"]), { ...env, ...job }, bin, signal, 2500);
+        // The stop comes when the copy has begun (8 MiB are on disk), not after a time: a runner that is slow to start the engine has not begun the copy at 2.5 s.
+        // An fsync of the copied bytes takes 20 s here (a disk flushing hundreds of megabytes): a stop must not wait for it.
+        const begun = async () => (await stat(join(out, "mem_fs", "d", "huge.bin"))).size > 8 * 2 ** 20;
+        const run = await runTool(FS, cwd, args(out, ["d/huge.bin", "small.bin"]), { ...env, ...job, FAKE_FSYNC_SECONDS: "20" }, bin, signal, 0, begun);
+        assert.ok(!run.gateTimedOut, "the copy began");
         assert.equal(run.code, number, run.stderr);
         const answer = JSON.parse(run.stdout) as Fs & { unfinished?: unknown };
         assert.equal(answer.status, "interrupted");

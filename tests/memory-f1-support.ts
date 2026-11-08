@@ -178,7 +178,21 @@ while True:
   await chmod(join(bin, "memprocfs"), 0o755);
   const shim = join(cwd, "mountshim2");
   await mkdir(shim, { recursive: true });
-  await writeFile(join(shim, "sitecustomize.py"), "import os, os.path\nos.path.ismount = lambda p: os.path.isdir(os.path.join(p, 'sys'))\n");
+  // With FAKE_FSYNC_SECONDS an fsync of a file over 1 MiB takes that long first (a runner's disk flushing a copy of gigabytes); small files (the ranges file,
+  // the manifest) are not slowed.
+  await writeFile(join(shim, "sitecustomize.py"), [
+    "import os, os.path, time",
+    "os.path.ismount = lambda p: os.path.isdir(os.path.join(p, 'sys'))",
+    "_slow = float(os.environ.get('FAKE_FSYNC_SECONDS', '0') or 0)",
+    "if _slow:",
+    "    _fsync = os.fsync",
+    "    def _slow_fsync(fd):",
+    "        if os.fstat(fd).st_size > (1 << 20):",
+    "            time.sleep(_slow)",
+    "        return _fsync(fd)",
+    "    os.fsync = _slow_fsync",
+    "",
+  ].join("\n"));
   return {
     PYTHONPATH: shim, STUB_TREE: tree, STUB_LOG: log, STUB_MODE: o.mode ?? "", STUB_LINKS: JSON.stringify(o.links ?? []),
     STUB_STDERR: o.stderrText ?? "", ...(o.pidFile ? { STUB_PID: o.pidFile } : {}), ...(o.flood ? { STUB_FLOOD: String(o.flood) } : {}),

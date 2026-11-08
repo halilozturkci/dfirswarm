@@ -693,13 +693,17 @@ test("a file that ends inside a record over max_record_bytes is partial and name
       assert.match(JSON.stringify(out), /the file ends inside a record larger than max_record_bytes/, s.name);
     });
     await withDir(async (cwd) => {
-      // 60 MiB of one-character strings: far more than a one second limit can scan.
+      // 60 MiB of one-character strings (60 reads of 1 MiB). The clock is a count of looks at it, not of seconds: every look moves it a fiftieth of a second, so the
+      // one second limit falls in the fiftieth look, in the skip of the 60 reads (before it a handful), whatever the speed of the host (60 MiB were scanned in less than a second on a fast runner).
       await put(cwd, "work/ev/a.json", s.wrap([s.ok(1), huge("[" + '"a",'.repeat(15_000_000) + '"a"]'), s.ok(3)]));
+      const shim = join(cwd, "fake-clock");
+      await put(cwd, "fake-clock/sitecustomize.py", "import time\n_now = [0.0]\ndef _look():\n    _now[0] += 0.02\n    return _now[0]\ntime.monotonic = _look\n");
       const started = Date.now();
-      const out = body(await tool(s.script, cwd, { path: "work/ev/a.json", max_record_bytes: 1024, time_limit_seconds: 1 }));
+      const out = body(await tool(s.script, cwd, { path: "work/ev/a.json", max_record_bytes: 1024, time_limit_seconds: 1 }, { PYTHONPATH: shim }));
       assert.ok(Date.now() - started < 30_000, `${s.name}: ${Date.now() - started} ms`);
       assert.equal(out.status, "partial", s.name);
       assert.equal(out.coverage.stopped_by_time_limit, true, s.name);
+      assert.ok(out.coverage[s.read] <= 1, `${s.name}: the record after the skip was not read`);
     });
   }
 });
