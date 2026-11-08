@@ -3134,6 +3134,7 @@ def guarded(ctx, label, fn, *args):
 
 HARD_SECONDS = 105                  # the manifest's 120 s less 15: the answer is built and printed after the reading clock, and past this the tool answers that it did not finish
 PRINTING = [False]                  # the answer has begun to be written: a signal after that must not write a second one
+STOPPING = [False]                  # a stop is being answered: a second stop signal while it is must not cut that answer short
 
 
 PARTIAL_BUILDING = [False]          # the partial answer of the hard limit is being built
@@ -3143,7 +3144,13 @@ PARTIAL_WRITING = [False]           # and has begun to be written: no other docu
 def _stopped_by_signal(signum, frame):
     """SIGINT, SIGTERM and SIGHUP end the call with one JSON answer and the exit code 128 + the signal, not a traceback and not silence. A signal
     while the partial answer of the hard limit is being built (not yet being written) is answered by a minimal failed document; one while a
-    document is being written leaves that document, which is cut (the reader of a half-written answer has to expect that)."""
+    document is being written leaves that document, which is cut (the reader of a half-written answer has to expect that). A second stop signal that
+    arrives while the first is being answered (a signal handler can be entered again between two bytecodes of itself, and a second signal is usually
+    already pending when the first is handled) changes nothing: it used to find PRINTING set, skip the document and raise SystemExit from inside the
+    first handler, which ended the call with the exit code and no document."""
+    if STOPPING[0]:
+        return
+    STOPPING[0] = True
     if not PRINTING[0] or (PARTIAL_BUILDING[0] and not PARTIAL_WRITING[0]):
         PRINTING[0] = True
         PARTIAL_BUILDING[0] = False

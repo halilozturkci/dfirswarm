@@ -87,6 +87,25 @@ export function startDetached(script: string, cwd: string, args: unknown, env: R
   };
 }
 
+/**
+ * Waits until the process has a SIGTERM handler (the kernel's own account, SigCgt in /proc/<pid>/status), so that a stop is sent to a tool that
+ * has started and not to an interpreter still loading, which on a loaded runner takes longer than any fixed delay. Where /proc is not there a
+ * fixed two seconds stand in. Gives up after 15 s (the signal is then sent anyway and the case fails on its own).
+ */
+export async function termHandlerIn(pid: number): Promise<void> {
+  const until = Date.now() + 15_000;
+  while (Date.now() < until) {
+    try {
+      const m = /SigCgt:\s+([0-9a-f]+)/.exec(await readFile(`/proc/${pid}/status`, "utf8"));
+      if (m && (BigInt(`0x${m[1]}`) & 0x4000n) === 0x4000n) return;
+    } catch {
+      if (process.platform !== "linux") await new Promise((r) => setTimeout(r, 2000));
+      return;                                 // no /proc, or the process is gone already
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 /** Whether a process is gone, giving it a moment (a killed process is reaped by its parent or by init). */
 export async function gone(pid: number, waitMs = 30_000): Promise<boolean> {
   const until = Date.now() + waitMs;

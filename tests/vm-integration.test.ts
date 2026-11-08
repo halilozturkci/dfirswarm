@@ -354,14 +354,19 @@ test("a VM reaches its allowed host and the names under an allowed suffix, and n
   const name = vmName(r.run, "vmt200");
   const out = inVm(name, `
     code() { curl -s -o /dev/null -m 15 -w '%{http_code}' "$1" 2>/dev/null || echo fail; }
-    echo "allowed=$(code https://registry.npmjs.org/)"
-    echo "suffix=$(code https://api.github.com/)"
+    # An allowed host is another party's server: it can answer a gateway error (504 from api.github.com on a hosted runner) or not at all for a moment. The
+    # policy is what is under test, so an allowed name is asked up to four times until it gives a status that is not a server error; a name the policy
+    # denies is asked once and never answers.
+    reach() { for try in 1 2 3 4; do c=$(code "$1"); case "$c" in 5??|fail|000) sleep 2;; *) break;; esac; done; echo "$c"; }
+    echo "allowed=$(reach https://registry.npmjs.org/)"
+    echo "suffix=$(reach https://api.github.com/)"
     echo "denied=$(code https://example.com/)"
     echo "ip=$(code https://1.1.1.1/)"
     getent hosts example.com >/dev/null 2>&1 && echo "resolved=yes" || echo "resolved=no"
   `);
   assert.match(out, /allowed=(200|301|302|304)/, out);
-  assert.match(out, /suffix=(200|301|302|304|403)/, `a name under an allowed *.suffix is reachable\n${out}`);
+  // A server error after four asks is still the host answering through the rule (a name the policy denies gives no status at all, below): the policy is what is tested.
+  assert.match(out, /suffix=(200|301|302|304|403|5\d\d)/, `a name under an allowed *.suffix is reachable\n${out}`);
   assert.match(out, /denied=(000|fail)/, out);
   assert.match(out, /ip=(000|fail)/, out);
   assert.match(out, /resolved=no/, "a name outside the rules does not resolve");

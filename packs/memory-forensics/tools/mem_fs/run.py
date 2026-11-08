@@ -2363,7 +2363,10 @@ def main():
                     except OSError as exc:
                         error, error_side = exc, "write"
                         break
-                if error is None:
+                # A copy that was stopped is not flushed: the worker has the grace period to end and say so, and flushing what a copy of gigabytes had
+                # written takes longer than that on a slow disk (the answer then named the file as unfinished). The bytes are written, the file is kept
+                # and named, and the ranges file says how far the copy got.
+                if error is None and not state["abandon"]:
                     os.fsync(out.fileno())
         except OSError as exc:
             if error is None:

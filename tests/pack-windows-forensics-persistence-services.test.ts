@@ -330,8 +330,11 @@ dual("a task file and a service of the same name stay two items of two mechanism
 dual("a time limit that falls inside the services stops the walk and counts what was not read", async (v) => {
   await withCwd(async (cwd) => {
     const env = await v.write(cwd, "work/SYSTEM", system(Array.from({ length: 4000 }, (_, i) => ({ name: `S${i}`, values: [esz("ImagePath", `C:\s${i}.exe`)] }))));
-    const src = (await readFile(join(WIN, TOOL, "run.py"), "utf8")).replace(/DEADLINE_SECONDS = \d+ /, "DEADLINE_SECONDS = 0.05 ");
-    assert.ok(src.includes("DEADLINE_SECONDS = 0.05 "));
+    // The clock is a count of looks at it, not of seconds (every look moves it 1 ms), so the limit falls after the same number of services on a slow
+    // runner and on a fast one: a limit in real seconds fell after the last of the 4000 on a host that reads them in less than 45 ms.
+    const src = (await readFile(join(WIN, TOOL, "run.py"), "utf8")).replace(/DEADLINE_SECONDS = \d+ /, "DEADLINE_SECONDS = 0.05 ")
+      .replace("\nimport time\n", "\nimport time\n_looks = [0.0]\ndef _counted_clock():\n    _looks[0] += 0.001\n    return _looks[0]\ntime.monotonic = _counted_clock\n");
+    assert.ok(src.includes("DEADLINE_SECONDS = 0.05 ") && src.includes("_counted_clock"));
     await mkdir(join(cwd, "copy", TOOL), { recursive: true });
     await writeFile(join(cwd, "copy", TOOL, "run.py"), src);
     const { runPy } = await import("./tool-library-harness.ts");
