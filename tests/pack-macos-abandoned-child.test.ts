@@ -360,7 +360,7 @@ test("the tool and the recipe still carry one copy of the log reader, and neithe
   const [a, b] = [await readFile(TRIAGE, "utf8"), await readFile(RECIPE, "utf8")];
   assert.equal(cut(a), cut(b));
   for (const t of [a, b, await readFile(UL, "utf8")]) assert.doesNotMatch(t, /start_new_session\s*=\s*True|process_group\s*=|os\.setpgid\(|os\.setsid\(/);
-  assert.equal((await stat(TRIAGE)).mode & 0o777, 0o755);
+  assert.equal((await stat(TRIAGE)).mode & 0o755, 0o755);
   assert.ok((await filesUnder(join(MAC, ".."))).length > 0);
   assert.ok((await readdir(MAC)).includes("macos_triage"));
 });

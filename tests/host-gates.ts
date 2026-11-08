@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
@@ -30,3 +32,14 @@ export async function interpreterDir(dir: string): Promise<string> {
 
 /** The skip reason of a case whose stand-in starts a writer with the setsid command (util-linux): macOS does not have it. */
 export const NO_SETSID: string | false = spawnSync("sh", ["-c", "command -v setsid"]).status === 0 ? false : "the setsid command (util-linux) is not on this host";
+
+/** The skip reason of a case that mounts a tmpfs of a few kilobytes in a user and mount namespace (unshare -rm) to make a full disk: a container without that right (the pack-tool CI job's) cannot. */
+export const NO_TMPFS_NAMESPACE: string | false = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "tmpfs-probe-"));
+  try {
+    const r = spawnSync("unshare", ["-rm", "sh", "-c", 'mount -t tmpfs -o size=4k tmpfs "$1"', "sh", dir], { encoding: "utf8" });
+    return r.status === 0 ? false : "this host does not allow a tmpfs mount in a user and mount namespace (unshare -rm): " + (r.stderr || "").trim().slice(0, 120);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();

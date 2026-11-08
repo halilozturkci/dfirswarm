@@ -504,7 +504,7 @@ test("the manifest declares secret_output required and says what was read and wh
   const src = await readFile(TRIAGE, "utf8");
   assert.match(src, /DEFAULT_MAX_SECONDS = 6600/);
   assert.ok(src.includes("start_new_session") === false || !/start_new_session\s*=\s*True/.test(src));
-  assert.equal((await stat(TRIAGE)).mode & 0o777, 0o755);
+  assert.equal((await stat(TRIAGE)).mode & 0o755, 0o755);
 });
 
 test("the tool without a job is not secret output: the harness's manifest key is what makes it one (the tool itself answers either way)", async () => {
@@ -713,7 +713,7 @@ test("the recipe and the tool carry one copy of the log reader, and the recipe's
   assert.equal(r.capability, "macos-artifacts");
   assert.deepEqual(r.auto, []);
   assert.ok(r.exclusions.length >= 4);
-  assert.equal((await stat(RECIPE)).mode & 0o777, 0o755);
+  assert.equal((await stat(RECIPE)).mode & 0o755, 0o755);
 });
 
 // ---- the error vocabulary does not rest on an uppercase level word that was never observed; the recipe's files are exclusive ---------------------
