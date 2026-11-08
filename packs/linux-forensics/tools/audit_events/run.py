@@ -65,7 +65,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 TOOL = "audit_events"
-PARSER = "audit_events/6"
+PARSER = "audit_events/7"
 
 
 DEFAULT_LIMIT = 100

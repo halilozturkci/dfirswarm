@@ -69,7 +69,7 @@ import unicodedata
 from pathlib import Path
 from urllib.parse import quote
 
-PARSER = "backup_decrypt/4"
+PARSER = "backup_decrypt/5"
 TOOL = "backup_decrypt"
 VALUES_NAME = "backup-decrypt-values.jsonl"        # unused: the tool has no values mode, the shared block names it
 VALUES_FORMAT = "unused"

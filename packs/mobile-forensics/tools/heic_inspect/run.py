@@ -47,7 +47,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-PARSER = "heic_inspect/5"
+PARSER = "heic_inspect/6"
 TOOL = "heic_inspect"
 VALUES_NAME = "heic-inspect-values.jsonl"       # the first free name of this and -2, -3 ... is used (see choose_values_name)
 VALUES_FORMAT = "JSON Lines: one metadata tag of the original per line (group, tag, value)"

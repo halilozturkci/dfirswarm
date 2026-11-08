@@ -35,7 +35,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 15,
-  "sha256": "afcfa3d2066ba9408894e06bdd28f5133bc8be6c1ca988c44fd7cb8768c2a9ff",
+  "sha256": "b0ec78d49c16beb0166534a5eed7ec5106d68b92fbe697e28da2e1f525f9b002",
   "use": {
     "extensions": [
       ".e01",

@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "journal_export"
-PARSER = "journal_export/19"
+PARSER = "journal_export/20"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 240.0
 MAX_SECONDS = 270.0           # the most a caller may ask for (the manifest allows 300)

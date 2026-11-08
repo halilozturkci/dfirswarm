@@ -37,7 +37,7 @@ import time
 from pathlib import Path
 
 TOOL = "package_verify"
-PARSER = "package_verify/5"
+PARSER = "package_verify/6"
 
 
 DEFAULT_LIMIT = 100
