@@ -28,7 +28,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "capture_transform", "version": 6}
+TOOL = {"name": "capture_transform", "version": 7}
 PARSER = "capture_transform/1"
 
 # BEGIN SHARED STOP
@@ -1805,7 +1805,7 @@ def main():
     hold = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
     was = signal.pthread_sigmask(signal.SIG_BLOCK, hold)
     try:
-        work = tempfile.mkdtemp(dir=out_dir, prefix=".capture_transform-")
+        work = os.path.abspath(tempfile.mkdtemp(dir=out_dir, prefix=".capture_transform-"))   # Python 3.11 answers a relative path for a relative dir; the programs run with cwd=work
         PROGRESS["work"] = work                    # registered at once: a stop between the two would leave it, and the stop handler removes only what is registered
     except OSError as exc:
         signal.pthread_sigmask(signal.SIG_SETMASK, was)

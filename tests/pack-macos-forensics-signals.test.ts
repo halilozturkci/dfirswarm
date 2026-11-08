@@ -134,6 +134,7 @@ test("unified_log, SIGTERM during the sweep of a storm of setsid orphans: every 
 with open(out, "w") as f:
     f.write(json.dumps({"timestamp": "2026-02-14T09:30:00.000000+0000", "eventMessage": "m", "process": "sudo", "subsystem": "s"}) + "\\n")
 pids = os.path.join(os.path.dirname(out), "storm.pids")
+open(pids, "a").close()                    # the file exists before the first sleeper has written to it: the wait below must not race the forks
 if os.fork() == 0:
     os.setsid()
     for _ in range(400):

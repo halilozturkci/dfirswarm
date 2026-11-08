@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
@@ -40,3 +41,13 @@ export const NO_PROC: string | false = existsSync("/proc/self") ? false : "this 
 
 /** The skip reason of a case that makes a namespace with the unshare command (util-linux), which macOS does not have. */
 export const NO_UNSHARE: string | false = spawnSync("sh", ["-c", "command -v unshare"]).status === 0 ? false : "the unshare command (util-linux) is not on this host";
+/** The skip reason of a case that mounts a tmpfs of a few kilobytes in a user and mount namespace (unshare -rm) to make a full disk: a container without that right (the pack-tool CI job's) cannot. */
+export const NO_TMPFS_NAMESPACE: string | false = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "tmpfs-probe-"));
+  try {
+    const r = spawnSync("unshare", ["-rm", "sh", "-c", 'mount -t tmpfs -o size=4k tmpfs "$1"', "sh", dir], { encoding: "utf8" });
+    return r.status === 0 ? false : "this host does not allow a tmpfs mount in a user and mount namespace (unshare -rm): " + (r.stderr || "").trim().slice(0, 120);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
