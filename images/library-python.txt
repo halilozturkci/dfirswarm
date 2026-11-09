@@ -7,4 +7,4 @@
 cryptography==50.0.2  # Apache-2.0 OR BSD-3-Clause. AES for aescrypt_v2_decrypt.
 dissect.util==3.24    # Apache-2.0 (from 3.5; AGPL-3.0 before), Fox-IT. lzxpress_huffman for compressed prefetch (mam_*).
 python-evtx==0.8.1    # Apache-2.0. Evtx: event log records (evtx_filter, evtx_query).
-regipy==6.3.0         # MIT. Registry hives (amcache_apps, reg_hive_query, regkeys, regkv).
+regipy==6.5.0         # MIT. Registry hives (amcache_apps, reg_hive_query, regkeys, regkv).
