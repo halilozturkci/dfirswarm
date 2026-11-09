@@ -1,15 +1,26 @@
 {
   "name": "image_layout",
-  "description": "One probe of an image through the Sleuth Kit as installed: the container named from its signature (E01, VHD fixed or dynamic, VHDX, VMDK, QCOW, else 'raw' with the basis said), the E01 acquisition record, the partition table in sectors (the same sector size, passed as -b, goes to mmls, to fsstat and to the example commands), and each volume's file system, cluster size and serial. Returns the -o offset every other command needs. A table is true (mmls read one), false (mmls ran and recognised none, which does not show there is none) or 'unknown' (mmls was missing, timed out, was refused, or failed without saying why and img_stat does not open the image). Reads one path: a split raw set is not assembled, and the first segment is said to be one segment. It does not verify the image, read snapshots or backing files, or show a volume is intact or unencrypted. mmls, fsstat and ewfinfo's whole output is kept in files named in raw_outputs. A row of mmls's table is taken only in the shape mmls writes (three columns of ten or more digits whose end and length agree with the start, in sequence): a partition name holding a line break cannot add a partition, and a line of the table that is not read as a row is a note and makes the status partial.",
+  "description": "One probe of an image through the Sleuth Kit as installed: the container named from its signature (E01, VHD fixed or dynamic, VHDX, VMDK, QCOW, else 'raw' with the basis said), the E01 acquisition record, the partition table in sectors (the same sector size, passed as -b, goes to mmls, to fsstat and to the example commands), and each volume's file system, cluster size and serial. Returns the -o offset every other command needs. A table is true (mmls read one), false (mmls ran and recognised none, which does not show there is none) or 'unknown' (mmls was missing, timed out, was refused, or failed without saying why and img_stat does not open the image). Reads one path: a split raw set is not assembled, and the first segment is said to be one segment. It does not verify the image, read snapshots or backing files, or show a volume is intact or unencrypted. mmls, fsstat and ewfinfo's whole output is kept in files named in raw_outputs. A row of mmls's table is taken only in the shape mmls writes (three columns of ten or more digits whose end and length agree with the start, in sequence): a partition name holding a line break cannot add a partition, and a line of the table that is not read as a row is a note and makes the status partial. SIGTERM, SIGINT and SIGHUP end it with one JSON answer (partial, with interrupted true and the signal, and what was done), exit 128 plus the signal, and the removal of the hidden file it was writing; the program it was running is ended by its pid. With descriptor (and optionally descriptor_sha256 and verify_sources) in place of image and sector_size, the sources are given to the Sleuth Kit in order, the descriptor's sector size is passed as -b when it is not 512, and the answer is otherwise the one the same image gives by path. With a descriptor image_layout probes the sources it names exactly as it would probe the one path; the answer adds descriptor (file, sha256, layer, sources_checked) and images. PIPES: the wait for a program has a clock all the way. A program that has ended while something it started keeps its output pipes open (silent, writing now and then, or flooding) is given one second after it ended, or 1 MiB more output, whichever comes first; then its output is not taken (the program counts as not finished), the pipes are let go, and what it left behind is ended, also when a stop signal arrives. A flood is not held in memory beyond that.",
   "params": {
     "image": {
       "type": "string",
-      "description": "Path to the image: raw, an E01's first segment (libewf finds the rest), or a VHD, VHDX, VMDK or QCOW file. One path: a split raw set's segments are not joined.",
-      "required": true
+      "description": "Path to the image: raw, an E01's first segment (libewf finds the rest), or a VHD, VHDX, VMDK or QCOW file. One path: a split raw set's segments are not joined. Give this or descriptor."
     },
     "sector_size": {
       "type": "integer",
       "description": "The sector size in bytes when the container does not say: a multiple of 512, passed to mmls and fsstat as -b"
+    },
+    "descriptor": {
+      "type": "string",
+      "description": "A layer descriptor layer_describe wrote (layer-<sha256>.json), in place of image and sector_size. Its bytes must hash to the name it carries; it is refused when it lists a missing dependency, when a source it names is no longer a regular file of the size it records, or when a volume's offset is past the end of the media. "
+    },
+    "descriptor_sha256": {
+      "type": "string",
+      "description": "Pins the descriptor: its sha256 (64 hexadecimal digits) must be this one."
+    },
+    "verify_sources": {
+      "type": "boolean",
+      "description": "With a descriptor, read every source again and compare its sha256 with the descriptor's (up to 120 seconds). Without it only the sizes are checked, and a source swapped for another of the same size is not found."
     }
   },
   "runtime": "python3",
@@ -60,6 +71,6 @@
   },
   "by": "maintainer",
   "at": "2026-09-22T09:00:00.000Z",
-  "version": 4,
-  "sha256": "b9bc7cff784e5b6040ca5f127a77431949afb8d25272d45df8bf307ce8081568"
+  "version": 14,
+  "sha256": "c2c666c0fa6f30064d84e3aa07240832f2e8535c35f30b03cf77078e3a1b0bb9"
 }

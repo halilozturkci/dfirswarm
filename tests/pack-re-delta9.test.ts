@@ -15,6 +15,10 @@ import { DOC_STRUCTURE, PE_DIRECTORIES, RE, body, buildZip, put, tool, withCwd }
 import { buildPeDirs, buildVbaProject } from "./pack-re-doc-fixtures.ts";
 import { GROWTH_PY, LINEAR_ABSOLUTE, linearOk } from "./pack-re-timing.ts";
 
+// The growth checks below take the median CPU time of each size over FIVE rounds (the helper's `growth(f, texts, tries=3)` with tries given). Every round runs: the helper no longer
+// stops at the first round that looks linear, which let a quadratic rule through on one lucky round. On a loaded host the 128 KB text and the 512 KB text of one round can differ by
+// more than the 8x the bound allows for a 4x step, and the median of five does not (two noisy rounds of five leave it untouched).
+
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
 const COPIES = [DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS];
 const CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -265,7 +269,7 @@ test("P2-2 the growth check passes a linear function and fails a quadratic one (
     "import re",
     "quadratic = re.compile(r'\\s*x')",
     "make = lambda n: [' ' * n, ' ' * (4 * n)]",
-    "lin = growth(lambda t: t.count('x'), [' ' * 400000, ' ' * 1600000])",
+    "lin = growth(lambda t: sum(1 for c in t if c == 'x'), [' ' * 400000, ' ' * 1600000], 5)",
     "quad = growth(lambda t: quadratic.sub('', t), make(8000))",
     "print(json.dumps({'lin': lin, 'quad': quad}))",
   ].join("\n"), [], undefined, 300_000);
@@ -273,6 +277,21 @@ test("P2-2 the growth check passes a linear function and fails a quadratic one (
   const { lin, quad } = JSON.parse(r.stdout) as { lin: number[]; quad: number[] };
   assert.ok(linearOk(lin[0]!, lin[1]!), `linear: ${lin}`);
   assert.ok(!linearOk(quad[0]!, quad[1]!), `quadratic: ${quad}`);
+  assert.ok(quad[1]! <= LINEAR_ABSOLUTE * 4, "the quadratic probe itself is quick");
+});
+
+test("P2-2 five rounds do not hide a quadratic rule: the median of five rounds of a regex that rescans the rest of the text from every position still fails the 8x bound at 8,000 and 32,000 characters", () => {
+  const r = py(DOC_STRUCTURE, [
+    GROWTH_PY,
+    "import re",
+    "quadratic = re.compile(r'\\s*x')",
+    "texts = [' ' * 8000, ' ' * 32000]",
+    "quad = growth(lambda t: quadratic.sub('', t), texts, 5)",
+    "print(json.dumps({'quad': quad}))",
+  ].join("\n"), [], undefined, 300_000);
+  assert.equal(r.status, 0, r.stderr);
+  const { quad } = JSON.parse(r.stdout) as { quad: number[] };
+  assert.ok(!linearOk(quad[0]!, quad[1]!), `quadratic over nine rounds: ${quad}`);
   assert.ok(quad[1]! <= LINEAR_ABSOLUTE * 4, "the quadratic probe itself is quick");
 });
 
@@ -331,7 +350,7 @@ test("P3-2 the element forms the review named are withheld: a namespace prefix, 
   }
 });
 
-test("P3-2 the wider element rule takes time linear in the text: 128 KB and 512 KB of each hostile shape of the new forms (namespace prefixes, entry/property open tags, settings with spaces, masks and padding in front of a `<`), best of three", () => {
+test("P3-2 the wider element rule takes time linear in the text: 128 KB and 512 KB of each hostile shape of the new forms (namespace prefixes, entry/property open tags, settings with spaces, masks and padding in front of a `<`), median of five rounds", () => {
   for (const path of COPIES) {
     const r = py(path, [
       GROWTH_PY,
@@ -342,7 +361,7 @@ test("P3-2 the wider element rule takes time linear in the text: 128 KB and 512 
       "rows = []",
       "for u in units:",
       "    texts = [(u * ((1 << k) // len(u) + 1))[:1 << k] for k in (17, 19)]",
-      "    rows.append([u[:24]] + growth(m.shown_path, texts))",
+      "    rows.append([u[:24]] + growth(m.shown_path, texts, 5))",
       "print(json.dumps(rows))",
     ].join("\n"), [], undefined, 600_000);
     assert.equal(r.status, 0, `${path}: ${r.stderr}`);

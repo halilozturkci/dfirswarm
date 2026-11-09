@@ -40,7 +40,7 @@ async function load(root: string): Promise<Map<string, Skill>> {
   return out;
 }
 
-const IDS = ["router/start", "evidence/boundaries", "control-plane/chronology", "hypervisor/activity", "hypervisor/inventory", "snapshots/chain-integrity", "snapshots/markers", "snapshots/header-markers", "backup/catalogues-and-retention", "backup/deletion-vs-loss", "recovery/survivability"];
+const IDS = ["router/start", "evidence/boundaries", "control-plane/chronology", "hypervisor/activity", "hypervisor/inventory", "snapshots/chain-integrity", "snapshots/markers", "snapshots/header-markers", "backup/catalogues-and-retention", "backup/deletion-vs-loss", "backup/product-presets", "recovery/survivability"];
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., says what it shows, does not show and records, and has a short index entry", async () => {
   const skills = await load(SKILLS);
@@ -183,4 +183,36 @@ test("the skills name every tool of the pack, and the pack's method-only leaves 
   const methodOnly: string[] = pack.method_only.map((m: { path: string }) => m.path).sort();
   const namesNone = [...skills.values()].filter((s) => !/`(?:snapshot_chain_check|virtualization_inventory|backup_audit_normalise)`/.test(s.body)).map((s) => `skills/${s.id}.md`).sort();
   assert.deepEqual(methodOnly, namesNone);
+});
+
+test("no leaf calls whoever acted on the management plane an operator: in this repository the operator is the authorised human who runs the case", async () => {
+  const skills = await load(SKILLS);
+  for (const s of skills.values()) {
+    assert.doesNotMatch(s.text, /\boperator acted\b/i, `${s.id} names who acted as the operator`);
+    assert.doesNotMatch(s.text, /\boperators?\b/i, `${s.id} uses "operator": say which person or account acted, or administrator or intruder where the evidence says so`);
+  }
+  assert.match(skills.get("control-plane/chronology")!.body, /Which person or account acted/);
+});
+
+test("backup/product-presets: the router names it, the leaves that mention products point to it, and every format and preset it names is one the tool has", async () => {
+  const skills = await load(SKILLS);
+  const leaf = skills.get("backup/product-presets");
+  assert.ok(leaf, "the leaf exists");
+  assert.ok(skills.get("router/start")!.body.includes("`backup/product-presets`"), "the router names it");
+  for (const id of ["backup/catalogues-and-retention", "backup/deletion-vs-loss", "recovery/survivability", "hypervisor/activity"]) {
+    assert.ok(skills.get(id)!.body.includes("`backup/product-presets`"), `${id} points to it`);
+  }
+  assert.deepEqual(leaf.meta.tools, ["backup_audit_normalise"]);
+  const source = await readFile(join(TOOLS, "backup_audit_normalise", "run.py"), "utf8");
+  const manifest = JSON.parse(await readFile(join(TOOLS, "backup_audit_normalise", "manifest.json"), "utf8"));
+  const names = new Set<string>();
+  for (const m of leaf.body.matchAll(/`((?:pve|pbs|declared)_[a-z_]+)`/g)) names.add(m[1]);
+  assert.ok(names.size >= 7, "the leaf names the formats");
+  for (const name of names) {
+    assert.ok(source.includes(`"${name}"`), `${name} is a format the tool has`);
+    assert.ok(manifest.params.format.description.includes(name), `${name} is in the manifest's format parameter`);
+  }
+  for (const m of leaf.body.matchAll(/`(proxmox_backup_client[a-z_]*)`/g)) assert.ok(source.includes(m[1]), `${m[1]} is a product or preset the tool has`);
+  assert.equal((leaf.body.match(/validated against a real export/g) ?? []).length, 1, "the sentence that no reader is validated appears once");
+  assert.ok(!/unsupported.*Veeam/.test(leaf.body), "no claim about Veeam here");
 });

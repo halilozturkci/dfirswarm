@@ -11,17 +11,25 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { disputeEntry, initSandbox, recordEntry } from "../extensions/protocol.ts";
-import { ledgerChain, redactPackage, verifyPackage, writeComponents } from "../scripts/package-tools.ts";
+import { hygieneReport, ledgerChain, makeDigestReplacer, packSessions, redactPackage, type Replaced, SESSIONS_ARCHIVE, SESSIONS_MANIFEST, type SessionsManifest, verifyPackage, verifySessions, writeComponents } from "../scripts/package-tools.ts";
 import { takeCustody } from "../scripts/custody.ts";
+import { T, fixtureFiles, hubLine, jl, traceRow, writeFiles } from "./sensitive-access-fixture.ts";
+import { sealTree, storePaths } from "../scripts/evidence-store.ts";
 import { appendReview } from "../scripts/review.ts";
 
 const dirs: string[] = [];
 after(async () => {
-  for (const d of dirs) await rm(d, { recursive: true, force: true });
+  // A sealed job output is read-only, as the store leaves it.
+  for (const d of dirs) {
+    spawnSync("chmod", ["-R", "u+w", d]);
+    await rm(d, { recursive: true, force: true });
+  }
 });
 const sha = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
 const SECRET = "123456-654321-111222-333444-555666-777888-999000-121212";
@@ -301,4 +309,361 @@ test("the question register travels with the package: its chain is walked and he
   v = verifyPackage(pkg);
   assert.equal(v.ok, false);
   assert.match(v.lines.join("\n"), /questions\.jsonl \(declared present\)/);
+});
+
+// --- the sessions component (swarm.sh package --with-sessions) -------------------------------------
+
+/** A sandbox whose ledger holds one sensitive entry (SECRET), with sessions of two seats under .pi-sessions/, and an empty package directory. */
+async function withSessions(): Promise<{ root: string; pkg: string }> {
+  const root = await mkdtemp(join(tmpdir(), "pkg-sessions-"));
+  dirs.push(root);
+  await initSandbox(root, { reset: true, agentIds: ["a0", "a1"] });
+  await recordEntry({ sandboxRoot: root, agentId: "a0" }, { kind: "ioc", value: `BitLocker recovery key ${SECRET}`, source: "notes app", evidence: "sqlite3 NoteStore row 11", sensitive: true });
+  await mkdir(join(root, ".pi-sessions", "a0"), { recursive: true });
+  await mkdir(join(root, ".pi-sessions", "a1"), { recursive: true });
+  await writeFile(join(root, ".pi-sessions", "a0", "s1.jsonl"), `${JSON.stringify({ role: "tool", text: `the key is ${SECRET}` })}\n${JSON.stringify({ role: "assistant", text: "nothing sensitive here" })}\n`);
+  await writeFile(join(root, ".pi-sessions", "a1", "s2.jsonl"), `${JSON.stringify({ role: "assistant", text: "a second seat's session, nothing sensitive" })}\n`);
+  const pkg = join(root, "package");
+  await mkdir(pkg, { recursive: true });
+  return { root, pkg };
+}
+
+/** The archive's members extracted into a fresh directory with the host's tar. */
+async function extracted(pkg: string): Promise<string> {
+  const into = await mkdtemp(join(tmpdir(), "pkg-sessions-x-"));
+  dirs.push(into);
+  const r = spawnSync("tar", ["-xzf", join(pkg, SESSIONS_ARCHIVE), "-C", into]);
+  assert.equal(r.status, 0, String(r.stderr));
+  return into;
+}
+
+test("the sessions component carries each seat's session masked, in one archive with a manifest; verify holds both", async () => {
+  const { root, pkg } = await withSessions();
+  const r = await packSessions(root, pkg);
+  assert.equal(r.files, 2);
+  assert.ok(r.masked >= 1, "the sensitive value was masked");
+  const manifest = JSON.parse(await readFile(join(pkg, SESSIONS_MANIFEST), "utf8")) as SessionsManifest;
+  assert.equal(manifest.archive.sha256, sha(await readFile(join(pkg, SESSIONS_ARCHIVE))));
+  assert.deepEqual(manifest.files.map((f) => f.restore_to), [".pi-sessions/a0/s1.jsonl", ".pi-sessions/a1/s2.jsonl"]);
+  const s1 = manifest.files[0]!;
+  assert.equal(s1.sha256_before, sha(await readFile(join(root, ".pi-sessions", "a0", "s1.jsonl"))), "the hash before masking is the file as copied");
+  assert.notEqual(s1.sha256_after, s1.sha256_before);
+  assert.equal(manifest.files[1]!.masked, 0);
+  assert.ok(!(await readFile(join(pkg, SESSIONS_MANIFEST), "utf8")).includes(SECRET));
+  const into = await extracted(pkg);
+  const text = await readFile(join(into, ".pi-sessions", "a0", "s1.jsonl"), "utf8");
+  assert.ok(!text.includes(SECRET), "the value is gone from the member");
+  assert.match(text, /hidden-[0-9a-f]{24}/, "its keyed id stands in its place");
+  assert.equal(sha(await readFile(join(into, ".pi-sessions", "a0", "s1.jsonl"))), s1.sha256_after);
+  const sidecar = JSON.parse(await readFile(`${pkg}.sessions.private.json`, "utf8")) as { map: Record<string, unknown> };
+  assert.ok(Object.keys(sidecar.map).some((k) => k.startsWith("hidden-")), "the id map is in the private sidecar, outside the package");
+  const v = verifySessions(pkg);
+  assert.ok(v.lines.some((l) => /^Sessions: +2 file\(s\) in sessions\/sessions\.tar\.gz/.test(l) && /match the manifest/.test(l)), v.lines.join("\n"));
+  assert.equal(v.ok, true, v.lines.join("\n"));
+  // The session in the run is copied, never edited.
+  assert.ok((await readFile(join(root, ".pi-sessions", "a0", "s1.jsonl"), "utf8")).includes(SECRET));
+});
+
+test("verify names a tampered member, a missing member and a member the manifest lacks", async () => {
+  const { root, pkg } = await withSessions();
+  await packSessions(root, pkg);
+  const manifestPath = join(pkg, SESSIONS_MANIFEST);
+  const original = await readFile(join(pkg, SESSIONS_ARCHIVE));
+  // Rebuild the archive after changing the extracted tree, and point the manifest at the new archive, so only a member can be the difference.
+  const rebuild = async (change: (dir: string) => Promise<void>): Promise<string[]> => {
+    const into = await extracted(pkg);
+    await change(into);
+    const made = spawnSync("tar", ["-czf", join(pkg, SESSIONS_ARCHIVE), "-C", into, ".pi-sessions"]);
+    assert.equal(made.status, 0, String(made.stderr));
+    const m = JSON.parse(await readFile(manifestPath, "utf8")) as SessionsManifest;
+    m.archive.sha256 = sha(await readFile(join(pkg, SESSIONS_ARCHIVE)));
+    await writeFile(manifestPath, JSON.stringify(m));
+    return verifySessions(pkg).lines.filter((l) => l.startsWith("Sessions:"));
+  };
+  const pristine = await readFile(manifestPath, "utf8");
+  const reset = async () => {
+    await writeFile(join(pkg, SESSIONS_ARCHIVE), original);
+    await writeFile(manifestPath, pristine);
+  };
+  const tampered = await rebuild(async (d) => writeFile(join(d, ".pi-sessions", "a1", "s2.jsonl"), "changed after packaging\n"));
+  assert.ok(tampered.some((l) => /member \.pi-sessions\/a1\/s2\.jsonl DIFFERS FROM THE MANIFEST/.test(l)), tampered.join("\n"));
+  assert.equal(verifySessions(pkg).ok, false);
+  await reset();
+  const missing = await rebuild(async (d) => rm(join(d, ".pi-sessions", "a0", "s1.jsonl")));
+  assert.ok(missing.some((l) => /member \.pi-sessions\/a0\/s1\.jsonl IS MISSING from the archive/.test(l)), missing.join("\n"));
+  await reset();
+  const extra = await rebuild(async (d) => writeFile(join(d, ".pi-sessions", "a1", "s3.jsonl"), "slipped in\n"));
+  assert.ok(extra.some((l) => /member \.pi-sessions\/a1\/s3\.jsonl IS IN THE ARCHIVE AND NOT IN THE MANIFEST/.test(l)), extra.join("\n"));
+  await reset();
+  // The archive itself edited: its sha256 no longer matches the manifest.
+  await writeFile(join(pkg, SESSIONS_ARCHIVE), Buffer.concat([original, Buffer.from([0])]));
+  const edited = verifySessions(pkg);
+  assert.ok(edited.lines.some((l) => /sessions\.tar\.gz DOES NOT MATCH ITS MANIFEST/.test(l)), edited.lines.join("\n"));
+  assert.equal(edited.ok, false);
+  await reset();
+  assert.equal(verifySessions(pkg).ok, true);
+  // A package made with --redact never holds the component.
+  await writeFile(join(pkg, "REDACTIONS.txt"), "Redactions\n");
+  const disclosed = verifySessions(pkg);
+  assert.equal(disclosed.ok, false);
+  assert.ok(disclosed.lines.some((l) => /MADE WITH --redact AND HOLDS SESSIONS/.test(l)), disclosed.lines.join("\n"));
+});
+
+test("a session file that grows during the copy is named with both sizes; a link and a FIFO are never followed", async () => {
+  const { root, pkg } = await withSessions();
+  const outside = join(root, "..", `outside-${sha(root).slice(0, 8)}.txt`);
+  dirs.push(outside);
+  await writeFile(outside, `the operator's own file with ${SECRET}\n`);
+  await symlink(outside, join(root, ".pi-sessions", "a0", "link.jsonl"));
+  assert.equal(spawnSync("mkfifo", [join(root, ".pi-sessions", "a1", "pipe")]).status, 0);
+  const before = (await stat(join(root, ".pi-sessions", "a1", "s2.jsonl"))).size;
+  const r = await packSessions(root, pkg, { afterListed: () => appendFileSync(join(root, ".pi-sessions", "a1", "s2.jsonl"), "{\"role\":\"assistant\",\"text\":\"written during the copy\"}\n") });
+  assert.equal(r.changed, 1);
+  const grown = r.changed_files[0]!;
+  assert.equal(grown.path, ".pi-sessions/a1/s2.jsonl");
+  assert.equal(grown.listed_bytes, before);
+  assert.ok(grown.copied_bytes > before, "the copied size is the larger one");
+  const manifest = JSON.parse(await readFile(join(pkg, SESSIONS_MANIFEST), "utf8")) as SessionsManifest;
+  assert.deepEqual(manifest.skipped.map((s) => s.path).sort(), [".pi-sessions/a0/link.jsonl", ".pi-sessions/a1/pipe"]);
+  assert.match(manifest.skipped.find((s) => s.path.endsWith("link.jsonl"))!.why, /symbolic link: never followed/);
+  const into = await extracted(pkg);
+  const members = (await readdir(join(into, ".pi-sessions"), { recursive: true })).filter((m) => !m.endsWith("a0") && !m.endsWith("a1")).sort();
+  assert.deepEqual(members, ["a0/s1.jsonl", "a1/s2.jsonl"]);
+  assert.ok(!(await readFile(join(pkg, SESSIONS_ARCHIVE))).includes(Buffer.from("operator's own file")), "nothing was read through the link");
+  assert.equal(verifySessions(pkg).ok, true);
+});
+
+test("a value in a JSON escape, in UTF-16 text and in a session file's name is masked too", async () => {
+  const { root, pkg } = await withSessions();
+  const dir = join(root, ".pi-sessions", "a0");
+  // A dash of the value as a unicode escape (U+002D): no byte search of the plain value finds it.
+  const escaped = SECRET.replace("-", String.fromCharCode(92) + "u002d");
+  await writeFile(join(dir, "escaped.jsonl"), `{"role":"tool","text":"read ${escaped} from the note"}\n`);
+  await writeFile(join(dir, "utf16.txt"), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`key ${SECRET}\n`, "utf16le")]));
+  await writeFile(join(dir, `name-${SECRET}.txt`), "a file named after the value\n");
+  const r = await packSessions(root, pkg);
+  assert.equal(r.files, 5);
+  const manifest = JSON.parse(await readFile(join(pkg, SESSIONS_MANIFEST), "utf8")) as SessionsManifest;
+  assert.ok(!JSON.stringify(manifest).includes(SECRET), "the manifest names no value");
+  assert.ok(manifest.files.some((f) => f.name_masked && /^\.pi-sessions\/a0\/name-hidden-[0-9a-f]{24}\.txt$/.test(f.path)), "the name is masked");
+  const into = await extracted(pkg);
+  for (const m of await readdir(join(into, ".pi-sessions", "a0"))) {
+    const bytes = await readFile(join(into, ".pi-sessions", "a0", m));
+    assert.ok(!bytes.includes(Buffer.from(SECRET, "utf8")), `${m} holds the value`);
+    assert.ok(!bytes.includes(Buffer.from(SECRET, "utf16le")), `${m} holds the value in UTF-16`);
+    assert.ok(!bytes.toString("utf8").includes(escaped), `${m} holds the escaped value`);
+  }
+  assert.ok((await readFile(join(into, ".pi-sessions", "a0", "utf16.txt"))).subarray(0, 2).equals(Buffer.from([0xff, 0xfe])), "the BOM stays");
+  const escapedLine = await readFile(join(into, ".pi-sessions", "a0", "escaped.jsonl"), "utf8");
+  assert.match(escapedLine, /hidden-[0-9a-f]{24}/);
+  JSON.parse(escapedLine.trim());
+  assert.equal(verifySessions(pkg).ok, true);
+});
+
+// --- redaction on sealed copies, directory citations and many digests ----------------------------------
+
+test("a package that holds a read-only (0444) sealed log of a sensitive job redacts and verifies, and the run's own log keeps its mode", async () => {
+  const { root, pkg } = await packaged();
+  // The run's sealed original and the package's copy of it, both as the store leaves them: read-only.
+  await mkdir(join(root, "store", "jobs", "j000001"), { recursive: true });
+  const original = join(root, "store", "jobs", "j000001", "stdout.log");
+  await writeFile(original, `recovery key: ${SECRET}\n`);
+  await chmod(original, 0o444);
+  const copy = join(pkg, "store", "jobs", "j000001", "stdout.log");
+  await chmod(copy, 0o444);
+  const r = await redactPackage(root, pkg);
+  assert.deepEqual(r.leaks, []);
+  assert.doesNotMatch(await readFile(copy, "utf8"), new RegExp(SECRET));
+  assert.equal((await stat(copy)).mode & 0o777, 0o644, "the redacted copy is the copy's mode with the owner's write bit");
+  assert.equal((await stat(original)).mode & 0o777, 0o444, "the run's sealed original keeps its mode");
+  assert.match(await readFile(original, "utf8"), new RegExp(SECRET), "and its bytes");
+  assert.deepEqual((await readdir(join(pkg, "store", "jobs", "j000001"))).filter((n) => n.includes(".tmp-")), [], "no temporary file is left");
+  const v = verifyPackage(pkg);
+  assert.equal(v.ok, true, v.lines.join("\n"));
+});
+
+/** A sandbox whose sensitive entry cites a directory of a sealed job's output, and a package --with-outputs that holds the files under it. */
+async function citingDirectory(): Promise<{ root: string; pkg: string; dir: string }> {
+  const root = await mkdtemp(join(tmpdir(), "pkg-cite-"));
+  dirs.push(root);
+  await initSandbox(root, { reset: true, agentIds: ["a0"] });
+  const staging = join(root, "..", `staging-${sha(root).slice(0, 8)}`);
+  dirs.push(staging);
+  await mkdir(join(staging, "archive", "contact"), { recursive: true });
+  await writeFile(join(staging, "archive", "contact", "a.txt"), "Joe Doe, 12 Elm Street\n");
+  await writeFile(join(staging, "archive", "contact", "b.txt"), "Jane Roe, 3 Oak Avenue\n");
+  await sealTree(root, staging, join(storePaths(root).jobs, "j000001", "out"), "j000001", 1);
+  await writeFile(join(storePaths(root).jobs, "j000001", "job.json"), JSON.stringify({ id: "j000001", state: "committed", requester: { agent: "a0" }, status: "ok", exit: 0, spec: { kind: "command", scope: "all", command: "export" } }));
+  // A ref names an object of the job's manifest, so a directory is not recorded as one: the entry cites a file, and the line is then written as citing the directory
+  // (the ledger is read raw here, as redaction reads it), the shape a run packaged with its outputs can hold.
+  const e = await recordEntry({ sandboxRoot: root, agentId: "a0" }, { kind: "ioc", value: "the contact archive", source: "the export", evidence: "a listing", sensitive: true, refs: ["job:j000001/archive/contact/a.txt"] });
+  assert.ok(e.ok, JSON.stringify(e));
+  const entries = join(root, "ledger", "entries.jsonl");
+  await writeFile(entries, (await readFile(entries, "utf8")).replace("job:j000001/archive/contact/a.txt", "job:j000001/archive/contact/"));
+  const pkg = join(root, "package");
+  const out = join(pkg, "store", "jobs", "j000001", "out", "archive", "contact");
+  await mkdir(out, { recursive: true });
+  await mkdir(join(out, "nested"), { recursive: true });
+  await writeFile(join(out, "a.txt"), "Joe Doe, 12 Elm Street\n");
+  await writeFile(join(out, "b.txt"), "Jane Roe, 3 Oak Avenue\n");
+  await writeFile(join(out, "nested", "c.txt"), "a third record\n");
+  await writeFile(join(pkg, "ledger.jsonl"), await readFile(join(root, "ledger", "entries.jsonl")));
+  return { root, pkg, dir: out };
+}
+
+test("a sensitive entry that cites a job's output directory has every file under it withheld, each by its keyed id; a symlink there is refused and named", async () => {
+  const { root, pkg, dir } = await citingDirectory();
+  const r = await redactPackage(root, pkg);
+  for (const f of ["a.txt", "b.txt", join("nested", "c.txt")]) {
+    const text = await readFile(join(dir, f), "utf8");
+    assert.match(text, /cited by a sensitive ledger entry \(E-1\); matched hidden-[0-9a-f]{24}/, f);
+    assert.doesNotMatch(text, /Elm Street|Oak Avenue|third record/, f);
+  }
+  const ids = new Set((await Promise.all(["a.txt", "b.txt"].map((f) => readFile(join(dir, f), "utf8")))).map((x) => /matched (hidden-[0-9a-f]{24})/.exec(x)![1]));
+  assert.equal(ids.size, 2, "each file has its own id");
+  // A link under the cited directory is not followed: the redaction is refused, naming it.
+  const again = await citingDirectory();
+  await symlink("/etc/hostname", join(again.dir, "link.txt"));
+  await assert.rejects(redactPackage(again.root, again.pkg), /cites store\/jobs\/j000001\/out\/archive\/contact, which holds store\/jobs\/j000001\/out\/archive\/contact\/link\.txt: a symbolic link; redaction refuses it and does not follow it/);
+});
+
+test("makeDigestReplacer gives the old function's output on small inputs, and 50,000 digests over 20 MB take little CPU time", () => {
+  const hex = (n: number) => createHash("sha256").update(`digest-${n}`).digest("hex");
+  /** The function this replaced, kept as the oracle: once per digest, over the whole text. */
+  const oldReplace = (list: string[], hide: (sha: string) => string, text: string, replaced: Replaced[]): string => {
+    let t = text;
+    for (const sha of list) {
+      if (!t.includes(sha)) continue;
+      const id = hide(sha);
+      const count = t.split(sha).length - 1;
+      t = t.split(sha).join(id);
+      replaced.push({ what: "text", entry: null, sha256_of_original: id, count, why: "the digest of a sensitive output" });
+    }
+    return t;
+  };
+  const small = Array.from({ length: 40 }, (_, i) => hex(i));
+  const hide = (sha: string) => `hidden-${sha.slice(0, 24)}`;
+  const a = small[3]!;
+  const b = small[7]!;
+  const corpus = [
+    "",
+    "no digest here",
+    `one ${a} two`,
+    `${a}${a}`,
+    `${a} and ${b} and ${a}`,
+    `line one ${a}\nline two ${b}\n{"sha":"${a}","other":"${hex(500)}"}`,
+    `${a.toUpperCase()} upper case is not a sensitive digest as written`,
+    `${hex(500)} not sensitive, ${b} sensitive`,
+    // Overlapping runs: a digest inside a longer hex run, two digests back to back, a digest preceded and followed by hex.
+    `ab${a}cd`,
+    `${a}${b}`,
+    `${a}${a.slice(0, 20)}`,
+    `${b.slice(40)}${a}${b.slice(0, 40)}`,
+    `${small.join("")}`,
+    `x ${small.join(" ")} y`,
+  ];
+  for (const text of corpus) {
+    const wantRecords: Replaced[] = [];
+    const gotRecords: Replaced[] = [];
+    const want = oldReplace(small, hide, text, wantRecords);
+    const r = makeDigestReplacer(small, hide);
+    const got = r.replace(text, gotRecords);
+    assert.equal(got, want, JSON.stringify(text.slice(0, 60)));
+    assert.deepEqual(gotRecords, wantRecords, JSON.stringify(text.slice(0, 60)));
+    assert.equal(r.holds(text), small.some((d) => text.includes(d)), JSON.stringify(text.slice(0, 60)));
+  }
+  // 50,000 digests over a 20 MB text: process CPU time, not wall clock, with a wide bound. The old function does 50,000 passes over the text.
+  const many = Array.from({ length: 50_000 }, (_, i) => hex(100_000 + i));
+  const chunk = `${"a line of an ordinary report with a few words and no digest in it ".repeat(20)}\n${many[12_345]} ${hex(7)}\n`;
+  const text = chunk.repeat(Math.ceil((20 * 1024 * 1024) / chunk.length));
+  const replacer = makeDigestReplacer(many, (sha) => `hidden-${sha.slice(0, 24)}`);
+  const before = process.cpuUsage();
+  const records: Replaced[] = [];
+  const out = replacer.replace(text, records);
+  const used = process.cpuUsage(before);
+  const cpuSeconds = (used.user + used.system) / 1e6;
+  assert.ok(!out.includes(many[12_345]!), "the digest is replaced everywhere");
+  assert.equal(records.length, 1);
+  assert.ok(cpuSeconds < 20, `${cpuSeconds.toFixed(2)} CPU seconds for 50,000 digests over ${(text.length / 1048576).toFixed(1)} MB`);
+});
+
+test("HYGIENE.json carries the access record as whole counts {roots, readers, edges, maybe}: no seat, job or path is named in it", async () => {
+  const base = await mkdtemp(join(tmpdir(), "hygiene-access-"));
+  dirs.push(base);
+  const S = await writeFiles(base, fixtureFiles());
+  const pkg = join(base, "pkg");
+  await mkdir(pkg, { recursive: true });
+  await hygieneReport(S, pkg);
+  const hyg = JSON.parse(await readFile(join(pkg, "HYGIENE.json"), "utf8")) as { access: Record<string, number> };
+  // j000001 is the one root; agent-2 the one seat the hub's line shows reading; three jobs took an output as an input;
+  // two jobs declared no scope and could read 2 and 4 of the outputs: six possible reaches, none of them a read.
+  assert.deepEqual(hyg.access, { roots: 1, readers: 1, edges: 3, maybe: 6, marked_trace_lines: 0, marked_kept_copies: 0 });
+  assert.doesNotMatch(JSON.stringify(hyg.access), /agent-|j0000|store\//, "counts only");
+});
+
+// --- --redact replaces the trace lines the access record marks (PKG-ACC-04) ---------------------------------------
+
+/** A run whose ledger holds no sensitive entry (so no word is looked for), with a package made of its trace and a kept output. */
+async function markedRun(o: { sensitive?: boolean } = {}): Promise<{ S: string; pkg: string; lines: string[]; kept: string }> {
+  const base = await mkdtemp(join(tmpdir(), "redact-marks-"));
+  dirs.push(base);
+  const kept = "tool-output/agent-2/bash-1.out";
+  const trace = [
+    traceRow("agent-2", 1, "bash", { command: "cat store/jobs/j000001/out/values.jsonl" }, T(10), { ok: true, full_output: { path: kept } }),
+    hubLine(T(10, 1), "agent-2", { job: "j000001", via: "text", certainty: "text", part: "out", paths: ["store/jobs/j000001/out/values.jsonl"] }, { sid: "sid-agent-2", seq: 1, tool: "bash" }, { kept_as: kept }),
+    traceRow("agent-3", 2, "bash", { command: "cat store/jobs/*/out/*" }, T(11)),
+    traceRow("agent-3", 3, "bash", { command: "ls inputs" }, T(12)),
+    traceRow("agent-2", 4, "read", { path: "store/jobs/j000010/out/x" }, T(13)),
+  ];
+  // A run with no sensitive output has no line of the hub on its trace.
+  const files = fixtureFiles({ trace: o.sensitive === false ? trace.filter((l) => (l as { tool?: string }).tool !== "sensitive_access") : trace, ledger: [] });
+  if (o.sensitive === false) {
+    files["run1/store/journal.jsonl"] = jl({ v: 1, seq: 0, at: T(0), type: "job_accepted", job: "j000010", spec: { kind: "command" }, requester: { agent: "agent-2" } });
+    delete files["run1/store/jobs/j000001/manifest.json"];
+  }
+  const S = await writeFiles(base, files);
+  const pkg = join(base, "pkg");
+  await mkdir(join(pkg, "trace"), { recursive: true });
+  await mkdir(join(pkg, "tool-output", "agent-2"), { recursive: true });
+  await writeFile(join(pkg, "trace", "events.jsonl"), files["run1/traces/events.jsonl"]);
+  await writeFile(join(pkg, kept), "the whole output a seat's command returned\n");
+  return { S, pkg, lines: files["run1/traces/events.jsonl"].trim().split("\n"), kept };
+}
+
+test("--redact replaces the trace lines the access record marks (the possible reaches and the commands that name an output included) and the whole copy kept of the read; the rest stays", async () => {
+  const { S, pkg, lines, kept } = await markedRun();
+  const r = await redactPackage(S, pkg, { leaks: "list" });
+  const out = (await readFile(join(pkg, "trace", "events.jsonl"), "utf8")).trim().split("\n");
+  assert.equal(out.length, lines.length, "no line is dropped");
+  assert.deepEqual(JSON.parse(out[0]), { redacted: true, line_sha256: sha(lines[0]) }, "the seat's tool result that named the output is replaced by the hash of the line");
+  assert.equal(out[1], lines[1], "the hub's own line names a job and a path, never a value: it stays");
+  assert.deepEqual(JSON.parse(out[2]), { redacted: true, line_sha256: sha(lines[2]) }, "a command that walks a root which holds it is marked too");
+  assert.deepEqual([out[3], out[4]], [lines[3], lines[4]], "a call that names nothing sensitive stays");
+  assert.equal(r.lines, 2);
+  // The whole copy kept of the read is replaced by a stub that names a keyed id, not the digest.
+  const stub = await readFile(join(pkg, kept), "utf8");
+  assert.match(stub, /^\[redacted: marked sensitive\]: a whole output kept from a seat's read of a sensitive output \(the access record marks it\); matched hidden-[0-9a-f]{24}/);
+  assert.doesNotMatch(stub, /[0-9a-f]{64}|seat's command returned/);
+  // The chain still reads: a redacted line stands for the line it replaced, by its hash.
+  const chain = out.map((l) => JSON.parse(l) as { redacted?: boolean; line_sha256?: string });
+  assert.deepEqual(chain.map((c, i) => (c.redacted ? c.line_sha256 : sha(out[i]))), [sha(lines[0]), sha(lines[1]), sha(lines[2]), sha(lines[3]), sha(lines[4])]);
+});
+
+test("without --redact nothing changes, and HYGIENE.json counts the lines the record marks and advises --redact", async () => {
+  const { S, pkg, lines } = await markedRun();
+  await hygieneReport(S, pkg);
+  assert.equal(await readFile(join(pkg, "trace", "events.jsonl"), "utf8"), `${lines.join("\n")}\n`, "the trace is as it was");
+  const hyg = JSON.parse(await readFile(join(pkg, "HYGIENE.json"), "utf8")) as { access: { marked_trace_lines: number; marked_kept_copies: number; advice?: string } };
+  assert.equal(hyg.access.marked_trace_lines, 2);
+  assert.equal(hyg.access.marked_kept_copies, 1);
+  assert.match(hyg.access.advice ?? "", /2 trace line\(s\) of seats' tool results and 1 kept whole output\(s\).* a package made with --redact replaces them/);
+});
+
+test("a run with no sensitive output marks nothing: the trace of its package is not touched", async () => {
+  const { S, pkg, lines } = await markedRun({ sensitive: false });
+  const before = await readFile(join(pkg, "trace", "events.jsonl"), "utf8");
+  const r = await redactPackage(S, pkg, { leaks: "list" });
+  assert.equal(r.lines, 0);
+  assert.equal(await readFile(join(pkg, "trace", "events.jsonl"), "utf8"), before);
+  assert.equal(before, `${lines.join("\n")}\n`);
 });

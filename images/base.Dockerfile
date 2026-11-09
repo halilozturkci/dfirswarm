@@ -16,17 +16,49 @@
 # seekfix (images/seekfix.c): SEEK_DATA and SEEK_HOLE on a virtiofs mount as
 # Linux means them. msb on a macOS host swaps the two, and GNU grep then calls
 # every mounted text file past its first buffer "binary".
-FROM debian:bookworm-slim AS seekfix
+#
+# Every apt install, here and in every profile image built on this one, comes
+# from snapshot.debian.org at one date, the one in images/debian-snapshot (the
+# ARG below repeats it; the build refuses a mismatch, and
+# scripts/apt-snapshot-bump.sh moves both). The base images are pinned to
+# their digests, the tag kept beside each for the reader. Both move on
+# purpose: the date by a monthly pull request (.github/workflows/apt-snapshot.yml),
+# the digests by scripts/apt-snapshot-bump.sh --digests.
+ARG APT_SNAPSHOT=20261030T000000Z
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS seekfix
+ARG APT_SNAPSHOT
+COPY debian-snapshot /tmp/debian-snapshot
+RUN set -eu; d="$(tr -d '[:space:]' < /tmp/debian-snapshot)"; rm /tmp/debian-snapshot; \
+    [ "$d" = "$APT_SNAPSHOT" ] || { echo "images/debian-snapshot ($d) and the ARG ($APT_SNAPSHOT) differ" >&2; exit 1; }; \
+    printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s/\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s/\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' "$d" "$d" > /etc/apt/sources.list.d/debian.sources; \
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99snapshot
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 COPY seekfix.c /src/seekfix.c
 RUN gcc -O2 -Wall -Wextra -Werror -shared -fPIC -o /seekfix.so /src/seekfix.c -ldl
 
-FROM node:24-bookworm-slim
+FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
+ARG APT_SNAPSHOT
+COPY debian-snapshot /tmp/debian-snapshot
+RUN set -eu; d="$(tr -d '[:space:]' < /tmp/debian-snapshot)"; rm /tmp/debian-snapshot; \
+    [ "$d" = "$APT_SNAPSHOT" ] || { echo "images/debian-snapshot ($d) and the ARG ($APT_SNAPSHOT) differ" >&2; exit 1; }; \
+    printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s/\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s/\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' "$d" "$d" > /etc/apt/sources.list.d/debian.sources; \
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99snapshot
 
 ARG PI_VERSION=1.4.0
-RUN npm install -g --no-audit --no-fund "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+# Pi is installed as a project in /opt/pi, not globally, so that its undici can be
+# overridden: Pi's own release still pins undici 8.10.2, which has
+# GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685 and GHSA-f72v-6w45-q472, and Pi talks
+# to the model endpoints through it. The override is the repository's own
+# (package.json), and install.py --base fails the build if any undici under Pi
+# is older than 8.12.2. `pi` is linked onto PATH. When Pi's release moves its
+# own pin past 8.12.2, drop the override.
+RUN mkdir -p /opt/pi \
+ && printf '{"name":"dfirswarm-pi","private":true,"dependencies":{"@earendil-works/pi-coding-agent":"%s"},"overrides":{"undici":"^8.12.2"}}\n' "${PI_VERSION}" > /opt/pi/package.json \
+ && cd /opt/pi \
+ && npm install --omit=dev --no-audit --no-fund \
+ && ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi \
  && npm cache clean --force
 
 # What every seat uses whatever the case: Python with venv for the pack
@@ -57,9 +89,9 @@ ARG NONREDISTRIBUTABLE="debian-gpl-packages"
 # Debian package list and the venv (what a VM holds at stop is diffed against
 # them, so the image's own packages are never "installed outside the image"),
 # /etc/dfirswarm/NOTICE and the SBOM, /etc/dfirswarm/sbom.json.
-COPY library-python.txt install.py /tmp/dfirswarm-build/
+COPY library-python.txt library-python.lock install.py /tmp/dfirswarm-build/
 RUN python3 -m venv /opt/dfir/venv \
- && /opt/dfir/venv/bin/pip install --no-cache-dir -r /tmp/dfirswarm-build/library-python.txt \
+ && /opt/dfir/venv/bin/pip install --no-cache-dir --require-hashes -r /tmp/dfirswarm-build/library-python.lock \
  && REDISTRIBUTABLE="$REDISTRIBUTABLE" NONREDISTRIBUTABLE="$NONREDISTRIBUTABLE" PI_VERSION="$PI_VERSION" \
       python3 /tmp/dfirswarm-build/install.py --base \
  && rm -rf /tmp/dfirswarm-build
@@ -78,4 +110,5 @@ LABEL org.opencontainers.image.title="dfirswarm-base" \
       org.opencontainers.image.source="https://github.com/halilozturkci/dfirswarm" \
       dev.dfirswarm.profile="base" \
       dev.dfirswarm.pi-version="${PI_VERSION}" \
+      dev.dfirswarm.apt-snapshot="${APT_SNAPSHOT}" \
       dev.dfirswarm.redistributable="${REDISTRIBUTABLE}"

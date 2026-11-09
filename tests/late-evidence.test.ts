@@ -22,7 +22,7 @@ import * as SW from "../extensions/store-sweep.ts";
 import { checkLedgerAnswers } from "../scripts/check-answers.ts";
 import { admitMaterial, reconcileAdditions } from "../scripts/material.ts";
 import { renderReportBodyMarkdown } from "../scripts/report-body.ts";
-import { A, coverage, ESTABLISHED, F, ok, okq, planned, rec, refused, REVIEW, run } from "./negative-bar-fixture.ts";
+import { A, ALL_AREAS, coverage, covers, ESTABLISHED, F, ok, okq, planned, rec, refused, REVIEW, run } from "./negative-bar-fixture.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const HIGH = { ...A, confidence: "high" } as const;
@@ -56,8 +56,9 @@ async function before() {
   await attested(c.a2, { seq: cov2.seq, how: "ran the search again from job:j000001", review: REVIEW });
   await planned(c.a0, "1");
   const f1 = ok(await rec(c.a0, { kind: "finding", ...F, value: "the account ran the tool at 09:14", source: "the log", evidence: "line 12", refs: ["job:j000002/hits.txt"], answers: ["1"] })).entry;
-  const cov1 = ok(await rec(c.a0, coverage("1", ["input:logs/a.log"], [`E-${f1.seq}`, "job:j000002/hits.txt"], { looked_for: ["bob-laptop", "carol"] }))).entry;
+  const cov1 = ok(await rec(c.a0, coverage("1", ["input:logs/a.log"], [`E-${f1.seq}`, "job:j000002/hits.txt"], { looked_for: ["bob-laptop", "carol"], areas: ALL_AREAS }))).entry;
   const ans1 = ok(await rec(c.a1, { kind: "answer", section: "question:1", value: "The first account, at 09:14", reasoning: `E-${f1.seq}, searched as E-${cov1.seq}`, ...HIGH, result: "established" })).entry;
+  await covers(c.a0, "1");
   await attested(c.a2, { seq: ans1.seq, how: "re-read line 12", ...ESTABLISHED });
   await planned(c.a3, "4");
   const abs4 = ok(await rec(c.a3, { kind: "absence", value: "a start time", source: "inputs/logs/a.log", evidence: "a search", refs: ["job:j000002/hits.txt"], answers: ["4"] })).entry;

@@ -1,6 +1,6 @@
 {
   "name": "mft_records",
-  "description": "Parse $MFT records: both time sets ($STANDARD_INFORMATION and $FILE_NAME) side by side (ISO 8601 UTC with seven fractional digits, raw FILETIMEs beside them), allocation, resident data (base64 on request) and every named stream, each name and stream carrying its attribute instance id and each name its parent entry and sequence. Every nested range is checked against the attribute that holds it and the attribute chain against the record's used size; a record with a range that does not fit (a short $STANDARD_INFORMATION, a $FILE_NAME or resident $DATA running past its attribute, a non-resident header shorter than its sizes, a chain without its end marker) keeps what was sound, is marked unreliable with structural_errors, and is also a problem of the run with its offset (status partial). The update sequence fixup is applied first: a record that fails it is still parsed, flagged fixup_failed and unreliable and counted in records_fixup_failed (it does not make the run partial); a slot with neither a FILE nor a BAAD signature is not listed as a record: an all-zero one is counted in slots_zeroed (an unused slot, ordinary at the end of an $MFT), one that holds data in slots_unrecognised (which is also a problem of the run, status partial), and slots_without_signature is their sum. A used size that is larger than the record or does not reach past the first attribute is a structural error, no longer silently corrected. The scan starts at the first record that looks like one (a FILE signature with an update sequence array of the size the record size implies), so a file that does not begin on a record boundary is read at its own alignment: alignment_offset says where (0 when aligned) and a nonzero one is a problem (status partial); a file in which no slot holds a record is also a problem, never a complete answer with zero records. A file that ends inside a record says so; fewer than 48 bytes at the end are trailing_bytes. NOT done: $ATTRIBUTE_LIST is not resolved (a record that has one says so, and its other attributes are in extension records, read as records of their own with base_record and base_sequence), and no parent path is rebuilt. The record size is the allocated size in the first record's header (the gap between FILE signatures is the second evidence), or the record_size argument; the answer says which. A flag beginning si_ is an indicator, not proof. Filters: name, entry, deleted records only, named streams only, or records whose two time sets disagree. SENSITIVE: with_resident returns the bytes of resident files, which can hold a secret; run it as a job with secret_output: true when they may.",
+  "description": "Parse $MFT records: both time sets ($STANDARD_INFORMATION and $FILE_NAME) side by side (ISO 8601 UTC with seven fractional digits, raw FILETIMEs beside them), allocation, resident data (base64 on request) and every named stream, each name and stream carrying its attribute instance id and each name its parent entry and sequence. Every nested range is checked against the attribute that holds it and the attribute chain against the record's used size; a record with a range that does not fit (a short $STANDARD_INFORMATION, a $FILE_NAME or resident $DATA running past its attribute, a non-resident header shorter than its sizes, a chain without its end marker) keeps what was sound, is marked unreliable with structural_errors, and is also a problem of the run with its offset (status partial). The update sequence fixup is applied first: a record that fails it is still parsed, flagged fixup_failed and unreliable and counted in records_fixup_failed (it does not make the run partial); a slot with neither a FILE nor a BAAD signature is not listed as a record: an all-zero one is counted in slots_zeroed (an unused slot, ordinary at the end of an $MFT), one that holds data in slots_unrecognised (which is also a problem of the run, status partial), and slots_without_signature is their sum. A used size that is larger than the record or does not reach past the first attribute is a structural error, no longer silently corrected. The scan starts at the first record that looks like one (a FILE signature with an update sequence array of the size the record size implies), so a file that does not begin on a record boundary is read at its own alignment: alignment_offset says where (0 when aligned) and a nonzero one is a problem (status partial); a file in which no slot holds a record is also a problem, never a complete answer with zero records. A file that ends inside a record says so; fewer than 48 bytes at the end are trailing_bytes. NOT done: $ATTRIBUTE_LIST is not resolved (a record that has one says so, and its other attributes are in extension records, read as records of their own with base_record and base_sequence), and no parent path is rebuilt. The record size is the allocated size in the first record's header (the gap between FILE signatures is the second evidence), or the record_size argument; the answer says which. A flag beginning si_ is an indicator, not proof. Filters: name, entry, deleted records only, named streams only, or records whose two time sets disagree. SENSITIVE: with_resident returns the bytes of resident files, which can hold a secret. The manifest declares secret_output for it (a job that sets it runs as secret output); where SECRET_OUTPUT is not 1 the tool refuses as JSON before it opens or creates anything. The tool has its own clock (285 s of the manifest's 300): when it runs out the sweep stops, the pages written so far are placed and named, and the answer is partial with a status_basis that says where it stopped and how many record slots were read; every answer carries status and status_basis (complete only for an input read to its end), a wrong-type argument is refused as JSON (status failed), and SIGTERM, SIGINT and SIGHUP end it with one JSON document (status failed with interrupted true, exit 128 plus the signal) and no temporary file. A result file is never replaced: the same result keeps its name, another takes the next free -n name. A forced record_size that the first record's header or the FILE signatures contradict is a problem, so the answer is partial, and a record_size past 65536 is refused. name is a regular expression, tested under a 0.5 s budget per record.",
   "params": {
     "path": {
       "type": "string",
@@ -8,7 +8,7 @@
     },
     "name": {
       "type": "string",
-      "description": "Case-insensitive regex over the record's file names"
+      "description": "Case-insensitive regular expression over the record's file names (at most 500 characters). One record's names are tested for at most 0.5 s; an expression that takes longer stops the sweep there (partial), so use a plain pattern"
     },
     "entry": {
       "type": "integer",
@@ -28,15 +28,15 @@
     },
     "with_resident": {
       "type": "boolean",
-      "description": "Include the bytes of a resident $DATA, base64 encoded"
+      "description": "Include the bytes of a resident $DATA, base64 encoded. Secret output: refused as JSON, before anything is opened, unless the job runs with secret_output (the manifest declares it for this parameter)"
     },
     "record_size": {
       "type": "integer",
-      "description": "Record size in bytes when it is not the usual 1024"
+      "description": "Record size in bytes when it is not the usual 1024 (256 to 65536). It is compared with the allocated size in the first record's header and with the gap between the first two FILE signatures: a disagreement is a problem of the run (status partial)"
     },
     "limit": {
       "type": "integer",
-      "description": "Records shown inline (default 200, an inline page size); every record is read, and when more match the whole list is written as JSON Lines and named in all_results"
+      "description": "Records shown inline (default 200, 1 to 10000, an inline page size); every record is read, and when more match the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -45,8 +45,8 @@
   "example": "{\"path\": \"work/extracted/$MFT\", \"name\": \"\\\\.docx$\", \"limit\": 50}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 3,
-  "sha256": "5a613e30a11da25aaee64bb003bdf79f908ff9d41aba850fe29baa1228239f40",
+  "version": 6,
+  "sha256": "a1b8c0e90b641bf7fb06f3e6ed9dad4c1c09499332dcad2c4a5b589894001369",
   "use": {
     "names": [
       "$MFT",
@@ -59,5 +59,10 @@
       }
     ]
   },
-  "requires": []
+  "requires": [],
+  "secret_output": {
+    "when_args": [
+      "with_resident"
+    ]
+  }
 }

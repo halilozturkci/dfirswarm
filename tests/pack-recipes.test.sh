@@ -118,7 +118,8 @@ for r in archive-members disk-volumes memory-windows; do
   entry="$CFB/recipes/$r/$(jq -r .entry "$rj")"
   rt="$(jq -r .runtime "$rj")"
   v="$("$rt" "$entry" detect --target "{\"paths\": [\"$T/a.zip\"], \"name\": \"inputs/a.zip\"}" 2>/dev/null)"; rc=$?
-  [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || fail "$r detect should exit 0 or 1, not $rc: $v"
+  # Exit 2 with "applies": "unknown" is the protocol's "cannot tell" (a reader that is not in the image): not a failure.
+  [[ "$rc" -eq 0 || "$rc" -eq 1 || ( "$rc" -eq 2 && "$(jq -r '.applies' <<<"$v" 2>/dev/null)" == unknown ) ]] || fail "$r detect should exit 0 or 1 (or 2 with applies unknown), not $rc: $v"
   jq -e 'has("why")' <<<"$v" >/dev/null || fail "$r detect should say why: $v"
 done
 python3 "$CFB/recipes/archive-members/run.py" run --target "{\"paths\": [\"$T/a.zip\"]}" --out "$T/out" >/dev/null || fail "archive-members should catalogue a zip"
@@ -173,10 +174,12 @@ printf "datetime,message\n2024-04-01T00:00:00,x\n" > "$w"
 PSORT
 chmod +x "$T/bin/log2timeline" "$T/bin/psort"
 mkdir -p "$T/ro"; chmod a-w "$T/ro"
+# a host that cannot adopt orphaned processes (not Linux) answers partial for a clean run, and says so: the exit is 1 and the status partial
+if [[ "$(uname -s)" == Linux ]]; then want_rc=0; want_status=complete; else want_rc=1; want_status=partial; fi
 (cd "$T/ro" && PATH="$T/bin:$PATH" python3 "$DT" run --target "{\"paths\": [\"$T/x.E01\"]}" --out "$T/dt" >/dev/null); rc=$?
 chmod u+w "$T/ro"
-[[ "$rc" -eq 0 ]] || fail "disk-timeline should run with log2timeline and psort from a read-only directory: $(cat "$T/dt/coverage.json" 2>/dev/null; cat "$T/dt/"*.stderr 2>/dev/null)"
-jq -e '.status == "complete"' "$T/dt/coverage.json" >/dev/null || fail "disk-timeline should say complete: $(cat "$T/dt/coverage.json")"
+{ if [[ "$want_rc" -eq 0 ]]; then [[ "$rc" -eq 0 ]]; else [[ "$rc" -ne 0 ]]; fi; } || fail "disk-timeline should run with log2timeline and psort from a read-only directory: $(cat "$T/dt/coverage.json" 2>/dev/null; cat "$T/dt/"*.stderr 2>/dev/null)"
+jq -e --arg s "$want_status" '.status == $s' "$T/dt/coverage.json" >/dev/null || fail "disk-timeline should say $want_status: $(cat "$T/dt/coverage.json")"
 [[ "$(cut -f1 "$T/dt/index.tsv" | tr '\n' ' ')" == "timeline.plaso timeline.csv " ]] || fail "disk-timeline should index the storage file and the timeline: $(cat "$T/dt/index.tsv")"
 [[ -s "$T/dt/log2timeline.log.gz" && -s "$T/dt/psort.log.gz" ]] || fail "disk-timeline should give each Plaso step its log in --out (--logfile): $(ls "$T/dt")"
 [[ -z "$(ls -A "$T/ro")" ]] || fail "disk-timeline wrote in the directory it was run from: $(ls -A "$T/ro")"
@@ -198,9 +201,10 @@ echo "Plaso Storage Information"
 echo "Warnings generated: 3"
 PINFO
 chmod +x "$T/bin2/"*
-CALLS_L2T="$T/l2t-args.txt" PATH="$T/bin2:$PATH" python3 "$DT" run --target "{\"paths\": [\"$T/x.E01\"], \"timezone\": \"Europe/Istanbul\"}" --out "$T/dt-zone" >/dev/null || fail "disk-timeline with a timezone should run: $(cat "$T/dt-zone/coverage.json" 2>/dev/null)"
+CALLS_L2T="$T/l2t-args.txt" PATH="$T/bin2:$PATH" python3 "$DT" run --target "{\"paths\": [\"$T/x.E01\"], \"timezone\": \"Europe/Istanbul\"}" --out "$T/dt-zone" >/dev/null; rc=$?
+{ if [[ "$want_rc" -eq 0 ]]; then [[ "$rc" -eq 0 ]]; else [[ "$rc" -ne 0 ]]; fi; } || fail "disk-timeline with a timezone should run: $(cat "$T/dt-zone/coverage.json" 2>/dev/null)"
 grep -q -- '--timezone Europe/Istanbul' "$T/l2t-args.txt" || fail "the evidence's timezone reaches log2timeline: $(cat "$T/l2t-args.txt")"
-jq -e '.status == "complete" and .timezone == "Europe/Istanbul" and (.coverage_note | test("does not say every parser read every source"))' "$T/dt-zone/coverage.json" >/dev/null || fail "complete says the pipeline finished, and the zone is stated: $(cat "$T/dt-zone/coverage.json")"
+jq -e --arg s "$want_status" '.status == $s and .timezone == "Europe/Istanbul" and (.coverage_note | test("does not say every parser read every source"))' "$T/dt-zone/coverage.json" >/dev/null || fail "complete says the pipeline finished, and the zone is stated: $(cat "$T/dt-zone/coverage.json")"
 grep -q 'Warnings generated: 3' "$T/dt-zone/pinfo.txt" && cut -f1 "$T/dt-zone/index.tsv" | grep -qx 'pinfo.txt' || fail "Plaso's processing report is kept and indexed"
 CALLS_L2T="$T/l2t-args2.txt" PATH="$T/bin2:$PATH" python3 "$DT" run --target "{\"paths\": [\"$T/x.E01\"]}" --out "$T/dt-nozone" >/dev/null
 jq -e '.timezone == "not given" and (.timezone_note | test("none given"))' "$T/dt-nozone/coverage.json" >/dev/null || fail "no zone given is said, not assumed to be UTC: $(cat "$T/dt-nozone/coverage.json")"
@@ -240,8 +244,9 @@ chmod +x "$T/bin3/log2timeline" "$T/bin3/psort"
 dt3() { # dt3 <out> : run with the bin3 stubs and whatever environment is set
   PATH="$T/bin3:$PATH" python3 "$DT" run --target "{\"paths\": [\"$T/x.E01\"]}" --out "$1" >/dev/null
 }
-dt3 "$T/dt-clean" || fail "disk-timeline with Plaso saying nothing wrong should be complete: $(cat "$T/dt-clean/coverage.json")"
-jq -e '.status == "complete" and (has("plaso_signals") | not)' "$T/dt-clean/coverage.json" >/dev/null || fail "a clean run is complete: $(cat "$T/dt-clean/coverage.json")"
+# (a host that cannot adopt orphaned processes answers partial, exit 1, for a clean run, and says so in its errors: the signals are what this case is about)
+dt3 "$T/dt-clean" || { [[ "$(uname -s)" != Linux ]] && jq -e '.status == "partial"' "$T/dt-clean/coverage.json" >/dev/null; } || fail "disk-timeline with Plaso saying nothing wrong should be complete: $(cat "$T/dt-clean/coverage.json")"
+jq -e --arg want "$([[ "$(uname -s)" == Linux ]] && echo complete || echo partial)" '.status == $want and (has("plaso_signals") | not)' "$T/dt-clean/coverage.json" >/dev/null || fail "a clean run is complete: $(cat "$T/dt-clean/coverage.json")"
 PSORT_STDERR="[ERROR] Worker killed" dt3 "$T/dt-killed" && fail "a worker Plaso reported killed should not be complete"
 jq -e '.status == "partial" and ([.errors[] | select(test("psort.stderr: 1 line.*error.*Worker killed"))] | length == 1) and .plaso_signals[0].file == "psort.stderr"' "$T/dt-killed/coverage.json" >/dev/null || fail "the killed worker is named, with where it was said: $(cat "$T/dt-killed/coverage.json")"
 PSORT_STDOUT="Events extracted: 0" PSORT_EMPTY=1 dt3 "$T/dt-zero" && fail "a timeline of no events should not be complete"
@@ -636,4 +641,41 @@ if [[ -n "$SEVEN" ]]; then
   pass "a 7z is listed as its listing streams, and stops at the member limit, saying so"
 else
   echo "skip - no 7z or 7zz on this host"
+fi
+
+# macos-artefacts, the macOS pack's broad extraction over mac_apt (stand-ins only: mac_apt was never run here). Its recipe.json is a broad
+# extraction with its exclusions and no trigger; detect answers by signature; the status comes from the program's log and never from its exit code
+# (a stand-in that logs a traceback in a plugin and exits 0 is partial); the full suite is tests/pack-macos-triage.test.ts.
+MA="$ROOT/packs/macos-forensics/recipes/macos-artefacts"
+jq -e '.purpose == "broad_extraction" and .capability == "macos-artifacts" and (.auto | length == 0) and (.exclusions | length >= 4) and .requires == ["mac_apt.py"]' "$MA/recipe.json" >/dev/null || fail "macos-artefacts is a broad extraction with exclusions and no trigger"
+MAW="$WORK/macapt"; mkdir -p "$MAW/bin" "$MAW/work"
+python3 - "$MAW" <<'PYEOF'
+import os, sys
+w = sys.argv[1]
+open(os.path.join(w, "work", "mac.E01"), "wb").write(bytes([0x45, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00]) + bytes(4096))
+open(os.path.join(w, "work", "plain.txt"), "w").write("text")
+open(os.path.join(w, "bin", "mac_apt.py"), "w").write('''#!/usr/bin/env python3
+import os, sys
+argv = sys.argv[1:]
+out = argv[argv.index("-o") + 1]
+log = open(os.path.join(out, "Log.20261104-120000.txt"), "a")
+def line(s):
+    log.write("x|MAIN|INFO|" + s + "\\n")
+line("Started macOS Artifact Parsing Tool, version 1.33.2")
+line("Running plugin TCC")
+line("Traceback (most recent call last):")
+line("TCC plugin ran for 00:00:01")
+line("Finished in time = 00:00:02")
+''')
+os.chmod(os.path.join(w, "bin", "mac_apt.py"), 0o755)
+PYEOF
+if [[ "$(uname -m)" == x86_64 ]]; then
+  PATH="$MAW/bin:$PATH" python3 "$MA/run.py" detect --target "{\"paths\": [\"$MAW/work/mac.E01\"]}" >"$MAW/d.json"; [[ $? -eq 0 ]] || fail "an E01 applies: $(cat "$MAW/d.json")"
+  PATH="$MAW/bin:$PATH" python3 "$MA/run.py" detect --target "{\"paths\": [\"$MAW/work/plain.txt\"]}" >"$MAW/d2.json"; [[ $? -eq 1 ]] || fail "a text file does not apply: $(cat "$MAW/d2.json")"
+  PATH="$MAW/bin:$PATH" python3 "$MA/run.py" run --target "{\"paths\": [\"$MAW/work/mac.E01\"], \"plugins\": [\"TCC\"]}" --out "$MAW/out" >"$MAW/r.json" || true
+  jq -e '.status == "partial"' "$MAW/out/coverage.json" >/dev/null || fail "a traceback behind an exit 0 is never complete: $(cat "$MAW/out/coverage.json")"
+  jq -e '.secret_bearing["mac_apt.stdout"] != null' "$MAW/out/coverage.json" >/dev/null || fail "the files it wrote are marked secret_bearing"
+  pass "macos-artefacts: a broad extraction with exclusions, detect by signature, and a status from the log (a stand-in that exits 0 after a traceback is partial)"
+else
+  echo "skip - macos-artefacts runs on amd64 only (mac_apt is not in the arm64 image): $(uname -m)"
 fi

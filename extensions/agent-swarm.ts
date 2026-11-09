@@ -43,6 +43,8 @@ import {
   stateRevision,
   FINISH_LINE_UNSETTLED,
   inboxPageChars,
+  itemBudget,
+  pageWholeItems,
   classifyTurnError,
   providerErrorPost,
   normalizeProviderError,
@@ -82,6 +84,7 @@ import {
   toolArgsForJob,
   writtenToOf,
   placedOutputs,
+  emptyDirPlaces,
   stagedPaths,
   stagedPathsIn,
   packSecretsFor,
@@ -125,6 +128,8 @@ import {
   nudgePeerViaBroker,
   postSender,
   useHarnessTrace,
+  SENSITIVE_READ_NOTE,
+  couldNameOutput,
 } from "./protocol.ts";
 // The board: protocol.ts on the host, the hub on the other side of a VM's wall (board.ts says why).
 import {
@@ -196,6 +201,7 @@ import {
   netRequest,
   netFetch,
   netView,
+  sensitiveRead,
 } from "./board.ts";
 // The lead register's host-side pieces: a host run's wait checks it itself (a VM's hub does it there).
 import { LEAD_DISPOSITIONS, leadsWaitCheck, reopenOnLedger } from "./leads.ts";
@@ -525,6 +531,8 @@ export default function (pi: ExtensionAPI) {
   const longRuns = new Map<string, KeptRun>();
   const repeatHinted = new Set<string>();
   const jobHinted = new Set<string>();
+  /** The sensitive jobs this seat was told about already (docs/adr/0018): the note on a read is once per seat and job. */
+  const toldSensitive = new Set<string>();
   let jobsOffered: boolean | undefined;
   /** When this agent was steered for its own cap, if it was. */
   let agentCapSteeredAt: number | null = null;
@@ -1897,6 +1905,26 @@ export default function (pi: ExtensionAPI) {
     return { truncated: true, by: t.truncatedBy ?? null, total_lines: t.totalLines ?? null, shown_lines: t.outputLines ?? null, total_bytes: t.totalBytes ?? null, shown_bytes: t.outputBytes ?? null };
   }
 
+  /**
+   * The sensitive jobs a tool call read, by the one classifier (scripts/sensitive-access.ts): asked of the hub, which holds the run's index and
+   * the copies it kept; in a host run, with no hub, the classifier is run here with the index the seat can read (no kept copies), and when it
+   * cannot run, none. The extension holds no rule of its own.
+   */
+  async function sensitiveJobsRead(cwd: string, tool: string, args: Record<string, unknown>): Promise<string[]> {
+    if (!couldNameOutput(tool, args)) return [];
+    const asked = await sensitiveRead(cwd, { tool, args });
+    if (asked !== null) return asked;
+    try {
+      const [{ classifyTraceRow }, { sensitiveIndex }] = await Promise.all([import("../scripts/sensitive-access.ts"), import("../scripts/output-hygiene.ts")]);
+      const ix = await sensitiveIndex(cwd);
+      if (!ix.jobs.size) return [];
+      const hits = classifyTraceRow({ tool, args }, ix, { sandbox: cwd });
+      return [...new Set(hits.filter((h) => h.job !== null && h.certainty !== "maybe").map((h) => h.job as string))].sort();
+    } catch {
+      return [];
+    }
+  }
+
   pi.on("tool_result", async (event, ctx) => {
     const name = (event as { toolName?: string }).toolName ?? "";
     const callId = (event as { toolCallId?: string }).toolCallId;
@@ -1963,6 +1991,16 @@ export default function (pi: ExtensionAPI) {
         content = [...(Array.isArray(content) ? content : []), { type: "text", text: jobHintText(durationMs) }];
         contentChanged = true;
         await logEvent(ctx.cwd, agentId, "job_hint", { command: head }, { ok: true, ms: durationMs }).catch(() => undefined);
+      }
+    }
+    // A read of a sensitive output: one sentence on the result, once per seat and job. It informs and never blocks; a failure to ask is no note.
+    if (agentId && !isError && input) {
+      const read = await sensitiveJobsRead(ctx.cwd, name, input).catch(() => [] as string[]);
+      const fresh = read.filter((job) => !toldSensitive.has(job));
+      if (fresh.length) {
+        for (const job of fresh) toldSensitive.add(job);
+        content = [...(Array.isArray(content) ? content : []), { type: "text", text: SENSITIVE_READ_NOTE }];
+        contentChanged = true;
       }
     }
     // Pi takes a tool's failure only from a throw: an `isError: true` in what
@@ -2612,6 +2650,8 @@ export default function (pi: ExtensionAPI) {
       // three linux_triage jobs were refused before anything ran. What those
       // places already hold is what the tool reads, and stays as given.
       const toolArgs = params.tool ? await toolArgsForJob(toolCtx.cwd, (params.args ?? {}) as Record<string, unknown>, agentId) : undefined;
+      // An empty directory given for reading is taken as an output place; the reply says so when nothing was written there.
+      const emptyDirs = params.tool ? await emptyDirPlaces(toolCtx.cwd, (params.args ?? {}) as Record<string, unknown>, agentId).catch(() => new Set<string>()) : undefined;
       const spec: Record<string, unknown> = {
         ...(params.command ? { command: params.command } : {}),
         ...(params.tool ? { tool: params.tool, args: toolArgs } : {}),
@@ -2628,7 +2668,11 @@ export default function (pi: ExtensionAPI) {
       const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
       const res = await submitAndWait(toolCtx.cwd, spec, wait, signal as AbortSignal | undefined);
       if (!res.job) {
-        const refused = { ok: false as const, reason: String(res.result.reason ?? "the job was not accepted") };
+        let reason = String(res.result.reason ?? "the job was not accepted");
+        // A tool's arguments the manifest refuses (needs, takes no, must be): the refusal names the manifest's parameters,
+        // for a tool that is not a Pi tool has no schema to read them from.
+        if (params.tool && [" needs ", " takes no ", ": "].some((tail) => reason.startsWith(`tool ${params.tool}${tail}`))) reason += await toolParamsNote(toolCtx.cwd, params.tool);
+        const refused = { ok: false as const, reason };
         await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
         return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
       }
@@ -2636,7 +2680,7 @@ export default function (pi: ExtensionAPI) {
       const flagged = typeof params.command === "string" ? evidenceCodeRun(params.command, Array.isArray(params.inputs) ? params.inputs : []) : null;
       const code = flagged ? await withOwnJobOutputs(toolCtx.cwd, flagged, agentId).catch(() => flagged) : null;
       // Where each output path the agent gave went instead: the job's sealed output, read and cited from there, when it holds something.
-      const placed = toolArgs ? placedOutputs(toolCtx.cwd, writtenToOf(params.args ?? {}, toolArgs, res.job), res.result) : {};
+      const placed = toolArgs ? placedOutputs(toolCtx.cwd, writtenToOf(params.args ?? {}, toolArgs, res.job), res.result, { emptyDirs }) : {};
       const result = { ok: true, ...placed, ...res.result, ...(code ? { evidence_code: { ...code, note: evidenceCodeNote(code, "job") } } : {}) };
       await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status, ...placed, ...(res.result.lead ? { lead: res.result.lead } : {}), ...(Array.isArray(res.result.similar) ? { similar: (res.result.similar as Array<{ job?: unknown }>).map((x) => x.job) } : {}), ...(code ? { evidence_code: code } : {}) }, Date.now() - started);
       return okResult(result);
@@ -2881,6 +2925,27 @@ export default function (pi: ExtensionAPI) {
     return parts.length ? parts.join(", ") : "no params";
   }
 
+  // Packs whose tools are not Pi tools (the start option --pack-tools-as-jobs):
+  // the contract (SWARM.md, "Pack tools run as jobs") lists each one, and a
+  // seat calls it as job_run(tool: <name>, args: {...}). Only a seat that has
+  // a hub to take the job skips them: with none (a host run) a tool left
+  // unregistered would be a tool lost, so it is registered as ever.
+  const packsAsJobs = new Set(
+    (process.env.SWARM_PACK_TOOLS_AS_JOBS ?? "")
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean),
+  );
+  const jobOnlyTools = new Map<string, string>();
+  function runsAsJob(manifest: ForgedToolManifest): boolean {
+    return Boolean(manifest.pack) && packsAsJobs.has(manifest.pack as string) && Boolean(boardSocket());
+  }
+  /** What job_run's refusal of a tool's arguments adds: the manifest's own parameters, so a seat with no schema can reach them. */
+  async function toolParamsNote(cwd: string, name: string): Promise<string> {
+    const manifest = (await listForgedTools(cwd).catch(() => [] as ForgedToolManifest[])).find((m) => m.name === name);
+    return manifest ? ` Parameters of ${name}: ${paramSummary(manifest)} (a name ending in ? is optional).` : "";
+  }
+
   function registerForged(manifest: ForgedToolManifest): void {
     pi.registerTool({
       name: manifest.name,
@@ -3028,6 +3093,14 @@ export default function (pi: ExtensionAPI) {
     for (const manifest of await listForgedTools(cwd).catch(() => [] as ForgedToolManifest[])) {
       const key = `${manifest.version}:${manifest.sha256}`;
       if (loadedTools.get(manifest.name) === key) continue;
+      if (runsAsJob(manifest)) {
+        // Not a Pi tool: a job_run(tool, args) call, as SWARM.md says. On the trace once per version.
+        if (jobOnlyTools.get(manifest.name) !== key) {
+          jobOnlyTools.set(manifest.name, key);
+          await logEvent(cwd, agentId, "tool_loaded", { name: manifest.name, version: manifest.version, by: manifest.by }, { ok: true, forged: true, as_job: true });
+        }
+        continue;
+      }
       try {
         registerForged(manifest);
         fresh.push(manifest);
@@ -3159,7 +3232,7 @@ export default function (pi: ExtensionAPI) {
         const all = await listForgedTools(toolCtx.cwd);
         await logEvent(toolCtx.cwd, agentId, "tools", {}, { ok: true, n: all.length, loaded: fresh.length }, Date.now() - started);
         return okResult({
-          forged: all.map((m) => ({ name: m.name, description: m.description, params: paramSummary(m), runtime: m.runtime, by: m.by, version: m.version, ...(m.example ? { example: m.example } : {}) })),
+          forged: all.map((m) => ({ name: m.name, description: m.description, params: paramSummary(m), runtime: m.runtime, by: m.by, version: m.version, ...(m.example ? { example: m.example } : {}), ...(runsAsJob(m) ? { call: `job_run(tool: "${m.name}", args: {...})` } : {}) })),
           ...newToolsNote(fresh),
           hint: all.length ? "Call a forged tool by its name, like any other tool." : "Nothing forged yet. make_tool writes one and shares it.",
         });
@@ -3441,17 +3514,54 @@ export default function (pi: ExtensionAPI) {
     name: "ledger",
     label: "Ledger",
     description:
-      "List the swarm's ledger: every event, indicator, finding, search that found nothing, hypothesis, limitation and answer recorded so far, with authors and evidence; a corrected entry carries superseded_by, an entry somebody re-derived attested_by, one somebody contests disputed_by, and an answer that no longer stands on what it cites its problems. Filter by kind; the rendered file is ledger/ledger.md.",
+      "List the swarm's ledger: every event, indicator, finding, search that found nothing, hypothesis, limitation and answer recorded so far, with authors and evidence; a corrected entry carries superseded_by, an entry somebody re-derived attested_by, one somebody contests disputed_by, and an answer that no longer stands on what it cites its problems. Filter by kind; the rendered file is ledger/ledger.md. A reply is one page of whole entries under the inbox page bound: when it holds entries back it names next (call again with from: that E-<seq>), remaining, and kept_as, the whole result on disk with its size and sha256; nothing is cut. ids reads exact entries (E-<seq>) whatever their age.",
     promptSnippet: "See what the swarm has recorded so far",
     parameters: Type.Object({
       kind: Type.Optional(Type.String({ description: "event | ioc | finding | absence | hypothesis | limitation | answer | coverage | external" })),
-      limit: Type.Optional(Type.Number({ description: "Newest N entries (default 200)" })),
+      limit: Type.Optional(Type.Number({ description: "Newest N entries (default 200, at most 500)" })),
+      from: Type.Optional(Type.String({ description: "The E-<seq> a previous page named as next: the listing continues from it (entries recorded since come after)" })),
+      ids: Type.Optional(Type.Array(Type.String(), { description: "Exact entries to read, as E-<seq>, each whole with its hash, supersession, attestations, disputes and answer review; ids that do not exist are named in not_found" })),
     }),
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
-      const entries = await listLedger(toolCtx.cwd, params ?? {});
-      await logEvent(toolCtx.cwd, agentId, "ledger", params ?? {}, { ok: true, n: entries.length }, Date.now() - started);
-      return okResult({ entries, rendered: LEDGER_MD });
+      const p = (params ?? {}) as { kind?: string; limit?: number; from?: string; ids?: string[] };
+      const seqOf = (s: unknown): number | null => {
+        const m = /^E-(\d+)$/i.exec(String(s ?? "").trim());
+        return m ? Number(m[1]) : null;
+      };
+      const ids = Array.isArray(p.ids) ? p.ids.map(seqOf) : undefined;
+      const from = p.from === undefined ? undefined : seqOf(p.from);
+      if ((ids && ids.some((x) => x === null)) || (p.from !== undefined && from === null)) {
+        const reason = "ids and from are exact ledger ids written E-<seq> (E-3); a page names the next one as next";
+        await logEvent(toolCtx.cwd, agentId, "ledger", p as Record<string, unknown>, { ok: false, reason }, Date.now() - started).catch(() => undefined);
+        return { content: [{ type: "text" as const, text: `ledger refused: ${reason}` }], details: { ok: false, reason }, isError: true };
+      }
+      const listed = await listLedger(toolCtx.cwd, {
+        ...(p.kind !== undefined ? { kind: p.kind } : {}),
+        ...(p.limit !== undefined ? { limit: p.limit } : {}),
+        ...(ids ? { ids: ids as number[] } : {}),
+        ...(from !== undefined && from !== null ? { from } : {}),
+      });
+      const notFound = ids ? (ids as number[]).filter((s) => !listed.some((e) => e.seq === s)).map((s) => `E-${s}`) : [];
+      // One page of whole entries under the page bound. What it holds back is named (next, remaining) and the whole result is kept
+      // on disk, so no entry is cut and none is out of reach.
+      const { page, remaining } = pageWholeItems(listed, itemBudget(inboxPageChars()));
+      const payload: Record<string, unknown> = { entries: page, n: page.length, remaining, ...(notFound.length ? { not_found: notFound } : {}) };
+      let keptAs: { path: string; bytes: number; sha256: string } | undefined;
+      let writeError: string | undefined;
+      if (remaining > 0) {
+        const next = `E-${listed[page.length]!.seq}`;
+        const kept = await keepToolOutput(toolCtx.cwd, toolOutputRel(agentId, "ledger", "text"), listed.map((e) => JSON.stringify(e)).join("\n") + "\n");
+        if (kept.write_error) writeError = kept.write_error;
+        else keptAs = { path: kept.path, bytes: kept.bytes, sha256: kept.sha256 };
+        payload.next = next;
+        payload.note = `${remaining} more entr${remaining === 1 ? "y was" : "ies were"} held back to keep this reply under ${inboxPageChars().toLocaleString("en-US")} characters; nothing was cut. Call ledger again with from: "${next}"${keptAs ? `, or read the whole result at ${keptAs.path}` : ""}.`;
+        if (keptAs) payload.kept_as = keptAs;
+        if (writeError) payload.write_error = writeError;
+      }
+      payload.rendered = LEDGER_MD;
+      await logEvent(toolCtx.cwd, agentId, "ledger", p as Record<string, unknown>, { ok: true, n: page.length, remaining, ...(keptAs ? { kept_as: keptAs } : {}) }, Date.now() - started);
+      return okResult(payload);
     },
   });
 
@@ -4055,24 +4165,50 @@ export default function (pi: ExtensionAPI) {
     name: "inputs",
     label: "Inputs",
     description:
-      "List this swarm's read-only inputs: every file under inputs/ with its size and hash, where they came from, and what guards them. Read them with read, grep or bash; never write there.",
+      "List this swarm's read-only inputs: every file under inputs/ with its size and hash, where they came from, and what guards them. Read them with read, grep or bash; never write there. The files are one page of whole rows under the inbox page bound: when it holds rows back it names next (call again with from: that path), remaining and kept_as, the whole list on disk with its size and sha256; the per-set counts and the totals are always whole.",
     promptSnippet: "See the read-only files the swarm was given",
-    parameters: Type.Object({}),
-    async execute(_id, _params, _signal, _onUpdate, toolCtx: ToolCtx) {
+    parameters: Type.Object({
+      from: Type.Optional(Type.String({ description: "The path a previous page named as next: the listing continues from it" })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
       const manifest = await readInputsManifest(toolCtx.cwd);
       if (!manifest) {
         await logEvent(toolCtx.cwd, agentId, "inputs", {}, { ok: true, inputs: false }, Date.now() - started);
         return okResult({ inputs: false, hint: "This swarm was given no read-only inputs. Everything you need is in the goal and on the board." });
       }
-      await logEvent(toolCtx.cwd, agentId, "inputs", {}, { ok: true, inputs: true, n: manifest.files.length, bytes: manifest.bytes }, Date.now() - started);
+      const fromPath = (params as { from?: string } | undefined)?.from;
+      const startAt = fromPath === undefined ? 0 : manifest.files.findIndex((f) => f.path === fromPath);
+      if (startAt < 0) {
+        const reason = `from names ${fromPath}, which is not a file of the inputs; a page names the next path as next`;
+        await logEvent(toolCtx.cwd, agentId, "inputs", { from: fromPath }, { ok: false, reason }, Date.now() - started).catch(() => undefined);
+        return { content: [{ type: "text" as const, text: `inputs refused: ${reason}` }], details: { ok: false, reason }, isError: true };
+      }
+      const rows = manifest.files.slice(startAt).map((f) => ({ path: f.path, bytes: f.bytes, sha256: f.sha256.slice(0, 12) }));
+      const { page, remaining } = pageWholeItems(rows, itemBudget(inboxPageChars()));
+      let keptAs: { path: string; bytes: number; sha256: string } | undefined;
+      let writeError: string | undefined;
+      let next: string | undefined;
+      if (remaining > 0) {
+        next = rows[page.length]!.path;
+        // The whole list, with the whole hashes, kept once under tool-output/<seat>/ (every seat reads its own).
+        const kept = await keepToolOutput(toolCtx.cwd, toolOutputRel(agentId, "inputs", "text"), manifest.files.slice(startAt).map((f) => JSON.stringify({ path: f.path, bytes: f.bytes, sha256: f.sha256 })).join("\n") + "\n");
+        if (kept.write_error) writeError = kept.write_error;
+        else keptAs = { path: kept.path, bytes: kept.bytes, sha256: kept.sha256 };
+      }
+      await logEvent(toolCtx.cwd, agentId, "inputs", fromPath === undefined ? {} : { from: fromPath }, { ok: true, inputs: true, n: page.length, remaining, total: manifest.files.length, bytes: manifest.bytes, ...(keptAs ? { kept_as: keptAs } : {}) }, Date.now() - started);
       return okResult({
         inputs: true,
         source: manifest.source,
         ...(manifest.sets?.length ? { sets: manifest.sets.map((set) => ({ name: set.name, path: `${set.path}/`, source: set.source, count: set.files, bytes: set.bytes })) } : {}),
         count: manifest.files.length,
         bytes: manifest.bytes,
-        files: manifest.files.map((f) => ({ path: f.path, bytes: f.bytes, sha256: f.sha256.slice(0, 12) })),
+        files: page,
+        n: page.length,
+        remaining,
+        ...(next ? { next, note: `${remaining} more file${remaining === 1 ? " was" : "s were"} held back to keep this reply under ${inboxPageChars().toLocaleString("en-US")} characters; nothing was cut. Call inputs again with from: "${next}"${keptAs ? `, or read the whole list at ${keptAs.path}` : ""}.` } : {}),
+        ...(keptAs ? { kept_as: keptAs } : {}),
+        ...(writeError ? { write_error: writeError } : {}),
         guard: { requested: manifest.enforce, kickoff: manifest.guard, in_this_pane: inputsEnforced },
         rule: "Read only. Writes under inputs/ are refused or undone and announced; put results in work/, copying an input there if you need a version you can change.",
       });

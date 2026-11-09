@@ -1,0 +1,72 @@
+{
+  "name": "macos_triage",
+  "description": "Run the pinned mac_apt (1.33.2, amd64 worker image only) over a macOS acquisition in the input mode that matches it, keep its logs and output whole, and say per plugin what the LOG shows. SENSITIVE: the output holds the examined system's own content (keychain metadata, shadow hash plists, browser data, user files); the manifest declares secret_output required, so every job of this tool is a secret job. path is the image, collection or folder; input_type is one of AFF4, AXIOMZIP, DD, DMG, E01, MOUNTED, SPARSE, UAC, VMDK, VR and must match the acquisition (a folder for MOUNTED, a file for the others; E01, SPARSE, VMDK, DMG, zip and collection-suffix checks are made before mac_apt starts, and a link is refused). plugins is a list of plugin names (upper-cased; ALL or FAST for a set; a trailing - excludes one), default FAST. formats is any of xlsx, csv, tsv, jsonl (default csv; mac_apt always writes mac_apt.db). A FileVault password or recovery key is given only as password_file, a sealed file (mode 0600) that the tool checks and never reads and mac_apt reads itself (-pf); there is no password argument, and an argument the tool does not know is refused. already_decrypted passes -d. WHAT WAS READ AND WHAT WAS NEVER SEEN: mac_apt was not installed or run to build this tool. The argument shape (positional input type and plugins, -o, -x -c -t -j, -pf, -d), the log file name (Log.<time>.txt in the output folder) and the texts of the start, plugin start, plugin end, plugin exception and finish log lines were read from the source of v1.33.2 (mac_apt.py, GitHub raw view, 2026-11-04). Never observed and not in what was read: the prefix of a log line, the wording of a plugin that finds nothing or does not take an operating-system version (so `empty` and `unsupported` rest on an assumed wording), the per-plugin file names of the formats (a file is tied to a plugin only when its name holds the plugin name, a guess), the console copy of the log, and the behaviour on an encrypted image without a password. The tests use stand-in programs shaped from the read lines. The tool runs mac_apt.py -h first (its description carries the version) and records the version, the argv (paths and the password file as placeholders) and the plugin list. mac_apt runs in this tool's own process group under the shared process block (a deadline, SIGTERM, SIGINT or SIGHUP end it and what it started; PR_SET_PDEATHSIG on Linux; never a session of its own), with its working directory, TMPDIR and HOME inside a run directory of this run only (under $OUT/tool-output or work/<your id>/tool-output, mode 0700; a rerun gets a directory of its own and never replaces an earlier one). stdout and stderr are written whole to files (mode 0600); max_output_bytes (default 268435456) ends mac_apt when they pass it and the answer says so. Status per plugin, from the log and never from the exit code (mac_apt exits 0 after errors it logged): parsed (started, ran to its end line, and no line inside its run holds an error word: error, exception, traceback, failed, cannot, could not, unable, corrupt, malformed or invalid, in any case; that absence rests on a log format never observed: the source sets the log file format '%(asctime)s|%(name)s|%(levelname)s|%(message)s', read through a page summary and never seen in a real run, so a failure logged below ERROR level or without an error word (permission denied, timed out, no such file, refused, skipping, errno) can still read as parsed), empty (as parsed, and every line inside its run says nothing was found), unsupported (a line inside its run says it does not support something, or mac_apt logged that it found no macOS installation), failed (an exception, an error line, a traceback, no end line, started more than once, or requested and never started). A plugin is never parsed from output nothing here recognised; no line of the log is copied into the answer (it can quote the evidence), only line numbers and fixed sentences. parsed is not a count of records. The tool status is complete only when mac_apt exited 0, was not ended, the log was read from the Log.<time>.txt file, its start line (with the pinned version) and its finish line are there, every requested plugin is parsed or empty, and no error line or traceback sits outside a plugin. Anything else is partial; nothing recognised as a mac_apt run, a missing or arm64-unavailable mac_apt, a refused argument or an output directory that refused a write is failed. With ALL or FAST the run is at most partial, because the plugins those names expand to are not listed by anything read here. Where mac_apt is not installed (it is left out of the arm64 image: its statx helper has no aarch64 syscall number and stops at import) the answer is status failed with that packaging reason, exit 1. Strings from the evidence (plugin names, output file names, the version) pass the shared boundary by their field kind; the kept log and output files hold mac_apt's text as it wrote it. It has a clock of its own (max_seconds, default 6600, at most 6900) below the 7200 seconds of the manifest; SIGTERM, SIGINT and SIGHUP end the tool with one JSON answer (interrupted set, exit 128 plus the signal; partial when plugins were read from the log before the stop); a signal in the first tens of milliseconds, before the module has run, ends it with no JSON (stated, not closed). Every answer carries status and status_basis. Not provided: no artefact is interpreted here (the output files are mac_apt's), no record count, no plugin list for ALL or FAST, no snapshot or deleted-data claim. ABANDONED CHILD: on Linux the shared PROCESS block makes the tool a child subreaper (prctl PR_SET_CHILD_SUBREAPER) before it starts the program, so every orphan the program leaves, whatever its session or process group (setsid, setpgid, a double fork, a writer that never exits), comes to it as its child. When the program has left the list of running programs (it ended on its own, at the deadline or at the output cap) the block's settle() stops those children and what they started, kills them (each pid's start time is read again before the signal) and reaps them with waitpid, for at most 3 seconds, BEFORE any size, hash, file list or log is read; one found makes the answer `partial` (program_group.left_behind) and the result is what they held at that moment. Where it cannot become the subreaper (the host is not Linux, prctl refused) or the process table cannot be read, nothing proves the files of the run final: the answer is at most `partial` and program_group.unproven says what could not be checked, never `complete`; this holds whether or not it leads its process group. After that the files are measured again one second later and, on Linux, the processes that hold one open are looked for: a file that grew or a holder makes the answer `partial`. THE LOG READ is charged to the tool's own clock: it gets what is left of max_seconds and at least 10 seconds, never past 7050 seconds from the start of the call, and at most 536870912 bytes (512 MiB) in all; a read that the deadline or the cap ends makes the answer `partial` (log.read_cut, 'the log was not fully read'). A line is scanned whole up to 1 MiB; a longer one is read to that length, counted in log.long_lines and makes the answer `partial`. LINE SHAPE (rests on a format never observed): the source sets the log format time|logger|LEVEL|message (read through a page summary, never seen in a real run); a line is a start, plugin start, plugin end, exception, finish or no-macOS line only when it has that shape and its MESSAGE begins with the text of that line. A line that holds the text without the shape is counted (log.unanchored_lines), is not recognised and makes the answer `partial`; a message that only quotes or ends with the text is an ordinary line. So if the real format differs, a run reads as `failed` or `partial`, never as a wrong `complete`. Evidence text that carries a line break followed by the whole shape could still forge a line (the logger was not seen to escape one). The finish hint ('Review the Log file and report any ERRORs or EXCEPTIONS to the developers') is exempt from the error vocabulary only as the whole message of a line of that shape with no error word in its prefix. When a Log.<time>.txt exists, the last 65536 bytes of stdout and of stderr are read for an error word or a traceback (the finish hint taken out): a hit is a problem and makes the answer `partial`; the rest of them is not read. A log name that is not a regular file (a FIFO planted at Log.<time>.txt) is never opened blocking: it is unreadable, the log is not read and the run is `partial`. A stop signal that arrives while the log is read ends the read (the answer is the stop answer).",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The image, collection or folder to read (a link is refused)"
+    },
+    "input_type": {
+      "type": "string",
+      "description": "mac_apt input type: AFF4, AXIOMZIP, DD, DMG, E01, MOUNTED, SPARSE, UAC, VMDK or VR; it must match the acquisition"
+    },
+    "plugins": {
+      "type": "array",
+      "description": "Plugin names (upper-cased; ALL or FAST for a set; a trailing - excludes one). Default [\"FAST\"]; a set can never give a complete run"
+    },
+    "formats": {
+      "type": "array",
+      "description": "Any of xlsx, csv, tsv, jsonl (default [\"csv\"]); mac_apt.db is always written"
+    },
+    "password_file": {
+      "type": "string",
+      "description": "A sealed secret file (mode 0600) holding the FileVault password or recovery key; checked, never read here, handed to mac_apt as -pf. There is no password argument"
+    },
+    "already_decrypted": {
+      "type": "boolean",
+      "description": "Pass -d: the image is already decrypted (not with password_file)"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The program's deadline in seconds (default 6600, at most 6900)"
+    },
+    "max_output_bytes": {
+      "type": "integer",
+      "description": "Bytes of stdout and stderr together kept before mac_apt is ended (default 268435456)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 7200,
+  "secret_output": "required",
+  "example": "{\"path\": \"work/extracted/mac.E01\", \"input_type\": \"E01\", \"plugins\": [\"TCC\", \"BASHSESSIONS\"]}",
+  "by": "maintainer",
+  "at": "2026-11-04T12:00:00.000Z",
+  "version": 5,
+  "sha256": "50a0c3b760743253de921a522c24b4dd673125ba4f851fba3edc5cefa1d053ef",
+  "use": {
+    "extensions": [
+      ".e01",
+      ".dmg",
+      ".sparseimage",
+      ".vmdk"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "455646090d0aff00"
+      },
+      {
+        "offset": 0,
+        "hex": "73707273"
+      },
+      {
+        "offset": 0,
+        "hex": "4b444d56"
+      }
+    ]
+  },
+  "requires": [
+    "mac_apt.py"
+  ]
+}

@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { readFile, readdir, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_PROBE, DOC_STRUCTURE, FUZZY, PE_DIRECTORIES, PE_INFO, RE, RECIPE, TOOLS, buildPe, childrenOf, gone, pidFile, put, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { DOC_PROBE, DOC_STRUCTURE, ELF_DIRECTORIES, FUZZY, PE_DIRECTORIES, PE_INFO, RE, RECIPE, TOOLS, buildPe, childrenOf, gone, pidFile, put, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
@@ -70,7 +70,7 @@ test("SIGTERM, SIGINT and SIGHUP end the engine and what it started, and the too
         assert.equal(await gone(engine), true, `${how}: the engine survived`);
         assert.equal(await gone(child), true, `${how}: what the engine started survived`);
         const word = JSON.parse(run.stdout()) as Json;
-        assert.equal(word.status, "failed");
+        assert.equal(word.status, "interrupted");
         assert.match(word.error, /stopped by signal/);
       } finally {
         for (const pid of [engine, child]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
@@ -183,11 +183,11 @@ const sha = (text: string): string => createHash("sha256").update(text).digest("
 // reverse-engineering packs and the tool library; the tests of each hold their copies equal). The process block is the one
 // with the poll() guard in kill_tree, the seen set in the walk, the libproc route on macOS, the bounded pipe read (communicate_bounded) and the
 // signal path that also ends everything below the tool (tests/pack-shared-process.test.ts holds those cases).
-const NETWORK_PROCESS_SHA = "6a346a556fd3aa04e663d17a505434db5195726251411f19809dd8c69e96e9f2";
-const NETWORK_WITHHOLDING_SHA = "fdd1ae506f0e017a7fb011e552ba9ac5dd015728d8eeadc534fbc88e3f72c0a5";
+const NETWORK_PROCESS_SHA = "80256d11fb0fbb7604f195ef4c66022d598a888486f6384bc295d3d2f6c92b33";
+const NETWORK_ZEEK = join(RE, "..", "network-forensics", "tools", "zeek_run", "run.py"); // the network pack's text is read, not pinned by a digest, so that a sweep of the block does not leave this test behind
 
 test("the tool and the recipes that start programs carry one process block, the network pack's text, and nothing in the pack starts a program in a session or a group of its own", async () => {
-  const files = [join(TOOLS, "fuzzy_hash", "run.py"), RECIPE, CAPA_FLOSS];
+  const files = [join(TOOLS, "fuzzy_hash", "run.py"), join(TOOLS, "unpack_safe", "run.py"), join(TOOLS, "authenticode_verify", "run.py"), join(TOOLS, "clr_inspect", "run.py"), DOC_STRUCTURE, RECIPE, CAPA_FLOSS];
   const blocks = await Promise.all(files.map(processBlock));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   assert.equal(sha(blocks[0]!), NETWORK_PROCESS_SHA);
@@ -209,15 +209,15 @@ test("the tool and the recipes that start programs carry one process block, the 
 });
 
 test("the withholding blocks of doc_probe, doc_structure, pe_directories, pe_info and the capa-floss recipe are the network pack's text", async () => {
-  for (const path of [DOC_PROBE, DOC_STRUCTURE, PE_DIRECTORIES, PE_INFO, CAPA_FLOSS]) assert.equal(sha(await block(path, "WITHHOLDING")), NETWORK_WITHHOLDING_SHA, path);
+  for (const path of [DOC_PROBE, DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, PE_INFO, CAPA_FLOSS]) assert.equal(sha(await block(path, "WITHHOLDING")), sha(await block(NETWORK_ZEEK, "WITHHOLDING")), path);
 });
 
 test("doc_structure, pe_directories and the capa-floss recipe carry one ONE WAY OUT block (the sanitiser and the backstop), after the withholding block", async () => {
-  const blocks = await Promise.all([DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS].map((p) => block(p, "ONE WAY OUT")));
+  const blocks = await Promise.all([DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, CAPA_FLOSS].map((p) => block(p, "ONE WAY OUT")));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   assert.match(blocks[0]!, /^def shown_path\(text\):$/m);
   assert.match(blocks[0]!, /^def final_check\(value, safe=None, key=""\):$/m);
-  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS]) {
+  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, CAPA_FLOSS]) {
     const text = await readFile(path, "utf8");
     assert.ok(text.indexOf("# END SHARED WITHHOLDING") < text.indexOf("# BEGIN SHARED ONE WAY OUT"), `${path}: the one-way-out block follows the withholding block`);
     // one definition of each: no second sanitiser elsewhere in the file
@@ -231,7 +231,7 @@ test("the timeouts the pack sets itself are below the manifest's and the recipe'
   const total = Number(/^TOTAL_BUDGET = (\d+)/m.exec(fuzzy)![1]);
   const manifest = JSON.parse(await readFile(join(TOOLS, "fuzzy_hash", "manifest.json"), "utf8")) as Json;
   assert.ok(total < manifest.timeout_seconds, `fuzzy_hash budgets ${total} s of ${manifest.timeout_seconds}`);
-  for (const [tool, name] of [["doc_probe", "DEFAULT_SECONDS"], ["doc_structure", "DEFAULT_SECONDS"], ["pe_directories", "DEFAULT_SECONDS"], ["pe_info", "DEFAULT_SECONDS"], ["entropy_map", "DEFAULT_SECONDS"]] as const) {
+  for (const [tool, name] of [["doc_probe", "DEFAULT_SECONDS"], ["doc_structure", "DEFAULT_SECONDS"], ["pe_directories", "DEFAULT_SECONDS"], ["elf_directories", "DEFAULT_SECONDS"], ["macho_directories", "DEFAULT_SECONDS"], ["pe_info", "DEFAULT_SECONDS"], ["entropy_map", "DEFAULT_SECONDS"]] as const) {
     const text = await readFile(join(TOOLS, tool, "run.py"), "utf8");
     const own = Number(new RegExp(`^MAX_SECONDS = (\\d+)`, "m").exec(text)![1]);
     const dflt = Number(new RegExp(`^${name} = (\\d+)`, "m").exec(text)![1]);

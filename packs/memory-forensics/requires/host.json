@@ -79,6 +79,25 @@
       "redistributable": false
     },
     {
+      "name": "dwarf2json",
+      "package": "dwarf2json",
+      "optional": true,
+      "why": "Turn a Linux kernel's debug material (a vmlinux or debug-symbols file, or a System.map) into an Intermediate Symbol Format table that `vol` loads. The isf_intake tool runs it on what the operator supplies and calls the table ready only when its banner is, character for character, one found in the image. The project publishes a Linux build for amd64 only (v0.9.0 has no arm64 asset), so an arm64 image records it as not installed. Its source builds with Go 1.18 and fetches a module (pflag) when built, so a build recipe is not used.",
+      "install": {
+        "brew": "https://github.com/volatilityfoundation/dwarf2json/releases",
+        "apt": "pinned download 0.9.0 (install.download)",
+        "download": {
+          "version": "0.9.0",
+          "amd64": {
+            "url": "https://github.com/volatilityfoundation/dwarf2json/releases/download/v0.9.0/dwarf2json-linux-amd64",
+            "sha256": "e2e75ba5bc9c22bc38a48edffbb050456d089d54998d54f46cb580223d9fbc6b"
+          }
+        }
+      },
+      "licence": "Volatility Software License 1.0 (https://github.com/volatilityfoundation/dwarf2json/blob/v0.9.0/LICENSE.txt)",
+      "redistributable": false
+    },
+    {
       "name": "avml",
       "package": "AVML",
       "optional": true,
@@ -99,7 +118,8 @@
         }
       },
       "licence": "MIT",
-      "redistributable": false
+      "redistributable": false,
+      "not_in_image": "A live-memory acquirer, run on the source host whose memory it captures; run in an analysis VM it would capture that VM, not the subject. The pinned download stays declared so the operator has the exact binary and checksum to take to the source."
     },
     {
       "name": "strings",
@@ -117,7 +137,7 @@
       "name": "yara",
       "package": "yara",
       "optional": true,
-      "why": "Scan a whole memory image or a dumped process region with examiner-supplied rules, preserving rule names, matching strings and byte offsets (match bytes can be secret: run the job with secret_output: true). This is the standalone scanner: Volatility's YARA plugins need a Python binding that no requirement of this pack installs.",
+      "why": "Scan a whole memory image or a dumped process region with examiner-supplied rules, preserving rule names, matching strings and byte offsets (match bytes can be secret: run the job with secret_output: true). This is the standalone scanner: Volatility's YARA plugins need a Python binding, which requires/python.txt declares (yara-python, pinned) for the image's Python environment.",
       "install": {
         "brew": "brew install yara",
         "apt": "apt-get install -y yara"

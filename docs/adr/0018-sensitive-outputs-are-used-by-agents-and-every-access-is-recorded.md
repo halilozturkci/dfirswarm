@@ -63,8 +63,11 @@ page is the decision they rest on.
    mark is not a reason to hide the job from the board, the console or the
    report.
 3. **The operator's console shows sensitive content.** The operator is the
-   owner of the run and sees what the run holds. Each time the console opens
-   a sensitive file, that is recorded.
+   owner of the run and sees what the run holds. Each time the console
+   serves a sensitive job's log, that is recorded on the operator's audit,
+   as a `console_view` line, before it is served; the console has no route
+   that serves a job's output file, and one added later records its views
+   the same way.
 4. **A broad-scope job that names a sensitive path runs.** A job with no
    declared scope whose command, arguments, source or targets name a
    sensitive output is not refused. The dependency is declared on the agent's
@@ -109,6 +112,12 @@ page is the decision they rest on.
    says to hand the package over with `--redact`. A line the record marks as
    "maybe" or "text" is replaced as well: redacting too much costs a line,
    and redacting too little costs a value.
+   The directories `tool-output/<seat>/` and `.pi-sessions/` in the run's
+   working directory hold plaintext: what a seat's tool returned and what its
+   session recorded. This decision builds nothing for them and changes
+   neither in the run; a package replaces the kept copy the record names
+   (`kept_as`) when it carries it, and `--with-sessions` replaces the
+   recorded sensitive values by keyed ids.
 10. **The record is a lower bound, and the report says so in a fixed
     sentence.** What the harness sees is what an agent's own tool call names:
     a path the read tools are given, a path or sensitive job id in a command

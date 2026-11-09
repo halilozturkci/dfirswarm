@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { deepSuites, nodeSuites } from "../scripts/test-node.ts";
+import { repoLayout, select } from "../scripts/test-select.ts";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const WORKFLOW = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
@@ -125,8 +126,12 @@ const SHELL_TAIL = String.raw` \$\{\{ needs\.select\.outputs\.all != 'true' && f
 test("a suite list narrows a run only through the select job, and never on a run it marks as everything", () => {
   const narrowing = [...WORKFLOW.matchAll(/--files-from|--within|--tier=/g)].length;
   const guarded = [...WORKFLOW.matchAll(/needs\.select\.outputs\.all != 'true' && format\('--(?:files-from|within)=\{0\}\/(?:node|shell)\.list', runner\.temp\)/g)].length;
+  // The Python 3.11 job builds its own list (the pack-tool suites among the select job's, or all of them) in a step that reads the
+  // select job's outputs; the next test holds that step to it.
+  const packList = [...WORKFLOW.matchAll(/--files-from="\$RUNNER_TEMP\/pack\.list"/g)].length;
   assert.ok(narrowing > 0, "no job reads the select job's lists");
-  assert.equal(narrowing, guarded, "a --files-from, --within or --tier in ci.yml that is not the select job's guarded list");
+  assert.equal(narrowing, guarded + packList, "a --files-from, --within or --tier in ci.yml that is not the select job's guarded list");
+  assert.equal(packList, 1, "the Python 3.11 job's one list");
   const select = WORKFLOW.match(/^ {2}select:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n)/m)?.[1] ?? "";
   assert.match(select, /if \{ \[ "\$EVENT" != pull_request \] && \[ "\$narrow_push" != true \]; \} \|\| \[ "\$FULL_LABEL" = true \]; then[\s\S]*?echo "all=true"/, "a run that is neither a pull request nor a push with a range (the nightly run, a run by hand), and a pull request labelled full-ci, must run everything");
   assert.match(select, /narrow_push=false\n\s+if \[ "\$EVENT" = push \] && \[ -n "\$BASE" \] && git cat-file -e "\$BASE\^\{commit\}" 2>\/dev\/null; then narrow_push=true; fi/, "only a push whose before is a commit here may run narrow");
@@ -219,7 +224,7 @@ test("the node suites npm test runs are found by scripts/test-node.ts, none lost
   assert.equal(run.length + skipped.length, onDisk);
 });
 
-test("the CI green job, the check main requires, needs every other job, always runs, and passes on success or skipped only", () => {
+test("the CI green job, the check main requires, needs every other job but macos, always runs, and decides through scripts/ci-green.ts", () => {
   const jobs = WORKFLOW.slice(WORKFLOW.search(/^jobs:\n/m));
   const ids = [...jobs.matchAll(/^ {2}([a-z][\w-]*):\n/gm)].map((m) => m[1]);
   const green = jobs.match(/^ {2}green:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))/m)?.[1];
@@ -229,7 +234,156 @@ test("the CI green job, the check main requires, needs every other job, always r
   // because a job it needs failed would let the pull request merge.
   assert.match(green, /^ {4}if: always\(\)$/m, "it must run whatever the jobs it needs did");
   const needs = green.match(/^ {4}needs: \[([^\]\n]*)\]$/m)?.[1].split(",").map((s) => s.trim()) ?? [];
-  assert.deepEqual([...needs].sort(), ids.filter((id) => id !== "green").sort(), "it must need every other job, or a job it leaves out could fail and the pull request still merge");
+  assert.deepEqual([...needs].sort(), ids.filter((id) => id !== "green" && id !== "macos" && id !== "report-failure").sort(), "it must need every other job but macos and the failure reporter (which needs it), or a job it leaves out could fail and the pull request still merge (the macOS parts are read from the run's job list by scripts/ci-green.ts, so a queued Mac does not hold it)");
   assert.match(green, /NEEDS: \$\{\{ toJSON\(needs\) \}\}/, "it reads every result it needs");
-  assert.match(green, /jq -e 'all\(\.\[\]; \.result == "success" or \.result == "skipped"\)'/, "anything but success or skipped (failure, cancelled) must fail it");
+  assert.match(green, /scripts\/ci-green\.ts[\s\S]*--needs-env NEEDS[\s\S]*--jobs-from-gh/,"it decides through scripts/ci-green.ts: the needed jobs pass on success or skipped only (tests/ci-green.test.ts), and the macOS parts are read from this run attempt's jobs");
+  assert.match(green, /^ {6}actions: read$/m, "it reads the run's jobs");
+  assert.doesNotMatch(green, /^ {4}needs:.*\bmacos\b/m, "it does not need the macOS job");
+});
+
+// --- the Python 3.11 job: the pack tools on the images' interpreter -----------------------------------------------------------------
+
+/** The text of one job of ci.yml, up to the next job. */
+function jobText(name: string): string {
+  const m = WORKFLOW.match(new RegExp(String.raw`^ {2}${name}:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))`, "m"));
+  assert.ok(m, `ci.yml has no \`${name}:\` job`);
+  return m[1];
+}
+
+const BASE_DOCKERFILE = readFileSync(join(ROOT, "images/base.Dockerfile"), "utf8");
+
+test("a job runs the pack-tool suites on the images' Python 3.11, in the images' own base image, from the images' apt snapshot", () => {
+  const job = jobText("python-311");
+  // The image is the one the base Dockerfile ends in, by the same digest: a digest moved there (scripts/apt-snapshot-bump.sh --digests) and not here fails this.
+  const from = [...BASE_DOCKERFILE.matchAll(/^FROM (node:24-bookworm-slim@sha256:[0-9a-f]{64})$/gm)].map((m) => m[1]);
+  assert.equal(from.length, 1, "images/base.Dockerfile has one node:24-bookworm-slim stage, pinned by digest");
+  const image = from[0].replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
+  assert.match(job, new RegExp(String.raw`^ {4}container:\n {6}image: ${image}\n(?: {6}#[^\n]*\n)* {6}options: --init$`, "m"), "the job's container is the base image's node stage, by its digest, with an init that reaps what the suites kill (a zombie is still a pid to a stop-signal case)");
+  assert.match(job, /^ {4}runs-on: ubuntu-24\.04$/m);
+  // python3 comes from the images' own apt sources (the snapshot date in images/debian-snapshot, the sources text of the Dockerfile) and is checked to be 3.11.
+  assert.match(job, /d="\$\(tr -d '\[:space:\]' < images\/debian-snapshot\)"/, "the snapshot date is read from images/debian-snapshot");
+  const sources = BASE_DOCKERFILE.match(/printf ('Types: deb\\nURIs: http:\/\/snapshot\.debian\.org[^']*') "\$d" "\$d" > \/etc\/apt\/sources\.list\.d\/debian\.sources/)?.[1];
+  assert.ok(sources, "the Dockerfile writes the snapshot sources");
+  assert.ok(job.includes(`printf ${sources} "$d" "$d" > /etc/apt/sources.list.d/debian.sources`), "the job writes the same apt sources as the base image");
+  assert.match(job, /apt-get install -y -q --no-install-recommends [^\n]*\bpython3\b/, "python3 is Debian's");
+  assert.match(job, /assert sys\.version_info\[:2\] == \(3, 11\)/, "the job fails when the interpreter is not 3.11");
+  // The suites: the pack-tool ones, by scripts/test-node.ts, in shards 1..N of one N, as an unprivileged user.
+  const parts = [...job.matchAll(/^\s+part: \[([^\]]*)\]$/gm)][0]?.[1];
+  assert.ok(parts, "no part: [..] matrix");
+  const shards = parts.split(",").map((s) => s.trim().replace(/^"|"$/g, "").split("/").map(Number));
+  const n = shards[0][1];
+  assert.ok(shards.every(([, m]) => m === n), "the parts name different shard counts");
+  assert.deepEqual(shards.map(([i]) => i).sort(), Array.from({ length: n }, (_, k) => k + 1), "the parts must be shards 1..N, each once");
+  assert.match(job, /scripts\/test-node\.ts --test-shard=\$\{\{ matrix\.part \}\} --files-from="\$RUNNER_TEMP\/pack\.list" "--test-skip-pattern=a walk of the whole file system with max_seconds 1"'/, "each part runs its own shard of the pack list through scripts/test-node.ts, with the one case it names left out");
+  // The one case left out exists, under that name, and says why it cannot run on a small root (it walks "/").
+  const skipped = readFileSync(join(ROOT, "tests/pack-windows-forensics-links-contract.test.ts"), "utf8");
+  assert.match(skipped, /test\("lnk_jumplist: a walk of the whole file system with max_seconds 1 ends by its clock/, "the skipped case is named as the job skips it");
+  assert.match(skipped, /runTool\("lnk_jumplist", cwd, \{ path: "\/", max_seconds: 1 \}\)/, "and it walks the root, the file system whose size it relies on");
+  assert.equal(job.match(/--test-skip-pattern/g)?.length, 1, "one case is left out, no more");
+  // Two uids share the job: root in the container (the steps), the runner's own (the files it writes into $RUNNER_TEMP before every step).
+  // A chown of $RUNNER_TEMP to the node user locks the runner out of its own step files, and the next step fails.
+  const commands = job.split("\n").filter((l) => !/^\s*#/.test(l));
+  assert.deepEqual(commands.filter((l) => /\bchown\b/.test(l)).map((l) => l.trim()), ['chown -R node:node "$GITHUB_WORKSPACE"'], "the only chown is of the workspace");
+  assert.ok(!commands.some((l) => /\b(chown|chmod)\b[^\n]*RUNNER_TEMP/.test(l)), "$RUNNER_TEMP is not handed to the node user");
+  assert.match(job, /if \[ "\$ALL" = true \] && \[ ! -s "\$RUNNER_TEMP\/pack\.list" \]; then[^\n]*exit 1; fi/, "a run that runs everything fails on an empty list");
+  assert.match(job, /su node -s \/bin\/bash -c 'node --experimental-strip-types/, "the suites run as the image's unprivileged user");
+  // The list is the pack-tool suites among the select job's (a narrow run), or all of them: nothing else narrows it.
+  assert.match(job, /ALL: \$\{\{ needs\.select\.outputs\.all \}\}\n\s+NODE_LIST: \$\{\{ needs\.select\.outputs\.node \}\}/, "the list is built from the select job's outputs");
+  assert.match(job, /if \[ "\$ALL" = true \]; then\n\s+su node -s \/bin\/bash -c 'node --experimental-strip-types --no-warnings scripts\/test-node\.ts --list'\n\s+else\n\s+printf '%s\\n' "\$NODE_LIST"\n\s+fi \| \{ grep -E '\^tests\/pack-\[\^\/\]\+\\.test\\.ts\$' \|\| true; \} > "\$RUNNER_TEMP\/pack\.list"/, "everything: every suite npm test runs, then only the tests/pack-*.test.ts ones; narrow: those among the select job's");
+});
+
+test("the select job decides the Python 3.11 job, and the green check needs it", () => {
+  const select = jobText("select");
+  assert.match(select, /py311: \$\{\{ steps\.s\.outputs\.py311 \}\}/, "select exports py311");
+  assert.match(select, /\{ echo "all=true"; echo "vm=true"; echo "py311=true"; echo "node="; echo "shell="; \} >> "\$GITHUB_OUTPUT"/, "a run that runs everything runs the job (the nightly run, a run by hand, the full-ci label)");
+  assert.match(select, /py311="\$\(q 's\.py311'\)"/, "a narrow run asks scripts/test-select.ts");
+  assert.match(jobText("python-311"), /^ {4}needs: select\n {4}if: needs\.select\.outputs\.py311 == 'true'$/m, "the job runs when select says so");
+  assert.match(jobText("green"), /^ {4}needs: \[[^\]\n]*\bpython-311\b[^\]\n]*\]$/m, "CI green needs the job");
+});
+
+test("scripts/test-select.ts asks for the Python 3.11 job for a pack, the tool library, an image file or a pack-tool suite, and for everything it does not narrow", () => {
+  const layout = repoLayout();
+  const packTool = layout.nodeRun.find((s) => /^tests\/pack-[^/]+\.test\.ts$/.test(s)) as string;
+  assert.ok(packTool, "there are pack-tool suites");
+  const yes = ["packs/cloud-forensics/tools/cloudtrail_parse/run.py", "packs/triage-collection/README.md", "tool-library/x/run.py", "images/base.Dockerfile", packTool, "scripts/vm.ts", ".github/workflows/ci.yml", "package.json"];
+  for (const f of yes) assert.equal(select([f], layout).py311, true, `${f} needs the Python 3.11 job`);
+  const no = ["docs/architecture.md", "changelog.d/x.md", "tests/ci-shards.test.ts", "tests/changelog.test.ts"];
+  for (const f of no) {
+    const s = select([f], layout);
+    assert.equal(s.all, false, f);
+    assert.equal(s.py311, false, `${f} does not need the Python 3.11 job (${s.reasons.join("; ")})`);
+  }
+  assert.equal(select([], layout).py311, false, "nothing changed");
+});
+
+test("the re-real-programs job reports and does not gate: continue-on-error is on the job, it runs only when the Python 3.11 job does, on Python 3.11, and CI green still needs it", () => {
+  const job = jobText("re-real-programs");
+  assert.match(job, /^ {4}continue-on-error: true$/m, "the job itself, not one step, does not fail the run");
+  assert.match(job, /^ {4}if: needs\.select\.outputs\.py311 == 'true'$/m);
+  assert.match(job, /actions\/setup-python@[0-9a-f]{40} # v[\d.]+\n {8}with:\n {10}python-version: "3\.11"/, "the FLOSS lock is resolved for 3.11");
+  assert.match(jobText("green"), /^ {4}needs: \[[^\]\n]*\bre-real-programs\b[^\]\n]*\]$/m);
+});
+
+test("the real-libraries job runs the listed files, fails on any skipped test, and CI green needs it", () => {
+  const job = jobText("real-libraries");
+  assert.match(job, /^ {4}needs: select\n {4}if: needs\.select\.outputs\.all == 'true' \|\| needs\.select\.outputs\.py311 == 'true'$/m, "it runs for everything and for a change the Python 3.11 job is also asked for");
+  assert.doesNotMatch(job, /continue-on-error/, "it gates: a failure fails CI green");
+  assert.match(job, /apt-get install -y -q qemu-utils /, "it installs qemu-img");
+  assert.match(job, /grep -hE '\^\(python-evtx\|regipy\|Pillow\|pytsk3\)[^\n]*packs\/\*\/requires\/python\.txt/, "it installs the libraries as the packs declare them, with no versions of its own");
+  assert.match(job, /--test-reporter=tap \$\(grep -vE '\^\[\[:space:\]\]\*\(#\|\$\)' tests\/real-libraries\.list\)/, "it runs the files of tests/real-libraries.list");
+  assert.match(jobText("green"), /^ {4}needs: \[[^\]\n]*\breal-libraries\b[^\]\n]*\]$/m, "CI green needs the job");
+  // The files it runs are real test files, one a line.
+  const listed = readFileSync(join(ROOT, "tests/real-libraries.list"), "utf8").split("\n").filter((l) => l.trim() && !l.startsWith("#"));
+  assert.equal(listed.length, 6);
+  for (const f of listed) assert.ok(readFileSync(join(ROOT, f), "utf8").length > 0, f + " is a test file");
+  // The skip check is the step's own text, run here on a TAP sample with and without a skip.
+  const step = job.match(/- name: Fail when any test was skipped\n {8}if: [^\n]*\n {8}run: \|\n((?: {10}[^\n]*\n)+)/);
+  assert.ok(step, "the job has a step that fails on a skip");
+  const script = step[1].replace(/^ {10}/gm, "");
+  const dir = mkdtempSync(join(tmpdir(), "real-libraries-"));
+  try {
+    const run = (tap: string | null) => {
+      const file = join(dir, "sample.tap");
+      if (tap !== null) writeFileSync(file, tap);
+      try {
+        return { code: 0, out: execFileSync("bash", ["-c", script], { env: { PATH: process.env.PATH ?? "", TAP: file, RUNNER_TEMP: dir }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
+      } catch (e) {
+        const err = e as { status: number; stdout: string };
+        return { code: err.status, out: err.stdout };
+      }
+    };
+    const clean = "TAP version 13\n# Subtest: a\nok 1 - a\n  ---\n  duration_ms: 1\n  ...\n1..1\n# tests 1\n# skipped 0\n";
+    assert.equal(run(clean).code, 0, "a run with no skip passes");
+    const skipped = "TAP version 13\nok 1 - a\n  # Subtest: nested\n  ok 1 - nested b # SKIP python-evtx is not installed on this host\nok 2 - c # SKIP no lib\n1..2\n# skipped 2\n";
+    const bad = run(skipped);
+    assert.notEqual(bad.code, 0, "a run with a skip fails");
+    assert.match(bad.out, /nested b # SKIP python-evtx is not installed/, "and names the skipped test");
+    assert.match(bad.out, /ok 2 - c # SKIP/);
+    assert.equal(run("TAP version 13\nok 1 - todo # TODO\n").code, 0, "a todo is not a skip");
+    rmSync(join(dir, "sample.tap"));
+    assert.notEqual(run(null).code, 0, "no TAP output at all fails");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the failure reporters run only on a schedule or a push to main, need every job, may write issues, and are not among green's needs", () => {
+  const jobs = WORKFLOW.slice(WORKFLOW.search(/^jobs:\n/m));
+  const ids = [...jobs.matchAll(/^ {2}([a-z][\w-]*):\n/gm)].map((m) => m[1]);
+  const ci = jobText("report-failure");
+  assert.match(ci, /^ {4}if: always\(\) && \(github\.event_name == 'schedule' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\)\)$/m, "a pull request is never reported");
+  const needs = ci.match(/^ {4}needs: \[([^\]\n]*)\]$/m)?.[1].split(",").map((s) => s.trim()) ?? [];
+  assert.deepEqual([...needs].sort(), ids.filter((id) => id !== "report-failure" && id !== "macos").sort(), "it reads every job's result but macos, as CI green does (the Mac is one machine)");
+  assert.ok(needs.includes("green"), "it reads CI green's own result");
+  assert.doesNotMatch(jobText("green"), /^ {4}needs:.*report-failure/m, "CI green does not need the reporter: the reporter needs it");
+  assert.match(ci, /^ {4}permissions:\n {6}contents: read\n {6}issues: write$/m, "it may write issues and nothing else");
+  assert.match(ci, /NEEDS_JSON: \$\{\{ toJSON\(needs\) \}\}/);
+  assert.match(ci, /run: bash scripts\/ci-report-failure\.sh$/m);
+  const boot = readFileSync(join(ROOT, ".github/workflows/image-boot.yml"), "utf8");
+  const bootJob = boot.match(/^ {2}report-failure:\n([\s\S]*)/m)?.[1] ?? "";
+  assert.ok(bootJob, "image-boot.yml has a report-failure job");
+  assert.match(bootJob, /^ {4}needs: \[boot\]$/m);
+  assert.match(bootJob, /^ {4}if: always\(\) && github\.event_name == 'schedule'$/m, "only its weekly schedule is reported");
+  assert.match(bootJob, /^ {4}permissions:\n {6}contents: read\n {6}issues: write$/m);
+  assert.match(bootJob, /run: bash scripts\/ci-report-failure\.sh$/m);
 });

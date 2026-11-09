@@ -7,7 +7,8 @@
  *  - a program that has ended while something it started still holds its pipes does not hold the tool (it waited for the last holder
  *    to let go, up to the program's whole life), and that holder is ended when the tool leads its group, as the harness starts it;
  *  - nothing outside the tool's own tree is ever signalled: a process in another group, and one in the tool's group when the tool does
- *    not lead it, are untouched.
+ *    not lead it, are untouched. (Since the block makes the tool a subreaper, what a program left is the tool's own child and is ended
+ *    whether or not the tool leads its group: tests/pack-shared-process-settle.test.ts.)
  *
  * The block is run as text in a process of its own (it must lead its group, the way the harness starts a tool), and the tools
  * are run end to end with a stand-in engine. Every stand-in and decoy is recorded by pid and ended by this file.
@@ -20,14 +21,15 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ZEEK, gone, pidFile, put, stub, withCwd } from "./pack-network-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const BEGIN = "# BEGIN SHARED PROCESS";
 const END = "# END SHARED PROCESS";
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 /** The two texts, as a copy carries them (from BEGIN to END, the way the other suites cut them). */
-export const GENERAL_SHA = "6a346a556fd3aa04e663d17a505434db5195726251411f19809dd8c69e96e9f2";
-export const WINDOWS_SHA = "d856905899410381ac49ee6157a8fd1c8c1db13c2c520dfac5ec2edfe12f324e";
+export const GENERAL_SHA = "80256d11fb0fbb7604f195ef4c66022d598a888486f6384bc295d3d2f6c92b33";
+export const WINDOWS_SHA = "f5e7f38978e383174cf6c3edeab50a503b0fb11f098e684c80a8a88d88ab3fcf";
 
 async function carriers(): Promise<string[]> {
   const found: string[] = [];
@@ -186,7 +188,7 @@ for (const [family, script] of FAMILIES) {
     });
   });
 
-  test(`${family}: a tool that does not lead its group ends nothing it did not start below itself (the holder is left, the tool is not held)`, async () => {
+  test(`${family}: a tool that does not lead its group still ends what its program left (the tool is a subreaper), and nothing beside it: not the tool's group, not a process it did not start`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd) => {
       // not detached: the tool is in this test's own group, which holds the decoy and the test runner
       const decoy = spawn("sleep", ["300"], { stdio: "ignore" });
@@ -198,7 +200,7 @@ for (const [family, script] of FAMILIES) {
         assert.equal(ran.code, 0, ran.stderr);
         assert.ok(JSON.parse(ran.stdout).took < 10);
         assert.equal(await gone(decoy.pid as number, 300), false, "a process in the shared group was signalled");
-        assert.equal(await gone(holder, 300), false, "the holder was ended although the tool does not lead its group");
+        assert.equal(await gone(holder, 10_000), true, "the holder, which the program left and the tool adopted, was not ended (tests/pack-shared-process-settle.test.ts has the cases of settle)");
       } finally {
         ran?.endGroup();
         for (const pid of [holder, decoy.pid as number]) if (pid) end(pid);

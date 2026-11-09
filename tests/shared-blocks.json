@@ -1,0 +1,42 @@
+{
+  "about": "Every shared block under packs/ and tool-library/: a family is the name in its BEGIN/END markers (`# BEGIN SHARED X` ... `# END SHARED X`, or the dashed `# ---- BEGIN X ----` ... `# ---- END X ----`), a variant is one text of it (the lines strictly between the markers, digested), carriers is how many files hold that text, example is one of them. The first variant of a family is its base; every other variant says why it exists. tests/shared-blocks-census.test.ts fails on a family or a variant that is not declared here, on a changed number of carriers, and on a BEGIN without its END. When a sweep or an adoption adds or removes carriers, change `carriers` in the same change; when a new variant is meant, add it with its reason. A block that changes everywhere at once needs no edit here (the file declares counts, not digests).",
+  "lossless_page": "Recommendation on `LosslessPage` (not marked, converted or counted here): the class is in 67 files in several textual variants, and the largest group, the windows pack's tools and their tool-library twins, carries one text (slice it as tests/tool-library.test.ts does, from `class LosslessPage` to its `return result`). It is a block in every sense but the markers. Recommendation: mark it as a block (`# BEGIN SHARED LOSSLESS PAGE`) in the windows lineage first, where the text is already one, declare that family here, and leave the other variants unmarked until each pack's own package converges its pager; do not mark all 67 at once, because the PAGE block and NoReplacePage already sit beside it in the same files and a sweep of the class would be one more writer on them. The owner decides.",
+  "families": {
+    "ARCHIVE BLOCK": { "variants": [ { "carriers": 3, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },
+    "BACKSTOP": { "variants": [ { "carriers": 8, "example": "packs/ransomware-response/tools/encrypted_survey/run.py" } ] },
+    "BOUNDARY": { "variants": [ { "carriers": 26, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
+    "COMMON": { "variants": [ { "carriers": 3, "example": "packs/virtualization-backup-forensics/tools/backup_audit_normalise/run.py" } ] },
+    "EVTX READ": { "variants": [ { "carriers": 4, "example": "packs/windows-forensics/tools/evtx_carve/run.py" } ] },
+    "FILES": { "variants": [ { "carriers": 2, "example": "packs/virtualization-backup-forensics/tools/snapshot_chain_check/run.py" } ] },
+    "GUARD": { "variants": [ { "carriers": 9, "example": "packs/macos-forensics/tools/fsevents_parse/run.py" } ] },
+    "HIVE BOUNDS": { "variants": [ { "carriers": 8, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
+    "NAMES": { "variants": [
+      { "carriers": 9, "example": "packs/encrypted-containers/tools/archive_probe/run.py" },
+      { "carriers": 8, "example": "packs/ransomware-response/tools/encrypted_survey/run.py", "why": "ransomware-response's own names text, not the encrypted-containers one" }
+    ] },
+    "ONE WAY OUT": { "variants": [ { "carriers": 10, "example": "packs/reverse-engineering/recipes/capa-floss/run.py" } ] },
+    "PAGE": { "variants": [
+      { "carriers": 49, "example": "packs/windows-forensics/tools/regkv/run.py" },
+      { "carriers": 8, "example": "packs/memory-forensics/tools/mem_carve/run.py", "why": "the memory pack's own pager text" }
+    ] },
+    "PLACE": { "variants": [ { "carriers": 59, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
+    "PROCESS": { "variants": [
+      { "carriers": 45, "example": "packs/computer-forensics-base/tools/archive_extract/run.py", "why": "the general lineage" },
+      { "carriers": 17, "example": "packs/windows-forensics/recipes/windows-artefacts/run.py", "why": "the windows lineage: its stop and process handling differs from the general text" }
+    ] },
+    "RECORDS BLOCK": { "variants": [ { "carriers": 7, "example": "packs/triage-collection/recipes/collection-intake/run.py" } ] },
+    "SCAN": { "variants": [ { "carriers": 6, "example": "packs/computer-forensics-base/tools/chunk_needles/run.py" } ] },
+    "TEMPS": { "variants": [ { "carriers": 31, "example": "packs/computer-forensics-base/recipes/ad1-items/run.py" } ] },
+    "SHARED BLOCK": { "variants": [
+      { "carriers": 8, "example": "packs/triage-collection/tools/collection_coverage/run.py", "why": "triage-collection's block (the error form, where an output may be written, the lossless table, the secret-safe values file, the withholding)" },
+      { "carriers": 6, "example": "packs/cloud-forensics/tools/cloudtrail_parse/run.py", "why": "cloud-forensics' block: an unrelated text that happens to carry the same name" }
+    ] },
+    "SHOWN": { "variants": [ { "carriers": 7, "example": "packs/memory-forensics/tools/mem_fs/run.py" } ] },
+    "STOP": { "variants": [
+      { "carriers": 68, "example": "packs/windows-forensics/tools/regkv/run.py", "why": "the windows lineage (the windows pack, and the ransomware-response and reverse-engineering tools that adopted its text)" },
+      { "carriers": 9, "example": "packs/encrypted-containers/tools/archive_probe/run.py", "why": "the encrypted-containers lineage" },
+      { "carriers": 11, "example": "packs/macos-forensics/tools/fsevents_parse/run.py", "why": "the macOS lineage" }
+    ] },
+    "WITHHOLDING": { "variants": [ { "carriers": 61, "example": "packs/computer-forensics-base/tools/archive_extract/run.py" } ] }
+  }
+}

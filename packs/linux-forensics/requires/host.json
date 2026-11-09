@@ -16,7 +16,7 @@
       "name": "debsums",
       "package": "debsums",
       "optional": true,
-      "why": "Compare packaged files on a Debian-family host with the hashes the acquired package database records. That is triage against the examined machine's own database, not an independent trust anchor (packages/integrity).",
+      "why": "Compare packaged files on a Debian-family host with the hashes the acquired package database records. `package_verify` runs it with `-r` on the acquired root. That is triage against the examined machine's own database, not an independent trust anchor (packages/integrity).",
       "install": {
         "brew": "not available on macOS",
         "apt": "apt-get install -y debsums"
@@ -28,7 +28,7 @@
       "name": "rpm",
       "package": "rpm",
       "optional": true,
-      "why": "Verify packaged files against an acquired RPM database on a Red Hat-family host with -V, reporting which attribute differs. Run it with --noscripts --nodeps so that no verification script from the evidence runs; the examiner confirms on the installed version, against a trial database, that those options are honoured for -V before relying on them (packages/integrity).",
+      "why": "Verify packaged files against an acquired RPM database on a Red Hat-family host with -V, reporting which attribute differs. `package_verify` runs it with --root, --dbpath, --noscripts, --nodeps, --nodigest and --nosignature, but nothing in this repository has confirmed on a trial database that the installed version suppresses a %verifyscript with them (no rpm was available to its tests): the examiner confirms that before relying on it (packages/integrity).",
       "install": {
         "brew": "brew install rpm",
         "apt": "apt-get install -y rpm"
@@ -40,7 +40,7 @@
       "name": "ausearch",
       "package": "auditd",
       "optional": true,
-      "why": "Read the kernel audit log, where the estate had auditd on: execve with arguments, and file access by rule. No skill of this pack names it yet; the skill that will (logs/auditd) is planned for a later change.",
+      "why": "Read the kernel audit log, where the estate had auditd on: execve with arguments, and file access by rule. `audit_events` runs it on a sample as a second reader (compare_ausearch), and logs/auditd names it.",
       "install": {
         "brew": "not available on macOS",
         "apt": "apt-get install -y auditd"
@@ -136,10 +136,11 @@
       "name": "target-fs",
       "package": "dissect.target",
       "optional": true,
-      "why": "Copy a directory or a file out of a disk image's file systems, a root inside LVM included, without mounting the evidence: target-fs -q IMAGE cp PATH -o DIR, one path a call, in a job into $OUT, so that the tools that read an extracted root (cron_dump, shell_history, utmp_parse, auth_log, journal_export) can read it (triage/system-profile). The copies carry the time of extraction as their modification time.",
+      "why": "Copy a directory or a file out of a disk image's file systems, a root inside LVM included, without mounting the evidence: target-fs -q IMAGE cp PATH -o DIR, one path a call, in a job into $OUT, so that the tools that read an extracted root (cron_dump, shell_history, utmp_parse, auth_log, journal_export) can read it (triage/system-profile). The copies carry the time of extraction as their modification time. Pinned to the dissect metapackage 3.22 (dissect.target 3.25.1) with its whole dependency set in a hash lock (requires/locks/dissect.txt, the same lock as the base pack's target-query).",
       "install": {
-        "brew": "python3 -m pip install dissect",
-        "apt": "python3 -m pip install dissect"
+        "brew": "python3 -m pip install dissect==3.22",
+        "apt": "python3 -m pip install dissect==3.22",
+        "pip_lock": "requires/locks/dissect.txt"
       },
       "licence": "AGPL-3.0-or-later",
       "redistributable": false

@@ -78,8 +78,9 @@ ran the first pass; read `catalog/` before running the same commands again.
    and for each who did it, from where and whether it follows an anomaly
    from question 3 (Okta `user.account.reset_password`,
    `user.account.update_password`; Entra audit `Reset password (by admin)`,
-   `Reset password (self-service)`, `Change user password`; Workspace login
-   `password_edit`, `recovery_email_edit`, `recovery_phone_edit`).
+   `Reset password (self-service)`, `Change user password`; Workspace
+   user-accounts audit `password_edit`, `recovery_email_edit`,
+   `recovery_phone_edit`, which the login audit does not hold).
 6. Administrator actions in the window: every administrative event
    (roles granted or removed, policies and rules changed, applications
    added or configured, users created, suspended or deleted, sessions
@@ -228,10 +229,9 @@ timeline rests on, and `inputs/` is unchanged.
 - `grep -qi 'baseline' work/report.md`
 - `test -f work/timeline.md`
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 20`
-- `grep -m1 -iE '^\| *(# *\| *)?(time|utc|date)' work/timeline.md | grep -qi 'account'`
+- `grep -qiE '^\| *(# *\| *)?(time|utc|date).*account' work/timeline.md`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 15`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies

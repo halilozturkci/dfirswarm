@@ -55,7 +55,11 @@ of the network.
 
 A pinned download is fetched over HTTPS, checked against its sha256 before
 anything is unpacked, unpacked under /opt/dfir/tools/<name>/ and put on PATH
-by a wrapper in /usr/local/bin. An architecture with no entry is recorded,
+by a wrapper in /usr/local/bin. A NuGet package (.nupkg, a zip file) is
+unpacked whole by unpack_nupkg: regular files and directories only, nothing
+outside the directory, nothing replaced or followed, bounded in members and
+bytes, modes fixed at 0644 and 0755. A download's architecture entry may name
+its own `run` (the interpreter), which wins over the download's. An architecture with no entry is recorded,
 not guessed. A `.deb` is installed by apt from where it was checked, so its
 dependencies come from Debian. A pinned source is checked the same way,
 unpacked under /opt/dfir/src/<name>/ (its archive's one top directory
@@ -76,18 +80,23 @@ NOTICE and the SBOM.
 import hashlib
 import http.client
 import json
+import lzma
 import os
 import re
 import shutil
+import socket
+import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -100,12 +109,20 @@ SBOM = ETC / "sbom.json"
 # What an agent in a VM reads to learn what its image holds: one line a
 # program, grep-able. The run's contract names this file and no program.
 TOOLS_MD = ETC / "tools.md"
+# What the build asked a program about itself (a host.json entry's `facts`):
+# one file a command, its sha256 in image.json. The limits are a command's
+# time and the bytes of its output kept; a test sets both.
+FACTS = ETC / "facts"
+FACTS_TIMEOUT = int(os.environ.get("DFIRSWARM_FACTS_TIMEOUT", "120"))
+FACTS_MAX_BYTES = int(os.environ.get("DFIRSWARM_FACTS_MAX_BYTES", str(64 * 1024 * 1024)))
 # Where pinned downloads go, where pinned sources are unpacked, where their
 # programs are linked, and where apt's sources are; a test sets them.
 TOOLS = Path(os.environ.get("DFIRSWARM_TOOLS_DIR", "/opt/dfir/tools"))
+DATA_ROOT = Path(os.environ.get("DFIRSWARM_DATA_DIR", "/opt/dfir/data"))
 SRC = Path(os.environ.get("DFIRSWARM_SRC_DIR", "/opt/dfir/src"))
 BIN = Path(os.environ.get("DFIRSWARM_BIN_DIR", "/usr/local/bin"))
 APT_SOURCES = Path(os.environ.get("DFIRSWARM_APT_SOURCES_DIR", "/etc/apt/sources.list.d"))
+PI_DIR = Path(os.environ.get("DFIRSWARM_PI_DIR", "/opt/pi"))
 # apt's package lists, emptied once the install is done; a test that runs the
 # whole install on a host points this at its own directory.
 APT_LISTS = Path(os.environ.get("DFIRSWARM_APT_LISTS_DIR", "/var/lib/apt/lists"))
@@ -120,6 +137,73 @@ os.environ.setdefault("DEBIAN_FRONTEND", "noninteractive")
 def run(cmd: list[str], cwd=None, env: dict | None = None) -> bool:
     print("+", " ".join(cmd), flush=True)
     return subprocess.run(cmd, cwd=cwd, env={**os.environ, **env} if env else None).returncode == 0
+
+
+LOCK_DIR = Path(os.environ.get("DFIRSWARM_LOCK_DIR", "/tmp/dfirswarm-build/locks"))
+# Every pip set this build installed from a hash lock, for image.json (`locked`).
+# An entry is added only after pip has installed the set with --require-hashes.
+LOCKED: list = []
+LOCK_LINE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9,._-]+\])?==([A-Za-z0-9._+!]+)\s*(;[^-]*?)?((?:\s+--hash=sha256:[0-9a-fA-F]{64})+)$")
+
+
+def lock_problem(text: str) -> str | None:
+    """Why `text` is not a pip hash lock, or None. Every requirement is
+    name==version with at least one --hash=sha256:<64 hex>; any other option
+    (an index, a find-links, a pip flag) is refused, since it could let the lock
+    be met from somewhere else. Comments and blank lines are skipped; a
+    backslash continues a line, as pip-compile writes them."""
+    logical, cur, first = [], "", 0
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not cur and (not line or line.startswith("#")):
+            continue
+        if not cur:
+            first = n
+        if line.endswith("\\"):
+            cur += line[:-1].strip() + " "
+            continue
+        logical.append((first, (cur + line).strip()))
+        cur = ""
+    if cur.strip():
+        logical.append((first, cur.strip()))
+    if not logical:
+        return "it holds no requirement"
+    for n, entry in logical:
+        if entry.startswith("-"):
+            return f"line {n}: {entry.split()[0]} is an option, not a requirement (a hash lock holds requirements only)"
+        if LOCK_LINE.match(entry):
+            continue
+        word = entry.split()[0]
+        if "==" not in word.split(";")[0]:
+            return f"line {n}: {word} is not pinned with =="
+        if "--hash=sha256:" not in entry:
+            return f"line {n}: {word.split(';')[0]} has no --hash=sha256:<64 hex digits>"
+        return f"line {n}: {word} is not name==version followed by --hash=sha256:<64 hex digits> options"
+    return None
+
+
+def pip_locked(pip: list[str], ref: dict, what: str, cwd=None, env: dict | None = None) -> str | None:
+    """Install the set `ref` names ({name, sha256}: a file in LOCK_DIR, which
+    recipe.py copied into the build context) with pip's hash-checking mode.
+    Returns why not, or None. The lock is checked against the sha256 the build
+    recorded and against lock_problem first; --require-hashes is always on, so a
+    wheel whose hash is not in the lock does not install, and the set is
+    recorded as locked only after pip has succeeded."""
+    name = str(ref.get("name", ""))
+    path = LOCK_DIR / name
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return f"{what}: its lock {name or '(unnamed)'} is not in the build"
+    if hashlib.sha256(data).hexdigest() != str(ref.get("sha256", "")).lower():
+        return f"{what}: its lock {name} does not match the sha256 the build recorded"
+    why = lock_problem(data.decode("utf-8", "replace"))
+    if why:
+        return f"{what}: its lock {name} is not a hash lock: {why}"
+    if not run(pip + ["--require-hashes", "-r", str(path)], cwd=cwd, env=env):
+        return f"{what}: pip install --require-hashes -r {name} failed (a hash that does not match fails here)"
+    LOCKED.append({"for": what, "lock": name, "sha256": hashlib.sha256(data).hexdigest()})
+    return None
 
 
 def arch() -> str:
@@ -185,6 +269,34 @@ def safe_members(t: tarfile.TarFile, dest: Path, strip: bool = False, skip: list
 
 
 DOWNLOAD_ATTEMPTS = 3
+# How long to wait before the second and the third attempt: 10 s, then 30 s,
+# so a server that is restarting or rate limiting is not asked three times in
+# a second. DFIRSWARM_FETCH_BACKOFF ("10,30") shortens it for a test; the last
+# wait is used again if there are more attempts than waits.
+def _backoff() -> list:
+    raw = os.environ.get("DFIRSWARM_FETCH_BACKOFF", "10,30")
+    try:
+        waits = [max(0.0, float(x)) for x in raw.split(",") if x.strip()]
+    except ValueError:
+        waits = []
+    return waits or [10.0, 30.0]
+
+
+def retryable(e: BaseException) -> tuple:
+    """(whether another attempt can help, what the failure was). A 4xx (not
+    found, forbidden, too many requests...) is the server's answer and the
+    same one comes again: it is not retried. A 5xx, a timeout, a connection
+    that dropped and a body that ended short are the network's or a busy
+    server's, and are."""
+    if isinstance(e, urllib.error.HTTPError):
+        if 400 <= e.code < 500:
+            return False, f"HTTP {e.code} {e.reason} (a client error: the server's answer, not retried)"
+        return True, f"HTTP {e.code} {e.reason} (a server error)"
+    if isinstance(e, (TimeoutError, socket.timeout)) or isinstance(getattr(e, "reason", None), (TimeoutError, socket.timeout)):
+        return True, f"timed out ({e})"
+    if isinstance(e, http.client.IncompleteRead):
+        return True, f"the body ended short ({e})"
+    return True, str(e)
 # A download's bounds: no more redirects than this, every hop over HTTPS, no
 # more bytes than its pin says (or this many when it pins none), and no longer
 # than this in all. A pack's URL is https (pack.sh); file:// and a loopback
@@ -192,6 +304,8 @@ DOWNLOAD_ATTEMPTS = 3
 MAX_REDIRECTS = 5
 MAX_BYTES = int(os.environ.get("DFIRSWARM_FETCH_MAX_BYTES", str(4 << 30)))
 FETCH_SECONDS = int(os.environ.get("DFIRSWARM_FETCH_SECONDS", "3600"))
+# How long one read may wait for the server (a stalled one ends the attempt, which is then retried).
+FETCH_TIMEOUT = float(os.environ.get("DFIRSWARM_FETCH_TIMEOUT", "300"))
 # A local copy of what a pin names, by its sha256 (recipe.py build --data-from
 # and --symbols-from put them here): used instead of the network, still checked.
 DATA_DIR = os.environ.get("DFIRSWARM_DATA_DIR", "")
@@ -281,7 +395,7 @@ def fetch_once(url: str, dest: Path, size: int | None, allowed_hosts: list | Non
     # own User-Agent with a 403, and says so in no other way.
     req = urllib.request.Request(url, headers={"User-Agent": "dfirswarm-image-build (+https://github.com/halilozturkci/dfirswarm)"})
     opener = urllib.request.build_opener(*(opener_handlers or [HttpsRedirects(allowed_hosts)]))
-    with opener.open(req, timeout=300) as r, open(dest, "wb") as out:
+    with opener.open(req, timeout=FETCH_TIMEOUT) as r, open(dest, "wb") as out:
         length = r.headers.get("Content-Length")
         if length and length.isdigit() and int(length) > cap:
             raise urllib.error.URLError(f"the server offers {length} bytes, more than the {cap} this pin allows")
@@ -320,16 +434,30 @@ def obtain(url: str, dest: Path, sha256: str, size: int | None = None, offline: 
     if offline:
         return "it is not fetched by the build, and no local copy of it was given", "local copy"
     why = None
+    waits = _backoff()
+
+    def wait_before_next(attempt: int, cause: str) -> None:
+        """Say what failed and how long the next attempt waits, then wait."""
+        wait = waits[min(attempt - 1, len(waits) - 1)]
+        print(f"  attempt {attempt} of {DOWNLOAD_ATTEMPTS} failed: {cause}; waiting {wait:g} s before attempt {attempt + 1}", flush=True)
+        time.sleep(wait)
+
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         print(f"+ fetch {url}" + (f" (attempt {attempt} of {DOWNLOAD_ATTEMPTS})" if attempt > 1 else ""), flush=True)
         try:
             hexd, got, length = fetch_once(url, dest, size)
         except (OSError, http.client.HTTPException) as e:
             dest.unlink(missing_ok=True)
-            why = f"download failed: {e}"
+            again, cause = retryable(e)
+            why = f"download failed: {cause}"
             # A refusal by the bounds is not cured by asking again.
             if "refused" in str(e) or "more than" in str(e) or "is not fetched" in str(e):
                 break
+            if not again:
+                print(f"  attempt {attempt} of {DOWNLOAD_ATTEMPTS} failed: {cause}", flush=True)
+                break
+            if attempt < DOWNLOAD_ATTEMPTS:
+                wait_before_next(attempt, cause)
             continue
         if hexd == want and (size is None or got == size):
             return None, "download"
@@ -340,6 +468,8 @@ def obtain(url: str, dest: Path, sha256: str, size: int | None = None, offline: 
         # another attempt fetches the same wrong bytes.
         if not short and length:
             break
+        if attempt < DOWNLOAD_ATTEMPTS:
+            wait_before_next(attempt, f"the body ended short{short}" if short else "the bytes are not the pinned ones")
     return why, "download"
 
 
@@ -384,6 +514,16 @@ def wrapper(name: str, program: Path, run_with: str | None = None, run_from_dir:
     return None
 
 
+def download_run(d: dict):
+    """The interpreter a pinned download's program runs on this architecture: the architecture's own `run` when its entry says one (a
+    program that is a native build on one architecture and a .NET assembly on the other), else the download's. None for a program that
+    runs by itself."""
+    entry = d.get(arch())
+    if isinstance(entry, dict) and "run" in entry:
+        return entry["run"] or None
+    return d.get("run")
+
+
 def fetch(d: dict, apt: list) -> tuple:
     """Install one pinned download. Returns (record, failure reason)."""
     entry = d.get(arch())
@@ -416,20 +556,140 @@ def fetch(d: dict, apt: list) -> tuple:
     else:
         try:
             unpack(archive, name, dest)
-        except (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile) as e:
+        except UNPACK_ERRORS as e:
             return None, f"could not unpack: {e}"
         program = dest / entry.get("bin", archive.name)
         if not program.is_file():
             return None, f"{entry.get('bin', archive.name)} is not in what was downloaded"
-    why = wrapper(d["name"], program, d.get("run"), bool(d.get("run_from_dir")))
+    why = wrapper(d["name"], program, download_run(d), bool(d.get("run_from_dir")))
     if why:
         return None, why
     return {"kind": "deb" if name.endswith(".deb") else "download", "version": d.get("version"),
             "url": entry["url"], "sha256": want}, None
 
 
+# A NuGet package (.nupkg) is a zip file. One is unpacked whole, by the rules
+# below, and never by the plain zip route: a package is a download from a
+# registry anyone can publish to, and the bytes are only as trusted as the pin
+# that named them (the sha256 is checked before this runs).
+NUPKG_MAX_FILES = 2000
+NUPKG_MAX_NAME = 512
+NUPKG_MAX_COMPONENT = 255
+NUPKG_MAX_FILE_BYTES = 256 << 20
+NUPKG_MAX_TOTAL_BYTES = 512 << 20
+NUPKG_METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+
+
+def nupkg_name(name: str) -> tuple:
+    """(relative path, whether it is a directory) for a package member's name, or ValueError. A name is refused if it is absolute or
+    has a drive letter, a backslash, a NUL or another control character, an empty, `.` or `..` component, or is longer than the bounds."""
+    shown = name.encode("ascii", "backslashreplace").decode()[:80]
+    if not name or len(name) > NUPKG_MAX_NAME:
+        raise ValueError(f"a member name of {len(name)} characters is refused")
+    if name.startswith("/") or re.match(r"^[A-Za-z]:", name):
+        raise ValueError(f"{shown} is an absolute name")
+    if "\\" in name or any(ord(c) < 0x20 or ord(c) == 0x7F for c in name):
+        raise ValueError(f"{shown} holds a backslash or a control character")
+    is_dir = name.endswith("/")
+    parts = name[:-1].split("/") if is_dir else name.split("/")
+    for part in parts:
+        if part in ("", ".", ".."):
+            raise ValueError(f"{shown} leaves the download's directory or has an empty component")
+        if len(part) > NUPKG_MAX_COMPONENT:
+            raise ValueError(f"{shown} has a component longer than {NUPKG_MAX_COMPONENT}")
+    return "/".join(parts), is_dir
+
+
+def nupkg_mkdirs(root: Path, rel: str, made: list) -> Path:
+    """Make the directories of rel under root one step at a time, each a real directory (never a link). Returns the last."""
+    here = root
+    for part in rel.split("/"):
+        here = here / part
+        try:
+            st = os.lstat(here)
+        except FileNotFoundError:
+            os.mkdir(here, 0o755)
+            made.append(("d", here))
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            raise ValueError(f"{rel} runs through something that is not a directory")
+    return here
+
+
+# What an archive can raise while it is read: a name, a bound or a kind it does not allow (ValueError, OSError), a tar or zip structure that is not
+# one (TarError, BadZipFile), a compressed stream that is corrupt (zlib.error, lzma.LZMAError) or ends before its end marker (EOFError), and a zip
+# entry stored by a method the standard library does not read (NotImplementedError). Each one records the optional program as not installed. Any other
+# exception (a zip entry that needs a password raises RuntimeError, memory runs out as MemoryError) is not caught here and stops the build with a traceback.
+UNPACK_ERRORS = (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile, zlib.error, lzma.LZMAError, EOFError, NotImplementedError)
+
+
+def unpack_nupkg(archive: Path, dest: Path) -> None:
+    """Unpack a NuGet package into dest: only regular files and directories, every one under dest, written with O_EXCL and O_NOFOLLOW
+    (nothing existing is replaced or followed), mode 0644 for a file and 0755 for a directory whatever the archive says (a program is
+    made executable by its wrapper). Refused whole, and what was made removed, for an encrypted member, a method other than stored or
+    deflate, a symbolic link, a device or another special file, a name twice, a file where a directory is, more than NUPKG_MAX_FILES members,
+    a member that declares more than NUPKG_MAX_FILE_BYTES, or members that together write more than NUPKG_MAX_TOTAL_BYTES (counted as they
+    are written: the zip reader stops a member at its declared size, so a header that understates a member cannot make it longer)."""
+    root = dest.resolve()
+    made: list = []
+    seen: set = set()
+    total = 0
+    try:
+        with zipfile.ZipFile(archive) as z:
+            infos = z.infolist()
+            if len(infos) > NUPKG_MAX_FILES:
+                raise ValueError(f"{len(infos)} members; at most {NUPKG_MAX_FILES} are taken")
+            for info in infos:
+                rel, is_dir = nupkg_name(info.filename)
+                if info.flag_bits & 0x1:
+                    raise ValueError(f"{rel} is encrypted")
+                if info.compress_type not in NUPKG_METHODS:
+                    raise ValueError(f"{rel} uses compression method {info.compress_type}; only stored and deflate are taken")
+                kind = stat.S_IFMT((info.external_attr >> 16) & 0xFFFF) if info.create_system == 3 else 0
+                if kind == stat.S_IFLNK:
+                    raise ValueError(f"{rel} is a symbolic link")
+                if kind not in (0, stat.S_IFREG, stat.S_IFDIR):
+                    raise ValueError(f"{rel} is a special file")
+                if kind != 0 and (kind == stat.S_IFDIR) != is_dir:
+                    raise ValueError(f"{rel} is a directory entry that is not named as one, or the reverse")
+                if rel in seen:
+                    raise ValueError(f"{rel} is in the package twice")
+                seen.add(rel)
+                if is_dir:
+                    nupkg_mkdirs(root, rel, made)
+                    continue
+                if info.file_size > NUPKG_MAX_FILE_BYTES:
+                    raise ValueError(f"{rel} declares {info.file_size} bytes; at most {NUPKG_MAX_FILE_BYTES} are taken")
+                parent, _, leaf = rel.rpartition("/")
+                directory = nupkg_mkdirs(root, parent, made) if parent else root
+                fd = os.open(directory / leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+                made.append(("f", directory / leaf))
+                written = 0
+                with os.fdopen(fd, "wb") as out, z.open(info) as src:
+                    while chunk := src.read(1 << 20):
+                        written += len(chunk)
+                        total += len(chunk)
+                        if written > NUPKG_MAX_FILE_BYTES or total > NUPKG_MAX_TOTAL_BYTES:
+                            raise ValueError(f"{rel} grows past the bounds ({NUPKG_MAX_FILE_BYTES} bytes a member, {NUPKG_MAX_TOTAL_BYTES} in all)")
+                        out.write(chunk)
+                    out.flush()
+                    os.fchmod(out.fileno(), 0o644)
+    except BaseException:
+        for kind, path in reversed(made):
+            try:
+                os.unlink(path) if kind == "f" else os.rmdir(path)
+            except OSError:
+                pass
+        raise
+    archive.unlink()
+
+
 def unpack(archive: Path, name: str, dest: Path, strip: bool = False, skip: list = ()) -> None:
-    if name.endswith(".zip"):
+    if name.endswith(".nupkg"):
+        if strip or skip:
+            raise ValueError("a .nupkg is unpacked whole: strip and skip are not taken")
+        unpack_nupkg(archive, dest)
+    elif name.endswith(".zip"):
         with zipfile.ZipFile(archive) as z:
             names = z.namelist()
             top = top_dir(names) if strip else ""
@@ -475,11 +735,11 @@ def fetch_source(d: dict, apt: list) -> tuple:
         return None, why
     try:
         unpack(archive, archive.name.lower(), dest, strip=True, skip=list(d.get("skip") or []))
-    except (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile) as e:
+    except UNPACK_ERRORS as e:
         archive.unlink(missing_ok=True)
         return None, f"could not unpack: {e}"
     venv = None
-    if d.get("pip") or d.get("pip_after"):
+    if d.get("pip") or d.get("pip_after") or d.get("pip_lock") or d.get("pip_after_lock"):
         # Its own venv: one program's pins (an old beautifulsoup4, an exact
         # numpy) must not move what another program or the tool library imports.
         venv = dest / ".venv"
@@ -489,7 +749,15 @@ def fetch_source(d: dict, apt: list) -> tuple:
         # `pip_after` is a second install into the same venv, for what one
         # resolve cannot say: a dependency installed with --no-deps at a pinned
         # commit, over the unpinned URL a requirement names for it.
+        # `pip_lock` / `pip_after_lock` name a hash lock for the set: it installs
+        # first, with --require-hashes, and the plain arguments (the source itself
+        # with --no-deps, say) follow. A venv shared by several programs needs one
+        # lock for all of them (docs/packs.md).
         for key in ("pip", "pip_after"):
+            if isinstance(d.get(key + "_lock"), dict):
+                why = pip_locked([str(venv / "bin" / "pip"), "install", "--no-cache-dir"], d[key + "_lock"], f"{d['name']} ({key}_lock)", cwd=dest, env=d.get("env"))
+                if why:
+                    return None, why
             if d.get(key) and not run([str(venv / "bin" / "pip"), "install", "--no-cache-dir", *d[key]], cwd=dest, env=d.get("env")):
                 return None, f"its Python requirements (pip install {' '.join(d[key])}) did not install"
     program = dest / d["entry"]
@@ -641,14 +909,23 @@ def fetch_data(d: dict) -> tuple:
     An entry acquired by the operator (`acquire: "operator"`) is never fetched
     here: it comes from the local copy the build was given, or not at all.
     Returns (record, failure reason)."""
-    if not d.get("url") or not d.get("sha256") or not d.get("package"):
+    into = str(d.get("into", ""))
+    # What no program of the image imports (definitions a tool reads by a path)
+    # names an absolute directory under /opt/dfir/data/ and needs no package.
+    absolute = into.startswith("/")
+    if not d.get("url") or not d.get("sha256") or not (d.get("package") or absolute):
         return None, "no url, sha256 and package pinned"
-    root = package_dir(d["package"])
-    if not root:
-        return None, f"its program's Python package {d['package']} is not in the image"
-    dest_dir = (root / d.get("into", "")).resolve()
-    if not (dest_dir == root.resolve() or str(dest_dir).startswith(f"{root.resolve()}/")):
-        return None, f"{d.get('into')} leaves the package's directory"
+    if absolute:
+        dest_dir = Path(os.path.normpath(into))
+        if not str(dest_dir).startswith(f"{DATA_ROOT}/"):
+            return None, f"{into} is not a directory under {DATA_ROOT}"
+    else:
+        root = package_dir(d["package"])
+        if not root:
+            return None, f"its program's Python package {d['package']} is not in the image"
+        dest_dir = (root / into).resolve()
+        if not (dest_dir == root.resolve() or str(dest_dir).startswith(f"{root.resolve()}/")):
+            return None, f"{d.get('into')} leaves the package's directory"
     name = d.get("file") or Path(urllib.parse.urlparse(d["url"]).path).name
     if not name or name in (".", "..") or "/" in name or "\\" in name:
         return None, f"the file name {name!r} is not a plain name"
@@ -760,8 +1037,8 @@ def fetch_data(d: dict) -> tuple:
         keep = bool(d.get("keep", False))
         rec["source"] = {"url": d["url"], "sha256": rec["sha256"], "bytes": rec["bytes"], "from": how, "kept": keep}
         rec["transform"] = {"commands": [[a.replace(str(dest), name) for a in argv] for argv in ran],
-                            "package": d["package"],
-                            "package_version": venv_answer("import importlib.metadata as m, sys; print(m.version(sys.argv[1]))", d["package"]) or None,
+                            "package": d.get("package"),
+                            "package_version": (venv_answer("import importlib.metadata as m, sys; print(m.version(sys.argv[1]))", d["package"]) or None) if d.get("package") else None,
                             "python": venv_answer("import platform; print(platform.python_version())") or None}
         if conv:
             rec["transform"]["converter"] = conv
@@ -856,7 +1133,7 @@ def build_source(spec_path: str) -> int:
         return done(why)
     try:
         unpack(archive, archive.name.lower(), work, strip=True)
-    except (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile) as e:
+    except UNPACK_ERRORS as e:
         return done(f"could not unpack: {e}")
     jobs = str(os.cpu_count() or 2)
     env = d.get("env")
@@ -929,7 +1206,11 @@ def enable_release(release: str) -> str | None:
     # The image's own mirror (debian.sources), not the security one.
     uris = [line.split()[1] for f in sorted(APT_SOURCES.glob("*.sources")) for line in f.read_text().splitlines()
             if line.startswith("URIs:") and len(line.split()) > 1]
-    mirror = next((u for u in uris if not u.rstrip("/").endswith("-security")), "http://deb.debian.org/debian")
+    # (On a snapshot image the security URI is .../debian-security/<date>/, so the
+    # test is on the archive name, not on how the address ends.) A backports suite
+    # then comes from the snapshot at the image's own date.
+    mirror = next((u for u in uris if "debian-security" not in u and not u.rstrip("/").endswith("-security")),
+                  "http://deb.debian.org/debian")
     APT_SOURCES.mkdir(parents=True, exist_ok=True)
     (APT_SOURCES / f"dfirswarm-{release}.sources").write_text(
         f"Types: deb\nURIs: {mirror}\nSuites: {release}\nComponents: main\n"
@@ -969,12 +1250,23 @@ def source_venvs(record: dict) -> list:
 def npm_packages() -> list:
     """Every package under npm's global root, nested dependencies included:
     [name, version, licence]. Pi and what it pulls in live there."""
+    roots = []
     try:
         root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=60).stdout.strip()
+        if root and os.path.isdir(root):
+            roots.append(root)
     except (OSError, subprocess.SubprocessError):
-        return []
-    if not root or not os.path.isdir(root):
-        return []
+        pass
+    # Pi is a project of its own (base.Dockerfile), not a global package.
+    if (PI_DIR / "node_modules").is_dir():
+        roots.append(str(PI_DIR / "node_modules"))
+    rows = set()
+    for root in roots:
+        rows |= _npm_rows(root)
+    return [list(r) for r in sorted(rows)]
+
+
+def _npm_rows(root: str) -> set:
     rows = set()
     top = Path(root)
 
@@ -1001,7 +1293,32 @@ def npm_packages() -> list:
         elif isinstance(lic, list):
             lic = " OR ".join(str(x.get("type", "")) if isinstance(x, dict) else str(x) for x in lic)
         rows.add((str(pj["name"]), str(pj["version"]), " ".join(str(lic).split()) or "licence not stated"))
-    return [list(r) for r in sorted(rows)]
+    return rows
+
+
+UNDICI_FLOOR = (8, 12, 2)
+
+
+def pi_undici_problems() -> list:
+    """Every undici under Pi's project that is older than UNDICI_FLOOR (8.12.2:
+    the release that fixes GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685 and
+    GHSA-f72v-6w45-q472). Empty when Pi is not installed there."""
+    bad = []
+    top = PI_DIR / "node_modules"
+    if not top.is_dir():
+        return bad
+    for dirpath, dirs, files in os.walk(top):
+        dirs[:] = [d for d in dirs if d != ".bin"]
+        here = Path(dirpath)
+        if here.name == "undici" and "package.json" in files:
+            try:
+                version = str(json.loads((here / "package.json").read_text()).get("version", ""))
+            except (OSError, ValueError):
+                version = ""
+            m = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+            if not m or tuple(int(x) for x in m.groups()) < UNDICI_FLOOR:
+                bad.append(f"{here.relative_to(top)} is {version or 'of no version'}, older than {'.'.join(map(str, UNDICI_FLOOR))}")
+    return bad
 
 
 def dpkg_versions(names: list = ()) -> dict:
@@ -1159,6 +1476,69 @@ def norm(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def fact_file(argv: list, taken: set) -> str:
+    """The file a fact's output is kept in: the program, then its arguments
+    without their leading dashes (`tshark-version.txt`, `tshark-G-fields.txt`)."""
+    words = [re.sub(r"[^A-Za-z0-9._-]+", "_", a.lstrip("-")) or "_" for a in argv]
+    stem = "-".join(words)[:120]
+    name, n = f"{stem}.txt", 2
+    while name in taken:
+        name, n = f"{stem}-{n}.txt", n + 1
+    taken.add(name)
+    return name
+
+
+def record_facts(spec: dict) -> dict:
+    """What an entry's `facts` ask of its program (a command each, its first
+    word the program): run with a time limit, the output kept under
+    /etc/dfirswarm/facts/ with its sha256, capped at FACTS_MAX_BYTES (said:
+    status `capped`, the kept file is the front of a longer output). A command
+    that fails, times out or has no program to run is recorded as `failed`
+    with why. The record is `{file: {program, argv, required, status, ...}}`."""
+    facts, taken, seen = {}, set(), set()
+    for b in spec.get("binaries", []):
+        for argv in b.get("facts") or []:
+            if (b["name"], tuple(argv)) in seen:
+                continue
+            seen.add((b["name"], tuple(argv)))
+            name = fact_file(argv, taken)
+            row = {"program": b["name"], "argv": list(argv), "required": bool(b.get("required"))}
+            facts[name] = row
+            exe = shutil.which(argv[0], path=IMAGE_PATH)
+            if not exe:
+                row.update(status="failed", why="the program is not on PATH")
+                continue
+            FACTS.mkdir(parents=True, exist_ok=True)
+            path = FACTS / name
+            try:
+                with open(path, "wb") as out, tempfile.TemporaryFile() as err:
+                    try:
+                        code = subprocess.run([exe, *argv[1:]], stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                              timeout=FACTS_TIMEOUT, env={**os.environ, "PATH": IMAGE_PATH, "LC_ALL": "C"}).returncode
+                        why = None if code == 0 else f"exit {code}"
+                    except subprocess.TimeoutExpired:
+                        code, why = None, f"timed out after {FACTS_TIMEOUT} s"
+                    err.seek(0)
+                    tail = err.read(400).decode("utf-8", "replace").strip()
+            except OSError as e:
+                row.update(status="failed", why=f"could not run: {e}")
+                continue
+            size = path.stat().st_size
+            if size > FACTS_MAX_BYTES:
+                with open(path, "r+b") as f:
+                    f.truncate(FACTS_MAX_BYTES)
+            kept = path.stat().st_size
+            row.update(bytes=kept, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+            if why:
+                row.update(status="failed", why=why + (f": {tail}" if tail else ""))
+            elif size > FACTS_MAX_BYTES:
+                row.update(status="capped", bytes_seen=size,
+                           why=f"the output is longer than {FACTS_MAX_BYTES} bytes; the file holds the first {kept}")
+            else:
+                row["status"] = "recorded"
+    return facts
+
+
 def tools_md(record: dict, spec: dict | None) -> str:
     """/etc/dfirswarm/tools.md: every program the image's packs put in it, what
     it is for (the pack's own words), its pack and the version installed, one
@@ -1169,6 +1549,7 @@ def tools_md(record: dict, spec: dict | None) -> str:
     pip = {norm(k): v for k, v in (record.get("pip") or {}).items()}
     apt = record.get("apt") or {}
     on_path = record.get("binaries") or {}
+    facts = record.get("facts") or {}
     packs = record.get("packs") or []
     lines = [f"# Programs in this VM ({record.get('profile', '?')} image)", "",
              f"Packs: {', '.join(packs) if packs else 'none (the base image: the shell, Python and the tool library)'}.",
@@ -1180,6 +1561,9 @@ def tools_md(record: dict, spec: dict | None) -> str:
     for b in (spec or {}).get("binaries", []):
         if b["name"] in seen:
             seen[b["name"]]["packs"].append(b["pack"])
+            # A program two packs declare shows what either says it decodes and reads, never one pack's list alone.
+            for key in ("isa", "formats"):
+                seen[b["name"]][key] = list(dict.fromkeys([*seen[b["name"]].get(key, []), *b.get(key, [])]))
             continue
         entry = {**b, "packs": [b["pack"]]}
         seen[b["name"]] = entry
@@ -1204,7 +1588,14 @@ def tools_md(record: dict, spec: dict | None) -> str:
         lines += ["## Programs", ""]
         for b in sorted(rows, key=lambda x: x["name"].lower()):
             v = version(b)
-            lines.append(f"- `{b['name']}` — {b.get('why') or 'no description'} ({', '.join(b['packs'])}{'; ' + v if v else ''})")
+            reads = "; ".join(x for x in (f"decodes: {', '.join(b['isa'])}" if b.get("isa") else "", f"reads: {', '.join(b['formats'])}" if b.get("formats") else "") if x)
+            lines.append(f"- `{b['name']}` — {b.get('why') or 'no description'} ({', '.join(b['packs'])}{'; ' + v if v else ''}){' — ' + reads if reads else ''}")
+            # What the build recorded about the program: a file each, the
+            # command that made it and whether it worked.
+            for fname, fact in sorted(facts.items()):
+                if fact.get("program") == b["name"]:
+                    state = fact.get("status", "?") + (f" ({fact['why']})" if fact.get("status") != "recorded" and fact.get("why") else "")
+                    lines.append(f"  - `{' '.join(fact.get('argv') or [])}`: `{FACTS / fname}`, {state}")
         lines.append("")
     libs = []
     for n in list(record.get("python_library") or []) + list((spec or {}).get("python_notes") or []):
@@ -1274,10 +1665,29 @@ def on_path(path: str = IMAGE_PATH) -> list:
     return found
 
 
+def apt_snapshot() -> str | None:
+    """The snapshot.debian.org date this image's apt sources name
+    (images/debian-snapshot, written by base.Dockerfile), or None."""
+    try:
+        for f in sorted(APT_SOURCES.glob("*.sources")):
+            for line in f.read_text().splitlines():
+                m = re.match(r"URIs:\s*https?://snapshot\.debian\.org/archive/debian/(\d{8}T\d{6}Z)/?\s*$", line)
+                if m:
+                    return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
 def write_record(record: dict, head: str, spec: dict | None = None) -> None:
     """image.json with the whole package inventory, every program on PATH,
     the NOTICE, the SBOM, and tools.md, the list an agent reads."""
     record["arch"] = arch()
+    record["apt_snapshot"] = apt_snapshot()
+    # The pip sets this build installed from a hash lock (pip --require-hashes).
+    record["locked"] = list(LOCKED)
+    # What a FUSE mount needs of the image (the device is the VM's to expose, probed there): the helper that releases a mount.
+    record["fuse"] = {"fusermount": bool(shutil.which("fusermount3", path=IMAGE_PATH) or shutil.which("fusermount", path=IMAGE_PATH))}
     record["dpkg_all"] = dpkg_versions()
     record["pip"] = pip_versions()
     record["on_path"] = on_path()
@@ -1297,6 +1707,10 @@ def base() -> int:
     holds, in the fields a profile image has, so a VM booted from the base
     diffs against a whole baseline. Whether the base may be redistributed is
     the Dockerfile's to say (REDISTRIBUTABLE, NONREDISTRIBUTABLE)."""
+    old = pi_undici_problems()
+    if old:
+        print("Pi's undici is older than 8.12.2: " + "; ".join(old), file=sys.stderr)
+        return 1
     npm = {name: version for name, version, _ in npm_packages()}
     held = [x for x in os.environ.get("NONREDISTRIBUTABLE", "").replace(",", " ").split() if x]
     try:
@@ -1443,10 +1857,13 @@ def main(spec_path: str) -> int:
         return 1
 
     sources = spec.get("sources", [])
-    compiles = bool(spec["pip"] or spec["requirements"] or any(d.get("pip") for d in sources))
+    locks = list(spec.get("python_locks", [])) + list(spec.get("pip_locks", []))
+    compiles = bool(spec["pip"] or spec["requirements"] or locks or any(d.get("pip") or d.get("pip_lock") for d in sources))
     # Some wheels have no build for every architecture (flare-floss pulls
     # binary2strings, which arm64 has to compile), and some none at all
-    # (dfvfs pulls libewf-python and libfvde-python, sdists only; a pinned
+    # (dfvfs pulls libewf-python and libfvde-python: the pack's python.lock
+    # holds the hash of a cp311 wheel for each architecture and of the sdist,
+    # which an architecture or glibc without a wheel compiles; a pinned
     # source's requirements pull more). The compiler, and what a source says
     # its requirements build with, is here for the build only and leaves with it.
     build_deps = ["build-essential", "python3-dev"]
@@ -1457,10 +1874,26 @@ def main(spec_path: str) -> int:
     if compiles and not run(apt + build_deps):
         print(f"required build dependencies failed: {build_deps}", file=sys.stderr)
         return 1
-    if spec["pip"] or spec["requirements"]:
+    if spec["pip"] or spec["requirements"] or locks:
         if not run([sys.executable, "-m", "venv", str(VENV)]):
             return 1
         pip = [str(VENV / "bin" / "pip"), "install", "--no-cache-dir"]
+        # The sets a pack locks (requires/python.lock beside python.txt, a
+        # program's pip_lock): installed with hash checking. A lock that fails
+        # fails the build when its pack requires it, and names the program.
+        for ref in spec.get("python_locks", []):
+            why = pip_locked(pip, ref, f"{ref.get('pack', '?')} requires/python.lock")
+            if why:
+                print(f"required python packages failed: {why}", file=sys.stderr)
+                return 1
+        for ref in spec.get("pip_locks", []):
+            why = pip_locked(pip, ref, ref.get("program", "?"))
+            if why and ref.get("required", True):
+                print(f"required python packages failed: {why}", file=sys.stderr)
+                return 1
+            if why:
+                print(f"optional python packages failed: {why}", file=sys.stderr)
+                failed["pip"].extend(ref.get("packages") or [ref.get("program", "?")])
         required = [p for p, req in spec["pip"].items() if req] + spec["requirements"]
         if required and not run(pip + required):
             print(f"required python packages failed: {required}", file=sys.stderr)
@@ -1476,7 +1909,7 @@ def main(spec_path: str) -> int:
 
     # A runtime first (dotnet, pinned as a download of its own), then what
     # runs on it.
-    for d in sorted(spec.get("downloads", []), key=lambda d: bool(d.get("run"))):
+    for d in sorted(spec.get("downloads", []), key=lambda d: bool(download_run(d))):
         if not settle("download", d, *fetch(d, apt)):
             return 1
     for d in sources:
@@ -1495,6 +1928,12 @@ def main(spec_path: str) -> int:
     shutil.rmtree(APT_LISTS, ignore_errors=True)
 
     record = profile_record(json.loads(RECORD.read_text()) if RECORD.exists() else {}, spec, downloads, failed)
+    # The facts the packs ask of their programs, kept as files. A command that
+    # fails is recorded as failed: it fails the build only for a program a pack
+    # requires, whose own version command not working is a broken program.
+    record["facts"] = record_facts(spec)
+    for fname, fact in record["facts"].items():
+        print(f"fact {fname}: {fact['status']}" + (f" ({fact['why']})" if fact.get("why") else ""))
     missing = missing_programs(spec, record)
     if missing and spec.get("allow_missing_optional"):
         record["missing_allowed"] = missing
@@ -1510,6 +1949,11 @@ def main(spec_path: str) -> int:
     lacking = sorted({b["name"] for b in spec["binaries"] if b.get("required") and not record["binaries"].get(b["name"])})
     if lacking:
         print(f"required programs missing from the image: {', '.join(lacking)}", file=sys.stderr)
+        return 1
+    broken = sorted(n for n, f in record["facts"].items()
+                    if f["status"] == "failed" and f.get("required") and record["binaries"].get(f["program"]))
+    if broken:
+        print(f"a command that records a fact about a required program failed: {', '.join(broken)}", file=sys.stderr)
         return 1
     # The program list, checked at the end: an optional program that should be
     # here and is not is a build that went wrong (apt out of disk space did

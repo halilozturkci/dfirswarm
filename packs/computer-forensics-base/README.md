@@ -11,7 +11,7 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 
 ## What it carries
 
-**Twenty-nine skills**, fetched one at a time by the agents that need them. Each is a leaf of at most 800 tokens that opens with "Use when ... Not for ..."; a topic that needs more has a second-level leaf the first one points to ("only if"), so `skills/INDEX.md` lists both. One of them is the pack's router, `base/router` (at most 400 tokens): when a run's index is over its budget the prompt shows this one line for the pack, and the router names every other skill by the question it answers:
+**Thirty skills**, fetched one at a time by the agents that need them. Each is a leaf of at most 800 tokens that opens with "Use when ... Not for ..."; a topic that needs more has a second-level leaf the first one points to ("only if"), so `skills/INDEX.md` lists both. One of them is the pack's router, `base/router` (at most 400 tokens): when a run's index is over its budget the prompt shows this one line for the pack, and the router names every other skill by the question it answers:
 
 | | |
 | --- | --- |
@@ -25,11 +25,12 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 | `evidence/catalog` | read the catalogue with its coverage and revision before you spend a token |
 | `evidence/coverage` | what a search did and did not cover: no hit, not searched, unsupported, failed, no trace expected; the `kind=coverage` record |
 | `evidence/collections` | the evidence is a zip, a directory tree or an AD1, not a disk: what it contains and what it cannot show |
-| `evidence/archives` | a zip, tar, 7z or compressed file: list it, extract it under budgets, never recreate a link, keep every name |
+| `evidence/archives` | a zip, tar, 7z, RAR or compressed file: list it, extract it under budgets, never recreate a link, keep every name |
 | `evidence/ad1` | an FTK Imager logical image: list, extract and corroborate it |
 | `evidence/tool-validation` | validate a parser before you trust it: version, status counts, the decisive field against the bytes, independence, a positive control |
 | `data/sqlite` | a SQLite database is a set of files: snapshot it, apply its WAL in a copy, query the state you name |
 | `data/sqlite-secrets` | a table of cookies, logins, tokens, keys or messages: its values go to a sealed file, never into your context (`sqlite_query` with `write_values`) |
+| `data/browser-storage` | a Chromium or Electron IndexedDB, Local Storage or Session Storage: the inventory, the locators, what a preview shows, and the sealed file for the values (`browser_storage`) |
 | `data/documents-media` | document and image content as layers: bytes, rendering, extracted text, embedded objects, metadata, OCR, concealment |
 | `filesystem/extract` | get a file out of an image, and say which record it came from |
 | `filesystem/semantics` | path against object identity, record reuse, sizes, allocation, deletion, times, snapshots and TRIM: what a recovered file does and does not show |
@@ -45,17 +46,32 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 | `reporting/citations` | every claim resolves to an inspectable observation, and a negative is bounded |
 | `reporting/disagreement` | disputing, correcting and republishing, through the ledger's own acts |
 
-**Sixteen tools**: `image_layout`, `check_inputs`, `catalog_search`,
+**Twenty tools**: `image_layout`, `check_inputs`, `catalog_search`,
 `icat_extract`, `sig_carve`, `file_carver`, `ioc_scan`, `chunk_needles`,
 `file_type`, `sqlite_query`, `feature_scan`, `timeline_super`,
-`timestamp_decode`, `ad1_extract`, `archive_extract`, `sqlite_snapshot`. `file_type` to `timestamp_decode` arrived
+`timestamp_decode`, `ad1_extract`, `archive_extract`, `sqlite_snapshot`,
+`image_verify`, `layer_describe`, `byte_range_extract`, `browser_storage`. `file_type` to `timestamp_decode` arrived
 with the packs that depend on this one: a tool every pack would have carried
 belongs here once, not in each of them. `ad1_extract` writes an AccessData
 AD1 logical image's files out, checked against the digests the image
 records; run as a job, what it writes is catalogued in turn. `archive_extract`
-writes the members of a zip, tar (gzip, bzip2, xz, zstd), 7z or single compressed
+writes the members of a zip, tar (gzip, bzip2, xz, zstd), 7z, RAR (through 7zz) or single compressed
 file into a private directory under byte, ratio, member, depth and time budgets, and never
-recreates a link or a device.
+recreates a link or a device. `image_verify` gives a receipt for an EWF set: each
+segment's sha256, missing and misordered segments, the section chain of each
+segment read without libewf, and `ewfverify`'s stored and recomputed digests,
+with its output kept in files; it never says an image is authentic.
+`layer_describe` turns the sources you declare (an E01 set, the segments of a split
+raw image, a virtual disk and the files it depends on) and a sector size into one
+immutable descriptor named by its own sha256: order, sizes, media size, partition
+table and volumes, and `missing_dependencies`; it looks at nothing you did not
+declare and mounts nothing. `byte_range_extract` copies declared byte ranges of a file, or of a
+split raw set through its descriptor, into files of their own under byte and time budgets, with a
+sha256 for each range; a short range stays `.partial`, and it says nothing about whether the bytes
+are a file. `browser_storage` inventories a Chromium or Electron LevelDB directory (an IndexedDB, Local Storage or Session Storage) with the pinned
+`ccl_chromium_reader` 0.3.18, which it runs in the `ccl_indexeddb_dump` venv as a program of its own: databases, object stores, key types, puts, deletes and
+current keys, a locator for every record, and a bounded preview after the shared withholding. With `write_values`, in a `secret_output` job, it writes every record
+whole to a 0600 file; a venv that is missing is `failed`, never an empty inventory. It does not verify the files' checksums, read blob files or interpret Local Storage.
 Every one takes JSON on stdin and returns JSON, and every call lands on the
 run's trace under the calling agent's name. What they return is bounded and
 says so: a carve is a candidate with `boundary: validated` or `heuristic`, a
@@ -67,7 +83,7 @@ held equal in the three by a test and to a brute-force search over every way of 
 inside the manifest's limit, so reaching it is reported (`partial`, `not_checked`,
 `interrupted`) and is not a kill with nothing said: the scanners (`ioc_scan`,
 `chunk_needles`) and `file_carver` have one, and the answer names where to go on or how far it got. The scanners read their clock between reads and every 256 matches, so a stream of one repeated byte searched for many nested needles ends at it too (memory is one position per needle, not every match of a read).
-`feature_scan`'s counting of the files bulk_extractor wrote has none. `sqlite_query` reads the main
+`feature_scan`'s counting of the files bulk_extractor wrote has none. A program that exits and leaves a process running (in the tool's group, in a session of its own, or holding no descriptor of the tool's) is ended by the shared process block before the file it wrote is read, counted or hashed, and the answer of `archive_extract`, `feature_scan`, `image_verify`, `layer_describe` and `timeline_super`, of `browser_storage` with `write_values`, and the `disk-timeline` recipe (which does it with a small mechanism of its own) is `partial` with `program_group.left_behind`; where the block cannot show that none was left (a host that is not Linux, or a kernel that refuses `PR_SET_CHILD_SUBREAPER`) a run whose program wrote files is at most `partial` and says why. A tool that only reads what a program printed on a pipe is not held to the second. `sqlite_query` reads the main
 database file and reports a write-ahead log beside it without applying it; on a table of secrets,
 run as a job with `secret_output`, `write_values` with a `table` writes the cells to a 0600 file under `$OUT`
 and answers with locators, types and lengths only (no `sql` in that mode, so no filter can confirm a guess);

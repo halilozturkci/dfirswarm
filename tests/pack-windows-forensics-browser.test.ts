@@ -219,11 +219,11 @@ test("browser_history withholds the secrets of a URL in every cell, and writes t
 
     // Outside a job the request is refused, and nothing is written.
     const refused = failed(await tool("browser_history", cwd, { path: "work/History", query: "chrome_url_summary", write_url_secrets: true }));
-    assert.match(refused.error, /refused outside a job/);
+    assert.match(refused.error, /write_url_secrets is refused/);
 
     // In a job the whole text goes to a file of mode 0600 under $OUT, and the answer still holds no secret.
     const env = await inJob(cwd);
-    const jobRun = await tool("browser_history", cwd, { path: "work/History", sql: "SELECT id, url FROM urls ORDER BY id", write_url_secrets: true }, env);
+    const jobRun = await tool("browser_history", cwd, { path: "work/History", sql: "SELECT id, url FROM urls ORDER BY id", write_url_secrets: true }, { ...env, SECRET_OUTPUT: "1" });
     const job = body<Answer>(jobRun);
     assert.equal(job.secret_values.written, 3);
     assert.equal(job.secret_values.contains_secret_values, true);
@@ -234,7 +234,7 @@ test("browser_history withholds the secrets of a URL in every cell, and writes t
     assert.equal(rows[0].url.includes(TOKEN), true, "the whole text is in the file");
     await assertAbsent(jobRun, join(cwd, "out"), [TOKEN, USERPW, FRAGMENT], (f) => f === file);
     // A second run in the same job does not replace it.
-    const again = failed(await tool("browser_history", cwd, { path: "work/History", query: "chrome_url_summary", write_url_secrets: true }, env));
+    const again = failed(await tool("browser_history", cwd, { path: "work/History", query: "chrome_url_summary", write_url_secrets: true }, { ...env, SECRET_OUTPUT: "1" }));
     assert.match(again.error, /already exists/);
     assert.deepEqual((await readFile(file, "utf8")).trim().split("\n").length, 3);
     // The disposable copy, which held the originals, is gone from $OUT.
@@ -270,7 +270,7 @@ test("browser_history fails as JSON, with the reason, when the evidence or the p
     await mkdir(join(cwd, "work", "s1"), { recursive: true });
     await chmod(join(cwd, "work", "s1"), 0o555);
     try {
-      const nowhere = failed(await tool("browser_history", cwd, { path: "work/History", query: "tables" }));
+      const nowhere = failed(await tool("browser_history", cwd, { path: "work/History", query: "tables" }, { TMPDIR: join(cwd, "work", "s1") }));
       assert.match(nowhere.error, /scratch directory/);
     } finally {
       await chmod(join(cwd, "work", "s1"), 0o755);
@@ -475,9 +475,9 @@ test("utf16_urls withholds the secrets of a URL in its candidates and groups, ca
     assert.equal(guess.candidate_count, 0);
     assert.equal(guess.url_secrets_withheld.count, 0, "a candidate that is filtered out is not a finding");
     const refused = failed(await tool("utf16_urls", cwd, { path: "work/mem.raw", write_url_secrets: true }));
-    assert.match(refused.error, /refused outside a job/);
+    assert.match(refused.error, /write_url_secrets is refused/);
     const env = await inJob(cwd);
-    const jobRun = await tool("utf16_urls", cwd, { path: "work/mem.raw", write_url_secrets: true }, env);
+    const jobRun = await tool("utf16_urls", cwd, { path: "work/mem.raw", write_url_secrets: true }, { ...env, SECRET_OUTPUT: "1" });
     const job = body<Answer>(jobRun);
     assert.equal(job.secret_values.written, 3);
     const file2 = join(cwd, "out", "utf16_urls-url-secrets.jsonl");
@@ -583,6 +583,53 @@ test("esedb_query reuses an export only when its manifest is this version's and 
     const { env, manifest } = await first(cwd, bin);
     await writeFile(manifest, "{ not json");
     assert.equal(await exportedAgain(cwd, bin, env), true, "an unreadable manifest");
+  });
+});
+
+test("esedb_query makes the export again when the program_group of its manifest has the wrong shape, and answers JSON", async () => {
+  // reusable() only checked that program_group was a dict: "unproven": 5 crashed export_doubt() with a TypeError and no JSON.
+  const shapes: Array<[string, unknown]> = [
+    ["unproven a number", { left_behind: "x", unproven: 5 }],
+    ["left_behind a string", { left_behind: "x", unproven: [] }],
+    ["unproven a number and left_behind fine", { left_behind: 0, unproven: 5 }],
+    ["unproven a string", { left_behind: 0, unproven: "no proof" }],
+    ["unproven holds a number", { left_behind: 0, unproven: ["a", 7] }],
+    ["unproven missing", { left_behind: 0 }],
+    ["left_behind negative", { left_behind: -1, unproven: [] }],
+    ["left_behind a boolean", { left_behind: true, unproven: [] }],
+    ["left_behind a float", { left_behind: 1.5, unproven: [] }],
+    ["notes a string", { left_behind: 0, unproven: [], notes: "x" }],
+    ["notes holds an object", { left_behind: 0, unproven: [], notes: [{}] }],
+    ["a list", []],
+    ["null", null],
+  ];
+  for (const [label, group] of shapes) {
+    await withCwd(async (cwd, bin) => {
+      await stub(bin, "esedbexport", ESEDBEXPORT(`printf 'Id\\tName\\n1\\ta\\n' > "$root.export/T.0"`));
+      await writeFile(join(cwd, "work", "SRUDB.dat"), "ESE stand-in");
+      const env = { COUNT_FILE: join(cwd, "count") };
+      const one = body<Answer>(await tool("esedb_query", cwd, { path: "work/SRUDB.dat" }, env, bin));
+      const manifest = join(cwd, "work", "s1", "esedb-export", (one.db_sha256 as string).slice(0, 16), "export-manifest.json");
+      const record = JSON.parse(await readFile(manifest, "utf8")) as Answer;
+      record.program_group = group;
+      await writeFile(manifest, JSON.stringify(record));
+      const again = body<Answer>(await tool("esedb_query", cwd, { path: "work/SRUDB.dat" }, env, bin));
+      assert.equal(again.export_reused, false, `${label}: the export is made again`);
+      assert.equal(again.program_group.left_behind, 0, label);
+    });
+  }
+  // A well-formed record (with notes) is still reused.
+  await withCwd(async (cwd, bin) => {
+    await stub(bin, "esedbexport", ESEDBEXPORT(`printf 'Id\\tName\\n1\\ta\\n' > "$root.export/T.0"`));
+    await writeFile(join(cwd, "work", "SRUDB.dat"), "ESE stand-in");
+    const env = { COUNT_FILE: join(cwd, "count") };
+    const one = body<Answer>(await tool("esedb_query", cwd, { path: "work/SRUDB.dat" }, env, bin));
+    const manifest = join(cwd, "work", "s1", "esedb-export", (one.db_sha256 as string).slice(0, 16), "export-manifest.json");
+    const record = JSON.parse(await readFile(manifest, "utf8")) as Answer;
+    record.program_group = { left_behind: 0, unproven: [], notes: ["a note"] };
+    await writeFile(manifest, JSON.stringify(record));
+    const again = body<Answer>(await tool("esedb_query", cwd, { path: "work/SRUDB.dat" }, env, bin));
+    assert.equal(again.export_reused, true);
   });
 });
 

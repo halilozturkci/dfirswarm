@@ -8,7 +8,7 @@ true of any platform.
 
 ## What it carries
 
-**Fifty-three skills**: fifty-two leaves in ten families and the pack's router, `windows/router` (at most 400 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf). Each leaf is short: it opens with when to use
+**Fifty-three skills**: fifty-two leaves in ten families and the pack's router, `windows/router` (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf). Each leaf is short: it opens with when to use
 it and when not, gives the decision rules, and ends with what the artefact shows,
 does not show and what to record. A topic that needs more has a second-level leaf
 that its parent opens "only if" the question calls for it. An agent reads the
@@ -27,7 +27,7 @@ one-line index once and fetches a body only when it reaches that artefact family
 | Memory | `memory/windows` (`memory/hibernation-pagefile`) |
 | Anti-forensics | `antiforensics/traces` (`antiforensics/wiping`, `antiforensics/log-clearing`, `antiforensics/timestamps-clock`, `antiforensics/controls`) |
 
-**Twenty-two tools.** The parsers that carry most cases: `mft_records` (both time
+**Twenty-seven tools.** The parsers that carry most cases: `mft_records` (both time
 sets, resident data, every named stream), `evtx_query` and `evtx_carve` (records
 from a log, and records from a log that was cleared), `regkv`, `prefetch_mam`
 and `mam_scan`, `amcache_apps`, `usn_journal`, `shellbags`, `jumplist`,
@@ -35,7 +35,18 @@ and `mam_scan`, `amcache_apps`, `usn_journal`, `shellbags`, `jumplist`,
 `esedb_query`, `extract_stream`, `utf16_urls`, `yara_scan`, `registry_recover` (replays a hive's
 transaction logs on a copy, never on the original, and says what it could not apply) and
 `lnk_jumplist` (shell links and Jump Lists as rows with the place of every structure in the file,
-the container's consistency, and a second read by `lnkinfo`).
+the container's consistency, and a second read by `lnkinfo`) and `powershell_blocks` (script block
+logging records, event 4104, reassembled into blocks with the fragments each block expects, has and lacks;
+it carries no script text unless a secret-output job asks for it) and `vss_materialise` (copies
+chosen files out of chosen shadow copies through a FUSE mount it always unmounts, tagged with the
+snapshot's identity; without FUSE it answers `blocked: no FUSE` and writes nothing), `userassist_bam_shimcache` (UserAssist, BAM, DAM and ShimCache records with the raw bytes beside the decoded
+fields, the layout and its basis, and `unsupported` for a layout it does not know; its offsets are from published notes, not checked
+against real hives, and no second reader cross-checks it) and
+`persistence_normalise` (scheduled tasks, services and autorun keys: the task XML files, the TaskCache, the service keys, the Run, Winlogon, AppInit,
+IFEO and Active Setup entries and the events of an `evtx_query` result file as items with observations that are not verdicts; the WMI repository is not
+examined and no second reader is started) and `srum_reader` (SRUDB.dat read through SrumECmd and dissect.target, every row naming the backend that produced it, with the
+database's state, the unresolved ids counted and the table counts of the two compared; SrumECmd's own strings say it refuses to run off Windows (read from the dll's strings, not run), so in a Linux image only dissect.target can give rows, and neither backend's
+shape has been checked against a real run).
 
 **One recipe**, `windows-artefacts`, run on request over an extracted collection: it reads each
 family of artefact it finds with the tool above that reads it (and runs a fixed list of
@@ -44,18 +55,34 @@ whole answer of every call, and writes `coverage.json` with `parsed`, `partial`,
 `unsupported`, `failed` or `not_attempted` for each family. `complete` there is not coverage of
 the host.
 
-What a tool measures, and what it does not, is in its manifest, and a tool says
-what it did not read rather than hand back a clean answer for a run that did not
-read everything: `partial` or `failed` in a `status` where it has one, and
-otherwise its own counts (`structure_complete`, `unrecognised_bytes`,
-`records_examined` against `parse_errors`). An exit status of 0 means the engine
-ran, not that the examination is complete. Five of them can reach secret material and print none
-of it: `browser_history` replaces the credential cells of Login Data, Cookies and
-Firefox's key database by their length, `regkv` and `registry_recover` do the same for values that can
-be secrets, `lnk_jumplist` withholds a link's arguments, and `yara_scan` returns where a rule matched, never the bytes it
-matched; `yara_scan`, in a job run with `secret_output: true`, can be asked
-(`write_matches`) to write the matched bytes to a sealed file; `registry_recover` and `lnk_jumplist` can be asked
-(`write_values`, `write_strings`) to write theirs, in a job run with `secret_output: true`.
+What a tool measures, and what it does not, is in its manifest, and a tool says what it did not read
+rather than hand back a clean answer for a run that did not read everything: `partial` or `failed`
+in a `status` where it has one, and otherwise its own counts (`structure_complete`,
+`unrecognised_bytes`, `records_examined` against `parse_errors`). An exit status of 0 means the
+engine ran, not that the examination is complete. Several of them can reach secret material and keep
+it out of their answers by shape or by name, not wholesale, so a secret of another shape is printed:
+`browser_history` replaces the credential cells of Login Data, Cookies and Firefox's key database,
+and the cells of columns named for a secret, by their length, and masks URL secrets by parameter
+name and user-info (a token in a path or under another name is printed); `regkv` and
+`registry_recover` do the same for values judged secret by name or place (a secret inside a value
+that does not look like one, such as a command line, is printed); `lnk_parse` and `lnk_jumplist`
+keep a link's arguments out of the answer and show a first word only when it is a program, a script
+or a known switch name; `utf16_urls` masks URL secrets by parameter name and user-info; and
+`yara_scan` returns where a rule matched, never the bytes it matched (its rule and string
+identifiers are the rule file's words and are printed). Describe a found secret by where it sits,
+its kind, length and what it grants, never by its value. `yara_scan`, in a job run with
+`secret_output: true`, can be asked (`write_matches`) to write the matched bytes to a sealed file;
+`registry_recover` and `lnk_jumplist` can be asked (`write_values`, `write_strings`) to write
+theirs, and so can `browser_history` and `utf16_urls` (`write_url_secrets`), in a job run with
+`secret_output: true`.
+
+**A program that leaves a process behind.** The tools that run a program share one process block, and its `settle()` ends, before anything is sized, hashed or read, every process
+a program left running after it ended (in the tool's group, in a session of its own, or holding no descriptor at all); the answer carries `program_group` (`subreaper`, `left_behind`,
+`unproven`, `notes`). `extract_stream`, `vss_stores`, `esedb_query`, `sigma_hunt`, `srum_reader`, `yara_scan`, `lnk_jumplist` (for JLECmd's CSV) and the windows-artefacts recipe report a
+file a program wrote, so they answer `partial` when `settle()` ended a leftover (the file is stable but may be short) and, on a host that is not Linux or where the kernel refuses
+`PR_SET_CHILD_SUBREAPER`, when the absence of one cannot be ruled out. `registry_recover` (regfexport's counts), `vss_materialise` (copies made from icat's pipe) and the lnkinfo read of
+`lnk_jumplist` report what a program printed on a pipe: they are not held to the second rule, but a process that holds the pipe is ended, and what came through it is not trusted
+(`vss_materialise` keeps no copy of it; `registry_recover` does not compare the counts). A pipe cut at the block's byte cap (the holder kept writing after the program ended; the tool let the pipe go after 1 MiB) makes `lnk_jumplist` `partial` when it is lnkinfo's (the link keeps lnk_parse's reading, `integrity.lnkinfo.ran` is false with the reason) and `vss_materialise` `partial` when it is vshadowinfo's or fusermount's; the vshadowmount daemon is left on purpose and its pipe is not counted. A writer that is no descendant of the program (started through a service manager) is not found.
 
 **Three goal templates** in `goals/`, each with its own questions, definition of
 done and checks: `intrusion-triage.md`, `data-left-the-building.md`,

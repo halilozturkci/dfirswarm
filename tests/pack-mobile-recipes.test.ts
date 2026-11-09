@@ -15,10 +15,13 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPySnippet, withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const PACK = process.env.MOBILE_PACK ?? join(ROOT, "packs", "mobile-forensics");
 const RECIPES = join(PACK, "recipes");
@@ -78,8 +81,8 @@ async function coverage(out: string): Promise<Coverage> {
 }
 
 /** A recipe run under a wrapper that reports the peak resident memory (bytes) of the recipe's own process. */
-const MEASURE = String.raw`
-import resource, runpy, sys
+const MEASURE = peakRssPrelude() + String.raw`
+import runpy
 script = sys.argv[1]
 sys.argv = [script] + sys.argv[2:]
 try:
@@ -88,8 +91,7 @@ except SystemExit as exit:
     code = exit.code
 else:
     code = 0
-usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-sys.stderr.write("MAXRSS %d\n" % (usage if sys.platform == "darwin" else usage * 1024))
+sys.stderr.write("MAXRSS %d\n" % self_peak_bytes())
 sys.exit(code)
 `;
 
@@ -217,7 +219,7 @@ for (const [recipeName, program, marker, label, otherMarker] of [
   ["ios-ileapp", "ileapp", "private/var/mobile/Library/SMS/sms.db", "iLEAPP", "data/system/packages.xml"],
   ["android-aleapp", "aleapp", "data/system/packages.xml", "ALEAPP", "private/var/mobile/Library/SMS/sms.db"],
 ] as const) {
-  test(`${recipeName} is complete only when its log accounts for every module and none errored (exit 0 and a TSV are not enough)`, async () => {
+  test(`${recipeName} is complete only when its log accounts for every module and none errored (exit 0 and a TSV are not enough)`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
       await build(TAR, tar, JSON.stringify([[marker, 16], ["data/data/com.example/databases/x.db", 4]]));
@@ -283,7 +285,7 @@ for (const [recipeName, program, marker, label, otherMarker] of [
     });
   });
 
-  test(`${recipeName} keeps every file the program leaves in its scratch tree, runs it from a directory under the output (a relative one too) and never writes the run directory`, async () => {
+  test(`${recipeName} keeps every file the program leaves in its scratch tree, runs it from a directory under the output (a relative one too) and never writes the run directory`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
       await build(TAR, tar, JSON.stringify([[marker, 16]]));
@@ -316,7 +318,7 @@ echo "log beside the report" > "$out/run-log.txt"; pwd > "$out/../cwd-seen.txt";
       const before = (await readFile(join(out, "coverage.json"))).toString();
       const again = await recipe(recipeName, ["run", "--target", target(tar), "--out", "../rel/out-dir"], runDir, {}, bin);
       assert.equal(again.code, 2);
-      assert.equal(JSON.parse(again.stdout).status, "refused");
+      assert.equal(JSON.parse(again.stdout).status, "failed");
       assert.equal((await readFile(join(out, "coverage.json"))).toString(), before, "the earlier coverage.json is untouched");
       assert.equal(await exists(join(out, program, "_TSV Exports", "Messages.tsv")), true);
     });
@@ -355,7 +357,7 @@ echo "log beside the report" > "$out/run-log.txt"; pwd > "$out/../cwd-seen.txt";
     return { result, coverage: await coverage(join(cwd, out)), tsv };
   }
 
-  test(`${recipeName} reads the log as the program prints it: a count with thousands separators, records beside "No data found", a version gate`, async () => {
+  test(`${recipeName} reads the log as the program prints it: a count with thousands separators, records beside "No data found", a version gate`, { skip: NO_ADOPTION }, async () => {
     // Lines of this shape are those of real iLEAPP v2026.4.1 runs: the unified-log module prints "Found 167,304 records"
     // and, in the same module, "No data found for ..." for its other artefacts; a module gated by the OS version says so.
     await withCwd(async (cwd, bin) => {
@@ -409,7 +411,7 @@ ${[LOG.header(2), LOG.found(1, 2, "Messages", "messages", 2), `echo "OSError: [E
     });
   });
 
-  test(`${recipeName} reads stderr into the same account, and a line on stderr that nothing explains is a problem`, async () => {
+  test(`${recipeName} reads stderr into the same account, and a line on stderr that nothing explains is a problem`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
       await build(TAR, tar, JSON.stringify([[marker, 16]]));
@@ -463,15 +465,16 @@ ${[LOG.header(2), LOG.found(1, 2, "Messages", "messages", 2), `echo "OSError: [E
         const tar = join(cwd, "work", `long-${compress}.tar`);
         await build(TARX, tar, JSON.stringify({ compress, long_header_first: 200 * 1024 * 1024, members: [{ name: marker, size: 16 }] }));
         const { result, maxrss } = await measuredRecipe(recipeName, ["detect", "--target", target(tar)], cwd);
-        const answer = JSON.parse(result.stdout) as { applies: boolean; why: string };
-        assert.equal(answer.applies, false, answer.why);
+        const answer = JSON.parse(result.stdout) as { applies: boolean | string; why: string };
+        assert.equal(answer.applies, "unknown", answer.why);
+        assert.equal(result.code, 2, "a scan that stopped at a bound could not tell: exit 2");
         assert.match(answer.why, /before a header the scan does not read \(an extended header of 209715200 bytes at offset 0\)/);
         assert.ok(maxrss < 100 * 1024 * 1024, `${compress}: ${maxrss} bytes resident`);
       }
     });
   });
 
-  test(`${recipeName} lists what it wrote with the log files, labels the program's copies of the acquisition as copies, and counts only a report as a report`, async () => {
+  test(`${recipeName} lists what it wrote with the log files, labels the program's copies of the acquisition as copies, and counts only a report as a report`, { skip: NO_ADOPTION }, async () => {
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
       await build(TAR, tar, JSON.stringify([[marker, 16]]));
@@ -492,7 +495,7 @@ ${[LOG.header(2), LOG.found(1, 2, "Messages", "messages", 2), `echo "OSError: [E
     });
   });
 
-  test(`${recipeName} reads a log line to a bound, not whole`, async () => {
+  test(`${recipeName} reads a log line to a bound, not whole`, { skip: NO_ADOPTION }, async () => {
     // A line of 96 MiB in the log (a module that prints a blob) was read whole before it was cut.
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
@@ -910,7 +913,7 @@ test("android-backup and ios-filesystem refuse to write over an earlier run, and
       const before = await filesUnder(out);
       const again = await recipe(name, ["run", "--target", target(input), "--out", out], cwd);
       assert.equal(again.code, 2, again.stdout + again.stderr);
-      assert.equal(JSON.parse(again.stdout).status, "refused");
+      assert.equal(JSON.parse(again.stdout).status, "failed");
       assert.deepEqual(await filesUnder(out), before, `${name}: the earlier run's files are as they were`);
     }
   });
@@ -1198,7 +1201,23 @@ for (const [recipeName, program, marker] of [
     await withCwd(async (cwd, bin) => {
       const tar = join(cwd, "work", "acq.tar");
       await build(TAR, tar, JSON.stringify([[marker, 16]]));
-      const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+      // A process that was sent SIGKILL is gone when it is a zombie (dead, its parent has not yet collected it) or has left the table: a kill(0) alone also says "running" for a zombie
+      // and for a process in the middle of dying, which the host's init reaps a moment after the recipe has exited. It is given up to 3 seconds to be gone.
+      const running = (pid: number): boolean => {
+        try { process.kill(pid, 0); } catch { return false; }
+        try {
+          const stat = readFileSync(`/proc/${pid}/stat`, "latin1");
+          const state = stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3);
+          return state !== "Z" && state !== "X";
+        } catch { return true; }
+      };
+      const alive = (pid: number): boolean => {
+        for (let i = 0; i < 60; i++) {
+          if (!running(pid)) return false;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+        }
+        return true;
+      };
       const pidOf = async (file: string): Promise<number[]> => (await readFile(file, "utf8")).trim().split("\n").map(Number).filter(Boolean);
       // The program writes a report and then waits for a long time with a child of its own that also waits.
       const stall = `${REPORT}\n${LOG.header(1)}\n${LOG.found(1, 1, "Messages", "messages", 2)}\n(sleep 600 & echo $! >> "$out/../pids.txt"; wait) &\necho $$ >> "$out/../pids.txt"\nsleep 600`;
@@ -1422,3 +1441,663 @@ test("the module receipt of the two LEAPP recipes is the same code", async () =>
   assert.equal(receipt(ios), receipt(android));
 });
 
+
+// --- the five recipes: the LEAPP programs in the recipe's own group, the status pair on every exit, a clock inside a member ---
+
+const alivePid = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const pidsIn = async (file: string): Promise<number[]> => (await readFile(file, "utf8")).trim().split("\n").map(Number).filter(Boolean);
+
+test("no mobile tool or recipe starts a program in a session of its own", async () => {
+  // docs/packs.md: a program stays in the tool's process group and never uses start_new_session, because the harness ends a tool by killing its group.
+  const offenders: string[] = [];
+  for (const dir of ["tools", "recipes"]) {
+    for (const entry of await readdir(join(PACK, dir), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const text = await readFile(join(PACK, dir, entry.name, "run.py"), "utf8");
+      if (/start_new_session\s*=\s*True|\bsetsid\b\s*\(|preexec_fn\s*=\s*os\.setsid/.test(text)) offenders.push(`${dir}/${entry.name}`);
+    }
+  }
+  assert.deepEqual(offenders, []);
+});
+
+for (const [recipeName, program, marker] of [
+  ["ios-ileapp", "ileapp", "private/var/mobile/Library/SMS/sms.db"],
+  ["android-aleapp", "aleapp", "data/system/packages.xml"],
+] as const) {
+  test(`${recipeName} leaves no process of the program running after a stop, or after its own group is killed, though a grandchild ignores SIGTERM`, async () => {
+    // The program ran in a session of its own and the recipe ended its group with SIGTERM, waiting for the leader and no longer: a grandchild that
+    // ignored SIGTERM was left running when the leader had gone, and the group of the recipe did not hold it, so killing that group left it too.
+    await withCwd(async (cwd, bin) => {
+      const tar = join(cwd, "work", "acq.tar");
+      await build(TAR, tar, JSON.stringify([[marker, 16]]));
+      const stall = `${REPORT}\n${LOG.header(1)}\n${LOG.found(1, 1, "Messages", "messages", 2)}\n(trap '' TERM; exec sleep 600) &\necho $! >> "$out/../pids.txt"\necho $$ >> "$out/../pids.txt"\nsleep 600`;
+      await standin(bin, program, stall);
+      const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+      for (const how of ["stop", "kill-group"] as const) {
+        const out = join(cwd, how);
+        await mkdir(out, { recursive: true });
+        const child = spawn("python3", [join(RECIPES, recipeName, "run.py"), "run", "--target", target(tar), "--out", out], { cwd, env, detached: how === "kill-group" });
+        const stdout: Buffer[] = [];
+        child.stdout.on("data", (c: Buffer) => stdout.push(c));
+        const exit = new Promise<number | null>((resolve) => child.on("close", (code, signal) => resolve(code ?? (signal ? 128 + 99 : null))));
+        const guard = setTimeout(() => child.kill("SIGKILL"), 90000);
+        let pids: number[] = [];
+        try {
+          for (let i = 0; i < 300 && pids.length < 2; i++) {
+            await new Promise((r) => setTimeout(r, 100));
+            pids = await pidsIn(join(out, "pids.txt")).catch(() => []);
+          }
+          assert.ok(pids.length >= 2, `${how}: the program started`);
+          if (how === "stop") child.kill("SIGTERM");
+          else process.kill(-child.pid!, "SIGKILL");
+          const code = await exit;
+          if (how === "stop") {
+            assert.equal(code, 143);
+            const last = JSON.parse(Buffer.concat(stdout).toString("utf8")) as { status: string; status_basis: string };
+            assert.equal(last.status, "partial");
+            assert.match(last.status_basis, /stopped by SIGTERM/);
+          }
+          await new Promise((r) => setTimeout(r, 300));
+          for (const pid of pids) assert.equal(alivePid(pid), false, `${how}: process ${pid} is still running`);
+        } finally {
+          clearTimeout(guard);
+          for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+        }
+      }
+    });
+  });
+}
+
+/** The status pair of an answer or a coverage.json: one of the contract's three words, and one sentence that says what it rests on. */
+function pair(value: { status?: unknown; status_basis?: unknown }, label: string): void {
+  assert.ok(["complete", "partial", "failed"].includes(String(value.status)), `${label}: status ${String(value.status)}`);
+  assert.equal(typeof value.status_basis, "string", `${label}: status_basis`);
+  assert.ok((value.status_basis as string).length > 20 && !(value.status_basis as string).includes("\n"), `${label}: status_basis is a sentence: ${String(value.status_basis)}`);
+}
+
+test("every answer and every coverage.json of the five recipes carries a status of complete, partial or failed and a status_basis, on every exit path", { skip: NO_ADOPTION }, async () => {
+  // Their answers said `refused` and `unsupported` beside the contract's three words, and none wrote a status_basis (docs/packs.md).
+  await withCwd(async (cwd, bin) => {
+    const none = join(cwd, "work", "nothing.bin");
+    await writeFile(none, "this is not an acquisition");
+    const tar = join(cwd, "work", "acq.tar");
+    await build(TAR, tar, JSON.stringify([["private/var/mobile/Library/SMS/sms.db", 16]]));
+    const droid = join(cwd, "work", "acq-android.tar");
+    await build(TAR, droid, JSON.stringify([["data/system/packages.xml", 16]]));
+    const ab = join(cwd, "work", "bk.ab");
+    await build(AB, ab, JSON.stringify({ members: [["apps/com.example/f/a.txt", 100]] }));
+    const names = ["ios-ileapp", "android-aleapp", "ios-filesystem", "android-backup", "android-backup-apps"];
+    const answered = async (name: string, args: string[], label: string, expectExit: number | null = null): Promise<Record<string, unknown>> => {
+      const result = await recipe(name, args, cwd, {}, bin);
+      if (expectExit !== null) assert.equal(result.code, expectExit, `${label}: ${result.stdout}${result.stderr}`);
+      const line = JSON.parse(result.stdout.trim().split("\n").pop() ?? "{}") as Record<string, unknown>;
+      pair(line, label);
+      return line;
+    };
+    for (const name of names) {
+      // The target cannot be read, run has no --out, the target is not what the recipe reads.
+      const bad = await answered(name, ["run", "--target", JSON.stringify({ paths: [] }), "--out", join(cwd, `${name}-bad`)], `${name} bad target`, 2);
+      assert.equal(bad.status, "failed");
+      await answered(name, ["run", "--target", target(name === "android-backup-apps" ? ab : tar)], `${name} no --out`, 2);
+      const unsupported = await answered(name, ["run", "--target", target(none), "--out", join(cwd, `${name}-unsupported`)], `${name} not applicable`, 2);
+      assert.equal(unsupported.status, "failed");
+      assert.ok(typeof unsupported.why === "string", `${name}: the refusal carries why`);
+    }
+    // A run into a directory that already holds an earlier run's account is refused, as failed, with why, and the account is left alone.
+    for (const name of names) {
+      const out = join(cwd, `${name}-earlier`);
+      await mkdir(out, { recursive: true });
+      await writeFile(join(out, "coverage.json"), "{\"earlier\": true}\n");
+      const refusal = await answered(name, ["run", "--target", target(name === "android-aleapp" ? droid : name === "android-backup" || name === "android-backup-apps" ? ab : tar), "--out", out], `${name} refused`, 2);
+      assert.equal(refusal.status, "failed");
+      assert.equal(typeof refusal.why, "string");
+      assert.equal(await readFile(join(out, "coverage.json"), "utf8"), "{\"earlier\": true}\n");
+    }
+    // The ends: the program is not in the image (failed), the listing of a tar and of a backup (complete, partial), the layout of a backup (complete, partial).
+    const missing = await answered("ios-ileapp", ["run", "--target", target(tar), "--out", join(cwd, "no-program")], "ios-ileapp without the program", 1);
+    pair(await coverage(join(cwd, "no-program")), "ios-ileapp coverage without the program");
+    assert.equal(missing.status, "failed");
+    await standin(bin, "aleapp", `${REPORT}\n${LOG.header(2)}\n${LOG.found(1, 2, "Messages", "messages", 2)}\n${LOG.failed(2, 2, "addressBook", "addressBook")}\n${LOG.end}`);
+    await answered("android-aleapp", ["run", "--target", target(droid), "--out", join(cwd, "partial-leapp")], "android-aleapp partial", 0);
+    pair(await coverage(join(cwd, "partial-leapp")), "android-aleapp coverage partial");
+    await standin(bin, "ileapp", `${REPORT}\n${LOG.header(1)}\n${LOG.found(1, 1, "Messages", "messages", 2)}\n${LOG.end}`);
+    const done = await answered("ios-ileapp", ["run", "--target", target(tar), "--out", join(cwd, "complete-leapp")], "ios-ileapp complete", 0);
+    assert.equal(done.status, "complete");
+    pair(await coverage(join(cwd, "complete-leapp")), "ios-ileapp coverage complete");
+    const listed = await answered("ios-filesystem", ["run", "--target", target(tar), "--out", join(cwd, "fs-run")], "ios-filesystem run", 0);
+    pair(await coverage(join(cwd, "fs-run")), "ios-filesystem coverage");
+    assert.ok(["complete", "partial"].includes(String(listed.status)));
+    const backed = await answered("android-backup", ["run", "--target", target(ab), "--out", join(cwd, "ab-run")], "android-backup run", 0);
+    pair(await coverage(join(cwd, "ab-run")), "android-backup coverage");
+    assert.ok(["complete", "partial"].includes(String(backed.status)));
+    const encrypted = join(cwd, "work", "enc.ab");
+    await writeFile(encrypted, Buffer.from("ANDROID BACKUP\n5\n1\nAES-256\n0a0b\n0c0d\n10000\n0e0f\n1011\n"));
+    await answered("android-backup", ["run", "--target", target(encrypted), "--out", join(cwd, "ab-enc")], "android-backup encrypted", 0);
+    pair(await coverage(join(cwd, "ab-enc")), "android-backup encrypted coverage");
+    const laidOut = await answered("android-backup-apps", ["run", "--target", target(ab), "--out", join(cwd, "apps-run")], "android-backup-apps run", 0);
+    assert.ok(["complete", "partial"].includes(String(laidOut.status)));
+    pair(await coverage(join(cwd, "apps-run")), "android-backup-apps coverage");
+    const encApps = await answered("android-backup-apps", ["run", "--target", target(encrypted), "--out", join(cwd, "apps-enc")], "android-backup-apps encrypted", 2);
+    assert.equal(encApps.status, "failed");
+    // No recipe's source names `refused` or `unsupported` as a status.
+    for (const name of names) assert.doesNotMatch(await readFile(join(RECIPES, name, "run.py"), "utf8"), /"status": "(refused|unsupported)"/, name);
+  });
+});
+
+/**
+ * A recipe with a clock that moves 0.1 s every time it is read, and the byte budget between two looks at it lowered to 1 MiB: how far through the
+ * time limit the listing stops inside one huge member does not depend on how fast the machine is. argv: the recipe's run.py, then its arguments.
+ */
+const RECIPE_FAKE_CLOCK = String.raw`
+import importlib.util, sys, time
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("r", sys.argv[1]); r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
+    def monotonic(self):
+        self.now += 0.1
+        return self.now
+    def __getattr__(self, name):
+        return getattr(time, name)
+r.time = Clock()
+if hasattr(r, "CLOCK_BYTES"):
+    r.CLOCK_BYTES = 1 << 20
+sys.argv = [sys.argv[1]] + sys.argv[2:]
+sys.exit(r.main())
+`;
+
+test("ios-filesystem and android-backup read the clock inside a member, by byte budget, so one huge member is stopped on time", async () => {
+  // The clock was read once every 256 members: a single member of any size was read to its end first, however long that took.
+  await withCwd(async (cwd) => {
+    const big = 64 << 20;
+    const gz = join(cwd, "work", "huge.tar.gz");
+    await build(TARX, gz, JSON.stringify({ members: [{ name: "private/var/mobile/Library/SMS/sms.db", size: big }], compress: "gz" }));
+    const fs = await runPySnippet(RECIPE_FAKE_CLOCK, [join(RECIPES, "ios-filesystem", "run.py"), "run", "--target", target(gz), "--out", join(cwd, "fs-huge"), "--max-seconds", "1"], null);
+    assert.equal(fs.code, 0, fs.stdout + fs.stderr);
+    const fsCoverage = await coverage(join(cwd, "fs-huge"));
+    assert.equal(fsCoverage.status, "partial", JSON.stringify(fsCoverage));
+    assert.ok(fsCoverage.limits_hit.some((l) => /^time limit of 1 seconds for the listing/.test(l)), JSON.stringify(fsCoverage.limits_hit));
+    assert.equal(fsCoverage.errors.length, 0, `the time limit is the one statement: ${JSON.stringify(fsCoverage.errors)}`);
+    for (const compress of [true, false]) {
+      const ab = join(cwd, "work", `huge-${compress}.ab`);
+      await build(AB, ab, JSON.stringify({ members: [["apps/com.example/f/big.bin", big]], compress }));
+      const run = await runPySnippet(RECIPE_FAKE_CLOCK, [join(RECIPES, "android-backup", "run.py"), "run", "--target", target(ab), "--out", join(cwd, `ab-huge-${compress}`), "--max-seconds", "1"], null);
+      assert.equal(run.code, 0, run.stdout + run.stderr);
+      const cov = await coverage(join(cwd, `ab-huge-${compress}`));
+      assert.equal(cov.status, "partial", `${compress}: ${JSON.stringify(cov)}`);
+      assert.ok(cov.limits_hit.some((l) => /^time limit of 1 seconds for the listing/.test(l)), `${compress}: ${JSON.stringify(cov.limits_hit)}`);
+      assert.equal(cov.errors.length, 0, `${compress}: ${JSON.stringify(cov.errors)}`);
+    }
+  });
+});
+
+
+// --- android-backup-apps: the adb backup laid out as ALEAPP reads it, then ALEAPP -----------------------------------------------------------------
+
+/** A stand-in ALEAPP that records its argv and what it was given to read, then reports as a clean run. */
+async function appsStandin(bin: string, cwd: string, extra = ""): Promise<void> {
+  await standin(bin, "aleapp", `printf '%s\\n' "-t" "$kind" "-i" "$src" > "${cwd}/aleapp-argv.txt"; ( cd "$src" && find . -type f | sort > "${cwd}/aleapp-saw.txt" )\n${REPORT}\n${LOG.header(1)}\n${LOG.found(1, 1, "Messages", "messages", 2)}\n${extra}\n${LOG.end}`);
+}
+
+const APPS_MEMBERS = [["apps/com.example/_manifest", 40], ["apps/com.example/db/x.db", 100], ["apps/com.example/db/x.db-wal", 30], ["apps/com.example/sp/p.xml", 20], ["apps/com.example/a/base.apk", 50], ["shared/0/pic.jpg", 10]];
+
+test("android-backup-apps lays an adb backup out and runs ALEAPP over the layout with -t fs: complete, a derivative, versions 1 to 5, no password option", { skip: NO_ADOPTION }, async () => {
+  await withCwd(async (cwd, bin) => {
+    await appsStandin(bin, cwd);
+    for (const version of [1, 2, 3, 4, 5]) {
+      const ab = join(cwd, "work", `v${version}.ab`);
+      await build(AB, ab, JSON.stringify({ version, members: APPS_MEMBERS }));
+      const out = join(cwd, `out-v${version}`);
+      const detect = await recipe("android-backup-apps", ["detect", "--target", target(ab)], cwd, {}, bin);
+      assert.equal(detect.code, 0, detect.stdout);
+      const result = await recipe("android-backup-apps", ["run", "--target", target(ab), "--out", out], cwd, {}, bin);
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      const cov = await coverage(out);
+      assert.equal(cov.status, "complete", `${version}: ${JSON.stringify(cov.errors)} ${cov.covered}`);
+      assert.equal(cov.recipe, "android-backup-apps");
+      const adb = (cov.modules as unknown as { adb_backup: { kind: string; stream: string; tar_end: string; counts: { extracted_files: number; states: Record<string, number> } } }).adb_backup;
+      assert.equal(adb.kind, "derivative of an adb backup");
+      assert.equal(adb.stream, "reached");
+      assert.equal(adb.tar_end, "reached");
+      assert.equal(adb.counts.extracted_files, 4);
+      assert.equal(adb.counts.states.not_laid_out, 1);
+      assert.equal(adb.counts.states.shared_storage, 1);
+    }
+    const out = join(cwd, "out-v5");
+    const argv = (await readFile(join(cwd, "aleapp-argv.txt"), "utf8")).trim().split("\n");
+    assert.deepEqual(argv.slice(0, 3), ["-t", "fs", "-i"]);
+    assert.equal(argv[3], join(cwd, "out-v5", "derivative"), "ALEAPP reads the derivative directory");
+    assert.ok(!argv.some((a) => /pass|key|secret/i.test(a)), "no password option");
+    const saw = (await readFile(join(cwd, "aleapp-saw.txt"), "utf8")).trim().split("\n");
+    assert.ok(saw.includes("./data/data/com.example/databases/x.db") && saw.includes("./data/data/com.example/databases/x.db-wal") && saw.includes("./data/data/com.example/shared_prefs/p.xml"), saw.join(", "));
+    assert.ok(saw.includes("./ab_layout_meta/com.example/_manifest") && saw.includes("./DERIVATIVE.json"));
+    assert.ok(!saw.some((f) => /base\.apk|pic\.jpg/.test(f)), "the APK and shared storage are not laid out");
+    const banner = JSON.parse(await readFile(join(out, "derivative", "DERIVATIVE.json"), "utf8")) as { kind: string; is_not: string };
+    assert.equal(banner.kind, "derivative of an adb backup");
+    assert.match(banner.is_not, /not a file-system acquisition|a file-system acquisition/);
+    assert.match(await readFile(join(out, "ab-members.tsv"), "utf8"), /\textracted\t/);
+    assert.ok(await exists(join(out, "modules.tsv")));
+    assert.match(await readFile(join(out, "index.tsv"), "utf8"), /ab-members\.tsv/);
+  });
+});
+
+test("android-backup-apps refuses an encrypted backup (failed, ALEAPP never started), and says partial for a backup whose stream is not whole even when ALEAPP is clean", async () => {
+  await withCwd(async (cwd, bin) => {
+    await appsStandin(bin, cwd);
+    const enc = join(cwd, "work", "enc.ab");
+    await writeFile(enc, Buffer.from("ANDROID BACKUP\n5\n1\nAES-256\n0a0b\n0c0d\n10000\n0e0f\n1011\n"));
+    const detect = await recipe("android-backup-apps", ["detect", "--target", target(enc)], cwd, {}, bin);
+    assert.equal(detect.code, 1);
+    assert.match(detect.stdout, /encrypted/);
+    const refused = await recipe("android-backup-apps", ["run", "--target", target(enc), "--out", join(cwd, "o-enc")], cwd, {}, bin);
+    assert.equal(refused.code, 2);
+    assert.equal((JSON.parse(refused.stdout.trim().split("\n").pop()!) as { status: string }).status, "failed");
+    assert.equal(await exists(join(cwd, "aleapp-argv.txt")), false, "ALEAPP was not started");
+    const v99 = join(cwd, "work", "v99.ab");
+    await build(AB, v99, JSON.stringify({ version: 99, members: APPS_MEMBERS }));
+    assert.equal((await recipe("android-backup-apps", ["detect", "--target", target(v99)], cwd, {}, bin)).code, 1);
+    // No end blocks, bytes after the end: each is partial (the lone zero block is covered by the ab_layout suite) with ALEAPP clean.
+    for (const [name, spec, pattern] of [
+      ["noend", { members: APPS_MEMBERS, end: false }, /two end blocks were not reached/],
+      ["tail", { members: APPS_MEMBERS, tail: 3 }, /data follows the tar's end blocks|byte\(s\) follow/],
+    ] as const) {
+      const ab = join(cwd, "work", `${name}.ab`);
+      await build(AB, ab, JSON.stringify(spec));
+      const out = join(cwd, `o-${name}`);
+      const r = await recipe("android-backup-apps", ["run", "--target", target(ab), "--out", out], cwd, {}, bin);
+      assert.equal(r.code, 0, r.stdout);
+      const cov = await coverage(out);
+      assert.equal(cov.status, "partial", `${name}: ${cov.errors.join(" | ")}`);
+      assert.match(cov.errors.join(" | "), pattern, name);
+    }
+    // ALEAPP missing: failed.
+    const noProgram = join(cwd, "work", "np.ab");
+    await build(AB, noProgram, JSON.stringify({ members: APPS_MEMBERS }));
+    const np = await recipe("android-backup-apps", ["run", "--target", target(noProgram), "--out", join(cwd, "o-np")], cwd, { PATH: "/usr/bin:/bin" });
+    assert.equal(np.code, 1, np.stdout);
+    assert.equal((await coverage(join(cwd, "o-np"))).status, "failed");
+  });
+});
+
+test("android-backup-apps: hostile names are rejected and listed, a bomb is bounded by the budget, a second run into the same directory is refused and leaves the first alone", async () => {
+  await withCwd(async (cwd, bin) => {
+    await appsStandin(bin, cwd);
+    const ab = join(cwd, "work", "hostile.ab");
+    await build(AB, ab, JSON.stringify({ members: [["apps/com.example/f/../../../escape.txt", 5], ["/etc/abs.txt", 5], ["apps/com.example/f/..config", 7], ["apps/com.example/f/ok.txt", 9]] }));
+    const out = join(cwd, "out-h");
+    const r = await recipe("android-backup-apps", ["run", "--target", target(ab), "--out", out], cwd, {}, bin);
+    assert.equal(r.code, 0, r.stdout);
+    const cov = await coverage(out);
+    assert.equal(cov.status, "partial");
+    assert.match(cov.errors.join(" | "), /rejected_name 2/);
+    const tsv = await readFile(join(out, "ab-members.tsv"), "utf8");
+    assert.equal((tsv.match(/\trejected_name\t|^\d+\trejected_name\t/gm) ?? []).length, 2);
+    assert.ok(await exists(join(out, "derivative", "data", "data", "com.example", "files", "..config")), "an odd name is a name");
+    assert.equal(await exists(join(cwd, "escape.txt")), false);
+    assert.equal(await exists(join(out, "escape.txt")), false);
+    // The same directory again: refused (exit 2) and the first account is untouched.
+    const first = await readFile(join(out, "coverage.json"), "utf8");
+    const again = await recipe("android-backup-apps", ["run", "--target", target(ab), "--out", out], cwd, {}, bin);
+    assert.equal(again.code, 2);
+    assert.equal(await readFile(join(out, "coverage.json"), "utf8"), first);
+    // A member of 3 GB of zeros: ~3 MB on disk; the layout is written, the run goes on, and nothing is held in memory.
+    const bomb = join(cwd, "work", "bomb.ab");
+    await build(AB, bomb, JSON.stringify({ members: [["apps/com.example/f/zeros.bin", 600 << 20], ["apps/com.example/f/after.txt", 4]] }));
+    const big = await recipe("android-backup-apps", ["run", "--target", target(bomb), "--out", join(cwd, "out-bomb"), "--max-seconds", "600"], cwd, {}, bin);
+    assert.equal(big.code, 0, big.stdout);
+    assert.equal((await stat(join(cwd, "out-bomb", "derivative", "data", "data", "com.example", "files", "zeros.bin"))).size, 600 << 20);
+  });
+});
+
+test("android-backup-apps leaves no process of ALEAPP running after a stop, and a stop leaves the account saying partial", async () => {
+  await withCwd(async (cwd, bin) => {
+    const ab = join(cwd, "work", "stop.ab");
+    await build(AB, ab, JSON.stringify({ members: APPS_MEMBERS }));
+    const stall = `${REPORT}\n${LOG.header(1)}\n${LOG.found(1, 1, "Messages", "messages", 2)}\n(trap '' TERM; exec sleep 600) &\necho $! >> "$out/../pids.txt"\necho $$ >> "$out/../pids.txt"\nsleep 600`;
+    await standin(bin, "aleapp", stall);
+    const out = join(cwd, "stop");
+    await mkdir(out, { recursive: true });
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+    const child = spawn("python3", [join(RECIPES, "android-backup-apps", "run.py"), "run", "--target", target(ab), "--out", out], { cwd, env });
+    const stdout: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => stdout.push(c));
+    const exit = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
+    const guard = setTimeout(() => child.kill("SIGKILL"), 90000);
+    let pids: number[] = [];
+    try {
+      for (let i = 0; i < 300 && pids.length < 2; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        pids = await pidsIn(join(out, "pids.txt")).catch(() => []);
+      }
+      assert.ok(pids.length >= 2, "ALEAPP started");
+      child.kill("SIGTERM");
+      assert.equal(await exit, 143);
+      const last = JSON.parse(Buffer.concat(stdout).toString("utf8")) as { status: string; status_basis: string };
+      assert.equal(last.status, "partial");
+      assert.match(last.status_basis, /stopped by SIGTERM/);
+      assert.equal((await coverage(out)).status, "partial");
+      await new Promise((r) => setTimeout(r, 300));
+      for (const pid of pids) assert.equal(alivePid(pid), false, `process ${pid} is still running`);
+    } finally {
+      clearTimeout(guard);
+      for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+    }
+  });
+});
+
+// --- fix round 1: android-backup-apps, a pax sparse member; a stop in the layout phase; the clock ---------------------------------------------
+
+const SPARSE_AB = String.raw`
+import sys, zlib
+path = sys.argv[1]
+def block(name, size, flag=b"0"):
+    b = bytearray(512)
+    b[0:len(name)] = name
+    b[100:108] = b"0000644\0"; b[108:116] = b"0000000\0"; b[116:124] = b"0000000\0"
+    b[124:136] = b"%011o\0" % size; b[136:148] = b"14000000000\0"; b[148:156] = b"        "; b[156:157] = flag; b[257:265] = b"ustar  \0"
+    b[148:156] = b"%06o\0 " % (sum(b) & 0o777777)
+    return bytes(b)
+def pad(d): return d + b"\0" * (-len(d) % 512)
+def record(k, v):
+    body = b" %s=%s\n" % (k, v); n = len(body) + 1
+    while len(str(n)) + len(body) != n: n = len(str(n)) + len(body)
+    return b"%d%s" % (n, body)
+out = b""
+out += block(b"apps/com.example/_manifest", 4) + pad(b"man!")
+rec = record(b"path", b"apps/com.example/f/sp.bin") + record(b"GNU.sparse.major", b"1") + record(b"GNU.sparse.minor", b"0") + record(b"GNU.sparse.realsize", b"52428800")
+out += block(b"PaxHeaders/s", len(rec), b"x") + pad(rec) + block(b"apps/com.example/f/GNUSparseFile.1/sp.bin", 6) + pad(b"1\n0\n0\n")
+out += block(b"apps/com.example/f/after.txt", 5) + pad(b"after")
+out += b"\0" * 1024
+open(path, "wb").write(b"ANDROID BACKUP\n5\n1\nnone\n" + zlib.compress(out))
+`;
+
+const BIG_AB = String.raw`
+import sys, zlib
+path, size = sys.argv[1], int(sys.argv[2])
+def block(name, size):
+    b = bytearray(512)
+    b[0:len(name)] = name
+    b[100:108] = b"0000644\0"; b[108:116] = b"0000000\0"; b[116:124] = b"0000000\0"
+    b[124:136] = b"%011o\0" % size; b[136:148] = b"14000000000\0"; b[148:156] = b"        "; b[156:157] = b"0"; b[257:265] = b"ustar  \0"
+    b[148:156] = b"%06o\0 " % (sum(b) & 0o777777)
+    return bytes(b)
+z = zlib.compressobj(1)
+with open(path, "wb") as fh:
+    fh.write(b"ANDROID BACKUP\n5\n1\nnone\n")
+    fh.write(z.compress(block(b"apps/com.example/f/big.bin", size)))
+    left = size
+    chunk = bytes(1 << 20)
+    while left > 0:
+        n = min(left, len(chunk)); fh.write(z.compress(chunk[:n])); left -= n
+    fh.write(z.compress(bytes(-size % 512) + bytes(1024)))
+    fh.write(z.flush())
+`;
+
+test("android-backup-apps lists a pax sparse member as sparse_not_extracted, never extracts it, and says partial", async () => {
+  await withCwd(async (cwd, bin) => {
+    await appsStandin(bin, cwd);
+    const ab = join(cwd, "work", "sparse.ab");
+    await mkdir(join(cwd, "work"), { recursive: true });
+    const made = await runPySnippet(SPARSE_AB, [ab], null);
+    assert.equal(made.code, 0, made.stderr);
+    const out = join(cwd, "out-sparse");
+    const result = await recipe("android-backup-apps", ["run", "--target", target(ab), "--out", out], cwd, {}, bin);
+    assert.doesNotMatch(result.stderr, /Traceback/);
+    const members = await readFile(join(out, "ab-members.tsv"), "utf8");
+    const line = members.split("\n").find((l) => l.includes("f/sp.bin")) ?? "";
+    assert.match(line, /sparse_not_extracted/, members);
+    assert.match(members.split("\n").find((l) => l.includes("after.txt")) ?? "", /\textracted\t/);
+    const found = (await readFile(join(cwd, "aleapp-saw.txt"), "utf8")).split("\n").filter((p) => /sp\.bin|GNUSparse/.test(p));
+    assert.deepEqual(found, []);
+    assert.equal((await coverage(out)).status, "partial");
+  });
+});
+
+test("android-backup-apps stopped in the layout phase gives one JSON, exit 143, and leaves no hidden temporary in the derivative", async () => {
+  await withCwd(async (cwd, bin) => {
+    await appsStandin(bin, cwd);
+    const ab = join(cwd, "work", "big.ab");
+    await mkdir(join(cwd, "work"), { recursive: true });
+    const made = await runPySnippet(BIG_AB, [ab, String(3 * 2 ** 30)], null);
+    assert.equal(made.code, 0, made.stderr);
+    const out = join(cwd, "stop-layout");
+    await mkdir(out, { recursive: true });
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+    const child = spawn("python3", [join(RECIPES, "android-backup-apps", "run.py"), "run", "--target", target(ab), "--out", out], { cwd, env });
+    const stdout: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => stdout.push(c));
+    const exit = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
+    const guard = setTimeout(() => child.kill("SIGKILL"), 120000);
+    const files = join(out, "derivative", "data", "data", "com.example", "files");
+    try {
+      let seen = false;
+      for (let i = 0; i < 3000 && !seen; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        seen = (await readdir(files).catch(() => [] as string[])).some((n) => n.startsWith(".ab-"));
+      }
+      assert.ok(seen, "the member was being written");
+      child.kill("SIGTERM");
+      assert.equal(await exit, 143);
+      const last = JSON.parse(Buffer.concat(stdout).toString("utf8").trim().split("\n").pop() ?? "{}") as { status?: string };
+      assert.equal(last.status, "partial");
+      assert.deepEqual((await readdir(files).catch(() => [] as string[])).filter((n) => n.startsWith(".ab-")), []);
+    } finally {
+      clearTimeout(guard);
+      child.kill("SIGKILL");
+    }
+  });
+});
+
+test("android-backup-apps gives ALEAPP the time that is left of --max-seconds, not at least a minute", async () => {
+  await withCwd(async (cwd, bin) => {
+    const ab = join(cwd, "work", "clock.ab");
+    await build(AB, ab, JSON.stringify({ members: APPS_MEMBERS }));
+    await standin(bin, "aleapp", `${REPORT}\n${LOG.header(1)}\nsleep 600`);
+    const began = Date.now();
+    const result = await recipe("android-backup-apps", ["run", "--target", target(ab), "--out", join(cwd, "clock"), "--max-seconds", "4"], cwd, {}, bin);
+    assert.doesNotMatch(result.stderr, /Traceback/);
+    assert.ok(Date.now() - began < 40000, `${Date.now() - began} ms: the program was given more than the limit`);
+    assert.equal((await coverage(join(cwd, "clock"))).status, "partial");
+  });
+});
+
+test("android-backup-apps passes over the map extension block of an old GNU sparse header and reads the member after it from the right place", async () => {
+  await withCwd(async (cwd, bin) => {
+    await appsStandin(bin, cwd);
+    const ab = join(cwd, "work", "gnu-sparse.ab");
+    await build(RAWTAR, ab, JSON.stringify({ compress: true, members: [{ kind: "plain", name: "apps/com.example/_manifest", size: 10 }, { kind: "sparse", name: "apps/com.example/f/sp.bin", size: 3000 }, { kind: "plain", name: "apps/com.example/f/after.txt", size: 10 }] }));
+    const out = join(cwd, "out-gnu-sparse");
+    const result = await recipe("android-backup-apps", ["run", "--target", target(ab), "--out", out], cwd, {}, bin);
+    assert.doesNotMatch(result.stderr, /Traceback/);
+    const rows = (await readFile(join(out, "ab-members.tsv"), "utf8")).split("\n");
+    assert.match(rows.find((l) => l.includes("f/sp.bin")) ?? "", /sparse_not_extracted/);
+    assert.match(rows.find((l) => l.includes("after.txt")) ?? "", /\textracted\t/);
+    const cov = await coverage(out);
+    assert.equal(cov.status, "partial");
+    assert.equal((cov.modules as unknown as { adb_backup: { tar_end: string } }).adb_backup.tar_end, "reached");
+  });
+});
+
+// --- ios-ileapp over an unencrypted iOS backup directory (-t itunes) ----------------------------------------------------------------
+
+/** An iOS backup directory built from the format's own layout: Manifest.db (SQLite magic, or ciphertext), the three plists, one blob. */
+const BACKUPDIR = String.raw`
+import json, os, plistlib, sys
+path, spec = sys.argv[1], json.loads(sys.argv[2])
+os.makedirs(path)
+if spec.get("manifest_db", "plain") == "plain":
+    open(os.path.join(path, "Manifest.db"), "wb").write(b"SQLite format 3\0" + bytes(4080))
+else:
+    open(os.path.join(path, "Manifest.db"), "wb").write(bytes(range(256)) * 16)
+if spec.get("manifest_plist", "ok") == "ok":
+    plistlib.dump({"IsEncrypted": spec.get("encrypted", False), "Version": "10.0", "SystemDomainsVersion": "24.0"}, open(os.path.join(path, "Manifest.plist"), "wb"))
+elif spec["manifest_plist"] == "no_flag":
+    plistlib.dump({"Version": "10.0"}, open(os.path.join(path, "Manifest.plist"), "wb"))
+elif spec["manifest_plist"] == "garbage":
+    open(os.path.join(path, "Manifest.plist"), "wb").write(b"bplist00" + b"\xff" * 64)
+elif spec["manifest_plist"] == "huge":
+    open(os.path.join(path, "Manifest.plist"), "wb").write(b"<?xml version='1.0'?><plist><string>" + b"a" * (5 << 20) + b"</string></plist>")
+elif spec["manifest_plist"] == "link":
+    plistlib.dump({"IsEncrypted": False}, open(os.path.join(path, "..", "elsewhere.plist"), "wb"))
+    os.symlink(os.path.join(path, "..", "elsewhere.plist"), os.path.join(path, "Manifest.plist"))
+if spec.get("info", True):
+    plistlib.dump({"Device Name": "Test phone", "Product Version": "17.0"}, open(os.path.join(path, "Info.plist"), "wb"))
+if spec.get("status", "finished"):
+    plistlib.dump({"SnapshotState": spec.get("status", "finished"), "IsFullBackup": True}, open(os.path.join(path, "Status.plist"), "wb"))
+if spec.get("derivative"):
+    open(os.path.join(path, "derivative.json"), "w").write(json.dumps({"kind": "ios-backup-derivative"}))
+os.makedirs(os.path.join(path, "ab"))
+open(os.path.join(path, "ab", "ab" + "c" * 38), "wb").write(b"blob")
+`;
+
+test("ios-ileapp reads an unencrypted iOS backup directory with -t itunes, passes no password option and no terminal, and says which route it took", { skip: NO_ADOPTION }, async () => {
+  await withCwd(async (cwd, bin) => {
+    // The stand-in sees the whole argv: write it verbatim, one word per line.
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "ileapp"), `#!/usr/bin/env bash
+printf '%s\\n' "$@" > "$PWD/argv-all.txt"
+readlink /proc/$$/fd/0 > "$PWD/stdin-is.txt" 2>/dev/null || echo unknown > "$PWD/stdin-is.txt"
+while [[ $# -gt 0 ]]; do case "$1" in -o) out="$2"; shift 2;; -t) kind="$2"; shift 2;; -i) src="$2"; shift 2;; *) shift;; esac; done
+${REPORT}
+${LOG.header(1)}
+${LOG.found(1, 1, "Messages", "messages", 2)}
+${LOG.end}
+`, "utf8");
+    await chmod(join(bin, "ileapp"), 0o755);
+    const backup = join(cwd, "work", "backup");
+    await build(BACKUPDIR, backup, JSON.stringify({}));
+    const detect = await recipe("ios-ileapp", ["detect", "--target", target(backup), "--probe-out", join(cwd, "probe")], cwd, {}, bin);
+    assert.equal(detect.code, 0, detect.stdout);
+    assert.match(detect.stdout, /iOS backup directory/);
+    const out = join(cwd, "out");
+    const result = await recipe("ios-ileapp", ["run", "--target", target(backup), "--out", out], cwd, {}, bin);
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    const cov = await coverage(out);
+    assert.equal(cov.status, "complete", JSON.stringify(cov));
+    assert.match(cov.covered, /unencrypted iOS backup directory \(-t itunes\)/);
+    const input = (cov as unknown as { input: { type: string; route: string; backup: { encryption: string; completion: string } } }).input;
+    assert.equal(input.type, "itunes");
+    assert.equal(input.backup.encryption, "not_encrypted");
+    assert.equal(input.backup.completion, "finished");
+    // The program ran once, from a directory under the output, with exactly -t itunes -i <backup> -o <scratch>, no other option, and a stdin that is /dev/null.
+    const argv = (await readFile(join(out, "ileapp-cwd", "argv-all.txt"), "utf8")).trimEnd().split("\n");
+    assert.equal(argv.length, 6, argv.join(" | "));
+    assert.deepEqual(argv.slice(0, 4), ["-t", "itunes", "-i", backup]);
+    assert.equal(argv[4], "-o");
+    assert.doesNotMatch(argv.join(" "), /password|itunes_password|--keychain/i);
+    assert.equal((await readFile(join(out, "ileapp-cwd", "stdin-is.txt"), "utf8")).trim(), "/dev/null");
+    // The backup itself is untouched.
+    assert.deepEqual((await readdir(backup)).sort(), ["Info.plist", "Manifest.db", "Manifest.plist", "Status.plist", "ab"]);
+    // A backup without Info.plist, or without a finished Status.plist, is partial: the run says what the backup does not show.
+    for (const [label, spec, pattern] of [
+      ["noinfo", { info: false }, /no readable Info\.plist/],
+      ["nostatus", { status: "" }, /no readable Status\.plist/],
+      ["running", { status: "running" }, /may not be whole \(Status\.plist SnapshotState is not finished\)/],
+    ] as const) {
+      const dir = join(cwd, "work", label);
+      await build(BACKUPDIR, dir, JSON.stringify(spec));
+      const o = join(cwd, `out-${label}`);
+      const r = await recipe("ios-ileapp", ["run", "--target", target(dir), "--out", o], cwd, {}, bin);
+      assert.equal(r.code, 0, r.stdout);
+      const c = await coverage(o);
+      assert.equal(c.status, "partial", label);
+      assert.ok(c.errors.some((e) => pattern.test(e)), `${label}: ${JSON.stringify(c.errors)}`);
+    }
+  });
+});
+
+test("ios-ileapp never starts iLEAPP on an encrypted backup, or one whose encryption it cannot establish, or on a derivative; hostile plists and links are not followed", async () => {
+  await withCwd(async (cwd, bin) => {
+    await standin(bin, "ileapp", `${REPORT}\necho started >> "$out/../started.txt"\n${LOG.header(1)}\n${LOG.found(1, 1, "Messages", "messages", 2)}\n${LOG.end}`);
+    const cases: [string, Record<string, unknown>, RegExp][] = [
+      ["encrypted", { encrypted: true }, /the backup is encrypted \(Manifest\.plist says IsEncrypted is true\)/],
+      ["cipher", { manifest_db: "cipher" }, /not established.*Manifest\.db is not a plain SQLite file/],
+      ["noflag", { manifest_plist: "no_flag" }, /not established.*no IsEncrypted key/],
+      ["garbage", { manifest_plist: "garbage" }, /not established.*Manifest\.plist is unreadable/],
+      ["huge", { manifest_plist: "huge" }, /not established.*Manifest\.plist is too_large/],
+      ["link", { manifest_plist: "link" }, /Manifest\.plist is link/],
+    ];
+    // A symbolic Manifest.plist is not a backup directory at all (detect says so), and run refuses it as JSON.
+    for (const [label, spec, pattern] of cases) {
+      const dir = join(cwd, "work", label);
+      await build(BACKUPDIR, dir, JSON.stringify(spec));
+      const out = join(cwd, `out-${label}`);
+      const r = await recipe("ios-ileapp", ["run", "--target", target(dir), "--out", out], cwd, {}, bin);
+      if (label === "link") {
+        assert.equal(r.code, 2, r.stdout);
+        assert.equal((JSON.parse(r.stdout) as { status: string }).status, "failed");
+        assert.equal(await exists(join(out, "coverage.json")), false);
+        continue;
+      }
+      assert.equal(r.code, 1, `${label}: ${r.stdout}`);
+      const ans = JSON.parse(r.stdout) as { ok: boolean; status: string; status_basis: string };
+      assert.equal(ans.status, "failed", label);
+      assert.match(ans.status_basis, pattern, label);
+      const c = await coverage(out);
+      assert.equal(c.status, "failed");
+      assert.equal(await exists(join(out, "ileapp.stdout")), false, `${label}: iLEAPP was started`);
+      assert.equal(await exists(join(cwd, `out-${label}`, "started.txt")), false);
+    }
+    // A derivative (its banner) is not a route: detect says no, run refuses before writing anything.
+    const derivative = join(cwd, "work", "derivative");
+    await build(BACKUPDIR, derivative, JSON.stringify({ derivative: true }));
+    const d = await recipe("ios-ileapp", ["detect", "--target", target(derivative), "--probe-out", join(cwd, "p")], cwd, {}, bin);
+    assert.equal(d.code, 1);
+    assert.match(d.stdout, /backup_materialise derivative/);
+    const dr = await recipe("ios-ileapp", ["run", "--target", target(derivative), "--out", join(cwd, "out-derivative")], cwd, {}, bin);
+    assert.equal(dr.code, 2);
+    assert.equal(await exists(join(cwd, "out-derivative")), false);
+    // A directory that is not a backup is not read.
+    await mkdir(join(cwd, "work", "empty"));
+    const e = await recipe("ios-ileapp", ["detect", "--target", target(join(cwd, "work", "empty")), "--probe-out", join(cwd, "p")], cwd, {}, bin);
+    assert.equal(e.code, 1);
+  });
+});
+
+test("ios-ileapp over a backup directory ends the program and its children at its limit and on a stop signal, and four runs at once do not disturb each other", async () => {
+  await withCwd(async (cwd, bin) => {
+    const stall = `${REPORT}\n${LOG.header(1)}\n${LOG.found(1, 1, "Messages", "messages", 2)}\n(sleep 600 & echo $! >> "$out/../pids.txt"; wait) &\necho $$ >> "$out/../pids.txt"\nsleep 600`;
+    await standin(bin, "ileapp", stall);
+    const backup = join(cwd, "work", "backup");
+    await build(BACKUPDIR, backup, JSON.stringify({}));
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+    // A stop signal: the tree is gone, one JSON line, exit 143, the account written before the program started says partial and says which route it was.
+    const out = join(cwd, "stopped");
+    await mkdir(out, { recursive: true });
+    const child = spawn("python3", [join(RECIPES, "ios-ileapp", "run.py"), "run", "--target", target(backup), "--out", out], { cwd, env });
+    const stdout: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => stdout.push(c));
+    const exit = new Promise<number | null>((resolve) => child.on("close", (code, signal) => resolve(code ?? (signal ? 128 + 99 : null))));
+    const guard = setTimeout(() => child.kill("SIGKILL"), 60000);
+    let pids: number[] = [];
+    try {
+      for (let i = 0; i < 300 && pids.length < 2; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        pids = await pidsIn(join(out, "pids.txt")).catch(() => []);
+      }
+      assert.ok(pids.length >= 2, "the program started");
+      child.kill("SIGTERM");
+      assert.equal(await exit, 143);
+      const last = JSON.parse(Buffer.concat(stdout).toString("utf8")) as { status: string };
+      assert.equal(last.status, "partial");
+      const cov = await coverage(out);
+      assert.equal(cov.status, "partial");
+      assert.equal((cov as unknown as { input: { type: string } }).input.type, "itunes");
+      await new Promise((r) => setTimeout(r, 300));
+      for (const pid of pids) assert.equal(alivePid(pid), false, `process ${pid} is still running after the stop`);
+    } finally {
+      clearTimeout(guard);
+      for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+    }
+    // Four runs at once, each with the 3-second limit: each ends within the limit and leaves its own partial account, and no process of any of them.
+    const started = Date.now();
+    const runs = await Promise.all([0, 1, 2, 3].map((i) => recipe("ios-ileapp", ["run", "--target", target(backup), "--out", join(cwd, `four-${i}`), "--max-seconds", "3"], cwd, {}, bin)));
+    assert.ok(Date.now() - started < 60000, `took ${Date.now() - started} ms`);
+    for (const [i, r] of runs.entries()) {
+      assert.equal(r.code, 1, r.stdout);
+      assert.equal((await coverage(join(cwd, `four-${i}`))).status, "partial");
+      for (const pid of await pidsIn(join(cwd, `four-${i}`, "pids.txt"))) assert.equal(alivePid(pid), false, `run ${i}: process ${pid} is still running`);
+    }
+  });
+});

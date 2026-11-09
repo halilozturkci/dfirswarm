@@ -3,15 +3,15 @@ id: extractions/backup-detail
 title: iOS backups and Android .ab files
 when: The evidence is an iOS backup directory or an adb backup.
 needs: [extractions/what-you-have]
-tools: [manifest_db]
+tools: [manifest_db, backup_decrypt]
 requires_host: []
 ---
 
-Use only if the evidence is an iOS backup directory or an Android adb backup (`.ab`). Not for a file-system extraction.
+Use only if you read a `manifest_db` or `android-backup` answer. Not for what a backup covers (`extractions/backups`).
 
 **iOS backup** (`manifest_db` on the directory):
 - It lists the map: file id, domain, relative path, kind, metadata, and whether the blob is present, missing, a directory, a link, or refused (an id that is not 40 hex digits is never joined to a path). It is not the phone's file system. Cite relative path, domain, file id, Manifest.db row.
-- **Encryption** is `encrypted`, `not_encrypted` or `unknown`, from `Manifest.plist`. `unknown` (`Manifest.plist` missing, unreadable or without `IsEncrypted`) is not unencrypted. An encrypted backup is not empty: its `Manifest.db` is listed if it opens as SQLite, otherwise the answer says the listing is unavailable. Which parts are readable depends on the build that made it; the answer says whether `Manifest.db` opened. No decryption is provided: say what could not be read.
+- **Encryption** is `encrypted`, `not_encrypted` or `unknown`, from `Manifest.plist`. `unknown` (`Manifest.plist` missing, unreadable or without `IsEncrypted`) is not unencrypted. An encrypted backup is not empty: its `Manifest.db` is listed if it opens as SQLite, otherwise the answer says the listing is unavailable. Which parts are readable depends on the build that made it; the answer says whether `Manifest.db` opened. Decrypting: `extractions/backups`.
 - The key bag and manifest key are a presence and a length, never printed. `contains` and `domain` match the path and domain as printed (a recovery-password-shaped or over-long component is withheld). A row whose `file` cell is over 1 MiB, NULL or not a keyed archive has no metadata (partial).
 - **Times** are counted from the epoch you pass (`epoch`: `unix` default, or `apple`). The tool does not guess: check against a file whose time the case documents. A wrong epoch is a 31-year shift (`epoch.consistency` counts times after the backup's date or before 2007): rerun with the other, compare, say which you kept.
 - `completion` is `finished`, `not_finished` or `unknown`, from `Status.plist` `SnapshotState` (`not_finished` is partial; an iTunes backup has no `Status.plist`: `unknown`). `Info.plist` has the device. A -wal or -journal beside `Manifest.db` is applied in a working copy, never in place.
@@ -25,4 +25,4 @@ Does not show: what the user chose to back up, when the backup was made (a file 
 
 Record: encryption state and basis, what was readable, the epoch you chose and how you checked it, the completion state, any blob missing.
 
-Sensitive output: key material is never printed; the device identifiers in the plain plists (serial, UDID, IMEI, ICCID, phone number) are. A job that decrypts or reads keychain content runs with `secret_output: true`.
+Sensitive output: key material is never printed; the device identifiers in the plain plists (serial, UDID, IMEI, ICCID, phone number) are. Only `backup_decrypt` decrypts; one that reads keychain content runs with `secret_output: true`.

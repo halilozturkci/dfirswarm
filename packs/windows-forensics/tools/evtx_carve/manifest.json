@@ -50,8 +50,8 @@
   "example": "{\"path\": \"work/unallocated.bin\", \"event_ids\": [4624, 4688, 1102]}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 8,
-  "sha256": "805209be76242a8962c98983705bc66f5896828406477edd6449259290625105",
+  "version": 12,
+  "sha256": "614d2d41ceab63d34ef8c55e8f6c33196ca20e5888fa5bf58ee2034df9e2102b",
   "requires": [],
   "use": {
     "extensions": [

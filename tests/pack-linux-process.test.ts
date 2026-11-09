@@ -13,10 +13,13 @@ import { spawnSync } from "node:child_process";
 import { JOURNAL, RECIPE, TRIAGE, TOOLS, body, gone, pidFile, refused, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
 import { ROOT } from "./tool-library-harness.ts";
+import { NO_PROC } from "./host-gates.ts";
 
 const BEGIN = "# BEGIN SHARED PROCESS";
 const END = "# END SHARED PROCESS";
 const LINUX = join(TOOLS, "..");
+const AUDIT = join(TOOLS, "audit_events", "run.py");
+const VERIFY = join(TOOLS, "package_verify", "run.py");
 
 async function pyFiles(dir: string): Promise<string[]> {
   const out: string[] = [];
@@ -36,8 +39,8 @@ async function processBlock(path: string): Promise<string> {
   return text.slice(start, end + END.length);
 }
 
-test("the three programs that run programs carry the same process block, byte for byte, and no script of the pack starts one in a session of its own", async () => {
-  const blocks = await Promise.all([JOURNAL, TRIAGE, RECIPE].map(processBlock));
+test("the five programs that run programs carry the same process block, byte for byte, and no script of the pack starts one in a session of its own", async () => {
+  const blocks = await Promise.all([JOURNAL, TRIAGE, RECIPE, AUDIT, VERIFY].map(processBlock));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   // ... and it is the text the network pack's engine tools carry (the reference copy, with the walk that never starts at a program
   // already waited for, the seen set, and the libproc route on macOS that needs no ps), not an older one.
@@ -87,7 +90,7 @@ async function stage(cwd: string, bin: string, name: string, script: string): Pr
 type Case = { name: string; script: string; fake: string; args: (cwd: string) => unknown; argv?: (cwd: string) => string[] };
 const CASES: Case[] = [
   { name: "journal_export", script: JOURNAL, fake: "journalctl", args: () => ({ path: "work/journal" }) },
-  { name: "linux_triage", script: TRIAGE, fake: "target-query", args: () => ({ source: "inputs/server.E01", out_dir: "work/triage", groups: ["users"] }) },
+  { name: "linux_triage", script: TRIAGE, fake: "target-query", args: () => ({ source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users"] }) },
   { name: "the linux-target recipe", script: RECIPE, fake: "target-query", args: () => ({}), argv: (cwd) => ["run", "--target", join(cwd, "target.json"), "--out", join(cwd, "recipe-out")] },
 ];
 
@@ -118,11 +121,11 @@ for (const c of CASES) {
 test("linux_triage and the recipe still say terminated after a signal: the summary and the receipt are written by the dying tool", async () => {
   await withCwd(async (cwd, bin) => {
     const { dir, env } = await stage(cwd, bin, "target-query", engineScript());
-    const run = startDetached(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users"] }, env, bin);
+    const run = startDetached(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users"] }, env, bin);
     await pidFile(join(dir, "child.pid"));
     run.signal("SIGINT");
     await run.closed;
-    const summary = JSON.parse(await readFile(join(cwd, "work", "triage", "summary.json"), "utf8"));
+    const summary = JSON.parse(await readFile(join(cwd, "work", "s1", "triage", "summary.json"), "utf8"));
     assert.equal(summary.state, "terminated");
     assert.equal(summary.groups[0].functions[0].status, "failed");
     assert.equal(summary.status, "failed", "the one function there was did not run to an exit");
@@ -180,7 +183,7 @@ test("a deadline ends the engine and what it started, whichever tool ran it", as
     // linux_triage: timeout_seconds
     const { dir, env } = await stage(cwd, bin, "target-query", engineScript());
     try {
-      const out = body(await comesBack(tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users"], timeout_seconds: 5, total_timeout_seconds: 30 }, env, bin), "linux_triage"));
+      const out = body(await comesBack(tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users"], timeout_seconds: 5, total_timeout_seconds: 30 }, env, bin), "linux_triage"));
       const fn = out.groups[0].functions[0];
       assert.equal(fn.status, "failed");
       assert.equal(fn.timed_out, true);
@@ -210,7 +213,7 @@ test("the timeouts of the tools that run programs are held under their manifests
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, "target-query", "#!/bin/sh\nexit 0\n");
     for (const bad of [{ total_timeout_seconds: 14101 }, { timeout_seconds: 14101 }, { total_timeout_seconds: 99999 }]) {
-      const err = refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/t", groups: ["users"], ...bad }, {}, bin));
+      const err = refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/t", groups: ["users"], ...bad }, {}, bin));
       assert.match(err.error, /from 1 to 14100/, JSON.stringify(bad));
     }
     const manifest = (name: string): Promise<Json> => readFile(join(TOOLS, name, "manifest.json"), "utf8").then((t) => JSON.parse(t));
@@ -314,4 +317,76 @@ print(sorted(found))
     assert.equal(r.status, 0, `${path}: ${r.stderr}`);
     assert.equal(r.stdout.trim(), "[11, 12, 13]", path);
   }
+});
+
+test("the linux-target recipe's stop handler signals a pid only while it is the process it listed: a changed start time is not killed, the listed one is", { skip: NO_PROC }, () => {
+  // The identity check is called directly. A process is listed with process_identity; a pid whose identity has changed since (another
+  // process took the number, here simulated by a listed identity with another start time) is not signalled, a pid that is gone is not,
+  // and the process that was listed is.
+  const program = String.raw`
+import importlib.util, os, signal, subprocess, sys, time
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("recipe_under_test", sys.argv[1])
+recipe = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(recipe)
+sleeper = subprocess.Popen(["sleep", "60"])
+try:
+    listed = recipe.process_identity(sleeper.pid)
+    assert listed is not None, "the identity of a running process can be read"
+    moved = (listed[0], listed[1] + 1)          # the same pid with another start time: the pid was taken by another process
+    results = {
+        "listed": recipe.same_process(sleeper.pid, listed),
+        "start time changed": recipe.same_process(sleeper.pid, moved),
+        "unreadable when listed, in our group": recipe.same_process(sleeper.pid, None),
+    }
+    sleeper.kill()
+    sleeper.wait()
+    results["gone"] = recipe.same_process(sleeper.pid, listed)
+    results["never existed"] = recipe.same_process(2 ** 22 + 12345, listed)
+    print(results)
+finally:
+    if sleeper.poll() is None:
+        sleeper.kill()
+        sleeper.wait()
+`;
+  const r = spawnSync("python3", ["-c", program, RECIPE], { encoding: "utf8", timeout: 60_000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(
+    r.stdout.trim(),
+    "{'listed': True, 'start time changed': False, 'unreadable when listed, in our group': True, 'gone': False, 'never existed': False}",
+  );
+});
+
+test("the linux-target recipe's stop handler still signals a listed child whose parent has ended and left it to init", { skip: NO_PROC }, () => {
+  // The wrapper dies on SIGTERM and its children are re-parented; they are the processes that were listed and must still be signalled.
+  const program = String.raw`
+import importlib.util, os, signal, subprocess, sys, time
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("recipe_under_test", sys.argv[1])
+recipe = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(recipe)
+parent = subprocess.Popen(["sh", "-c", "sleep 60 & echo $!; exec sleep 60"], stdout=subprocess.PIPE, text=True)
+child = int(parent.stdout.readline())
+try:
+    listed = recipe.process_identity(child)
+    before = os.getppid() != 0 and open("/proc/%d/stat" % child).read().rsplit(")", 1)[1].split()[1]
+    parent.kill()
+    parent.wait()
+    # The child is re-parented when its parent ends; wait for that state (up to 20 s on a loaded host) rather than for a fixed time.
+    until = time.monotonic() + 20
+    while True:
+        after = open("/proc/%d/stat" % child).read().rsplit(")", 1)[1].split()[1]
+        if after != before or time.monotonic() > until:
+            break
+        time.sleep(0.02)
+    print({"reparented": before != after, "still the listed process": recipe.same_process(child, listed)})
+finally:
+    try:
+        os.kill(child, signal.SIGKILL)
+    except OSError:
+        pass
+`;
+  const r = spawnSync("python3", ["-c", program, RECIPE], { encoding: "utf8", timeout: 60_000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "{'reparented': True, 'still the listed process': True}");
 });

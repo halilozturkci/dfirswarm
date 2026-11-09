@@ -37,7 +37,7 @@ import {
 } from "node:fs/promises";
 import { constants as fsConstants, existsSync } from "node:fs";
 import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
-import { createInterface } from "node:readline";
+import { jsonlLines } from "./jsonl-lines.ts";
 import { fileURLToPath } from "node:url";
 import * as NB from "./negative-bar.ts";
 import * as PM from "./premises.ts";
@@ -2375,6 +2375,41 @@ export function inboxPageChars(env: Record<string, string | undefined> = process
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : INBOX_PAGE_CHARS_DEFAULT;
 }
 
+/**
+ * What one item costs in a tool reply, in characters: `toolText` pretty-prints the payload with two spaces a level, so an item inside
+ * a list of the payload (two levels down) costs its own pretty text with every line indented four more spaces, and a comma.
+ */
+export function replyCost(item: unknown): number {
+  const text = JSON.stringify(item, null, 2) ?? "null";
+  return text.length + text.split("\n").length * 4 + 1;
+}
+
+/**
+ * One page of whole items, in order, under `budget` characters of reply: the rule the inbox, the leads view, the ledger and the inputs
+ * share. Always at least one item (an item larger than the bound comes whole, alone on its page), never a cut item. `remaining` is
+ * the number of items held back; the caller names where the next page starts and keeps the whole result. 0 means no bound.
+ */
+export function pageWholeItems<T>(items: readonly T[], budget: number, cost: (item: T) => number = replyCost): { page: T[]; remaining: number } {
+  if (budget <= 0) return { page: [...items], remaining: 0 };
+  const page: T[] = [];
+  let used = 0;
+  for (const item of items) {
+    const c = cost(item);
+    if (page.length > 0 && used + c > budget) break;
+    page.push(item);
+    used += c;
+  }
+  return { page, remaining: items.length - page.length };
+}
+
+/** The characters of a tool reply that are not the paged items (the envelope's keys, the notes): what a page leaves out of its budget. */
+export const REPLY_ENVELOPE_CHARS = 2_000;
+
+/** The budget for the items of one reply under the page bound, or 0 when there is no bound. */
+export function itemBudget(pageChars: number = inboxPageChars()): number {
+  return pageChars <= 0 ? 0 : Math.max(1_000, pageChars - REPLY_ENVELOPE_CHARS);
+}
+
 export async function readInbox(
   ctx: SwarmContext,
   args: { thread?: string; markSeen?: boolean; pageChars?: number } = {},
@@ -2896,7 +2931,7 @@ export async function readEventLogChecked(sandboxRoot: string): Promise<{ events
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
     handle = await open(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
-    const lines = createInterface({ input: handle.createReadStream({ autoClose: false, encoding: "utf8" }), crlfDelay: Infinity });
+    const lines = jsonlLines(handle.createReadStream({ autoClose: false }));
     for await (const line of lines) {
       if (!line.trim()) continue;
       try {
@@ -7075,10 +7110,35 @@ export async function heldOwnPaths(root: string, args: Record<string, unknown>, 
 }
 
 /**
+ * The places in a tool's arguments, in the agent's own writable directories,
+ * that are empty directories now, as the agent wrote them. job_run takes such
+ * a place as an output place (toolArgsForJob), so the reply can say that
+ * was the cause when nothing was written there.
+ */
+export async function emptyDirPlaces(root: string, args: Record<string, unknown>, agentId: string | undefined): Promise<Set<string>> {
+  const empty = new Set<string>();
+  if (!agentId) return empty;
+  const places: Array<[string, string]> = [];
+  mapPlaces(args, (v) => {
+    const place = ownPlace(v, agentId, root);
+    if (place) places.push([v, place.rel]);
+    return v;
+  });
+  for (const [given, rel] of places) {
+    const st = await stat(join(root, rel)).catch(() => null);
+    if (st?.isDirectory() && (await readdir(join(root, rel)).catch(() => [""])).length === 0) empty.add(given);
+  }
+  return empty;
+}
+
+/**
  * A tool's arguments as job_run submits them: what a direct call run again
  * as a job gets (ownPathsToOut over heldOwnPaths), so a manifest that asks
- * for work/<id>/x is right whichever way the tool reaches a worker. Here a
- * place that exists at all is read, not written (no attempt came first).
+ * for work/<id>/x is right whichever way the tool reaches a worker. Here no
+ * attempt came first, so a file of any size (an empty btmp too) is read, and
+ * so is a directory with entries; an empty directory holds nothing to read
+ * and is taken as an output place, {OUT}/<name> (see emptyDirPlaces, which
+ * names those so the reply can say so).
  */
 export async function toolArgsForJob(root: string, args: Record<string, unknown>, agentId: string | undefined): Promise<Record<string, unknown>> {
   const held = await heldOwnPaths(root, args, agentId, { existing: true }).catch(() => new Set<string>());
@@ -7113,9 +7173,12 @@ export function writtenToOf(given: unknown, mapped: unknown, job: string): Recor
  * or the sealed tree this VM sees says written, and nothing is said not
  * written: a place neither shows is `unconfirmed` (this VM's view of a tree
  * just sealed may lag). Before, `written_to` named a place whether or not
- * anything was there.
+ * anything was there. A `not_written` place that the agent gave as an empty
+ * directory (`emptyDirs`, from emptyDirPlaces) also gets a line in
+ * `not_written_cause`: the empty directory was taken as an output place, so
+ * nothing was read from it, and the tool wrote nothing there.
  */
-export function placedOutputs(root: string, moved: Record<string, string>, job: { state?: unknown; outputs?: unknown }): Record<string, Record<string, string>> {
+export function placedOutputs(root: string, moved: Record<string, string>, job: { state?: unknown; outputs?: unknown }, o: { emptyDirs?: Set<string> } = {}): Record<string, Record<string, string>> {
   if (!Object.keys(moved).length) return {};
   if (job.state !== "committed" && job.state !== "failed" && job.state !== "cancelled") return { writes_to: moved };
   const out = (job.outputs && typeof job.outputs === "object" ? job.outputs : {}) as { files?: unknown; list?: unknown };
@@ -7129,7 +7192,11 @@ export function placedOutputs(root: string, moved: Record<string, string>, job: 
     const kind = listed ? "written_to" : whole || out.files === 0 || job.state !== "committed" ? "not_written" : existsSync(join(root, place)) ? "written_to" : "unconfirmed";
     sorted[kind][given] = place;
   }
-  return Object.fromEntries(Object.entries(sorted).filter(([, v]) => Object.keys(v).length));
+  const cause: Record<string, string> = {};
+  for (const given of Object.keys(sorted.not_written)) {
+    if (o.emptyDirs?.has(given)) cause[given] = "an empty directory was given for reading; job_run takes an empty directory as an output place, so nothing was read from it and the tool wrote nothing there";
+  }
+  return Object.fromEntries(Object.entries({ ...sorted, not_written_cause: cause }).filter(([, v]) => Object.keys(v).length));
 }
 
 /**
@@ -7158,7 +7225,7 @@ export async function stagedPathsIn(file: string, root: string, job: string): Pr
   const handle = await open(file, "r");
   try {
     const paths: Record<string, string> = {};
-    const lines = createInterface({ input: handle.createReadStream({ autoClose: false, encoding: "utf8" }), crlfDelay: Infinity });
+    const lines = jsonlLines(handle.createReadStream({ autoClose: false }));
     for await (const line of lines) Object.assign(paths, stagedPaths(line, root, job));
     return paths;
   } finally {
@@ -8394,4 +8461,32 @@ export async function claimPauseNotice(sandboxRoot: string, pausedAt: string): P
     () => true,
     () => false,
   );
+}
+
+// --- a read of a sensitive output (docs/adr/0018) ---------------------------------------------------
+
+/**
+ * The one sentence a seat's tool result ends with, once per seat and job, when
+ * the call read a sensitive output. It informs and never blocks, like the
+ * evidence-code note. prompts/worker-system.md quotes it word for word
+ * (tests/seat-sensitive-note.test.ts holds the two equal).
+ */
+export const SENSITIVE_READ_NOTE = "This output is sensitive: the run records reads of it, and its value does not belong in a post, the ledger or a command line; give it to another job as an input.";
+
+/** The tools of a seat whose rows may name a sensitive output (the classifier, scripts/sensitive-access.ts, reads these and no others). */
+export const ACCESS_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "powershell"]);
+/** Where a row can name the store, the catalogue, a kept output or a job: the rest need no look at the journal. */
+export const ACCESS_PROBE = /store|catalog|tool-output|j\d{6}/;
+
+/**
+ * Whether a seat's tool call could name a sensitive output, so that the
+ * classifier is worth asking: a read tool or a shell, with a path or a
+ * command that mentions the store, the catalogue, a kept output or a job id,
+ * or no path at all. A cheap test that decides nothing: the classifier does.
+ */
+export function couldNameOutput(tool: unknown, args: unknown): boolean {
+  if (typeof tool !== "string" || !ACCESS_TOOLS.has(tool) || typeof args !== "object" || args === null || Array.isArray(args)) return false;
+  const a = args as Record<string, unknown>;
+  const probe = tool === "bash" || tool === "powershell" ? a.command : ["path", "filePath", "file_path", "file"].map((k) => a[k]).find((v) => typeof v === "string" && v.trim()) ?? "";
+  return typeof probe === "string" && (probe === "" || ACCESS_PROBE.test(probe));
 }

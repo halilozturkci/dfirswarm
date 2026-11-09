@@ -17,6 +17,6 @@ Use when you order records from more than one plane. Not for one source's own ti
 5. **Order only within uncertainty.** Two events closer than the offsets and resolutions allow are not ordered. Say "within N seconds" and cite both rows.
 6. Use `timestamp_decode` for a value you identified; do not apply today's zone offset to a past date.
 
-**Shows.** A sequence across planes within a stated uncertainty. **Does not show.** Which operator acted, or that an event preceded another when the clocks are unrelated.
+**Shows.** A sequence across planes within a stated uncertainty. **Does not show.** Which person or account acted, or that an event preceded another when the clocks are unrelated.
 **Record.** Per source: clock, zone, epoch, resolution, the offset you measured, how, and its uncertainty. For Hyper-V host events use the Windows pack's `evtx_query` when it is loaded.
-**Sensitive output.** Run `backup_audit_normalise` as a job with `secret_output: true`. An object or job name is shown only if plain, else `<withheld: N bytes, field F>`; hosts, actors, actions and messages have token-shaped runs, user-info and the value after `password=`-style names withheld; a short plain password passes unseen.
+**Sensitive output.** Run `backup_audit_normalise` as a job with `secret_output: true`. An object or job name is shown only if plain, else `<withheld N characters: reason>`; hosts, actors, actions and messages have token-shaped runs, user-info and the value after `password=`-style names withheld; a short plain password passes unseen.

@@ -4,7 +4,7 @@
       "name": "yara",
       "package": "yara",
       "optional": true,
-      "why": "Match a recovered sample against rules the case supplies, recording the engine version, the ruleset's source, revision and hash, and each match's location. No rules ship with this pack and none is fetched during an examination; a match is a classification lead, not proof of execution or attribution. The version installed is not pinned here: the image's inventory records it.",
+      "why": "Match a recovered sample against rules the case supplies, recording the engine version, the ruleset's source, revision and hash, and each match's location. The only rules this pack ships are two note-text rules read by ransomware_family_match, none is fetched during an examination, and a ruleset for a sample is the case's; a match is a classification lead, not proof of execution or attribution. On Linux the image installs it from the Debian snapshot dated in images/debian-snapshot, so the version is the one Debian 12 (bookworm) held on that date (4.2.3-4 at the time of writing) and the image's inventory records it; the apt line is not edited, the snapshot pins it. Homebrew on macOS is not pinned.",
       "install": {
         "brew": "brew install yara",
         "apt": "apt-get install -y yara"

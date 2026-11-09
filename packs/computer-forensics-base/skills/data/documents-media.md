@@ -1,6 +1,6 @@
 ---
 id: data/documents-media
-title: Document and image content is another evidence layer
+title: Document and image content is its own layer
 when: A PDF, an Office file, an image or a media file is the evidence, or holds it.
 needs: []
 tools: []

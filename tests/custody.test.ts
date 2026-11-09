@@ -18,12 +18,15 @@ import {
   keptOutputRefs,
   markOwnHost,
   secretViolations,
+  adverse,
   takeCustody,
   verdictAnchorState,
   verdictOf,
   type Custody,
 } from "../scripts/custody.ts";
 import { hashArtifacts } from "../scripts/artifacts.ts";
+import { ACCESS_RULES, LOWER_BOUND_SENTENCE, SEAT_ROWS_SENTENCE } from "../scripts/sensitive-access.ts";
+import { READ_HIT, T, fixtureFiles, hubLine, jl, traceRow, writeFiles, type Extra } from "./sensitive-access-fixture.ts";
 import { ledgerHash, type LedgerEntry } from "../extensions/protocol.ts";
 import {
   anchorGuarded,
@@ -926,4 +929,110 @@ test("the model gateway's log: its chain is checked, its hash anchored with the 
   // Not reached before custody ended: named as such.
   const partial = verdictOf({ phase: "the ledger", sandbox: root, inputsDone: true, ledgerDone: true, vmsDone: true, artifactsDone: true }, "the deadline passed");
   assert.ok(partial.not_reached.includes("the model gateway log"));
+});
+
+test("a trace record that holds raw U+2028 and U+2029 verifies intact in custody, and a record edited to end in CRLF is reported edited", async () => {
+  const root = await sandbox();
+  const chain = (records: Array<Record<string, unknown>>): string[] => {
+    const lines: string[] = [];
+    let prev = "";
+    for (const r of records) {
+      const line = JSON.stringify({ ...r, prev });
+      lines.push(line);
+      prev = createHash("sha256").update(line).digest("hex");
+    }
+    return lines;
+  };
+  const lines = chain([
+    { ts: "t", agent: "a0", tool: "bash", args: { text: "before after" }, result: { ok: true } },
+    { ts: "t", agent: "a0", tool: "read", args: { text: "x y" }, result: { ok: true } },
+    { ts: "t", agent: "a0", tool: "bash", args: {}, result: { ok: true } },
+  ]);
+  assert.ok(lines[0]!.includes(" ") && lines[1]!.includes(" "), "JSON.stringify writes both raw");
+  await writeFile(join(root, "traces", "events.jsonl"), `${lines.join("\n")}\n`);
+  const intact = await takeCustody(root);
+  assert.equal(intact.trace.intact, true, intact.trace.detail);
+  assert.equal(intact.trace.lines, 3, "three records, not five pieces");
+  // The same records with the first line edited to end in CRLF: the CR is part of the record, so the chain breaks there.
+  await writeFile(join(root, "traces", "events.jsonl"), `${lines[0]}\r\n${lines.slice(1).join("\n")}\n`);
+  const edited = await takeCustody(root);
+  assert.equal(edited.trace.intact, false, "an added CR is an edit");
+});
+
+// --- the access record in the verdict (PKG-ACC-01) ---------------------------------------------------------------
+
+async function accessRun(extra: Extra = {}, edit?: (files: Record<string, string>) => void): Promise<string> {
+  const base = await mkdtemp(join(tmpdir(), "custody-access-"));
+  dirs.push(base);
+  const files = fixtureFiles(extra);
+  edit?.(files);
+  return writeFiles(base, files);
+}
+
+const accessCheck = (c: Custody) => c.checks.find((x) => x.name === "sensitive access");
+const READ_ROW = traceRow("agent-2", 1, "read", { path: "store/jobs/j000001/out/values.jsonl" }, T(10));
+const READ_LINE = hubLine(T(10, 1), "agent-2", READ_HIT, { sid: "sid-agent-2", seq: 1, tool: "read" });
+
+test("custody holds the access record to the trace: an agreeing record passes, and the summary ends with the fixed sentences", async () => {
+  const S = await accessRun({ trace: [READ_ROW, READ_LINE] });
+  const c = await takeCustody(S);
+  assert.deepEqual([accessCheck(c)?.status, accessCheck(c)?.reason], ["passed", undefined]);
+  assert.equal(c.access_record?.sensitive_jobs, 4);
+  assert.ok(c.summary.endsWith(` ${SEAT_ROWS_SENTENCE} ${LOWER_BOUND_SENTENCE}`), "the summary ends with the two sentences, the lower bound last");
+  assert.match(c.summary, /access to sensitive outputs: 4 sensitive jobs, every recorded line agrees/);
+});
+
+test("custody: a recorded line with no trace row behind it is a FAIL, a recorded way the scope manifest does not bear out is a FAIL", async () => {
+  const orphan = await takeCustody(await accessRun({ trace: [READ_LINE] }));
+  assert.equal(accessCheck(orphan)?.status, "failed");
+  assert.match(accessCheck(orphan)?.reason ?? "", /1 recorded access line\(s\) point at a trace row that is not there/);
+  assert.match(orphan.summary, /1 RECORDED ACCESS LINE WITH NO TRACE ROW BEHIND IT \(FAIL\)/);
+  const bad = await takeCustody(await accessRun({ trace: [READ_ROW, READ_LINE] }, (f) => (f["run1/store/jobs/j000034/scope.1.json"] += " ")));
+  assert.equal(accessCheck(bad)?.status, "failed");
+  assert.match(accessCheck(bad)?.reason ?? "", /1 recorded way\(s\) .* disagree with the scope manifest of its job_started \(j000034: declared from j000001 \(manifest_unverified\)\)/);
+  assert.match(bad.summary, /1 RECORDED WAY\(S\) NOT AGREEING WITH THE SCOPE MANIFEST OF THEIR JOB \(FAIL\)/);
+  assert.ok(adverse(bad).some((x) => x.name === "sensitive access"));
+});
+
+test("custody: a seat row no line records and a row recorded twice are a WARN, never a FAIL; none at the burst limit", async () => {
+  const missing = await takeCustody(await accessRun({ trace: [READ_ROW] }));
+  assert.equal(accessCheck(missing)?.status, "passed", "a WARN does not fail the verdict");
+  assert.match(accessCheck(missing)?.reason ?? "", /^WARN: 1 seat row\(s\) the rules read as an access have no line \(trace:L1\)$/);
+  assert.match(missing.summary, /WARN: 1 seat row the rules read as an access with no line/);
+  assert.ok(!adverse(missing).some((x) => x.name === "sensitive access"));
+  const twice = await takeCustody(await accessRun({ trace: [READ_ROW, READ_LINE, { ...READ_LINE, ts: T(10, 2) }] }));
+  assert.equal(accessCheck(twice)?.status, "passed");
+  assert.match(accessCheck(twice)?.reason ?? "", /WARN: 1 line\(s\) repeat a row/);
+  const burst = { ...hubLine(T(10, 2), "agent-2", READ_HIT, undefined), args: { rules: ACCESS_RULES, seat: "agent-2", via: "path", certainty: "path", on: { job: "j000001", part: "out" }, burst: { after: 200, note: "the rest are on the trace" } } };
+  const limited = await takeCustody(await accessRun({ trace: [READ_ROW, burst] }));
+  assert.deepEqual([accessCheck(limited)?.status, accessCheck(limited)?.reason], ["passed", undefined], "no false WARN at the burst limit");
+});
+
+test("custody: lines written under other rules are a note, never a FAIL", async () => {
+  const c = await takeCustody(await accessRun({ trace: [READ_ROW, hubLine(T(10, 1), "agent-2", READ_HIT, { sid: "sid-agent-2", seq: 1, tool: "read" }, { rules: 0 })] }));
+  assert.equal(accessCheck(c)?.status, "passed");
+  assert.equal(accessCheck(c)?.reason, "note: the lines were written under rules 0; the lines and the rows are not compared");
+});
+
+test("custody: a run with no sensitive output, or no store, has nothing to hold: not applicable, and no access sentences in the summary", async () => {
+  const none = await accessRun({}, (f) => {
+    f["run1/store/journal.jsonl"] = jl({ v: 1, seq: 0, at: T(0), type: "job_accepted", job: "j000010", spec: { kind: "command" }, requester: { agent: "agent-2" } });
+    f["run1/traces/events.jsonl"] = jl(READ_ROW);
+  });
+  const c = await takeCustody(none);
+  assert.deepEqual([accessCheck(c)?.status, accessCheck(c)?.reason], ["not_applicable", "the run has no sensitive output"]);
+  assert.ok(!c.summary.includes(LOWER_BOUND_SENTENCE));
+  const noStore = await takeCustody(await accessRun({ skip: ["journal"] }));
+  assert.equal(accessCheck(noStore)?.status, "not_applicable");
+  assert.equal(noStore.access_record, null);
+});
+
+test("custody: the access check is charged to custody's own deadline, and a verdict ended before it names it as not reached", async () => {
+  const S = await accessRun({ trace: [READ_ROW, READ_LINE] });
+  const late = await takeCustody(S, { timeoutSec: 0 });
+  assert.ok(late.incomplete, "the deadline had passed");
+  assert.notEqual(accessCheck(late)?.status, "passed", "a check that did not run is never a pass");
+  const ended = verdictOf({ phase: "the store", sandbox: S, storeDone: true }, "ended");
+  assert.ok(ended.not_reached.includes("the access record"));
+  assert.equal(ended.checks.find((x) => x.name === "sensitive access")?.status, "incomplete");
 });

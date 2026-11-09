@@ -32,6 +32,10 @@ export type SwarmRow = {
   wall_clock_minutes: number;
   /** False when no model on the team bills: spend is an exact zero and cap_tokens is the brake. */
   metered: boolean;
+  /** Why a team is unmetered: `local` (served from this machine or network) or `subscription` (an OAuth login; Pi's dollars are an estimate); absent in a run from before it was recorded. */
+  unmetered_why?: "local" | "subscription" | null;
+  /** A run stop found with nothing alive: it ended without a stop, cause unknown. */
+  ended?: { by: "unknown"; last_trace_at: string | null } | null;
   cap_tokens: number;
   /** guarded · hosts · open · local for a host run; vm (each VM denies by default) · vm-open for a microVM run. */
   net: string;
@@ -289,6 +293,8 @@ export type BudgetRecord = {
   cap_per_model_usd?: Record<string, number>;
   /** False when no model on the team bills; the brake is then cap_tokens. */
   metered?: boolean;
+  /** Why: `local` or `subscription` (see SwarmRow.unmetered_why). */
+  unmetered_why?: "local" | "subscription" | null;
   cap_tokens?: number;
   /** The operator's token marks (--token-alert), ascending: told once each as the run crosses it; advisory. */
   token_alerts?: number[];
@@ -1351,6 +1357,20 @@ export type StoreJobOutputs = { files: number; bytes: number; rejected: number; 
  * `outcome`) is what the job did; `state` is where its record stands:
  * `committed` means its output was sealed into the store, whatever it did.
  */
+/** The badge of a sensitive job on the jobs list, from the access record: "sensitive · N seats read · M jobs used". */
+export type StoreSensitive = { why: "secret_output" | "derived"; seats_read: number; jobs_used: number; badge: string };
+
+/** A sensitive job's readers and dependents, from the access record: a lower bound. */
+export type StoreAccess = {
+  why: "secret_output" | "derived";
+  badge: string;
+  readers: Array<{ seat: string; reads: number; first: string | null; last: string | null; certainty: string }>;
+  dependents: Array<{ job: string; seat: string | null; how: string | null }>;
+  cited_by: number[];
+  console_views: number;
+  lower_bound: string;
+};
+
 export type StoreJobRow = {
   id: string;
   kind: string;
@@ -1397,6 +1417,8 @@ export type StoreJobRow = {
   note: string | null;
   /** A program its image did not hold (exit 127, or "command not found"): shown for the images' upkeep. */
   program_missing?: { program: string | null; profile: string | null; image: string | null } | null;
+  /** The badge of a sensitive job (the access record); null for any other. */
+  sensitive?: StoreSensitive | null;
 };
 
 /** A similar job as the journal names it (scripts/job-reuse.ts Similar). */
@@ -1478,6 +1500,8 @@ export type StoreJobDetail = {
     page: { offset: number; limit: number; total: number; next: number | null };
   } | null;
   logs: Array<{ name: string; path: string; bytes: number | null; sha256: string | null; present: boolean; why: string | null }>;
+  /** Who reached this job's output, when it is sensitive: null otherwise. */
+  access?: StoreAccess | null;
 };
 
 /** GET /api/swarms/:id/jobs/:job/log/:name: a page of a job's log, by bytes, ending on a character boundary. */

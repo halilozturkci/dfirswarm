@@ -1,0 +1,63 @@
+{
+  "name": "guardduty_findings",
+  "description": "Reconcile GuardDuty finding exports into update chains, offline: one finding id updated over time is ONE finding with a count of the records exported, never N incidents. Input: JSON from the GetFindings API ({\"findings\": [...]}), a JSON array, JSON Lines, or the S3 export (JSON Lines, gzip), one file, several (paths) or directories of them; the format is read from the content. A record is read case-insensitively: the API reference writes lowerCamelCase keys, and the pages read do not say which form the S3 export uses, so both forms are read and the form seen is counted per file (key_forms). Documentation: the field lists are those of the AWS pages named in tests/fixtures/guardduty/SOURCES.json, read on 2026-11-04 (Finding: id, arn, type, severity, region, accountId, createdAt, updatedAt, title, description, partition, schemaVersion, resource, service, and the optional confidence, associatedAttackSequenceArn and customDetectionRuleName; Service: archived, count, detectorId, eventFirstSeen, eventLastSeen, action, evidence, serviceName, featureName, resourceRole, userFeedback and the detail objects). Outputs, under out_dir (default: guardduty-findings under $OUT in a job, work/<agent>/guardduty-findings otherwise): findings.jsonl (one chain per finding id, in the order of the id), finding-versions.jsonl (every record of every chain, in the order of UpdatedAt, located by file, record and line), rejected.jsonl and coverage.json. Each chain: the records in the export; the state (active or archived, from the latest record's Service.Archived) with the transitions between records; the occurrences GuardDuty counted (Service.Count: first, last, smallest, largest, and how often it went down) beside the records exported (the export holds only the updates that were exported, at the frequency set, so the records are not the occurrences); the severity (first, last, smallest, largest) and the documented band of the latest (Low 1.0-3.9, Medium 4.0-6.9, High 7.0-8.9, Critical 9.0-10.0); the first and last UpdatedAt, the earliest and latest CreatedAt, the event window (EventFirstSeen, EventLastSeen); the detector ids, Regions, accounts and ARNs the records name; the type, title, service, feature, resource type and action type of the latest; whether evidence is present; and the latest record whole, cleaned. A chain whose records disagree on the ARN, type, account, Region, CreatedAt or detector says so (conflicts), lists the values, and takes the record with the latest UpdatedAt as the latest; a record without a readable UpdatedAt sorts first; two records with the same UpdatedAt and different content are counted (same_time_conflicting_updates); an identical record repeated is counted (exact_duplicate_records); nothing is merged away silently and nothing is dropped. Suppression: the finding records Service.Archived and nothing the pages read name as a suppression marker, so the tool reports archived and says that it cannot tell a suppression rule from an archive by hand. Archived findings, including new instances of suppressed findings, are not exported by default (the export page says so), so an export without archived findings is the default behaviour and not a statement that none exist. Export coverage (coverage.json, and in short the answer): the Regions, accounts and detectors the findings name with their chain counts, the time ranges, the counts by type, state, latest severity band and chain length, and the paths laid out as GuardDuty writes an export (AWSLogs/<account>/GuardDuty/<Region>) with the account and Region they name. A Region or account the export does not name is not a Region or account without findings. Every answer carries the statement that no finding is not no activity, and an export with no finding says so again as empty_export. This tool reconciles findings and exports only. Corroborating a finding against raw evidence (CloudTrail, VPC flow logs, DNS logs) is the examiner's work; Action, Evidence and every other text of a finding are text from the activity GuardDuty saw, are untrusted, and go through the credential rules. `status` and `status_basis` say whether every record of the supplied files was read as a finding and reconciled into its chain; complete says nothing about whether the export holds every finding GuardDuty generated. A file that names a next page (nextToken) keeps the run partial. A record that is not a finding (no id or no type), a malformed line and a record larger than max_record_bytes go to rejected.jsonl with the reason and the locator and are counted. One clock: time_limit_seconds (default 420, at most 480, the call allows 600) covers the listing of directories, the reading (the first 60 percent of it), the ordering and reconciling of the chains (the records are held in a temporary SQLite file, in $OUT in a job, so an export larger than memory is still one pass and one sort) and the writing; a run that reaches it is partial and names what it did not do. A termination signal ends the run with a partial coverage file (coverage.partial.json), one line of JSON on stdout and exit 128 plus the signal. An output is never replaced by a smaller one, or by any other: a file already at an output name is kept and the new one is kept beside it as name.2.ext (or is the file when the bytes are equal); a run that ended early or left anything out publishes findings.partial.jsonl and finding-versions.partial.jsonl and coverage.partial.json. NOT measured: whether GuardDuty was enabled, in which Regions, whether its findings were exported or only some of them, whether findings older than the 90 days GuardDuty keeps them were exported, whether a finding is a true positive, or what the activity was beyond what the finding says. SENSITIVE: addresses, user names, account ids, resource names and the text of actions are in the findings. Withholding is the shared block of every pack that withholds, with a 1 MiB gate: identifiers (finding id, ARN, account, Region, detector) are printed as they are; every other string goes through the credential rules only; a field named like a secret goes through the name layer. A field named or shaped like a credential is withheld and its original written only with write_values, in a job, to a mode 0600 file under $OUT: run as a job with secret_output: true when the case treats the export as sensitive. Known gaps: an EventBridge event (a finding in a detail member) is rejected, not unwrapped; the file the ListFindings API returns (ids only) holds no finding and is rejected; the S3 export's key form is not documented on the pages read; the detail objects (runtime, malware scan, attack sequence) are kept whole in the latest record and not lifted; a secret with neither a credential name nor a token shape is printed; the severity bands follow the severity page, and a value outside 1.0 to 10.0 has no band.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "One export file or a directory of them (the files of a directory are read in name order, then its subdirectories; names ending .json, .jsonl, .ndjson, .log or .gz are read)"
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Several files or directories, read in the order given; a file listed twice is read once"
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "Directory for findings.jsonl, finding-versions.jsonl, rejected.jsonl and coverage.json, under the run directory (in a job, under $OUT: name it work/<your agent id>/..., which becomes $OUT). Default: guardduty-findings under $OUT in a job, work/<agent>/guardduty-findings otherwise. A file already at an output name is kept and the new one is named beside it"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Chains (and versions) returned inline (default 500, an inline page size); the whole is always in the files the answer names"
+    },
+    "max_expanded_bytes": {
+      "type": "integer",
+      "description": "Most bytes read from one file after decompression (default 4 GiB); a file that reaches it is partial and says so"
+    },
+    "max_record_bytes": {
+      "type": "integer",
+      "description": "Most text held while one record is read (default 16 MiB; a CSV line too); a larger record is rejected, located and listed, never cut (in an array or an envelope it is skipped by scanning to its end without holding it, and the records after it are read)"
+    },
+    "time_limit_seconds": {
+      "type": "number",
+      "description": "Stop reading after this many seconds (default 420, at most 480, so the answer is written well inside the 600 seconds a call has); the limit is checked inside a record too; what was read is kept, the answer is partial and names the files not read"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the originals of the values withheld from the answer to a mode 0600 file under $OUT. The manifest declares secret output for it: a job with write_values runs as secret output whether or not the agent set the flag, and its values file is sealed sensitive. Honoured only in a job whose SECRET_OUTPUT is 1; outside a job, or in a job that is not secret output, it is refused as JSON and nothing is written"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 600,
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  },
+  "example": "{\"path\": \"inputs/guardduty-export\"}",
+  "by": "maintainer",
+  "at": "2026-11-04T18:00:00.000Z",
+  "version": 1,
+  "use": {
+    "names": [
+      "*guardduty*",
+      "*GuardDuty*",
+      "*finding*.json",
+      "*findings*.jsonl",
+      "*findings*.jsonl.gz"
+    ]
+  },
+  "sha256": "bff9aa21f14cd9b0ad71f3004348eeddff64d52a62f6d06b764c127055b9630d"
+}

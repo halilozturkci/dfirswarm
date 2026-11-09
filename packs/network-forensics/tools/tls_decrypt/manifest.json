@@ -1,0 +1,95 @@
+{
+  "name": "tls_decrypt",
+  "description": "AUTHORISED OFFLINE TLS DECRYPTION over the declared tshark. SENSITIVE: the tool declares secret_output: \"required\", so every job is a secret-output job, and the decrypted data goes only to files (mode 0600) under out_dir. A capture (pcap or pcapng), a key log given as a FILE reference (keylog_file: a job input, never the key log's text; text that looks like a key log is refused without being echoed) and/or the Decryption Secrets Blocks a pcapng carries (use_embedded_secrets) go in, with a scope (host, port, stream, display_filter). The tool reads the key log itself, keeping only the client random of each line and the kind of its label in memory, to tell \"no line for this session\" from \"a line that did not decrypt\"; nothing of a line, no fragment, no digest and no client random is ever printed. It reads tshark -G currentprefs and passes -o tls.keylog_file:PATH (ssl.keylog_file in an older build), and refuses as JSON if neither exists; a pcapng with Decryption Secrets Blocks is decrypted by tshark without -o, and the receipt names the source of the secrets by counts of blocks. It records tshark --version and checks every field it relies on against tshark -G fields of the installed build; a build without them is refused by name. For every TCP flow in scope the answer has a status: decrypted (tshark named an application protocol for every application-data frame, which it does only for data it decrypted), partially (some), unsupported (ECH, a key log line that did not decrypt the session, only handshake secrets for a TLS 1.3 session, or no application data), no_secret_for_session (a forward-secret session with no line, or no ClientHello in the capture to match: a resumed or mid-flow session) and not_tls, each with a reason, the frame range, the endpoints, the counts, the application protocol tshark named and the version of TLS where the ClientHello and ServerHello show it. TLS 1.2 sessions are matched by CLIENT_RANDOM lines and TLS 1.3 sessions by CLIENT_TRAFFIC_SECRET_0 with SERVER_TRAFFIC_SECRET_0 (handshake secrets alone decrypt the handshake, not the data). With write_payload (default true, honoured only in a secret-output job; false gives the statuses alone) the decrypted bytes of each decrypted or partially decrypted flow (tshark -z follow,tls,raw,N, the first max_payload_streams flows) are written per direction to out_dir without replacing an earlier file (-2, -3); the answer carries stream ids, frame ranges, counts, protocol names and byte lengths only, never payload, a digest of it or a part of it. The flow rows are paged: limit rows inline, the whole list in the JSON Lines file all_results names. WHAT IS NOT VERIFIED: the tool relies on tshark's tls.app_data_proto as the sign of a decrypted frame (so data in a protocol tshark has no dissector for shows no sign of decryption and is not counted as decrypted) and on the output of follow,tls,raw; those names were read from tshark -G fields, but their meaning was not checked against a real capture and a real build here (the suite runs a stand-in tshark, and one test runs the real program when it is installed). A flow is not an identity: decrypting a session shows what that session carried, never who the endpoint was. Evidence is hostile input: nothing is executed, no network is used, writes go only under out_dir, a listing is read as a stream and cut at 2 GiB, flows beyond 100000 are counted not tracked, a payload direction is cut at 256 MiB and said to be cut, and a cut or a skipped flow makes the answer partial. The tool's own clock (max_seconds, default 900, at most 1000) is below the manifest's timeout; a program still running at the end is killed with everything it started. Programs run in the tool's own process group (never a session of its own) with the kernel asked to end them if the tool dies. SIGTERM, SIGINT and SIGHUP end the tool with partial JSON and exit 128 plus the signal. A process tshark leaves behind after it exits is stopped, killed and reaped by the shared process block's settle() before the flows, the payload files and tshark's messages file are kept, and the answer is then partial (program_group.left_behind and a line under problems). This tool reports what tshark printed on a pipe, so a host where the absence of a leftover cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) does not make it partial: program_group.unproven says so.",
+  "params": {
+    "capture": {
+      "type": "string",
+      "description": "The pcap or pcapng to read; never written"
+    },
+    "keylog_file": {
+      "type": "string",
+      "description": "A key log FILE (NSS format: CLIENT_RANDOM, CLIENT_TRAFFIC_SECRET_0 and the other labels), given as a job input. Never the text of a key log: that is refused. Optional when use_embedded_secrets is set"
+    },
+    "use_embedded_secrets": {
+      "type": "boolean",
+      "description": "Decrypt with the Decryption Secrets Blocks of a pcapng (tshark applies them without -o); the answer names how many blocks there are. A key log file may be given as well"
+    },
+    "host": {
+      "type": "string",
+      "description": "Scope: only flows with this IP address (as source or destination)"
+    },
+    "port": {
+      "type": "integer",
+      "description": "Scope: only flows with this TCP port (as source or destination)"
+    },
+    "stream": {
+      "type": "integer",
+      "description": "Scope: only this tcp.stream number"
+    },
+    "display_filter": {
+      "type": "string",
+      "description": "Scope: a tshark display filter, one line, at most 1024 characters, ANDed with the rest of the scope (the listing is always limited to TCP)"
+    },
+    "write_payload": {
+      "type": "boolean",
+      "description": "Write the decrypted bytes of each decrypted flow to files in out_dir (default true; honoured only in a job run as secret output). false gives the per-flow statuses alone"
+    },
+    "max_payload_streams": {
+      "type": "integer",
+      "description": "The most decrypted flows whose payload is extracted (default 20, at most 200); each extraction is one more pass of tshark over the capture. Flows past it are counted as not attempted and the answer is partial"
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "A directory under work/ (in a job, under $OUT; work/<your id>/name is mapped to $OUT/name) for the payload files and tshark's messages. It is private (0700, files 0600). It may hold earlier results: none is replaced"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Flow rows answered inline (default 200); the whole list is the file all_results names"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own clock, 10 to 1000 seconds, default 900: a program still running at the end is killed with everything it started"
+    }
+  },
+  "requires": [
+    "tshark"
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 1200,
+  "example": "{\"capture\": \"inputs/capture.pcapng\", \"keylog_file\": \"inputs/keys.log\", \"out_dir\": \"work/<your id>/tls\"}",
+  "by": "maintainer",
+  "at": "2026-11-04T00:00:00.000Z",
+  "version": 6,
+  "use": {
+    "extensions": [
+      ".pcap",
+      ".pcapng",
+      ".cap"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "d4c3b2a1"
+      },
+      {
+        "offset": 0,
+        "hex": "a1b2c3d4"
+      },
+      {
+        "offset": 0,
+        "hex": "4d3cb2a1"
+      },
+      {
+        "offset": 0,
+        "hex": "a1b23c4d"
+      },
+      {
+        "offset": 0,
+        "hex": "0a0d0d0a"
+      }
+    ]
+  },
+  "secret_output": "required",
+  "sha256": "4c0ec8a21724401d1d96c1712b71e51e584eaa6a04b465bbd4214f9854ead12e"
+}

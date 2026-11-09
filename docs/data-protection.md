@@ -68,7 +68,10 @@ establish, and nothing here settles it.
 
 The report names each seat's model and the hosts it was served from, and
 the summary model with them, so the record of a run says who received its
-content. `--local-only` keeps every model on this machine or this network
+content. For a sensitive output the report also has a section, "Sensitive
+outputs and who used them", that names each seat the harness observed
+reading it, with that seat's model and host, and says the list is a lower
+bound. `--local-only` keeps every model on this machine or this network
 and narrows netguard to those endpoints; the evidence then reaches no cloud
 model. [Credentials and teams](credentials-and-teams.md) covers local
 models.
@@ -114,6 +117,17 @@ models.
   kept outside the hand-over), then scans every file it hands over — and the
   filenames — for what should not be there; without `--redact`, `HYGIENE.json`
   names what in the package is sensitive.
+  `--with-sessions` adds `.pi-sessions/` for an **internal handover** only:
+  regular files copied at a cutoff, every recorded sensitive value (a
+  sensitive entry's words, a sensitive output's text, its digest) replaced by
+  its keyed id, one lossless archive and a manifest of each file's size and
+  sha256, checked by `verify`. It is refused together with `--redact`, so a
+  disclosure copy never carries sessions. A session file larger than 1 GiB is
+  not masked in one piece, so `package` stops with a BLOCKER and hands nothing over. Masking removes the recorded
+  sensitive values, not the evidence text the models read: a session still
+  holds what they saw of the case, and the archive is to be treated as
+  evidence content. The key and the id map are in a private sidecar
+  (`<dir>.sessions.private.json`) outside the package.
   What a package may carry under GDPR or similar laws is the operator's to
   decide; these are the means.
 - **Exports** (`swarm.sh export`, under `<sandbox>/exports/` by default):

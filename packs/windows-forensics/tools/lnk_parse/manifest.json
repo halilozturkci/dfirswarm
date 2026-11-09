@@ -1,6 +1,6 @@
 {
   "name": "lnk_parse",
-  "description": "Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layout. Decoded: the flags; the three FILETIMEs (raw decimal and ISO 8601 UTC with seven fractional digits, integer arithmetic); LinkInfo (VolumeID: drive type, serial number as eight hex digits, label; local base path and common path suffix, ANSI and Unicode; CommonNetworkRelativeLink: share, device name, provider type); the string data; the extra blocks it recognises; `linkinfo_target` joins them as the specification defines. Heuristic, not a decode: `idlist_ascii`, `idlist_paths` and the UTF-16 string scan are printable runs searched for in the bytes, not the shell item list. ANSI strings are in a code page the file does not record and are shown as Latin-1. A read that ends inside the structure says so under `problems` and `structure_complete`. A scan carves by the 20-byte header signature: a hit is a candidate. It executes nothing and resolves no target. SENSITIVE, and withheld: a link's arguments and the UTF-16 string scan can hold a command line with a secret in it, so the answer carries neither. For the arguments it gives arguments_present, arguments_chars and arguments_first_token (only a switch name, a program or a script; otherwise null with arguments_first_token_withheld). The string scan answers `utf16_strings`, offsets and lengths with a finding_id, and utf16_string_count; the text is not in the answer. A path-like field (the description, relative path, working directory, icon location, LinkInfo paths and labels, share and device names, the shell item list, an environment or tracker block) is printed unless it has the shape of a secret (a password, token or key assignment, a URL with a password, a token), when a marker holding only its length stands in its place and sensitive_fields_withheld lists the field, its length and the finding_id. The text of all of these goes only to $OUT/lnk-strings.jsonl (mode 0600, one row per finding_id, a long string in pieces) when write_strings is true and the tool runs as a job (run it with secret_output: true); it is refused anywhere else, and a second run in the same job writes lnk-strings-2.jsonl and never replaces the first. An extra block this reader does not know shows its first 128 characters and its length (ascii_inline_cut), the whole of it hex in the values file. A file that is not a link answers its size and nothing of its bytes. The string scan reads a window of the file at a time, so a file of zeros or of one repeated byte costs a pass, not memory. A string of the link longer than 262,144 characters (the string data of a link holds 65,535 at most; a LinkInfo path can be longer) is not read for the shape of a secret: it is withheld whole, by its length, and its row in sensitive_fields_withheld says not_scanned. A URL with a password and a web token are read in time linear in the string.",
+  "description": "Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layout. Decoded: the flags; the three FILETIMEs (raw decimal and ISO 8601 UTC with seven fractional digits, integer arithmetic); LinkInfo (VolumeID: drive type, serial number as eight hex digits, label; local base path and common path suffix, ANSI and Unicode; CommonNetworkRelativeLink: share, device name, provider type); the string data; the extra blocks it recognises; `linkinfo_target` joins them as the specification defines. Heuristic, not a decode: `idlist_ascii`, `idlist_paths` and the UTF-16 string scan are printable runs searched for in the bytes, not the shell item list. ANSI strings are in a code page the file does not record and are shown as Latin-1. A read that ends inside the structure says so under `problems` and `structure_complete`. A scan carves by the 20-byte header signature: a hit is a candidate. It executes nothing and resolves no target. SENSITIVE, and withheld: a link's arguments and the UTF-16 string scan can hold a command line with a secret in it, so the answer carries neither. For the arguments it gives arguments_present, arguments_chars and arguments_first_token: a word is shown only when it is a program or a script name, or a switch whose name is on a closed list of known names (exact, case-insensitive: -noprofile, -ExecutionPolicy, /c, ...); any other word, a switch-shaped one such as -pX included (the name and a value in one word cannot be told apart), is null with arguments_first_token_withheld. The string scan answers `utf16_strings`, offsets and lengths with a finding_id, and utf16_string_count; the text is not in the answer. A path-like field (the description, relative path, working directory, icon location, LinkInfo paths and labels, share and device names, the shell item list, an environment or tracker block) is printed unless it has the shape of a secret (a password, token or key assignment, a URL with a password, a token), when a marker holding only its length stands in its place and sensitive_fields_withheld lists the field, its length and the finding_id. The text of all of these goes only to $OUT/lnk-strings.jsonl (mode 0600, one row per finding_id, a long string in pieces) when write_strings is true and the tool runs as a job (run it with secret_output: true); it is refused anywhere else, and a second run in the same job writes lnk-strings-2.jsonl and never replaces the first. An extra block this reader does not know shows its first 128 characters and its length (ascii_inline_cut), the whole of it hex in the values file. A file that is not a link answers its size and nothing of its bytes. The string scan reads a window of the file at a time, so a file of zeros or of one repeated byte costs a pass, not memory. A string of the link longer than 262,144 characters (the string data of a link holds 65,535 at most; a LinkInfo path can be longer) is not read for the shape of a secret: it is withheld whole, by its length, and its row in sensitive_fields_withheld says not_scanned. A URL with a password and a web token are read in time linear in the string. The ExtraData blocks are counted whatever their number (extra_count): the first 50 are decoded inline (extra, with extra_not_shown for the rest), the first 16 tracker blocks are kept apart (tracker, tracker_count), and when there are more than 50 every block is one row of a JSON Lines file the answer names (all_extra_blocks), so a structure of millions of tiny blocks is read in bounded memory. The tool has its own clock (24 s of the manifest's 30): when it runs out the read stops, the pages written so far are placed and named, and the answer is partial with a status_basis that says where it stopped and how many ExtraData blocks or string runs were read; every answer carries status and status_basis (complete only for an input read to its end), a wrong-type argument is refused as JSON (status failed), and SIGTERM, SIGINT and SIGHUP end it with one JSON document (status failed with interrupted true, exit 128 plus the signal) and no temporary file. A result file is never replaced: the same result keeps its name, another takes the next free -n name. The read of the file, the ExtraData walk, the string scan and the search for the end of a LinkInfo string are inside the clock. In a scan the status is partial when a candidate ends before its terminal block or when bytes of the file lie past the slice that was read. SENSITIVE: write_strings is declared secret output (a job that sets it runs as secret output); where SECRET_OUTPUT is not 1 the tool refuses as JSON before it opens or creates anything.",
   "params": {
     "path": {
       "type": "string",
@@ -16,7 +16,7 @@
     },
     "size": {
       "type": "integer",
-      "description": "Bytes to read (default 4096, at most 268435456); structure_complete and problems say whether the link ended inside them"
+      "description": "Bytes to read (default 4096, at most 268435456); structure_complete and problems say whether the link ended inside them. In a scan, bytes of the file past the slice that was read make the status partial"
     },
     "scan": {
       "type": "boolean",
@@ -28,15 +28,15 @@
     },
     "max": {
       "type": "integer",
-      "description": "LNKs shown inline when scanning (default 50, an inline page size); every one found is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
+      "description": "LNKs shown inline when scanning (default 50, 1 to 10000, an inline page size); every one found is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
     },
     "write_strings": {
       "type": "boolean",
-      "description": "Write the withheld text (arguments, the UTF-16 strings, a secret-shaped field) to $OUT/lnk-strings.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the answer never carries a value"
+      "description": "Write the withheld text (arguments, the UTF-16 strings, a secret-shaped field) to $OUT/lnk-strings.jsonl (default false). Secret output: refused as JSON, before anything is created, unless the job runs with secret_output (the manifest declares it for this parameter); the answer never carries a value"
     },
     "limit": {
       "type": "integer",
-      "description": "UTF-16 string locators shown inline (default 50, an inline page size); every one is kept, and when there are more the whole list is written as JSON Lines and named in utf16_strings_page.all_results"
+      "description": "UTF-16 string locators shown inline (default 50, 1 to 10000, an inline page size); every one is kept, and when there are more the whole list is written as JSON Lines and named in utf16_strings_page.all_results"
     }
   },
   "runtime": "python3",
@@ -45,8 +45,8 @@
   "example": "{\"dump\": \"work/extracted/unallocated.bin\", \"offset\": 313125516, \"size\": 2048}",
   "by": "s183902",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 5,
-  "sha256": "9958676c03b281e648666d4e88bbe41ce64737d9a766b7a2fff1398786e6d97c",
+  "version": 8,
+  "sha256": "c39a6ab2e35a55a278a57d28b874b09448a2096535d3c9c19f98ffdf9c153bdb",
   "use": {
     "extensions": [
       ".lnk"
@@ -58,5 +58,10 @@
       }
     ]
   },
-  "requires": []
+  "requires": [],
+  "secret_output": {
+    "when_args": [
+      "write_strings"
+    ]
+  }
 }

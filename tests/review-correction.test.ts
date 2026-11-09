@@ -12,7 +12,7 @@ import * as L from "../extensions/leads.ts";
 import * as Q from "../extensions/questions.ts";
 import { checkLedgerAnswers } from "../scripts/check-answers.ts";
 import { finishGate } from "../scripts/finish-gate.ts";
-import { A, coverage, ESTABLISHED, F, job, ok, okq, planned, rec, refused, REVIEW, run } from "./negative-bar-fixture.ts";
+import { A, coverage, covers, ESTABLISHED, F, job, ok, okq, planned, rec, refused, REVIEW, run } from "./negative-bar-fixture.ts";
 
 const HIGH = { ...A, confidence: "high" } as const;
 const review = (parts: Array<{ part: string; established: boolean; why: string }> = ESTABLISHED.answer_review.parts as never) => ({ ...ESTABLISHED.answer_review, parts });
@@ -51,6 +51,7 @@ test("B2: an answer to a question is attested with a strength and its review; wh
   assert.ok(r.lines.some((l) => /a best candidate, not established \(every review holds #\d+ a best candidate: a2/.test(l)), r.lines.join("\n"));
   assert.ok(!r.defects.some((d) => d.code === "no_critic_act"), "a best candidate is a critic act");
   // A second review that holds it established makes it answered.
+  await covers(c.a0, "1");
   const est = await P.attestEntry(c.a3, { seq: a.seq, how: "re-derived both parts, the clock too", ...ESTABLISHED });
   assert.ok(est.ok, (est as { reason?: string }).reason);
   assert.equal((await checkLedgerAnswers(c.S, ["1"])).outcomes["question:1"], "answered");

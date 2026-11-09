@@ -369,7 +369,7 @@ lack="$(VOL_STUB_NO_TABLE=1 PATH="$TMP/volshim:$PATH" bash "$MW" detect --target
 jq -e '.applies and .missing[0].kind == "symbols" and .missing[0].identity == {"pdb": "ntkrnlmp.pdb", "guid": "0123456789ABCDEF0123456789ABCDEF", "age": 10} and (.missing[0].what | test("inputs/k.mem runs: this image does not hold it"))' <<<"$lack" >/dev/null \
   || fail "a missing table is not said with the kernel's identity (the age read in hexadecimal): $lack"
 slow="$(VOL_STUB_SLOW=1 RECIPE_PROBE_SECONDS=1 PATH="$TMP/volshim:$PATH" bash "$MW" detect --target "$T")"; rc=$?
-[[ $rc -eq 1 ]] && jq -e '(.applies | not) and .missing[0].kind == "symbols" and (.missing[0].what | test("did not answer within 1s.*unknown"))' <<<"$slow" >/dev/null \
+[[ $rc -eq 2 ]] && jq -e '(.applies == "unknown") and .missing[0].kind == "symbols" and (.missing[0].what | test("did not answer within 1s.*unknown"))' <<<"$slow" >/dev/null \
   || fail "a probe that did not answer passed silently (rc $rc): $slow"
 VOL_STUB_NO_TABLE=1 PATH="$TMP/volshim:$PATH" bash "$MW" run --target "$T" --out "$TMP/mw-out" >/dev/null
 jq -e '.missing[0].identity.guid == "0123456789ABCDEF0123456789ABCDEF"' "$TMP/mw-out/coverage.json" >/dev/null || fail "the run's coverage does not say what is missing: $(cat "$TMP/mw-out/coverage.json")"

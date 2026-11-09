@@ -17,14 +17,19 @@
  *   tests/<helper>        the node suites that import it, directly or not; none
  *                         found: everything.
  *   docs, *.md, changelog.d
- *                         the suites that name the file, the link check and the
- *                         changelog suite.
+ *                         the suites that name the file, the link check, the
+ *                         Markdown link suite (tests/markdown-links.test.ts) and
+ *                         the changelog suite.
  *   anything else         everything: the harness (scripts/, extensions/),
  *                         images/, prompts/, the libraries, the workflow,
  *                         package*.json, a fixture, a path this map does not
  *                         know.
  *
  * Three suites always run, being about the test layout itself.
+ *
+ * `py311` (in the JSON) says whether the CI job that runs the pack-tool suites
+ * on Debian 12's Python 3.11 is needed: it is, for everything, and for a change
+ * under packs/, tool-library/ or images/ or to a suite that starts a pack tool.
  *
  *   node --experimental-strip-types scripts/test-select.ts [--base REF] [--files a,b,...]
  *        [--node-out FILE] [--shell-out FILE] [--json]
@@ -47,7 +52,17 @@ export const ALWAYS_NODE = ["tests/changelog.test.ts", "tests/ci-shards.test.ts"
 /** The shell suites that read every pack. */
 export const PACK_WIDE_SHELL = ["packs", "pack-tools", "pack-recipes", "pack-parsers", "pack-links", "skill-budgets"];
 
-export type Selection = { all: boolean; reasons: string[]; node: string[]; shell: string[] };
+/**
+ * `py311` says whether the CI job that runs the pack-tool suites on the images' Python (Debian 12's 3.11) is needed: everything,
+ * or a change to a pack, to the tool library, to an image file, or to a suite that starts a pack tool. The workflow itself is
+ * outside the map, so a change to the job is `all`.
+ */
+export type Selection = { all: boolean; py311: boolean; reasons: string[]; node: string[]; shell: string[] };
+
+/** The paths whose change needs the Python 3.11 job. */
+export const PY311_PATHS = /^(packs\/|tool-library\/|images\/)/;
+/** The node suites that start a pack tool. */
+export const PACK_TOOL_SUITE = /^tests\/pack-[^/]+\.test\.ts$/;
 
 export type Layout = {
   /** The node suites npm test runs (scripts/test-node.ts). */
@@ -83,7 +98,7 @@ const NARROW_DOC = /^(docs\/.*|[^/]+\.md|changelog\.d\/.*)$/;
 /** What the change needs. `changed` holds repository paths with forward slashes. */
 export function select(changed: string[], layout: Layout): Selection {
   const reasons: string[] = [];
-  const everything = (why: string): Selection => ({ all: true, reasons: [...reasons, why], node: [...layout.nodeRun], shell: [...layout.shell] });
+  const everything = (why: string): Selection => ({ all: true, py311: true, reasons: [...reasons, why], node: [...layout.nodeRun], shell: [...layout.shell] });
   const node = new Set<string>(ALWAYS_NODE.filter((p) => layout.nodeRun.includes(p)));
   const shell = new Set<string>();
   const closure = new Map<string, string>();
@@ -100,7 +115,7 @@ export function select(changed: string[], layout: Layout): Selection {
     for (const s of layout.shell) if (layout.read(`tests/${s}.test.sh`).includes(needle)) shell.add(s);
   };
   const files = [...new Set(changed.map((p) => p.trim()).filter(Boolean))].sort();
-  if (!files.length) return { all: false, reasons: ["nothing changed"], node: [...node].sort(), shell: [] };
+  if (!files.length) return { all: false, py311: false, reasons: ["nothing changed"], node: [...node].sort(), shell: [] };
   const toolPacks = new Set<string>();
   for (const f of files) {
     const pack = f.match(/^packs\/([^/]+)\/(.*)$/);
@@ -135,7 +150,9 @@ export function select(changed: string[], layout: Layout): Selection {
     if (NARROW_DOC.test(f)) {
       naming(f);
       if (layout.shell.includes("pack-links")) shell.add("pack-links");
-      reasons.push(`${f}: the suites that name it, and the link check`);
+      // Every relative link of the tracked Markdown is checked by one node suite; a Markdown change can break one.
+      if (f.endsWith(".md") && layout.nodeRun.includes("tests/markdown-links.test.ts")) node.add("tests/markdown-links.test.ts");
+      reasons.push(`${f}: the suites that name it, and the link checks`);
       continue;
     }
     return everything(`${f}: outside what this map narrows; everything`);
@@ -145,7 +162,9 @@ export function select(changed: string[], layout: Layout): Selection {
     for (const s of layout.nodeRun) if (/^tests\/pack-shared-[^/]+\.test\.ts$/.test(s)) node.add(s);
     reasons.push(`tools of ${[...toolPacks][0]} changed: every tests/pack-shared-* suite`);
   }
-  return { all: false, reasons, node: [...node].sort(), shell: [...shell].sort() };
+  const py311 = files.some((f) => PY311_PATHS.test(f)) || [...node].some((s) => PACK_TOOL_SUITE.test(s));
+  if (py311) reasons.push("a pack, the tool library, an image file or a suite that starts a pack tool is in the change: the Python 3.11 job");
+  return { all: false, py311, reasons, node: [...node].sort(), shell: [...shell].sort() };
 }
 
 /** The repository's own layout, read from disk. */

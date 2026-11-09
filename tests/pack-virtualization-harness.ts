@@ -11,6 +11,7 @@
  * anything about a file a real product wrote, and the suites say so where it matters.
  */
 import assert from "node:assert/strict";
+import { PYTHON3 } from "./host-gates.ts";
 import { spawn } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -109,12 +110,15 @@ export async function rowsOf(cwd: string, out: Json, key: string, outDir = "out"
  * agent's own tool-output pages (`work/s1`), less the files named in `skip` (the fixtures under inputs/ and work/ are the
  * evidence and hold the planted secret on purpose).
  */
+/** The values file the one BOUNDARY text writes in a secret_output job with write_text: <tool>-values.jsonl, mode 0600, the originals of what it withheld. */
+export const OWN_VALUES = /(?:^|\/)(?:backup_audit_normalise|snapshot_chain_check|virtualization_inventory)-values\.jsonl$/;
+
 export async function everythingBut(cwd: string, answer: string, skip: string[] = []): Promise<string> {
   const parts = [answer];
   const roots = (await readdir(cwd)).filter((d) => d.startsWith("out")).concat(["work/s1"]);
   for (const root of roots) {
     for (const f of await filesUnder(join(cwd, root))) {
-      if (skip.includes(`${root}/${f}`)) continue;
+      if (skip.includes(`${root}/${f}`) || OWN_VALUES.test(f)) continue;       // (the values file of the one text holds originals by design, in a job run as secret output)
       parts.push(await readFile(join(cwd, root, f), "utf8").catch(() => ""));
     }
   }
@@ -475,7 +479,7 @@ print(json.dumps({"virtual-size": size, "filename": sys.argv[-1], "format": fmt,
  * outlives it; one started in the tool's own group is ended with it.
  */
 export function startDetached(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, bin?: string): { pid: number; closed: Promise<number | null>; stdout: () => string; killGroup: () => void; signal: (s: NodeJS.Signals) => void } {
-  const child = spawn("python3", [script], { cwd, env: { ...process.env, ...(bin ? { PATH: `${bin}:${process.env.PATH ?? ""}` } : {}), ...AGENT, ...env }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(PYTHON3, [script], { cwd, env: { ...process.env, ...(bin ? { PATH: `${bin}:${process.env.PATH ?? ""}` } : {}), ...AGENT, ...env }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   const chunks: Buffer[] = [];
   child.stdout.on("data", (c: Buffer) => chunks.push(c));
   child.stderr.on("data", () => undefined);

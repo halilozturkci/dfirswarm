@@ -1310,9 +1310,11 @@ was attested established high on a verified `reproduced_at` locator, while
 the true value sat in file slack, which no seat examined. A locator proves
 presence, not truth.
 
-- **A cap on an established attest with a locator.** On an established
-  attest of an answer to a material question that gives `reproduced_at`,
-  the hub follows each located object back to the run's input files: an
+- **A cap on an established attest.** On an established attest of an
+  answer to a material question, the hub follows each located object
+  (`reproduced_at`) back to the run's input files; a review that locates
+  nothing is followed from what the answer's support reaches (see "Decided
+  2026-10-31" below): an
   input is its own source, a catalogue member leads to its generation's
   target, and a job's output leads through the job's declared inputs.
 - **The condition.** For each such source, a standing coverage record for
@@ -1332,10 +1334,17 @@ presence, not truth.
   - A located object that traces to no input (a job that read everything,
     or an agent's own file) is not capped.
   - A partial or not-determinable answer is not affected.
-  - An answer that rests on a derivation alone is not affected.
 - **The review asks the question.** "Could these exact bytes exist if the
   claim were wrong? Which observation would tell them apart, and where
   would a rival value live?"
+- **Decided 2026-10-31: the check runs for every review.** The check runs
+  whatever metadata the review gives, so a review that supplies less
+  verification can no longer pass where one that supplies more is capped.
+  With locators it follows the located objects; without, it follows the
+  inputs the answer's support reaches: the answer's refs, the refs of the
+  entries it cites (and those they cite in turn), and the derivation's
+  inputs when it gives one. The same answer gets the same verdict with and
+  without locators; the warning `no_locator_or_derivation` stays a warning.
 - **Counted.** `swarm.sh metrics` counts the caps and each area's
   `not_applicable` across coverage records, the signs to watch for gaming.
   So does `reversals.partial_after_cap`, which already counts answers

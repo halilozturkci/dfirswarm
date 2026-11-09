@@ -22,10 +22,10 @@ import { ROOT } from "./tool-library-harness.ts";
 
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 const PINS: Record<string, string> = {
-  windows: "37604b4f9798ed2e8633c23b95bde6edd5eec069ec000a7f35d8f13e61243145",
-  macos: "c2e19b97dbdc3943294c42a9573427e487199059969d25cee3171a7d908a1675",
-  encrypted: "1c2073b19c6881895643b72d190304b9386356c9e7f74a2e6625efeecc95ab11",
-  page: "36e9ed0641414393ce86f2a4a0bcd2f97a0c925d3f04dcefdf6e5d4a0d0cd09a",
+  windows: "74c974d75fdd178bc86ebd2f724b41c9292864c5d4b310dcde05ae7fa58e2fd6",
+  macos: "f3e800e7d94bf70b19f7c6a192bfb604282684a3c5a9e5c392a96240c96ffed1",
+  encrypted: "cb1cd7b46f1e0068532f6039cebc91fc124bb9bc6190e99626c5f8a76b818e62",
+  page: "b339c021341a2ad88f8cfca6a799888108a7bf64f93bd49f989a4d98a1012145",
 };
 
 async function carriers(marker: string): Promise<string[]> {
@@ -63,7 +63,7 @@ test("every carrier of the stop block holds the text of its lineage, byte for by
   assert.ok(files.length >= 14, `${files.length} carriers`);
   for (const file of files) assert.equal(sha(cut(await readFile(file, "utf8"), "STOP")), PINS[lineage(file)], `${file} (${lineage(file)})`);
   const memory = (await carriers("# BEGIN SHARED PAGE")).filter((f) => f.includes("/memory-forensics/"));
-  assert.equal(memory.length, 3);
+  assert.equal(memory.length, 8, "mem_carve, mem_profile, mem_scan and the five tools added since (vol_readiness, mem_registry, carve_handoff, vol_views, isf_intake)");
   for (const file of memory) assert.equal(sha(cut(await readFile(file, "utf8"), "PAGE")), PINS.page, file);
 });
 
@@ -101,6 +101,12 @@ test("a stop signal after the block has run and before main() installs the tool'
 test("SIGINT and SIGHUP in that gap end each lineage the same way", async () => {
   for (const file of [
     join(ROOT, "packs", "ransomware-response", "tools", "ransom_note_scan", "run.py"),
+    join(ROOT, "packs", "ransomware-response", "tools", "encryption_extent", "run.py"),
+    join(ROOT, "packs", "ransomware-response", "tools", "recovery_validate", "run.py"),
+    join(ROOT, "packs", "ransomware-response", "tools", "ransomware_scope_report", "run.py"),
+    join(ROOT, "packs", "ransomware-response", "tools", "backup_destruction_correlate", "run.py"),
+    join(ROOT, "packs", "ransomware-response", "tools", "ransomware_family_match", "run.py"),
+    join(ROOT, "packs", "ransomware-response", "tools", "decryptor_catalog", "run.py"),
     join(ROOT, "packs", "macos-forensics", "tools", "plist_read", "run.py"),
     join(ROOT, "packs", "encrypted-containers", "tools", "crypto_id", "run.py"),
   ]) {
@@ -153,7 +159,7 @@ for (const [name, tool] of [["ransom_note_scan", "ransom_note_scan"], ["encrypte
     try {
       await noteTree(cwd, 3000);
       const ran = await signalledDuringPrint(join(ROOT, "packs", "ransomware-response", "tools", tool, "run.py"), cwd, { root: "work/ev", limit: 1_000_000 });
-      assert.ok(ran.stdout.length > 1_000_000, `${ran.stdout.length} bytes`);
+      assert.ok(ran.stdout.length > 500_000, `${ran.stdout.length} bytes`);   // the rows shown inline stop at about 512 KiB (INLINE_BYTES), so the answer is no longer megabytes long
       const answer = JSON.parse(ran.stdout);
       assert.notEqual(answer.status, "interrupted");
       assert.equal(ran.code, 0, "the answer was written whole and the tool ended by itself");
@@ -194,5 +200,57 @@ test("a page whose temporary file cannot be flushed (disk full, a quota) is stil
     const ran = spawnSync("python3", ["-c", PAGE_CASE, join(ROOT, "packs", "memory-forensics", "tools", tool, "run.py")], { encoding: "utf8", timeout: 60_000 });
     assert.equal(ran.status, 0, ran.stderr);
     assert.deepEqual(JSON.parse(ran.stdout), { raised: null, left: false, tmp_cleared: true }, tool);
+  }
+});
+
+// --- a stop that lands inside a write of the page's own file ------------------------------------------------------------------------
+
+/**
+ * keep_partial() runs from the stop handler, in the main thread, between two bytecodes of add(): the file object may be inside its own write, and flush() on
+ * it then raises RuntimeError ("reentrant call inside <_io.BufferedWriter>"), which is not an OSError. That used to leave the tool with exit 143 and no
+ * document at all (found in CI on Node 24, and 1 run in 12 here). The page now keeps the file it can name, cut back to its last whole line.
+ */
+const REENTRANT_CASE = String.raw`
+from __future__ import annotations
+import errno, hashlib, json, os, re, sys, tempfile, time
+from pathlib import Path
+src = open(sys.argv[1]).read()
+block = re.search(r"^# BEGIN SHARED PAGE\n.*?^# END SHARED PAGE\n", src, re.S | re.M).group(0)
+ns = {"errno": errno, "hashlib": hashlib, "json": json, "os": os, "re": re, "time": time, "Path": Path, "GUARD": {"depth": 0}, "checkpoint": lambda: None}
+exec(compile(block, "page-block", "exec"), ns)
+os.chdir(tempfile.mkdtemp())
+page = ns["LosslessPage"]("t", "k", 1)
+for i in range(50):
+    page.add({"i": i})
+real = page._out
+real.flush()
+with open(page._tmp, "ab") as fh:
+    fh.write(b'{"i": 50, "cut')           # a line cut where the stop fell
+class Busy:
+    def flush(self):
+        raise RuntimeError("reentrant call inside <_io.BufferedWriter name='x'>")
+    close = flush
+page._out = Busy()
+named = page.keep_partial()
+text = Path(named).read_bytes()
+other = ns["LosslessPage"]("u", "k", 1)
+for i in range(50):
+    other.add({"i": i})
+tmp = str(other._tmp)
+other._out = Busy()
+other.abort()                              # a stop inside a write, and the page dropped: nothing is raised and the hidden file goes
+print(json.dumps({"name": str(named), "ends_in_newline": text.endswith(b"\n"), "lines": text.count(b"\n"), "hidden_left": [n for n in os.listdir(Path(named).parent) if n.startswith(".")], "aborted_file_left": os.path.exists(tmp)}))
+`;
+
+test("a stop that lands inside a write of the page's own file still keeps the whole lines under a .partial name, and raises nothing", () => {
+  for (const tool of ["mem_carve", "mem_fs", "mem_profile", "mem_registry", "vol_readiness", "carve_handoff", "vol_views", "isf_intake"]) {
+    const ran = spawnSync("python3", ["-c", REENTRANT_CASE, join(ROOT, "packs", "memory-forensics", "tools", tool, "run.py")], { encoding: "utf8", timeout: 60_000 });
+    assert.equal(ran.status, 0, `${tool}: ${ran.stderr}`);
+    const got = JSON.parse(ran.stdout);
+    assert.match(got.name, /\.jsonl\.partial$/, tool);
+    assert.equal(got.ends_in_newline, true, tool);
+    assert.equal(got.lines, 50, `${tool}: the 50 rows that were flushed, and not the cut one`);
+    assert.deepEqual(got.hidden_left, [], tool);
+    assert.equal(got.aborted_file_left, false, `${tool}: abort() of a page whose file cannot be flushed`);
   }
 });

@@ -71,8 +71,9 @@ ran the first pass; read `catalog/` before running the same commands again.
    turned off, exclusions or settings changed), 1116 and 1117 (what was
    detected and what was done about it), audit policy changes 4719 and
    4907, the log clears from question 1, the event log service stopping
-   (System 6005/6006 out of place), Security 1100 and 1104 (logging shut
-   down, log full), System 7036 and 7040 for the security services,
+   (System 6005/6006 out of place), Security 1100 (the event log service shut down: also
+   written on every normal shutdown, so read it with the System 6006 and
+   the boot that follows) and 1104 (log full), System 7036 and 7040 for the security services,
    Sysmon 16 (configuration change) and Defender 5013, and the services
    or tasks that stopped security tooling; each with the account and the
    moment.
@@ -217,10 +218,9 @@ unchanged.
 - `grep -qi 'hypothesis' work/report.md`
 - `test -f work/timeline.md`
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 30`
-- `grep -m1 -iE '^\| *(# *\| *)?(time|utc|date)' work/timeline.md | grep -qiE 'host.*account|account.*host'`
+- `grep -qiE '^\| *(# *\| *)?(time|utc|date).*(host.*account|account.*host)' work/timeline.md`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 23`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,8,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies

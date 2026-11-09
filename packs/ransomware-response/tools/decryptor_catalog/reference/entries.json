@@ -1,0 +1,299 @@
+{
+  "schema": "decryptor_catalog.reference/1",
+  "set": {
+    "id": "project-seed",
+    "version": 1,
+    "snapshot_date": "2026-11-04",
+    "fresh_until": "2027-05-03",
+    "licence": "AGPL-3.0-or-later",
+    "authored_for": "this project; the entries are original summaries of what the cited pages say; no executable, script or key is redistributed",
+    "scope": "five public decryptors for six names of the pack's family snapshot; the absence of an entry is not the absence of a decryptor"
+  },
+  "prerequisite_kinds": {
+    "original_and_encrypted_pair": "an original, unencrypted file and the same file as the family encrypted it",
+    "same_machine_as_encryption": "the decryptor is run on the machine where the files were encrypted",
+    "known_plaintext_64_bytes": "the plaintext of 64 encrypted bytes of a file is known",
+    "encryptor_bitness_known": "whether the encryptor that ran was 32-bit or 64-bit is known",
+    "memory_for_password_cracking": "a machine with a large amount of memory for the password-cracking step",
+    "publisher_guide_read": "the publisher's own guide was read for requirements this snapshot did not record"
+  },
+  "strength_scale": {
+    "strong": "two or more of the cited pages describe the tool and its requirements",
+    "moderate": "the requirements come from one page, or the page records little",
+    "weak": "only a listing names the tool"
+  },
+  "sources": {
+    "S01": {
+      "title": "Decryption Tools",
+      "publisher": "No More Ransom",
+      "url": "https://www.nomoreransom.org/en/decryption-tools.html",
+      "published": null,
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "the page shows no date; it lists each tool with the name of its provider"
+    },
+    "S02": {
+      "title": "Decrypted: Akira Ransomware",
+      "publisher": "Gen Digital (Avast)",
+      "url": "https://www.gendigital.com/blog/insights/research/decrypted-akira-ransomware",
+      "published": "2023-06-29",
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "published 2023-06-29; the page shows no update notes"
+    },
+    "S03": {
+      "title": "Decrypted: Rhysida Ransomware",
+      "publisher": "Gen Digital (Avast)",
+      "url": "https://www.gendigital.com/blog/insights/research/decrypted-rhysida-ransomware",
+      "published": "2024-02-13",
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "published 2024-02-13"
+    },
+    "S04": {
+      "title": "Ransomware Damage Recovery",
+      "publisher": "Japan National Police Agency",
+      "url": "https://www.npa.go.jp/english/bureau/cyber/ransomdamagerecovery.html",
+      "published": null,
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "the page shows no date"
+    },
+    "S05": {
+      "title": "Japanese police release a decryptor for Phobos and 8Base ransomware (news report)",
+      "publisher": "The Record",
+      "url": "https://therecord.media/decryptor-phobos-8base-ransomware-japan-national-police",
+      "published": "2025-07-18",
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "byline dated 2025-07-18; it says the tool was released on the preceding Thursday; the title is the curator's description"
+    },
+    "S06": {
+      "title": "New Black Basta decryptor exploits ransomware flaw to recover files",
+      "publisher": "BleepingComputer",
+      "url": "https://www.bleepingcomputer.com/news/security/new-black-basta-decryptor-exploits-ransomware-flaw-to-recover-files/",
+      "published": "2023-12-30",
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "the page shows a publication date"
+    }
+  },
+  "entries": [
+    {
+      "id": "akira-avast",
+      "family": "akira",
+      "family_name": "Akira",
+      "aliases": [],
+      "tool_name": "Akira Decryptor",
+      "publisher": "Avast (Gen Digital)",
+      "kind": "vendor_tool",
+      "publication": {
+        "date": "2023-06-29",
+        "basis": "the date of the publisher's post that announces the tool"
+      },
+      "variants_stated": [
+        "akira-original"
+      ],
+      "applicability": "Stated for the Akira ransomware the post describes: a 64-bit Windows decryptor that matches the 64-bit ransomware, a 32-bit one for users who have no other option, and use of the Windows decryptor under WINE for files encrypted by the Linux build. The post says a native Linux decryptor was in development when it was written. It does not say whether builds reported after its date are covered.",
+      "prerequisites": [
+        {
+          "kind": "original_and_encrypted_pair",
+          "text": "One unencrypted file and its Akira-encrypted counterpart; the tool uses the pair to find the password. A larger pair is better, because the size limit follows Akira's block-size calculation."
+        },
+        {
+          "kind": "memory_for_password_cracking",
+          "text": "The password-cracking step usually takes seconds but needs a lot of memory; the post strongly recommends the 64-bit build. Running as administrator is recommended."
+        }
+      ],
+      "limitations": [
+        "The size of the file pair can set a limit on the size of the files that can be decrypted.",
+        "It does not decrypt files of an unrelated, older ransomware also called Akira that the post says was discovered in 2017.",
+        "Success depends on following the publisher's instructions, above all on choosing a suitable file pair."
+      ],
+      "acquisition": {
+        "approved_source": "The publisher's own page and the No More Ransom listing named in the sources; verify the publisher and the build you hold against them before use.",
+        "redistributed_here": false,
+        "note": "No executable ships with this pack and none is fetched by the tool. The executable's terms are the publisher's own."
+      },
+      "sources": [
+        "S01",
+        "S02"
+      ],
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "strong"
+    },
+    {
+      "id": "rhysida-avast",
+      "family": "rhysida",
+      "family_name": "Rhysida",
+      "aliases": [],
+      "tool_name": "Rhysida Decryptor",
+      "publisher": "Avast (Gen Digital)",
+      "kind": "vendor_tool",
+      "publication": {
+        "date": "2024-02-13",
+        "basis": "the date of the publisher's post that announces the public release"
+      },
+      "variants_stated": null,
+      "applicability": "The post names no Rhysida versions; it distinguishes 32-bit and 64-bit encryptor samples only.",
+      "prerequisites": [
+        {
+          "kind": "same_machine_as_encryption",
+          "text": "Run the decryptor, and its password-cracking step, on the PC where the files were encrypted; do not copy files from other machines to the PC that decrypts."
+        },
+        {
+          "kind": "encryptor_bitness_known",
+          "text": "The default assumes a 64-bit encryptor; a command-line parameter switches to 32-bit. A testing mode checks whether decryption will work without changing files."
+        },
+        {
+          "kind": "memory_for_password_cracking",
+          "text": "The cracking step needs a large amount of memory."
+        }
+      ],
+      "limitations": [
+        "Results can depend on the drive letter set, the file order, the number of CPU cores, the bitness of the encryptor and the original file format.",
+        "Common formats (Office documents, archives, pictures, multimedia) are covered; for less common or proprietary formats the post invites you to contact the publisher to ask for support.",
+        "Small text files (source code, INI, XML, HTML and similar) must be above a minimum size to be decrypted."
+      ],
+      "acquisition": {
+        "approved_source": "The publisher's own page named in the sources, and the No More Ransom listing; verify the publisher and the build you hold against them before use.",
+        "redistributed_here": false,
+        "note": "No executable ships with this pack and none is fetched by the tool. The executable's terms are the publisher's own."
+      },
+      "sources": [
+        "S01",
+        "S03"
+      ],
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "strong"
+    },
+    {
+      "id": "phobos-8base-npa",
+      "family": "phobos",
+      "family_name": "Phobos and 8Base",
+      "aliases": [
+        "8base",
+        "phobos / 8base",
+        "phobos/8base"
+      ],
+      "tool_name": "Phobos / 8base decryptor (file phdec_gui_v1.0.0.zip)",
+      "publisher": "Japan National Police Agency",
+      "kind": "law_enforcement_tool",
+      "publication": {
+        "date": "2025-07-18",
+        "basis": "the date of a news report on the release; the publisher's page shows no date"
+      },
+      "variants_stated": [
+        "phobos-core",
+        "phobos-8base"
+      ],
+      "applicability": "The news report says the tool is for victims of Phobos and 8Base ransomware incidents and does not say which other variants, if any, are covered.",
+      "prerequisites": [
+        {
+          "kind": "publisher_guide_read",
+          "text": "The publisher's page links an English user guide. This snapshot did not read it, so the requirements and limits are not recorded here."
+        }
+      ],
+      "limitations": [
+        "The publisher's page records no limitation, supported extension or prerequisite; read the guide it links."
+      ],
+      "acquisition": {
+        "approved_source": "The Japan National Police Agency page named in the sources, and the No More Ransom listing 'Phobos / 8base'.",
+        "redistributed_here": false,
+        "note": "No executable ships with this pack and none is fetched by the tool. The executable's terms are the publisher's own."
+      },
+      "sources": [
+        "S01",
+        "S04",
+        "S05"
+      ],
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "moderate"
+    },
+    {
+      "id": "lockbit-three-japan-police",
+      "family": "lockbit",
+      "family_name": "LockBit",
+      "aliases": [
+        "lockbit 3.0",
+        "lockbit3",
+        "lockbit black"
+      ],
+      "tool_name": "Lockbit 3.0",
+      "publisher": "Japanese Police (as the No More Ransom listing names the provider)",
+      "kind": "law_enforcement_tool",
+      "publication": {
+        "date": null,
+        "basis": "the listing shows no date"
+      },
+      "variants_stated": [
+        "lockbit-three"
+      ],
+      "applicability": "The listing names the tool 'Lockbit 3.0' and gives no further description in the part of the page this snapshot read.",
+      "prerequisites": [
+        {
+          "kind": "publisher_guide_read",
+          "text": "This snapshot recorded no prerequisite, version or limit for this tool: read the listing and the publisher's own page."
+        }
+      ],
+      "limitations": [
+        "Nothing beyond the listing is recorded in this snapshot."
+      ],
+      "acquisition": {
+        "approved_source": "The No More Ransom listing named in the sources.",
+        "redistributed_here": false,
+        "note": "No executable ships with this pack and none is fetched by the tool. The executable's terms are the publisher's own."
+      },
+      "sources": [
+        "S01"
+      ],
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "weak"
+    },
+    {
+      "id": "black-basta-srlabs",
+      "family": "black-basta",
+      "family_name": "Black Basta",
+      "aliases": [
+        "blackbasta",
+        "black basta"
+      ],
+      "tool_name": "Black Basta Buster (Python scripts, decryptauto.py)",
+      "publisher": "Security Research Labs",
+      "kind": "research_tool",
+      "publication": {
+        "date": "2023-12-30",
+        "basis": "the date of the news report that describes the tool"
+      },
+      "variants_stated": null,
+      "applicability": "The report says the tool works on encryptors used from November 2022 until about a week before the report, when the developers fixed the bug it relies on; it names the period, not versions. It says older variants that append the .basta extension are not supported.",
+      "prerequisites": [
+        {
+          "kind": "known_plaintext_64_bytes",
+          "text": "Recovery needs the plaintext of 64 encrypted bytes. For files without large runs of zero bytes, an older unencrypted copy with similar content may help."
+        }
+      ],
+      "limitations": [
+        "Files under 5,000 bytes cannot be recovered; files from 5,000 bytes up to 1 GB can be recovered in full; for files over 1 GB the first 5,000 bytes are lost and the rest can be recovered.",
+        "The scripts work on one file at a time.",
+        "Encryptors after the fix the report mentions are not covered by the technique."
+      ],
+      "acquisition": {
+        "approved_source": "The publisher's repository named by the report and the No More Ransom listing 'BlackBasta'; verify the publisher against both before use.",
+        "redistributed_here": false,
+        "note": "No script or executable ships with this pack and none is fetched by the tool. The terms are the publisher's own."
+      },
+      "sources": [
+        "S01",
+        "S06"
+      ],
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "moderate"
+    }
+  ]
+}

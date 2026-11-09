@@ -1,6 +1,6 @@
 {
   "name": "archive_extract",
-  "description": "Extract the members of a zip, tar (plain, gzip, bzip2, xz or zstd), 7z (through the 7z program) or single-file gzip/bzip2/xz/zstd archive into a NEW private directory, bounded and safe against hostile input. Format is read from the bytes. Only member CONTENT is written: a symlink, hard link, device node or FIFO is recorded with its target and never created, nothing lands outside the output directory (files are created exclusively through directory descriptors; an absolute path, a drive letter or '..' is rendered harmless and flagged), and nothing is executed. Every member is one row of members.jsonl in archive order (n is the number the archive-members recipe gives it) with its exact name bytes (name_b64), type, declared and written sizes, the times as stored with their zone said, flags, status and the path it was written to; two members with one name are two files; an encrypted member is counted, never skipped silently and never opened; a compression method this build cannot read is 'unsupported'. A name shaped like a token is withheld from every output channel and kept in withheld-names.jsonl (0600). A member is written as <path>.partial and takes its name only when its size and CRC match what the archive declared; a member that stops, fails or mismatches stays .partial and its row says why. A digest or CRC of a member shorter than 128 bytes is not written. Budgets: max_total_bytes, max_member_bytes, max_members, max_ratio (default 1000), max_depth and max_seconds; a member-level budget skips or cuts that member and goes on, a global one stops the run, names it and gives next_index (run again with from_index and resume true to go on in the same out_dir, which writes a second manifest beside the first). A nested archive is named (looks_like), not opened; one call extracts one level. zstd needs Python 3.14 or the zstd program, else it is reported unsupported. RAR, CAB and ISO are refused by name. A 7z archive with encrypted headers cannot be listed and is refused. Not measured: the content of any member, the archive's authenticity, and whether the archive is the whole of what was acquired. Extracted bytes are evidence content and can hold credentials: when the member list shows credential stores, keys, tokens or browser profiles, run it as a job with secret_output true. The manifest does not force it: an archive of a whole case would make every output sensitive.",
+  "description": "Extract the members of a zip, tar (plain, gzip, bzip2, xz or zstd), 7z (through the 7z program), RAR (version 4 or 5, through 7zz) or single-file gzip/bzip2/xz/zstd archive into a NEW private directory, bounded and safe against hostile input. Format is read from the bytes. Only member CONTENT is written: a symlink, hard link, device node or FIFO is recorded with its target and never created, nothing lands outside the output directory (files are created exclusively through directory descriptors; an absolute path, a drive letter or '..' is rendered harmless and flagged), and nothing is executed. Every member is one row of members.jsonl in archive order (n is the number the archive-members recipe gives it) with its exact name bytes (name_b64), type, declared and written sizes, the times as stored with their zone said, flags, status and the path it was written to; two members with one name are two files; an encrypted member is counted, never skipped silently and never opened; a compression method this build cannot read is 'unsupported'. A name shaped like a token is withheld from every output channel and kept in withheld-names.jsonl (0600). A member is written as <path>.partial and takes its name only when its size and CRC match what the archive declared; a member that stops, fails or mismatches stays .partial and its row says why. A digest or CRC of a member shorter than 128 bytes is not written. Budgets: max_total_bytes, max_member_bytes, max_members, max_ratio (default 1000), max_depth and max_seconds; a member-level budget skips or cuts that member and goes on, a global one stops the run, names it and gives next_index (run again with from_index and resume true to go on in the same out_dir, which writes a second manifest beside the first). A nested archive is named (looks_like), not opened; one call extracts one level. A gzip, bzip2 or xz tar is complete only when its whole stream has been read: after the tar's end blocks the rest of the decompressed stream and every further compressed stream are read, under the clock and the ratio budget, and must be zeros; a further tar header or other data, a trailer that does not match (the gzip CRC-32 or length) or a stream that does not end, bytes after the last stream that are not zero padding, or a rest the budget or the clock cut short make the answer partial, naming the offset (zstd tars are read as before). zstd needs Python 3.14 or the zstd program, else it is reported unsupported. CAB and ISO are refused by name. A RAR (signature Rar!, 1A 07 00 or 1A 07 01 00) is listed and extracted through 7zz, 7-Zip's own build, with one row per member as for a 7z: the reader is asked only for the plain files it listed, by name, and is given no password; an encrypted member is counted and never opened; a link is recorded with its target, and an alternate data stream or a file-copy record is 'unsupported', none of them extracted; a reader that exits with a status other than 0 while listing or extracting, or whose output does not match its listing, makes the answer partial whatever the members say, and gives the reader's own words. Without 7zz the first 7z program on PATH is used and the answer says that build's RAR codec was not checked. A multi-volume set is given to the reader as its first volume: whether the reader finds the other volumes was not measured, and a reader that stops short (a missing volume included) makes the answer partial with the reader's own words. Measured: one RAR 5 archive from a public test-file collection (which program made it was not checked), stored without compression (method m0), read by 7zz 26.05, and its copies cut at every length. Not measured: a RAR 4 archive, a compressed or solid RAR, a multi-volume set, a link, stream or file-copy member, and a name with a line break. A 7z or RAR archive with encrypted headers cannot be listed and is refused. Not measured: the content of any member, the archive's authenticity, and whether the archive is the whole of what was acquired. Extracted bytes are evidence content and can hold credentials: when the member list shows credential stores, keys, tokens or browser profiles, run it as a job with secret_output true. The manifest does not force it: an archive of a whole case would make every output sensitive. A name, a path, a URL or a message that quotes a credential is withheld with the identifier-shaped strings, from version 15: a value given to a password, token, secret or cookie name (password=..., Pwd=..., a Cookie header), a Name/Value pair in text whose Name is a credential (a number, an array or a long Value too, and the NewValue after an OldValue), a -Password style switch, the argument of ConvertTo-SecureString, curl -u user:pass, mysql -uUSER -pSECRET, a bcrypt hash and the known token families; the text is replaced by a marker that holds only its length. Before, only identifier-shaped strings (tokens, key ids, user-info) were withheld, so these were printed. Known gaps: a pair whose Value is an array nested in another or longer than 4,096 characters, a crypt hash that is not bcrypt, and a secret that has neither a credential name nor a token shape. PROGRAM LEFTOVERS: a 7z or RAR reader that exits and leaves a process running (in the tool's group, in a session of its own, or holding none of the tool's descriptors) is ended by the shared process block before its listing and stderr files are read, and the answer and receipt.json are partial with program_group.left_behind; a run whose reader wrote those files is at most partial where the block cannot show that none was left (a host that is not Linux, or PR_SET_CHILD_SUBREAPER refused: program_group.unproven). A zstd program, which only prints on a pipe, is held to the first alone. An answer that reaches the end of a run carries program_group (a refusal, or a failure before the program ran, does not). The zstd program's pipe is read on the tool's clock (max_seconds): a zstd that has ended while something it started keeps its pipe open (silent, or writing all the time) is read for one second after it ended, the stream is then taken as damaged (the end was not seen), and the run is partial.",
   "params": {
     "path": {
       "type": "string",
@@ -33,7 +33,7 @@
     },
     "max_ratio": {
       "type": "integer",
-      "description": "Expanded over packed (default 1000): per member for a zip (its directory gives each packed size); over the whole stream for a gzip, bzip2, xz or zstd file or tar, and for a 7z (its output over the archive's size); a plain tar stores its members. A sparse disk image compressed with xz or zstd can pass it; raise it for such an archive on purpose."
+      "description": "Expanded over packed (default 1000): per member for a zip (its directory gives each packed size); over the whole stream for a gzip, bzip2, xz or zstd file or tar, and for a 7z or a RAR (its output over the archive's size); a plain tar stores its members. A sparse disk image compressed with xz or zstd can pass it; raise it for such an archive on purpose."
     },
     "max_depth": {
       "type": "integer",
@@ -41,7 +41,7 @@
     },
     "max_seconds": {
       "type": "integer",
-      "description": "Time budget in seconds (default 1500, at most 1700); past it the run stops, and any running 7z is killed."
+      "description": "Time budget in seconds (default 1500, at most 1700); past it the run stops, and any running 7z or 7zz is killed."
     },
     "limit": {
       "type": "integer",
@@ -52,7 +52,8 @@
   "entry": "run.py",
   "timeout_seconds": 1800,
   "requires": [
-    "7z"
+    "7z",
+    "7zz"
   ],
   "example": "{\"path\":\"inputs/collection.zip\",\"out_dir\":\"{OUT}/collection\",\"max_total_bytes\":2147483648}",
   "use": {
@@ -70,7 +71,8 @@
       ".bz2",
       ".xz",
       ".zst",
-      ".7z"
+      ".7z",
+      ".rar"
     ],
     "magic": [
       {
@@ -98,6 +100,14 @@
         "hex": "28b52ffd"
       },
       {
+        "offset": 0,
+        "hex": "526172211a0700"
+      },
+      {
+        "offset": 0,
+        "hex": "526172211a070100"
+      },
+      {
         "offset": 257,
         "hex": "7573746172"
       }
@@ -105,6 +115,6 @@
   },
   "by": "maintainer",
   "at": "2026-10-13T12:00:00.000Z",
-  "version": 3,
-  "sha256": "054bc20837624d40a78ee3c4a7734f004cf56c7f6ea4bcd2e2b4ea72b97c3759"
+  "version": 20,
+  "sha256": "b50858d9e727e594f398a9fe4c3cfdd99519903a65c6dee29f225e8caddb498d"
 }

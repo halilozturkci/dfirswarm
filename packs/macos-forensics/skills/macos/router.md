@@ -24,10 +24,21 @@ Records
 `artifacts/knowledgec` app and device activity
 `artifacts/knowledgec-fields-time` row fields, time columns
 `artifacts/plists` property list values, types
-`artifacts/plists-archives-dates` keyed archives, plist dates, recent items
+`artifacts/plists-archives-dates` keyed archives, plist dates
+`artifacts/recent-items` recent items, bookmarks, MRUs
+`artifacts/biome` Biome streams, SEGB framing
+`artifacts/spotlight` Spotlight index stores
 
 Accounts and persistence
 `accounts/users` accounts, sessions, local or remote
 `accounts/attribution-remote` attribution limits, remote access
 `persistence/mechanisms` configured, registered, enabled, run
 `persistence/login-items-quieter` login items, cron, profiles, extensions, privacy
+
+Security
+`security/tcc` privacy permission records
+`security/gatekeeper-xprotect` quarantine, Gatekeeper, XProtect
+`security/keychains` keychain files, opening with the case's password
+
+Workflow
+`workflow/mac-apt` broad parse with mac_apt, judging its log

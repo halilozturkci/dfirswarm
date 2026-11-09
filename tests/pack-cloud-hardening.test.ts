@@ -422,7 +422,7 @@ test("a key shaped like a credential is withheld from the pointers an answer lis
     const awsShaped = "Zq9Xw7Vb6Nm5Lk4Jh3Gf/Dd1Sa0Pp9Oo8Ii7Uu6Y";
     assert.equal(awsShaped.length, 40);
     await put(cwd, "work/ev/t.json", trail(ct({ requestParameters: { [key]: { password: "zzzzzzzz" }, [awsShaped]: { secret: "yyyyyyyy" } } })));
-    const run = await asJob(TRAIL, cwd, { path: "work/ev/t.json", link_sessions: false, write_values: true });
+    const run = await asJob(TRAIL, cwd, { path: "work/ev/t.json", link_sessions: false, write_values: true }, { SECRET_OUTPUT: "1" });
     const answer = body(run);
     assert.ok(answer.values_withheld.count >= 2);
     const everything = await everythingBut(cwd, run.stdout, ["out/cloudtrail-values.jsonl"]);

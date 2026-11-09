@@ -7,13 +7,18 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, open, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { closeSync, mkdirSync, openSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet } from "./tool-library-harness.ts";
-import { AUTH, CRON, JOURNAL, RECIPE, SHELL, UTMP, asJob, body, filesUnder, lines, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
+import { AUTH, CRON, JOURNAL, RECIPE, SHELL, UTMP, asJob as plainJob, body, filesUnder, lines, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+import { NO_ADOPTION, SLOW_BIG_TREES } from "./host-gates.ts";
+/** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
+const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
+  plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
 
 /** A tool that must come back: a case whose tool is still running after `ms` is killed and fails by name (the old code ran for minutes). */
 async function bounded(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, ms = 90_000): Promise<{ out: Json; seconds: number }> {
@@ -151,7 +156,8 @@ test("cron_dump keeps a timer of 300,000 assignments out of the answer: the row 
     const rows = await rowsOf(cwd, out, "assignments");
     assert.equal(rows.length, 299_951);
     assert.equal(rows[0].line, 52);
-    assert.equal(rows[0].key, "a");
+    assert.equal(rows[0].key, undefined, "a key systemd does not define is withheld");
+    assert.deepEqual([rows[0].key_withheld, rows[0].key_bytes], [true, 1]);
     assert.equal(rows[0].value_withheld, true);
   });
 });
@@ -292,7 +298,7 @@ test("utmp_parse does not claim a byte order supported by records when every rec
 
 // ---- the linux-target recipe ----
 
-test("the linux-target recipe does not replace the receipt of an earlier run in the same --out", async () => {
+test("the linux-target recipe does not replace the receipt of an earlier run in the same --out", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await writeFile(join(bin, "target-query"), "#!/bin/sh\nexit 0\n");
     const { chmod } = await import("node:fs/promises");
@@ -327,7 +333,7 @@ test("the linux-target recipe does not replace the receipt of an earlier run in 
 // timeout, and no JSON came back. The clock is now read before every match, and no match is begun after the deadline.
 
 const SLOW = `${"a".repeat(18)}!`;
-const JOB_ENV = (cwd: string): Record<string, string> => ({ JOB_ID: "j1", OUT: join(cwd, "out") });
+const JOB_ENV = (cwd: string): Record<string, string> => ({ JOB_ID: "j1", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" });
 
 test("utmp_parse ends at max_seconds when every user match is slow: 4,300 records of 16 ms, max_seconds 2", async () => {
   await withCwd(async (cwd) => {
@@ -439,7 +445,7 @@ test("cron_dump stops writing its paging files at a cap, counts what it did not 
 // ---- a signal ends a tool with a last word and no unfinished temporary file ------------------------------------------
 
 /** Start a tool, wait until it has begun a paging file (a dot-named temporary one), send SIGTERM, and read what is left. */
-async function terminated(script: string, cwd: string, args: unknown): Promise<{ code: number | null; word: Json; dir: string }> {
+async function terminated(script: string, cwd: string, args: unknown, signal: NodeJS.Signals = "SIGTERM"): Promise<{ code: number | null; word: Json; dir: string }> {
   const dir = join(cwd, "out", "tool-output");
   await mkdir(join(cwd, "out"), { recursive: true });
   const run = startDetached(script, cwd, args, JOB_ENV(cwd));
@@ -453,19 +459,21 @@ async function terminated(script: string, cwd: string, args: unknown): Promise<{
     }
     await new Promise((r) => setTimeout(r, 50));
   }
-  run.signal("SIGTERM");
+  run.signal(signal);
   const code = await Promise.race([run.closed, new Promise<"late">((r) => setTimeout(() => r("late"), 30_000))]);
   if (code === "late") {
     run.killGroup();
-    assert.fail("the tool ignored SIGTERM");
+    assert.fail(`the tool ignored ${signal}`);
   }
   return { code, word: JSON.parse(run.stdout()), dir };
 }
 
-async function assertKept(cwd: string, result: { code: number | null; word: Json; dir: string }, key: string, minRows: number): Promise<void> {
-  assert.equal(result.code, 143, "exit status of a SIGTERM");
+const SIGNUM: Record<string, number> = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 };
+
+async function assertKept(cwd: string, result: { code: number | null; word: Json; dir: string }, key: string, minRows: number, signal = "SIGTERM"): Promise<void> {
+  assert.equal(result.code, 128 + SIGNUM[signal], `exit status of a ${signal}`);
   assert.equal(result.word.status, "failed");
-  assert.equal(result.word.stopped_by_signal, 15);
+  assert.equal(result.word.stopped_by_signal, SIGNUM[signal]);
   const names = await readdir(result.dir);
   assert.deepEqual(names.filter((n) => n.startsWith(".")), [], "no unfinished temporary file is left");
   const shown: string = result.word.paging_files_kept[key];
@@ -497,6 +505,328 @@ test("utmp_parse ends on SIGTERM with a last word, and keeps the paging file it 
     await writeFile(join(cwd, "work", "btmp"), Buffer.concat([...Array.from({ length: FAST_THEN_SLOW }, () => btmpRecord("a")), ...Array.from({ length: 4000 }, () => btmpRecord(SLOW))]));
     const result = await terminated(UTMP, cwd, { path: "work/btmp", user: "(a+)+(\\s|$)", limit: 5 });
     await assertKept(cwd, result, "records", 6);
+  });
+});
+
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+  test(`auth_log ends on ${signal} with one last word, and keeps the paging file it had begun under its name`, async () => {
+    await withCwd(async (cwd) => {
+      // A log long enough that the tool is still reading when the temporary paging file appears.
+      const line = "Oct  5 10:00:00 h sshd[1]: Failed password for root from 192.0.2.1 port 22 ssh2\n";
+      await mkdir(join(cwd, "work", "ev"), { recursive: true });
+      await writeRepeated(join(cwd, "work", "ev", "auth.log"), Buffer.from(line), 600_000);
+      const result = await terminated(AUTH, cwd, { path: "work/ev", limit: 5 }, signal);
+      await assertKept(cwd, result, "records", 6, signal);
+      assert.deepEqual(result.word.paging_files_not_flushed, []);
+    });
+  });
+}
+
+// ---- a stop signal right after the imports: one document, from the first line the file runs after them ----------------------------------
+
+// The handlers are installed by the stop block, which sits right after TOOL and PARSER, and not in main(): the source is run up to
+// the end of that block and the signal is sent there. What comes before (the interpreter's start-up, compiling the file, the
+// imports) cannot be closed from inside the file and is not claimed.
+for (const [name, script] of [["auth_log", AUTH], ["utmp_parse", UTMP], ["cron_dump", CRON], ["shell_history", SHELL]] as const) {
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    test(`${name}: a ${signal} right after the imports gives one JSON document and exit ${128 + SIGNUM[signal]}`, async () => {
+      const source = await readFile(script, "utf8");
+      const end = source.indexOf("# END LINUX STOP");
+      assert.ok(end > 0, "the stop block is marked");
+      const program = source.slice(0, end) + `\nimport os as _os, signal as _sg\n_os.kill(_os.getpid(), _sg.SIG${signal.slice(3)})\nprint("the signal was never answered")\n`;
+      const r = await runPySnippet(program, [], null);
+      assert.equal(r.code, 128 + SIGNUM[signal], `${r.stdout}${r.stderr}`);
+      const docs = r.stdout.trim().split("\n");
+      assert.equal(docs.length, 1, "one document");
+      const word = JSON.parse(docs[0]);
+      assert.equal(word.stopped_by_signal, SIGNUM[signal]);
+      assert.equal(word.status, "failed");
+      assert.deepEqual(word.paging_files_kept, {});
+      assert.equal(word.text_file_kept, null);
+    });
+  }
+
+  test(`${name}: two stop signals in a row give one document`, async () => {
+    const source = await readFile(script, "utf8");
+    const end = source.indexOf("# END LINUX STOP");
+    const program = source.slice(0, end) + `\nimport os as _os, signal as _sg\n_os.kill(_os.getpid(), _sg.SIGTERM)\n_os.kill(_os.getpid(), _sg.SIGHUP)\nprint("late")\n`;
+    const r = await runPySnippet(program, [], null);
+    assert.equal(r.code, 143, `${r.stdout}${r.stderr}`);
+    assert.equal(r.stdout.trim().split("\n").length, 1);
+  });
+}
+
+// ---- a write that fails, and the cap of the text file --------------------------------------------------------------------------
+
+// A paging file whose writes fail with ENOSPC, as the disk does when it is full: the partial temporary must not be left unnamed.
+const FULL_DISK = String.raw`
+import errno, importlib.util, io, os, sys
+sys.dont_write_bytecode = True
+script, cwd, case = sys.argv[1:4]
+for name in ("JOB_ID", "OUT"):
+    os.environ.pop(name, None)
+os.environ["AGENT_ID"] = "s1"
+spec = importlib.util.spec_from_file_location("tool_under_test", script)
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+os.chdir(cwd)
+
+
+class Full(io.RawIOBase):
+    def __init__(self, fd):
+        self.fd, self.ok = fd, 3
+
+    def writable(self):
+        return True
+
+    def fileno(self):
+        return self.fd
+
+    def write(self, b):
+        if self.ok <= 0:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        self.ok -= 1
+        return os.write(self.fd, b)
+
+
+page = tool.LosslessPage(tool.TOOL, "records", 1)
+page.add({"n": 0})
+page.add({"n": 1})
+page._out.flush()
+held = page._out
+page._out = io.TextIOWrapper(io.BufferedWriter(Full(held.fileno()), buffer_size=16), encoding="utf-8", write_through=True)
+if case == "finish":
+    for n in range(2, 4):
+        page.add({"n": n})
+    page._out = io.TextIOWrapper(io.BufferedWriter(Full(held.fileno()), buffer_size=1 << 16), encoding="utf-8")
+    page._out.write("x" * 100)
+    page._out.buffer.raw.ok = 0
+    page.finish()
+else:
+    for n in range(2, 200):
+        page.add({"n": n, "pad": "x" * 40})
+print("no error was raised")
+`;
+
+for (const [name, script] of [["auth_log", AUTH], ["utmp_parse", UTMP], ["cron_dump", CRON], ["shell_history", SHELL], ["journal_export", JOURNAL]] as const) {
+  for (const when of ["write", "finish"] as const) {
+    test(`${name}: a paging file that cannot be written (${when}, disk full) keeps or removes its temporary and names it in one error document`, async () => {
+      await withCwd(async (cwd) => {
+        const r = await runPySnippet(FULL_DISK, [script, cwd, when], null);
+        assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
+        const docs = r.stdout.trim().split("\n");
+        assert.equal(docs.length, 1, "one document");
+        const doc = JSON.parse(docs[0]);
+        assert.equal(doc.status, "failed");
+        assert.match(doc.error, /could not be written/);
+        assert.ok(doc.paging_file, "the error names the paging file");
+        assert.match(doc.paging_file_state, /written before the error are in |was removed/, "and says what became of the partial temporary");
+        const names = await readdir(join(cwd, "work", "s1", "tool-output"));
+        assert.deepEqual(names.filter((n) => n.startsWith(".")), [], "no unnamed temporary is left");
+        if (/are in /.test(doc.paging_file_state)) assert.ok(names.includes(String(doc.paging_file).split("/").at(-1) as string), "the file the error names exists");
+      });
+    });
+  }
+}
+
+// The text file stops at its cap: the rest is counted, `not_written` says how many, and the answer is partial.
+const TEXT_CAP = String.raw`
+import importlib.util, io, json, os, sys
+sys.dont_write_bytecode = True
+script, cwd = sys.argv[1:3]
+os.environ["JOB_ID"], os.environ["OUT"], os.environ["SECRET_OUTPUT"] = "j1", os.path.join(cwd, "out"), "1"
+os.environ["AGENT_ID"] = "s1"
+spec = importlib.util.spec_from_file_location("tool_under_test", script)
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+os.makedirs(os.environ["OUT"])
+os.chdir(cwd)
+tool.TEXTING["left"] = 1000
+text = tool.TextFile("t.jsonl", True, "rows")
+for n in range(40):
+    text.add({"n": n, "pad": "x" * 60})
+text.close()
+page = tool.LosslessPage(tool.TOOL, "records", 1)
+summary = text.summary()
+print(json.dumps({"summary": summary, "why": tool.capped_why({"records": {"not_written": 0}}, text), "size": os.path.getsize(text.path)}))
+`;
+
+for (const [name, script] of [["auth_log", AUTH], ["utmp_parse", UTMP], ["cron_dump", CRON], ["shell_history", SHELL], ["journal_export", JOURNAL]] as const) {
+  test(`${name}: the text file stops at its cap, counts the records it did not write and says partial`, async () => {
+    await withCwd(async (cwd) => {
+      const r = await runPySnippet(TEXT_CAP, [script, cwd], null);
+      assert.equal(r.code, 0, r.stderr);
+      const got = JSON.parse(r.stdout);
+      assert.ok(got.size <= 1000, `the file holds ${got.size} bytes`);
+      assert.equal(got.summary.written + got.summary.not_written, 40, "every record is either in the file or counted");
+      assert.ok(got.summary.not_written > 0 && got.summary.written > 0);
+      assert.match(got.summary.not_written_why, /text file of one call holds at most 268435456 bytes/);
+      assert.match(got.why, /text file reached its cap/);
+    });
+  });
+}
+
+// The whole tool, end to end: a log of many records and a small cap give a partial answer that names the cap.
+const CAP_END_TO_END = String.raw`
+import importlib.util, io, json, os, sys
+sys.dont_write_bytecode = True
+script, cwd, args = sys.argv[1:4]
+os.environ["JOB_ID"], os.environ["OUT"], os.environ["SECRET_OUTPUT"] = "j1", os.path.join(cwd, "out"), "1"
+os.environ["AGENT_ID"] = "s1"
+spec = importlib.util.spec_from_file_location("tool_under_test", script)
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+os.makedirs(os.environ["OUT"])
+os.chdir(cwd)
+tool.TEXTING["left"] = 3000
+tool.PAGING["left"] = 3000
+sys.stdin = io.StringIO(args)
+tool.main()
+`;
+
+test("auth_log, shell_history and cron_dump answer partial, and say why, when the text file or a paging file reaches its cap", async () => {
+  await withCwd(async (cwd) => {
+    const auth = Array.from({ length: 200 }, (_, i) => `Oct  5 10:${String(i % 60).padStart(2, "0")}:00 h sshd[${i}]: Failed password for root from 192.0.2.1 port ${i} ssh2`);
+    await put(join(cwd, "work", "ev"), "auth.log", lines(...auth));
+    await put(join(cwd, "work", "ev"), "home/a/.bash_history", lines(...Array.from({ length: 300 }, (_, i) => `echo ${i}`)));
+    await put(join(cwd, "work", "ev"), "etc/crontab", lines(...Array.from({ length: 300 }, (_, i) => `* * * * * root /bin/job${i}`)));
+    const cases: Array<[string, string, Json]> = [
+      ["auth_log", AUTH, { path: "work/ev/auth.log", write_text: true, limit: 5 }],
+      ["shell_history", SHELL, { root: "work/ev", write_commands: true, limit: 5 }],
+      ["cron_dump", CRON, { root: "work/ev", write_text: true, limit: 5 }],
+    ];
+    for (const [name, script, args] of cases) {
+      const r = await runPySnippet(CAP_END_TO_END, [script, cwd, JSON.stringify(args)], null);
+      assert.equal(r.code, 0, `${name}: ${r.stdout.slice(0, 300)}${r.stderr}`);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.status, "partial", `${name}: ${out.status_basis}`);
+      assert.match(JSON.stringify([out.status_basis, out.partial_reason]), /reached (its|their) cap/, name);
+      const capped = Object.values(out.pages as Record<string, Json>).some((p) => p.not_written > 0) || out.text.not_written > 0;
+      assert.ok(capped, `${name}: not_written is in pages or text`);
+      await rm(join(cwd, "out"), { recursive: true, force: true });
+      await rm(join(cwd, "work", "s1"), { recursive: true, force: true });
+    }
+  });
+});
+
+// ---- a hostile parameter is a JSON refusal, never a traceback -------------------------------------------------------------
+
+test("every parameter that becomes a regex, an argument or a number answers a hostile value in JSON, with no traceback", async () => {
+  await withCwd(async (cwd, bin) => {
+    await mkdir(join(cwd, "work", "journal"), { recursive: true });
+    await writeFile(join(cwd, "work", "journal", "system.journal"), Buffer.concat([Buffer.from("LPKSHHRH"), Buffer.alloc(248)]));
+    await put(join(cwd, "work", "ev"), "etc/crontab", lines("* * * * * root /bin/true"));
+    await put(join(cwd, "work", "ev"), "home/a/.bash_history", lines("echo a"));
+    await writeFile(join(cwd, "work", "wtmp"), Buffer.alloc(384));
+    await writeFile(join(bin, "journalctl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const nested = "(".repeat(1000) + "a" + ")".repeat(1000);
+    const cases: Array<[string, string, Record<string, unknown>]> = [
+      ["journal_export", JOURNAL, { path: "work/journal", unit: "a\u0000b" }],
+      ["journal_export", JOURNAL, { path: "work/journal", unit: "\ud800" }],
+      ["journal_export", JOURNAL, { path: "work/journal", priority: "a\u0000b" }],
+      ["journal_export", JOURNAL, { path: "work/journal", priority: "\ud800" }],
+      ["cron_dump", CRON, { root: "work/ev", contains: nested }],
+      ["shell_history", SHELL, { root: "work/ev", contains: nested }],
+      ["utmp_parse", UTMP, { path: "work/wtmp", user: nested }],
+    ];
+    for (const [name, script, args] of cases) {
+      const run = await tool(script, cwd, args, {}, bin);
+      assert.doesNotMatch(run.stderr, /Traceback/, `${name} ${JSON.stringify(args).slice(0, 80)}: ${run.stderr.slice(-300)}`);
+      const answer = JSON.parse(run.stdout);
+      assert.ok(run.code === 0 || answer.status === "failed", `${name}: ${run.stdout.slice(0, 200)}`);
+    }
+    // A number no file can hold is refused as one, not met as an overflow (the integer is written out: JSON.stringify would make it a float).
+    const huge = spawnSync("python3", [UTMP], { cwd, input: '{"path": "work/wtmp", "start_record": 100000000000000000000000000000}', encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+    assert.doesNotMatch(huge.stderr, /Traceback/, huge.stderr.slice(-300));
+    assert.equal(JSON.parse(huge.stdout).status, "failed");
+    assert.match(JSON.parse(huge.stdout).error, /start_record/);
+  });
+});
+
+// ---- a list that grows with the evidence is capped inline and kept whole on disk -------------------------------------------------
+
+const INLINE = 200;
+
+test("auth_log: a directory of 100,000 empty log files ends at max_seconds, lists 200 files inline, pages the rest and says partial", async () => {
+  await withCwd(async (cwd) => {
+    const dir = join(cwd, "work", "sec");
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 100_000; i++) closeSync(openSync(join(dir, `secure.${i}`), "w"));
+    const started = Date.now();
+    const run = await tool(AUTH, cwd, { path: "work/sec", max_seconds: 1 });
+    const seconds = (Date.now() - started) / 1000;
+    assert.doesNotMatch(run.stderr, /Traceback/);
+    assert.ok(seconds < 20, `took ${seconds} s for max_seconds 1`);
+    assert.ok(run.stdout.length < 1_000_000, `the answer is ${run.stdout.length} bytes`);
+    const out = JSON.parse(run.stdout);
+    // The clock stopped it: partial, or failed where it stopped before a single file was read (the basis says which files were not reached).
+    assert.ok(out.status === "partial" || out.status === "failed", out.status_basis);
+    assert.ok(out.files.length <= INLINE && out.files_not_reached.length <= INLINE);
+    // On a loaded machine the walk itself may end at the clock before it has met every file (it says so in walk_errors).
+    const read = out.pages.files?.matched ?? 0;
+    const left = out.pages.files_not_reached?.matched ?? 0;
+    assert.ok(read + left > INLINE && read + left <= 100_000, `${read + left} files met`);
+    assert.ok(read + left === 100_000 || out.walk_errors.length > 0, "a file the walk did not meet is said in walk_errors");
+    assert.ok(left > 0 || out.walk_errors.length > 0, "what the clock left is counted");
+    if (left > INLINE) {
+      assert.equal((await rowsOf(cwd, out, "files_not_reached")).length, left, "the whole list is on disk");
+    }
+  });
+});
+
+test("shell_history: 100,000 homes each with a history file are listed 200 inline, whole in a page, in under a megabyte of answer", { skip: SLOW_BIG_TREES }, async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "homes");
+    for (let i = 0; i < 100_000; i++) {
+      mkdirSync(join(root, "home", `u${i}`), { recursive: true });
+      writeFileSync(join(root, "home", `u${i}`, ".bash_history"), "echo a\n");
+    }
+    const started = Date.now();
+    const run = await tool(SHELL, cwd, { root: "work/homes" });
+    const seconds = (Date.now() - started) / 1000;
+    assert.doesNotMatch(run.stderr, /Traceback/);
+    assert.ok(run.stdout.length < 1_000_000, `the answer is ${run.stdout.length} bytes`);
+    assert.ok(seconds < 60, `took ${seconds} s`);
+    const out = JSON.parse(run.stdout);
+    assert.equal(out.files.length, INLINE);
+    assert.equal(out.file_count, 100_000);
+    assert.equal(out.pages.files.matched, 100_000);
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.equal((await rowsOf(cwd, out, "files")).length, 100_000, "the whole list is on disk");
+    // With a clock that cannot cover them, the answer is partial and still small.
+    const short = await tool(SHELL, cwd, { root: "work/homes", max_seconds: 1 });
+    assert.ok(short.stdout.length < 1_000_000, `the answer is ${short.stdout.length} bytes`);
+    assert.equal(JSON.parse(short.stdout).status, "partial");
+  });
+});
+
+test("cron_dump keeps every link, error and special file it met in a page, 200 inline, and utmp_parse echoes at most 200 UIDs beyond the file", async () => {
+  await withCwd(async (cwd) => {
+    const dir = join(cwd, "work", "ev", "etc", "cron.d");
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 1000; i++) symlinkSync("/nonexistent", join(dir, `job${i}`));
+    const out = body(await tool(CRON, cwd, { root: "work/ev" }));
+    assert.ok(out.skipped_symlinks.length <= INLINE);
+    assert.equal(out.pages.skipped_symlinks.matched, 1000);
+    assert.equal((await rowsOf(cwd, out, "skipped_symlinks")).length, 1000, "all are on disk");
+    assert.equal(out.error_counts.skipped_symlinks, 1000);
+    await writeFile(join(cwd, "work", "lastlog"), Buffer.alloc(292 * 4));
+    const uids = Array.from({ length: 5000 }, (_, i) => 100 + i);
+    const last = body(await tool(UTMP, cwd, { path: "work/lastlog", layout: "lastlog-292", uids }));
+    assert.equal(last.uids_beyond_file.length, INLINE);
+    assert.equal(last.uids_beyond_file_count, 5000);
+  });
+});
+
+test("auth_log looks through a directory tree on the clock: the whole file system passed as the path ends at max_seconds, not at the harness's kill", async () => {
+  await withCwd(async (cwd) => {
+    const started = Date.now();
+    const run = await tool(AUTH, cwd, { path: "/", max_seconds: 3 });
+    const seconds = (Date.now() - started) / 1000;
+    assert.ok(seconds < 30, `took ${seconds} s for max_seconds 3`);
+    assert.doesNotMatch(run.stderr, /Traceback/);
+    const out = JSON.parse(run.stdout);
+    assert.notEqual(out.status, "complete");
   });
 });
 
@@ -586,7 +916,7 @@ else:
 print("the signal was never answered")
 `;
 
-for (const [name, script] of [["utmp_parse", UTMP], ["cron_dump", CRON], ["shell_history", SHELL]] as const) {
+for (const [name, script] of [["auth_log", AUTH], ["utmp_parse", UTMP], ["cron_dump", CRON], ["shell_history", SHELL]] as const) {
   test(`${name}: a signal while a row is being written still keeps the paging file under its name, every row in it whole`, async () => {
     await withCwd(async (cwd) => {
       const r = await runPySnippet(INSIDE_A_WRITE, [script, cwd, "page"], null);
@@ -605,7 +935,7 @@ for (const [name, script] of [["utmp_parse", UTMP], ["cron_dump", CRON], ["shell
     });
   });
 
-  test(`${name}: a signal during a slow match keeps the paging file under its name, though the match's clock runs out in the last word`, async () => {
+  if (name !== "auth_log") test(`${name}: a signal during a slow match keeps the paging file under its name, though the match's clock runs out in the last word`, async () => {
     await withCwd(async (cwd) => {
       const r = await runPySnippet(INSIDE_A_WRITE, [script, cwd, "clock"], null);
       assert.equal(r.code, 143, `exit status of a SIGTERM: ${r.stdout}${r.stderr}`);

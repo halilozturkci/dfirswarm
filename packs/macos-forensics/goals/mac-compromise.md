@@ -22,9 +22,9 @@ rather than text.
    user TCC stores, the states recorded in them, their client and service identities
    and any applicable policy, with historical grant or use times only where further
    evidence supports them; otherwise state that the available parser cannot answer
-   the question. This pack has no TCC parser or skill: a generic SQLite query can
-   open a TCC database, but nothing here says what its tables, columns or
-   authorization values mean, so say what you read and what you could not interpret.
+   the question. `macos_tcc` reads one TCC database through a private copy and decodes only
+   the documented authorization values, and `security/tcc` says how to read
+   its rows; say what you read and what you could not interpret.
 5. Activity: retained application, device-state and session evidence, separating
    account association, remote activity and any independently supported attribution
    to a person.

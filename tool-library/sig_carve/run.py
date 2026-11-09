@@ -21,7 +21,262 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "sig_carve", "version": 5}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+_shared_print_answer = print_answer
+
+
+def print_answer(answer, **dumps_kwargs):
+    _reconcile(answer)
+    _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
+
+
+def _unexpected_tool(kind, value, _tb):
+    """Last resort: an error nobody foresaw is an answer too. The hidden temporaries are removed first (a name that cannot be removed is said in the
+    answer), then one JSON document with the class and, for a file-system error, its reason (a message can quote a name from the evidence), and
+    exit 1; what was written before it is not claimed. A stop signal that arrives while this runs is held with the answer's write and is answered by
+    this document and exit 1, not by 128 + the signal."""
+    try:
+        left = drop_temporaries()
+        reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
+        said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
+        answer = {"tool": globals().get("TOOL"), "status": "failed", "error": said,
+                  "status_basis": "the tool stopped on an error it did not foresee (%s); what it had written before is not claimed" % kind.__name__}
+        if left:
+            answer["temporaries_left"] = left[:10]
+            answer["status_basis"] += "; hidden temporary files that could not be removed are listed in temporaries_left"
+        print_answer(answer)
+    except BaseException:       # noqa: BLE001 - nothing may stop the exit
+        pass
+    os._exit(1)
+
+
+sys.excepthook = _unexpected_tool
+
+TOOL = {"name": "sig_carve", "version": 16}
 WINDOW = 8 * 1024 * 1024
 BUDGET_SECONDS = 100              # inside the manifest's 120: past it the scan stops, says so, and names where to continue
 CONTEXT_MAX = 4096
@@ -135,10 +390,41 @@ class LosslessPage:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
 
+    def _cannot_write(self, exc: BaseException) -> None:
+        """The whole result cannot be kept: say so as JSON and stop, never a traceback."""
+        import sys as _sys
+        # The hidden temp file goes first: a page that cannot be written leaves nothing behind (a full disk, a quota).
+        out, self._out = self._out, None
+        try:
+            if out is not None:
+                out.close()
+        except BaseException:
+            pass
+        try:
+            if self._tmp is not None:
+                os.unlink(self._tmp)
+        except OSError:
+            pass
+        _sys.stdout.write(json.dumps({
+            "error": "the whole result (%d rows so far) cannot be written to %s: %s. Outside a job the place is your own "
+                     "work/<your id>/ directory; in a job it is $OUT." % (self.total, self.shown, exc),
+            "status": "failed",
+        }) + "\n")
+        _sys.exit(1)
+
     def _write(self, row: object) -> None:
         assert self._out is not None
-        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
-        self._out.write("\n")
+        text = json.dumps(row, ensure_ascii=False, default=str)
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            # A lone surrogate (a file name that is not UTF-8): escape it, lose nothing.
+            text = json.dumps(row, ensure_ascii=True, default=str)
+        try:
+            self._out.write(text)
+            self._out.write("\n")
+        except OSError as exc:
+            self._cannot_write(exc)
 
     def add(self, row: object) -> None:
         self.total += 1
@@ -146,12 +432,15 @@ class LosslessPage:
             self.page.append(row)
             return
         if self._out is None:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(
-                dir=self.path.parent, prefix=f".{self.path.name}-"
-            )
-            self._tmp = Path(name)
-            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(
+                    dir=self.path.parent, prefix=f".{self.path.name}-"
+                )
+                self._tmp = Path(name)
+                self._out = os.fdopen(fd, "w", encoding="utf-8")
+            except OSError as exc:
+                self._cannot_write(exc)
             for kept in self.page:
                 self._write(kept)
         self._write(row)
@@ -163,11 +452,14 @@ class LosslessPage:
             "truncated": self.total > len(self.page),
         }
         if self._out is not None:
-            self._out.flush()
-            os.fsync(self._out.fileno())
-            self._out.close()
-            assert self._tmp is not None
-            os.replace(self._tmp, self.path)
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                os.replace(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
@@ -181,6 +473,11 @@ class SafePage(LosslessPage):
     """
 
     error = None
+
+    def _cannot_write(self, exc):
+        """The pager above ends the call with a JSON failure when its file cannot be written; this one keeps the call and says so in
+        the answer (all_results_error): the failure is handed back as the OSError add() and finish() below catch."""
+        raise exc if isinstance(exc, OSError) else OSError(str(exc))
 
     def _give_up(self, exc):
         self.error = "%s: %s" % (self.path.parent, exc.strerror or exc)
@@ -272,20 +569,46 @@ SIGS = {
 }
 
 
-def _same_bytes(a, b):
-    """Two files with the same bytes (compared in blocks, never whole)."""
+def open_regular(path):
+    """open(path, "rb") for a path that was just checked as a regular file: opened without waiting (O_NONBLOCK) and looked at with fstat on the
+    descriptor, so a FIFO or a device put in its place after the check is refused and never waited on (a FIFO would hold the tool for ever)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     try:
-        if os.path.getsize(a) != os.path.getsize(b):
+        if os.fstat(fd).st_mode & 0o170000 != 0o100000:
+            raise OSError(22, "is not a regular file (it changed after it was checked)")
+    except BaseException:
+        os.close(fd)
+        raise
+    return open(fd, "rb")
+
+
+def _same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
+    try:
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
             return False
-        with open(a, "rb") as fa, open(b, "rb") as fb:
-            while True:
-                x, y = fa.read(1 << 20), fb.read(1 << 20)
-                if x != y:
-                    return False
-                if not x:
-                    return True
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
     except OSError:
         return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
 
 
 def earlier_answers(path):
@@ -303,14 +626,8 @@ def earlier_answers(path):
 PAGES = []                         # the pages being written: a SIGTERM removes their half files before the scan ends
 
 
-def _terminated(signum, _frame):
-    for page in PAGES:
-        page.discard()
-    raise SystemExit(128 + signum)
-
-
 def fail(message, **extra):
-    print(json.dumps({"ok": False, "error": message, "tool": TOOL, **extra}))
+    print_answer({"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "error": message, "tool": TOOL, **extra})
     raise SystemExit(1)
 
 
@@ -324,7 +641,7 @@ def whole_number(args, key, default, low, high):
 def main():
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments are a JSON object")
@@ -351,8 +668,6 @@ def main():
     carry_len = max(len(h) for h in headers.values()) - 1
     pages = {name: SafePage("sig_carve-" + name, [path, name, size, context, start], max_hits) for name in chosen}
     PAGES.extend(pages.values())
-    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
-        signal.signal(sig, _terminated)
     deadline = time.monotonic() + BUDGET_SECONDS
     totals = {name: 0 for name in chosen}
     capped = {}
@@ -367,8 +682,15 @@ def main():
 
     scanned = start
     stopped, read_error = None, None
+
+    def _stopped(signum):
+        print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "source": {"path": path},
+                          "scanned": {"start": start, "end": scanned, "complete": False},
+                          "status_basis": "the tool was stopped by signal %d: [start, end) was read, no half-written results file was kept, and the counts so far were not kept; "
+                                          "run again with start=%d to go on" % (signum, scanned)}), flush=True)
+    install_signal_handlers(_stopped)
     try:
-        fh = open(path, "rb")
+        fh = open_regular(path)
     except OSError as exc:
         fail("the file cannot be opened: %s" % (exc.strerror or exc), path=path)
     with fh:
@@ -447,10 +769,13 @@ def main():
         scan["stopped"] = stopped
     if read_error:
         scan["read_error"] = read_error
-    print(json.dumps({
+    unwritten = [n for n, e in results.items() if "all_results_error" in e]      # hits past the page that no file holds
+    print_answer({
         "tool": TOOL,
-        "status": "complete" if complete else "partial" if not read_error else "failed",
-        "status_basis": ("the whole requested range was read and every header in it is reported" if complete else
+        "status": "complete" if complete and not unwritten else "partial" if not read_error else "failed",
+        "status_basis": ("the whole requested range was read and every header in it is reported" if complete and not unwritten else
+                         "the whole range was read and the counts and pages are right, but the file that should hold every hit could not be written for %s "
+                         "(all_results_error): the hits past the page are counted, not listed" % ", ".join(unwritten) if complete else
                          "the scan stopped at its clock (scanned.stopped says where to go on)" if not read_error else
                          "the file could not be read all the way (scanned.read_error)"),
         "source": {"path": path, "bytes": size, "address_space": "the bytes of this file as given; a container (E01, VMDK) is not decoded"},
@@ -459,7 +784,7 @@ def main():
         "signatures": results,
         "note": "A hit is where a header's bytes occur, not a file: cut it with file_carver or read it in place and check it with a parser of that format. "
                 "A signature that is not listed here, an encrypted or compressed region and a file split across the scan's source are not found by this scan.",
-    }, indent=2))
+    }, indent=2)
     # Exit 0 means the engine ran: a stop at the time budget is a valid answer for [start, end) with the position to go on from
     # (scanned.complete is false and scanned.stopped says where). A read error is a failure.
     sys.exit(1 if read_error else 0)

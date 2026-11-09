@@ -1,0 +1,57 @@
+{
+  "name": "collection_timestamps",
+  "description": "Keep the clocks of a collection apart and say what each can and cannot tell: the archive's member times (clock 2: a zip header's DOS date and time, two-second steps with no zone, so never read as UTC; a zip's extended-timestamp and NTFS extra fields, UTC; a tar header's mtime in whole seconds, UTC; a pax mtime with every fractional digit the writer wrote) and the delivered files' modification times (clock 3: one lstat per entry of the delivered tree, to the nanosecond; modified_epoch_ns is the raw value as a decimal string, because a JSON number past 2^53 does not survive a JavaScript or jq 1.6 reader). The tree is walked here with collection_index's rules (links recorded and never followed, nothing opened, special files counted), not read from a census file, whose producer and version this tool would have to trust. The archive is read in one pass and never extracted, by the bounded readers of the collection-intake recipe: a damaged gzip, bzip2 or xz stream (a CRC or length that disagrees, a cut stream, a second stream or garbage appended), a tar without its end-of-archive marker (two zero blocks end a tar; one is accepted, as GNU tar does), a metadata record over 1 MiB, bytes in front of or between a zip's members and a zip over 2,000,000 members make the answer partial and say why; an archive inside the archive is counted and not opened, which is partial too. It gives, per clock, the earliest and the latest time with the raw value, the epoch, the zone, the precision the format has and the resolution observed in the files read, the files per date, and apparent_flattening when more than 90% of more than 20 files fall on one date (a count with no cause: a reset mtime, a copy that stamped its own time and a real burst of activity all look like this; a histogram is a lead, not proof of lost metadata). With both root and archive it compares a member with the delivered file of the same name, joined by the name with '/' separators, NFC normalisation and case folding after member_prefix is removed: equal, within_precision (the delivered time is later by less than the archive's step), consistent_with_zone_offset (a zoneless zip time that matches under some offset of whole quarter hours: any such offset would, so it names no zone), differs (with the difference in nanoseconds), ambiguous_join (several delivered files share the name; each stays a candidate), or present on one side only; every row is in the comparison table file and the page is its first rows. local_zone (an IANA zone name) reads a zip's zoneless times under that zone and marks a wall time that a clock change repeats as ambiguous (two UTC times) or skips as nonexistent; without it no zone is assumed. conflicts lists members whose time differs from the delivered file's, a name that is in the archive twice, ambiguous joins and a flattening in one clock only. Clock 1, the collector's own record times, is read from the delivered tree by the records block shared with collection_manifest_parse: a KAPE copy log's CopiedTimestamp, CreatedOnUtc, ModifiedOnUtc and LastAccessedOnUtc, a Velociraptor upload row's Timestamp and started, and the timestamps of UAC's log, KAPE's console log and Velociraptor's log.json (record_clocks). Each is the collector's raw text with the zone the writer states: an offset in the text, a column named ...OnUtc, or a number of Unix seconds, with the basis; a time with none is a wall-clock reading (KAPE's CopiedTimestamp and console log are) and is never taken to be UTC. Clock 4, the acquisition interval, is the first and the last timestamped line of each collector log (acquisition): the span of what the collector wrote, not a statement of when it began or ended; with no such log it is unknown and it is never inferred from file times. A copy-log row's ModifiedOnUtc is compared with the mtime of the delivered file the join names (records.comparison, the record-comparison table: equal, within_precision, differs, ambiguous_join when several delivered files share the name, not_compared), only where the join names exactly one regular file and the record time has a zone. A record cut by the time limit, a log that is not UTF-8 text or a record time that cannot be read makes the answer partial. Not measured: why a time is what it is, whether an extractor, a copy or the collector set a delivered time, which clock is right, or anything about an event; a member the archive and the tree hold under names that differ (another prefix, a renamed file) is listed as on one side only. Run it as a job with secret_output: true (withholding by shape applies in every call; write_values: true is refused unless the job runs as secret output, which the tool checks). Paths and names are withheld where shaped like a recovery password, an access key, a token, a private-key block, URL user-info, or the value after a credential header, key name or password option; write_values: true (jobs only) writes the real strings to $OUT/collection-timestamps-values.jsonl, mode 0600, created first, a second run in the same job refused. The answer starts with the summary and ends with the entries. Every key and value of the answer and of the table files it names is withheld by shape, and the structure is then read back by a second check written apart from the first; a string that check finds suspect is replaced by <withheld: N bytes>, counted in the answer's boundary entry, and the answer is partial. Withholding is by shape. Measured on random plants (1,000 per shape and context: alone, in a path, a file name, a log line, a URL, an option, glued to letters), the 33 listed shapes (token prefixes, JWT, PEM, connection strings, user-info, name=value and option forms, recovery passwords), the unlisted token families (GitLab, Stripe, Google, npm, SendGrid, DigitalOcean, Twilio), names such as DB_PASSWORD= and adminPassword:, and tokens split by NUL, zero-width, bidi, UTF-16-in-8-bit or full-width characters or written in another case come out in 0.2% or fewer of the plants; AWS-secret-shaped keys and base64 of 20 to 48 bytes in 0.7% or fewer, base64 of 16 bytes in 2.5%, 20 random letters and digits in 1.5% and 32 in 0.5%; base36 text of 24 to 32 characters in 18% to 26%. A plain password or passphrase alone in a name, a UUID-shaped key, 24 lower-case letters and 16 characters of base32 are printed (100%). A secret of another shape is printed: a file whose secrets matter is read in a secret_output job. Cost on real names, measured: 0.47% of this repository's paths, 0.14% of 37,916 Linux package paths and 3.64% of 57,142 macOS system and application paths (hardware ids and GUID-named profiles read as random) are withheld.",
+  "params": {
+    "root": {
+      "type": "string",
+      "description": "The delivered collection directory (clock 3, the collector's records for clocks 1 and 4, and the side the archive's members are compared with). An archive is not opened from here: give it in archive"
+    },
+    "archive": {
+      "type": "string",
+      "description": "A zip or a tar file (plain, gzip, bzip2 or xz) whose member times are read (clock 2); nothing is extracted. root, archive or both are required"
+    },
+    "member_prefix": {
+      "type": "string",
+      "description": "A leading directory of the archive's member names to remove before the join with the delivered tree (compared after NFC and case folding); a member without it is listed as in the archive only"
+    },
+    "local_zone": {
+      "type": "string",
+      "description": "An IANA zone name (Europe/Istanbul) to read a zip's zoneless DOS times under; without it no zone is assumed. Names the times a clock change makes ambiguous or nonexistent"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of the comparison table shown inline (default 200); the whole table is in the file the answer names"
+    },
+    "time_limit_seconds": {
+      "type": "integer",
+      "description": "Stop after this long (default 3000, at most 3400): the answer then says it stopped, status partial, and what was not read"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the real strings that were withheld to $OUT/collection-timestamps-values.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the file is created first and one already there is refused"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 3600,
+  "example": "{\"root\": \"inputs/collection\", \"archive\": \"inputs/collection.tar.gz\", \"member_prefix\": \"collection\"}",
+  "by": "maintainer",
+  "at": "2026-11-02T12:00:00.000Z",
+  "version": 2,
+  "sha256": "01c28bed9ea4a5fc6e7c7ed82a477f39e4fe17fabe8f4a2f523b6fb7fd4804d2",
+  "use": {
+    "names": [
+      "*.zip",
+      "*.tar",
+      "*.tar.gz",
+      "*.tgz",
+      "*.tar.bz2",
+      "*.tar.xz"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  }
+}

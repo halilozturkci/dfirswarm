@@ -1,0 +1,3 @@
+### Fixed: the sig_carve pager is the library pager again, and a missing-reader test no longer depends on the host
+
+`sig_carve` (computer-forensics-base 1.16.4, tool version 16) carried the pager from before PKG-WIN-10: a page that could not be written left its hidden temporary file behind. Its `LosslessPage` is now the library text byte for byte, so `_cannot_write` closes and removes that file before it answers `failed`. The test that pins the pager to `tool-library/regkv` passes again. The `encrypted-containers` test for a missing `cryptsetup` now runs the tool with a PATH that holds no `cryptsetup`, so a runner that has one no longer turns `unavailable` into `partial`.

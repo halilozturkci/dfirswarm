@@ -1,0 +1,694 @@
+{
+  "schema": "ransomware_family_match.reference/1",
+  "set": {
+    "id": "project-seed",
+    "version": 1,
+    "snapshot_date": "2026-11-04",
+    "fresh_until": "2027-05-03",
+    "licence": "AGPL-3.0-or-later",
+    "authored_for": "this project; the entries are original summaries of what the cited pages say, with no third-party rule bundle",
+    "scope": "a small snapshot of seven documented families; no match here never means that an unknown family is absent"
+  },
+  "strength_scale": {
+    "strong": "two or more publishers in the cited sources name the feature",
+    "moderate": "one cited publisher names the feature",
+    "weak": "a shape only, or a generic file name that other families also use"
+  },
+  "sources": {
+    "S01": {
+      "title": "Akira, again: The ransomware that keeps on taking",
+      "publisher": "Sophos",
+      "url": "https://www.sophos.com/en-us/blog/akira-again-the-ransomware-that-keeps-on-taking",
+      "published": null,
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "the page shows no publication date"
+    },
+    "S02": {
+      "title": "Threat Assessment: Howling Scorpius (Akira Ransomware)",
+      "publisher": "Palo Alto Networks Unit 42",
+      "url": "https://unit42.paloaltonetworks.com/threat-assessment-howling-scorpius-akira-ransomware/",
+      "published": "2024-12-02",
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "published 2024-12-02; no update date shown"
+    },
+    "S03": {
+      "title": "Akira ransomware continues to evolve",
+      "publisher": "Cisco Talos",
+      "url": "https://blog.talosintelligence.com/akira-ransomware-continues-to-evolve/",
+      "published": "2024-10-21",
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "the page shows a publication date"
+    },
+    "S04": {
+      "title": "LockBit 3.0 Ransomware: Analysis, Detection, and Mitigation",
+      "publisher": "SentinelOne",
+      "url": "https://www.sentinelone.com/anthology/lockbit-3-0-lockbit-black/",
+      "published": "2022-11-30",
+      "updated": "2025-09-17",
+      "retrieved": "2026-11-04",
+      "page_dates": "published 2022-11-30, last updated 2025-09-17"
+    },
+    "S05": {
+      "title": "Ransom:Win32/LockBit!MTB threat description",
+      "publisher": "Microsoft Security Intelligence",
+      "url": "https://www.microsoft.com/en-us/wdsi/threats/malware-encyclopedia-description?Name=Ransom%3AWin32%2FLockBit!MTB",
+      "published": "2021-08-21",
+      "updated": "2024-07-15",
+      "retrieved": "2026-11-04",
+      "page_dates": "published 2021-08-21, updated 2024-07-15"
+    },
+    "S06": {
+      "title": "Ransom.Win32.LOCKBIT.A threat encyclopedia entry",
+      "publisher": "Trend Micro",
+      "url": "https://www.trendmicro.com/vinfo/us/threat-encyclopedia/malware/ransom.win32.lockbit.a",
+      "published": "2020-05-21",
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "dated 2020-05-21 (initial samples received 2020-05-02)"
+    },
+    "S07": {
+      "title": "BlackCat Ransomware (ALPHV)",
+      "publisher": "Varonis",
+      "url": "https://www.varonis.com/blog/blackcat-ransomware",
+      "published": null,
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "the page shows no publication date; the latest date it gives is late January 2022"
+    },
+    "S08": {
+      "title": "The many lives of BlackCat ransomware",
+      "publisher": "Microsoft Security blog",
+      "url": "https://www.microsoft.com/en-us/security/blog/2022/06/13/the-many-lives-of-blackcat-ransomware/",
+      "published": "2022-06-13",
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "dated 2022-06-13, with a note added in April 2023"
+    },
+    "S09": {
+      "title": "Threat Assessment: Black Basta Ransomware",
+      "publisher": "Palo Alto Networks Unit 42",
+      "url": "https://unit42.paloaltonetworks.com/threat-assessment-black-basta-ransomware/",
+      "published": "2022-08-25",
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "the page shows a publication date"
+    },
+    "S10": {
+      "title": "Black Basta besting your network?",
+      "publisher": "IBM X-Force",
+      "url": "https://www.ibm.com/think/x-force/black-basta-ransomware-group-besting-network",
+      "published": null,
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "the page shows no publication date; it says Black Basta first appeared in April 2022"
+    },
+    "S11": {
+      "title": "An Overview of the New Rhysida Ransomware",
+      "publisher": "Trend Micro",
+      "url": "https://www.trendmicro.com/en_us/research/23/h/an-overview-of-the-new-rhysida-ransomware.html",
+      "published": "2023-08-09",
+      "updated": "2023-08-14",
+      "retrieved": "2026-11-04",
+      "page_dates": "published 2023-08-09, updated 2023-08-09 and 2023-08-14"
+    },
+    "S12": {
+      "title": "Rhysida",
+      "publisher": "SentinelOne",
+      "url": "https://www.sentinelone.com/anthology/rhysida/",
+      "published": "2023-05-23",
+      "updated": "2025-09-17",
+      "retrieved": "2026-11-04",
+      "page_dates": "published 2023-05-23, last updated 2025-09-17"
+    },
+    "S13": {
+      "title": "Phobos (.phobos) ransomware virus - removal and decryption options",
+      "publisher": "PCrisk",
+      "url": "https://www.pcrisk.com/removal-guides/14258-phobos-ransomware",
+      "published": null,
+      "updated": "2024-11-19",
+      "retrieved": "2026-11-04",
+      "page_dates": "marked updated 2024-11-19; no first publication date shown"
+    },
+    "S14": {
+      "title": "Deep Analysis of Phobos Ransomware",
+      "publisher": "n1ght-w0lf (independent analyst)",
+      "url": "https://n1ght-w0lf.github.io/malware%20analysis/phobos-ransomware",
+      "published": null,
+      "updated": "2020-03-03",
+      "retrieved": "2026-11-04",
+      "page_dates": "marked updated 2020-03-03; no first publication date shown"
+    },
+    "S15": {
+      "title": "8Base Ransomware Data Leak Sites Seized in International Law Enforcement Operation",
+      "publisher": "The Hacker News",
+      "url": "https://thehackernews.com/2025/02/8base-ransomware-data-leak-sites-seized.html",
+      "published": "2025-02-11",
+      "updated": null,
+      "retrieved": "2026-11-04",
+      "page_dates": "the page shows a publication date"
+    },
+    "S16": {
+      "title": "Play",
+      "publisher": "SentinelOne",
+      "url": "https://www.sentinelone.com/anthology/play/",
+      "published": "2023-06-07",
+      "updated": "2025-09-17",
+      "retrieved": "2026-11-04",
+      "page_dates": "published 2023-06-07, last updated 2025-09-17"
+    },
+    "S17": {
+      "title": "PLAY (.PLAY) ransomware virus - removal and decryption options",
+      "publisher": "PCrisk",
+      "url": "https://www.pcrisk.com/removal-guides/24571-play-ransomware",
+      "published": null,
+      "updated": "2025-04-03",
+      "retrieved": "2026-11-04",
+      "page_dates": "last updated 2025-04-03 (earlier updates 2022-09-06, 2023-11-23, 2024-07-24); no first publication date shown"
+    }
+  },
+  "entries": [
+    {
+      "id": "akira",
+      "name": "Akira",
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "strong",
+      "evidence_basis": "the lowest evidence strength of its variants; a variant's strength is that of its strongest feature that is neither generic nor shape-only",
+      "variants": [
+        {
+          "id": "akira-original",
+          "label": "Akira, the original naming",
+          "valid_for": "Sophos describes the naming in an undated report; Talos reports samples seen in early September 2024 returning to it, and says it matches versions before August 2023.",
+          "evidence_strength": "strong",
+          "features": [
+            {
+              "kind": "extension",
+              "match": "exact",
+              "value": ".akira",
+              "strength": "strong",
+              "generic": false,
+              "sources": [
+                "S01",
+                "S02",
+                "S03"
+              ]
+            },
+            {
+              "kind": "note_name",
+              "match": "exact",
+              "value": "akira_readme.txt",
+              "strength": "strong",
+              "generic": false,
+              "sources": [
+                "S01",
+                "S02",
+                "S03"
+              ]
+            }
+          ],
+          "context": [
+            {
+              "text": "Sophos and Unit 42 report that the Windows build tries to delete Volume Shadow Copies.",
+              "sources": [
+                "S01",
+                "S02"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "akira-v2-akiranew",
+          "label": "Akira_v2, the build reported for Linux and ESXi",
+          "valid_for": "Reported in 2024 (Talos 2024-10-21, Unit 42 2024-12-02).",
+          "evidence_strength": "strong",
+          "features": [
+            {
+              "kind": "extension",
+              "match": "exact",
+              "value": ".akiranew",
+              "strength": "strong",
+              "generic": false,
+              "sources": [
+                "S02",
+                "S03"
+              ]
+            },
+            {
+              "kind": "note_name",
+              "match": "exact",
+              "value": "akiranew.txt",
+              "strength": "strong",
+              "generic": false,
+              "sources": [
+                "S02",
+                "S03"
+              ]
+            }
+          ],
+          "context": [
+            {
+              "text": "Unit 42 assesses that the Linux and ESXi samples it describes, of which Akira_v2 is a later variant, were first designed to run on ESXi systems.",
+              "sources": [
+                "S02"
+              ]
+            },
+            {
+              "text": "Talos names a Rust build of Akira_v2 for Linux and ESXi.",
+              "sources": [
+                "S03"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "lockbit",
+      "name": "LockBit",
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "weak",
+      "evidence_basis": "the lowest evidence strength of its variants; a variant's strength is that of its strongest feature that is neither generic nor shape-only",
+      "variants": [
+        {
+          "id": "lockbit-lockbit-extension",
+          "label": "LockBit samples reported with the .lockbit extension",
+          "valid_for": "A Trend Micro entry dated 2020-05-21 and a Microsoft entry updated 2024-07-15 report it; neither ties the extension to a numbered version.",
+          "evidence_strength": "strong",
+          "features": [
+            {
+              "kind": "extension",
+              "match": "exact",
+              "value": ".lockbit",
+              "strength": "strong",
+              "generic": false,
+              "sources": [
+                "S05",
+                "S06"
+              ]
+            },
+            {
+              "kind": "note_name",
+              "match": "exact",
+              "value": "restore-my-files.txt",
+              "strength": "strong",
+              "generic": false,
+              "sources": [
+                "S04",
+                "S05",
+                "S06"
+              ]
+            }
+          ],
+          "context": [
+            {
+              "text": "Trend Micro reports that the 2020 sample deletes shadow copies and the backup catalogue with built-in Windows commands.",
+              "sources": [
+                "S06"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lockbit-three",
+          "label": "LockBit 3.0, as one vendor names it",
+          "valid_for": "SentinelOne, first published 2022-11-30 and updated 2025-09-17; no other retrieved page names this extension, so it is a single-source lead.",
+          "evidence_strength": "weak",
+          "features": [
+            {
+              "kind": "extension",
+              "match": "exact",
+              "value": ".lockbit3",
+              "strength": "weak",
+              "generic": false,
+              "sources": [
+                "S04"
+              ]
+            },
+            {
+              "kind": "note_name",
+              "match": "exact",
+              "value": "restore-my-files.txt",
+              "strength": "weak",
+              "generic": false,
+              "sources": [
+                "S04"
+              ]
+            }
+          ],
+          "context": [
+            {
+              "text": "This variant rests on one page. The curator did not retrieve other vendors' reports, so a LockBit build whose extension or note name differs from these is not excluded by this entry, and a match here is a lead only.",
+              "sources": [
+                "S04"
+              ]
+            },
+            {
+              "text": "SentinelOne reports the note name above as the one dropped by LockBit 3.0.",
+              "sources": [
+                "S04"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "blackcat",
+      "name": "BlackCat (ALPHV)",
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "moderate",
+      "evidence_basis": "the lowest evidence strength of its variants; a variant's strength is that of its strongest feature that is neither generic nor shape-only",
+      "variants": [
+        {
+          "id": "blackcat-seven-character",
+          "label": "BlackCat with a victim-specific seven-character extension",
+          "valid_for": "Varonis (undated page, latest date late January 2022) describes it; Microsoft's 2022-06-13 post describes the payload.",
+          "evidence_strength": "moderate",
+          "features": [
+            {
+              "kind": "extension",
+              "match": "regex",
+              "pattern": "\\.[a-z0-9]{7}",
+              "strength": "weak",
+              "generic": false,
+              "sources": [
+                "S07"
+              ],
+              "shape_only": true
+            },
+            {
+              "kind": "note_name",
+              "match": "regex",
+              "pattern": "recover-([a-z0-9]{7})-files\\.txt",
+              "strength": "moderate",
+              "generic": false,
+              "sources": [
+                "S07"
+              ],
+              "captures": "extension"
+            }
+          ],
+          "context": [
+            {
+              "text": "The same seven characters name the extension and the note, so a note whose embedded text differs from the extension seen is a contradiction.",
+              "sources": [
+                "S07"
+              ]
+            },
+            {
+              "text": "Microsoft reports that the payload needs an --access-token argument on its command line to encrypt.",
+              "sources": [
+                "S08"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "black-basta",
+      "name": "Black Basta",
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "strong",
+      "evidence_basis": "the lowest evidence strength of its variants; a variant's strength is that of its strongest feature that is neither generic nor shape-only",
+      "variants": [
+        {
+          "id": "black-basta-basta-extension",
+          "label": "Black Basta with the .basta extension",
+          "valid_for": "Unit 42 (2022-08-25) analysed a sample; IBM X-Force (undated) says the group first appeared in April 2022 and gives a sample compile time in April 2022.",
+          "evidence_strength": "strong",
+          "features": [
+            {
+              "kind": "extension",
+              "match": "exact",
+              "value": ".basta",
+              "strength": "strong",
+              "generic": false,
+              "sources": [
+                "S09",
+                "S10"
+              ]
+            },
+            {
+              "kind": "note_name",
+              "match": "exact",
+              "value": "readme.txt",
+              "strength": "weak",
+              "generic": true,
+              "sources": [
+                "S09",
+                "S10"
+              ]
+            }
+          ],
+          "context": [
+            {
+              "text": "Unit 42 reports that the sample deletes Volume Shadow Copies with vssadmin.",
+              "sources": [
+                "S09"
+              ]
+            },
+            {
+              "text": "IBM X-Force and Unit 42 report that the sample sets a desktop wallpaper from a JPG in the temporary folder.",
+              "sources": [
+                "S09",
+                "S10"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rhysida",
+      "name": "Rhysida",
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "strong",
+      "evidence_basis": "the lowest evidence strength of its variants; a variant's strength is that of its strongest feature that is neither generic nor shape-only",
+      "variants": [
+        {
+          "id": "rhysida-2023",
+          "label": "Rhysida, as reported from 2023",
+          "valid_for": "SentinelOne (first published 2023-05-23) and Trend Micro (2023-08-09).",
+          "evidence_strength": "strong",
+          "features": [
+            {
+              "kind": "extension",
+              "match": "exact",
+              "value": ".rhysida",
+              "strength": "strong",
+              "generic": false,
+              "sources": [
+                "S11",
+                "S12"
+              ]
+            },
+            {
+              "kind": "note_name",
+              "match": "exact",
+              "value": "criticalbreachdetected.pdf",
+              "strength": "moderate",
+              "generic": false,
+              "sources": [
+                "S11"
+              ]
+            }
+          ],
+          "context": [
+            {
+              "text": "SentinelOne says the note is a PDF document without naming it; Trend Micro gives a file name that ends in .pdf.",
+              "sources": [
+                "S11",
+                "S12"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "phobos",
+      "name": "Phobos",
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "moderate",
+      "evidence_basis": "the lowest evidence strength of its variants; a variant's strength is that of its strongest feature that is neither generic nor shape-only",
+      "variants": [
+        {
+          "id": "phobos-core",
+          "label": "Phobos with the id, mail address and .phobos suffix",
+          "valid_for": "PCrisk (updated 2024-11-19) names the .phobos extension and the two note files; an analyst page (updated 2020-03-03) gives the rename as a pattern with placeholders and lists the shadow-copy commands it saw.",
+          "evidence_strength": "moderate",
+          "features": [
+            {
+              "kind": "extension",
+              "match": "exact",
+              "value": ".phobos",
+              "strength": "moderate",
+              "generic": false,
+              "sources": [
+                "S13"
+              ]
+            },
+            {
+              "kind": "extension",
+              "match": "regex",
+              "pattern": "\\.id\\[[^\\]]{1,64}\\]\\.\\[[^\\]]{1,128}\\]\\.[a-z0-9]{1,16}",
+              "strength": "moderate",
+              "generic": false,
+              "sources": [
+                "S14"
+              ]
+            },
+            {
+              "kind": "note_name",
+              "match": "exact",
+              "value": "info.hta",
+              "strength": "moderate",
+              "generic": false,
+              "sources": [
+                "S13"
+              ]
+            },
+            {
+              "kind": "note_name",
+              "match": "exact",
+              "value": "info.txt",
+              "strength": "weak",
+              "generic": true,
+              "sources": [
+                "S13"
+              ]
+            },
+            {
+              "kind": "note_text",
+              "match": "yara",
+              "rule": "rm_phobos_note_phrase_1",
+              "strength": "moderate",
+              "generic": false,
+              "sources": [
+                "S13"
+              ],
+              "rule_version": 1
+            }
+          ],
+          "context": [
+            {
+              "text": "The analyst page lists vssadmin and wmic shadow-copy deletion commands for the sample it analysed.",
+              "sources": [
+                "S14"
+              ]
+            },
+            {
+              "text": "PCrisk says other variants use other extensions, such as .barak, .zax, .banjo and .BANKS; this entry does not match them.",
+              "sources": [
+                "S13"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "phobos-8base",
+          "label": "Phobos sample reported with the .8base extension",
+          "valid_for": "The Hacker News, 2025-02-11, reports a Phobos sample with this extension.",
+          "evidence_strength": "moderate",
+          "features": [
+            {
+              "kind": "extension",
+              "match": "exact",
+              "value": ".8base",
+              "strength": "moderate",
+              "generic": false,
+              "sources": [
+                "S15"
+              ]
+            }
+          ],
+          "context": [
+            {
+              "text": "The page names no ransom note for it.",
+              "sources": [
+                "S15"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "play",
+      "name": "Play",
+      "reviewed_on": "2026-11-04",
+      "fresh_until": "2027-05-03",
+      "evidence_strength": "strong",
+      "evidence_basis": "the lowest evidence strength of its variants; a variant's strength is that of its strongest feature that is neither generic nor shape-only",
+      "variants": [
+        {
+          "id": "play-play-extension",
+          "label": "Play with the .play extension",
+          "valid_for": "SentinelOne (first published 2023-06-07, updated 2025-09-17) and PCrisk (updated 2025-04-03); the sources disagree on the note's name, so both are listed.",
+          "evidence_strength": "strong",
+          "features": [
+            {
+              "kind": "extension",
+              "match": "exact",
+              "value": ".play",
+              "strength": "strong",
+              "generic": false,
+              "sources": [
+                "S16",
+                "S17"
+              ]
+            },
+            {
+              "kind": "note_name",
+              "match": "exact",
+              "value": "play_readme.txt",
+              "strength": "moderate",
+              "generic": false,
+              "sources": [
+                "S16"
+              ]
+            },
+            {
+              "kind": "note_name",
+              "match": "exact",
+              "value": "readme.txt",
+              "strength": "weak",
+              "generic": true,
+              "sources": [
+                "S17"
+              ]
+            },
+            {
+              "kind": "note_text",
+              "match": "yara",
+              "rule": "rm_play_note_phrase_1",
+              "strength": "moderate",
+              "generic": false,
+              "sources": [
+                "S17"
+              ],
+              "rule_version": 1
+            }
+          ],
+          "context": [
+            {
+              "text": "PCrisk reports the 2025 note begins with the phrase the text rule looks for; earlier notes it describes are shorter.",
+              "sources": [
+                "S17"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

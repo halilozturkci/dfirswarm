@@ -7,7 +7,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
 
 python3 -m py_compile "$PACK"/tools/*/run.py "$PACK"/recipes/*/run.py
-jq -e '.binaries | map(.name) | index("tcpdump") and index("tcpick") and index("ngrep") and index("capinfos")' \
+jq -e '.binaries | map(.name) | index("tcpdump") and index("ngrep") and index("capinfos")' \
   "$PACK/requires/host.json" >/dev/null || fail "examiner capture programs are not declared"
 pass "network pack Python compiles and examiner programs are declared"
 

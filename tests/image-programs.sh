@@ -182,4 +182,96 @@ PY
 else
   absent steghide
 fi
+
+# 7zz is the reader archive_extract sends a RAR to. The 542-byte RAR 5 archive
+# below is packs/computer-forensics-base/tests/fixtures/rar/rar5-subdirs.rar (from
+# the rarfile project's test files, ISC licence; its sha256 is checked
+# before it is used). Its files are stored, not compressed, so this shows that
+# 7zz lists a RAR 5 archive and gives a member's bytes, and nothing about the
+# RAR decompressors. A program the image does not hold is skipped when its packs
+# do not name it, as above.
+if command -v 7zz >/dev/null 2>&1; then
+  base64 -d > "$T/rar5.rar" <<'B64'
+UmFyIRoHAQDz4YLrCwEFBwAGAQGAgIAAWyrxsjACAwuGAASGAKSDAsekBMmAAAESc3ViL2RpcjIv
+ZmlsZTIudHh0CgMTCNwVX4XkBhNmaWxlMgokNHkgOAIDC4gABIgApIMCfSS3cYAAARpzdWIvd2l0
+aCBzcGFjZS9sb25nIGZuLnR4dAoDEyncFV9mv8sdbG9uZyBmbgoOjzxzOAIDC4UABIUApIMCwYns
+L4AAARpzdWIvw7zItcSpw7bhuIvDqC9maWxlLnR4dAoDE0TdFV+dEHMIZmlsZQqvrxG4MAIDC4YA
+BIYApIMCBPcp4oAAARJzdWIvZGlyMS9maWxlMS50eHQKAxP92xVfHJEnNGZpbGUxCtVl6Z4kAgML
+AAUA7YMBAAAAAIAAAQhzdWIvZGlyMgoDEwjcFV/ICfsT1nxQqSoCAwsABQDtgwEAAAAAgAABDnN1
+Yi93aXRoIHNwYWNlCgMTKdwVX1vbgh6UOOweJQIDCwAFAO2DAQAAAACAAAEJc3ViL2VtcHR5CgMT
+5dsVX/bv4ArIG6fPLQIDCwAFAO2DAQAAAACAAAERc3ViL8O8yLXEqcO24biLw6gKAxNE3RVfmSwq
+CYEdQEkkAgMLAAUA7YMBAAAAAIAAAQhzdWIvZGlyMQoDE/3bFV8Nrd40msCgER8CAwsABQDtgwEA
+AAAAgAABA3N1YgoDEzLdFV+8OWMOHXdWUQMFBAA=
+B64
+  RAR_SHA=4449d0e82e09f52af23a11cd84904625de8b15beafcf73e5c30dc3296beae0b2
+  if [ "$(sha256sum "$T/rar5.rar" | cut -d' ' -f1)" != "$RAR_SHA" ]; then
+    no "the RAR 5 archive in this script is not the file whose sha256 is pinned in it"
+  else
+    7zz l -slt -ba "$T/rar5.rar" </dev/null > "$T/rar5.list" 2>"$T/rar5.err"; rc=$?
+    files="$(grep -c '^Folder = -' "$T/rar5.list")"
+    dirs="$(grep -c '^Folder = +' "$T/rar5.list")"
+    got="$(7zz x -so -y -bd "$T/rar5.rar" sub/dir1/file1.txt </dev/null 2>/dev/null)"
+    if [ "$rc" -eq 0 ] && [ "$files" = 4 ] && [ "$dirs" = 6 ] && grep -qx 'Path = sub/dir1/file1.txt' "$T/rar5.list" && [ "$got" = file1 ]; then
+      ok "7zz lists a real RAR 5 archive (4 files, 6 directories) and gives a member's bytes"
+    else
+      no "7zz did not read the RAR 5 archive as expected (exit $rc, $files files, $dirs directories, member bytes '$got')"
+    fi
+  fi
+else
+  absent 7zz
+fi
+
+# The isolated venv of ccl_indexeddb_dump decodes Brotli content taken from the
+# evidence, and Brotli before 1.2.1 has an out-of-bounds write in its decoder
+# (GHSA-9v8h-qqgm-4m35): the venv must hold 1.2.1 or newer.
+CCL_PY="${DFIRSWARM_SRC_DIR:-/opt/dfir/src}/ccl_indexeddb_dump/.venv/bin/python"
+if [ -x "$CCL_PY" ]; then
+  if v="$("$CCL_PY" -c 'import brotli; print(brotli.__version__)' 2>/dev/null)" && [ -n "$v" ] \
+     && python3 -c 'import sys; v = tuple(int(p) for p in sys.argv[1].split(".")[:3]); sys.exit(0 if v >= (1, 2, 1) else 1)' "$v" 2>/dev/null; then
+    ok "the ccl_indexeddb_dump venv holds Brotli $v (at least 1.2.1)"
+  else
+    no "the ccl_indexeddb_dump venv does not hold Brotli 1.2.1 or newer (${v:-no brotli module}); before 1.2.1 its decoder has an out-of-bounds write (GHSA-9v8h-qqgm-4m35)"
+  fi
+else
+  absent ccl_indexeddb_dump
+fi
+
+# Pi (the agent runtime, /opt/pi) must not carry an undici older than 8.12.2:
+# its own release pins 8.10.2, which has GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685
+# and GHSA-f72v-6w45-q472, so base.Dockerfile overrides it.
+PI_DIR="${DFIRSWARM_PI_DIR:-/opt/pi}"
+if [ -d "$PI_DIR/node_modules" ] && command -v node >/dev/null 2>&1; then
+  old="$(node - "$PI_DIR/node_modules" <<'JS'
+const fs = require("fs"), path = require("path");
+const floor = [8, 12, 2], bad = [];
+let found = 0;
+function walk(dir) {
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name === ".bin") continue;
+    const full = path.join(dir, e.name);
+    if (e.name === "undici" && fs.existsSync(path.join(full, "package.json"))) {
+      found++;
+      let v = "";
+      try { v = String(JSON.parse(fs.readFileSync(path.join(full, "package.json"), "utf8")).version || ""); } catch {}
+      const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
+      const n = m ? [+m[1], +m[2], +m[3]] : null;
+      const older = !n || n[0] < floor[0] || (n[0] === floor[0] && (n[1] < floor[1] || (n[1] === floor[1] && n[2] < floor[2])));
+      if (older) bad.push(path.relative(process.argv[2], full) + " " + (v || "(no version)"));
+    }
+    walk(full);
+  }
+}
+walk(process.argv[2]);
+process.stdout.write(bad.join("\n"));
+process.exit(bad.length ? 1 : 0);
+JS
+)" && ok "every undici under Pi is 8.12.2 or later" \
+    || no "Pi carries an undici older than 8.12.2 (GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472): $old"
+elif [ -d "$PI_DIR/node_modules" ]; then
+  no "Pi is installed in $PI_DIR and node is not there to check its undici"
+else
+  skip "Pi is not installed in $PI_DIR in this image"
+fi
 exit $failed

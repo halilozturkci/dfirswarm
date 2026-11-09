@@ -3,7 +3,7 @@ id: macho/structure
 title: Mach-O files and universal binaries
 when: The sample is a Mach-O executable, library, bundle or universal binary.
 needs: [triage/quarantine]
-tools: [pe_info]
+tools: [pe_info, macho_directories]
 requires_host: [r2]
 ---
 
@@ -14,7 +14,7 @@ Use when the sample is a Mach-O or a universal ("fat") binary. Not for macOS tru
 3. **Header and entry.** Read `type` (executable, dylib, bundle, kext), byte order and width from the slice's `macho`. `entry_offset` is the `LC_MAIN` file offset into the `__TEXT` segment; a file with `LC_UNIXTHREAD` instead has no `LC_MAIN` entry here. Locators carry their type: file offset, or virtual address from `segments`.
 4. **Linked libraries** (`linked_libraries`, `linked_library_commands`) are what the loader is asked for: a weak, re-exported or lazy-loaded library is a different command, and `@rpath`, `@loader_path` and relative names are resolution leads that need the examined system's search paths. System frameworks are ordinary. Install names are claims; a library name is not a use.
 5. **`LC_CODE_SIGNATURE`** is read as presence, offset and size only (`code_signature`). Nothing here verifies a signature, a team identity or a notarisation ticket; write "not verified". An `LC_ENCRYPTION_INFO` command (it appears in `commands`) can mean a segment is encrypted and unreadable statically; this pack does not decode its fields, so say the segment contents were not read.
-6. **Not read**: symbol tables, dyld information, sections inside segments, segment contents. Strings and code are separate steps (`strings/obfuscated`, `code/static-inspection`).
+6. **Not read** by `pe_info`: symbol tables, dyld information, sections inside segments, segment contents. `macho_directories` reads, per slice, `symtab` (every symbol row), `dyld_info` (bind rows, export names), `chained_fixups` imports, `build_version` and `code_signature` as structure (blobs, identifier and team identifier, entitlements by length only), still verifying nothing; rebase opcodes, fixup chains and entitlement contents stay unread. Strings and code are separate steps (`strings/obfuscated`, `code/static-inspection`).
 7. Execution, persistence and install artefacts belong to the macOS pack: link to it only if it is loaded (check the run's tool inventory).
 
 Sensitive output: an install name or a library path can carry user-info or a token; `pe_info` withholds those (`withheld_fields` names them with their offsets): cite the offset.

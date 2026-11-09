@@ -86,6 +86,18 @@ class LosslessPage:
     def _cannot_write(self, exc: BaseException) -> None:
         """The whole result cannot be kept: say so as JSON and stop, never a traceback."""
         import sys as _sys
+        # The hidden temp file goes first: a page that cannot be written leaves nothing behind (a full disk, a quota).
+        out, self._out = self._out, None
+        try:
+            if out is not None:
+                out.close()
+        except BaseException:
+            pass
+        try:
+            if self._tmp is not None:
+                os.unlink(self._tmp)
+        except OSError:
+            pass
         _sys.stdout.write(json.dumps({
             "error": "the whole result (%d rows so far) cannot be written to %s: %s. Outside a job the place is your own "
                      "work/<your id>/ directory; in a job it is $OUT." % (self.total, self.shown, exc),
@@ -145,10 +157,223 @@ class LosslessPage:
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. A result written at the same moment cannot be replaced either: taking a name fails when it is there.
+# Only regular files are ever compared: both names are opened with O_NONBLOCK and O_NOFOLLOW and looked at with fstat before a byte is
+# read, so a FIFO, a device, a directory or a link at a name (the caller's own results_to, say) is another result's and cannot hold the
+# tool. The comparing of one call has PLACE_COMPARE_SECONDS in all; past it an earlier result is taken as different and this one takes
+# the next free name (nothing is replaced, but an identical rerun may then be named anew).
+# The name is taken with a hard link of the finished file, so it never holds an empty file, whatever stops the tool and when (SIGKILL
+# included). Where the file system refuses the link, the name is taken with an exclusive create and the file is moved over it: a stop
+# that unwinds (an exception) takes the empty name back while it is still the empty file this call made; a stop that ends the process
+# without unwinding (SIGKILL, the handlers of the STOP block) between the create and the move leaves the empty name, and the next run takes -2.
+PLACE_COMPARE_SECONDS = 5   # all the comparing one call to place_without_replacing does; past it an earlier result is taken as different
+
+
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
+    try:
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
+            return False
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
+    except OSError:
+        return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
+
+
+def _take_name(tmp, candidate):
+    """Give the finished `tmp` the name `candidate` if it is free, and say whether it now has it (False: the name is taken, by a file, a
+    link, a FIFO or a directory). The name is taken with a hard link, so it never holds an empty file; where the file system refuses the
+    link it is taken with an exclusive create and the file is moved over it, and a stop that unwinds in between takes the empty name back."""
+    try:
+        os.link(tmp, candidate)
+    except FileExistsError:
+        return False
+    except OSError:
+        pass                                   # no hard links here: the older way, below
+    else:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass                               # the hidden name stays beside the placed file; the stop path of the page removes it
+        return True
+    fd = made = None
+    try:
+        fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        made = os.fstat(fd)
+        closing, fd = fd, None
+        os.close(closing)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return True
+    except FileExistsError:
+        return False
+    except BaseException:
+        try:
+            if made is None and fd is not None:
+                made = os.fstat(fd)
+        except OSError:
+            pass
+        try:
+            if fd is not None:
+                os.close(fd)
+        except OSError:
+            pass
+        try:
+            now = os.lstat(candidate)
+            if made is not None and (now.st_mode & 0o170000) == 0o100000 and now.st_size == 0 and (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino):
+                os.unlink(candidate)           # the empty name this call took is not left behind
+        except OSError:
+            pass
+        raise
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. A name that is taken (by a file, a link, a FIFO or a directory) is
+    left as it is: a regular file of the same bytes is named again, any other result takes the next free <stem>-<n><suffix>. Returns the
+    path that holds it. The comparing with earlier results has PLACE_COMPARE_SECONDS in all: past it an earlier result is taken as
+    different and this one takes the next free name."""
+    deadline = time.monotonic() + PLACE_COMPARE_SECONDS
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        if _take_name(tmp, candidate):
+            return candidate
+        if not os.path.islink(candidate) and same_bytes(tmp, candidate, deadline):
+            os.unlink(tmp)
+            return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 LNK_MAGIC = bytes([0x4C, 0x00, 0x00, 0x00]) + binascii.unhexlify("0114020000000000c000000000000046")
 DESTLIST_HEADER = 32
-PARSER = "jumplist/4"
+PARSER = "jumplist/5"
+DEADLINE_SECONDS = 114            # the manifest allows 120: the walk, the files and the streams stop here, so that the pages are placed and the answer printed before the harness ends it
+MAX_LIMIT = 10000                 # the largest bound on the rows shown inline; the whole is in the files the answers name
+INLINE_STREAM_NAMES = 200         # the stream names of a compound file shown inline (every stream is a row of the links file)
+PROGRESS = {"file": 0}
+BUDGET = {"entries": 500, "links": 500}   # the bound on the inline rows of each kind over the WHOLE answer (not per file); set from limit in main()
 MAX_PATH_CHARS = 32767
 # A DestList stream is read whole before it is parsed; a real one is a few hundred
 # kilobytes at most, so a stream past this is refused by name instead of held in memory.
@@ -168,9 +393,30 @@ LAYOUTS = {
 }
 
 
+class ClockStop(Exception):
+    """The tool's own clock ran out inside a file."""
+
+
+def drop_pages():
+    """Remove the temporary files of the pages that were being written (the STOP block does the same on a signal)."""
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            page._tmp = None
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    drop_pages()
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error and read no result (see error)", **extra})
     raise SystemExit(1)
+
+
+def last_word(signum):
+    interrupted_answer(signum, file_index=PROGRESS["file"])
 
 
 def filetime(value):
@@ -204,6 +450,8 @@ def parse_destlist(data):
     fixed, chars_at, trailer = layout["fixed"], layout["chars_at"], layout["trailer"]
     offset = DESTLIST_HEADER
     while offset + fixed <= len(data):
+        if not (len(out["entries"]) & 1023) and out_of_time():
+            raise ClockStop()
         if len(out["entries"]) >= MAX_DESTLIST_ENTRIES:
             out["entries_not_read_from"] = offset
             out["problems"].append(
@@ -257,6 +505,8 @@ def lnk_starts(fh, size, window=1 << 20):
     keep = len(LNK_MAGIC) - 1
     fh.seek(0)
     while True:
+        if out_of_time():
+            raise ClockStop()
         block = fh.read(window)
         if not block:
             break
@@ -319,7 +569,7 @@ def resolve_output(out):
     return dest
 
 
-def same_bytes(path, chunks, length):
+def same_stream_bytes(path, chunks, length):
     """Whether the file at `path` holds exactly these bytes (given as pieces, `length` in all), read in pieces."""
     try:
         if os.path.getsize(path) != length:
@@ -347,7 +597,7 @@ def write_stream(out_dir, name, chunks, length):
     if len(safe) > 200:
         # A file system refuses a name much longer than this. The digest keeps
         # the shortened name unique; the whole name stays in the output.
-        safe = safe[:160] + "-" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
+        safe = safe[:160] + "-" + hashlib.sha256(name.encode("utf-8", "surrogatepass")).hexdigest()[:16]
     target = os.path.join(out_dir, safe + ".lnk")
     n = 2
     # A name already taken, by a file or by a link, is never written through:
@@ -356,11 +606,11 @@ def write_stream(out_dir, name, chunks, length):
     # points, inputs/ as well. Only a regular file is read to compare, and the
     # new file is created, never opened over something already there.
     while os.path.lexists(target):
-        if os.path.isfile(target) and not os.path.islink(target) and same_bytes(target, chunks, length):
+        if os.path.isfile(target) and not os.path.islink(target) and same_stream_bytes(target, chunks, length):
             return target
         target = os.path.join(out_dir, "%s-%d.lnk" % (safe, n))
         n += 1
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)    # a link keeps its arguments and strings
     with os.fdopen(fd, "wb") as fh:
         for piece in chunks():
             fh.write(piece)
@@ -370,10 +620,17 @@ def write_stream(out_dir, name, chunks, length):
 def page_links(result, links):
     page = links.finish()
     result["links"] = links.page
+    BUDGET["links"] -= len(links.page)
     result["link_count"] = page["matched"]
     result.update(page)
     if page["truncated"]:
         result["links_truncated"] = True
+
+
+def inline_rows(kind):
+    """The inline page a file's rows of this kind may take: what is left of the bound on the inline rows of that kind over the whole answer. A page is never
+    smaller than one row (a page of none does not exist); the rest of a file's rows are in the file the answer names."""
+    return max(1, BUDGET[kind])
 
 
 def read_automatic(path, out_dir, limit):
@@ -386,57 +643,69 @@ def read_automatic(path, out_dir, limit):
         return {"file": path, "error": "not an OLE compound file; is it a customDestinations-ms?"}
     ole = olefile.OleFileIO(path)
     result = {"file": path, "format": "automaticDestinations-ms", "streams": [], "links": []}
+    links = None
     try:
         names = ["/".join(p) for p in ole.listdir()]
-        result["stream_names"] = names
+        result["stream_names"] = names[:INLINE_STREAM_NAMES]
+        if len(names) > INLINE_STREAM_NAMES:
+            result["stream_names_not_shown"] = len(names) - INLINE_STREAM_NAMES
         by_stream = {}
-        if "DestList" in names:
-            size = ole.get_size("DestList") if hasattr(ole, "get_size") else None
-            if size is not None and size > MAX_DESTLIST_BYTES:
-                result["problems"] = ["the DestList stream is %d bytes, over the %d this tool reads whole; it was not parsed" % (size, MAX_DESTLIST_BYTES)]
+        try:
+            if "DestList" in names:
+                size = ole.get_size("DestList") if hasattr(ole, "get_size") else None
+                if size is not None and size > MAX_DESTLIST_BYTES:
+                    result["problems"] = ["the DestList stream is %d bytes, over the %d this tool reads whole; it was not parsed" % (size, MAX_DESTLIST_BYTES)]
+                else:
+                    parsed = parse_destlist(ole.openstream("DestList").read())
+                    entries = NoReplacePage("jumplist", [path, "entries", out_dir], inline_rows("entries"))
+                    everything = parsed.pop("entries")
+                    for entry in everything:
+                        entries.add(entry)
+                    by_stream = {e["stream"]: e for e in everything}
+                    result.update(parsed)
+                    kept = entries.finish()
+                    result["entries"] = entries.page
+                    BUDGET["entries"] -= len(entries.page)
+                    result["entry_count"] = kept["matched"]
+                    result["entries_page"] = kept
             else:
-                parsed = parse_destlist(ole.openstream("DestList").read())
-                entries = LosslessPage("jumplist", [path, "entries", out_dir], limit)
-                everything = parsed.pop("entries")
-                for entry in everything:
-                    entries.add(entry)
-                by_stream = {e["stream"]: e for e in everything}
-                result.update(parsed)
-                kept = entries.finish()
-                result["entries"] = entries.page
-                result["entry_count"] = kept["matched"]
-                result["entries_page"] = kept
-        else:
-            result["problems"] = ["there is no DestList stream in this file"]
-        links = LosslessPage("jumplist", [path, "links", out_dir], limit)
-        for name in names:
-            if name == "DestList":
-                continue
-            # olefile holds an opened stream whole in memory, so a stream is sized from its directory entry first: a link
-            # structure is small by nature, and one past MAX_STREAM_BYTES is named and left unread, never read whole.
-            length = ole.get_size(name) if hasattr(ole, "get_size") else None
-            if length is not None and length > MAX_STREAM_BYTES:
-                result.setdefault("problems", []).append(
-                    "the stream %s is %d bytes, over the %d this tool reads (olefile holds an opened stream in memory); it was not read"
-                    % (name, length, MAX_STREAM_BYTES))
-                links.add({"stream": name, "bytes": length, "is_link": None, "not_read": True})
-                continue
-            payload = ole.openstream(name).read()
-            # The whole 20-byte header: the 4-byte size and the shell link CLSID.
-            entry = {"stream": name, "bytes": len(payload), "is_link": payload[:20] == LNK_MAGIC}
-            known = by_stream.get(name.lower())
-            if known:
-                entry["path"] = known["path"]
-                entry["last_access"] = known["last_access"]
-                entry["last_access_filetime"] = known["last_access_filetime"]
-            if out_dir and entry["is_link"]:
-                view = memoryview(payload)
+                result["problems"] = ["there is no DestList stream in this file"]
+            links = NoReplacePage("jumplist", [path, "links", out_dir], inline_rows("links"))
+            for name in names:
+                if name == "DestList":
+                    continue
+                if out_of_time():
+                    raise ClockStop()
+                # olefile holds an opened stream whole in memory, so a stream is sized from its directory entry first: a link
+                # structure is small by nature, and one past MAX_STREAM_BYTES is named and left unread, never read whole.
+                length = ole.get_size(name) if hasattr(ole, "get_size") else None
+                if length is not None and length > MAX_STREAM_BYTES:
+                    result.setdefault("problems", []).append(
+                        "the stream %s is %d bytes, over the %d this tool reads (olefile holds an opened stream in memory); it was not read"
+                        % (name, length, MAX_STREAM_BYTES))
+                    links.add({"stream": name, "bytes": length, "is_link": None, "not_read": True})
+                    continue
+                payload = ole.openstream(name).read()
+                # The whole 20-byte header: the 4-byte size and the shell link CLSID.
+                entry = {"stream": name, "bytes": len(payload), "is_link": payload[:20] == LNK_MAGIC}
+                known = by_stream.get(name.lower())
+                if known:
+                    entry["path"] = known["path"]
+                    entry["last_access"] = known["last_access"]
+                    entry["last_access_filetime"] = known["last_access_filetime"]
+                if out_dir and entry["is_link"]:
+                    view = memoryview(payload)
 
-                def pieces(view=view):
-                    for at in range(0, len(view), 1 << 20):
-                        yield view[at:at + (1 << 20)]
-                entry["written_to"] = shown_path(write_stream(out_dir, os.path.basename(path) + "-" + name, pieces, len(payload)))
-            links.add(entry)
+                    def pieces(view=view):
+                        for at in range(0, len(view), 1 << 20):
+                            yield view[at:at + (1 << 20)]
+                    entry["written_to"] = shown_path(write_stream(out_dir, os.path.basename(path) + "-" + name, pieces, len(payload)))
+                links.add(entry)
+        except ClockStop:
+            result.setdefault("problems", []).append("the tool's own clock (%d s) ran out in this file: the streams after this point were not read" % DEADLINE_SECONDS)
+            result["stopped_by_time_limit"] = True
+        if links is None:
+            links = NoReplacePage("jumplist", [path, "links", out_dir], 1)
         page_links(result, links)
     finally:
         ole.close()
@@ -446,29 +715,35 @@ def read_automatic(path, out_dir, limit):
 def read_custom(path, out_dir, limit):
     result = {"file": path, "format": "customDestinations-ms", "links": [],
               "method": "carved: the file is split at every 20-byte link header; its own container structure is not parsed"}
-    links = LosslessPage("jumplist", [path, "links", out_dir], limit)
+    links = NoReplacePage("jumplist", [path, "links", out_dir], inline_rows("links"))
     with open(path, "rb") as fh:
         size = os.fstat(fh.fileno()).st_size
         # Only the offsets are kept; the file is read a window at a time, and each structure is written from its own
         # range in pieces, so a very large file costs time, not memory.
-        starts = lnk_starts(fh, size)
-        for i, offset in enumerate(starts):
-            length = (starts[i + 1] if i + 1 < len(starts) else size) - offset
-            entry = {"offset": offset, "bytes": length, "is_link": True, "carved": True}
-            if out_dir:
-                def pieces(offset=offset, length=length):
-                    fh.seek(offset)
-                    left = length
-                    while left:
-                        piece = fh.read(min(left, 1 << 20))
-                        if not piece:
-                            return
-                        left -= len(piece)
-                        yield piece
-                entry["written_to"] = shown_path(write_stream(out_dir, "%s-%04d" % (os.path.basename(path), i), pieces, length))
-            links.add(entry)
+        try:
+            starts = lnk_starts(fh, size)
+            for i, offset in enumerate(starts):
+                if not (i & 63) and out_of_time():
+                    raise ClockStop()
+                length = (starts[i + 1] if i + 1 < len(starts) else size) - offset
+                entry = {"offset": offset, "bytes": length, "is_link": True, "carved": True}
+                if out_dir:
+                    def pieces(offset=offset, length=length):
+                        fh.seek(offset)
+                        left = length
+                        while left:
+                            piece = fh.read(min(left, 1 << 20))
+                            if not piece:
+                                return
+                            left -= len(piece)
+                            yield piece
+                    entry["written_to"] = shown_path(write_stream(out_dir, "%s-%04d" % (os.path.basename(path), i), pieces, length))
+                links.add(entry)
+        except ClockStop:
+            result["problems"] = ["the tool's own clock (%d s) ran out in this file: the link structures after this point were not listed or written" % DEADLINE_SECONDS]
+            result["stopped_by_time_limit"] = True
     page_links(result, links)
-    if not result["links"]:
+    if not result["links"] and "problems" not in result:
         result["problems"] = ["no link structure header found in this file"]
     return result
 
@@ -482,22 +757,38 @@ def shown_path(written):
 
 
 def main():
+    set_deadline(DEADLINE_SECONDS)
+    install_signal_handlers(last_word)
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
         fail("arguments are not valid JSON", reason=str(exc))
+    if not isinstance(args, dict):
+        fail("arguments must be a JSON object")
 
     path = args.get("path")
     if not isinstance(path, str) or not path:
         fail("path is required: a jump list file or a directory of them")
 
     limit = args.get("limit", 500)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer", limit=args.get("limit"))
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIMIT:
+        fail("limit must be a whole number from 1 to %d (the one bound on the rows shown inline; the whole is in the files the answer names)" % MAX_LIMIT)
+    BUDGET["entries"] = BUDGET["links"] = limit
 
     out_dir = args.get("out_dir")
     if out_dir is not None and (not isinstance(out_dir, str) or not out_dir):
         fail("out_dir must be a directory path under work/")
+    write_links = args.get("write_links", False)
+    if not isinstance(write_links, bool):
+        fail("write_links must be true or false")
+    if write_links and out_dir is None:
+        fail("write_links needs out_dir: the directory the link structures are written to")
+    if out_dir is not None and not write_links:
+        fail("out_dir needs write_links: true. The link structures are written whole, and a link keeps its arguments and strings, so writing them is secret "
+             "output and is asked for by name. Nothing was written.")
+    if write_links and os.environ.get("SECRET_OUTPUT") != "1":
+        fail("write_links is refused: the link structures keep their arguments and strings, and are written only in a job the harness runs as secret output "
+             "(job_run with secret_output: true). Nothing was written.")
     if out_dir is not None:
         resolved = resolve_output(out_dir)
         try:
@@ -508,10 +799,17 @@ def main():
 
     targets = []
     not_attempted = []          # a FIFO, a socket, a device or a file that could not be examined: never opened
+    walk_stopped = False
     if os.path.isdir(path):
         for root, dirs, names in os.walk(path):
+            if out_of_time():
+                walk_stopped = True
+                break
             dirs.sort()                                   # the same order on every run
             for name in sorted(names):
+                if out_of_time():
+                    walk_stopped = True
+                    break
                 if name.lower().endswith(("destinations-ms",)):
                     full = os.path.join(root, name)
                     try:
@@ -533,14 +831,19 @@ def main():
         targets = [path]
     else:
         fail("no such file or directory", path=path)
-    if not targets and not not_attempted:
+    if not targets and not not_attempted and not walk_stopped:
         fail("no jump list files under that directory", path=path)
-    if not targets:
+    if not targets and not walk_stopped:
         fail("no jump list file under that directory could be opened", path=path, not_attempted=len(not_attempted),
              first_not_attempted=not_attempted[:5])
 
     files = []
-    for target in targets:
+    not_read = 0
+    for index, target in enumerate(targets):
+        if out_of_time():
+            not_read = len(targets) - index
+            break
+        PROGRESS["file"] = index
         try:
             if target.lower().endswith("customdestinations-ms"):
                 files.append(read_custom(target, out_dir, limit))
@@ -554,31 +857,57 @@ def main():
 
     failed = [f for f in files if f.get("error")]
     with_problems = [f for f in files if f.get("problems")]
-    skipped = LosslessPage("jumplist", [path, "not_attempted", out_dir], limit)
+    stopped_files = [f for f in files if f.get("stopped_by_time_limit")]
+    skipped = NoReplacePage("jumplist", [path, "not_attempted", out_dir], limit)
     for item in not_attempted:
         skipped.add(item)
     skipped_page = skipped.finish()
-    page = LosslessPage("jumplist", [path, "files", out_dir], limit)
+    page = NoReplacePage("jumplist", [path, "files", out_dir], limit)
     for f in files:
         page.add(f)
     kept = page.finish()
-    status = "failed" if len(failed) == len(files) else "partial" if failed or with_problems or not_attempted else "complete"
-    print(json.dumps({
+    reasons = []
+    if walk_stopped or not_read or stopped_files:
+        reasons.append("the tool's own clock (%d s) ran out: %s" % (DEADLINE_SECONDS, "; ".join(filter(None, [
+            "the directory walk was cut short" if walk_stopped else "",
+            "%d file(s) were not read" % not_read if not_read else "",
+            "%d file(s) were read only in part" % len(stopped_files) if stopped_files else ""]))))
+    if failed:
+        reasons.append("%d file(s) failed" % len(failed))
+    if with_problems:
+        reasons.append("%d file(s) name a problem" % len(with_problems))
+    if not_attempted:
+        reasons.append("%d file(s) were not opened (a pipe, a socket, a device or a file that could not be examined)" % len(not_attempted))
+    if len(failed) == len(files) and files:
+        status = "failed"
+        basis = "every file failed (%d)" % len(files)
+    elif not files:
+        status = "partial"
+        basis = reasons[0] if reasons else "no file was read"
+    else:
+        status = "partial" if reasons else "complete"
+        basis = "; ".join(reasons) if reasons else "every file was read to its end, every DestList and every stream was listed, and no problem is named"
+    print_answer({
         "parser": PARSER,
         "status": status,
+        "status_basis": basis,
+        "stopped_by_time_limit": bool(walk_stopped or not_read or stopped_files),
         "files": page.page,
         "file_count": len(files),
         "files_failed": len(failed),
         "files_with_problems": len(with_problems),
+        "files_not_read_for_time": not_read,
         "first_failures": [{"file": f["file"], "error": f["error"]} for f in failed[:5]],
         "files_page": kept,
         "files_not_attempted": skipped_page["matched"],
         "not_attempted": skipped.page,
         "not_attempted_page": skipped_page,
+        "inline_rows_bound": limit,
         "note": "The DestList gives the index: entry number, host, last access, pin state and path. The target path, the volume "
                 "serial and the three target timestamps come from the link structures, so run lnk_parse over what was written "
-                "to out_dir before citing any of them. Access counters are not decoded. A customDestinations-ms is carved, not parsed.",
-    }, indent=2))
+                "to out_dir before citing any of them. Access counters are not decoded. A customDestinations-ms is carved, not parsed. "
+                "The entries and the links shown inline are each bounded by limit over the whole answer, not per file; every row is in the file its page names.",
+    }, indent=2)
     if status == "failed":
         raise SystemExit(1)
 
@@ -586,5 +915,12 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except SystemExit:
+        raise
     except OSError as exc:
         fail("a file operation failed: %s" % exc, reason=type(exc).__name__)
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        drop_pages()
+        print_answer({"error": "the read failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)

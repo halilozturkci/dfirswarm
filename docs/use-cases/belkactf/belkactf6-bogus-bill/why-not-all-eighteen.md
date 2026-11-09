@@ -152,7 +152,7 @@ thing the host could not open.
   seventeen denials become an install — of libraries that read, not tools
   that mount.
 - Root on the examiner's host stays refused, and the reason is written down
-  in [safety](../../safety.md).
+  in [safety](../../../safety.md).
 
 The next run on this case starts with `--toolbox dfir,crypto
 --toolbox-required`, and either the libraries are there or it does not start.

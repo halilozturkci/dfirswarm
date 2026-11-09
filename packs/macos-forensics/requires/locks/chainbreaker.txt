@@ -1,0 +1,8 @@
+# Hash lock for chainbreaker (commit 2eb467d) and everything it needs: pycryptodome, which has no dependencies. Every line is name==version with the sha256 of each
+# file PyPI publishes for it that CPython 3.11 on Linux glibc (x86_64 or aarch64) can use (the abi3 wheel of each architecture), plus the sdist (an
+# architecture with no wheel builds from it). Resolved from PyPI's JSON metadata for exactly that environment; pip installs it with --require-hashes, so a
+# file whose hash is not here does not install. chainbreaker's own requirements file pins pycryptodome~=3.10.1 and is not used.
+pycryptodome==3.23.0 \
+    --hash=sha256:447700a657182d60338bab09fdb27518f8856aecd80ae4c6bdddb67ff5da44ef \
+    --hash=sha256:67bd81fcbe34f43ad9422ee8fd4843c8e7198dd88dd3d40e6de42ee65fbe1490 \
+    --hash=sha256:c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575

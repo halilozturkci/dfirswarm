@@ -27,7 +27,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, existsSync, readFileSync, realpathSync } from "node:fs";
 import { chmod, copyFile, link, lstat, mkdir, open, readdir, readFile, readlink, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { createInterface } from "node:readline";
+import { jsonlLines, jsonlRecords } from "../extensions/jsonl-lines.ts";
 import { fileURLToPath } from "node:url";
 
 export const STORE_REL = "store";
@@ -568,18 +568,15 @@ export async function resolveRef(sandbox: string, ref: string, opts: ResolveOpti
     const tsv = join(P.gen, mm[1], "members.tsv");
     if (!existsSync(tsv)) return { ok: false, ref, reason: `generation ${mm[1]} has no member list` };
     // Read as it streams, stopping at the row: a phone's list is millions of lines.
-    const found = await new Promise<boolean>((done) => {
-      const rl = createInterface({ input: createReadStream(tsv), crlfDelay: Infinity });
-      let hit = false;
-      rl.on("line", (l) => {
-        if (!hit && l.startsWith(`${mm[2]}\t`)) {
-          hit = true;
-          rl.close();
-        }
-      });
-      rl.on("close", () => done(hit));
-      rl.on("error", () => done(false));
-    });
+    // (The rows hold names from the evidence, which can hold U+2028: the LF-only reader, not readline.)
+    const found = await (async () => {
+      try {
+        for await (const l of jsonlLines(createReadStream(tsv))) if (l.startsWith(`${mm[2]}\t`)) return true;
+        return false;
+      } catch {
+        return false;
+      }
+    })();
     return found ? { ok: true, ref, kind: "member", path: `catalog/gen/${mm[1]}/members.tsv#${mm[2]}` } : { ok: false, ref, reason: `no member ${mm[2]} in generation ${mm[1]}` };
   }
   if (kind === "sha256") {
@@ -690,14 +687,13 @@ export async function traceOrigin(sandbox: string, ref: string): Promise<{ ok: t
   let pending: Hit | null = null;
   let confirmed: Hit | null = null;
   const refusals: string[] = [];
-  const rl = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
+  const rl = jsonlLines(createReadStream(file));
   for await (const line of rl) {
     if (!line) continue;
     if (pending) {
       // On the chain: this line names the one before it.
       if (lineParent(line) === pending.hash) {
         confirmed = pending;
-        rl.close();
         break;
       }
       refusals.push(`the line ${pending.hash.slice(0, 12)}… is not what the next line names as its parent (the trace was changed there)`);
@@ -765,12 +761,9 @@ export async function traceOrigin(sandbox: string, ref: string): Promise<{ ok: t
 export async function traceLineBytes(sandbox: string, sha256: string): Promise<Buffer | null> {
   const file = join(resolve(sandbox), TRACE_REL);
   if (!existsSync(file)) return null;
-  const rl = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
-  for await (const line of rl) {
-    if (line && sha256Hex(line) === sha256) {
-      rl.close();
-      return Buffer.from(line, "utf8");
-    }
+  // The record's own bytes, split at LF only: a record that holds U+2028 or U+2029 is found whole, and a CR before the LF is part of it.
+  for await (const record of jsonlRecords(createReadStream(file))) {
+    if (record.length > 0 && sha256Hex(record.bytes) === sha256) return Buffer.from(record.bytes);
   }
   return null;
 }
@@ -852,7 +845,7 @@ export async function keptOutputOrigins(sandbox: string, wanted?: ReadonlySet<st
   const confirm = (p: { origins: KeptOutputOrigin[] }) => {
     for (const o of p.origins) if (!out.has(o.path)) out.set(o.path, o);
   };
-  const rl = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
+  const rl = jsonlLines(createReadStream(file));
   for await (const line of rl) {
     if (!line) continue;
     if (pending) {
@@ -1165,7 +1158,7 @@ export type StoreCheck = {
   /** Each revision's MANIFEST.json and its index files, and each generation.json, held to the journal's lines. */
   catalogue: { revisions_verified: number; revisions_mismatched: string[]; generations_verified: number; generations_mismatched: string[] };
   /** The derived catalogue, from its journal lines: objects offered and skipped, answered, catalogued, left unanswered, and each limit it met. */
-  derived: { offered: number; skipped: number; detected: number; applied: number; catalogued: number; partial: number; unanswered: number; deferred: number; bounded: string[] };
+  derived: { offered: number; skipped: number; detected: number; applied: number; undetermined: number; catalogued: number; partial: number; unanswered: number; deferred: number; bounded: string[] };
 };
 
 /** Every regular file under a directory, links and specials left out. */
@@ -1213,16 +1206,17 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
     notes: count("note"),
     degraded: count("jobs_degraded"),
     catalogue: { revisions_verified: 0, revisions_mismatched: [], generations_verified: 0, generations_mismatched: [] },
-    derived: { offered: 0, skipped: 0, detected: 0, applied: 0, catalogued: 0, partial: 0, unanswered: count("detect_unanswered"), deferred: count("derived_deferred"), bounded: [] },
+    derived: { offered: 0, skipped: 0, detected: 0, applied: 0, undetermined: 0, catalogued: 0, partial: 0, unanswered: count("detect_unanswered"), deferred: count("derived_deferred"), bounded: [] },
   };
   for (const l of checked.lines) {
     if (l.type === "derived_offered") {
       out.derived.offered += ((l.offered as unknown[]) ?? []).length;
       out.derived.skipped += ((l.skipped as unknown[]) ?? []).length;
     } else if (l.type === "detect_answered") {
-      const rows = (l.rows as Array<{ applies?: boolean }>) ?? [];
+      const rows = (l.rows as Array<{ applies?: boolean | "unknown" }>) ?? [];
       out.derived.detected += rows.length;
-      out.derived.applied += rows.filter((r) => r.applies).length;
+      out.derived.applied += rows.filter((r) => r.applies === true).length;
+      out.derived.undetermined += rows.filter((r) => r.applies === "unknown").length;
     } else if (l.type === "generation_committed" && l.trigger === "derived") {
       if (l.status === "complete") out.derived.catalogued += 1;
       else out.derived.partial += 1;

@@ -17,7 +17,11 @@ cleanup phase, and the mount may then remain). Three modes:
     list     names, kinds and sizes of a directory (or one file): metadata, no content
     text     one file that is UTF-8 text, written to a file under $OUT/mem_fs
     export   the named virtual files, copied byte for byte to $OUT/mem_fs, with their
-             sizes and sha256 in a sealed manifest beside them
+             sizes and sha256 in a sealed manifest beside them, and for each file a ranges
+             file under $OUT/mem_fs/%ranges: the ranges read, the ranges the mount did not give,
+             the ranges not copied (a stop or a bound) and the zero-filled pages (whole aligned
+             4096-byte pages of zeros: MemProcFS fills a page it cannot read with zeros, and real
+             zeros read the same, so they are not proof that data is missing)
 
 THE SECRET-SAFE OUTPUT PATTERN (docs/packs.md, "Secrets and sensitive output"),
 copied from recovery_key_scan, the reference implementation, with one change: the
@@ -25,8 +29,8 @@ value here is a file. A memory file can hold anything the machine held (a comman
 line, an environment block, a key, a page of a process), so:
 
   1. The answer is a locator: virtual path, output file, size, status. It carries
-     no content, no characters of it and no digest of it. A digest is in the
-     manifest file only. A name the engine lists, and a line it prints, come from the
+     no content, no characters of it and no digest of it. A digest of content is in the
+     manifest file only (the digest the answer names is that of a ranges file, which holds offsets and lengths, never content). A name the engine lists, and a line it prints, come from the
      capture too: they are judged before they are shown (the SHOWN block), and the
      originals of what was withheld go to a names file only on write_values.
   2. Content is written only when the caller asks (`write_values: true`), only when
@@ -45,9 +49,32 @@ bytes of its stream (a thread always reads the pipe, so a verbose engine neither
 pipe nor fills the disk); the answer counts what was read after that and discarded.
 
 The tool stops by itself: timeout_seconds is at most 480, so the end of the call (the
-engine's stop, its unmount, the last file) stays inside the manifest's 600. A signal
+engine's stop, its unmount, the last file) stays inside the manifest's 600. Those steps have their own bounded waits: terminate 20 s,
+kill 20 s, the checks of whether the mount is still there 3 s in all (and 2 s to end a check that did not answer), two unmount calls
+12 s each (and 2 s each to end a helper that did not finish), two drains 5 s each and the worker 5 s, which is 88 s before the
+reads of the process table. Where /proc is read, each read of it stops at 2 s (the table is read three times in the clean-up and the
+search for the pipe holders walks /proc once more: 8 s) and the holders of the engine's pipes are given 2 s after SIGTERM and 2 s after
+SIGKILL: the bound is 100 s. Where it is not, process_table() runs ps (10 s at most, and 2 s to end it) twice in the clean-up: the
+bound is 112 s. A check at the deadline that has to be ended adds 2 s before the clean-up: 480 + 2 + 112 = 594 is inside the 600.
+
+What the engine daemonised before the listing of its descendants, or forked after it, is not in that listing. On Linux it is found by
+what it holds: the pipes this tool made for the engine are named in /proc/<pid>/fd as pipe:[inode], and a process that holds one got it
+from the engine. Each holder is ended (SIGTERM, then SIGKILL) and named in the answer (clean_up.pipe_holders); the kill set is never
+wider than the holders: not this tool, not pid 1, not an ancestor of this tool, and a process only if its start time and its pipe are
+checked again just before the signal, through a pidfd where the kernel has one. A process that closed its copies of the pipes is not
+found, and off Linux, or where /proc cannot be read, nothing is searched: what the engine daemonised may outlive the call.
+
+No stat of the mount is made by this process, because a FUSE server that does not answer holds every stat of its mount for as long as
+it lives: the readiness check at startup and the checks of the clean-up are made by a short child (python -P -c, in this tool's process
+group) that is killed at its time limit. At startup the limit is the call's deadline, and a check that does not answer ends the call as
+"not ready"; in the clean-up the mount is named as still there and not answering. A request that the FUSE server has read cannot be
+interrupted, not even by SIGKILL, so a check stuck on it ends only with the server: a child or an unmount helper that is still not
+reaped REAP_WAIT seconds after its kill is named in the answer with its pid and left (a check that has ended by the time the engine is
+stopped is not named): no wait in the clean-up is without a limit.
+
+A signal
 (SIGTERM, SIGINT, SIGHUP) ends it with one JSON answer (status interrupted, exit 128 plus
-the signal), after the engine is stopped and the mount released; the rows already kept in the results file are named (partial_results). A
+the signal), after the engine is stopped and the mount released (or, when the clean-up did not finish, with cleanup_problems saying so); the rows already kept in the results file are named (partial_results). A
 signal that arrives while that file is placed or the answer written is held until the answer is out. The process leaves without the
 interpreter's shutdown (os._exit after the flush), which would put the default action of every signal back first. What no script can answer
 is a stop that arrives before the interpreter has run this file's first lines, tens of milliseconds at the start of a process (longer on a
@@ -90,7 +117,7 @@ from pathlib import Path  # noqa: E402
 CHUNK = 1 << 20
 DEFAULT_TIMEOUT = 300
 MIN_TIMEOUT = 2
-MAX_TIMEOUT = 480          # 480 s + the engine's stop and unmount (at most 95 s) stays inside the manifest's 600
+MAX_TIMEOUT = 480          # 480 s + 2 s + the engine's stop and unmount (at most 100 s with /proc, 112 s with ps) stays inside the manifest's 600
 DEFAULT_MAX_BYTES = 4 << 30
 MAX_PATHS = 1000
 PAGE = 200
@@ -98,6 +125,11 @@ MAX_PAGE = 5000
 CLEANUP_WAIT = 20
 OUT_DIR = "mem_fs"
 MANIFEST = "export-manifest.jsonl"
+RANGES_DIR = "%ranges"     # output_name writes a % only before two hex digits, so no export can be named inside this directory, and no component of an
+#                            output name contains "%." : a ranges file is named <output name>%.json, which is never a directory of another ranges file
+ZERO_PAGE = 4096
+ZERO_MEANING = ("zero_filled lists whole aligned 4096-byte pages in which every copied byte is 0. MemProcFS fills a page it cannot read with zeros, "
+                "and a page of real zeros reads the same, so a zero-filled range is not proof that data is missing and not proof that it is present.")
 ENGINE_LINES = 20
 LOG_CAP = 1 << 20          # bytes of each engine stream kept in its log file; the rest is counted and discarded
 ENGINE_LINE_CHARS = 200
@@ -105,11 +137,16 @@ MAX_OUTPUT_COMPONENT = 200
 
 
 # BEGIN SHARED WITHHOLDING
-# The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
-# reverse-engineering packs), so that they withhold the same strings; the tests that hold the copies equal are
-# tests/pack-network-withholding.test.ts, tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts and
-# tests/pack-re-process.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a
-# path component, a URL, a message that quotes either.
+# The same text is in every tool that withholds identifier-shaped strings and credentials (the network, base, encrypted-containers,
+# memory, virtualization, ransomware and reverse-engineering packs, and the three tools of the cloud pack), so that they withhold the
+# same strings; the tests that hold the copies equal are tests/shared-blocks-census.test.ts (how many carry it),
+# tests/pack-re-delta10.test.ts (every copy equal, found by the marker), tests/pack-network-withholding.test.ts,
+# tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts, tests/pack-re-process.test.ts and
+# tests/pack-cloud-shared.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a path
+# component, a URL, a message that quotes either; and a credential (a value given to a password, a token, a cookie, a pair, a
+# switch) by the name it is given under. A carrier may set two names above this block: WITHHOLD_LIMIT, the length past which a text is
+# withheld whole (65536 when it sets none), and WITHHOLD_TICK, a hook that long scans call and that may raise to end them at the
+# carrier's deadline (none when it sets none). Nothing else in the block is a carrier's to change.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
 # A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
 # `/` joins pieces of a base64 token and is handled apart, below.
@@ -173,7 +210,7 @@ _SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
 # long, and the answer says how long the text was. Every rule below reads a text of this length in well under a second whatever its
 # characters are, so that no call of `scrub` or `token_spans` can run for long on a text a file chose; the limit is the backstop for
 # a shape of text that no rule was tried on, and the rules themselves are linear.
-TEXT_LIMIT = 65536
+TEXT_LIMIT = globals().get("WITHHOLD_LIMIT", 65536)
 
 
 def _prefixed_spans(text, tail=None):
@@ -330,10 +367,342 @@ def token_shaped(text):
     return bool(token_spans(text))
 
 
+# ---- credentials: a value is withheld by the name it is given under and by the text around it ----------------------------------
+# The rules above find strings that are shaped like an identifier. These find a secret that has no shape, because of what it is
+# assigned to (`password=`, a `Name`/`Value` pair, a `-Password` switch, `curl -u user:pass`, `mysql -pSECRET`), and the common
+# token families, private key blocks and hashes of an account database. A name decides whether a value is a secret, a value
+# decides nothing. Every rule runs in time linear in the text (a bounded stretch after each anchor, no nested repeat), and a
+# carrier whose texts are long (a cloud log: a megabyte) sets WITHHOLD_TICK to a hook that ends the work at its deadline.
+_CRED_CHECKSUM_NAME = re.compile(r"(?i)checksum|digest|sha[0-9]|md5|etag|crc[0-9]")
+_CRED_REDACTED = re.compile(r"^\W*(?:hidden_due_to_security_reasons|redacted|masked|removed|\*+|x{3,}|\[\])\W*$", re.I)
+_CRED_NOT_A_VALUE = frozenset(("true", "false", "null", "none", "nil", "undefined", "required", "optional", "enabled", "disabled"))
+_CRED_EXACT = {
+    "password", "newpassword", "oldpassword", "currentpassword", "passwd", "pwd", "passphrase", "passcode", "pin", "otp",
+    "pass", "dbpass", "userpass", "adminpass", "rootpass", "plaintext",
+    "secret", "clientsecret", "secretkey", "secretaccesskey", "awssecretaccesskey", "awssecretkey", "secretstring",
+    "secretbinary", "secrettext", "secretvalue", "accesskeysecret",
+    "sessiontoken", "securitytoken", "accesstoken", "refreshtoken", "idtoken", "bearertoken", "authtoken", "token",
+    "tokencode", "mfacode", "verificationcode", "authorizationcode",
+    "authorization", "proxyauthorization", "cookie", "setcookie", "apikey", "privatekey", "privatekeypem",
+    "sharedaccesskey", "sharedaccesssignature", "accountkey", "primarykey", "secondarykey", "keyvalue", "masterkey",
+    "storagekey", "subscriptionkey", "ocpapimsubscriptionkey",
+    "connectionstring", "credential", "credentials", "assertion", "samlresponse", "mfasecret",
+    "sastoken", "sassignature", "signature", "sig",
+    "passwordhash", "nthash", "ntlmhash", "lmhash",
+}
+_CRED_SUFFIX = ("password", "passwd", "passphrase", "secret", "apikey", "privatekey", "sessiontoken", "securitytoken",
+                "accesstoken", "refreshtoken", "clientsecret", "token", "secrettext", "secretkey", "secretaccesskey",
+                "primarykey", "secondarykey", "accountkey", "sharedaccesskey", "subscriptionkey", "passwordhash",
+                "ntlmhash", "nthash", "passcode", "signature", "cookie")
+# a position or an idempotency key under a name that ends in `token`
+_CRED_NOT_SECRET = ("nexttoken", "pagetoken", "continuationtoken", "paginationtoken", "nextpagetoken", "pagingtoken",
+                    "startingtoken", "nextmarkertoken", "clienttoken", "clientrequesttoken", "idempotencytoken",
+                    "nextforwardtoken", "nextbackwardtoken", "requesttoken")
+_CRED_CONTAINERS = ("credential", "credentials")
+_CRED_NAME_CACHE = {}
+_CRED_NAME_KEYS = ("Name", "name", "Key", "key")
+_CRED_VALUE_KEYS = ("Value", "NewValue", "OldValue", "value", "newValue", "oldValue")
+
+
+def is_container_name(name):
+    """`credentials` names a group of fields (an access key id, an expiry, a token): each is judged by its own name."""
+    return re.sub(r"[^a-z0-9]", "", str(name).lower()) in _CRED_CONTAINERS
+
+
+def name_is_sensitive(name):
+    """Does a field or a parameter of this name hold a secret? (`Password`, `client_secret`, `x-api-key`; not `nextToken`.)"""
+    hit = _CRED_NAME_CACHE.get(name)
+    if hit is None:
+        flat = re.sub(r"[^a-z0-9]", "", str(name).lower())
+        hit = flat in _CRED_EXACT or (len(flat) > 6 and flat.endswith(_CRED_SUFFIX) and not flat.endswith(_CRED_NOT_SECRET))
+        if len(_CRED_NAME_CACHE) < 20000:
+            _CRED_NAME_CACHE[name] = hit
+    return hit
+
+
+_CRED_B64 = "A-Za-z0-9+/_-"
+_CRED_B64_RUN = re.compile(r"(?<![%s])[%s]{128,}={0,2}(?![%s])" % (_CRED_B64, _CRED_B64, _CRED_B64))
+_CRED_B64_EDGE = "(?<![A-Za-z0-9+/=_-])"
+_CRED_B64_END = "(?![A-Za-z0-9+/=_-])"
+# The names an assignment is recognised by. A long compound name may carry any prefix (dbPassword=, apiToken=, adminSecret:);
+# a short one needs the edge of a word (sig= is not design=).
+_CRED_STRONG = (r"password|passwd|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|"
+                r"security[_-]?token|auth[_-]?token|bearer[_-]?token|account[_-]?key|shared[_-]?access[_-]?key|primary[_-]?key|"
+                r"secondary[_-]?key|private[_-]?key|subscription[_-]?key|sas[_-]?token|password[_-]?hash|nt[_-]?hash|ntlm[_-]?hash|"
+                r"lm[_-]?hash|client[_-]?secret|secret[_-]?access[_-]?key|secret[_-]?key|secret[_-]?text|secret[_-]?value|token|signature|plaintext")
+_CRED_SHORT = r"(?<![A-Za-z0-9])(?:pwd|pass|sig|pin|otp|sas)"
+_CRED_SEP = r"""(?:\\*["']|["'])?\s*(?:[:=]|%3[dD]|%3[aA])\s*"""
+# a short name is a name only as `pwd=value` or `pass:value`: "pass: 3 attempts" is prose
+_CRED_SEPS = r"""(?:\\*["']|["'])?(?:\s*(?:=|%3[dD])\s*|:(?=\S))"""
+_CRED_NAME = r"(?:(?:%s)%s|%s%s)" % (_CRED_STRONG, _CRED_SEP, _CRED_SHORT, _CRED_SEPS)
+_CRED_ARN_TAIL = re.compile(r"arn:[A-Za-z0-9-]+:[A-Za-z0-9-]+:[A-Za-z0-9-]*:[0-9]*:$")
+_CRED_PAIR_WHY = "a value paired with a credential name"
+_CRED_RULES = [
+    # anchored at the start of a run and possessive, so that a megabyte of `eyJ` is read once, not once per `eyJ`
+    ("a JSON Web Token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+\.[A-Za-z0-9_-]{2,}+(?:\.[A-Za-z0-9_-]*+)?"), 0),
+    ("a JSON Web Encryption token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+(?:\.[A-Za-z0-9_-]*+){4}"), 0),
+    ("a password in a URL", re.compile(r"(?i)(?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,20}://[^\s:/@\"'<>\\]{0,256}:([^\s/\"'<>\\]{1,1024})@(?=[^\s/@\"'<>]{1,255})"), 1),
+    ("an Azure Functions key", re.compile(r"""(?i)(?:x-functions-key["']?\s*[:=]\s*(?:\\*["'])?|[?&;]code=)([A-Za-z0-9_/+=-]{16,512})"""), 1),
+    ("a private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|[\s\S]*)"), 0),
+    ("a base64 block of key lines", re.compile(r"(?:[A-Za-z0-9+/]{60,80}={0,2}\r?\n){2,}[A-Za-z0-9+/]{2,80}={0,2}"), 0),
+    ("an authorization header value", re.compile(
+        r"""(?i)authorization["']?\s*[:=]\s*(?:\\*["'])?(?:(?:bearer|basic|digest|negotiate|ntlm|token)\s+)?([^\s"'&,;\\]{1,4096})"""), 1),
+    ("a cookie header value", re.compile(r"""(?i)cookie["']?\s*[:=]\s*(?:\\*["'])?([^\r\n"'\\]{1,4096})"""), 1),
+    ("a scheme and its credential", re.compile(r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{3,4096})|\b(?:negotiate|ntlm|digest)\s+([A-Za-z0-9._~+/=-]{24,4096})"), -2),
+    ("a value assigned to a credential name (quoted)", re.compile(
+        r"""(?i)%s\\*(["'])(.{1,4096}?)(?=\\*\1)""" % _CRED_NAME), 2),
+    ("a value assigned to a credential name", re.compile(
+        r"""(?i)%s((?:(?!%%26)[^\s"'&<>\\]){1,4096})""" % _CRED_NAME), 1),
+    ("a value given to a credential switch", re.compile(
+        r"""(?i)(?<![A-Za-z0-9_])-(?:password|pass|pwd|passphrase|secret|clientsecret|apikey|accesstoken|token)\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    ("a secret given to ConvertTo-SecureString", re.compile(
+        r"""(?i)ConvertTo-SecureString\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    # `mysql -u<user> -p<password>`: with `-p` glued to its value, and only as an option of a MySQL or MariaDB client (`ssh -p 22`,
+    # `nc -p 80` and `mysql -p` alone, which asks for the password, name a port or nothing). The options are read up to the next
+    # command of the kind, so that a text of many of them is read once, not once for each
+    ("a password given to a MySQL client", re.compile(
+        r"""(?i:(?<![\w.-])(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mysqlshow|mariadb|mariadb-dump|mariadb-admin)(?:\.exe)?(?=\s))(?:(?!(?i:mysql|mariadb)\b)[^\n]){0,512}?(?<=\s)-p(?=[^\s`,;)])(?:"([^"\n]{1,256})"|'([^'\n]{1,256})'|([^\s"']{1,256}))"""), -3),
+    # `curl -u user:password`: the part after the colon, and only when there is one (`curl -u user` asks for it)
+    ("a password given to curl", re.compile(
+        r"""(?i:(?<![\w.-])curl(?:\.exe)?(?=\s))(?:(?!(?i:curl)\b)[^\n]){0,512}?(?<=\s)(?:-u|-U|--user|--proxy-user)(?:\s+|=)(?:"[^":\n]*:([^"\n]{1,256})"|'[^':\n]*:([^'\n]{1,256})'|[^\s:"']*:([^\s"']{1,256}))"""), -3),
+    ("a hash pair of an account database", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}:([0-9a-fA-F]{32})(?![0-9a-fA-F])"), 1),
+    ("a bcrypt hash", re.compile(r"(?<![A-Za-z0-9$])\$2[abxy]?\$[0-9]{2}\$[./A-Za-z0-9]{53}(?![./A-Za-z0-9])"), 0),
+    ("a token of a known family", re.compile(
+        r"(?:GOCSPX-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])|"
+        r"ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{30,}|(?:IQoJb3JpZ2lu|FQoGZXIvYXdz|FwoGZXIvYXdz)[A-Za-z0-9+/=]{40,}|"
+        r"[A-Za-z0-9_.~-]{3}[0-9]Q~[A-Za-z0-9_.~-]{30,}|[01]\.A[A-Za-z0-9_-]{50,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})"), 0),
+]
+_CRED_GROUPS = {-1: (1, 2, 3), -2: (1, 2), -3: (1, 2, 3)}
+# A random-looking run of an exact length that keys have: 32, 40 (an AWS secret access key), 43 + "=" and 86 + "==" (a base64 key).
+_CRED_SHAPES = [
+    ("a key-length base64 string", re.compile(_CRED_B64_EDGE + r"(?:[A-Za-z0-9+/]{32}|[A-Za-z0-9+/]{40}|[A-Za-z0-9+/]{43}=|[A-Za-z0-9+/]{86}==)" + _CRED_B64_END), True),
+]
+# A Name/Value pair written as JSON text inside a string (an AuditData in a column of another name, a parameter list in a cell): the
+# structure rule (clean_value) cannot see it, so the text rule reads the head of the pair, and the name decides as it does there. The
+# value is read by hand, not by an expression: a string up to its first quote (the backslashes before the quote are not part of it), a
+# number, a flat array of up to 4,096 characters, or a literal; and the next value of the same pair (`OldValue`, then `NewValue`).
+_CRED_PAIR_HEAD = re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})\\*"\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_NEXT_VALUE = re.compile(r"""(?i)\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_QUOTE = re.compile(r'\\*"')
+# a format directive (`%s`, `%d`), a template field (`{0}`, `{name}`) or a `%VAR%` is where a value goes, not a value
+_CRED_PLACEHOLDER = re.compile(r"%[-+ #0-9.]*[sdiuxXfeEgGcr](?![A-Za-z0-9])|\{\w*\}|%\w+%$|\.{2,}|\u2026")
+_CRED_BARE = re.compile(r"-?[0-9][0-9.eE+-]{0,39}|\[[^\[\]]{0,4096}\]|(?:null|true|false)\b")
+# What a text must hold for a rule to match it: a literal (lower case) of which one must be in the text, checked before the rule runs, so
+# that a text with none of them (most names, addresses and ids) costs a few substring tests and no expression. An assignment rule also
+# needs a separator in the text. Each is a necessary condition of its rule.
+_CRED_ASSIGN = ("pass", "pwd", "secret", "key", "token", "signature", "plaintext", "sig", "pin", "otp", "sas", "hash")
+_CRED_NEEDLES = {
+    "a JSON Web Token": ("eyj",), "a JSON Web Encryption token": ("eyj",), "a password in a URL": ("://",),
+    "an Azure Functions key": ("x-functions-key", "code="), "a private key block": ("-----begin",), "a base64 block of key lines": ("\n",),
+    "an authorization header value": ("authorization",), "a cookie header value": ("cookie",),
+    "a scheme and its credential": ("bearer", "basic", "negotiate", "ntlm", "digest"),
+    "a value assigned to a credential name (quoted)": _CRED_ASSIGN, "a value assigned to a credential name": _CRED_ASSIGN,
+    "a value given to a credential switch": ("password", "pass", "pwd", "secret", "apikey", "accesstoken", "token"),
+    "a secret given to ConvertTo-SecureString": ("securestring",), "a password given to a MySQL client": ("mysql", "mariadb"),
+    "a password given to curl": ("curl",), "a hash pair of an account database": (":",), "a bcrypt hash": ("$2",),
+    "a token of a known family": ("gocspx-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xoxa-", "xoxb-", "xoxp-", "xoxr-", "xoxs-",
+                                  "aiza", "ya29.", "1//0", "iqojb3", "fqogzx", "fwogzx", "q~", "0.a", "1.a", "sk_", "rk_"),
+}
+_CRED_CLEAN = set()               # short texts already judged to hold nothing (names, addresses and ids repeat)
+_CRED_GATE = 4096                 # a text longer than this is scanned with the carrier's hook in view, rule by rule
+# The carrier's hook for long scans: called with the work done so far (1 per stretch found, 4096 between rules over a long text); it may
+# raise to end the scan at the carrier's deadline. Most carriers set none and the calls do nothing.
+_tick = globals().get("WITHHOLD_TICK") or (lambda units=1: None)
+
+
+def _cred_json_value(text, at):
+    """(start, end, after) of the JSON value whose text starts at `at`: `end` is where what is withheld ends, `after` where the next
+    token of the pair begins. None when no value starts there."""
+    q = _CRED_QUOTE.match(text, at)
+    if q:
+        start = q.end()
+        close = text.find('"', start)
+        if close < 0:
+            return start, len(text), len(text)      # a value that is cut off: the rest of the text is the value
+        return start, start + len(text[start:close].rstrip("\\")), close + 1
+    m = _CRED_BARE.match(text, at)
+    if m is None:
+        return None
+    if m.group()[0] in "nft":
+        return at, at, m.end()                     # null, true and false are not secrets
+    return m.start(), m.end(), m.end()
+
+
+def _cred_pair_spans(text, spans):
+    for head in _CRED_PAIR_HEAD.finditer(text):
+        if not name_is_sensitive(head.group(1)):
+            continue
+        at = head.end()
+        for _ in range(3):
+            got = _cred_json_value(text, at)
+            if got is None:
+                break
+            start, end, after = got
+            if end > start:
+                value = text[start:end]
+                if not (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    spans.append((start, end, _CRED_PAIR_WHY))
+            more = _CRED_NEXT_VALUE.match(text, after)
+            if more is None:
+                break
+            at = more.end()
+
+
+def _cred_random_like(run):
+    """A run that looks like random base64 and not like a path, a name or a hash: mixed case and digits in the proportions
+    random text has (a long path is mostly lower case with few capitals; a hex digest has no case to mix)."""
+    n = len(run)
+    upper = sum(1 for ch in run if "A" <= ch <= "Z")
+    lower = sum(1 for ch in run if "a" <= ch <= "z")
+    digit = sum(1 for ch in run if "0" <= ch <= "9")
+    return upper * 100 >= 15 * n and lower * 100 >= 15 * n and digit * 100 >= 5 * n
+
+
+def _cred_name_before(text, at):
+    """The letters and digits of the name an assigned value follows (`nextToken=` gives `nexttoken`)."""
+    return re.sub(r"[^a-z0-9]", "", text[max(0, at - 64):at].lower())
+
+
+def _cred_spans(text, shapes, skip=()):
+    spans = []
+    big = len(text) > _CRED_GATE
+    low = text.lower()
+    sep = "=" in text or ":" in text or "%3" in low
+    if "value" in low:
+        _cred_pair_spans(text, spans)
+    for why, rx, group in _CRED_RULES:
+        if why in skip:
+            continue
+        need = _CRED_NEEDLES[why]
+        if need is _CRED_ASSIGN and not sep:
+            continue
+        for n in need:
+            if n in low:
+                break
+        else:
+            continue
+        if big:
+            _tick(4096)
+        for m in rx.finditer(text):
+            if big:
+                _tick(1)
+            if "assigned to a credential name" in why:
+                if _CRED_ARN_TAIL.search(text[max(0, m.start() - 120):m.start()]):
+                    continue                              # arn:aws:secretsmanager:...:secret:NAME is a name, not a value
+                if _cred_name_before(text, m.start(m.lastindex or 0)).endswith(_CRED_NOT_SECRET):
+                    continue                              # nextToken=, pageToken=, clientToken=: a position or an idempotency key
+            for g in _CRED_GROUPS.get(group, (group,)):
+                if g and m.group(g) is None:
+                    continue
+                start, end = m.span(g)
+                value = text[start:end]
+                if g and (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    continue
+                if why == "a scheme and its credential" and g == 1 and not (re.search(r"[0-9+/=_.~-]", value) or len(value) >= 16):
+                    continue                              # "basic authentication" is prose, "Basic dXNlcjpwYXNz" is not
+                if g == 1 and group == -1 and len(m.groups()) >= 2 and m.group(1) in ("'", '"'):
+                    continue                              # group 1 of the switch rules is the quote
+                spans.append((start, end, why))
+    if big:
+        _tick(4096)
+    for m in (_CRED_B64_RUN.finditer(text) if len(text) >= 128 and "a long unbroken base64-like run" not in skip else ()):
+        if _cred_random_like(m.group(0)):
+            spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
+    if shapes and len(text) >= 32 and "a key-length base64 string" not in skip:
+        for why, rx, check in _CRED_SHAPES:
+            for m in rx.finditer(text):
+                if not check or _cred_random_like(m.group(0)):
+                    spans.append((m.start(), m.end(), why))
+    spans.sort()
+    merged = []
+    for s in spans:
+        if merged and s[0] < merged[-1][1]:
+            if s[1] > merged[-1][1]:
+                merged[-1] = (merged[-1][0], s[1], merged[-1][2])
+            continue
+        merged.append(s)
+    return merged
+
+
+def credential_spans(text, shapes=True, skip=()):
+    """(start, end, why) of each stretch of `text` that is a credential by the name it is given under or by its text, in order and
+    not overlapping. `shapes` False leaves out the rules that recognise a key by its length alone (a value that is named a checksum or
+    a digest is not scanned for them). This is not `token_spans`: an identifier (a GUID, a hex digest, an access key id, an ARN) is
+    not a credential here, and a tool that prints identifiers on purpose asks only for these."""
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text), "text longer than %d characters" % TEXT_LIMIT)]
+    if shapes and not skip and text in _CRED_CLEAN:
+        return []
+    spans = _cred_spans(text, shapes, skip)
+    if shapes and not skip and not spans and len(text) <= 256 and len(_CRED_CLEAN) < 100000:
+        _CRED_CLEAN.add(text)
+    return spans
+
+
+def clean_value(value, leaf, note, key=None, pointer="", depth=0, shapes=True, max_depth=200):
+    """The structure rule: `value` (what a JSON document decoded to) with every credential in it replaced. A string goes to
+    `leaf(text, pointer, shapes)`, which returns what is printed for it. A field whose name says it holds a secret (or a `Value` whose
+    `Name` does), at any depth, is not read at all: `note(pointer, why, original)` returns what is printed for it (a number under such
+    a name is withheld too: 0 and 1 are not nothing). A key goes through `key(text)` when one is given. A value nested deeper than
+    `max_depth` is replaced the same way."""
+    if isinstance(value, str):
+        return leaf(value, pointer, shapes)
+    _tick(1)
+    if depth > max_depth and isinstance(value, (dict, list)):
+        return note(pointer, "nested deeper than %d levels" % max_depth, value)
+    if isinstance(value, dict):
+        named = None
+        for k in _CRED_NAME_KEYS:
+            if isinstance(value.get(k), str):
+                named = value[k]
+                break
+        pair_secret = named is not None and name_is_sensitive(named)
+        out = {}
+        for k, v in value.items():
+            ks = str(k)
+            point = "%s/%s" % (pointer, ks.replace("~", "~0").replace("/", "~1"))
+            safe_key = key(ks) if key is not None else ks
+            if safe_key in out:
+                safe_key = "%s#%d" % (safe_key, len(out))
+            sensitive = name_is_sensitive(ks) or (pair_secret and ks in _CRED_VALUE_KEYS)
+            if sensitive and is_container_name(ks) and isinstance(v, (dict, list)):
+                sensitive = False
+            if sensitive and not (v is None or isinstance(v, bool) or v == "") and not (isinstance(v, str) and (_CRED_REDACTED.match(v) or v.lower() in _CRED_NOT_A_VALUE)):
+                out[safe_key] = note(point, "credential-named field", v)
+            else:
+                out[safe_key] = clean_value(v, leaf, note, key, point, depth + 1, shapes and not _CRED_CHECKSUM_NAME.search(ks), max_depth)
+        return out
+    if isinstance(value, list):
+        return [clean_value(v, leaf, note, key, "%s/%d" % (pointer, i), depth + 1, shapes, max_depth) for i, v in enumerate(value)]
+    return value
+
+
+# what the rules of the block above already withhold whole, with their own markers: the first pass leaves these to them
+_CRED_OLD_COVERS = frozenset(("a JSON Web Token", "a password in a URL", "an authorization header value", "a scheme and its credential",
+                              "a long unbroken base64-like run", "a key-length base64 string"))
+
+
+def _credentials_withheld(text, kind, skip=()):
+    """`text` with each credential in it withheld. It runs after the rules above, on text that may hold their markers: a stretch that
+    begins at a marker is theirs already."""
+    out, last = [], 0
+    for start, end, why in credential_spans(text, True, skip):
+        if text.startswith("<", start):
+            continue
+        out.append(text[last:start])
+        out.append(_withheld(why, end - start, kind))
+        last = end
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
+
+
 def scrub(text, kind="text"):
-    """The text with every token-shaped run and every user-info withheld."""
+    """The text with every token-shaped run, every user-info and every credential withheld."""
     if len(text) > TEXT_LIMIT:
         return _withheld("over-long text", len(text), kind)
+    text = _credentials_withheld(text, kind, _CRED_OLD_COVERS)     # first: the rules above cut a secret into pieces that no rule for a whole one can match
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
@@ -342,7 +711,7 @@ def scrub(text, kind="text"):
         out.append(_withheld("token-shaped text", end - start, kind))
         last = end
     out.append(text[last:])
-    return "".join(out)
+    return _credentials_withheld("".join(out), kind)
 
 
 def redact_url(url):
@@ -689,46 +1058,107 @@ def boundary_summary():
 # The finished file is placed without replacing an earlier one (a rerun that stopped sooner never leaves a smaller file
 # where a larger one was; the name actually used is the one in `shown`), and a stop removes or names the temporary file, under a name
 # an answer may print (never the hidden one). Closing and placing the file is held against a stop, which is acted on right after.
+# Only regular files are ever compared: both names are opened with O_NONBLOCK and O_NOFOLLOW and looked at with fstat before a byte is
+# read, so a FIFO, a device, a directory or a link at a name (the caller's own results_to, say) is another result's and cannot hold the
+# tool. The comparing of one call has PLACE_COMPARE_SECONDS in all; past it an earlier result is taken as different and this one takes
+# the next free name (nothing is replaced, but an identical rerun may then be named anew).
+# The name is taken with a hard link of the finished file, so it never holds an empty file, whatever stops the tool and when (SIGKILL
+# included). Where the file system refuses the link, the name is taken with an exclusive create and the file is moved over it: a stop
+# that unwinds (an exception) takes the empty name back while it is still the empty file this call made; a stop that ends the process
+# without unwinding (SIGKILL, the handlers of the STOP block) between the create and the move leaves the empty name, and the next run takes -2.
+# abort_pages() drops the temporary files of all the pages under that guard; the module's fail() calls it before it answers.
 # The module that carries this block defines GUARD (a dict with "depth") and checkpoint().
-def same_bytes(a, b):
-    """Whether two files hold the same bytes (read in blocks, never whole)."""
+PLACE_COMPARE_SECONDS = 5   # all the comparing one call to place_without_replacing does; past it an earlier result is taken as different
+
+
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
     try:
-        if os.path.getsize(a) != os.path.getsize(b):
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
             return False
-        with open(a, "rb") as fa, open(b, "rb") as fb:
-            while True:
-                x, y = fa.read(1 << 20), fb.read(1 << 20)
-                if x != y:
-                    return False
-                if not x:
-                    return True
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
     except OSError:
         return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
+
+
+def _take_name(tmp, candidate):
+    """Give the finished `tmp` the name `candidate` if it is free, and say whether it now has it (False: the name is taken, by a file, a
+    link, a FIFO or a directory). The name is taken with a hard link, so it never holds an empty file; where the file system refuses the
+    link it is taken with an exclusive create and the file is moved over it, and a stop that unwinds in between takes the empty name back."""
+    try:
+        os.link(tmp, candidate)
+    except FileExistsError:
+        return False
+    except OSError:
+        pass                                   # no hard links here: the older way, below
+    else:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass                               # the hidden name stays beside the placed file; the stop path of the page removes it
+        return True
+    fd = made = None
+    try:
+        fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        made = os.fstat(fd)
+        closing, fd = fd, None
+        os.close(closing)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return True
+    except FileExistsError:
+        return False
+    except BaseException:
+        try:
+            if made is None and fd is not None:
+                made = os.fstat(fd)
+        except OSError:
+            pass
+        try:
+            if fd is not None:
+                os.close(fd)
+        except OSError:
+            pass
+        try:
+            now = os.lstat(candidate)
+            if made is not None and (now.st_mode & 0o170000) == 0o100000 and now.st_size == 0 and (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino):
+                os.unlink(candidate)           # the empty name this call took is not left behind
+        except OSError:
+            pass
+        raise
 
 
 def place_without_replacing(tmp, path):
-    """Move the finished `tmp` to `path` and never replace what is there, a file or a link: the name is taken first with an
-    exclusive create that does not follow links; a file of the same bytes is named again, any other result takes the next free
-    <stem>-<n><suffix>. Returns the path that holds it."""
+    """Move the finished `tmp` to `path` and never replace what is there. A name that is taken (by a file, a link, a FIFO or a directory) is
+    left as it is: a regular file of the same bytes is named again, any other result takes the next free <stem>-<n><suffix>. Returns the
+    path that holds it. The comparing with earlier results has PLACE_COMPARE_SECONDS in all: past it an earlier result is taken as
+    different and this one takes the next free name."""
+    deadline = time.monotonic() + PLACE_COMPARE_SECONDS
     for n in range(1, 1000):
         candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
-        try:
-            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        except FileExistsError:
-            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
-                os.unlink(tmp)
-                return candidate
-            continue
-        os.close(fd)
-        try:
-            os.replace(tmp, candidate)         # only replaces the empty file this call just made
-        except OSError:
-            try:
-                os.unlink(candidate)           # the empty name this call took is not left behind
-            except OSError:
-                pass
-            raise
-        return candidate
+        if _take_name(tmp, candidate):
+            return candidate
+        if not os.path.islink(candidate) and same_bytes(tmp, candidate, deadline):
+            os.unlink(tmp)
+            return candidate
     raise OSError(errno.EEXIST, "no free name beside %s" % path)
 
 
@@ -750,7 +1180,39 @@ def place_visibly(tmp, wanted):
     return fallback
 
 
+def _whole_lines_only(path):
+    """Cut the kept file back to its last newline, so that the .partial file a stop keeps holds whole lines only. Best effort: a file that cannot be opened is left as it is."""
+    try:
+        with open(path, "rb+") as fh:
+            size = fh.seek(0, 2)
+            end = size
+            while end > 0:
+                start = max(0, end - 65536)
+                fh.seek(start)
+                at = fh.read(end - start).rfind(b"\n")
+                if at >= 0:
+                    if start + at + 1 < size:
+                        fh.truncate(start + at + 1)
+                    return
+                end = start
+            fh.truncate(0)
+    except OSError:
+        pass
+
+
 PAGES = []
+
+
+def abort_pages():
+    """Drop the hidden temporary file of every page that was being written, under the signal guard (GUARD["depth"], as emit holds it for an
+    answer): a signal that lands in the loop is held until it is over, so that no page's file is left and the answer that follows is the one
+    answer."""
+    GUARD["depth"] += 1
+    try:
+        for page in list(PAGES):
+            page.abort()
+    finally:
+        GUARD["depth"] -= 1
 
 
 class LosslessPage:
@@ -835,7 +1297,7 @@ class LosslessPage:
         try:
             if out is not None:
                 out.close()
-        except OSError:
+        except (OSError, RuntimeError, ValueError):
             pass
         finally:
             if tmp is not None:
@@ -856,12 +1318,13 @@ class LosslessPage:
             try:
                 self._out.flush()
                 self._out.close()
-            except OSError:
-                pass
+            except (OSError, RuntimeError, ValueError):
+                pass                            # a stop that landed inside a write of this very file: its buffer cannot be flushed (RuntimeError: reentrant call)
             self._out = None
         if not os.path.lexists(self._tmp):      # a stop between choosing the name and creating the file
             self._tmp = None
             return None
+        _whole_lines_only(self._tmp)            # what the file holds ends at a line end, whether the stop fell between a line and its newline or inside a flush
         placed = place_visibly(self._tmp, self.path.with_name(self.path.name + ".partial"))
         self._tmp = None
         return placed
@@ -918,17 +1381,21 @@ def emit(answer):
 
 
 def fail(message, **extra):
-    for page in list(PAGES):    # a page that was being written is dropped with its hidden temporary file, whatever ended the call
-        page.abort()
+    abort_pages()               # a page that was being written is dropped with its hidden temporary file, whatever ended the call
     emit({"error": message, "status": "failed",
           "status_basis": "the call was refused or ended before an answer; nothing in this document is a finding about the evidence", **extra})
     raise SystemExit(1)
 
 
 def interrupted_answer(signum, **extra):
+    released = ("the engine was stopped and the mount released" if not extra.get("cleanup_problems")
+                else "the clean-up did not finish (cleanup_problems), so the mount may remain")
+    unfinished = extra.get("unfinished")
+    kept = ("and what an export had written before that is kept and named" if not unfinished else
+            "and what an export had written before that is kept, but the export worker did not end within its grace period: the file it was "
+            "copying (unfinished) is named, and its bytes, ranges file and manifest row may be incomplete")
     emit({"error": "stopped by signal %d before the call was complete" % signum, "status": "interrupted",
-          "status_basis": "the tool was stopped by signal %d; the engine was stopped and the mount released, and what an export had written "
-                          "before that is kept and named" % signum, "signal": signum, "parser": PARSER, **extra})
+          "status_basis": "the tool was stopped by signal %d; %s, %s" % (signum, released, kept), "signal": signum, "parser": PARSER, **extra})
 
 
 class SecretValuesRefused(Exception):
@@ -949,6 +1416,165 @@ def make_private_dirs(path):
             os.mkdir(str(directory), 0o700)
         except FileExistsError:
             pass
+
+
+class ZeroPages:
+    """Finds the zero-filled pages of a byte stream fed in order: whole, aligned ZERO_PAGE-byte pages in which every byte is 0, joined into
+    runs. Memory is one run and one partial page, whatever the stream; a run is handed to `emit(offset, length)` when it ends. A last page
+    shorter than ZERO_PAGE is not a whole page and is not judged (`tail` says how many bytes it holds)."""
+
+    def __init__(self, emit):
+        self.emit = emit
+        self.start = None
+        self.length = 0
+        self.part_n = 0
+        self.part_zero = True
+        self.part_at = 0
+
+    def _page(self, offset, zero):
+        if zero:
+            if self.start is not None and self.start + self.length == offset:
+                self.length += ZERO_PAGE
+            else:
+                self._close()
+                self.start, self.length = offset, ZERO_PAGE
+        else:
+            self._close()
+
+    def _close(self):
+        if self.start is not None:
+            start, length, self.start, self.length = self.start, self.length, None, 0
+            self.emit(start, length)
+
+    def feed(self, offset, data):
+        """`data` begins at `offset`, the byte after the last one fed."""
+        n, i = len(data), 0
+        if self.part_n:
+            take = min(ZERO_PAGE - self.part_n, n)
+            if self.part_zero and data.count(0, 0, take) != take:
+                self.part_zero = False
+            self.part_n += take
+            i = take
+            if self.part_n == ZERO_PAGE:
+                self._page(self.part_at, self.part_zero)
+                self.part_n = 0
+        view = memoryview(data)
+        while n - i >= ZERO_PAGE:
+            # Pages before the first zero byte are not zero pages: they are jumped, not looked at one by one.
+            first = data.find(b"\0", i)
+            if first < 0:
+                self._close()
+                i += ((n - i) // ZERO_PAGE) * ZERO_PAGE
+                break
+            skip = (first - i) // ZERO_PAGE
+            if skip:
+                self._close()
+                i += skip * ZERO_PAGE
+                continue
+            self._page(offset + i, view[i:i + ZERO_PAGE] == ZERO_BYTES)
+            i += ZERO_PAGE
+        view.release()
+        if n - i:
+            self.part_at, self.part_n = offset + i, n - i
+            self.part_zero = data.count(0, i) == n - i
+
+    def finish(self):
+        """Ends the last run and returns the number of bytes in the last, partial page (not judged)."""
+        self._close()
+        return self.part_n
+
+
+ZERO_BYTES = bytes(ZERO_PAGE)
+
+
+class RangesFile:
+    """The ranges sidecar of one export: JSON Lines under $OUT/mem_fs/%ranges/<output name>.json, one row per range as it is found (so a hostile
+    file with many zero holes costs no memory), then the rows of the read and unavailable ranges and a last row of kind `summary`. A file that
+    does not end in that row was cut (a stop, a full disk). Its size and sha256 are of the bytes the system accepted. A refused write is the
+    file system's trouble: it is named as a problem of the sidecar, never as a fact about the memory."""
+
+    def __init__(self, secret, rel, virtual, reported):
+        self.rel = "%s/%s%%.json" % (RANGES_DIR, rel)
+        self.fd, self.problem = None, None
+        self.digest, self.size, self.buf, self.pending = hashlib.sha256(), 0, [], 0
+        self.counts = {"read": 0, "unavailable": 0, "not_copied": 0, "zero_filled": 0}
+        self.zero_bytes = 0
+        try:
+            self.fd = secret.open_value(self.rel, count=False)
+        except OSError as exc:
+            self.problem = "the ranges file could not be created: %s" % _describe(exc)
+            return
+        self._put({"kind": "ranges", "version": 1, "virtual_path": virtual, "output": rel, "mount_reported_size": reported,
+                   "page_size": ZERO_PAGE, "meaning": ZERO_MEANING})
+
+    def _put(self, row):
+        if self.fd is None:
+            return
+        line = (json.dumps(row) + "\n").encode("ascii")
+        self.buf.append(line)
+        self.pending += len(line)
+        if self.pending >= 1 << 16:
+            self._flush()
+
+    def _flush(self):
+        data, self.buf, self.pending = b"".join(self.buf), [], 0
+        if self.fd is None or not data:
+            return
+        view = memoryview(data)
+        try:
+            while len(view):
+                taken = os.write(self.fd, view)
+                if not taken:
+                    raise OSError(errno.EIO, "a write took no bytes")
+                self.digest.update(view[:taken])
+                self.size += taken
+                view = view[taken:]
+        except OSError as exc:
+            self.problem = "the ranges file could not be written whole: %s; it is cut" % _describe(exc)
+            self._close_fd()
+        finally:
+            view.release()
+
+    def _close_fd(self):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+
+    def add(self, kind, offset, length, why=None):
+        self.counts[kind] += 1
+        if kind == "zero_filled":
+            self.zero_bytes += length
+        row = {"kind": kind, "offset": offset, "length": length}
+        if why:
+            row["why"] = why
+        self._put(row)
+
+    def finish(self, summary):
+        """Writes the summary row and closes; the info the answer carries."""
+        self._put(dict(summary, kind="summary", **{k + "_ranges": v for k, v in self.counts.items()}, zero_filled_bytes=self.zero_bytes))
+        self._flush()
+        if self.fd is not None:
+            try:
+                os.fsync(self.fd)
+            except OSError as exc:
+                self.problem = "the ranges file could not be flushed to disk: %s" % _describe(exc)
+            self._close_fd()
+        return self.info()
+
+    def info(self):
+        wrote = self.size > 0
+        return {"bytes": self.size if wrote else None, "sha256": self.digest.hexdigest() if wrote else None,
+                "read_ranges": self.counts["read"], "unavailable_ranges": self.counts["unavailable"], "not_copied_ranges": self.counts["not_copied"],
+                "zero_filled_ranges": self.counts["zero_filled"], "zero_filled_bytes": self.zero_bytes,
+                "file_complete": self.problem is None, "problem": self.problem}
+
+
+def _describe(exc):
+    code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
+    return "%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc))
 
 
 class SecretValues:
@@ -989,8 +1615,9 @@ class SecretValues:
     def shown_path(self, rel: str) -> str:
         return "%s/%s" % (self.shown, rel)
 
-    def open_value(self, rel: str) -> int:
-        """A file descriptor for $OUT/mem_fs/<rel>, created exclusively, never through a link, mode 0600. The file is counted the moment it exists."""
+    def open_value(self, rel: str, count: bool = True) -> int:
+        """A file descriptor for $OUT/mem_fs/<rel>, created exclusively, never through a link, mode 0600. The file is counted the moment it exists
+        (a ranges file, which holds no value, is not: count=False)."""
         assert self.root is not None
         target = self.root / rel
         make_private_dirs(target.parent)
@@ -999,7 +1626,8 @@ class SecretValues:
             raise OSError(errno.EPERM, "the output directory is not inside $OUT/%s" % OUT_DIR)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(str(target), flags, 0o600)
-        self.written += 1
+        if count:
+            self.written += 1
         return fd
 
     def open_unique(self, rel: str):
@@ -1053,7 +1681,8 @@ class SecretValues:
             "manifest": ("%s/%s" % (self.shown, MANIFEST)) if present and self.values_root is not None and (self.values_root / MANIFEST).exists() else None,
             "contains_secret_values": present,
             "earlier_calls_in_this_job_wrote_values": self.earlier,
-            "format": "files byte for byte, mode 0600; the manifest is JSON Lines, appended to by every call of the job: item_id, virtual_path, output, bytes, sha256, status" if present else None,
+            "format": ("files byte for byte, mode 0600; the manifest is JSON Lines, appended to by every call of the job: item_id, virtual_path, output, bytes, sha256, status, "
+                       "ranges_file (+ its bytes and sha256); each export's ranges file is under %s/" % RANGES_DIR) if present else None,
         }
         if present and not self.enabled:
             answer["note"] = ("this call asked for no values and wrote none, but the job's output holds values written by earlier calls of this job: "
@@ -1129,8 +1758,21 @@ def output_name(virtual):
     return "/".join(parts) or "_"
 
 
+# The device a FUSE mount needs; a test points it at a path that is not there.
+FUSE_DEVICE = os.environ.get("DFIRSWARM_FUSE_DEVICE", "/dev/fuse")
+
+
+def no_fuse_answer(missing):
+    """The one form of "no FUSE here" every tool that mounts gives (memory-forensics mem_fs, windows-forensics vss_stores): a `no_fuse`
+    object with a reason, what the host lacks, and what to do. It is a limit of the host, not a finding about the evidence."""
+    return {"no_fuse": {"reason": "no_fuse", "blocked_by": list(missing),
+                        "what_to_do": "Run this job where /dev/fuse exists and fusermount3 or fusermount is installed (the image record, /etc/dfirswarm/image.json, says under `fuse` "
+                                      "whether the image has fusermount; the VM must also expose /dev/fuse). Until then say that no FUSE mount was possible here, "
+                                      "never that the evidence holds nothing."}}
+
+
 def prerequisites():
-    device = "/dev/fuse"
+    device = FUSE_DEVICE
     return {
         "dev_fuse_present": os.path.exists(device),
         "dev_fuse_usable": os.access(device, os.R_OK | os.W_OK),
@@ -1143,9 +1785,9 @@ def blocked_by():
     have = prerequisites()
     missing = []
     if not have["dev_fuse_present"]:
-        missing.append("/dev/fuse is not present")
+        missing.append("%s is not present" % FUSE_DEVICE)
     elif not have["dev_fuse_usable"]:
-        missing.append("/dev/fuse cannot be opened by this process")
+        missing.append("%s cannot be opened by this process" % FUSE_DEVICE)
     if not have["unmount_helper"]:
         missing.append("neither fusermount3 nor fusermount is installed")
     return missing
@@ -1209,23 +1851,39 @@ def _pdeathsig():
         pass
 
 
+PROC_SCAN = 2          # seconds one read of /proc may take (the process table, the search for the holders of the engine's pipes)
+SCAN = {"incomplete": False}    # a read of /proc that stopped at PROC_SCAN: the clean-up says so
+
+
 def process_table():
-    """{pid: (parent pid, start)} for every process, from /proc where there is one, else from ps (given 10 seconds); {} when neither
-    answers. `start` is when the process started (the kernel's clock ticks since boot, or the time ps prints): a pid whose start has
-    changed is another process."""
+    """{pid: (parent pid, start)} for every process, from /proc where there is one (read for PROC_SCAN seconds at most, the clock looked
+    at for every entry; a read that did not finish sets SCAN["incomplete"]), else from ps (given 10 seconds, and 2 more to be reaped after
+    its kill); {} when neither answers. `start` is when the process started (the kernel's clock ticks since boot, or the time ps prints):
+    a pid whose start has changed is another process."""
     table = {}
     try:
         if os.path.isdir("/proc/self"):
-            for entry in os.listdir("/proc"):
-                if entry.isdigit():
-                    try:
-                        with open("/proc/%s/stat" % entry, "rb") as fh:
-                            fields = fh.read().rsplit(b")", 1)[1].split()
-                        table[int(entry)] = (int(fields[1]), int(fields[19]))   # fields 4 and 22 of stat: ppid, starttime
-                    except (OSError, IndexError, ValueError):
-                        continue
+            stop = time.monotonic() + PROC_SCAN
+            with os.scandir("/proc") as entries:
+                for entry in entries:
+                    if time.monotonic() >= stop:
+                        SCAN["incomplete"] = True
+                        break
+                    if entry.name.isdigit():
+                        try:
+                            with open("/proc/%s/stat" % entry.name, "rb") as fh:
+                                fields = fh.read().rsplit(b")", 1)[1].split()
+                            table[int(entry.name)] = (int(fields[1]), int(fields[19]))   # fields 4 and 22 of stat: ppid, starttime
+                        except (OSError, IndexError, ValueError):
+                            continue
         else:
-            listing = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,lstart="], capture_output=True, text=True, timeout=10).stdout
+            child = subprocess.Popen(["ps", "-A", "-o", "pid=,ppid=,lstart="], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, text=True)
+            try:
+                listing = child.communicate(timeout=10)[0]
+            except subprocess.TimeoutExpired:
+                end_child(child, "ps")      # subprocess.run would wait for it without a limit after its kill
+                return {}
             for line in listing.splitlines():
                 parts = line.split(None, 2)
                 if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
@@ -1269,15 +1927,240 @@ def end_what_the_engine_left(listed):
             pass
 
 
-def is_mounted(mount):
-    """Whether the path is a mount point, a dead one included: os.path.ismount says no for a FUSE mount whose engine has died (ENOTCONN)."""
+# What the engine started and daemonised before the listing, or forked between the listing and its end, is not in the listing. On Linux
+# it is found by what it holds: the pipes this tool made for the engine (its stdout and stderr) are named in /proc/<pid>/fd as
+# pipe:[inode], and a process that holds one of them got it from the engine. The kill set is never wider than that: not this tool, not
+# pid 1, not an ancestor of this tool, and only a process whose start time and pipe are checked again, through a pidfd where there is
+# one, just before the signal.
+HOLDER_TERM = 2        # seconds the holders are given after SIGTERM
+HOLDER_KILL = 2        # seconds they are given after SIGKILL
+MAX_HOLDERS = 64       # holders ended in one call; a search that finds more is incomplete and says so
+MAX_REPORTED = 50      # holders named in the answer
+
+
+def pipe_inodes(*streams):
+    """The inode numbers of the pipes this tool made for the engine ({} where there is no /proc to look them up in)."""
+    if not os.path.isdir("/proc/self/fd"):
+        return set()
+    found = set()
+    for stream in streams:
+        try:
+            found.add(os.fstat(stream.fileno()).st_ino)
+        except (OSError, ValueError):
+            pass
+    return found
+
+
+def start_of(pid):
+    """The start time of a process (field 22 of /proc/<pid>/stat), or None when there is no such process."""
     try:
-        if os.path.ismount(mount):
-            return True
-        os.lstat(mount)
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            return int(fh.read().rsplit(b")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def alive_as(pid, start):
+    """Whether `pid` is still the process that started at `start` and is not dead (a zombie is not: it holds no descriptor)."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            fields = fh.read().rsplit(b")", 1)[1].split()
+        return int(fields[19]) == start and fields[0] not in (b"Z", b"X")
+    except (OSError, IndexError, ValueError):
         return False
-    except OSError as exc:
-        return exc.errno == errno.ENOTCONN
+
+
+def holds_pipe(pid, wanted, stop=None):
+    """Whether process `pid` holds one of the pipes in `wanted` ({'pipe:[inode]', ...}); None when its descriptors cannot be read, or
+    the clock `stop` ran out before they were all looked at."""
+    try:
+        with os.scandir("/proc/%d/fd" % pid) as entries:
+            for entry in entries:
+                if stop is not None and time.monotonic() >= stop:
+                    return None
+                try:
+                    if os.readlink(entry.path) in wanted:
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return False
+
+
+def find_pipe_holders(inodes):
+    """({pid: start} of the processes, other than this tool, pid 1 and the tool's ancestors, that hold one of the pipes; whether the search
+    was complete). The search stops at PROC_SCAN seconds and at MAX_HOLDERS holders."""
+    wanted = {"pipe:[%d]" % inode for inode in inodes}
+    table = process_table()
+    skip, pid = {1, os.getpid()}, os.getppid()
+    while pid and pid not in skip and pid in table:     # the ancestors of this tool
+        skip.add(pid)
+        pid = table[pid][0]
+    skip.add(pid)
+    found, complete = {}, not SCAN["incomplete"]
+    stop = time.monotonic() + PROC_SCAN
+    try:
+        with os.scandir("/proc") as entries:
+            for entry in entries:
+                if time.monotonic() >= stop:
+                    complete = False
+                    break
+                if not entry.name.isdigit() or int(entry.name) in skip:
+                    continue
+                pid = int(entry.name)
+                held = holds_pipe(pid, wanted, stop)
+                if held is None and time.monotonic() >= stop:
+                    complete = False
+                    break
+                if held:
+                    start = start_of(pid)
+                    if start is not None:
+                        if len(found) >= MAX_HOLDERS:
+                            complete = False
+                            break
+                        found[pid] = start
+    except OSError:
+        complete = False
+    return found, complete
+
+
+def signal_holder(pid, start, wanted, signum):
+    """Signal `pid` only if it is still the process that was found: the same start time and still holding one of the pipes. Where the
+    kernel has pidfds the descriptor is opened first and the checks are made after it, so that the signal goes to the process that was
+    checked even if its number is reused a moment later. True when a signal was sent."""
+    fd = None
+    try:
+        try:
+            fd = os.pidfd_open(pid)
+        except AttributeError:
+            fd = None
+        except OSError as exc:
+            if exc.errno != errno.ENOSYS and exc.errno != errno.EPERM:
+                return False                # ESRCH: gone
+        if start_of(pid) != start or holds_pipe(pid, wanted) is not True:
+            return False
+        send = getattr(signal, "pidfd_send_signal", None)
+        if fd is not None and send is not None:
+            send(fd, signum)
+        else:
+            os.kill(pid, signum)
+        return True
+    except OSError:
+        return False
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def end_pipe_holders(inodes):
+    """End the processes that still hold the engine's pipes once the engine and what was listed below it are gone: SIGTERM, HOLDER_TERM
+    seconds, SIGKILL, HOLDER_KILL seconds, each checked again just before the signal. Returns the clean-up record: {'found': n,
+    'ended': [{'pid', 'how'}], 'left': [pids], 'search_complete': bool}, or None where there is no /proc to look in."""
+    if not inodes:
+        return None
+    found, complete = find_pipe_holders(inodes)
+    wanted = {"pipe:[%d]" % inode for inode in inodes}
+    how = {}
+
+    def alive(pid):         # the process that was found, not yet dead (a zombie holds nothing)
+        return alive_as(pid, found[pid])
+
+    for signum, wait, word in ((signal.SIGTERM, HOLDER_TERM, "terminated"), (signal.SIGKILL, HOLDER_KILL, "killed")):
+        sent = [pid for pid, start in found.items() if alive(pid) and signal_holder(pid, start, wanted, signum)]
+        for pid in sent:
+            how[pid] = word
+        until = time.monotonic() + wait
+        while time.monotonic() < until and any(alive(pid) for pid in sent):
+            time.sleep(0.05)
+        if not any(alive(pid) for pid in found):
+            break
+    ended = [{"pid": pid, "how": how[pid]} for pid in found if pid in how and not alive(pid)]
+    left = [pid for pid in found if alive(pid)]
+    return {"found": len(found), "ended": ended[:MAX_REPORTED], "left": left[:MAX_REPORTED], "search_complete": complete,
+            **({"more": len(ended) + len(left) - MAX_REPORTED} if len(ended) + len(left) > MAX_REPORTED else {})}
+
+
+# A stat of a FUSE mount whose server does not answer blocks for as long as the server lives (and, once a signal has interrupted it, can
+# be ended by SIGKILL only), so no call on the mount is made by this process: it is made by a short child with a time limit.
+CHECK_WAIT = 3         # seconds, in all, that the clean-up gives to asking whether the mount is still there
+UNMOUNT_WAIT = 12      # one call of the unmount helper
+REAP_WAIT = 2          # after a child (a mount check, the unmount helper) was killed; a child still not reaped then is named and left
+LEFT = []              # children that were not reaped REAP_WAIT seconds after their kill: (what, Popen); looked at again once the engine is stopped
+CHECK_CODE = (
+    "import errno, os, sys\n"
+    "mount, marker = sys.argv[1], sys.argv[2]\n"
+    "try:\n"
+    "    mounted = os.path.ismount(mount)\n"
+    "    if not mounted:\n"
+    "        os.lstat(mount)\n"
+    "except OSError as exc:\n"
+    "    mounted = exc.errno == errno.ENOTCONN\n"      # os.path.ismount says no for a FUSE mount whose engine has died (ENOTCONN)
+    "if not mounted:\n"
+    "    sys.exit(12)\n"
+    "sys.exit(10 if not marker or os.path.isdir(marker) else 11)\n"
+)
+
+
+def end_child(child, what):
+    """Kill a child of this tool and wait for it for REAP_WAIT seconds at most (never without a limit: a process in uninterruptible
+    sleep is not reaped by its kill). A child that is still not reaped is recorded in LEFT, named in the answer, and left."""
+    try:
+        child.kill()
+    except OSError:
+        pass
+    try:
+        child.wait(timeout=REAP_WAIT)
+    except subprocess.TimeoutExpired:
+        LEFT.append((what, child))
+    except OSError:
+        pass
+
+
+def check_mount(mount, wait, marker=None):
+    """Ask, from a child that is ended at the time limit, whether `mount` is a mount point (a dead one included) and, when a marker is
+    given, whether the marker is a directory in it. 'ready' (a mount point, the marker there), 'mounted' (a mount point, no marker), 'free'
+    (not a mount point), 'silent' (no answer in `wait` seconds: the child was killed) or 'unknown' (the child could not be run or gave
+    no verdict). The child stays in this tool's process group and ends with the call."""
+    argv = [sys.executable or "python3", "-P", "-c", CHECK_CODE, str(mount), str(marker) if marker else ""]
+    try:
+        child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, ValueError):
+        return "unknown"
+    try:
+        try:
+            code = child.wait(timeout=max(0.05, wait))
+        except subprocess.TimeoutExpired:
+            return "silent"
+        return {10: "ready", 11: "mounted", 12: "free"}.get(code, "unknown")
+    finally:
+        if child.poll() is None:
+            end_child(child, "mount check")
+
+
+def run_unmount_helper(argv):
+    """Run the unmount helper for UNMOUNT_WAIT seconds at most; then kill it and wait REAP_WAIT more. None when it finished, else
+    what happened, in words."""
+    try:
+        helper = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return "the unmount helper could not be run"
+    ended = False
+    try:
+        try:
+            helper.wait(timeout=UNMOUNT_WAIT)
+            return None
+        except subprocess.TimeoutExpired:
+            pass
+        ended = True
+        message = "the unmount helper did not finish within %ds" % UNMOUNT_WAIT
+        end_child(helper, "unmount helper")
+        if helper.poll() is None:
+            message += " and could not be ended (pid %d, left running)" % helper.pid
+        return message
+    finally:
+        if not ended and helper.poll() is None:
+            end_child(helper, "unmount helper")
 
 
 def main():
@@ -1299,7 +2182,7 @@ def main():
     mount = writable_mount(mount_arg)
     timeout = args.get("timeout_seconds", DEFAULT_TIMEOUT)
     if not isinstance(timeout, int) or isinstance(timeout, bool) or not MIN_TIMEOUT <= timeout <= MAX_TIMEOUT:
-        fail("timeout_seconds must be an integer from %d to %d: the engine's stop and unmount after it need up to 95 s, "
+        fail("timeout_seconds must be an integer from %d to %d: the engine's stop and unmount after it need up to 114 s, "
              "and the tool's own limit is 600" % (MIN_TIMEOUT, MAX_TIMEOUT))
     mode = args.get("mode", "list")
     if mode not in ("list", "text", "export"):
@@ -1395,6 +2278,9 @@ def main():
     drains = [LogDrain(proc.stdout, stdout_file), LogDrain(proc.stderr, stderr_file)]
     state = {"phase": "startup", "abandon": False}
     problem = None  # (phase, message)
+    cleanup_notes = []  # every trouble of the clean-up, also when an earlier problem is the one the answer names
+    clean_up_record = {}  # what the clean-up did beyond the engine's own end (the processes that held the engine's pipes), in every answer
+    pipes = pipe_inodes(proc.stdout, proc.stderr)   # the pipes this tool made for the engine, by inode (empty without /proc)
     result = {}
     timings = {}
     interrupted = None
@@ -1403,6 +2289,9 @@ def main():
     counts = {"requested": len(targets), "exported": 0, "failed": 0, "refused": 0, "not_exported": 0, "partial": 0,
               "not_attempted": 0}
     names_info = {"withheld": 0, "file": None, "errors": 0}
+    unfinished = {}   # set when the worker did not end within the grace period after a stop: the file it was copying, named
+    ranges_total = {"files": 0, "problems": 0, "bytes": 0, "read_ranges": 0, "unavailable_ranges": 0, "not_copied_ranges": 0,
+                    "zero_filled_ranges": 0, "zero_filled_bytes": 0}
 
     def describe(exc):
         code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
@@ -1458,30 +2347,74 @@ def main():
             return "failed"
         # `size` and the digest count the bytes the operating system accepted (an unbuffered writer, short writes followed), so a disk that
         # fills leaves a count, a digest and a file that agree; what is on disk is read back at the end and said.
-        digest, size, partial, error = hashlib.sha256(), 0, None, None
+        # The ranges of the file are found as it is copied: what was read, what the mount could not give (a read error, a file that ends before
+        # the size the mount reported), what was not copied (a stop, a bound, a full disk) and the zero-filled pages.
+        reported = st.st_size
+        ranges = RangesFile(secret, rel, virtual, reported)
+        state["inflight"] = {"virtual_path": label, "output": shown(secret.shown_path(rel), "path"), "ranges_file": shown(secret.shown_path(ranges.rel), "path"),
+                             "note": "the worker was still copying this file when the answer was made: its bytes on disk, its ranges file and its manifest row may be unfinished"}
+        zeros = ZeroPages(lambda start, length: ranges.add("zero_filled", start, length))
+        digest, size, partial, error, error_side, short, grew = hashlib.sha256(), 0, None, None, None, None, None
         try:
-            with os.fdopen(fd, "wb", buffering=0) as out, os.fdopen(source_fd, "rb") as src:
+            with os.fdopen(fd, "wb", buffering=0) as out, os.fdopen(source_fd, "rb", buffering=0) as src:
                 while True:
                     if state["abandon"]:
                         partial = "the call was stopped or its deadline was reached"
                         break
-                    chunk = src.read(CHUNK)
+                    try:
+                        chunk = src.read(CHUNK)
+                    except OSError as exc:
+                        error, error_side = exc, "read"
+                        break
                     if not chunk:
                         break
                     if size + len(chunk) > max_bytes:
                         partial = "max_bytes_per_path (%d) was reached while reading" % max_bytes
                         break
                     view = memoryview(chunk)
-                    while len(view):
-                        taken = out.write(view)
-                        if not taken:
-                            raise OSError(errno.EIO, "a write took no bytes")
-                        digest.update(view[:taken])
-                        size += taken
-                        view = view[taken:]
-                os.fsync(out.fileno())
+                    try:
+                        while len(view):
+                            taken = out.write(view)
+                            if not taken:
+                                raise OSError(errno.EIO, "a write took no bytes")
+                            digest.update(view[:taken])
+                            zeros.feed(size, chunk if taken == len(chunk) else bytes(view[:taken]))
+                            size += taken
+                            view = view[taken:]
+                    except OSError as exc:
+                        error, error_side = exc, "write"
+                        break
+                # A copy that was stopped is not flushed: the worker has the grace period to end and say so, and flushing what a copy of gigabytes had
+                # written takes longer than that on a slow disk (the answer then named the file as unfinished). The bytes are written, the file is kept
+                # and named, and the ranges file says how far the copy got.
+                if error is None and not state["abandon"]:
+                    os.fsync(out.fileno())
         except OSError as exc:
-            error = exc
+            if error is None:
+                error, error_side = exc, "write"
+        tail = zeros.finish()
+        if error is None and partial is None and size < reported:
+            short = "the file ended at %d bytes and the mount reports %d" % (size, reported)
+        if error is None and partial is None and size > reported:
+            grew = "the file gave %d bytes, %d more than the %d the mount reports" % (size, size - reported, reported)
+        gap = max(reported - size, 0)
+        if error is not None and error_side == "read":
+            # The failing read asked for up to CHUNK bytes at `size`; which page of them failed is not known, so the whole read is listed.
+            bad = min(gap, CHUNK)
+            ranges.add("unavailable", size, bad, judged("the read of up to %d bytes at offset %d failed (the failing page within it is not known): %s" % (CHUNK, size, describe(error))))
+            if gap > bad:
+                ranges.add("not_copied", size + bad, gap - bad, "the copy stopped at the first read error and did not try the rest")
+        elif error is not None:
+            ranges.add("not_copied", size, gap, judged("the output could not be written: %s" % describe(error)))
+        elif partial:
+            ranges.add("not_copied", size, gap, partial)
+        elif short:
+            ranges.add("unavailable", size, gap, short)
+        if size:
+            ranges.add("read", 0, size)
+        range_info = ranges.finish({"bytes_copied": size, "mount_reported_size": reported, "unjudged_tail_bytes": tail,
+                                    "grew_beyond_reported": max(size - reported, 0)})
+        range_info["file"] = shown(secret.shown_path(ranges.rel), "path")
         try:
             on_disk = os.lstat(secret.root / rel).st_size
         except OSError:
@@ -1497,12 +2430,24 @@ def main():
         elif partial:
             item["status"] = "partial: %s; %s" % (partial, kept)
             category = "partial"
+        elif short or grew:
+            item["status"] = "partial: %s; %s" % (short or grew, kept)
+            category = "partial"
         else:
             item["status"] = "exported"
             category = "exported"
+        if range_info["problem"]:
+            range_info["problem"] = judged(range_info["problem"])
+            ranges_total["problems"] += 1
+        ranges_total["files"] += 1
+        for key in ("bytes", "read_ranges", "unavailable_ranges", "not_copied_ranges", "zero_filled_ranges", "zero_filled_bytes"):
+            ranges_total[key] += range_info[key] or 0
+        item["ranges"] = range_info
+        state["inflight"] = None
         try:
             row = {"item_id": item["item_id"], "virtual_path": virtual, "output": rel, "bytes": size,
-                   "sha256": digest.hexdigest(), "status": str(item["status"])}
+                   "sha256": digest.hexdigest(), "status": str(item["status"]), "ranges_file": ranges.rel,
+                   "ranges_file_bytes": range_info["bytes"], "ranges_file_sha256": range_info["sha256"]}
             if on_disk is not None and on_disk != size:
                 row["bytes_on_disk"] = on_disk
             secret.note(row)
@@ -1638,17 +2583,30 @@ def main():
     def describe_for_result(exc):
         return exc if isinstance(exc, (FileNotFoundError, OutsideMount)) else describe_text(exc)
 
+    # The worker's end is an Event it sets as its last act, not Thread.join(): on CPython 3.12 a join() cut by the exception a signal
+    # handler raises marks the thread as stopped, and is_alive()/join() then say it is finished while it is still writing.
+    work_done = threading.Event()
+
     def work():
         try:
             {"list": work_list, "text": work_text, "export": work_export}[mode]()
         except BaseException as exc:  # reported by phase, never swallowed
             result["error"] = exc
+        finally:
+            work_done.set()
 
     worker = None
     try:
         # --- startup: until the mount appears ---
         while True:
-            if is_mounted(mount) and ready_marker.is_dir():
+            # The stat of the mount and of <mount>/sys is made by a child that is ended at the deadline: a FUSE server that does not
+            # answer must not hold this process past the one deadline.
+            seen = check_mount(mount, max(0.2, deadline - time.monotonic()), ready_marker)
+            if seen == "ready":
+                break
+            if seen == "silent":
+                problem = ("startup", "not ready: the mount did not answer a check within the %ds deadline (the FUSE server of the engine is not "
+                                      "answering)" % timeout)
                 break
             if proc.poll() is not None:
                 problem = ("startup", "memprocfs exited before the mount appeared (exit status %s)" % proc.returncode)
@@ -1662,8 +2620,8 @@ def main():
             work_started = time.monotonic()
             worker = threading.Thread(target=work, daemon=True)
             worker.start()
-            worker.join(max(0.0, deadline - time.monotonic()))
-            if worker.is_alive():
+            work_done.wait(max(0.0, deadline - time.monotonic()))
+            if not work_done.is_set():
                 state["abandon"] = True
                 problem = (state["phase"], "the %s phase did not finish within the %ds deadline" % (state["phase"], timeout))
             timings["work_seconds"] = round(time.monotonic() - work_started, 2)
@@ -1684,8 +2642,26 @@ def main():
             # problem of the cleanup, and the steps after it still run.
             def cleanup_problem(message):
                 nonlocal problem
+                cleanup_notes.append(message)
                 if not problem:
                     problem = ("cleanup", message)
+
+            # Whether the mount is still there, asked of a child (CHECK_WAIT seconds in all for every ask of the clean-up). A mount that
+            # does not answer is counted as still there, and is not asked about again.
+            check_left = [float(CHECK_WAIT)]
+            silent = []
+
+            def still_mounted():
+                if silent:
+                    return True
+                asked = time.monotonic()
+                seen = check_mount(mount, check_left[0])
+                check_left[0] -= time.monotonic() - asked
+                if seen == "silent":
+                    silent.append(True)
+                    cleanup_problem("the mount is still there and does not answer (a check of it did not return in the %ds the clean-up "
+                                    "gives to checks)" % CHECK_WAIT)
+                return seen != "free"
 
             try:
                 table = process_table()
@@ -1706,20 +2682,36 @@ def main():
                     cleanup_problem("memprocfs did not end within %ds of being killed" % CLEANUP_WAIT)
             # What the engine started and left (it holds the engine's pipes for as long as it lives) is ended with it.
             end_what_the_engine_left(listed)
-            if is_mounted(mount):
+            # What it daemonised before that listing, or forked after it, is found by the pipes it still holds (Linux).
+            try:
+                holders = end_pipe_holders(pipes)
+            except Exception:  # noqa: BLE001 - best effort; a search that failed is said so, not hidden
+                holders = {"found": 0, "ended": [], "left": [], "search_complete": False}
+            if holders is not None:
+                clean_up_record["pipe_holders"] = holders
+                if holders["left"]:
+                    cleanup_problem("%d process(es) that hold the engine's pipes could not be ended (pid %s)"
+                                    % (len(holders["left"]), ", ".join(str(p) for p in holders["left"])))
+                if not holders["search_complete"]:
+                    cleanup_problem("the search for the processes that hold the engine's pipes did not finish (it is bounded at %ds), so "
+                                    "one may have been left running" % PROC_SCAN)
+            if SCAN["incomplete"]:
+                cleanup_problem("the process table was not read in full within %ds, so a process the engine started may have been missed"
+                                % PROC_SCAN)
+            if still_mounted():
                 unmount = shutil.which("fusermount3") or shutil.which("fusermount")
                 if unmount:
                     for flags in (["-u"], ["-u", "-z"]):
-                        try:
-                            subprocess.run([unmount, *flags, str(mount)], stdout=subprocess.DEVNULL,
-                                           stderr=subprocess.DEVNULL, timeout=CLEANUP_WAIT, check=False)
-                        except (subprocess.TimeoutExpired, OSError) as exc:
-                            cleanup_problem("the unmount helper did not finish within %ds" % CLEANUP_WAIT
-                                            if isinstance(exc, subprocess.TimeoutExpired) else "the unmount helper could not be run")
-                        if not is_mounted(mount):
+                        trouble = run_unmount_helper([unmount, *flags, str(mount)])
+                        if trouble:
+                            cleanup_problem(trouble)
+                        if not still_mounted():
                             break
-            if is_mounted(mount) and not problem:
+            if still_mounted() and not problem:
                 problem = ("cleanup", "memprocfs stopped but the FUSE mount remained")
+            for what, child in LEFT:    # a check stuck on a server that has since died is gone by now; one that is not is named
+                if what == "mount check" and child.poll() is None:
+                    cleanup_problem("a mount check (pid %d) could not be ended and was left running" % child.pid)
             for drain in drains:
                 drain.finish(5)
             # A stream a drain thread is still reading is not closed here: close() waits for the read that thread is blocked in, which
@@ -1736,7 +2728,9 @@ def main():
                     except (OSError, ValueError):
                         pass
             if state["abandon"] and worker is not None:
-                worker.join(5)
+                # The worker ends its file (a stop is seen at the next chunk), closes its ranges file with a summary row and sets the event.
+                if not work_done.wait(5):
+                    unfinished.update(state.get("inflight") or {"note": "the export worker did not finish"})
             secret.close()
             timings["cleanup_seconds"] = round(time.monotonic() - cleanup_started, 2)
         finally:
@@ -1767,7 +2761,8 @@ def main():
     kept = {"partial_results": paged["all_results"], "partial_results_format": paged["all_results_format"]} if paged.get("all_results") else {}
     if interrupted is not None:
         interrupted_answer(interrupted, mode=mode, mount=str(mount), logs=logs, phases=timings,
-                           counts=counts if mode == "export" else None, secret_values=secret.summary(), **kept, **items)
+                           counts=counts if mode == "export" else None, ranges=ranges_total if mode == "export" else None, unfinished=unfinished or None, secret_values=secret.summary(), **kept, **items,
+                           **({"cleanup_problems": cleanup_notes} if cleanup_notes else {}), **({"clean_up": clean_up_record} if clean_up_record else {}))
         raise SystemExit(128 + interrupted)
 
     if problem:
@@ -1775,11 +2770,14 @@ def main():
         blocked = blocked_by() if phase == "startup" else None
         fail(message, phase=phase, command=" ".join(argv), mount=str(mount), logs=logs,
              engine_stderr=engine_lines(stderr_log), engine_stdout=engine_lines(stdout_log),
-             engine_exit_status=proc.returncode, blocked_by=blocked,
+             engine_exit_status=proc.returncode, blocked_by=blocked, **(no_fuse_answer(blocked) if blocked and any("fuse" in b for b in blocked) else {}),
              prerequisites=prerequisites(), phases=timings,
              counts=counts if mode == "export" else None,
+             ranges=ranges_total if mode == "export" else None,
+             unfinished=unfinished or None,
              secret_values=secret.summary(),
              **kept,
+             **({"cleanup_problems": cleanup_notes} if cleanup_notes else {}), **({"clean_up": clean_up_record} if clean_up_record else {}),
              note="Mounting needs FUSE, which a sandbox may refuse. That is a limit on the host, not a finding "
                   "about the evidence, and the report should say so. The engine's own output is in the log files named; "
                   "the lines shown here are judged as text.",
@@ -1818,9 +2816,19 @@ def main():
     else:
         answer["items"] = page.page
         answer["counts"] = counts
-        complete = counts["exported"] == counts["requested"]
-        basis = ("%d of %d requested files were exported whole%s" % (counts["exported"], counts["requested"], "" if complete else
-                 "; the others are refused, failed, partial, not exported or not attempted (each item's status says which)"))
+        answer["ranges"] = dict(ranges_total, format="one JSON Lines file per export under the values_dir's %s directory, named in each item's ranges: "
+                                "rows of kind read, unavailable (the mount gave no bytes there), not_copied (stopped or bounded before) and zero_filled, then a summary row; "
+                                "a file with no summary row was cut" % RANGES_DIR, zero_filled_means=ZERO_MEANING)
+        complete = counts["exported"] == counts["requested"] and ranges_total["problems"] == 0
+        if counts["exported"] == counts["requested"] and ranges_total["problems"]:
+            basis = "all %d requested files were copied whole" % counts["requested"]
+        else:
+            basis = ("%d of %d requested files were exported whole%s" % (counts["exported"], counts["requested"], "" if counts["exported"] == counts["requested"] else
+                     "; the others are refused, failed, partial, not exported or not attempted (each item's status says which)"))
+        if ranges_total["problems"]:
+            basis += (", but " if counts["exported"] == counts["requested"] else "; ") + "%d ranges file(s) were not written whole (each item's ranges.problem says why), so the ranges of those files are not all on disk" % ranges_total["problems"]
+        if ranges_total["unavailable_ranges"] or ranges_total["not_copied_ranges"]:
+            basis += "; %d unavailable and %d not copied range(s) are named in the ranges files" % (ranges_total["unavailable_ranges"], ranges_total["not_copied_ranges"])
     if paged.get("all_results"):
         answer["complete_results"] = paged["all_results"]
         answer["complete_results_format"] = paged["all_results_format"]
@@ -1828,6 +2836,8 @@ def main():
         answer["limit_clamped_to"] = MAX_PAGE
         answer["limit_requested"] = limit_requested
     answer["truncated"] = paged["truncated"]
+    if clean_up_record:
+        answer["clean_up"] = clean_up_record
     answer["boundary"] = boundary_summary()
     answer["status"] = "complete" if complete else "partial"
     answer["status_basis"] = basis
@@ -1838,6 +2848,8 @@ def main():
                       "The answer carries no file content and no digest of one: the manifest named in "
                       "secret_values has each export's size and sha256. A file that was not exported, or only in part, "
                       "is named in items with its status: an export that is not complete says so in complete. "
+                      "In mode export each file also has a ranges file (items[].ranges: its path, size and sha256, and a count of each class): "
+                      "what was read, what the mount did not give, what was not copied and the zero-filled pages; " + ZERO_MEANING + " "
                       "Names are shown by shape: see boundary.")
     answer = sealed(answer)
     answer["boundary"] = boundary_summary()

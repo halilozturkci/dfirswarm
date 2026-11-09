@@ -1,0 +1,62 @@
+{
+  "name": "marshal_inspect",
+  "description": "Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and never run it: its constants and every code object (names, file name, first line, flags, names used, constants, bytecode size, sha256 and bytecode hex). The reader is the tool's own: it never calls marshal.loads, builds no code object and imports nothing. CPython 3.11 to 3.13 code objects; a .pyc header is skipped, dated (the raw mtime beside the ISO 8601 UTC time) and its interpreter named from the magic number (3.14 and newer, and 3.10 and older, are `unsupported` with the version named; a stream with no header is read as the 3.11 to 3.13 layout and stops, with the position, where it does not parse). `status` and `status_basis` on every answer: complete when the root object was read to its end, every code object whole, and the whole result is in the file named in `result_file`; partial when the stream stops with an error (a cut, a count that cannot fit in what is left, nesting past 200, a reference to nothing, a type the reader does not know, a long of more than 1,048,576 digits, more than 2,000,000 objects), when text or numbers are shared so that their copies shown where used pass 32 MiB, or when the clock (max_seconds) ends the read, each named in `error` or `limits_hit` with the offset, and the code objects read whole before it are listed; failed when nothing could be read; a stream that stops is also a non-zero exit. A container that holds itself, or any large container referred to again, is named by its reference number and not followed. The answer holds counts, the root and each field of a code object cut at a fixed number of nodes (the rest marked `not_shown` with its count), and the first `limit` code objects; the whole is in the result file, a JSON document created exclusively, mode 0600, never replaced by a later call, with the byte-string constants and the bytecode as hex. NOT measured: what the program does, whether a constant is used, whether the stream is the one the interpreter would accept. SENSITIVE: a constant can be a credential. Every string, name and file name shown in the answer or the result file is withheld by its shape (user-info, a secret-named key's value, token-shaped text); a string over 4,096 characters is given by its length; an integer of 32 digits or more is given by its size; a byte string or a bytecode is shown as hex only when its text, read as Latin-1, holds nothing that shape would withhold (else it is given by its length). A secret of another shape (a plain password, a token family the rules do not name, a token split across two fields) is printed. Measured: 500 canaries of each of 17 shapes, each planted in a file name, a qualified name, names, string constants and byte-string constants (also as UTF-16), 8,500 in all: one reached an output (the 30-character AWS-secret shape, whose pieces are too short; at most 1.1% for that shape at 95%, Wilson), none of the others (at most 0.8% per shape). The canaries are random pieces, each forced to hold a lower-case letter, a capital and a digit, and the bound is for strings made so. A string of a token family drawn uniformly at random from its alphabet is not so made, and the shared rules print some of those: measured on 240 of each in this tool, about 11% of sk_live_ keys, about 5% of Slack webhook URLs and about 3% of 30-character AWS secret keys reached an output; for such strings rely on those rates, not on the bound above. write_values, in a job run as secret output, writes the whole text of each string and the hex of each byte string the outputs withheld to a mode 0600 file under $OUT, and is refused as JSON, before anything is read, outside such a job. The default out_dir is work/<agent>/marshal_inspect (in a job $OUT/marshal_inspect); a symbolic link on the way to it is refused. A name, a path, a URL or a message that quotes a credential is withheld with the identifier-shaped strings, from version 5: a value given to a password, token, secret or cookie name (password=..., Pwd=..., a Cookie header), a Name/Value pair in text whose Name is a credential (a number, an array or a long Value too, and the NewValue after an OldValue), a -Password style switch, the argument of ConvertTo-SecureString, curl -u user:pass, mysql -uUSER -pSECRET, a bcrypt hash and the known token families; the text is replaced by a marker that holds only its length. Before, only identifier-shaped strings (tokens, key ids, user-info) were withheld, so these were printed. Known gaps: a pair whose Value is an array nested in another or longer than 4,096 characters, a crypt hash that is not bcrypt, and a secret that has neither a credential name nor a token shape.",
+  "use": {
+    "extensions": [
+      ".pyc",
+      ".marshal"
+    ]
+  },
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The file holding the stream (read only; a symbolic link, a pipe or a device is refused)",
+      "required": true
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Where the stream starts (default: after a .pyc header when the file begins with one, else 0)"
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "Where the whole result goes, inside the run directory and not under inputs/ (in a job, under $OUT; default work/<agent>/marshal_inspect)"
+    },
+    "max_bytes": {
+      "type": "integer",
+      "description": "The largest stream read, 16 to 536870912 (default 64 MiB)"
+    },
+    "preview": {
+      "type": "integer",
+      "description": "Characters of a string, or bytes of a byte string, shown in the answer, 8 to 4096 (default 160); the result file holds them as far as the withholding allows"
+    },
+    "bytecode": {
+      "type": "boolean",
+      "description": "Put each code object's bytecode, as hex, in the result file (default true)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Code objects shown in the answer, 1 to 5000 (default 50); all are in the result file"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds, from 1 to 50 (default 45); a read that reaches it stops and the answer is partial"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the whole text of what the outputs withheld to a mode 0600 file under $OUT. Honoured only when the tool runs as a job (run it with secret_output: true); outside one it is refused and nothing is written"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 60,
+  "example": "{\"path\": \"work/s01/payload.pyc\", \"out_dir\": \"work/s01/marshal\"}",
+  "by": "sd29252",
+  "at": "2026-10-06T03:07:14.935Z",
+  "version": 5,
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  },
+  "sha256": "82ee3d16bdab1c705a952ca0124a6719df26d02b9fd600c085d660c33e3b6f40"
+}

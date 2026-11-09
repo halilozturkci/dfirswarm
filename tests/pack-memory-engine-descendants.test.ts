@@ -128,7 +128,8 @@ test("an unmount helper that does not answer is a named problem of the clean-up,
     const fast = join(cwd, "mem_fs_fast.py");
     const text = await readFile(FS, "utf8");
     assert.match(text, /^CLEANUP_WAIT = 20$/m);
-    await writeFile(fast, text.replace(/^CLEANUP_WAIT = 20$/m, "CLEANUP_WAIT = 2"));
+    assert.match(text, /^UNMOUNT_WAIT = 12\b/m);
+    await writeFile(fast, text.replace(/^CLEANUP_WAIT = 20$/m, "CLEANUP_WAIT = 2").replace(/^UNMOUNT_WAIT = 12\b/m, "UNMOUNT_WAIT = 2"));
     await chmod(fast, 0o755);
     await writeFile(join(bin, "fusermount3"), "#!/bin/sh\nsleep 30\n");
     await chmod(join(bin, "fusermount3"), 0o755);
@@ -143,5 +144,111 @@ test("an unmount helper that does not answer is a named problem of the clean-up,
       ran?.endGroup();
     }
   });
+});
+
+// The stub engine of tests/memory-f1-support.ts, changed to double-fork a program that keeps the engine's stdout and stderr: it is
+// reparented to init (or a subreaper) at once, so it is never below the engine in the clean-up's listing.
+const DAEMON = `if os.environ.get("STUB_DAEMON"):
+    if os.fork() == 0:
+        os.setsid()
+        if os.fork() == 0:
+            open(os.environ["STUB_DAEMON_PID"], "w").write(str(os.getpid()))
+            os.execvp("sleep", ["sleep", os.environ["STUB_DAEMON"]])
+        os._exit(0)
+    os.wait()
+`;
+
+const linuxOnly = process.platform === "linux" ? false : "pipe holders are found through /proc, which is Linux's";
+
+test("an engine that daemonises a program holding its pipes: mem_fs ends it, names it, and leaves a process holding a pipe of its own alone", { skip: linuxOnly }, async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await fsStub(cwd, bin, { tree: { "proc/a.txt": "alpha\n", "sys/x": "" } });
+    const stub = await readFile(join(bin, "memprocfs"), "utf8");
+    const marker = 'print("stub memprocfs: initialising")\n';
+    assert.ok(stub.includes(marker));
+    await writeFile(join(bin, "memprocfs"), stub.replace(marker, marker + DAEMON));
+    await writeFile(join(cwd, "inputs", "memory.raw"), Buffer.alloc(4096));
+    const daemonPid = join(cwd, "daemon.pid");
+    const decoy = spawn("sleep", ["300"], { stdio: ["pipe", "pipe", "pipe"] });     // holds pipes, none of them the tool's
+    let daemon = 0;
+    let ran: Ended | undefined;
+    try {
+      ran = await start(FS, cwd, { path: "inputs/memory.raw", mount: join(cwd, "work", "s1", "m"), mode: "list", timeout_seconds: 30 },
+        { ...env, STUB_DAEMON: "60", STUB_DAEMON_PID: daemonPid }, bin, true);
+      daemon = await pidFile(daemonPid, 5000);
+      const answer = JSON.parse(ran.stdout);
+      assert.equal(answer.status, "complete", ran.stdout);
+      assert.equal(await gone(daemon, 5000), true, "the program the engine daemonised, holding its pipes, was left running");
+      const record = answer.clean_up?.pipe_holders;
+      assert.deepEqual(record?.ended?.map((e: { pid: number }) => e.pid), [daemon], ran.stdout);
+      assert.equal(record.search_complete, true);
+      assert.deepEqual(record.left, []);
+      assert.equal(await gone(decoy.pid as number, 300), false, "a process beside the tool, holding a pipe of its own, was signalled");
+    } finally {
+      ran?.endGroup();
+      for (const pid of [daemon, decoy.pid as number]) if (pid) end(pid);
+    }
+  });
+});
+
+// The checks that keep the kill set no wider than the holders, on the functions themselves (the tool is loaded as a module; nothing runs).
+const PROBE = `
+import importlib.util, json, os, signal, subprocess, sys, time
+spec = importlib.util.spec_from_file_location("memfs", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+m.HOLDER_TERM = 0.4
+m.HOLDER_KILL = 1.0
+out = {}
+
+# the tool's own pipe (stdout, which its parent holds too): neither this process nor an ancestor is ever a holder
+mine = m.pipe_inodes(sys.stdout)
+found, complete = m.find_pipe_holders(mine)
+out["own"] = {"inodes": len(mine), "self": os.getpid() in found, "parent": os.getppid() in found, "pid1": 1 in found}
+
+# a holder that is found, then signalled with the wrong start time (a pid reused since), the wrong pipe, and the right ones
+kid = subprocess.Popen(["sleep", "60"], stdout=subprocess.PIPE)
+inodes = m.pipe_inodes(kid.stdout)
+wanted = {"pipe:[%d]" % i for i in inodes}
+found, complete = m.find_pipe_holders(inodes)
+start = found.get(kid.pid)
+out["found"] = {"kid": kid.pid in found, "complete": complete, "only_kid": sorted(found) == [kid.pid]}
+out["reused"] = m.signal_holder(kid.pid, (start or 0) + 1, wanted, signal.SIGTERM)
+out["wrong_pipe"] = m.signal_holder(kid.pid, start, {"pipe:[1]"}, signal.SIGTERM)
+time.sleep(0.3)
+out["alive_after_refusals"] = kid.poll() is None
+out["right"] = m.signal_holder(kid.pid, start, wanted, signal.SIGTERM)
+kid.wait(timeout=5)
+
+# end_pipe_holders: one holder that gives way to SIGTERM, one that ignores it and is killed, one that is gone already
+polite = subprocess.Popen(["sleep", "60"], stdout=subprocess.PIPE)
+stubborn = subprocess.Popen([sys.executable, "-c", "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"], stdout=subprocess.PIPE)
+time.sleep(0.6)
+inodes = m.pipe_inodes(polite.stdout, stubborn.stdout)
+record = m.end_pipe_holders(inodes)
+polite.poll(); stubborn.poll()
+out["record"] = {"found": record["found"], "how": sorted((e["how"] for e in record["ended"])), "left": record["left"], "complete": record["search_complete"],
+                 "polite_ended": polite.returncode is not None, "stubborn_ended": stubborn.returncode is not None}
+print(json.dumps(out))
+`;
+
+test("the pipe-holder step: this tool, its parent and pid 1 are never holders, a reused pid or another pipe is not signalled, a holder that ignores SIGTERM is killed", { skip: linuxOnly }, async () => {
+  const ran = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+    const child = spawn("python3", ["-c", PROBE, FS], { stdio: ["ignore", "pipe", "pipe"] });
+    const out: Buffer[] = [], err: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    child.stderr.on("data", (c: Buffer) => err.push(c));
+    const hard = setTimeout(() => child.kill("SIGKILL"), 60_000);
+    child.on("close", (code) => { clearTimeout(hard); resolve({ code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") }); });
+  });
+  assert.equal(ran.code, 0, ran.stderr);
+  const got = JSON.parse(ran.stdout);
+  assert.deepEqual(got.own, { inodes: 1, self: false, parent: false, pid1: false });
+  assert.deepEqual(got.found, { kid: true, complete: true, only_kid: true });
+  assert.equal(got.reused, false, "a process with another start time was signalled");
+  assert.equal(got.wrong_pipe, false, "a process that does not hold the pipe was signalled");
+  assert.equal(got.alive_after_refusals, true);
+  assert.equal(got.right, true);
+  assert.deepEqual(got.record, { found: 2, how: ["killed", "terminated"], left: [], complete: true, polite_ended: true, stubborn_ended: true });
 });
 

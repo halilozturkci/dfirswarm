@@ -38,6 +38,23 @@ errors, warnings = [], []
 
 def p(*a): return os.path.join(root, *a)
 
+def lock_file_problem(proot, rel):
+    """Why `rel` (a path in the pack) is not a pip hash lock, or None: inside requires/, present, every
+    requirement name==version with --hash=sha256: (images/install.py lock_problem, which the build uses too)."""
+    rel = str(rel)
+    if not rel.startswith("requires/") or rel.startswith("/") or ".." in rel.split("/"):
+        return "%s must be a path inside requires/" % rel
+    path = os.path.join(proot, *rel.split("/"))
+    if not os.path.isfile(path):
+        return "%s is not in the pack" % rel
+    try:
+        sys.path.insert(0, os.environ.get("DFIRSWARM_IMAGES_DIR") or os.path.join(os.path.dirname(os.path.abspath(proot)), "..", "images"))
+        import install as _install
+    except Exception as e:
+        return "the lock checker (images/install.py) could not be loaded: %s" % e
+    why = _install.lock_problem(open(path, encoding="utf-8", errors="replace").read())
+    return ("%s is not a hash lock: %s" % (rel, why)) if why else None
+
 if not os.path.isfile(p("pack.json")):
     print("no pack.json at the top of the pack"); sys.exit(2)
 try:
@@ -68,6 +85,7 @@ skills, skill_tools, skill_needs, skill_host = {}, set(), set(), set()
 sdir = p("skills")
 if os.path.isdir(sdir):
     for dirpath, _dirs, files in os.walk(sdir):
+        _dirs.sort()  # the file system's order differs; warnings come in one order
         for f in sorted(files):
             if not f.endswith(".md") or f == "INDEX.md":
                 continue
@@ -219,6 +237,11 @@ if os.path.isdir(rdir):
         mg = rm.get("magic")
         if "magic" in rm and (not isinstance(mg, list) or not all(isinstance(x, dict) and isinstance(x.get("offset"), int) and 0 <= x.get("offset") <= 1048576 and isinstance(x.get("hex"), str) and re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,64}", x.get("hex")) for x in mg)):
             errors.append("recipes/%s: magic is a list of {offset, hex}: bytes (1 to 64, as hex) at an offset within the first MiB that a derived file must hold to be offered" % name)
+        for key in ("requires", "requires_optional"):
+            if key in rm and (not isinstance(rm.get(key), list) or not all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", x) for x in rm.get(key))):
+                errors.append("recipes/%s: %s is a list of program names (the programs the recipe %s)" % (name, key, "cannot run without" if key == "requires" else "uses when they are there"))
+        if set(rm.get("requires") or []) & set(rm.get("requires_optional") or []) if isinstance(rm.get("requires"), list) and isinstance(rm.get("requires_optional"), list) else False:
+            errors.append("recipes/%s: a program is required or optional, not both" % name)
         if "secret_output" in rm:
             errors.append("recipes/%s/recipe.json: secret_output is a tool manifest's key (job kind tool); a recipe job cannot honour it" % name)
         if "order" in rm and not isinstance(rm.get("order"), int):
@@ -266,7 +289,8 @@ def _dep_names(pack_dir, seen, acc):
     if os.path.isdir(tdir):
         acc["tools"].update(n for n in os.listdir(tdir) if os.path.isdir(os.path.join(tdir, n)))
     for dirpath, _d, files in os.walk(os.path.join(pack_dir, "skills")):
-        for f in files:
+        _d.sort()
+        for f in sorted(files):
             if f.endswith(".md"):
                 m = FM.match(open(os.path.join(dirpath, f), encoding="utf-8", errors="replace").read())
                 if m:
@@ -331,6 +355,17 @@ if os.path.isfile(hj):
                     elif not deb and (path.startswith("/") or ".." in path.split("/")):
                         errors.append("%s: %s must be a path inside the download" % (where, bin_key))
             install = b.get("install") or {}
+            # A hash lock a program's pip set installs from (pip_lock beside a
+            # `python3 -m pip install` line; pip_lock and pip_after_lock in a
+            # pinned source): a file inside requires/, present, every line
+            # name==version with --hash=sha256: (images/install.py lock_problem).
+            _lock_keys = [("pip_lock", install)] + [(k, install["source"]) for k in ("pip_lock", "pip_after_lock") if isinstance(install.get("source"), dict)]
+            for _lk, _holder in _lock_keys:
+                if _lk not in _holder:
+                    continue
+                _problem = lock_file_problem(root, _holder[_lk])
+                if _problem:
+                    errors.append("requires/host.json: %s's %s: %s" % (b.get("name"), _lk, _problem))
             dl = install.get("download")
             if dl is not None:
                 where = "requires/host.json: %s's download" % b.get("name")
@@ -409,13 +444,20 @@ if os.path.isfile(hj):
                         errors.append("%s needs a version" % where)
                         continue
                     pinned(where, data, "")
+                    # An entry whose `into` is an absolute directory under /opt/dfir/data/
+                    # (definitions a tool reads by a path) belongs to no Python package.
+                    _abs = isinstance(data.get("into"), str) and data["into"].startswith("/opt/dfir/data/") and ".." not in data["into"].split("/") and "//" not in data["into"]
                     for key in ("package", "licence", "why"):
+                        if key == "package" and _abs:
+                            continue
                         if not (isinstance(data.get(key), str) and data[key].strip()):
                             errors.append("%s needs %s" % (where, key))
                     for key in ("into", "file"):
                         v = data.get(key, "")
+                        if key == "into" and _abs:
+                            continue
                         if not isinstance(v, str) or v.startswith("/") or ".." in v.split("/"):
-                            errors.append("%s: %s must be a path inside the package" % (where, key))
+                            errors.append("%s: %s must be a path inside the package (or, for `into`, an absolute directory under /opt/dfir/data/)" % (where, key))
                     # Its size, pinned: a download stops past it.
                     if not (isinstance(data.get("bytes"), int) and data["bytes"] > 0):
                         errors.append("%s needs bytes: the size of what the url serves" % where)
@@ -468,9 +510,29 @@ if os.path.isfile(hj):
                     errors.append("requires/host.json: %s's not_in_image must say why" % b.get("name"))
                 elif not b.get("optional"):
                     errors.append("requires/host.json: %s is not_in_image, so it cannot be required: mark it optional" % b.get("name"))
+            # Facts the build records about the program: argument lists whose
+            # first item is the program itself (images/install.py runs them and
+            # keeps each output under /etc/dfirswarm/facts/).
+            if "facts" in b:
+                fx = b["facts"]
+                if not (isinstance(fx, list) and fx and all(isinstance(c, list) and len(c) > 1 and all(isinstance(x, str) and x for x in c) for c in fx)):
+                    errors.append("requires/host.json: %s's facts must be a list of argument lists (strings: the program, then at least one argument)" % b.get("name"))
+                elif any(c[0] != b.get("name") for c in fx):
+                    errors.append("requires/host.json: each of %s's facts must start with the program itself" % b.get("name"))
             host_names.add(b.get("name"))
     except Exception as e:
         errors.append("requires/host.json is not valid JSON: %s" % e)
+
+# The pack's own hash locks: requires/python.lock beside python.txt, and any file under requires/locks/.
+_lock_files = []
+if os.path.isfile(p("requires", "python.lock")):
+    _lock_files.append("requires/python.lock")
+if os.path.isdir(p("requires", "locks")):
+    _lock_files += ["requires/locks/" + n for n in sorted(os.listdir(p("requires", "locks"))) if os.path.isfile(p("requires", "locks", n))]
+for _rel in _lock_files:
+    _problem = lock_file_problem(root, _rel)
+    if _problem:
+        errors.append("requires: " + _problem)
 for h in sorted(skill_host):
     if h not in host_names and h not in deps["host"]:
         warnings.append("a skill calls %r, which requires/host.json does not declare%s" % (h, " (nor does a dependency's)" if man.get("depends") and not deps["missing"] else ""))
@@ -506,7 +568,7 @@ for s in man.get("secrets", []) or []:
 # --- checksums --------------------------------------------------------------
 def walk_files():
     for dirpath, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d != "__pycache__")
         for f in sorted(files):
             if f.startswith("."):
                 continue
@@ -583,7 +645,8 @@ if mode == "seal":
         digests.pop("skills/INDEX.md", None)
         h = hashlib.sha256(open(p("skills", "INDEX.md"), "rb").read()).hexdigest()
         digests["skills/INDEX.md"] = h
-    man["checksums"] = {"sha256": digests}
+    # Sorted by path, so one pack gives one pack.json on every file system.
+    man["checksums"] = {"sha256": dict(sorted(digests.items()))}
     # Assign, never setdefault: a tool added to an already-sealed pack has to
     # reach the manifest, or the manifest quietly describes the pack it used to be.
     man["tools"] = sorted(tools)

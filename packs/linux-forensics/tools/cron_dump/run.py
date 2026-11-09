@@ -37,6 +37,7 @@ anything, so a filtered-out error still shows; a file or directory that could no
 not followed, a cron line that matches no table shape and a place that does not exist are each named.
 """
 import datetime
+import hashlib
 import json
 import math
 import os
@@ -50,7 +51,93 @@ import time
 from pathlib import Path
 
 TOOL = "cron_dump"
-PARSER = "cron_dump/8"
+PARSER = "cron_dump/16"
+
+
+# BEGIN LINUX STOP
+# The same text is in auth_log, cron_dump, shell_history and utmp_parse (tests/pack-linux-parts.test.ts holds the copies equal); journal_export's
+# stop is its SHARED PROCESS block. A signal ends the tool with a last word. The harness ends a tool that runs too long with SIGTERM before it
+# kills the group, and a tool that ignored it left its paging files as unfinished temporary files nobody could name. The rows written so far are
+# kept under their final names and the text file is closed, so the last word can say where they are; the answer itself was never built.
+#
+# This block comes right after TOOL and PARSER and installs the handlers as its last line, before any parts, constants or arguments exist: a
+# signal from then on gets one document (until the parts below are defined there is no page or text file to name, and the document says
+# none was kept). What is before it is the interpreter's own start-up and the imports, which no code of this file can cover.
+#
+# Two moments are not the handler's. Python can run a handler inside a buffered file's own write (its flush looks for signals between
+# writes), and there the file refuses the last word's flush: a signal that came while a row was being written left that paging file
+# unfinished and unnamed. So while a file the last word closes is being written, the handler only notes the signal, and the write
+# gives the last word once it is done. And while the answer, or an error answer, is being written, a signal is not answered: the
+# answer stands, and no second document follows it. The last word disarms the regex clock (SIGALRM) before anything else, and a file
+# that cannot be flushed inside it is named with its error and does not start an error document of its own (STATE["stopping"]). One
+# window cannot be closed from inside Python: an alarm that is already pending when a stop signal arrives runs its handler at the
+# first instruction of the last word, in the last word's frame, and the exception it raises there is taken by the tool's own
+# expression-timeout handling; the tool then ends partial within max_seconds and not at the signal.
+STATE = {"pages": [], "text": None, "writing": 0, "pending": None, "answering": False, "stopping": False}
+
+
+def _writing():
+    STATE["writing"] += 1
+
+
+def _written():
+    STATE["writing"] -= 1
+    if not STATE["writing"] and STATE["pending"] is not None:
+        signum, STATE["pending"] = STATE["pending"], None
+        _on_signal(signum, None)
+
+
+def _on_signal(signum, _frame):
+    if hasattr(signal, "setitimer"):
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0)     # the regex clock stops first: its alarm inside the last word left a paging file unnamed
+            signal.signal(signal.SIGALRM, signal.SIG_IGN)
+        except BaseException:  # noqa: BLE001
+            pass
+    if STATE["answering"]:
+        return
+    if STATE["writing"]:
+        STATE["pending"] = signum
+        return
+    STATE["answering"] = STATE["stopping"] = True       # the last word is the answer now: a second signal does not start another
+    kept, unflushed = {}, []
+    for page in STATE["pages"]:
+        try:
+            shown = page.stop_here()
+        except BaseException:  # noqa: BLE001 - a last word is best effort
+            shown = None
+        if shown:
+            kept[page.key] = shown
+        if getattr(page, "stop_error", None):
+            unflushed.append(page.key)
+    text = STATE["text"]
+    text_file = getattr(text, "shown", None) if text is not None and getattr(text, "written", 0) else None
+    if text is not None:
+        try:
+            text.close()
+        except BaseException:  # noqa: BLE001
+            pass
+    try:
+        sys.stdout.write(json.dumps({
+            "parser": PARSER, "status": "failed", "stopped_by_signal": signum,
+            "status_basis": "this tool was stopped by signal %d before it finished: no answer was built, and what it had read is not a complete result" % signum,
+            "paging_files_kept": kept, "paging_files_not_flushed": unflushed, "text_file_kept": text_file,
+            "text_file_close_error": getattr(text, "close_error", None),
+            "kept_note": "the rows each file holds were written in the order read, up to where the tool was stopped; the files are named here and nowhere else",
+        }) + "\n")
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+install_signal_handlers()
+# END LINUX STOP
 DEFAULT_LIMIT = 200
 MAX_CONTINUED = 1 << 20      # a unit line continued with backslashes is joined up to this many bytes
 MAX_FILE_BYTES = 64 << 20    # a cron table larger than this is named as unread (a table is read a line at a time)
@@ -59,9 +146,32 @@ MAX_CRON_LINE = 1 << 20      # a cron line longer than this is located, not pars
 MAX_NAMED = 500              # how many errors, links and special files are named inline (all are counted)
 MAX_SHOWN_ASSIGNMENTS = 50   # assignments of one timer shown in its row; the rest are paged under pages.assignments (all are counted)
 MAX_SHOWN_SCHEDULES = 50     # the timer keys of one timer listed in its row (the count says how many there are)
+ANSWER_BYTES = 1 << 20       # the entries shown inline hold at most this many bytes of JSON; the rest of them are in pages.entries (all_results)
+# The names of unit settings and sections that systemd defines. A name is shown only if it is one of these; any other is withheld with
+# its length, because a line that is no unit setting at all (a pasted token, `abc123=...`) puts its first word where a key goes, and a
+# secret can be spelled like a setting (`AKIA...`). The values are a separate rule (SHOWN_KEYS below).
+KNOWN_SECTIONS = {"Unit", "Timer", "Install", "Service", "Socket", "Path", "Mount", "Automount", "Swap", "Slice", "Scope"}
+KNOWN_KEYS = {
+    "Description", "Documentation", "Wants", "Requires", "Requisite", "BindsTo", "PartOf", "Upholds", "Conflicts", "Before", "After",
+    "OnFailure", "OnSuccess", "PropagatesReloadTo", "ReloadPropagatedFrom", "JoinsNamespaceOf", "RequiresMountsFor", "OnFailureJobMode",
+    "IgnoreOnIsolate", "StopWhenUnneeded", "RefuseManualStart", "RefuseManualStop", "AllowIsolate", "DefaultDependencies", "CollectMode",
+    "FailureAction", "SuccessAction", "JobTimeoutSec", "JobTimeoutAction", "JobRunningTimeoutSec", "StartLimitIntervalSec", "StartLimitBurst",
+    "StartLimitAction", "RebootArgument", "SourcePath",
+    "OnActiveSec", "OnBootSec", "OnStartupSec", "OnUnitActiveSec", "OnUnitInactiveSec", "OnCalendar", "AccuracySec", "RandomizedDelaySec",
+    "FixedRandomDelay", "OnClockChange", "OnTimezoneChange", "Unit", "Persistent", "WakeSystem", "RemainAfterElapse",
+    "Alias", "WantedBy", "RequiredBy", "UpheldBy", "Also", "DefaultInstance",
+    "Type", "ExitType", "RemainAfterExit", "GuessMainPID", "PIDFile", "BusName", "ExecStart", "ExecStartPre", "ExecStartPost", "ExecCondition",
+    "ExecReload", "ExecStop", "ExecStopPost", "RestartSec", "TimeoutStartSec", "TimeoutStopSec", "TimeoutSec", "RuntimeMaxSec", "WatchdogSec",
+    "Restart", "SuccessExitStatus", "NotifyAccess", "WorkingDirectory", "RootDirectory", "User", "Group", "Environment", "EnvironmentFile",
+    "StandardInput", "StandardOutput", "StandardError", "Nice", "UMask", "Slice",
+}
+
+
+def known_name(name, names):
+    """Whether a unit key or section name is one systemd defines (a Condition... or Assert... key included)."""
+    return name in names or (names is KNOWN_KEYS and re.fullmatch(r"(?:Condition|Assert)[A-Z][A-Za-z0-9]{0,63}", name) is not None)
 REGEX_SECONDS = 2.0          # the most one match of the caller's expression may take; Python's re has no clock of its own
 MAX_LOCATIONS = 200          # how many places of the census are shown inline (the whole is paged)
-MAX_PAGING_BYTES = 128 << 20  # all the paging files of one call hold this much together; a row past it is counted and located, not written
 DEFAULT_SECONDS = 50.0       # the manifest allows 60
 MAX_SECONDS = 50.0           # the most a caller may ask for (the manifest allows 60)
 TEXT_NAME = "cron-text.jsonl"
@@ -122,7 +232,11 @@ USER_COMMAND = re.compile(r"^([A-Za-z_][A-Za-z0-9_.-]{0,63}\$?)(\s+)(.*)$", re.S
 ENV_LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", re.S)
 
 
+# BEGIN LINUX PARTS
 # ---- The parts every tool of this pack that pages or keeps text copies (a tool is standalone; none imports another) ----
+# The same text is in auth_log, cron_dump, journal_export, shell_history and utmp_parse (tests/pack-linux-parts.test.ts holds the copies
+# equal). It uses STATE, _writing and _written, which are LINUX STOP's in four tools and, in journal_export, whose stop is its SHARED PROCESS
+# block, two stand-ins below the SHARED PROCESS block's STATE.
 
 
 def fail(message, **extra):
@@ -228,13 +342,17 @@ def touches_withheld_text(has_filter):
     return bool(has_filter) and in_job()
 
 
+MAX_PAGING_BYTES = 128 << 20  # all the paging files of one call hold this much together; a row past it is counted and located, not written
+MAX_TEXT_BYTES = 256 << 20    # the text file of one call holds this much; a record past it is counted and located, not written
+PAGING = {"left": MAX_PAGING_BYTES}      # what the paging files of this call may still hold, in bytes, all of them together
+TEXTING = {"left": MAX_TEXT_BYTES}       # what the text file may still hold, in bytes
+
+
 # Lossless paging (the same in every library tool that pages): the page an agent reads stays small, and when
 # there are more rows the whole result is written as JSON Lines under work/<agent>/tool-output (in a job,
 # $OUT/tool-output) and named. The file name is random: it is never a digest of anything asked for. A write
-# that fails is an error answer naming the file, never a traceback and never a silent loss.
-PAGING = {"left": MAX_PAGING_BYTES}      # what the paging files of this call may still hold, in bytes, all of them together
-
-
+# that fails is an error answer naming the file, never a traceback and never a silent loss: the rows written
+# before the error are kept under the file's name and the answer says so, or says the temporary was removed.
 class LosslessPage:
     def __init__(self, tool, key, limit):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
@@ -245,6 +363,7 @@ class LosslessPage:
         self.page = []
         self.total = 0
         self.not_written = 0        # rows after the paging cap: counted in `total`, not in the file
+        self.stop_error = None
         self._out = None
         self._tmp = None
         name = "%s-%s.jsonl" % (self.tool, secrets.token_hex(8))
@@ -258,7 +377,30 @@ class LosslessPage:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
         self._done = False
-        STATE["pages"].append(self)     # every page is the last word's to name, from the moment it exists
+        STATE.setdefault("pages", []).append(self)     # every page is the last word's to name, from the moment it exists
+
+    def _abandon(self):
+        """A write failed (ENOSPC, EIO): what is already in the temporary is kept under the file's own name, or the temporary is removed.
+        Returns what the answer says about it."""
+        out, self._out = self._out, None
+        if out is not None:
+            try:
+                out.close()
+            except OSError:
+                pass
+        if self._tmp is None:
+            return "no paging file was left"
+        try:
+            os.replace(self._tmp, self.path)
+            self._done = True
+            return "the rows written before the error are in %s (the last row may be cut)" % self.path
+        except OSError:
+            pass
+        try:
+            os.unlink(self._tmp)
+            return "the temporary paging file was removed"
+        except OSError as exc:
+            return "the temporary paging file %s could not be renamed or removed (%s)" % (self._tmp, describe(exc))
 
     def _write(self, row, kept=False):
         data = json.dumps(row, ensure_ascii=False, default=str) + "\n"
@@ -271,7 +413,7 @@ class LosslessPage:
         try:
             self._out.write(data)     # one write: a stop never leaves half a row
         except OSError as exc:
-            fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
+            fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=self._abandon())
         finally:
             _written()
 
@@ -288,22 +430,30 @@ class LosslessPage:
                 fd = os.open(str(self._tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace")
             except OSError as exc:
-                fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path))
+                state = "no paging file was left" if self._tmp is None or not os.path.lexists(self._tmp) else self._abandon()
+                fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=state)
             for kept in self.page:
                 self._write(kept, kept=True)
         self._write(row)
 
     def stop_here(self):
-        """The rows written so far, kept under the final name (a signal ended the tool): the path as shown, or None where nothing was written."""
+        """The rows written so far, kept under the final name (a signal ended the tool): the path as shown, or None where nothing was written.
+        A file that cannot be flushed is still renamed (what reached the disk is kept) and `stop_error` says it."""
         if self._tmp is None:
             return None
         if self._done:
             return self.shown           # finish() had put it under its name: it holds every row
         out, self._out = self._out, None
         if out is not None:
-            out.flush()
-            os.fsync(out.fileno())
-            out.close()
+            try:
+                out.flush()
+                os.fsync(out.fileno())
+            except OSError as exc:
+                self.stop_error = describe(exc)
+            try:
+                out.close()
+            except OSError as exc:
+                self.stop_error = self.stop_error or describe(exc)
         if not os.path.exists(self._tmp):
             return None
         os.replace(self._tmp, self.path)
@@ -320,7 +470,7 @@ class LosslessPage:
                 os.replace(self._tmp, self.path)
                 self._done = True
             except OSError as exc:
-                fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
+                fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=self._abandon())
             finally:
                 _written()
             result["all_results"] = self.shown
@@ -333,79 +483,19 @@ class LosslessPage:
         return result
 
 
-# A signal ends the tool with a last word. The harness ends a tool that runs too long with SIGTERM before it kills the group, and a
-# tool that ignored it left its paging files as unfinished temporary files nobody could name. The rows written so far are kept under
-# their final names and the text file is closed, so the last word can say where they are; the answer itself was never built.
-#
-# Two moments are not the handler's. Python can run a handler inside a buffered file's own write (its flush looks for signals between
-# writes), and there the file refuses the last word's flush: a signal that came while a row was being written left that paging file
-# unfinished and unnamed. So while a file the last word closes is being written, the handler only notes the signal, and the write
-# gives the last word once it is done. And while the answer, or an error answer, is being written, a signal is not answered: the
-# answer stands, and no second document follows it.
-STATE = {"pages": [], "text": None, "writing": 0, "pending": None, "answering": False}
-
-
-def _writing():
-    STATE["writing"] += 1
-
-
-def _written():
-    STATE["writing"] -= 1
-    if not STATE["writing"] and STATE["pending"] is not None:
-        signum, STATE["pending"] = STATE["pending"], None
-        _on_signal(signum, None)
-
-
-def _on_signal(signum, _frame):
-    if STATE["answering"]:
-        return
-    if STATE["writing"]:
-        STATE["pending"] = signum
-        return
-    STATE["answering"] = True       # the last word is the answer now: a second signal does not start another
-    if hasattr(signal, "setitimer"):
-        signal.setitimer(signal.ITIMER_REAL, 0)     # the regex clock stops first: its alarm inside the last word left a paging file unnamed
-        signal.signal(signal.SIGALRM, signal.SIG_IGN)
-    kept = {}
-    for page in STATE["pages"]:
-        try:
-            shown = page.stop_here()
-        except BaseException:  # noqa: BLE001 - a last word is best effort
-            shown = None
-        if shown:
-            kept[page.key] = shown
-    text = STATE["text"]
-    text_file = getattr(text, "shown", None) if text is not None and getattr(text, "written", 0) else None
-    if text is not None:
-        try:
-            text.close()
-        except BaseException:  # noqa: BLE001
-            pass
-    try:
-        sys.stdout.write(json.dumps({
-            "parser": PARSER, "status": "failed", "stopped_by_signal": signum,
-            "status_basis": "this tool was stopped by signal %d before it finished: no answer was built, and what it had read is not a complete result" % signum,
-            "paging_files_kept": kept, "text_file_kept": text_file,
-            "kept_note": "the rows each file holds were written in the order read, up to where the tool was stopped; the files are named here and nowhere else",
-        }) + "\n")
-        sys.stdout.flush()
-    except Exception:  # noqa: BLE001
-        pass
-    os._exit(128 + signum)
-
-
-def install_signal_handlers():
-    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(signum, _on_signal)
-
-
 def require_job(flag):
     """What leaves a record's text is held to the secret-safe output pattern (docs/packs.md, "Secrets and
     sensitive output"): the text goes into the answer or into a file only in a job, whose output the skill
-    says to seal with secret_output: true. Outside a job the request is refused and nothing is written."""
+    says to seal with secret_output: true. Outside a job, and in a job the harness did not run as secret output (it sets
+    SECRET_OUTPUT=1 in the environment of such a job's process, from the manifest's declaration or the agent's flag), the
+    request is refused and nothing is written."""
     if not in_job():
         fail("%s is refused outside a job: a command line, a message or an environment value written or "
              "printed here would be an ordinary file or an ordinary answer, not a sealed output. Run this as "
+             "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
+    if os.environ.get("SECRET_OUTPUT") != "1":
+        fail("%s is refused: this job was not run as secret output, so what it wrote or printed would be sealed as an ordinary "
+             "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run this as "
              "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
 
 
@@ -421,11 +511,18 @@ class TextFile:
     created before anything is read (mode 0600, exclusively: a file or a link already at that name is
     refused by name) under $OUT, and the answer names it and says it may hold secrets. A byte that is not
     UTF-8 is written as a JSON escape of its lone surrogate and reads back as the byte: the file keeps the whole.
+    The file holds at most MAX_TEXT_BYTES: once a record would pass it, that record and every one after it are
+    counted in `not_written` and not written (the file stays the first records, in order), and `summary()` says so.
     """
 
     def __init__(self, name, enabled, what, flag="write_text"):
         self.enabled = enabled
         self.written = 0
+        self.not_written = 0        # records after the cap: counted, not in the file
+        self.capped = False
+        self.cut_record = False     # a record's first pieces (add_bytes_raw) were written and the cap came before its last
+        self._open_piece = False
+        self.close_error = None
         self.what = what
         self.flag = flag
         self._fh = None
@@ -438,6 +535,10 @@ class TextFile:
             raise TextRefused("%s is refused outside a job: the text of the records written here would be an "
                               "ordinary file, not a sealed output. Run this as job_run tool=%s with secret_output: "
                               "true, and ask again there. Nothing was written." % (flag, TOOL))
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise TextRefused("%s is refused: this job was not run as secret output, so the text of the records written here would be sealed "
+                              "as an ordinary output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. "
+                              "Run this as job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
         self.path = Path(out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
         try:
@@ -458,24 +559,48 @@ class TextFile:
         finally:
             _written()
 
+    def _room(self, size):
+        """Whether `size` more bytes fit under the cap; the first that does not closes the file to every later record."""
+        if self.capped or size > TEXTING["left"]:
+            self.capped = True
+            return False
+        TEXTING["left"] -= size
+        return True
+
     def add(self, row):
         if self._fh is None:
             return
+        data = json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n"
+        if not self._room(len(data)):
+            self.not_written += 1
+            return
         self.written += 1
-        self._put(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n")
+        self._put(data)
 
     def add_bytes_raw(self, data):
         """A piece of a source's own bytes, written as it came; the record it belongs to is counted by count_record."""
-        if self._fh is not None:
+        if self._fh is None:
+            return
+        if self._room(len(data)):
+            self._open_piece = True
             self._put(data)
+        elif self._open_piece:
+            self.cut_record = True
 
     def count_record(self):
         if self._fh is not None:
-            self.written += 1
+            self._open_piece = False
+            if self.capped:
+                self.not_written += 1
+            else:
+                self.written += 1
 
     def add_bytes(self, data):
         """One record exactly as its source wrote it (a native export's line, newline included)."""
         if self._fh is None:
+            return
+        if not self._room(len(data)):
+            self.not_written += 1
             return
         self.written += 1
         self._put(data)
@@ -489,7 +614,11 @@ class TextFile:
                 self._fh.close()
                 self._fh = None
             except OSError as exc:
-                fail("the text file could not be closed: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
+                if STATE.get("stopping"):
+                    self.close_error = describe(exc)    # the last word names it: one document, not an error document and then the last word
+                    self._fh = None
+                else:
+                    fail("the text file could not be closed: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
             finally:
                 _written()
 
@@ -501,8 +630,66 @@ class TextFile:
                     "The answer's records carry their text (preview); no file of it was written, and the paging file, if there is one, holds none.")
             return {"requested": False, "written": 0, "file": None, "contains_text_that_may_hold_secrets": False, **shown,
                     "hint": hint + " %s: true, in a job run with secret_output: true, keeps the whole of each record in a private file under $OUT." % self.flag}
-        return {"requested": True, "written": self.written, "file": self.shown,
-                "contains_text_that_may_hold_secrets": self.written > 0, **shown, "format": self.what}
+        result = {"requested": True, "written": self.written, "file": self.shown,
+                  "contains_text_that_may_hold_secrets": self.written > 0, **shown, "format": self.what}
+        if self.not_written or self.capped:
+            result["not_written"] = self.not_written
+            result["not_written_why"] = ("the text file of one call holds at most %d bytes: the first %d records are in it, in order; the %d after them are "
+                                         "counted and are in the evidence at the file and line each record names%s"
+                                         % (MAX_TEXT_BYTES, self.written, self.not_written,
+                                            "; the last record in the file may be cut short" if self.cut_record else ""))
+        return result
+
+
+def capped_why(pages, text=None):
+    """The sentence for an answer that is partial because a cap was reached (the paging files' or the text file's), or None. `pages` is
+    the answer's `pages` dictionary; `text` the TextFile."""
+    cut = ["%d of %s" % (page["not_written"], name) for name, page in pages.items() if page.get("not_written")]
+    held = []
+    if cut:
+        held.append("the paging files reached their cap of %d bytes: %s row(s) are counted and are not in a paging file (see not_written in `pages`)"
+                    % (MAX_PAGING_BYTES, ", ".join(cut)))
+    if text is not None and (text.not_written or text.capped):
+        held.append("the text file reached its cap of %d bytes: %d record(s) are counted and are not in it (see not_written in `text`)"
+                    % (MAX_TEXT_BYTES, text.not_written))
+    if not held:
+        return None
+    return "; ".join(held) + "; each is in the evidence at the file and line it names"
+
+
+INLINE_LIST = 200       # items of any list that grows with the evidence (files, homes, errors, links) kept inline in the answer
+
+
+class Listed(list):
+    """A list of the answer that grows with the evidence (one item per file, home, link or error): its first INLINE_LIST items are the list, and
+    every item, those too, is kept in a paging file that the answer names under pages.<key> (`page.total` is how many there were; `settle()`
+    finishes the file and returns the page's entry for the answer's `pages`)."""
+
+    def __init__(self, key):
+        super().__init__()
+        self.page = LosslessPage(TOOL, key, INLINE_LIST)
+
+    def append(self, item):
+        self.page.add(item)
+        if len(self) < INLINE_LIST:
+            super().append(item)
+
+    def settle(self):
+        return self.page.finish()
+# END LINUX PARTS
+
+
+def file_size_and_sha256(path):
+    """(bytes, sha256 hex) of a paging file this tool wrote, so that the whole result a page names can be checked against what the answer said."""
+    digest, size = hashlib.sha256(), 0
+    try:
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(block)
+                size += len(block)
+    except OSError as exc:
+        return None, "not read back: %s" % describe(exc)
+    return size, digest.hexdigest()
 
 
 def mtime_of(path):
@@ -589,9 +776,15 @@ class Run:
         self.need_text = text.enabled or preview
         self.need_command = self.need_text or (pattern is not None and in_job())
         self.preview_rows = []
+        self.inline_bytes = self.preview_bytes = 0
+        self.budget_reached = False
         self.total = self.matched = self.at_reboot = self.unparsed_count = self.seq = self.nested = 0
-        self.locations, self.read_errors, self.walk_errors = [], [], []
-        self.skipped_symlinks, self.special, self.dropins = [], [], []
+        # Every list that grows with the tree keeps INLINE_LIST items inline and the whole in a paging file; the places looked in go to their
+        # page as they are met (their inline part is MAX_LOCATIONS), counted by state.
+        self.read_errors, self.walk_errors = Listed("read_errors"), Listed("walk_errors")
+        self.skipped_symlinks, self.special, self.dropins = Listed("skipped_symlinks"), Listed("skipped_special"), Listed("unmerged_dropins")
+        self.locations_page = LosslessPage(TOOL, "locations", MAX_LOCATIONS)
+        self.by_state, self.looked = {}, 0
         self.counts = {"read_errors": 0, "walk_errors": 0, "skipped_symlinks": 0, "special": 0}
         self.seen_real = {}
         self.partial_reason = None
@@ -607,12 +800,14 @@ class Run:
 
     def keep(self, which, item):
         self.counts[which] += 1
-        target = getattr(self, which)
-        if len(target) < MAX_NAMED:
-            target.append(item)
+        getattr(self, which).append(item)
 
     def census(self, rel, state, **extra):
-        self.locations.append({"path": rel, "state": state, **extra})
+        self.locations_page.add({"path": rel, "state": state, **extra})
+        key = state.split(":")[0].split(" (")[0]
+        self.by_state[key] = self.by_state.get(key, 0) + 1
+        if state == "read":
+            self.looked += 1
 
     def error(self, path, exc):
         self.keep("read_errors", {"file": path, "error": describe(exc)})
@@ -637,9 +832,21 @@ class Run:
         self.matched += 1
         self.at_reboot += 1 if row.get("at_reboot") else 0
         self.text.add({**row, **texts})
+        shown_before = len(self.page.page)
         self.page.add(row)
-        if self.preview and len(self.preview_rows) < self.limit:
-            self.preview_rows.append({**row, **{k: v for k, v in texts.items() if k != "assignments"}} if row["source"] == "cron" else row)
+        if len(self.page.page) > shown_before:
+            # The entries shown inline stop at ANSWER_BYTES: from the next one on the page is full, and every later entry goes only to the
+            # paging file (which holds the ones shown as well). A row is bounded (50 assignments and 50 schedules of 1,024 characters).
+            self.inline_bytes += len(json.dumps(row, ensure_ascii=False, default=str))
+            if self.inline_bytes >= ANSWER_BYTES:
+                self.page.limit = len(self.page.page)
+                self.budget_reached = True
+        if self.preview and len(self.preview_rows) < self.limit and self.preview_bytes < ANSWER_BYTES:
+            shown = {**row, **{k: v for k, v in texts.items() if k != "assignments"}} if row["source"] == "cron" else row
+            self.preview_rows.append(shown)
+            self.preview_bytes += len(json.dumps(shown, ensure_ascii=False, default=str))
+        elif self.preview and self.preview_bytes >= ANSWER_BYTES:
+            self.budget_reached = True
 
     def unparsed_line(self, path, number, offset, reason, line):
         self.unparsed_count += 1
@@ -826,15 +1033,21 @@ def timer_entry(run, path, manager):
         return bound(value, 1024)[0]
 
     def view(a):
-        """The assignment as the answer shows it: its key and section cut at 128 characters (with their lengths), its value only
-        where the key has scheduling semantics."""
-        key, key_whole = bound(a["key"], 128)
-        section, section_whole = bound(a["section"], 128)
-        item = {"line": a["line"], "section": section, "key": key}
-        if key_whole is not None:
-            item["key_bytes"] = key_whole
-        if section_whole is not None:
-            item["section_bytes"] = section_whole
+        """The assignment as the answer shows it: its key and section only where systemd defines the name (KNOWN_KEYS, KNOWN_SECTIONS:
+        `OnCalendar`, `Timer`); any other key or section name is withheld with its length, because a line that is no unit setting at
+        all (a pasted token, `abc123=...`) puts its first word where a key goes. Its value is shown only where the key has scheduling
+        semantics."""
+        item = {"line": a["line"]}
+        for field, names in (("section", KNOWN_SECTIONS), ("key", KNOWN_KEYS)):
+            name = a[field]
+            if name is None or known_name(name, names):
+                shown, whole = bound(name, 128)
+                item[field] = shown
+                if whole is not None:
+                    item[field + "_bytes"] = whole
+            else:
+                item[field + "_bytes"] = blen(name)
+                item[field + "_withheld"] = True
         if shown_value(a):
             value, whole = bound(a["value"], 1024)
             item["value"] = value
@@ -928,7 +1141,9 @@ def scan_dir(run, rel, handle):
 
     try:
         for dirpath, dirs, names in os.walk(full, onerror=on_error):
-            for name in list(dirs):
+            for step, name in enumerate(list(dirs)):
+                if (step & 255) == 0:
+                    run.check()
                 sub = os.path.join(dirpath, name)
                 if os.path.islink(sub):
                     run.keep("skipped_symlinks", {"file": sub, "target": os.readlink(sub)})
@@ -980,6 +1195,25 @@ def read_passwd(run):
             run.known_users.add(name)
 
 
+MAX_LISTED_NAMES = 200000    # the names of one directory (home/, run/user/) that are looked in; past it the answer is partial, saying so
+
+
+def bounded_names(run, directory):
+    """The names in one directory, sorted: the clock is read as they are listed (Overtime past the deadline), and at most MAX_LISTED_NAMES are
+    taken. If the directory holds more, the rest are not looked in and the answer is partial, naming the directory."""
+    names = []
+    with os.scandir(directory) as entries:
+        for number, entry in enumerate(entries):
+            if (number & 1023) == 0:
+                run.check()
+            if len(names) >= MAX_LISTED_NAMES:
+                run.partial_reason = run.partial_reason or ("%s holds more than %d names: only the first %d were looked in" % (
+                    os.path.relpath(directory, run.root), MAX_LISTED_NAMES, MAX_LISTED_NAMES))
+                break
+            names.append(entry.name)
+    return sorted(names)
+
+
 def homes_of(run):
     """(homes relative to the root, where the list came from, how many the account database does not list, the home
     paths it gave that were not used): the accounts' homes from the evidence's etc/passwd, and every directory under home/
@@ -1001,7 +1235,7 @@ def homes_of(run):
     home_dir = os.path.join(run.root, "home")
     try:
         if os.path.isdir(home_dir) and not os.path.islink(home_dir):
-            homes += ["home/" + n for n in sorted(os.listdir(home_dir))]
+            homes += ["home/" + n for n in bounded_names(run, home_dir)]
     except OSError as exc:
         run.error(home_dir, exc)
     homes.append("root")
@@ -1014,6 +1248,7 @@ def homes_of(run):
     return unique, " and ".join(source), (max(0, len(unique) - from_passwd) if from_passwd else None), ignored
 
 
+# BEGIN LINUX IMAGE
 # ---- A disk image given where this tool reads a file or an extracted root (the same in every such tool of this pack) ----
 
 # What linux_triage takes as an image: these first bytes, or one of its names with a boot sector's signature at 510.
@@ -1046,11 +1281,11 @@ def refuse_disk_image(path, key):
     named = path.lower().endswith(IMAGE_SUFFIXES)
     if any(head[o:o + len(m)] == m for o, m in IMAGE_MAGIC) or (named and head[510:512] == b"\x55\xaa"):
         fail("%s is a disk image: %s" % (key, IMAGE_ROUTES), **{key: path})
+# END LINUX IMAGE
 
 
 def main():
     args = read_args()
-    install_signal_handlers()
     root = want_str(args, "root", "root is required: an extracted file system root")
     if os.path.islink(root):
         fail("refusing a symlink root: pass the extracted evidence directory", root=root, target=os.readlink(root))
@@ -1066,7 +1301,7 @@ def main():
     if want_str(args, "contains"):
         try:
             pattern = re.compile(args["contains"], re.I)
-        except re.error as exc:
+        except (re.error, RecursionError, OverflowError, ValueError) as exc:
             fail("contains is not a valid regex", reason=str(exc))
         arm_regex_clock()
     try:
@@ -1151,7 +1386,7 @@ def main():
         run_user = os.path.join(root, "run", "user")
         if os.path.isdir(run_user) and not os.path.islink(run_user):
             try:
-                for uid in sorted(os.listdir(run_user)):
+                for uid in bounded_names(run, run_user):
                     for sub in RUN_USER_DIRS:
                         scan_dir(run, "run/user/%s/%s" % (uid, sub), handle_timer_dir(run, "user"))
             except OSError as exc:
@@ -1160,19 +1395,20 @@ def main():
         run.partial_reason = str(exc) or "the inventory stopped at max_seconds (%s): the places after the last one in locations were not looked in" % seconds
     homes, home_source, homes_beyond_passwd, homes_ignored = homes_info
     text.close()
-    locations_page = LosslessPage(TOOL, "locations", MAX_LOCATIONS)
-    by_state = {}
-    for loc in run.locations:
-        locations_page.add(loc)
-        key = loc["state"].split(":")[0].split(" (")[0]
-        by_state[key] = by_state.get(key, 0) + 1
+    locations_page, by_state = run.locations_page, run.by_state
     pages = {"entries": page.finish(), "unparsed": unparsed_page.finish(), "assignments": assignments_page.finish(), "locations": locations_page.finish()}
-    capped = {name: p["not_written"] for name, p in pages.items() if p.get("not_written")}
+    for name, kept in (("entries", page), ("unparsed", unparsed_page), ("assignments", assignments_page), ("locations", locations_page)):
+        if pages[name].get("all_results"):
+            pages[name]["all_results_bytes"], pages[name]["all_results_sha256"] = file_size_and_sha256(kept.path)
+    for key, items in (("read_errors", run.read_errors), ("walk_errors", run.walk_errors), ("skipped_symlinks", run.skipped_symlinks),
+                       ("skipped_special", run.special), ("unmerged_dropins", run.dropins)):
+        settled = items.settle()
+        if settled["matched"]:
+            pages[key] = settled      # a list with nothing in it has no page to name
+    capped = capped_why(pages, text)
     if capped and run.partial_reason is None:
-        run.partial_reason = ("the paging files reached their cap of %d bytes: %s row(s) are counted and are not in a paging file (see not_written in `pages`); "
-                              "each is in the evidence at the file and line it names, and the text file, when asked for, holds every one"
-                              % (MAX_PAGING_BYTES, ", ".join("%d of %s" % (n, name) for name, n in capped.items())))
-    looked = sum(1 for loc in run.locations if loc["state"] == "read")
+        run.partial_reason = capped
+    looked = run.looked
     all_read = (looked > 0 and not run.counts["read_errors"] and not run.counts["walk_errors"] and not run.counts["skipped_symlinks"]
                 and not run.counts["special"] and run.partial_reason is None and run.unparsed_count == 0)
     outcome = status_of(
@@ -1181,7 +1417,7 @@ def main():
         "%d of %d place(s) listed were read (%s: see locations); %d line(s) of a cron table "
         "matched no table shape (see unparsed); %d read error(s), %d walk error(s), %d link(s) not followed, %d special file(s) not opened%s: "
         "the answer names each" % (
-            looked, len(run.locations),
+            looked, locations_page.total,
             "the others are missing, links or not directories, or the inventory stopped inside them" if run.partial_reason else "the others are missing, links or not directories",
             run.unparsed_count, run.counts["read_errors"], run.counts["walk_errors"], run.counts["skipped_symlinks"],
             run.counts["special"], "; the inventory stopped before the end, or a paging file was capped (partial_reason)" if run.partial_reason else ""),
@@ -1217,7 +1453,10 @@ def main():
         "error_counts": run.counts,
         "unmerged_dropins": run.dropins,
         "unsupported": UNSUPPORTED,
-        "truncated": any(p["truncated"] for p in pages.values()),
+        "truncated": any(p["truncated"] for p in pages.values()) or run.budget_reached,
+        "answer_budget": {"used": run.preview_bytes if preview_text else run.inline_bytes, "reached": run.budget_reached,
+                          **({"why": "the entries shown inline stopped at the budget of 1 MiB; the rest are in pages.entries.all_results (whole, with its size "
+                                     "and sha256), which also holds the ones shown"} if run.budget_reached else {})},
         "coverage_note": "A candidate inventory of the places listed in locations, counted before `contains` filtered anything: "
                          "it is not every scheduling mechanism (see unsupported) and not the effective systemd configuration.",
         "note": "file_modified is a lead to explain, not a conclusion: an install, a copy and a restore set it as well as an edit, "

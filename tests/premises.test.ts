@@ -25,7 +25,7 @@ import * as R from "../extensions/requests.ts";
 import { checkLedgerAnswers } from "../scripts/check-answers.ts";
 import { renderReportBodyMarkdown } from "../scripts/report-body.ts";
 import { questionArgv } from "../scripts/ui/questions.ts";
-import { A, ESTABLISHED, F, GOAL, ok, planned, rec, refused, run } from "./negative-bar-fixture.ts";
+import { A, covers, coversDiskAndLog, ESTABLISHED, F, GOAL, ok, planned, rec, refused, run } from "./negative-bar-fixture.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const HIGH = { ...A, confidence: "high" } as const;
@@ -324,6 +324,7 @@ test("a review names the answer's parts by id and may add one the answer leaves 
   assert.deepEqual(view.answer?.omitted, [{ by: "a2", part: "from which host", why: "the question asks where from" }]);
   // Recorded again with the part: nothing is warned; the review, by ids, holds it established.
   const a2 = ok(await rec(c.a1, { kind: "answer", section: "question:1", value: "alice, at 09:14, from the office host", reasoning: `E-${f}`, ...HIGH, result: "established", supersedes: a.seq, parts: [{ id: "who", part: "who", status: "established", refs: [`E-${f}`] }, { id: "when", part: "when", status: "established", refs: [`E-${f}`] }, { id: "where", part: "from which host", status: "established", refs: [`E-${f}`] }] })).entry;
+  await coversDiskAndLog(c.a0, "1");
   const est = await P.attestEntry(c.a2, { seq: a2.seq, how: "re-read line 12", ...review([{ id: "who", part: "who", established: true, why: "line 12" }, { id: "when", part: "when", established: true, why: "line 12" }, { id: "where", part: "from which host", established: true, why: "line 12's source address" }]) });
   assert.ok(est.ok && est.line?.strength === "established", JSON.stringify(est));
   r = await checkLedgerAnswers(c.S, ["1"]);
@@ -332,6 +333,7 @@ test("a review names the answer's parts by id and may add one the answer leaves 
   // An answer without parts: an id names nothing; parts without ids are read as they always were.
   const f2 = ok(await rec(c.a0, { kind: "finding", ...F, value: "a tool", source: "the disk", evidence: "a key", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry.seq;
   const plain = ok(await rec(c.a1, { kind: "answer", section: "question:2", value: "a tool", reasoning: `E-${f2}`, ...HIGH, result: "established" })).entry;
+  await covers(c.a0, "2");
   refused(await P.attestEntry(c.a2, { seq: plain.seq, how: "re-read", ...review([{ id: "a", part: "the question", established: true, why: "w" }]) }), /carries no parts: answer_review\.parts\[\]\.id names an answer's part \(a\)/);
   assert.ok((await P.attestEntry(c.a2, { seq: plain.seq, how: "re-read", ...ESTABLISHED })).ok);
 });
@@ -350,6 +352,7 @@ test("an open part the question does not ask: a review marks it not_asked, which
   refused(await P.attestEntry(c.a2, { seq: a.seq, how: "re-read line 12", ...review([{ id: "tty", part: "which terminal", established: true, why: "w", not_asked: true }]) }), /is not asked by the question, so the review does not weigh it: established false/);
   // A review that holds the open part open, as the answer declares it: nothing is warned, the answer is partial.
   const held = review([{ id: "who", part: "who logged on", established: true, why: "line 12" }, { id: "when", part: "when", established: true, why: "line 12" }, { id: "tty", part: "which terminal the session used", established: false, why: "the log keeps none" }]);
+  await coversDiskAndLog(c.a0, "1");
   assert.equal((await P.attestEntry(c.a3, { seq: a.seq, how: "re-read line 12", ...held })).ok, true);
   let r = await checkLedgerAnswers(c.S, ["1"]);
   assert.equal(r.dispositions["question:1"], "partial");
@@ -377,6 +380,7 @@ test("an open part the question does not ask: a review marks it not_asked, which
   // On an answer that claims established, a part marked not asked caps nothing either.
   const f2 = ok(await rec(c.a0, { kind: "finding", ...F, value: "a remote tool installed as a service", source: "the disk", evidence: "a key", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry.seq;
   const est = ok(await rec(c.a1, { kind: "answer", section: "question:2", value: "a remote tool, as a service", reasoning: `E-${f2}`, ...HIGH, result: "established" })).entry;
+  await covers(c.a0, "2");
   const e2 = await P.attestEntry(c.a2, { seq: est.seq, how: "re-read the key", ...review([{ part: "the question as asked", established: true, why: "the key" }, { part: "every other tool the host ever ran", established: false, why: "the question asks whether one was installed, not every tool", not_asked: true }]) });
   assert.ok(e2.ok && e2.line?.strength === "established" && !e2.line.capped, JSON.stringify(e2));
 });

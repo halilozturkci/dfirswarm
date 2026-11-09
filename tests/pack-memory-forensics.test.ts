@@ -680,7 +680,10 @@ test("mem_fs export writes the bytes of a virtual file exactly, in a job, and ke
     assert.equal(byPath["name/1234-notepad.exe/minidump/memory.dmp"].sha256, sha256(region));
     assert.equal(byPath["name/1234-notepad.exe/minidump/memory.dmp"].bytes, region.length);
     assert.equal(byPath["sys/proc/proc.txt"].sha256, sha256(PROC_TEXT));
-    assert.doesNotMatch(run.stdout, /[0-9a-f]{64}/i, "a digest is in the answer");
+    // No digest of content is in the answer; the only digests it names are those of the ranges files (offsets and lengths, never content).
+    for (const r of rows) assert.ok(!run.stdout.includes(r.sha256 as string), "a digest of content is in the answer");
+    const named = new Set(rows.map((r) => r.ranges_file_sha256 as string));
+    for (const digest of run.stdout.match(/[0-9a-f]{64}/gi) ?? []) assert.ok(named.has(digest), "a digest that is not a ranges file's is in the answer");
     assert.ok(!run.stdout.includes(SECRET_TOKEN), "a planted secret is in the answer");
     assert.equal(answer.content, undefined);
     assert.equal(answer.secret_values?.contains_secret_values, true);
@@ -857,4 +860,32 @@ test("mem_fs answers once, per item, for a link that leaves the mount or loops, 
     assert.match(list.error, /outside the mount/);
     assert.equal(list.phase, "read");
   });
+});
+
+const memText = async (...parts: string[]): Promise<string> => readFile(join(ROOT, "packs", "memory-forensics", ...parts), "utf8");
+
+test("each memory tool's manifest names the start-up window in which a stop ends it with no answer", async () => {
+  for (const tool of ["mem_carve", "mem_profile", "mem_fs"]) {
+    const { description } = JSON.parse(await memText("tools", tool, "manifest.json")) as { description: string };
+    assert.match(description, /before the interpreter has run the tool's first lines \(tens of milliseconds/, `${tool}: no start-up window sentence`);
+    assert.match(description, /ends it with no answer/, tool);
+  }
+});
+
+test("mem_fs states its clean-up bound with /proc and with the ps fallback, and the total inside the manifest's timeout", async () => {
+  const manifest = JSON.parse(await memText("tools", "mem_fs", "manifest.json")) as { description: string; params: Record<string, { description: string }>; timeout_seconds: number };
+  assert.match(manifest.description, /at most 100 s where \/proc is read, 112 s where the process table falls back to ps/);
+  assert.match(manifest.params.timeout_seconds.description, /100 s \(112 s where the process table falls back to ps\)/);
+  assert.ok(480 + 2 + 112 <= manifest.timeout_seconds);
+  assert.match((await memText("tools", "mem_fs", "run.py")).replace(/\s+/g, " "), /the bound is 100 s\..{0,200}the bound is 112 s\..{0,120}480 \+ 2 \+ 112 = 594/);
+});
+
+test("the README and the preserve-regions leaf say a failed clean-up may leave the mount, and the goal's Q6 depends on the windows pack", async () => {
+  for (const file of [["README.md"], ["skills", "processes", "preserve-regions.md"]]) {
+    const text = (await memText(...file)).replace(/\s+/g, " ");
+    assert.match(text, /unless (the|a) clean-up failed.{0,160}`cleanup` problem and the mount may remain/, file.join("/"));
+    assert.doesNotMatch(text, /the mount is gone/, file.join("/"));
+  }
+  const goal = (await memText("goals", "memory-triage.md")).replace(/\s+/g, " ");
+  assert.match(goal, /when the windows-forensics pack is loaded.{0,120}otherwise the hits, their validation, and that no parser read them/);
 });

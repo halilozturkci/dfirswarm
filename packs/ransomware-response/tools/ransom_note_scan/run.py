@@ -62,7 +62,9 @@ SIGHUP) ends the tool with one JSON answer (status `failed`, `interrupted`), exi
 128 + the signal, after removing the pages it was still writing; a values file already begun
 is kept, cut back to its last whole row, and the answer says how many rows it holds. A result
 file that is already there is never replaced by another result: the new one takes the next
-free name.
+free name. The handlers are installed when the module code reaches the stop block, so a stop
+signal in the start-up window (interpreter start, compiling this file, the module code above
+that block) can end the tool with no JSON answer.
 
 What it does not locate: a long token with no label and no known shape (a 64-digit hex
 string after the word "Token") is neither located nor counted.
@@ -74,6 +76,7 @@ import errno
 import functools
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -82,7 +85,18 @@ import tempfile
 import unicodedata
 from pathlib import Path
 
-PARSER = "ransom_note_scan/3"
+PARSER = "ransom_note_scan/4"
+# Template-similarity groups (see template_sketch): notes are grouped by the overlap of the 3-token shingles of their text after every located
+# indicator span has been replaced by its kind. The first TEMPLATE_CHARS characters of a note are compared, and a note is held as its
+# TEMPLATE_SKETCH smallest shingle hashes; a note is compared with earlier notes that share one of its TEMPLATE_KEYS smallest hashes (at most
+# TEMPLATE_PER_KEY earlier notes are kept per hash), and the groups are the connected components of "estimated similarity at or above the threshold".
+TEMPLATE_SHINGLE = 3
+TEMPLATE_CHARS = 65536
+TEMPLATE_SKETCH = 128
+TEMPLATE_KEYS = 8
+TEMPLATE_PER_KEY = 4
+TEMPLATE_MAX_NOTES = 50000
+DEFAULT_TEMPLATE_THRESHOLD = 0.8
 DEFAULT_MAX_SIZE = 200000
 MAX_SIZE_CEILING = 16 << 20
 DEFAULT_SECONDS, MAX_SECONDS = 480, 540    # the manifest allows 600: the walk stops here so that what it has is written and sealed
@@ -105,6 +119,12 @@ SHORT_NOTE = 128
 # written as JSON Lines under work/<agent>/tool-output and named.
 import hashlib
 
+# The rows a table shows inline are cut by size as well as by count: the answer is judged, serialised and read back within the run's
+# clock, and a `limit` of 1,000,000 over rows of a few hundred bytes would take longer than max_seconds (and leave the answer without
+# its keys). The cut is lossless: every row is in the paging file, named by all_results. The same text is in encrypted_survey, and a test
+# holds the two classes equal; the model is snapshot_chain_check's LosslessPage.
+INLINE_BYTES = 1 << 19
+
 
 class LosslessPage:
     def __init__(self, tool: str, key: object, limit: int):
@@ -113,6 +133,7 @@ class LosslessPage:
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
         self.page: list[object] = []
+        self.page_bytes = 0
         self.total = 0
         self._out = None
         self._tmp: Path | None = None
@@ -160,10 +181,15 @@ class LosslessPage:
         the row as kept."""
         row = seal_row(row, evidence)
         self.total += 1
-        if len(self.page) < self.limit:
+        if len(self.page) < self.limit and self.page_bytes < INLINE_BYTES:
             self.page.append(row)
+            self.page_bytes += len(repr(row))
             return row
         if self._out is None:
+            # A stop must not come between the temporary file and its registration (self._tmp): the stop handler removes only the
+            # registered files. The three stop signals are held for these steps and delivered right after; where the call is missing it is a no-op.
+            hold = getattr(signal, "pthread_sigmask", None)
+            was = hold(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hold else None
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 fd, name = tempfile.mkstemp(
@@ -173,6 +199,9 @@ class LosslessPage:
                 self._out = os.fdopen(fd, "w", encoding="utf-8")
             except OSError as exc:
                 self._cannot_write(exc)
+            finally:
+                if hold:
+                    hold(signal.SIG_SETMASK, was)
             for kept in self.page:
                 self._write(kept)
         self._write(row)
@@ -184,6 +213,10 @@ class LosslessPage:
             "returned": len(self.page),
             "truncated": self.total > len(self.page),
         }
+        if self.total > len(self.page) and len(self.page) < self.limit:
+            result["inline_cut_by_size"] = (
+                "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
+            )
         if self._out is not None:
             try:
                 self._out.flush()
@@ -201,38 +234,106 @@ class LosslessPage:
 # BEGIN SHARED PLACE
 # The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
 # A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
-# <stem>-<n><suffix>. The name is taken first, with an exclusive create, so a result written at the same moment cannot be replaced either.
-def same_bytes(a, b):
-    """Whether two files hold the same bytes (read in blocks, never whole)."""
+# <stem>-<n><suffix>. A result written at the same moment cannot be replaced either: taking a name fails when it is there.
+# Only regular files are ever compared: both names are opened with O_NONBLOCK and O_NOFOLLOW and looked at with fstat before a byte is
+# read, so a FIFO, a device, a directory or a link at a name (the caller's own results_to, say) is another result's and cannot hold the
+# tool. The comparing of one call has PLACE_COMPARE_SECONDS in all; past it an earlier result is taken as different and this one takes
+# the next free name (nothing is replaced, but an identical rerun may then be named anew).
+# The name is taken with a hard link of the finished file, so it never holds an empty file, whatever stops the tool and when (SIGKILL
+# included). Where the file system refuses the link, the name is taken with an exclusive create and the file is moved over it: a stop
+# that unwinds (an exception) takes the empty name back while it is still the empty file this call made; a stop that ends the process
+# without unwinding (SIGKILL, the handlers of the STOP block) between the create and the move leaves the empty name, and the next run takes -2.
+PLACE_COMPARE_SECONDS = 5   # all the comparing one call to place_without_replacing does; past it an earlier result is taken as different
+
+
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
     try:
-        if os.path.getsize(a) != os.path.getsize(b):
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
             return False
-        with open(a, "rb") as fa, open(b, "rb") as fb:
-            while True:
-                x, y = fa.read(1 << 20), fb.read(1 << 20)
-                if x != y:
-                    return False
-                if not x:
-                    return True
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
     except OSError:
         return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
+
+
+def _take_name(tmp, candidate):
+    """Give the finished `tmp` the name `candidate` if it is free, and say whether it now has it (False: the name is taken, by a file, a
+    link, a FIFO or a directory). The name is taken with a hard link, so it never holds an empty file; where the file system refuses the
+    link it is taken with an exclusive create and the file is moved over it, and a stop that unwinds in between takes the empty name back."""
+    try:
+        os.link(tmp, candidate)
+    except FileExistsError:
+        return False
+    except OSError:
+        pass                                   # no hard links here: the older way, below
+    else:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass                               # the hidden name stays beside the placed file; the stop path of the page removes it
+        return True
+    fd = made = None
+    try:
+        fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        made = os.fstat(fd)
+        closing, fd = fd, None
+        os.close(closing)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return True
+    except FileExistsError:
+        return False
+    except BaseException:
+        try:
+            if made is None and fd is not None:
+                made = os.fstat(fd)
+        except OSError:
+            pass
+        try:
+            if fd is not None:
+                os.close(fd)
+        except OSError:
+            pass
+        try:
+            now = os.lstat(candidate)
+            if made is not None and (now.st_mode & 0o170000) == 0o100000 and now.st_size == 0 and (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino):
+                os.unlink(candidate)           # the empty name this call took is not left behind
+        except OSError:
+            pass
+        raise
 
 
 def place_without_replacing(tmp, path):
-    """Move the finished `tmp` to `path` and never replace what is there. The name is taken first, with an exclusive create, so a
-    result written at the same moment cannot be replaced either. Returns the path that holds it."""
+    """Move the finished `tmp` to `path` and never replace what is there. A name that is taken (by a file, a link, a FIFO or a directory) is
+    left as it is: a regular file of the same bytes is named again, any other result takes the next free <stem>-<n><suffix>. Returns the
+    path that holds it. The comparing with earlier results has PLACE_COMPARE_SECONDS in all: past it an earlier result is taken as
+    different and this one takes the next free name."""
+    deadline = time.monotonic() + PLACE_COMPARE_SECONDS
     for n in range(1, 1000):
         candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
-        try:
-            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        except FileExistsError:
-            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
-                os.unlink(tmp)
-                return candidate
-            continue
-        os.close(fd)
-        os.replace(tmp, candidate)             # only replaces the empty file this call just made
-        return candidate
+        if _take_name(tmp, candidate):
+            return candidate
+        if not os.path.islink(candidate) and same_bytes(tmp, candidate, deadline):
+            os.unlink(tmp)
+            return candidate
     raise OSError("no free name beside %s" % path)
 # END SHARED PLACE
 
@@ -271,9 +372,20 @@ class NoReplacePage(LosslessPage):
 # END SHARED PAGE
 
 
+def finish_page(page) -> dict:
+    """page.finish(), with the size cut named: NoReplacePage (the shared block above) replaces LosslessPage.finish, so the cut that
+    LosslessPage makes by INLINE_BYTES is said here, outside the block, for every table. The same text is in encrypted_survey."""
+    result = page.finish()
+    if page.total > len(page.page) and len(page.page) < page.limit:
+        result["inline_cut_by_size"] = (
+            "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
+        )
+    return result
+
+
 # BEGIN SHARED STOP
-# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
-# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
 # The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
 # the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
 # first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
@@ -318,7 +430,7 @@ def install_signal_handlers(last_word=None):
 
 
 def interrupted_answer(signum, **extra):
-    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
                       "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
                       "signal": signum, **extra}), flush=True)
 
@@ -708,11 +820,16 @@ def count_content(contents, sha, blob, note_id):
 # --- paths --------------------------------------------------------------------------
 
 # BEGIN SHARED WITHHOLDING
-# The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
-# reverse-engineering packs), so that they withhold the same strings; the tests that hold the copies equal are
-# tests/pack-network-withholding.test.ts, tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts and
-# tests/pack-re-process.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a
-# path component, a URL, a message that quotes either.
+# The same text is in every tool that withholds identifier-shaped strings and credentials (the network, base, encrypted-containers,
+# memory, virtualization, ransomware and reverse-engineering packs, and the three tools of the cloud pack), so that they withhold the
+# same strings; the tests that hold the copies equal are tests/shared-blocks-census.test.ts (how many carry it),
+# tests/pack-re-delta10.test.ts (every copy equal, found by the marker), tests/pack-network-withholding.test.ts,
+# tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts, tests/pack-re-process.test.ts and
+# tests/pack-cloud-shared.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a path
+# component, a URL, a message that quotes either; and a credential (a value given to a password, a token, a cookie, a pair, a
+# switch) by the name it is given under. A carrier may set two names above this block: WITHHOLD_LIMIT, the length past which a text is
+# withheld whole (65536 when it sets none), and WITHHOLD_TICK, a hook that long scans call and that may raise to end them at the
+# carrier's deadline (none when it sets none). Nothing else in the block is a carrier's to change.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
 # A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
 # `/` joins pieces of a base64 token and is handled apart, below.
@@ -776,7 +893,7 @@ _SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
 # long, and the answer says how long the text was. Every rule below reads a text of this length in well under a second whatever its
 # characters are, so that no call of `scrub` or `token_spans` can run for long on a text a file chose; the limit is the backstop for
 # a shape of text that no rule was tried on, and the rules themselves are linear.
-TEXT_LIMIT = 65536
+TEXT_LIMIT = globals().get("WITHHOLD_LIMIT", 65536)
 
 
 def _prefixed_spans(text, tail=None):
@@ -933,10 +1050,342 @@ def token_shaped(text):
     return bool(token_spans(text))
 
 
+# ---- credentials: a value is withheld by the name it is given under and by the text around it ----------------------------------
+# The rules above find strings that are shaped like an identifier. These find a secret that has no shape, because of what it is
+# assigned to (`password=`, a `Name`/`Value` pair, a `-Password` switch, `curl -u user:pass`, `mysql -pSECRET`), and the common
+# token families, private key blocks and hashes of an account database. A name decides whether a value is a secret, a value
+# decides nothing. Every rule runs in time linear in the text (a bounded stretch after each anchor, no nested repeat), and a
+# carrier whose texts are long (a cloud log: a megabyte) sets WITHHOLD_TICK to a hook that ends the work at its deadline.
+_CRED_CHECKSUM_NAME = re.compile(r"(?i)checksum|digest|sha[0-9]|md5|etag|crc[0-9]")
+_CRED_REDACTED = re.compile(r"^\W*(?:hidden_due_to_security_reasons|redacted|masked|removed|\*+|x{3,}|\[\])\W*$", re.I)
+_CRED_NOT_A_VALUE = frozenset(("true", "false", "null", "none", "nil", "undefined", "required", "optional", "enabled", "disabled"))
+_CRED_EXACT = {
+    "password", "newpassword", "oldpassword", "currentpassword", "passwd", "pwd", "passphrase", "passcode", "pin", "otp",
+    "pass", "dbpass", "userpass", "adminpass", "rootpass", "plaintext",
+    "secret", "clientsecret", "secretkey", "secretaccesskey", "awssecretaccesskey", "awssecretkey", "secretstring",
+    "secretbinary", "secrettext", "secretvalue", "accesskeysecret",
+    "sessiontoken", "securitytoken", "accesstoken", "refreshtoken", "idtoken", "bearertoken", "authtoken", "token",
+    "tokencode", "mfacode", "verificationcode", "authorizationcode",
+    "authorization", "proxyauthorization", "cookie", "setcookie", "apikey", "privatekey", "privatekeypem",
+    "sharedaccesskey", "sharedaccesssignature", "accountkey", "primarykey", "secondarykey", "keyvalue", "masterkey",
+    "storagekey", "subscriptionkey", "ocpapimsubscriptionkey",
+    "connectionstring", "credential", "credentials", "assertion", "samlresponse", "mfasecret",
+    "sastoken", "sassignature", "signature", "sig",
+    "passwordhash", "nthash", "ntlmhash", "lmhash",
+}
+_CRED_SUFFIX = ("password", "passwd", "passphrase", "secret", "apikey", "privatekey", "sessiontoken", "securitytoken",
+                "accesstoken", "refreshtoken", "clientsecret", "token", "secrettext", "secretkey", "secretaccesskey",
+                "primarykey", "secondarykey", "accountkey", "sharedaccesskey", "subscriptionkey", "passwordhash",
+                "ntlmhash", "nthash", "passcode", "signature", "cookie")
+# a position or an idempotency key under a name that ends in `token`
+_CRED_NOT_SECRET = ("nexttoken", "pagetoken", "continuationtoken", "paginationtoken", "nextpagetoken", "pagingtoken",
+                    "startingtoken", "nextmarkertoken", "clienttoken", "clientrequesttoken", "idempotencytoken",
+                    "nextforwardtoken", "nextbackwardtoken", "requesttoken")
+_CRED_CONTAINERS = ("credential", "credentials")
+_CRED_NAME_CACHE = {}
+_CRED_NAME_KEYS = ("Name", "name", "Key", "key")
+_CRED_VALUE_KEYS = ("Value", "NewValue", "OldValue", "value", "newValue", "oldValue")
+
+
+def is_container_name(name):
+    """`credentials` names a group of fields (an access key id, an expiry, a token): each is judged by its own name."""
+    return re.sub(r"[^a-z0-9]", "", str(name).lower()) in _CRED_CONTAINERS
+
+
+def name_is_sensitive(name):
+    """Does a field or a parameter of this name hold a secret? (`Password`, `client_secret`, `x-api-key`; not `nextToken`.)"""
+    hit = _CRED_NAME_CACHE.get(name)
+    if hit is None:
+        flat = re.sub(r"[^a-z0-9]", "", str(name).lower())
+        hit = flat in _CRED_EXACT or (len(flat) > 6 and flat.endswith(_CRED_SUFFIX) and not flat.endswith(_CRED_NOT_SECRET))
+        if len(_CRED_NAME_CACHE) < 20000:
+            _CRED_NAME_CACHE[name] = hit
+    return hit
+
+
+_CRED_B64 = "A-Za-z0-9+/_-"
+_CRED_B64_RUN = re.compile(r"(?<![%s])[%s]{128,}={0,2}(?![%s])" % (_CRED_B64, _CRED_B64, _CRED_B64))
+_CRED_B64_EDGE = "(?<![A-Za-z0-9+/=_-])"
+_CRED_B64_END = "(?![A-Za-z0-9+/=_-])"
+# The names an assignment is recognised by. A long compound name may carry any prefix (dbPassword=, apiToken=, adminSecret:);
+# a short one needs the edge of a word (sig= is not design=).
+_CRED_STRONG = (r"password|passwd|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|"
+                r"security[_-]?token|auth[_-]?token|bearer[_-]?token|account[_-]?key|shared[_-]?access[_-]?key|primary[_-]?key|"
+                r"secondary[_-]?key|private[_-]?key|subscription[_-]?key|sas[_-]?token|password[_-]?hash|nt[_-]?hash|ntlm[_-]?hash|"
+                r"lm[_-]?hash|client[_-]?secret|secret[_-]?access[_-]?key|secret[_-]?key|secret[_-]?text|secret[_-]?value|token|signature|plaintext")
+_CRED_SHORT = r"(?<![A-Za-z0-9])(?:pwd|pass|sig|pin|otp|sas)"
+_CRED_SEP = r"""(?:\\*["']|["'])?\s*(?:[:=]|%3[dD]|%3[aA])\s*"""
+# a short name is a name only as `pwd=value` or `pass:value`: "pass: 3 attempts" is prose
+_CRED_SEPS = r"""(?:\\*["']|["'])?(?:\s*(?:=|%3[dD])\s*|:(?=\S))"""
+_CRED_NAME = r"(?:(?:%s)%s|%s%s)" % (_CRED_STRONG, _CRED_SEP, _CRED_SHORT, _CRED_SEPS)
+_CRED_ARN_TAIL = re.compile(r"arn:[A-Za-z0-9-]+:[A-Za-z0-9-]+:[A-Za-z0-9-]*:[0-9]*:$")
+_CRED_PAIR_WHY = "a value paired with a credential name"
+_CRED_RULES = [
+    # anchored at the start of a run and possessive, so that a megabyte of `eyJ` is read once, not once per `eyJ`
+    ("a JSON Web Token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+\.[A-Za-z0-9_-]{2,}+(?:\.[A-Za-z0-9_-]*+)?"), 0),
+    ("a JSON Web Encryption token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+(?:\.[A-Za-z0-9_-]*+){4}"), 0),
+    ("a password in a URL", re.compile(r"(?i)(?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,20}://[^\s:/@\"'<>\\]{0,256}:([^\s/\"'<>\\]{1,1024})@(?=[^\s/@\"'<>]{1,255})"), 1),
+    ("an Azure Functions key", re.compile(r"""(?i)(?:x-functions-key["']?\s*[:=]\s*(?:\\*["'])?|[?&;]code=)([A-Za-z0-9_/+=-]{16,512})"""), 1),
+    ("a private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|[\s\S]*)"), 0),
+    ("a base64 block of key lines", re.compile(r"(?:[A-Za-z0-9+/]{60,80}={0,2}\r?\n){2,}[A-Za-z0-9+/]{2,80}={0,2}"), 0),
+    ("an authorization header value", re.compile(
+        r"""(?i)authorization["']?\s*[:=]\s*(?:\\*["'])?(?:(?:bearer|basic|digest|negotiate|ntlm|token)\s+)?([^\s"'&,;\\]{1,4096})"""), 1),
+    ("a cookie header value", re.compile(r"""(?i)cookie["']?\s*[:=]\s*(?:\\*["'])?([^\r\n"'\\]{1,4096})"""), 1),
+    ("a scheme and its credential", re.compile(r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{3,4096})|\b(?:negotiate|ntlm|digest)\s+([A-Za-z0-9._~+/=-]{24,4096})"), -2),
+    ("a value assigned to a credential name (quoted)", re.compile(
+        r"""(?i)%s\\*(["'])(.{1,4096}?)(?=\\*\1)""" % _CRED_NAME), 2),
+    ("a value assigned to a credential name", re.compile(
+        r"""(?i)%s((?:(?!%%26)[^\s"'&<>\\]){1,4096})""" % _CRED_NAME), 1),
+    ("a value given to a credential switch", re.compile(
+        r"""(?i)(?<![A-Za-z0-9_])-(?:password|pass|pwd|passphrase|secret|clientsecret|apikey|accesstoken|token)\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    ("a secret given to ConvertTo-SecureString", re.compile(
+        r"""(?i)ConvertTo-SecureString\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    # `mysql -u<user> -p<password>`: with `-p` glued to its value, and only as an option of a MySQL or MariaDB client (`ssh -p 22`,
+    # `nc -p 80` and `mysql -p` alone, which asks for the password, name a port or nothing). The options are read up to the next
+    # command of the kind, so that a text of many of them is read once, not once for each
+    ("a password given to a MySQL client", re.compile(
+        r"""(?i:(?<![\w.-])(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mysqlshow|mariadb|mariadb-dump|mariadb-admin)(?:\.exe)?(?=\s))(?:(?!(?i:mysql|mariadb)\b)[^\n]){0,512}?(?<=\s)-p(?=[^\s`,;)])(?:"([^"\n]{1,256})"|'([^'\n]{1,256})'|([^\s"']{1,256}))"""), -3),
+    # `curl -u user:password`: the part after the colon, and only when there is one (`curl -u user` asks for it)
+    ("a password given to curl", re.compile(
+        r"""(?i:(?<![\w.-])curl(?:\.exe)?(?=\s))(?:(?!(?i:curl)\b)[^\n]){0,512}?(?<=\s)(?:-u|-U|--user|--proxy-user)(?:\s+|=)(?:"[^":\n]*:([^"\n]{1,256})"|'[^':\n]*:([^'\n]{1,256})'|[^\s:"']*:([^\s"']{1,256}))"""), -3),
+    ("a hash pair of an account database", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}:([0-9a-fA-F]{32})(?![0-9a-fA-F])"), 1),
+    ("a bcrypt hash", re.compile(r"(?<![A-Za-z0-9$])\$2[abxy]?\$[0-9]{2}\$[./A-Za-z0-9]{53}(?![./A-Za-z0-9])"), 0),
+    ("a token of a known family", re.compile(
+        r"(?:GOCSPX-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])|"
+        r"ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{30,}|(?:IQoJb3JpZ2lu|FQoGZXIvYXdz|FwoGZXIvYXdz)[A-Za-z0-9+/=]{40,}|"
+        r"[A-Za-z0-9_.~-]{3}[0-9]Q~[A-Za-z0-9_.~-]{30,}|[01]\.A[A-Za-z0-9_-]{50,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})"), 0),
+]
+_CRED_GROUPS = {-1: (1, 2, 3), -2: (1, 2), -3: (1, 2, 3)}
+# A random-looking run of an exact length that keys have: 32, 40 (an AWS secret access key), 43 + "=" and 86 + "==" (a base64 key).
+_CRED_SHAPES = [
+    ("a key-length base64 string", re.compile(_CRED_B64_EDGE + r"(?:[A-Za-z0-9+/]{32}|[A-Za-z0-9+/]{40}|[A-Za-z0-9+/]{43}=|[A-Za-z0-9+/]{86}==)" + _CRED_B64_END), True),
+]
+# A Name/Value pair written as JSON text inside a string (an AuditData in a column of another name, a parameter list in a cell): the
+# structure rule (clean_value) cannot see it, so the text rule reads the head of the pair, and the name decides as it does there. The
+# value is read by hand, not by an expression: a string up to its first quote (the backslashes before the quote are not part of it), a
+# number, a flat array of up to 4,096 characters, or a literal; and the next value of the same pair (`OldValue`, then `NewValue`).
+_CRED_PAIR_HEAD = re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})\\*"\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_NEXT_VALUE = re.compile(r"""(?i)\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_QUOTE = re.compile(r'\\*"')
+# a format directive (`%s`, `%d`), a template field (`{0}`, `{name}`) or a `%VAR%` is where a value goes, not a value
+_CRED_PLACEHOLDER = re.compile(r"%[-+ #0-9.]*[sdiuxXfeEgGcr](?![A-Za-z0-9])|\{\w*\}|%\w+%$|\.{2,}|\u2026")
+_CRED_BARE = re.compile(r"-?[0-9][0-9.eE+-]{0,39}|\[[^\[\]]{0,4096}\]|(?:null|true|false)\b")
+# What a text must hold for a rule to match it: a literal (lower case) of which one must be in the text, checked before the rule runs, so
+# that a text with none of them (most names, addresses and ids) costs a few substring tests and no expression. An assignment rule also
+# needs a separator in the text. Each is a necessary condition of its rule.
+_CRED_ASSIGN = ("pass", "pwd", "secret", "key", "token", "signature", "plaintext", "sig", "pin", "otp", "sas", "hash")
+_CRED_NEEDLES = {
+    "a JSON Web Token": ("eyj",), "a JSON Web Encryption token": ("eyj",), "a password in a URL": ("://",),
+    "an Azure Functions key": ("x-functions-key", "code="), "a private key block": ("-----begin",), "a base64 block of key lines": ("\n",),
+    "an authorization header value": ("authorization",), "a cookie header value": ("cookie",),
+    "a scheme and its credential": ("bearer", "basic", "negotiate", "ntlm", "digest"),
+    "a value assigned to a credential name (quoted)": _CRED_ASSIGN, "a value assigned to a credential name": _CRED_ASSIGN,
+    "a value given to a credential switch": ("password", "pass", "pwd", "secret", "apikey", "accesstoken", "token"),
+    "a secret given to ConvertTo-SecureString": ("securestring",), "a password given to a MySQL client": ("mysql", "mariadb"),
+    "a password given to curl": ("curl",), "a hash pair of an account database": (":",), "a bcrypt hash": ("$2",),
+    "a token of a known family": ("gocspx-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xoxa-", "xoxb-", "xoxp-", "xoxr-", "xoxs-",
+                                  "aiza", "ya29.", "1//0", "iqojb3", "fqogzx", "fwogzx", "q~", "0.a", "1.a", "sk_", "rk_"),
+}
+_CRED_CLEAN = set()               # short texts already judged to hold nothing (names, addresses and ids repeat)
+_CRED_GATE = 4096                 # a text longer than this is scanned with the carrier's hook in view, rule by rule
+# The carrier's hook for long scans: called with the work done so far (1 per stretch found, 4096 between rules over a long text); it may
+# raise to end the scan at the carrier's deadline. Most carriers set none and the calls do nothing.
+_tick = globals().get("WITHHOLD_TICK") or (lambda units=1: None)
+
+
+def _cred_json_value(text, at):
+    """(start, end, after) of the JSON value whose text starts at `at`: `end` is where what is withheld ends, `after` where the next
+    token of the pair begins. None when no value starts there."""
+    q = _CRED_QUOTE.match(text, at)
+    if q:
+        start = q.end()
+        close = text.find('"', start)
+        if close < 0:
+            return start, len(text), len(text)      # a value that is cut off: the rest of the text is the value
+        return start, start + len(text[start:close].rstrip("\\")), close + 1
+    m = _CRED_BARE.match(text, at)
+    if m is None:
+        return None
+    if m.group()[0] in "nft":
+        return at, at, m.end()                     # null, true and false are not secrets
+    return m.start(), m.end(), m.end()
+
+
+def _cred_pair_spans(text, spans):
+    for head in _CRED_PAIR_HEAD.finditer(text):
+        if not name_is_sensitive(head.group(1)):
+            continue
+        at = head.end()
+        for _ in range(3):
+            got = _cred_json_value(text, at)
+            if got is None:
+                break
+            start, end, after = got
+            if end > start:
+                value = text[start:end]
+                if not (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    spans.append((start, end, _CRED_PAIR_WHY))
+            more = _CRED_NEXT_VALUE.match(text, after)
+            if more is None:
+                break
+            at = more.end()
+
+
+def _cred_random_like(run):
+    """A run that looks like random base64 and not like a path, a name or a hash: mixed case and digits in the proportions
+    random text has (a long path is mostly lower case with few capitals; a hex digest has no case to mix)."""
+    n = len(run)
+    upper = sum(1 for ch in run if "A" <= ch <= "Z")
+    lower = sum(1 for ch in run if "a" <= ch <= "z")
+    digit = sum(1 for ch in run if "0" <= ch <= "9")
+    return upper * 100 >= 15 * n and lower * 100 >= 15 * n and digit * 100 >= 5 * n
+
+
+def _cred_name_before(text, at):
+    """The letters and digits of the name an assigned value follows (`nextToken=` gives `nexttoken`)."""
+    return re.sub(r"[^a-z0-9]", "", text[max(0, at - 64):at].lower())
+
+
+def _cred_spans(text, shapes, skip=()):
+    spans = []
+    big = len(text) > _CRED_GATE
+    low = text.lower()
+    sep = "=" in text or ":" in text or "%3" in low
+    if "value" in low:
+        _cred_pair_spans(text, spans)
+    for why, rx, group in _CRED_RULES:
+        if why in skip:
+            continue
+        need = _CRED_NEEDLES[why]
+        if need is _CRED_ASSIGN and not sep:
+            continue
+        for n in need:
+            if n in low:
+                break
+        else:
+            continue
+        if big:
+            _tick(4096)
+        for m in rx.finditer(text):
+            if big:
+                _tick(1)
+            if "assigned to a credential name" in why:
+                if _CRED_ARN_TAIL.search(text[max(0, m.start() - 120):m.start()]):
+                    continue                              # arn:aws:secretsmanager:...:secret:NAME is a name, not a value
+                if _cred_name_before(text, m.start(m.lastindex or 0)).endswith(_CRED_NOT_SECRET):
+                    continue                              # nextToken=, pageToken=, clientToken=: a position or an idempotency key
+            for g in _CRED_GROUPS.get(group, (group,)):
+                if g and m.group(g) is None:
+                    continue
+                start, end = m.span(g)
+                value = text[start:end]
+                if g and (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    continue
+                if why == "a scheme and its credential" and g == 1 and not (re.search(r"[0-9+/=_.~-]", value) or len(value) >= 16):
+                    continue                              # "basic authentication" is prose, "Basic dXNlcjpwYXNz" is not
+                if g == 1 and group == -1 and len(m.groups()) >= 2 and m.group(1) in ("'", '"'):
+                    continue                              # group 1 of the switch rules is the quote
+                spans.append((start, end, why))
+    if big:
+        _tick(4096)
+    for m in (_CRED_B64_RUN.finditer(text) if len(text) >= 128 and "a long unbroken base64-like run" not in skip else ()):
+        if _cred_random_like(m.group(0)):
+            spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
+    if shapes and len(text) >= 32 and "a key-length base64 string" not in skip:
+        for why, rx, check in _CRED_SHAPES:
+            for m in rx.finditer(text):
+                if not check or _cred_random_like(m.group(0)):
+                    spans.append((m.start(), m.end(), why))
+    spans.sort()
+    merged = []
+    for s in spans:
+        if merged and s[0] < merged[-1][1]:
+            if s[1] > merged[-1][1]:
+                merged[-1] = (merged[-1][0], s[1], merged[-1][2])
+            continue
+        merged.append(s)
+    return merged
+
+
+def credential_spans(text, shapes=True, skip=()):
+    """(start, end, why) of each stretch of `text` that is a credential by the name it is given under or by its text, in order and
+    not overlapping. `shapes` False leaves out the rules that recognise a key by its length alone (a value that is named a checksum or
+    a digest is not scanned for them). This is not `token_spans`: an identifier (a GUID, a hex digest, an access key id, an ARN) is
+    not a credential here, and a tool that prints identifiers on purpose asks only for these."""
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text), "text longer than %d characters" % TEXT_LIMIT)]
+    if shapes and not skip and text in _CRED_CLEAN:
+        return []
+    spans = _cred_spans(text, shapes, skip)
+    if shapes and not skip and not spans and len(text) <= 256 and len(_CRED_CLEAN) < 100000:
+        _CRED_CLEAN.add(text)
+    return spans
+
+
+def clean_value(value, leaf, note, key=None, pointer="", depth=0, shapes=True, max_depth=200):
+    """The structure rule: `value` (what a JSON document decoded to) with every credential in it replaced. A string goes to
+    `leaf(text, pointer, shapes)`, which returns what is printed for it. A field whose name says it holds a secret (or a `Value` whose
+    `Name` does), at any depth, is not read at all: `note(pointer, why, original)` returns what is printed for it (a number under such
+    a name is withheld too: 0 and 1 are not nothing). A key goes through `key(text)` when one is given. A value nested deeper than
+    `max_depth` is replaced the same way."""
+    if isinstance(value, str):
+        return leaf(value, pointer, shapes)
+    _tick(1)
+    if depth > max_depth and isinstance(value, (dict, list)):
+        return note(pointer, "nested deeper than %d levels" % max_depth, value)
+    if isinstance(value, dict):
+        named = None
+        for k in _CRED_NAME_KEYS:
+            if isinstance(value.get(k), str):
+                named = value[k]
+                break
+        pair_secret = named is not None and name_is_sensitive(named)
+        out = {}
+        for k, v in value.items():
+            ks = str(k)
+            point = "%s/%s" % (pointer, ks.replace("~", "~0").replace("/", "~1"))
+            safe_key = key(ks) if key is not None else ks
+            if safe_key in out:
+                safe_key = "%s#%d" % (safe_key, len(out))
+            sensitive = name_is_sensitive(ks) or (pair_secret and ks in _CRED_VALUE_KEYS)
+            if sensitive and is_container_name(ks) and isinstance(v, (dict, list)):
+                sensitive = False
+            if sensitive and not (v is None or isinstance(v, bool) or v == "") and not (isinstance(v, str) and (_CRED_REDACTED.match(v) or v.lower() in _CRED_NOT_A_VALUE)):
+                out[safe_key] = note(point, "credential-named field", v)
+            else:
+                out[safe_key] = clean_value(v, leaf, note, key, point, depth + 1, shapes and not _CRED_CHECKSUM_NAME.search(ks), max_depth)
+        return out
+    if isinstance(value, list):
+        return [clean_value(v, leaf, note, key, "%s/%d" % (pointer, i), depth + 1, shapes, max_depth) for i, v in enumerate(value)]
+    return value
+
+
+# what the rules of the block above already withhold whole, with their own markers: the first pass leaves these to them
+_CRED_OLD_COVERS = frozenset(("a JSON Web Token", "a password in a URL", "an authorization header value", "a scheme and its credential",
+                              "a long unbroken base64-like run", "a key-length base64 string"))
+
+
+def _credentials_withheld(text, kind, skip=()):
+    """`text` with each credential in it withheld. It runs after the rules above, on text that may hold their markers: a stretch that
+    begins at a marker is theirs already."""
+    out, last = [], 0
+    for start, end, why in credential_spans(text, True, skip):
+        if text.startswith("<", start):
+            continue
+        out.append(text[last:start])
+        out.append(_withheld(why, end - start, kind))
+        last = end
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
+
+
 def scrub(text, kind="text"):
-    """The text with every token-shaped run and every user-info withheld."""
+    """The text with every token-shaped run, every user-info and every credential withheld."""
     if len(text) > TEXT_LIMIT:
         return _withheld("over-long text", len(text), kind)
+    text = _credentials_withheld(text, kind, _CRED_OLD_COVERS)     # first: the rules above cut a secret into pieces that no rule for a whole one can match
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
@@ -945,7 +1394,7 @@ def scrub(text, kind="text"):
         out.append(_withheld("token-shaped text", end - start, kind))
         last = end
     out.append(text[last:])
-    return "".join(out)
+    return _credentials_withheld("".join(out), kind)
 
 
 def redact_url(url):
@@ -1614,7 +2063,7 @@ def format_hint(text):
 
 # --- arguments ----------------------------------------------------------------------
 
-KNOWN_PARAMS = {"root", "max_size", "limit", "write_values", "exclude_top_level_dirs", "max_seconds"}
+KNOWN_PARAMS = {"root", "max_size", "limit", "write_values", "exclude_top_level_dirs", "max_seconds", "template_threshold"}
 
 
 def int_param(args, key, default, low, high=None):
@@ -1626,6 +2075,96 @@ def int_param(args, key, default, low, high=None):
     if high is not None and value > high:
         fail("%s must be at most %d (a note is read whole into memory)" % (key, high))
     return value
+
+
+# --- template-similarity groups -------------------------------------------------------
+
+_TEMPLATE_TOKEN = re.compile(r"<[a-z_]+>|\w+")
+
+
+def template_sketch(text, spans):
+    """The sketch of a note for template grouping: the TEMPLATE_SKETCH smallest hashes of the 3-token shingles of its text, taken after every
+    located indicator span has been replaced by its kind, so that a victim identifier, an address or a wallet (the values the scan withholds)
+    is not in what is compared. Only the first TEMPLATE_CHARS characters are used. Returns (sketch, complete): `complete` is False when the clock
+    ran out, and None when the text has no token at all."""
+    end = min(len(text), TEMPLATE_CHARS)
+    pieces, at = [], 0
+    for start, stop, kind in sorted(spans):
+        if start < at:
+            continue                              # inside a span that was already replaced
+        pieces.append(text[at:start])
+        pieces.append(" <%s> " % kind)
+        at = stop
+        if at >= end:
+            break
+    if at < end:
+        pieces.append(text[at:end])
+    tokens = _TEMPLATE_TOKEN.findall("".join(pieces).lower())
+    n = min(TEMPLATE_SHINGLE, len(tokens))
+    if n == 0:
+        return None, True
+    hashes = set()
+    for i in range(len(tokens) - n + 1):
+        if i % 2048 == 0 and out_of_time():
+            return None, False
+        hashes.add(int.from_bytes(hashlib.blake2b(" ".join(tokens[i:i + n]).encode("utf-8", "replace"), digest_size=8).digest(), "big"))
+    return sorted(hashes)[:TEMPLATE_SKETCH], True
+
+
+def template_similarity(a, b):
+    """The Jaccard similarity of two notes' shingle sets, estimated from their sketches (exact when the two sets together hold no more than
+    TEMPLATE_SKETCH shingles, which is every note of about a hundred words)."""
+    sa, sb = set(a), set(b)
+    union = sorted(sa | sb)[:TEMPLATE_SKETCH]
+    return sum(1 for x in union if x in sa and x in sb) / len(union)
+
+
+class DirEntry:
+    """A directory as the answer prints it, for print_order: `name` is the printed text and `path` the real one (the tie-break is a keyed hash of it)."""
+
+    def __init__(self, name, path):
+        self.name = name
+        self.path = path
+
+
+class TemplateGroups:
+    """Notes joined into groups as they are read: a note is linked to the earlier notes that share one of its smallest shingle hashes and
+    whose similarity is at the threshold. The groups are the connected components, so a note that is similar to any member joins the group."""
+
+    def __init__(self, threshold):
+        self.threshold = threshold
+        self.parent = []
+        self.sketches = []
+        self.index = {}
+        self.notes = []             # (note_id, directory as printed, directory, mtime_ns, modified_utc)
+
+    def find(self, i):
+        root = i
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[i] != root:
+            self.parent[i], i = root, self.parent[i]
+        return root
+
+    def add(self, note, sketch):
+        i = len(self.parent)
+        self.parent.append(i)
+        self.sketches.append(sketch)
+        self.notes.append(note)
+        for h in sketch[:TEMPLATE_KEYS]:
+            for j in self.index.get(h, ()):
+                if self.find(j) != self.find(i) and template_similarity(sketch, self.sketches[j]) >= self.threshold:
+                    self.parent[self.find(j)] = self.find(i)
+        for h in sketch[:TEMPLATE_KEYS]:
+            held = self.index.setdefault(h, [])
+            if len(held) < TEMPLATE_PER_KEY:
+                held.append(i)
+
+    def groups(self):
+        members = {}
+        for i in range(len(self.parent)):
+            members.setdefault(self.find(i), []).append(i)
+        return sorted(members.values(), key=lambda m: (-len(m), m[0]))
 
 
 def main():
@@ -1650,6 +2189,10 @@ def main():
     exclude_top = args.get("exclude_top_level_dirs", DEFAULT_EXCLUDE_TOP)
     if not isinstance(exclude_top, list) or not all(isinstance(x, str) and x and "/" not in x for x in exclude_top):
         fail("exclude_top_level_dirs must be a list of directory names (no slash); [] excludes nothing")
+    template_threshold = args.get("template_threshold", DEFAULT_TEMPLATE_THRESHOLD)
+    if (isinstance(template_threshold, bool) or not isinstance(template_threshold, (int, float)) or not math.isfinite(template_threshold)
+            or not 0.5 <= template_threshold <= 1.0):
+        fail("template_threshold must be a number from 0.5 to 1.0 (the similarity of two notes' shingles at which they are one template)")
     unknown = sorted(k for k in args if k not in KNOWN_PARAMS)
     try:
         values = SecretValues(write_values)
@@ -1677,6 +2220,8 @@ def main():
     note_serial = finding_serial = 0
     bytes_read = 0
     stopped = {}
+    templates = TemplateGroups(template_threshold)
+    not_grouped = {"binary": 0, "no_text": 0, "scan_cut": 0, "clock": 0, "note_limit": 0}
     PROGRESS["coverage"] = counters
 
     # The first pass takes at most FIRST_PASS_SHARE of the time; the clock the rest of the run keeps is the one the caller set.
@@ -1717,12 +2262,14 @@ def main():
                             "encoding": None, "encoding_basis": decoded["basis"], "decode_errors": None,
                             "format_hint": "binary", "indicator_counts": {}})
                 by_class["binary_not_scanned"] = by_class.get("binary_not_scanned", 0) + 1
+                not_grouped["binary"] += 1
                 notes.add(row)
                 continue
 
             text = decoded["text"]
             offsets = Offsets(decoded)
             counts, note_values = {}, []
+            template_spans = []         # (start, end, kind) of the located spans in the first TEMPLATE_CHARS characters: what the template text masks
             cut = False
             for kind, pattern, group in KINDS:
                 if cut:
@@ -1733,6 +2280,8 @@ def main():
                         cut = True
                         break
                     value = m.group(group)
+                    if m.start(group) < TEMPLATE_CHARS:
+                        template_spans.append((m.start(group), m.end(group), kind))
                     finding_serial += 1
                     finding_id = "F%06d" % finding_serial
                     offset = offsets.at(m.start(group))
@@ -1794,6 +2343,18 @@ def main():
                 counters["notes_partly_scanned"] += 1
                 row["scan_stopped"] = ("the time limit (max_seconds) was reached while this note was being scanned: the indicators after the "
                                        "ones counted here were not looked for")
+            # Template grouping: on the text with every located indicator span replaced by its kind, so that no membership follows a value.
+            if cut:
+                not_grouped["scan_cut"] += 1
+            elif len(templates.parent) >= TEMPLATE_MAX_NOTES:
+                not_grouped["note_limit"] += 1
+            else:
+                sketch, finished = template_sketch(text, template_spans)
+                if sketch is None:
+                    not_grouped["no_text" if finished else "clock"] += 1
+                else:
+                    # the directory as the note's row prints it (a name that is also a value of this note is withheld), not counted a second time
+                    templates.add((note_id, shown(os.path.dirname(path), note_values, count=False), os.path.dirname(path), mtime_ns, modified), sketch)
             notes.add(row)
     finally:
         values.close()
@@ -1805,8 +2366,32 @@ def main():
     for kind, n in distinct.items():
         totals[kind]["distinct_values"] = n
 
-    pages = {"notes": notes.finish(), "occurrences": occurrences.finish(), "name_matches_not_read": rejected.finish(),
-             "exceptions": exceptions.finish(), "distinct_note_contents": variants.finish()}
+    group_page = NoReplacePage("ransom_note_scan", [real, "template groups"], limit)
+    member_page = NoReplacePage("ransom_note_scan", [real, "template group members"], limit)
+    group_count = 0
+    for members in templates.groups():
+        group_count += 1
+        gid = "T%04d" % group_count
+        times = [templates.notes[i][3] for i in members]
+        first, last = min(times), max(times)
+        printed_of = {templates.notes[i][2]: templates.notes[i][1] for i in members}
+        # in the order an answer prints names: by the printed text, the withheld ones in an order drawn afresh every run
+        directories = print_order([DirEntry(printed, raw) for raw, printed in printed_of.items()], lambda entry: False)
+        shown_directories = [d.name for d in directories[:20]]
+        group_page.add({"group_id": gid, "copies": len(members), "member_note_ids": [templates.notes[i][0] for i in members[:20]],
+                        "member_note_ids_shown": min(len(members), 20), "directories": shown_directories,
+                        "directories_total": len(directories), "directories_shown": len(shown_directories),
+                        "earliest_mtime_ns": first, "earliest_modified_utc": iso_utc(first),
+                        "latest_mtime_ns": last, "latest_modified_utc": iso_utc(last),
+                        "basis": "observation: notes whose text, with every located indicator span replaced by its kind, is similar at or above "
+                                 "the threshold; it says nothing about who wrote them or whether the same template was used by one actor"})
+        for i in members:
+            note_id, directory, _raw, mtime_ns, modified = templates.notes[i]
+            member_page.add({"group_id": gid, "note_id": note_id, "directory": directory, "mtime_ns": mtime_ns, "modified_utc": modified})
+
+    pages = {"notes": finish_page(notes), "occurrences": finish_page(occurrences), "name_matches_not_read": finish_page(rejected),
+             "exceptions": finish_page(exceptions), "distinct_note_contents": finish_page(variants),
+             "template_groups": finish_page(group_page), "template_group_members": finish_page(member_page)}
     OWN_NAMES.update(page["all_results"] for page in pages.values() if page.get("all_results"))
     if values.shown:
         OWN_NAMES.add(values.shown)
@@ -1827,6 +2412,13 @@ def main():
     if stopped:
         reasons.append("the time limit (max_seconds %d) was reached: %d entries of the directory being read and at least %d directories were "
                        "not examined, so a note under them was not looked for" % (max_seconds, stopped["entries_not_examined"], stopped["directories_not_entered"]))
+    if not_grouped["note_limit"]:
+        reasons.append("%d notes were not grouped by template: the grouping holds at most %d notes (they keep their rows and their exact-duplicate groups)"
+                       % (not_grouped["note_limit"], TEMPLATE_MAX_NOTES))
+    if not_grouped["clock"]:
+        reasons.append("%d notes were not grouped by template: the time limit was reached while their text was being compared" % not_grouped["clock"])
+    if not_grouped["scan_cut"]:
+        reasons.append("%d notes were not grouped by template: they were only partly scanned" % not_grouped["scan_cut"])
     if BOUNDARY["replaced"]:
         reasons.append("%d strings held an identifier-shaped text that the first rule missed and were replaced at the output (see boundary)"
                        % BOUNDARY["replaced"])
@@ -1853,6 +2445,23 @@ def main():
         "occurrences": occurrences.page,
         "rejected": rejected.page,
         "distinct_note_contents": variants.page,
+        "template_groups": group_page.page,
+        "template_group_members": member_page.page,
+        "template_grouping": {
+            "algorithm": "3-token shingles of the note's text, after every located indicator span is replaced by its kind, lower-cased; a "
+                         "note is held as its %d smallest shingle hashes; two notes are one template when the estimated Jaccard similarity of "
+                         "their shingle sets is at or above the threshold, and a group is a connected set of such notes" % TEMPLATE_SKETCH,
+            "threshold": template_threshold,
+            "text_used": "the first %d characters of each note" % TEMPLATE_CHARS,
+            "notes_grouped": len(templates.parent),
+            "groups": group_count,
+            "notes_not_grouped": {k: v for k, v in not_grouped.items() if v},
+            "binary_notes_are_not_grouped": not_grouped["binary"],
+            "estimate": "exact when the two notes together hold at most %d distinct shingles; otherwise an estimate with a standard error "
+                        "near 0.035 at a similarity of 0.8" % TEMPLATE_SKETCH,
+            "note": "groups are observations about the text of notes: they are computed without the values the scan withholds, they say nothing "
+                    "about the author, and they discard no note, occurrence or exact-duplicate group",
+        },
         "earliest_observed_note_mtime": (
             {"note_id": earliest[1], "modified_utc": earliest[2], "mtime_ns": earliest[0],
              "clock": "filesystem modification time as collected, UTC; extraction, copying and a restore change it",

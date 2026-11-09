@@ -14,8 +14,9 @@ launcher and probe scripts are written into each VM by the SDK.
 |---|---|
 | `base.Dockerfile` | The agent runtime every seat boots: Node, Pi, Python with a venv at `/opt/dfir/venv` holding what the tool library imports (`library-python.txt`), and the small tools an examiner's shell has (`strings`, `hexdump`, `file`, `xxd`, `sqlite3`, `jq`, the archive tools), plus `socat` for the hub link, and `seekfix.c` preloaded (on a macOS host msb swaps `SEEK_DATA` and `SEEK_HOLE` on a mount, and GNU grep then calls a large text file binary; the shim swaps them back only where it sees the swapped answers). It records itself as a profile image does (`install.py --base`): the whole package inventory, a NOTICE, an SBOM, and that it is not for redistribution (it holds Debian's GPL programs, whose source offer is not written yet; its record and NOTICE name that as `debian-gpl-packages`). |
 | `library-python.txt` | The Python packages the tool library's tools import. In the base, so a library tool handed to any run with `--tools-from` works whatever the run's packs; `tests/recipe.test.sh` keeps it in step with the tools' imports. |
-| `profiles.json` | A profile is a set of packs: `disk`, `memory`, `re`, `network`, `linux`, `mobile`, `macos`, `cloud`, `triage`, `core`, `full` — and `web`, the base with Chromium, which `--playwright` boots (the browser tools drive it with this repository's Playwright, mounted read-only). `disk` holds computer-forensics-base, encrypted-containers, virtualization-backup-forensics and windows-forensics; `full` holds every pack under `packs/` (with the dependencies of each), and `tests/recipe.test.sh` fails when a pack is missing from it. `macos` (macos-forensics), `cloud` (cloud-forensics) and `triage` (triage-collection) each hold one pack and the base pack: a macOS case no longer rides the `mobile` image, and a cloud or triage case no longer rides `full` (`disk` was never involved). `re` holds the ransomware pack beside reverse-engineering. `core` holds the base pack (computer-forensics-base) and nothing else: its programs (the Sleuth Kit, plaso, dissect, bulk_extractor and the rest it names) and no other pack's; it is the image of a run whose only pack is the base pack. |
-| `recipe.py` | Turns a profile's packs — every `requires/host.json` and `requires/python.txt`, with each pack's dependencies — into a Dockerfile (with a builder stage per program built from source), a spec and a NOTICE. `profile-for PACK...` names the profile that serves a run's packs, in this order: the smallest profile that holds them (they and their dependencies are among its packs; `full` holds every pack, so it is the answer for a pack no smaller profile lists); for a pack no profile lists, an installed pro or third-party one, the smallest profile whose packs name every program they name and install every library their tools import; else `full`. A pack no profile lists that names nothing the base pack does not name (stdlib Python that depends on the base pack, or a pack that names only Sleuth Kit programs) is covered by `core`; one that names a program the base pack lacks (`vol`, `tshark`, `pwsh`) goes to the smallest profile that names it, and one that needs programs only `full` has together goes to `full`, since `core` lacks them. A run with no packs, or an unlisted pack that names and depends on nothing, is `base`. Membership comes first because a pack whose tools use nothing beyond the base's is covered by every profile, and covering alone would pick one of them by chance. Of the candidates of a step the tie rule picks: `full` last, then the fewest packs, then the fewest programs the profile's packs name, then the profile's name; the order of `profiles.json` decides nothing (`tests/recipe.test.sh` shuffles it). It reads each pack where a run does: a path as given, an id from `$DFIRSWARM_HOME/packs` and then this repository, so an installed pro or third-party pack is matched by what it names. `--tools-from DIR` adds the programs a tool directory's manifests name (`requires`): among the candidates of that order, an image smaller than `full` that has them all is preferred. `check-lock FILE` refuses an images lock entry that is not pinned by digest. |
+| `library-python.lock` | The same packages, `==`, with the sha256 of every file PyPI publishes for them (CPython 3.11, Linux x86_64 and aarch64) and for what they need. The base image installs it with `pip --require-hashes`. |
+| `profiles.json` | A profile is a set of packs: `disk`, `memory`, `re`, `ransomware`, `network`, `linux`, `mobile`, `macos`, `cloud`, `triage`, `core`, `full` — and `web`, the base with Chromium, which `--playwright` boots (the browser tools drive it with this repository's Playwright, mounted read-only). `disk` holds computer-forensics-base, encrypted-containers, virtualization-backup-forensics and windows-forensics; `full` holds every pack under `packs/` (with the dependencies of each), and `tests/recipe.test.sh` fails when a pack is missing from it. `macos` (macos-forensics), `cloud` (cloud-forensics) and `triage` (triage-collection) each hold one pack and the base pack: a macOS case no longer rides the `mobile` image, and a cloud or triage case no longer rides `full` (`disk` was never involved). `re` holds the ransomware pack beside reverse-engineering. `core` holds the base pack (computer-forensics-base) and nothing else: its programs (the Sleuth Kit, plaso, dissect, bulk_extractor and the rest it names) and no other pack's; it is the image of a run whose only pack is the base pack. |
+| `recipe.py` | Turns a profile's packs — every `requires/host.json` and `requires/python.txt`, with each pack's dependencies — into a Dockerfile (with a builder stage per program built from source), a spec and a NOTICE. `profile-for PACK...` names the profile that serves a run's packs, in this order: the smallest profile that holds them (they and their dependencies are among its packs; `full` holds every pack, so it is the answer for a pack no smaller profile lists); for a pack no profile lists, an installed pro or third-party one, the smallest profile whose packs name every program they name and install every library their tools import; else `full`. A pack no profile lists that names nothing the base pack does not name (stdlib Python that depends on the base pack, or a pack that names only Sleuth Kit programs) is covered by `core`; one that names a program the base pack lacks (`vol`, `tshark`, `zeek`) goes to the smallest profile that names it, and one that needs programs only `full` has together goes to `full`, since `core` lacks them. A run with no packs, or an unlisted pack that names and depends on nothing, is `base`. Membership comes first because a pack whose tools use nothing beyond the base's is covered by every profile, and covering alone would pick one of them by chance. Of the candidates of a step the tie rule picks: `full` last, then the fewest packs, then the fewest programs the profile's packs name, then the profile's name; the order of `profiles.json` decides nothing (`tests/recipe.test.sh` shuffles it). It reads each pack where a run does: a path as given, an id from `$DFIRSWARM_HOME/packs` and then this repository, so an installed pro or third-party pack is matched by what it names. `--tools-from DIR` adds the programs a tool directory's manifests name (`requires`): among the candidates of that order, an image smaller than `full` that has them all is preferred. `check-lock FILE` refuses an images lock entry that is not pinned by digest. |
 | `install.py` | Runs inside the build: installs what the spec names, fetches each pinned artefact (download, `.deb`, source, a source a builder stage compiles, or a data file a program reads) and checks its sha256, fails on a required package it cannot install and, at the end, on any program the packs name that is not on PATH, optional ones too, unless it is left out on purpose (no build for this architecture) or the build says `--allow-missing-optional` (see "Disk space"), and writes `/etc/dfirswarm/image.json` — every program it found, every package version (the image's whole Debian list and its venv too), each pack's version and seal, and what it could not install — `/etc/dfirswarm/NOTICE`, `/etc/dfirswarm/sbom.json` and `/etc/dfirswarm/tools.md`, the list an agent greps. |
 
 ## When the profiles change
@@ -36,16 +37,20 @@ What a host that built images before this change has to know:
   `dfirswarm-<profile>:dev-<arch>`, and `scripts/swarm.sh image-for` then
   shows `digest: null`. A lock kept elsewhere (a private build repository's
   `images.lock.json`) needs entries for `core`, `macos`, `cloud` and `triage`,
-  built and pushed there, before runs of those packs are pinned again.
+  built and pushed there, before runs of those packs are pinned again. No such lock exists yet:
+  the private publishing path is planned, not in place (see "Prebuilt images").
 - **A run of several packs.** A profile is chosen because it holds the run's
   packs, not because it names the same programs. Where a smaller image used to
-  serve a run by chance, `full` now does: `ransomware-response` with
-  `windows-forensics`, with `encrypted-containers`, or with `memory-forensics`
-  resolved to `disk`, `disk` and `memory`, and now resolve to `full`, since no
-  profile but `full` holds both. The jobs of each pack still run in the
-  smallest image that holds it (`re`, `disk`, `memory`); the default image,
-  which holds every pack of the run, is `full`. A host that built only `disk`
-  or `memory` needs `full` for those runs, or `--image`.
+  serve a run by chance, a profile that holds all of them does:
+  `ransomware-response` with `windows-forensics` or with `encrypted-containers`
+  resolved to `disk` and now resolve to `ransomware` (the packs of `disk` and
+  `ransomware-response`, no bigger than `disk` in programs and far below `full`),
+  and with `memory-forensics`, which resolved to `memory`, now resolves to
+  `full`, since no profile but `full` holds both. The jobs of each pack still
+  run in the smallest image that holds it (`re`, `disk`, `memory`); the default
+  image, which holds every pack of the run, is `ransomware` or `full`. A host
+  that built only `disk` or `memory` needs `ransomware` or `full` for those
+  runs, or `--image`.
 - **The base pack alone.** `computer-forensics-base` names the Sleuth Kit
   programs, which the `base` image lacks. A run whose only pack is the base
   pack now boots `core`, the profile of that pack alone (it was `memory`, the
@@ -58,7 +63,7 @@ What a host that built images before this change has to know:
   only programs the base pack names (stdlib Python, or a pack that names only
   Sleuth Kit programs, with or without that dependency) is covered by `core`
   too. `core` lacks the programs of the other packs: a pack that names `vol`,
-  `tshark` or `pwsh` goes to the smallest profile that names it, and a pack
+  `tshark` or `zeek` goes to the smallest profile that names it, and a pack
   that needs programs no profile but `full` has together goes to `full`. A run
   with no packs at all, or an unlisted pack that names nothing and depends on
   nothing, is served by `base`.
@@ -203,7 +208,8 @@ in every image:
 run names its image by digest (the lock, or the tag resolved once at
 kickoff) and custody says whether every VM booted that digest, which proves
 the VMs ran the same image, not who built it. Signing belongs where images
-are published, the private `dfirswarm-pro` repository: `cosign sign` by
+are published, which is planned to be the private `dfirswarm-pro` repository
+(that path is not in place yet, see "Prebuilt images"): `cosign sign` by
 digest after the push (keyless, from the workflow's identity) and `cosign
 attest --type cyclonedx` with the image's own `sbom.json`. The kickoff would
 then run `cosign verify` on the lock's digest before it pulls.
@@ -217,14 +223,31 @@ anything is unpacked, installed or built.
 
 - `install.download` — a version, and per architecture the URL, its sha256
   and the program's path inside the archive; an architecture with no entry is
-  recorded as not installed. MemProcFS, avml, hayabusa (its static build: the
-  glibc one needs a newer glibc than Debian 12's), velociraptor, uac and
-  PowerShell come this way. A `.deb` is handed to apt from where it was
+  recorded as not installed. MemProcFS and hayabusa (its static build: the
+  glibc one needs a newer glibc than Debian 12's) come this way. avml,
+  velociraptor, uac and PowerShell keep their pinned downloads declared but
+  carry `not_in_image`, so the image does not install them: the operator takes
+  the pinned binary to the host it runs on. A `.deb` is handed to apt from where it was
   checked, so what it depends on comes from Debian: radare2 (upstream's
   package per architecture) and Zeek (the Zeek project's own `zeek-8.0-core`
   for Debian 12; `bin` names where the package puts it, `/opt/zeek/bin`).
+  A NuGet package (`.nupkg`, a zip file) is unpacked whole under
+  `/opt/dfir/tools/<name>/` after its sha256 is checked, by rules of its own:
+  only regular files and directories, every name under that directory (a
+  name that is absolute, has a drive letter, a backslash, a control character
+  or an empty, `.` or `..` component is refused), a link, a device or another
+  special file, an encrypted member, a method other than stored or deflate, a
+  name twice or a file where a directory is refused, nothing existing is
+  replaced or followed (`O_EXCL`, `O_NOFOLLOW`, no link on the way), at most
+  2,000 members, 256 MiB for a member and 512 MiB in all, and every file
+  0644 and every directory 0755 whatever the archive says (the wrapper makes
+  the program executable). A package that is refused leaves nothing behind but its archive, and
+  the program is recorded as not installed. ilspycmd comes this way (a
+  Native AOT build for amd64, the framework-dependent build on the .NET
+  runtime for arm64: see `run`).
 - `run` — the interpreter a program needs: `python`, or a program the image
-  holds. Eric Zimmerman's MFTECmd, EvtxECmd and RECmd are their `net` zips (built for .NET 10),
+  holds. A download's architecture entry may carry its own `run`, which wins
+  over the download's (an empty one: the program runs by itself). Eric Zimmerman's MFTECmd, EvtxECmd and RECmd are their `net` zips (built for .NET 10),
   one for every architecture, each run by `dotnet`, which the same pack pins
   as a download of its own (the .NET 10 runtime per architecture): a runtime
   is installed once, before what runs on it.
@@ -239,7 +262,7 @@ anything is unpacked, installed or built.
   for the build only, `apt_deps` stay. `pip_after` is a second `pip install`
   into the same venv, after `pip`: ALEAPP's `mister_skinnylegs` names its
   readers by an unpinned git URL, which pip will not let another URL replace,
-  so ALEAPP's other requirements go in `pip` and `mister_skinnylegs` with its
+  so ALEAPP's other requirements go in `pip_lock` and `mister_skinnylegs` with its
   dependencies go in `pip_after` with `--no-deps`, each git one at a commit.
   `env` is the environment of its pip:
   mac_apt pins pytsk3 20230125, an sdist whose bundled Sleuth Kit finds the
@@ -274,7 +297,10 @@ anything is unpacked, installed or built.
   steps. One url, its sha256 and its size (`bytes`, a download stops past it) for every architecture, put
   under the name it has at its url (or `file`) in `into` inside the directory
   of a Python package of the image's venv (`package`), where the program looks
-  for it. `warm` is a command run once the file is there, for a program that
+  for it. Definitions a tool reads by a path, not through a package, name an absolute
+  `into` under `/opt/dfir/data/` instead and no `package` (the triage pack's UAC,
+  Velociraptor and KapeFiles corpora go to `/opt/dfir/data/triage-definitions/<name>-<version>/`);
+  an `into` anywhere else is refused. `warm` is a command run once the file is there, for a program that
   indexes what it finds the first time it runs and would otherwise do it in
   every VM the image boots; a warm that fails is recorded (`warm: failed` in
   `image.json`) and does not lose the file. `check` is a command that must
@@ -312,8 +338,12 @@ anything is unpacked, installed or built.
   nowhere else: Suricata.
 - `not_in_image` (with why) — a program that belongs to another system:
   Apple's `log` (macOS only; UnifiedLogReader.py reads the same archives in
-  the image) and CyLR (a collector, run on the host being collected). It is
-  listed under `not_applicable` in `image.json` and the NOTICE, and a VM's
+  the image), and the programs an operator runs where the evidence or the
+  credentials are, not in an analysis VM: CyLR, UAC and Velociraptor
+  (collectors, run on the host being collected), AVML (live memory
+  acquisition), PowerShell and the AWS CLI (cloud acquisition). Those with a
+  pinned download keep it declared, for the operator to take to the source. It
+  is listed under `not_applicable` in `image.json` and the NOTICE, and a VM's
   toolbox check lists it there too, never as missing; a pack may not require
   one.
 
@@ -464,8 +494,11 @@ credential artefacts out of Windows memory, which is decided separately.
 
 ## Prebuilt images
 
-The pro edition's prebuilt, digest-pinned images are built in the private
-`dfirswarm-pro` repository and pushed there as private packages: an image
+The pro edition's prebuilt, digest-pinned images are planned to be built in the
+private `dfirswarm-pro` repository and pushed there as private packages. **That
+path is not in place yet:** no workflow runs there and no `images.lock.json`
+exists, so nothing is published today and a host builds its own images (see
+"Build your own"). The reason for the plan: an image
 bundles separately licensed programs, and a package published from this
 public repository is public. **Not the images that carry `install.data`** (the
 memory and `full` images, with Volatility's symbol tables): none of our
@@ -502,3 +535,76 @@ table there and supply it to the run) and capa's rules (`capa --rules` with a
 directory you carried across). A rebuild on a machine with no route out takes
 the Foundation's bundle from `DFIRSWARM_DATA_DIR`. A model the run calls has to be reachable too, or local
 (`--local-only`).
+
+## The apt snapshot and the base image digests
+
+Every apt install, in the base image and in every profile built on it, resolves
+from `snapshot.debian.org` at one date, held in `images/debian-snapshot` (the
+`ARG APT_SNAPSHOT=` line of `images/base.Dockerfile` repeats it, and the build
+refuses a mismatch). `bookworm` and `bookworm-updates` come from
+`archive/debian/<date>/`, `bookworm-security` from `archive/debian-security/<date>/`;
+`Acquire::Check-Valid-Until "false"` is set, since a snapshot's `Release` files
+expire, and apt retries five times. A backports line (`-t bookworm-backports`)
+takes the snapshot's backports at the same date. The record names the date
+(`apt_snapshot` in `/etc/dfirswarm/image.json`) and the image carries it as the
+label `dev.dfirswarm.apt-snapshot`. The apt lines of the packs are not edited:
+the snapshot pins them.
+
+Both `FROM` lines carry the multi-arch index digest, with the tag kept beside it.
+The date moves on purpose: `.github/workflows/apt-snapshot.yml` opens a pull
+request monthly (`scripts/apt-snapshot-bump.sh`), then starts `ci.yml` and
+`images.yml` on its branch. The digests move through Dependabot's docker
+ecosystem, or by hand: `scripts/apt-snapshot-bump.sh --digests` (it reads the
+manifests with `docker buildx imagetools inspect`, no layers).
+
+## Hash-locked pip sets
+
+`install.py` installs a pip set from a pack's lock file with `pip install
+--no-cache-dir --require-hashes -r <lock>` wherever a pack names one:
+`requires/python.lock` beside `python.txt`, `install.pip_lock` on a
+`python3 -m pip install` program, and `pip_lock` / `pip_after_lock` on a pinned
+source (docs/packs.md, section 8, "Requires and images", rule 1). `recipe.py`
+copies the lock files into the build context (`locks/`) and records each one's
+sha256 in the spec; the build refuses a lock whose file differs, a line without
+`==` or a hash, and a hash that does not match, naming the program. A set
+installed from a lock is listed in `image.json` under `locked` (`for`, `lock`,
+`sha256`), only after pip has succeeded. A set with no lock installs as before.
+No pack carries a lock yet; the pins are other changes.
+
+## Re-pinning a download
+
+Every URL a pack pins is checked once a week (`.github/workflows/pins.yml`,
+`scripts/check-pins.ts`): a HEAD request for each, and for a URL that names no
+version, the bytes too, compared with the pinned sha256. A URL too large to
+fetch every week (Volatility's symbol bundle) is checked by the size it answers
+with. The run fails when a pin rotted (404), changed (other bytes, other size) or
+did not answer, and names it in the job summary; `node
+--experimental-strip-types scripts/check-pins.ts --list` prints the pins and
+`--head-only` skips the fetches. The whole run has a deadline (`--deadline`, 20 minutes), and a scheduled run that fails opens (or comments on) one `ci-failure` issue. Dependabot is set to watch the base image digests and the Python requirement file (it holds lower bounds only, so what Dependabot proposes for it is not checked here); the pinned downloads are not a Dependabot ecosystem. Nothing re-pins by itself.
+
+To re-pin **an Eric Zimmerman tool** (MFTECmd, EvtxECmd, RECmd in
+`packs/windows-forensics/requires/host.json`): upstream replaced the zip at the
+same address, so download it from the entry's URL, take its sha256, read the new
+version from the tool (`<tool> --version`, or the release notes), set the entry's
+`version` and `sha256`, and update the `why` and the notes that name the old
+version; then raise the pack's version, seal it, and build `disk`. The other
+entries of a pack re-pin the same way: new URL if it names a version, new sha256
+from the bytes you downloaded, never copied from a page you did not check.
+
+To re-pin **Zeek** (`packs/network-forensics/requires/host.json`): the Zeek
+project's build service keeps only the latest release, so the two `.deb` files
+of the pinned version are kept as the assets of a release of this repository,
+tagged `assets/zeek-<version>` and made with `--latest=false` (it is a store of
+pinned downloads, never the repository's latest release); its notes name the
+build service URL each file came from and each file's sha256. The entry's URLs
+point at `https://github.com/halilozturkci/dfirswarm/releases/download/assets/zeek-<version>/<file>`.
+A GitHub release asset answers with a redirect to GitHub's own download host
+over https, which the build's redirect rule accepts. To move to a new Zeek
+version, download both `.deb` files (amd64 and arm64) from the build service's
+repository path while it still serves that version, take their sha256, create
+the release for the new tag with the two files and notes in that form
+(`gh release create assets/zeek-<version> --latest=false --notes-file ...`),
+and set the two URLs, the version and the two sha256 values; then raise the
+pack's version, seal it, and build `network`. The files are a public copy of the
+Zeek project's package: the entry keeps `redistributable: false` until the
+licence review has decided otherwise.

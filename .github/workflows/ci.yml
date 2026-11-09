@@ -25,6 +25,10 @@ concurrency:
 permissions:
   contents: read
 
+# The Linux jobs run on ubuntu-24.04, not ubuntu-latest: GitHub moves ubuntu-latest to
+# Ubuntu 26 from 2026-10-19, which changes the Linux Python and the AppArmor and
+# user-namespace setup these jobs adjust. Move the label on purpose, in a change
+# that tests it.
 jobs:
   select:
     # Which suites this run needs. A pull request runs the suites that read
@@ -40,11 +44,12 @@ jobs:
     # the microVM job is needed: everything, or a pack's requirements (the
     # images are built from them).
     name: which suites this change needs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       all: ${{ steps.s.outputs.all }}
       vm: ${{ steps.s.outputs.vm }}
+      py311: ${{ steps.s.outputs.py311 }}
       node: ${{ steps.s.outputs.node }}
       shell: ${{ steps.s.outputs.shell }}
     steps:
@@ -68,7 +73,7 @@ jobs:
           if [ "$EVENT" = push ] && [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then narrow_push=true; fi
           if { [ "$EVENT" != pull_request ] && [ "$narrow_push" != true ]; } || [ "$FULL_LABEL" = true ]; then
             why="$([ "$FULL_LABEL" = true ] && echo "the full-ci label" || echo "a $EVENT run")"
-            { echo "all=true"; echo "vm=true"; echo "node="; echo "shell="; } >> "$GITHUB_OUTPUT"
+            { echo "all=true"; echo "vm=true"; echo "py311=true"; echo "node="; echo "shell="; } >> "$GITHUB_OUTPUT"
             echo "**Everything** ($why)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -76,16 +81,18 @@ jobs:
           q() { node -e "const s = require(process.argv[1]); process.stdout.write(String($1))" "$RUNNER_TEMP/select.json"; }
           all="$(q 's.all')"
           vm="$(q "s.all || s.changed.some((p) => /^packs\/[^/]+\/requires\//.test(p))")"
-          { echo "all=$all"; echo "vm=$vm"
+          py311="$(q 's.py311')"
+          { echo "all=$all"; echo "vm=$vm"; echo "py311=$py311"
             echo "node<<SELECT_EOF"; q 's.node.join("\n")'; echo; echo "SELECT_EOF"
             echo "shell<<SELECT_EOF"; q 's.shell.join("\n")'; echo; echo "SELECT_EOF"; } >> "$GITHUB_OUTPUT"
           { echo "**$( [ "$all" = true ] && echo Everything || echo "$(q 's.node.length') node suites, $(q 's.shell.length') shell suites")** for $(q 's.changed.length') changed file(s); microVM job: $vm."
             echo; q 's.reasons.map((r) => "- " + r).join("\n")'; echo; } >> "$GITHUB_STEP_SUMMARY"
+          echo "Python 3.11 job: $py311." >> "$GITHUB_STEP_SUMMARY"
 
   test:
     name: linux · ${{ matrix.part }}
     needs: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # One job of six, run side by side. As one job it was the longest of the
     # run and the one every pull request waited for: 67 min 12 s on a green run
     # of 2026-10-27 (npm test 31 min 36 s, test:bash 24 min 6 s, the browser 8
@@ -219,13 +226,14 @@ jobs:
     # newest 22; this is the floor, so the claim is tested, not assumed.
     name: node tests ${{ matrix.node }} · Node 22.19 (the engines floor)
     needs: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Two parts (node's own --test-shard): as one job the node suites took 20 to
     # 34 min over 60 runs and 35 min 30 s on a green run of 2026-10-27, the
     # longest job of the run once the Linux job was split. The typecheck runs
     # in the first. A limit is there to stop a hang: every test has its own
-    # 5-minute limit (scripts/test-node.ts).
-    timeout-minutes: 45
+    # 5-minute limit (scripts/test-node.ts). 60 min, as the Node 24 job: the
+    # batch of 2026-11 added tests and a part took 38 min.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -278,10 +286,11 @@ jobs:
     # builds on node:24. The node suites again, on 24.
     name: node tests ${{ matrix.node }} · Node 24 (the VM image's)
     needs: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Two parts, as the Node 22.19 job: one job took 19 to 32 min over 60 runs
-    # and 34 min 36 s on a green run of 2026-10-27.
-    timeout-minutes: 45
+    # and 34 min 36 s on a green run of 2026-10-27. The batch of 2026-11 added
+    # tests: part 1 of 2 took 44.5 min on 2026-11-08 and met the old 45 min limit.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -324,6 +333,207 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  python-311:
+    # The pack tools run in the VM images on Debian 12's Python 3.11
+    # (images/base.Dockerfile: node:24-bookworm-slim, Debian's python3). The
+    # Linux jobs above run Ubuntu 24.04's 3.12, the macOS jobs 3.14, and the
+    # microVM job only the VM suites, so nothing else here meets the images'
+    # interpreter. This job runs the suites that start a pack tool
+    # (tests/pack-*.test.ts) inside that image, pinned to the digest the
+    # Dockerfile pins (tests/ci-shards.test.ts compares the two), with python3
+    # installed from the images' own apt snapshot (images/debian-snapshot), and
+    # fails when the interpreter is not 3.11. The select job runs it for
+    # everything (the nightly run, a run by hand, the full-ci label) and for a
+    # change to a pack, the tool library, an image file or a pack-tool suite
+    # (scripts/test-select.ts, py311). The suites run as the image's own
+    # unprivileged user, as the other Linux jobs' do: a suite that checks a
+    # refusal by file permissions proves nothing as root. The job adds runner
+    # time to every pull request that changes a pack.
+    name: pack tools · Python 3.11 (the images') · ${{ matrix.part }}
+    needs: select
+    if: needs.select.outputs.py311 == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
+      # A container's first process here is the runner's `tail -f /dev/null`,
+      # which reaps nothing: a program the suites kill is re-parented to it and
+      # stays a zombie, and the stop-signal suites ask whether it is gone.
+      # --init puts tini there. (Found by running the suites without it: the
+      # Suricata and pcap_extract stop cases failed on a zombie.)
+      options: --init
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ["1/2", "2/2"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Debian's python3, from the images' apt snapshot
+        run: |
+          set -eu
+          d="$(tr -d '[:space:]' < images/debian-snapshot)"
+          printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s/\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s/\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' "$d" "$d" > /etc/apt/sources.list.d/debian.sources
+          printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99snapshot
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends ca-certificates git python3 python3-venv python3-pip jq sqlite3 file xxd socat procps binutils bsdextrautils less unzip p7zip-full xz-utils bzip2 zstd curl libimage-exiftool-perl ripgrep
+          python3 -c 'import sys; print(sys.version); assert sys.version_info[:2] == (3, 11), "the images run Python 3.11"'
+          # The suites run as the image's own user, in the checkout it owns. Only the
+          # workspace changes hands: $RUNNER_TEMP is the runner's (another uid), which
+          # writes every later step's script and its GITHUB_ENV, GITHUB_OUTPUT and
+          # GITHUB_STEP_SUMMARY files there. The node user reads pack.list from it and
+          # writes only under the workspace and /tmp.
+          chown -R node:node "$GITHUB_WORKSPACE"
+      - name: npm ci
+        run: su node -s /bin/bash -c 'npm ci'
+      - name: The pack-tool suites this run needs
+        env:
+          ALL: ${{ needs.select.outputs.all }}
+          NODE_LIST: ${{ needs.select.outputs.node }}
+        run: |
+          set -eu
+          if [ "$ALL" = true ]; then
+            su node -s /bin/bash -c 'node --experimental-strip-types --no-warnings scripts/test-node.ts --list'
+          else
+            printf '%s\n' "$NODE_LIST"
+          fi | { grep -E '^tests/pack-[^/]+\.test\.ts$' || true; } > "$RUNNER_TEMP/pack.list"
+          echo "$(wc -l < "$RUNNER_TEMP/pack.list") pack-tool suite(s) on Python $(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Everything was asked for and nothing was found: a green job of no suites would say nothing.
+          if [ "$ALL" = true ] && [ ! -s "$RUNNER_TEMP/pack.list" ]; then echo "no pack-tool suite found in a run that runs everything" >&2; exit 1; fi
+      # One case is left out here, by its name: lnk_jumplist's walk of "/" with a
+      # one-second clock (tests/pack-windows-forensics-links-contract.test.ts)
+      # needs a file system too big to walk in a second, which a hosted runner
+      # has and this image's root has not (the walk finishes: complete). It runs
+      # in the Linux and macOS jobs.
+      - name: Pack-tool suites ${{ matrix.part }}
+        run: su node -s /bin/bash -c 'node --experimental-strip-types --no-warnings scripts/test-node.ts --test-shard=${{ matrix.part }} --files-from="$RUNNER_TEMP/pack.list" "--test-skip-pattern=a walk of the whole file system with max_seconds 1"'
+
+  re-real-programs:
+    # The reverse-engineering pack's real-program cases (tests/pack-re-real-programs.test.ts):
+    # the pack's tools and recipes run against the programs they call, not the
+    # stand-ins the other suites use. The programs are installed from the pins
+    # in the pack's requires/ (the download's sha256 is checked before anything
+    # is unpacked; FLOSS installs from its hash lock with --require-hashes), so
+    # this job tests the versions the images carry (Python 3.11, the one the
+    # FLOSS lock is resolved for). It REPORTS: continue-on-error is on the JOB,
+    # so a failure of any step (the install of a program, a hash that does not
+    # match, a case) shows as a warning and does not fail CI green. Whether it
+    # should gate is the owner's call; to make it gate, drop continue-on-error
+    # from the job. It runs when the select job says the Python 3.11 job is
+    # needed (a pack, the tool library, an image file or a pack-tool suite
+    # changed, and every nightly run). amd64 only (the runner's architecture).
+    name: reverse-engineering · real programs (reports, does not gate)
+    needs: select
+    if: needs.select.outputs.py311 == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - run: git config --global init.defaultBranch main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - run: npm ci
+      - name: Install the programs the pack pins
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q yara ssdeep tlsh-tools binutils python3-venv xz-utils unzip
+          python3 -m venv "$RUNNER_TEMP/re-venv"
+          "$RUNNER_TEMP/re-venv/bin/pip" install --require-hashes -r packs/reverse-engineering/requires/locks/floss.txt
+          mkdir -p "$RUNNER_TEMP/re-bin"
+          echo "$RUNNER_TEMP/re-venv/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/re-bin" >> "$GITHUB_PATH"
+          python3 - <<'PY'
+          import hashlib, json, os, shutil, subprocess, tarfile, urllib.request, zipfile
+          host = json.load(open("packs/reverse-engineering/requires/host.json"))
+          bindir = os.path.join(os.environ["RUNNER_TEMP"], "re-bin")
+          work = os.path.join(os.environ["RUNNER_TEMP"], "re-dl")
+          os.makedirs(work, exist_ok=True)
+          for b in host["binaries"]:
+              d = (b.get("install") or {}).get("download")
+              if b["name"] not in ("capa", "r2", "upx") or not d:
+                  continue
+              e = d["amd64"]
+              path = os.path.join(work, e["url"].rsplit("/", 1)[1])
+              urllib.request.urlretrieve(e["url"], path)
+              got = hashlib.sha256(open(path, "rb").read()).hexdigest()
+              if got != e["sha256"]:
+                  raise SystemExit("%s: sha256 %s is not the pinned %s" % (b["name"], got, e["sha256"]))
+              if path.endswith(".deb"):
+                  subprocess.run(["sudo", "apt-get", "install", "-y", "-q", path], check=True)
+              else:
+                  dest = os.path.join(work, b["name"])
+                  os.makedirs(dest, exist_ok=True)
+                  if path.endswith(".zip"):
+                      zipfile.ZipFile(path).extractall(dest)
+                  else:
+                      tarfile.open(path).extractall(dest)
+                  prog = os.path.join(dest, e.get("bin", b["name"]))
+                  os.chmod(prog, 0o755)
+                  os.symlink(prog, os.path.join(bindir, b["name"]))
+              print("installed", b["name"], d["version"], got)
+          PY
+          for p in capa floss ssdeep tlsh r2 upx readelf yara; do printf '%s: ' "$p"; command -v "$p" || echo "NOT INSTALLED"; done
+      - name: The real-program cases
+        continue-on-error: true
+        run: node --experimental-strip-types --no-warnings --test tests/pack-re-real-programs.test.ts tests/pack-re-capa-floss.test.ts
+
+  real-libraries:
+    # The tests that need a real library or program (python-evtx, regipy,
+    # Pillow, pytsk3, pyewf with ewfacquirestream, qemu-img) are gated on it
+    # and SKIP where it is missing, and a skip passes: no other job installs
+    # them, so these tests had never run in CI. This job installs what the
+    # packs declare (the lines of packs/*/requires/python.txt for the four
+    # that pip carries, with no version of its own; Ubuntu's python3-libewf and
+    # ewf-tools for pyewf and ewfacquirestream; qemu-utils), runs exactly the
+    # files of tests/real-libraries.list and fails when any test in them was
+    # skipped, naming it. It runs for everything (the nightly run, a run by
+    # hand, the full-ci label) and when select asks for the Python 3.11 job (a
+    # pack, the tool library, an image file or a pack-tool suite changed: the
+    # files it runs are those suites). CI green needs it.
+    name: real libraries · no skipped test
+    needs: select
+    if: needs.select.outputs.all == 'true' || needs.select.outputs.py311 == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: The libraries the packs declare, and qemu-img
+        run: |
+          set -eu
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-utils ewf-tools python3-libewf python3-venv
+          python3 -m venv --system-site-packages "$RUNNER_TEMP/real-venv"
+          grep -hE '^(python-evtx|regipy|Pillow|pytsk3)([=<>~ ]|$)' packs/*/requires/python.txt | sed 's/[[:space:]]*#.*//' | sort -u > "$RUNNER_TEMP/real-libraries.txt"
+          cat "$RUNNER_TEMP/real-libraries.txt"
+          "$RUNNER_TEMP/real-venv/bin/pip" install -r "$RUNNER_TEMP/real-libraries.txt"
+          echo "$RUNNER_TEMP/real-venv/bin" >> "$GITHUB_PATH"
+      - name: The files that need them
+        run: |
+          set -o pipefail
+          node --experimental-strip-types --no-warnings --test --test-reporter=tap $(grep -vE '^[[:space:]]*(#|$)' tests/real-libraries.list) | tee "$RUNNER_TEMP/real-libraries.tap"
+      - name: Fail when any test was skipped
+        if: success() || failure()
+        run: |
+          tap="${TAP:-$RUNNER_TEMP/real-libraries.tap}"
+          [ -s "$tap" ] || { echo "::error::no TAP output to read ($tap)"; exit 1; }
+          skipped="$(grep -E '^[[:space:]]*(not )?ok [0-9]+ .*# SKIP' "$tap" || true)"
+          if [ -n "$skipped" ]; then
+            echo "::error::tests were skipped; the libraries are installed here, so a skip means a gate that does not see them"
+            printf '%s\n' "$skipped"
+            exit 1
+          fi
+          echo "no test was skipped"
+
   replay-impact:
     # A pull request's impact line (scripts/replay-impact.ts): every contract
     # fixture replayed under the pull request's base and under its head, each
@@ -332,7 +542,7 @@ jobs:
     # be replayed.
     if: github.event_name == 'pull_request'
     name: replay impact · contract fixtures, base against head
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - run: git config --global init.defaultBranch main
@@ -356,7 +566,7 @@ jobs:
     # sees it. A pull request against its base; a push to main against the
     # commit before it.
     name: pack versions · base against head
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - run: git config --global init.defaultBranch main
@@ -373,7 +583,7 @@ jobs:
     # The guard suites must pass there too, with the record saying what the
     # host could not enforce rather than the guard pretending.
     name: guard suites · Landlock only
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - run: git config --global init.defaultBranch main
@@ -466,8 +676,9 @@ jobs:
           cache: npm
       # The Python the suites run, named rather than taken from the host: the
       # hosted runner's python3 is 3.14, a Mac's own may be the 3.9 of the
-      # command line tools. The Linux jobs run Ubuntu 24.04's 3.12, so the two
-      # supported ends are both tested. On the owner's Mac it is Homebrew's
+      # command line tools. The Linux jobs run Ubuntu 24.04's 3.12 and the
+      # python-311 job the images' 3.11 (Debian 12), so the supported ends are
+      # all tested. On the owner's Mac it is Homebrew's
       # python@3.14 (scripts/macos-runner-setup.sh requires it): setup-python
       # installs a macOS Python with sudo, which the job user does not have.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -550,7 +761,7 @@ jobs:
     # not change what the VMs boot leaves it out (the select job's vm).
     needs: select
     if: needs.select.outputs.vm == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
       - run: git config --global init.defaultBranch main
@@ -625,13 +836,59 @@ jobs:
     # tests/ci-shards.test.ts holds it to need every other job here.
     name: CI green
     if: always()
-    needs: [select, test, node-floor, node-24, replay-impact, pack-versions, guards-without-namespaces, macos, microvm]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # It does not need the macOS job. The Mac is one machine, and a part queued
+    # behind another run must not hold every pull request, so the parts are read
+    # from this run attempt's own job list by scripts/ci-green.ts (the rule and
+    # its table are in tests/ci-green.test.ts):
+    #   - a part that failed or was cancelled fails this check;
+    #   - a part that is running is waited for, up to its own time limit;
+    #   - a part that has not started after the grace period, or was skipped,
+    #     does not block, and a notice names it.
+    # The timeout covers the grace period plus the longest part (90 minutes).
+    needs: [select, test, node-floor, node-24, python-311, re-real-programs, real-libraries, replay-impact, pack-versions, guards-without-namespaces, microvm]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    permissions:
+      contents: read
+      actions: read
     steps:
-      - name: Every job passed or was skipped
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Every job passed or was skipped, and no macOS part failed
         env:
           NEEDS: ${{ toJSON(needs) }}
-        run: |
-          printf '%s' "$NEEDS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"'
-          printf '%s' "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types --no-warnings scripts/ci-green.ts
+          --needs-env NEEDS
+          --jobs-from-gh "${{ github.repository }}" "${{ github.run_id }}" "${{ github.run_attempt }}"
+
+  report-failure:
+    # A scheduled run or a push to main that failed opens one issue labelled
+    # ci-failure (or comments on the open one) with the run's URL, the event and
+    # the failed jobs; the next such run that is green closes it
+    # (scripts/ci-report-failure.sh). A pull request is never reported. It is not
+    # a required check and CI green does not need it: it only reports. It does
+    # not wait for the macOS job (CI green does not either).
+    name: tracking issue for a failed run
+    needs: [select, test, node-floor, node-24, python-311, re-real-programs, real-libraries, replay-impact, pack-versions, guards-without-namespaces, microvm, green]
+    if: always() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open or comment on the tracking issue, or close it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW: ${{ github.workflow }}
+        run: bash scripts/ci-report-failure.sh

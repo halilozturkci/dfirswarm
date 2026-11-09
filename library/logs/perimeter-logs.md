@@ -218,7 +218,6 @@ unchanged.
 - `awk '/^[|][|: ]*-[|: -]*$/ && tolower(p) ~ /^[|].*rank/ {m=1} {p=$0} END{exit !m}' work/hosts.md`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 19`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,8,9,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies

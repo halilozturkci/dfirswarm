@@ -25,7 +25,7 @@ import unittest
 import zipfile
 import zlib
 
-from support import Case, recipe_path, run_tool, stand_in, tool_path
+from support import CLEAN, Case, recipe_path, run_tool, stand_in, tool_path
 
 SEVEN_Z = next((p for p in ("7z", "7zz", "7za") if shutil.which(p)), None)
 
@@ -644,10 +644,10 @@ class Extract(Case):
         r = self.extract("inputs/junk.bin", "work/out")
         self.assertEqual(r.code, 1)
         self.assertIn("unsupported or unrecognised", r.json["error"])
-        self.write("inputs/r.rar", b"Rar!\x1a\x07\x00" + b"\x00" * 100)
-        r = self.extract("inputs/r.rar", "work/out2")
+        self.write("inputs/r.cab", b"MSCF\x00\x00\x00\x00" + b"\x00" * 100)
+        r = self.extract("inputs/r.cab", "work/out2")
         self.assertEqual(r.code, 1)
-        self.assertEqual(r.json["format"], "unsupported:rar")
+        self.assertEqual(r.json["format"], "unsupported:cab")
         self.assertFalse(os.path.exists(self.path("work/out2")), "a refused archive makes no directory")
         self.write("inputs/empty", b"")
         self.assertEqual(self.extract("inputs/empty").code, 1)
@@ -772,7 +772,7 @@ class Extract(Case):
         for row in rows:
             if row["type"] == "file" and row["size_declared"]:
                 self.assertIs(row["crc_verified"], True, row)
-        self.assertEqual(r.json["status"], "complete")
+        self.assertEqual(r.json["status"], CLEAN)
         self.assertIn("7-Zip", r.json["archive"]["program"]["banner"] + "7-Zip")
 
     @unittest.skipUnless(SEVEN_Z, "no 7z program on this host")
@@ -882,10 +882,14 @@ class Extract(Case):
             self.fail("the fake 7z never started")
         pid = int(self.read(pidfile).split()[0])
         proc.send_signal(signal.SIGTERM)
+        said = proc.stdout.read()
         proc.wait(timeout=20)
         proc.stdout.close()
         proc.stderr.close()
         self.assertEqual(proc.returncode, 143)
+        word = json.loads(said)                         # exactly one document on stdout, with the stop said in the status words the contract has
+        self.assertEqual((word["status"], word["interrupted"], word["signal"]), ("partial", True, int(signal.SIGTERM)))
+        self.assertGreater(len(word["status_basis"]), 20)
         time.sleep(0.5)
         self.assertFalse(self.alive(pid), "7z was left running")
         receipt = json.loads(self.read("work/out/receipt.json"))
@@ -1029,6 +1033,169 @@ class Extract(Case):
         code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
         for word in ("start_new_session", "setsid", "process_group"):
             self.assertNotIn(word, code)
+
+
+COMPRESSORS = {"gzip": lambda b: gzip.compress(b, mtime=0), "bzip2": bz2.compress, "xz": lzma.compress}
+
+
+def small_tar(*names):
+    """A plain tar of the given member names, ended as tarfile ends one: two zero blocks and zero padding to a 10240-byte record."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        for name in names:
+            data = (name.encode() + b"\n") * 20
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+class StartupAndClock(Case):
+    """The archive hash and the 7z banner are on the run's clock; the stop handlers are in from the PROCESS block on."""
+
+    def test_a_stop_signal_after_the_process_block_and_before_main_gives_one_json_document(self):
+        with open(tool_path("archive_extract"), encoding="utf-8") as fh:
+            text = fh.read()
+        end = text.index("# END SHARED PROCESS")
+        cut = text.index("install_signal_handlers()\n", end) + len("install_signal_handlers()\n")
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            script = self.write("prefix.py", text[:cut] + "\nimport os as _os, signal as _s, time as _t\n_os.kill(_os.getpid(), _s.%s)\n_t.sleep(30)\nprint('survived')\n" % sig.name)
+            proc = subprocess.run([sys.executable, script], cwd=self.dir, capture_output=True, text=True, timeout=60)
+            self.assertEqual(proc.returncode, 128 + sig, (sig.name, proc.stdout, proc.stderr))
+            said = json.loads(proc.stdout)
+            self.assertEqual((said["status"], said["interrupted"], said["signal"]), ("failed", True, int(sig)))
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_the_archive_hash_stops_at_the_runs_clock_and_says_why(self):
+        archive = make_zip(self.path("in/a.zip"), [("a.bin", os.urandom(3 * 1024 * 1024))], compress=zipfile.ZIP_STORED)
+        prelude = ("import os, time\n_fdopen = os.fdopen\n"
+                   "class Slow:\n"
+                   "    def __init__(self, f): self.f = f\n"
+                   "    def read(self, n=-1):\n"
+                   "        if n == 1 << 20: time.sleep(0.8)\n"
+                   "        return self.f.read(n)\n"
+                   "    def __enter__(self): self.f.__enter__(); return self\n"
+                   "    def __exit__(self, *a): return self.f.__exit__(*a)\n"
+                   "    def __getattr__(self, k): return getattr(self.f, k)\n"
+                   "os.fdopen = lambda fd, mode='r', *a, **k: Slow(_fdopen(fd, mode, *a, **k)) if mode == 'rb' else _fdopen(fd, mode, *a, **k)\n"
+                   "import sys\nexec(compile(open(sys.argv[1], encoding='utf-8').read(), sys.argv[1], 'exec'), {'__name__': '__main__'})\n")
+        began = time.monotonic()
+        proc = subprocess.run([sys.executable, "-c", prelude, tool_path("archive_extract")], input=json.dumps({"path": archive, "max_seconds": 1}),
+                              cwd=self.dir, capture_output=True, text=True, timeout=60)
+        took = time.monotonic() - began
+        said = json.loads(proc.stdout)
+        self.assertIsNone(said["archive"]["sha256"], said["archive"])
+        self.assertRegex(said["archive"]["sha256_skipped"], r"the time budget ran out after \d+ bytes of the archive were hashed")
+        self.assertLess(took, 10)
+        self.assertEqual(said["status"], "partial")
+
+    def test_a_banner_gets_only_the_time_left(self):
+        with open(tool_path("archive_extract"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn('banner(sevenz, STARTED + a["max_seconds"] - time.monotonic())', src)
+        self.assertIn("min(15, seconds)", src)
+
+    def test_arguments_nested_past_the_parser_are_json(self):
+        r = run_tool("archive_extract", None, self.dir, raw_input="[" * 100000)
+        self.assertEqual(r.code, 1)
+        self.assertIs(r.json["ok"], False)
+        self.assertNotIn("Traceback", r.stderr)
+
+
+class CompressedTarTail(Case):
+    """A compressed tar is complete only when its whole stream has been read (archive_extract, as the archive-members recipe): after
+    the tar's end blocks, a further tar in the same stream, a further compressed stream, bytes after the last stream, a trailer that
+    does not match and a stream that does not end all make the answer partial with the offset named, as the same bytes uncompressed
+    do; a sound tar stays complete. Fixtures are built from the formats with tarfile, gzip, bz2, lzma and zlib."""
+
+    extract = Extract.extract
+
+    def done(self, name, data, **kw):
+        self.write("inputs/" + name, data)
+        r = self.extract("inputs/" + name, "work/" + name + ".out", **kw)
+        self.assertEqual(r.code, 0, r.stdout + r.stderr)
+        return r.json
+
+    def partial(self, name, data, needle, **kw):
+        got = self.done(name, data, **kw)
+        self.assertEqual(got["status"], "partial", (name, got.get("status"), got.get("notes")))
+        self.assertIn(needle, " ".join(got.get("notes", [])) + " " + str(got.get("stop") or ""), (name, got.get("notes")))
+        return got
+
+    def test_a_sound_compressed_tar_stays_complete_also_with_a_record_of_zeros_after_it(self):
+        for kind, compress in COMPRESSORS.items():
+            tar = small_tar("a.txt", "b.txt")
+            for label, payload in (("plain", tar), ("zerotail", tar + b"\0" * 500_000)):
+                got = self.done("sound-%s-%s.tar" % (kind, label), compress(payload))
+                self.assertEqual(got["status"], "complete", (kind, label, got.get("notes")))
+                self.assertEqual(got["members_in_archive"], 2, (kind, label))
+
+    def test_two_tars_in_one_compressed_stream_are_partial_with_the_offset_of_the_second(self):
+        first, second = small_tar("a.txt"), small_tar("b.txt")
+        for kind, compress in COMPRESSORS.items():
+            got = self.partial("cat-%s.tar" % kind, compress(first + second), "starts at decompressed offset %d" % len(first))
+            self.assertEqual(got["members_in_archive"], 1, kind)
+
+    def test_a_second_compressed_stream_holding_a_tar_is_partial(self):
+        first, second = small_tar("a.txt"), small_tar("b.txt")
+        for kind, compress in COMPRESSORS.items():
+            self.partial("multi-%s.tar" % kind, compress(first) + compress(second), "starts at decompressed offset %d" % len(first))
+
+    def test_a_second_compressed_stream_of_zeros_only_is_still_complete(self):
+        tar = small_tar("a.txt")
+        for kind, compress in COMPRESSORS.items():
+            got = self.done("zeros-%s.tar" % kind, compress(tar) + compress(b"\0" * 20480))
+            self.assertEqual(got["status"], "complete", (kind, got.get("notes")))
+
+    def test_bytes_after_the_last_stream_are_partial_unless_they_are_zeros(self):
+        tar = small_tar("a.txt")
+        for kind, compress in COMPRESSORS.items():
+            self.partial("tail-%s.tar" % kind, compress(tar) + b"garbage that is no stream", "after the last compressed stream")
+            self.assertEqual(self.done("pad-%s.tar" % kind, compress(tar) + b"\0" * 512)["status"], "complete", kind)
+
+    def test_a_gzip_trailer_that_does_not_match_is_partial_for_the_crc_and_for_the_length(self):
+        sound = gzip.compress(small_tar("a.txt"), mtime=0)
+        for label, index, needle in (("crc", -8, "incorrect data check"), ("isize", -4, "incorrect length check")):
+            bad = bytearray(sound)
+            bad[index] ^= 0xFF
+            got = self.partial("bad-%s.tar.gz" % label, bytes(bad), needle)
+            self.assertEqual(got["members_in_archive"], 1, "the member before the bad trailer was listed, not lost with the failed check")
+
+    def test_a_stream_that_does_not_end_is_partial(self):
+        tar = small_tar("a.txt")
+        for kind, cut in (("gzip", 8), ("bzip2", 10), ("xz", 12)):
+            self.partial("cut-%s.tar" % kind, COMPRESSORS[kind](tar)[:-cut], "does not end cleanly")
+
+    def test_a_large_junk_rest_after_the_end_blocks_is_found_however_far_it_is(self):
+        tar = small_tar("a.txt")
+        for kind, compress in COMPRESSORS.items():
+            payload = tar + b"\0" * (4 << 20) + b"J" * 4096
+            self.partial("far-%s.tar" % kind, compress(payload), "starts at decompressed offset %d" % (len(tar) + (4 << 20)), max_ratio=1000000)
+
+    def test_a_large_gzip_member_is_read_past_the_end_of_the_archive_to_its_end(self):
+        # BASE-13: a tar whose gzip member goes on for 40 MiB after the end blocks, then a second member that holds a tar.
+        first, second = small_tar("a.txt"), small_tar("b.txt")
+        comp = zlib.compressobj(6, zlib.DEFLATED, 31)
+        blob = comp.compress(first) + b"".join(comp.compress(b"\0" * (1 << 20)) for _ in range(40)) + comp.flush()
+        self.partial("large.tar.gz", blob + gzip.compress(second, mtime=0), "starts at decompressed offset %d" % (len(first) + (40 << 20)), max_ratio=100000)
+
+    def test_a_rest_longer_than_the_clock_allows_is_partial_and_says_it_was_not_read_to_its_end(self):
+        path = self.path("inputs/long.tar.gz")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        comp = zlib.compressobj(1, zlib.DEFLATED, 31)
+        with open(path, "wb") as fh:
+            fh.write(comp.compress(small_tar("a.txt")))
+            zeros = b"\0" * (1 << 20)
+            for _ in range(3 * 1024):                         # 3 GiB of zeros after the end blocks, a few MiB compressed
+                fh.write(comp.compress(zeros))
+            fh.write(comp.flush())
+        began = time.monotonic()
+        r = self.extract("inputs/long.tar.gz", "work/long.out", max_seconds=1, max_ratio=100000)
+        self.assertEqual(r.code, 0, r.stdout + r.stderr)
+        self.assertLess(time.monotonic() - began, 60, "the clock bounds the rest-read")
+        self.assertEqual(r.json["status"], "partial", r.json.get("notes"))
+        self.assertEqual(r.json["stopped_by"], "max_seconds", r.json)
+        self.assertIn("not read to its end", str(r.json.get("stop") or "") + " ".join(r.json.get("notes", [])))
 
 
 if __name__ == "__main__":

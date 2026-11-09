@@ -3,7 +3,7 @@ id: filesystem/apfs
 title: APFS, snapshots, and what deletion means now
 when: Establish acquired volumes, snapshots, timestamps and recovery limits.
 needs: []
-tools: []
+tools: [apfs_inventory]
 requires_host: [fsapfsinfo]
 ---
 
@@ -13,7 +13,7 @@ APFS is a container holding volumes that share one pool of space. Start from the
 
 **Which volume.** A System and Data pair, joined by firmlinks so a user sees one tree, is the usual arrangement and not the whole inventory. Say which acquired System and Data volumes belong together, how the acquisition or parser represented the firmlinks, and name the source volume and snapshot of every artefact you extract. The System volume does not hold the user's home; reading only it looks like an empty machine.
 
-**Tools.** `fsapfsinfo` inspects the container and lists its volumes. The libfsapfs build declared here lists snapshots, Fusion drives and T2 encryption as unsupported: those are limits of that build, not findings about the evidence. What another APFS reader or a given Sleuth Kit build does depends on its version, so record the version and test it on the evidence rather than carry one build's limit to every reader.
+**Tools.** `fsapfsinfo` inspects the container and lists its volumes; `apfs_inventory` runs it and keeps its output, and gives no snapshot, extraction or unlock; a process the reader left behind, or a host where that cannot be ruled out, makes the answer `partial`. The libfsapfs build declared here lists snapshots, Fusion drives and T2 encryption as unsupported: those are limits of that build, not findings about the evidence. What another APFS reader or a given Sleuth Kit build does depends on its version, so record the version and test it on the evidence rather than carry one build's limit to every reader.
 
 **Snapshots.** Enumerate them per acquired volume with a tool whose support you have verified for this source, and record the parent volume UUID, the snapshot UUID and name, the transaction identifier and any creation metadata. The booted System snapshot is not a Data-volume or a Time Machine snapshot, and a System snapshot does not keep user data because the paths share one namespace. Read snapshots read-only, and never revert, delete or create one on the evidence. If the acquisition left snapshots out or the parser cannot list them, write "snapshot coverage unavailable", not "no snapshots".
 

@@ -1,7 +1,7 @@
 ---
 id: timeline/clocks
 title: Timestamp semantics, zones and clock uncertainty
-when: Before a number or a date string becomes a time in the ledger, or two sources disagree on when.
+when: Before a number or date string becomes a time in the ledger, or sources disagree on when.
 needs: []
 tools: [timestamp_decode]
 requires_host: []

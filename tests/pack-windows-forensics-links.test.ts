@@ -16,7 +16,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ownPathsToOut } from "../extensions/protocol.ts";
 import { withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 import { AGENT, WIN, body, everyFileUnder, exists, failed, stub, stubModule, tool, type Run } from "./windows-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const root = process.getuid?.() === 0;
 const LNK_MAGIC = Buffer.from("4c0000000114020000000000c000000000000046", "hex");
@@ -55,12 +57,10 @@ async function limited(script: string, cwd: string, args: unknown, env: Record<s
 
 /** The peak resident size of a run, in MiB, and its answer: python3 runs the tool as a child and reports the child's high-water mark. */
 async function measured(script: string, cwd: string, args: unknown, env: Record<string, string> = {}): Promise<{ run: Run; peakMiB: number }> {
-  const wrapper = `
-import json, os, resource, subprocess, sys
-p = subprocess.run(["python3", sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True)
-peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-scale = 1 if sys.platform == "darwin" else 1024
-sys.stdout.write(json.dumps({"code": p.returncode, "stdout": p.stdout.decode("utf8", "replace"), "stderr": p.stderr.decode("utf8", "replace"), "peak": peak * scale}))
+  const wrapper = peakRssPrelude() + `
+import json, os, subprocess
+p, peak = run_peak(["python3", sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True)
+sys.stdout.write(json.dumps({"code": p.returncode, "stdout": p.stdout.decode("utf8", "replace"), "stderr": p.stderr.decode("utf8", "replace"), "peak": peak}))
 `;
   return new Promise((resolve, reject) => {
     const child = spawn("python3", ["-c", wrapper, script], { cwd, env: { ...process.env, ...AGENT, ...env } });
@@ -151,12 +151,12 @@ test("lnk_parse never prints a link's arguments: their length, that there are so
 
     // Outside a job the values are refused, and nothing is written.
     const refused = failed(await tool("lnk_parse", cwd, { path: "work/a.lnk", write_strings: true }));
-    assert.match(refused.error, /refused outside a job/);
+    assert.match(refused.error, /write_strings is refused/);
     assert.deepEqual((await everyFileUnder(join(cwd, "work"))).filter((f) => f.includes("lnk-strings")), []);
 
     // In a job the text is in one 0600 file, under the finding id the answer cites; the answer still has none of it.
     const outDir = await jobDir(cwd);
-    const jobRun = await tool("lnk_parse", cwd, { path: "work/a.lnk", write_strings: true }, { JOB_ID: "j000001", OUT: outDir });
+    const jobRun = await tool("lnk_parse", cwd, { path: "work/a.lnk", write_strings: true }, { JOB_ID: "j000001", OUT: outDir, SECRET_OUTPUT: "1" });
     const job = body<LnkOut>(jobRun);
     for (const piece of SECRET_FORMS) assert.equal(jobRun.stdout.includes(piece), false, `the job's stdout holds ${piece}`);
     assert.equal(job.secret_values.values_file, "store/jobs/j000001/out/lnk-strings.jsonl");
@@ -175,7 +175,7 @@ test("lnk_parse never prints a link's arguments: their length, that there are so
 
     // A second run in the same job reads the link all the same and writes the next numbered file: the first is as it was.
     const before = await readFile(file);
-    const again = body<LnkOut>(await tool("lnk_parse", cwd, { path: "work/a.lnk", write_strings: true }, { JOB_ID: "j000001", OUT: outDir }));
+    const again = body<LnkOut>(await tool("lnk_parse", cwd, { path: "work/a.lnk", write_strings: true }, { JOB_ID: "j000001", OUT: outDir, SECRET_OUTPUT: "1" }));
     assert.equal(again.secret_values.values_file, "store/jobs/j000001/out/lnk-strings-2.jsonl");
     assert.deepEqual(await readFile(file), before);
   });
@@ -186,7 +186,9 @@ test("lnk_parse shows a first token only when it can only be a switch or a progr
     const cases: Array<[string, string | null]> = [
       ["C:\\Windows\\System32\\cmd.exe /c whoami", "C:\\Windows\\System32\\cmd.exe"],
       ["powershell -nop -w hidden", "powershell"],
-      ["--password=Hunter2Secret!", "--password"],
+      ["--password=Hunter2Secret!", null],
+      ["-NoProfile -File x.ps1", "-NoProfile"],
+      ["-pHunter2Secret!", null],
       ["Hunter2Secret! --verbose", null],
       ["", null],
     ];
@@ -290,7 +292,7 @@ test("jumplist searches a customDestinations file a window at a time and writes 
       file.write(`payload-${i}`, offset + 20, "latin1");
     }
     await writeFile(join(cwd, "work", "5f7b5f1e01b83767.customDestinations-ms"), file);
-    const { run, peakMiB } = await measured(join(WIN, "jumplist", "run.py"), cwd, { path: "work/5f7b5f1e01b83767.customDestinations-ms", out_dir: "work/s1/links" });
+    const { run, peakMiB } = await measured(join(WIN, "jumplist", "run.py"), cwd, { path: "work/5f7b5f1e01b83767.customDestinations-ms", out_dir: "work/s1/links", write_links: true }, { SECRET_OUTPUT: "1" });
     const out = body<JumpOut>(run);
     const links = out.files[0].links;
     assert.deepEqual(links.map((l) => l.offset), at);
@@ -392,22 +394,22 @@ test("jumplist writes its links only where the harness lets a job write, and say
   // work/<id>/, work/extracted/<id>/, work/quarantine/<id>/ and tool-output/<id>/): PermissionError, no link written.
   await withCwd(async (cwd) => {
     await writeFile(join(cwd, "work", "x.customDestinations-ms"), Buffer.concat([Buffer.from([2, 0, 0, 0]), LNK_MAGIC, Buffer.from("x".repeat(30))]));
-    const elsewhere = failed(await tool("jumplist", cwd, { path: "work/x.customDestinations-ms", out_dir: "work/extracted/jumplinks" }));
+    const elsewhere = failed(await tool("jumplist", cwd, { path: "work/x.customDestinations-ms", out_dir: "work/extracted/jumplinks", write_links: true }, { SECRET_OUTPUT: "1" }));
     assert.match(elsewhere.error, /out_dir must be a directory inside the run directory, in work\/s1\/, work\/extracted\/s1\/ or work\/quarantine\/s1\//);
     assert.equal(await exists(join(cwd, "work", "extracted")), false);
     for (const own of ["work/s1/links", "work/extracted/s1/links", "work/quarantine/s1/links"]) {
-      const ok = body<JumpOut>(await tool("jumplist", cwd, { path: "work/x.customDestinations-ms", out_dir: own }));
+      const ok = body<JumpOut>(await tool("jumplist", cwd, { path: "work/x.customDestinations-ms", out_dir: own, write_links: true }, { SECRET_OUTPUT: "1" }));
       assert.match(ok.files[0].links[0].written_to ?? "", new RegExp(`^${own}/`));
     }
 
     // In a job only $OUT is writable: the harness gives a work/<id>/... path as {OUT}/..., and nothing else is a place.
     const outDir = await jobDir(cwd);
-    const job = { JOB_ID: "j000003", OUT: outDir };
-    const mapped = body<JumpOut>(await tool("jumplist", cwd, { path: "work/x.customDestinations-ms", out_dir: join(outDir, "links") }, job));
+    const job = { JOB_ID: "j000003", OUT: outDir, SECRET_OUTPUT: "1" };
+    const mapped = body<JumpOut>(await tool("jumplist", cwd, { path: "work/x.customDestinations-ms", out_dir: join(outDir, "links"), write_links: true }, job));
     assert.equal(await exists(join(outDir, "links")), true);
     assert.equal((await readdir(join(outDir, "links"))).length, 1);
     assert.ok(mapped.files[0].links[0].written_to);
-    const unmapped = failed(await tool("jumplist", cwd, { path: "work/x.customDestinations-ms", out_dir: "work/s1/links2" }, job));
+    const unmapped = failed(await tool("jumplist", cwd, { path: "work/x.customDestinations-ms", out_dir: "work/s1/links2", write_links: true }, job));
     assert.match(unmapped.error, /in \$OUT/);
   });
 });
@@ -458,7 +460,7 @@ test("extract_stream never replaces what an earlier run kept: the next partial a
   });
 });
 
-test("extract_stream writes only in the agent's own places, in a job only under $OUT, and answers a directory it cannot make as JSON", async () => {
+test("extract_stream writes only in the agent's own places, in a job only under $OUT, and answers a directory it cannot make as JSON", { skip: NO_ADOPTION }, async () => {
   // Outside a job it wrote anywhere inside the run; and the manifest's example, work/extracted/168-128-4.bin, is a place
   // the harness leaves read-only in a job.
   await withCwd(async (cwd, bin) => {

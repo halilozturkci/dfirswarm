@@ -536,24 +536,24 @@ result.
 ## 7. The packs in this repository
 
 Thirteen, all under the same AGPL-3.0-or-later as the harness, in `packs/`:
-262 skills, 83 tools and 15 goal templates. Every one of them is sealed,
+328 skills, 142 tools and 15 goal templates. Every one of them is sealed,
 checksummed, and installs and verifies in the test suite.
 
 | Pack | Skills | Tools | Goals | What it is for |
 | --- | --- | --- | --- | --- |
-| `computer-forensics-base` | 29 | 16 | — | the method true of any platform; everything else depends on it |
-| `windows-forensics` | 53 | 22 | 3 | ten artefact families, from `$MFT` to what anti-forensics leaves behind |
-| `linux-forensics` | 26 | 6 | 2 | auth logs, the journal, accounts, systemd and cron, ext4, containers |
-| `macos-forensics` | 18 | 4 | 1 | property lists, the unified log, FSEvents, KnowledgeC, APFS |
-| `mobile-forensics` | 11 | 3 | 1 | iOS and Android extractions, app databases, protobuf |
-| `memory-forensics` | 20 | 3 | 1 | containers, what works with no framework, injection, credentials |
-| `network-forensics` | 13 | 6 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
-| `reverse-engineering` | 21 | 6 | 1 | static triage of a binary or a document, under quarantine |
-| `encrypted-containers` | 12 | 3 | 1 | which scheme, which protectors, and where the key already is |
-| `cloud-forensics` | 10 | 3 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
-| `ransomware-response` | 18 | 2 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
-| `triage-collection` | 20 | 6 | 1 | a collector's output, which is how most cases arrive |
-| `virtualization-backup-forensics` | 11 | 3 | 1 | the control plane of virtualization and backup: hypervisor records, disk and snapshot chains, backup catalogues, and which recovery points survive |
+| `computer-forensics-base` | 30 | 20 | — | the method true of any platform; everything else depends on it |
+| `windows-forensics` | 53 | 27 | 3 | ten artefact families, from `$MFT` to what anti-forensics leaves behind |
+| `linux-forensics` | 35 | 11 | 2 | auth logs, the journal, accounts, systemd and cron, ext4, containers |
+| `macos-forensics` | 25 | 11 | 1 | property lists, the unified log, FSEvents, KnowledgeC, TCC, quarantine, Biome, APFS |
+| `mobile-forensics` | 18 | 7 | 1 | iOS and Android extractions, app databases, protobuf |
+| `memory-forensics` | 28 | 8 | 1 | containers, what works with no framework, injection, credentials |
+| `network-forensics` | 19 | 11 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
+| `reverse-engineering` | 25 | 13 | 1 | static triage of a binary or a document, under quarantine |
+| `encrypted-containers` | 18 | 9 | 1 | which scheme, which protectors, and where the key already is |
+| `cloud-forensics` | 20 | 6 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
+| `ransomware-response` | 25 | 8 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
+| `triage-collection` | 20 | 8 | 1 | a collector's output, which is how most cases arrive |
+| `virtualization-backup-forensics` | 12 | 3 | 1 | the control plane of virtualization and backup: hypervisor records, disk and snapshot chains, backup catalogues, and which recovery points survive |
 
     scripts/pack.sh install packs/computer-forensics-base
     scripts/pack.sh install packs/windows-forensics
@@ -601,6 +601,18 @@ memory filesystem) mounts it under `work/<agent id>/`, which is where
 `vss_stores` and `mem_fs` put theirs; the mount is that VM's alone, and what
 is derived from it counts once it is a file there.
 
+A tool that mounts through FUSE says so in its manifest, `"needs": ["fuse"]`
+(`mem_fs` and `vss_stores` do). The harness reads the word and knows no tool:
+a VM whose probe found no `/dev/fuse` (`fuse: false`, read by `imageFit`), an
+image whose record has `fuse.fusermount: false`, and a job worker that probed
+itself without `/dev/fuse` (`worker_probe` on the job's record; `needs_unmet`
+and the reason of a failed job) each name the tool that needs it, and no other.
+A tool that cannot mount for want of FUSE answers in one form: a `no_fuse`
+object (`reason: "no_fuse"`, `blocked_by`: what the host lacks, `what_to_do`),
+beside its `status`. It is a limit of the VM, never a finding about the
+evidence. `vm.ts fuse-check --image REF` says whether a VM of an image has the
+device.
+
 Run again as a job, a tool writes only the job's `$OUT`. Each path it was
 given in the agent's own directories (`work/<id>/`, `work/extracted/<id>/`,
 `work/quarantine/<id>/`, `tool-output/<id>/`, written relative or absolute)
@@ -627,6 +639,115 @@ temp files to its working directory by default is given a path under the
 output (Plaso's and Zircolite's `--logfile`) or run there (Hayabusa, Zeek, the
 disk-timeline recipe's Plaso steps), and its test runs it from a read-only
 directory with a stand-in that writes where the real program does.
+
+**What a program leaves behind.** A program can exit by itself and leave a
+process that goes on writing a file the tool then reports: one in a session of
+its own, or one that holds none of the tool's descriptors. The shared PROCESS
+block (`# BEGIN SHARED PROCESS`, in the general and the windows text, the same
+API in both) ends it for every tool that carries it, and a carrier writes none
+of this itself:
+
+- On Linux `spawn()` makes the tool a subreaper (`PR_SET_CHILD_SUBREAPER`,
+  through the `ctypes` the block already imports) before the first program, so
+  what a program leaves is a child of the tool. `settle()` ends it: stopped,
+  what it started stopped with it, killed, reaped, for at most 3 seconds with
+  the clock read for every process. It runs on its own when a program leaves
+  `ACTIVE` after it has ended or been killed (`ACTIVE.remove(proc)`: every
+  carrier does this before it reads what the program wrote), at the end of
+  `communicate_bounded`, and inside `kill_all` (the stop signal). It runs on the
+  caller's thread and joins nothing.
+- It ends only a child of the tool that is no program's own: not a program
+  `spawn()` started (Popen reaps it and its `returncode` is never taken), not a
+  child the tool already had when the first program was spawned, and not one
+  kept on purpose (`spawn(argv, leaves=True)` for a program that leaves a
+  daemon the tool stops itself, or `process_keep(pid)`; `vss_materialise`
+  starts `vshadowmount`, and no other program there, with `leaves=True`, so
+  the FUSE daemon serves the mount until `fusermount` ends it, and a stop
+  signal still ends it with everything else below the tool). A program must be started through `spawn()`: a child
+  started by `subprocess` directly while a program runs is taken for a
+  leftover. While another program is running in `ACTIVE` nothing is ended and
+  the answer is unproven. A process that is not a descendant of a program (a
+  service manager or a socket started it, another PID namespace) is not found.
+- `process_verdict()` is `{subreaper, left_behind, unproven[], notes}`;
+  `process_apply(answer)` attaches it as `answer["program_group"]` and turns a
+  `complete` answer into `partial` (`ok` and `complete` false where they are
+  there, a sentence in `status_basis`) when `left_behind` is above 0 or
+  `unproven` is not empty. A carrier calls it once where it prints its answer;
+  a carrier that does not call it still has its leftovers ended, and its answer
+  does not say so.
+- What the pipes of a program that has ended may deliver is capped.
+  `communicate_bounded` reads the pipes itself and looks at the program after
+  every read. From the moment the program has ended (or was killed at its
+  deadline) it takes at most `PIPE_GRACE` (1 second) and `POST_EXIT_BYTES`
+  (1 MiB, both pipes together) more, whichever is used up first. Then it ends
+  the process that still holds the pipe (`reap_orphans`, `settle()`) and lets
+  the pipes go. The program's own last words are in the pipe already (a pipe
+  holds far less than 1 MiB), so what is cut is what a leftover wrote. A call
+  cut at the byte cap is counted in `PIPE_CUT["cut"]`, said in
+  `process_notes()` and, through `process_apply`, makes a complete answer
+  partial; the return value is the same three-tuple, and the bytes kept are the
+  program's output plus at most 1 MiB of the leftover's. While the program is
+  still alive the block caps nothing (its output is its caller's to bound; no
+  output cap is known that every carrier could take), so a holder that floods a
+  pipe while the program still runs is read until the program has ended. A
+  reader that decodes or parses the output still bounds it itself.
+- Where nothing is adopted (the kernel or a seccomp rule refuses the call, or
+  the host is not Linux) `settle()` ends only what the tool saw below a program
+  whose parent is gone, and `unproven` says so; on a host that is not Linux
+  that alone makes a complete answer partial while
+  `NONLINUX_UNPROVEN_DOWNGRADE = True` in the block (set it to `False` and it is
+  a sentence in `process_verdict()["notes"]` only; the sentence is never in
+  `process_notes()`, so a tool that puts `process_notes()` into its partial
+  reasons, as `ransomware_family_match` does, is made partial only by a tree
+  that could not be listed, on any host). The rule behind the constant: where the
+  absence of a leftover cannot be proven, a tool that runs a program and
+  reports the files the program wrote answers at most partial; a tool that
+  reports only what the program printed (`ransomware_family_match`) is not
+  held to it.
+- **Held and pipe-only.** A tool that reports files a program wrote, or that
+  it hashes or counts (a log, a derivative, an export, a kept standard output
+  or error file), is *held*: it calls `process_apply`, or the function of its
+  own that does the same (`program_group_problems` in the linux, memory and
+  mobile packs; the verdict read in the tool itself in `fuzzy_hash` and
+  `lnk_jumplist`), and is at most `partial` where the absence of a leftover
+  cannot be proven. A tool that reports only what a program printed on a pipe
+  is *pipe-only*: `partial` for a process `settle()` ended (and, through
+  `process_apply`, for a pipe cut at the byte cap), and not held to the
+  unproven rule. Both put `program_group` in an answer that ran a program.
+- **Not covered.** A writer that is not a descendant of a program (a service
+  manager, a socket, another PID namespace). The tool itself being killed (the
+  harness ends its group; a process in a session of its own survives, as it
+  always did). A flood that starts while the program is still alive: the byte
+  cap starts at the program's exit. The start of the interpreter, before a
+  handler is in, is a window a stop signal can land in. A tool that reads a
+  pipe through the block and neither calls `process_apply` nor reads
+  `PIPE_CUT` does not turn a cut pipe into `partial`; the cut is
+  in `program_group.notes`. The registry lists no such tool now (it fails for
+  one); the pipe-only tools that read `PIPE_CUT` themselves count one cut for
+  the whole run, so a cut while a version was read makes the answer `partial`
+  too. And the mechanisms that are not the block: the
+  `unified_log` tool, the disk-timeline recipe, `mem_fs`, five hand-written
+  pipe readers in the base pack (`image_layout`, `file_type`, `icat_extract`,
+  `chunk_needles`, the archive-members recipe), the shell recipes and
+  `master_icat`, and five library-only tools that call `subprocess.run`
+  (`fls_root`, `hdfs_node_icat`, `icat_root`, `sigscan_e01`, `volrun`), which
+  end only their direct child and have no abandoned-child test.
+- **The registry is the arbiter, not this text.**
+  `tests/process-sweep-coverage.json` lists every file under `packs/` and
+  `tool-library/` (outside `tests/`) that starts a program: the 62 copies of
+  the block, the files with a mechanism of their own, the library twins and the
+  shell recipes. Each entry has its class (`held`, `pipe-only`, `no-program`,
+  `local-mechanism`, `twin`), where the class is stated, and the test files
+  that run a real abandoned child for it, or the gap. A new tool that starts a
+  program is added there in the same change.
+  `tests/process-sweep-coverage.test.ts` reads the sources and fails for a
+  carrier that is not listed, a held tool that does not call what its `apply`
+  names, a listed test that is missing or does not mention the tool, a twin that
+  differs from its pack file, a count of block carriers that differs from the
+  census, and a registry that cannot fail (it is tried on damaged copies). It
+  runs no program; the late-writer runs are in the per-pack suites
+  (`tests/pack-*-process-apply.test.ts`, `tests/pack-re-pipe-matrix.test.ts`,
+  the base pack's `test_process_apply.py` and `test_pipe_shapes.py`).
 
 ---
 
@@ -759,8 +880,9 @@ import each other), and holds to this:
   ([ADR 0018](adr/0018-sensitive-outputs-are-used-by-agents-and-every-access-is-recorded.md)):
   the sandbox's `store/` is mounted read-only in an agent's VM, an agent that opens a
   values file reads every row, and a later job is given the file to use it. The file
-  is the sensitivity mark's unit, and the mark, the redaction of a package and the
-  access record cover what the agent does with it. These measures keep a value out
+  is the sensitivity mark's unit, and the mark, the redaction of a package (which
+  replaces the trace lines the access record marks) and the access record (a lower
+  bound) cover what the agent does with it. These measures keep a value out
   of what the tool prints (the answer, its status and counts, the file's size and
   digest), because that is quoted in a post or the ledger without the mark. They stay
   as they are built and are not extended: a hint of a value in an answer's size,
@@ -787,6 +909,35 @@ import each other), and holds to this:
   is a `UnicodeDecodeError`): the answer says the row and what the error's code
   decides (the time budget, the authorizer, a value over the length limit),
   never the message or the class, and no decision reads the message.
+- *What the shape rule misses is printed, and a `secret_output` job is where such a file is used.* A tool
+  that withholds by the shape of a string (a name that is not plain, a token prefix, user-info, a long
+  random-looking run) withholds what has the shape. A secret of another shape (a plain password, a
+  pronounceable passphrase, a UUID-shaped key, a short value in a name) is printed in the answer: the
+  rule is a floor for what a post quotes, not a classifier
+  ([ADR 0018](adr/0018-sensitive-outputs-are-used-by-agents-and-every-access-is-recorded.md)). The tool's
+  manifest and skill say so for its own rule, with the rates measured on random plants. The place to
+  use a file that holds what the rule misses is a `secret_output` job's sealed output: an agent reads
+  it there, and each read is recorded.
+- *A recipe's detect step has three answers.* `entry detect --target …` prints a JSON line with a `why`, and its exit code
+  is the answer: **0** the recipe applies, **1** it does not, **2** it cannot tell (the line also says
+  `applies: "unknown"`: the target could not be read, a program it needs is not in the image, a walk ended at its
+  limit); any other code is a failed detect. The census (`catalog/coverage.tsv`, `catalog/plan.json`) records exit 2 as
+  "its detect step could not tell", never as "does not apply" and never as a failure of the step, and the job
+  service's `detect_answered` rows carry `applies: true | false | "unknown"`; only `true` starts a recipe. A detect that can
+  tell neither way must exit 2, not 1: a 1 is a claim that the object is not for this recipe. A call the recipe did not understand (a usage error) is not an answer
+  about the object: where a recipe prints JSON for it, it says `applies: "unknown"`; an argument parser's own usage message on stderr with exit 2 cannot be told
+  from "cannot tell" by the census, which records the exit code.
+- *A recipe marks a file it wrote `secret_bearing`, and a redacted package withholds it.* A recipe cannot declare
+  `secret_output` (the seal refuses the key in `recipe.json`), so its coverage or receipt says which of its output
+  files hold what the evidence holds: a JSON file with a `secret_bearing` object, `{ "<file>": "<why>" }`, the name a
+  plain relative path beside that JSON file and the reason a string (network-capture writes it). `package --redact`
+  reads the mark by its shape, never by the name of a recipe or a tool, and withholds each file it names whole, its
+  digest and path kept in the private sidecar and never in the package, as it does for a sensitive job's output. A
+  `secret_bearing` that is not a map of names to reasons is an answer field and marks nothing: plist_read's
+  `secret_bearing` (counts of what it withheld) and doc_structure's `secret_bearing_attributes` are of that kind. A mark the redaction cannot honour whole fails closed: a file that carries
+  the word and is over 8 MiB or is not JSON that parses, and a mark that names a link or anything but a regular file,
+  make it withhold every file of that directory and below, and the record says why. A receipt is found by `.json` in any
+  case, and every mark in it is read.
 - *The manifest declares it, and the harness enforces it.* The description
   says SENSITIVE and names the flag, and the manifest carries the key the job
   service reads, `"secret_output"`: `"required"` (every job of the tool) or
@@ -860,6 +1011,9 @@ Every tool a pack bundles holds to this.
    the tool's own process group (never `start_new_session`): the harness ends
    a tool by killing its group, and a program outside it goes on writing after
    the tool is gone.
+   A program that exits and leaves a process behind is the shared PROCESS
+   block's to end, and the answer says it did (below, "What a program leaves
+   behind").
 6. **The manifest's description says exactly what is and is not measured.** A
    survey is described as a survey and a heuristic as a heuristic. A candidate
    is named a candidate; a score is not a verdict.
@@ -867,13 +1021,67 @@ Every tool a pack bundles holds to this.
    the parser, from the format's specification or a known-good sample, never
    from the parser's own output. A test that shares the parser's wrong
    assumption proves nothing.
+8. **A tool's version and its `PARSER` label move by one written rule.** The
+   tool's `version` (the manifest's, and `TOOL`'s in a script that carries one;
+   the two are always equal) moves with any change to the tool's script or
+   manifest. Its `PARSER` label (`<tool>/<n>`, in the script) moves when what a
+   record says changes: a field added, renamed, typed or read differently, or a
+   record newly kept, split or rejected, so that two answers with one label
+   were read the same way. A change only to what is withheld from printing, to
+   a bound, a clock or a message moves the version and leaves the label.
 
 ### Requires and images
+
+A tool or a recipe says which programs it runs. A tool's `manifest.json` names them in `requires`; a recipe's `recipe.json`
+names those it cannot run without in `requires` and those it uses when they are there in `requires_optional` (a program
+is one or the other; the seal checks the shape of both keys). The program must be one a pack's `requires/host.json`
+lists. `tests/pack-program-declarations.test.ts` reads every tool's and recipe's source, and fails on a program it names
+as a call (a quoted argv item or `which()` argument; a command at the start of a line or after a pipe) that the unit does
+not declare; a name that is only a word in the source (a file type, a dictionary key, a collector's name) is
+allow-listed in that test with its reason.
 
 1. **Every dependency is pinned.** A pip requirement with `==`; a host binary
    with its version; a download with its sha256. The licence label is read from
    the package's own metadata, not remembered. Each entry says whether it is
    redistributable, and whether it is available for arm64, amd64 or both.
+   An `apt` line is pinned by the image's snapshot date, not by a version in
+   the line: every image installs from snapshot.debian.org at the date in
+   `images/debian-snapshot`, and the base images are pinned to their digests
+   (`images/README.md`, "The apt snapshot and the base image digests").
+   A pip set can be **hash-locked**: the build then installs it with pip's
+   `--require-hashes`, from a lock file of the pack (every line `name==version`
+   with one or more `--hash=sha256:`; no other option, no index or find-links
+   line). The keys: `requires/python.lock` beside `python.txt` (it replaces
+   python.txt's lines for the image's venv); `install.pip_lock` in the entry of
+   a `python3 -m pip install` program (a path under `requires/`, e.g.
+   `requires/locks/<name>.txt`); `pip_lock` and `pip_after_lock` in a pinned
+   source's `install.source`, installed before its `pip` / `pip_after`
+   arguments. A lock holds the set and every dependency, since hash mode
+   refuses an unlisted one; **a venv shared by several programs needs one lock
+   for all of them** (the main venv is shared by every pip program and
+   python.txt line of the profile's packs). The seal refuses a lock outside
+   `requires/`, a missing one, and a line without `==` or without a hash; the
+   build refuses a lock whose file changed, and names the program when pip
+   refuses a hash. `/etc/dfirswarm/image.json` lists what was installed from a
+   lock under `locked` (a set is listed only after pip succeeded).
+   An entry can name **facts** the build records about its program:
+   `"facts": [["tshark", "--version"], ["tshark", "-G", "fields"]]`, a list of
+   argument lists whose first item is the entry's own program (the seal
+   refuses any other shape). The build runs each once, with a time limit, and
+   keeps its output as a file under `/etc/dfirswarm/facts/` (named after the
+   program and its arguments, `tshark-version.txt`), with the file's sha256
+   and its status (`recorded`, `capped` when the output was cut at the cap,
+   `failed` with why) under `facts` in `image.json`; `tools.md` names the files
+   beside the program. A failing command does not fail the build of an optional
+   program; it does for a required one.
+   An entry can also say what its program decodes and reads: `"isa": ["x86-64", "aarch64"]`
+   (instruction sets) and `"formats": ["ELF", "PE"]` (file formats), each a list of
+   short strings (letters, digits, space and `. _ + / -`, up to 40 characters). The
+   build carries them into the image's spec and `tools.md` prints them on the
+   program's line (`— decodes: x86-64, aarch64; reads: ELF, PE`); a program that two
+   packs declare shows the union of their lists. A value that is not a list of
+   short strings is refused by name when the image is built; an entry without the
+   fields is listed as before.
 2. **A program a skill tells the agent to run is in the pack's `requires`, or
    in a dependency's.** A program or Python package in `requires` that no skill
    names needs either a skill that names it, or a reason in `pack.json`:
@@ -961,13 +1169,20 @@ tokenizer; the estimate is the one the harness's index budget uses).
 | Budget | Limit | What happens past it |
 |---|---|---|
 | a leaf (a skill) | 800 tokens | a warning from 800; **seal refuses** above 1,000 |
-| a router (`router: true`) | 400 tokens | a finding |
+| a router (`router: true`) | 400 tokens (500 for windows-forensics, linux-forensics, memory-forensics and macos-forensics; `scripts/skill-budgets.json`) | a finding |
 | a skill file | 300 lines | a finding |
 | an index entry (its line in `skills/INDEX.md`) | 40 tokens | a finding: shorten `title` or `when` |
 | `needs` depth | 2 | a finding (a loop in `needs` is one too) |
 | the needs chain | 1,900 tokens | a finding; a warning within 150 of it |
 
-At the seal only a skill over 1,000 tokens (or a router over 400) is refused;
+The four packs with the 500-token router may pass 1,000 tokens of index; the
+harness budget (1,000 a pack) is unchanged, so such a pack is shown by its
+router line alone in every run. Every other pack, the base pack included, keeps
+its index within 1,000. The limits are in `scripts/skill-budgets.json`, which
+`scripts/skill-budgets.py` and `tests/pack-index-budgets.test.ts` both read.
+
+At the seal only a skill over 1,000 tokens (or a router over its limit, 400 or
+500) is refused;
 every other finding and warning is printed as a `budget:` line, and it is
 `tests/skill-budgets.test.sh` that fails on a finding.
 
@@ -1010,6 +1225,17 @@ they are. `pack.sh seal` reads it by pack id and refuses a listed leaf only once
 grown past its ceiling; a pack of another id has no listed findings, and a leaf
 over 1,000 tokens in it is refused. New and changed skills
 are written to the budget; a finding is not added to the list to get a change in.
+
+### A tool that starts a program
+
+A tool or a recipe that starts a program carries the shared PROCESS block,
+starts every program through its `spawn()`, and calls `process_apply` (or says
+in `tests/process-sweep-coverage.json` what it does instead) where it prints
+its answer. What the block does and does not do is in section 7, "What a
+program leaves behind". Which tools are covered, and how, is decided by the
+registry `tests/process-sweep-coverage.json` and its test, not by a pack's
+changelog: a tool that starts a program and is not listed there, or is listed
+with a claim its code does not keep, fails `tests/process-sweep-coverage.test.ts`.
 
 ### Closing a pack's review
 

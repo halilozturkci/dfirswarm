@@ -16,13 +16,16 @@ Start
 Executables
 `pe/structure` Windows executable, DLL, driver
 `pe/signature-and-resources` PE exports, signing, version information
+`pe/authenticode` reading a signature check
 `elf/structure` Linux executable, shared object, core
 `elf/packing-and-identity` ELF packing, linking, build identity
 `macho/structure` Mach-O file, universal binary
 `managed/clr` managed assembly, application bundle
+`managed/decompiled` a decompiled C# file
 
 Code and packing
 `code/static-inspection` native code, functions, references
+`code/second-readers` Ghidra headless, DIE, LIEF
 `packing/static-recovery` packing, where static recovery stops
 `runtimes/go-rust` Go or Rust binary
 `runtimes/python-packaged` Python launcher, bytecode
@@ -36,6 +39,7 @@ Documents and scripts
 `documents/macros` Office macros, OLE, OOXML
 `documents/external-and-active-content` external targets, active content
 `documents/pdf-rtf` PDF and RTF objects
+`documents/second-reading` second reader of encryption
 `scripts/static-analysis` PowerShell, JavaScript, VBScript
 
 Rules

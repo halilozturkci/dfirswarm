@@ -190,3 +190,62 @@ test("ransom_note_scan keeps the notes page of an earlier run when a later run w
     assert.match(second.pages.notes.all_results, /-2\.jsonl$/);
   });
 });
+
+// --- a stop between the creation of a temporary file and its registration -------------------
+
+// The signal is sent from inside tempfile.mkstemp, just after the real call returned: the file exists and the tool has not yet
+// registered it. The stop handler removes only registered files, so before the signals were held for these two steps the file stayed.
+const STOP_AT_CREATE = String.raw`
+import os, runpy, signal, sys, tempfile
+_real = tempfile.mkstemp
+want = os.environ["STOP_WHICH"]
+def mk(*args, **kwargs):
+    result = _real(*args, **kwargs)
+    prefix = str(kwargs.get("prefix", ""))
+    if ("census" in prefix) == (want == "census") and not os.environ.get("STOPPED"):
+        os.environ["STOPPED"] = "1"
+        os.kill(os.getpid(), getattr(signal, os.environ["STOP_SIGNAL"]))
+    return result
+tempfile.mkstemp = mk
+script = sys.argv[1]
+sys.argv = [script]
+runpy.run_path(script, run_name="__main__")
+`;
+
+async function stopAtCreate(script: string, cwd: string, args: unknown, which: "page" | "census", signal: string): Promise<Ended> {
+  const child = spawn("python3", ["-c", STOP_AT_CREATE, script], { cwd, env: { ...process.env, AGENT_ID: "s1", STOP_WHICH: which, STOP_SIGNAL: signal } });
+  const out: Buffer[] = [];
+  const err: Buffer[] = [];
+  child.stdout.on("data", (c: Buffer) => out.push(c));
+  child.stderr.on("data", (c: Buffer) => err.push(c));
+  const ended = new Promise<Ended>((resolve) =>
+    child.on("close", (code, sig) => resolve({ code, signal: sig, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") })),
+  );
+  child.stdin.end(JSON.stringify(args));
+  return ended;
+}
+
+for (const [name, script, which, args] of [
+  ["ransom_note_scan page", NOTES, "page", { root: "work/ev", limit: 1 }],
+  ["encrypted_survey page", SURVEY, "page", { root: "work/ev", limit: 1, census: false }],
+  ["encrypted_survey census", SURVEY, "census", { root: "work/ev", limit: 1 }],
+] as const) {
+  for (const [signal, code] of SIGNALS) {
+    test(`${name}: ${signal} between creating the temporary file and registering it leaves no hidden file, and the tool still ends with one JSON answer`, async () => {
+      await withCwd(async (cwd) => {
+        const ev = join(cwd, "work", "ev");
+        await mkdir(ev, { recursive: true });
+        for (let i = 0; i < 4; i++) {
+          await writeFile(join(ev, `README_${i}.txt`), `Your files are encrypted. Decrypt them: pay in bitcoin.\nyour personal id: ${"Z9".repeat(8)}${i}\n`);
+          await writeFile(join(ev, `f${i}.docx.locked`), randomBytes(5000));
+        }
+        const ended = await stopAtCreate(script, cwd, args, which, signal);
+        assert.equal(ended.code, code, `${ended.stdout}\n${ended.stderr}`);
+        assert.doesNotMatch(ended.stderr, /Traceback|KeyboardInterrupt/);
+        const answer = JSON.parse(ended.stdout) as { status: string; interrupted: boolean; signal: number };
+        assert.deepEqual([answer.status, answer.interrupted, answer.signal], ["failed", true, NUMBER[signal]]);
+        assert.deepEqual(await hiddenTemps(cwd), [], "a hidden temporary file was left");
+      });
+    });
+  }
+}

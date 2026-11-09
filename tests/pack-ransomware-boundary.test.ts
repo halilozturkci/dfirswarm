@@ -348,6 +348,12 @@ else:
             raise FileExistsError(errno.EEXIST, "exists", str(path))
         return _open(path, flags, *a, **k)
     os.open = op
+    _link = os.link
+    def lk(src, dst, *a, **k):
+        if "tool-output" in str(dst) and not os.path.basename(str(dst)).startswith("."):
+            raise FileExistsError(errno.EEXIST, "exists", str(dst))
+        return _link(src, dst, *a, **k)
+    os.link = lk
 sys.argv = [script]
 runpy.run_path(script, run_name="__main__")
 `;
@@ -492,7 +498,7 @@ test("the manifests, the skill and the module notes say what is printed, what th
   }
   const survey = (JSON.parse(await read("tools/encrypted_survey/manifest.json")) as { description: string }).description;
   assert.match(survey, /extension of .* is withheld/);
-  const skill = await read("skills/scope/triage-tools.md");
+  const skill = (await read("skills/scope/triage-tools.md")) + (await read("skills/scope/triage-tools-names.md"));
   for (const text of ["Every other file", "16 letters", "3%"]) assert.ok(skill.includes(text), `the skill does not say: ${text}`);
   const names = await readdir(join(ROOT, "changelog.d"));
   assert.ok(names.some((n) => /ransomware/.test(n)));

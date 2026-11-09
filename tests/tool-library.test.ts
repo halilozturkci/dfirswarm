@@ -10,6 +10,7 @@ import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import { test } from "node:test";
 import { failingStub, LIB, runPy, runPySnippet, runSh, withCwd } from "./tool-library-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 type LibraryManifest = {
   name: string;
@@ -230,8 +231,9 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     );
     const mismatch = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {});
     assert.notEqual(mismatch.code, 0);
-    const bad = JSON.parse(mismatch.stdout) as { status: string; modified: string[] };
-    assert.equal(bad.status, "FAIL");
+    const bad = JSON.parse(mismatch.stdout) as { status: string; ok: boolean; modified: string[] };
+    assert.equal(bad.status, "complete", "every file was checked: the status is about the check, ok is the verdict");
+    assert.equal(bad.ok, false);
     assert.ok(bad.modified.includes("inputs/AF-Case2.E01"));
 
     const { createHash } = await import("node:crypto");
@@ -249,7 +251,8 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     );
     const ok = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {});
     assert.equal(ok.code, 0, ok.stderr);
-    assert.equal((JSON.parse(ok.stdout) as { status: string }).status, "OK");
+    assert.equal((JSON.parse(ok.stdout) as { status: string }).status, "complete");
+    assert.equal((JSON.parse(ok.stdout) as { ok: boolean }).ok, true);
     assert.equal((JSON.parse(ok.stdout) as { baseline: string }).baseline, "the run's inputs.json");
 
     // In a job the run's inputs.json is not in the run directory the job sees: the job service gives a copy, named by
@@ -263,7 +266,7 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     const inJob = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {}, undefined, { JOB_ID: "j000006", OUT: out, SWARM_INPUTS_MANIFEST: join(copy, "inputs.json") });
     assert.equal(inJob.code, 0, inJob.stdout + inJob.stderr);
     const inJobBody = JSON.parse(inJob.stdout) as { status: string; baseline: string };
-    assert.equal(inJobBody.status, "OK");
+    assert.equal(inJobBody.status, "complete");
     assert.match(inJobBody.baseline, /a copy of the run.s inputs.json the job service gave this job when it started/, "the answer says its baseline was the job's copy");
     const none = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {}, undefined, { JOB_ID: "j000007", OUT: out });
     assert.notEqual(none.code, 0);
@@ -658,7 +661,7 @@ test("icat writers refuse an output that resolves under inputs/, and do not run 
   }
 });
 
-test("extract_stream writes the stream to a named file with its size and sha256, and an icat failure is JSON that keeps what it wrote as a .partial file", async () => {
+test("extract_stream writes the stream to a named file with its size and sha256, and an icat failure is JSON that keeps what it wrote as a .partial file", { skip: NO_ADOPTION }, async () => {
   // It used to print the stream as base64 on stdout (a 30 second limit, no digest, no size, the stream through a pipe whose
   // status was base64's). The library copy is the Windows pack's tool, which streams to a file under the agent's own place.
   await withCwd(async (cwd, bin) => {
@@ -885,18 +888,31 @@ test("no pack or library tool uses a module-level name it never binds", async ()
   const { spawnSync } = await import("node:child_process");
   const scan = `
 import builtins, glob, symtable, sys
+# The module attributes Python binds in every module are not in builtins; a
+# tool may read them (__file__ to find its own directory).
+known = set(dir(builtins)) | {"__file__", "__name__", "__doc__", "__package__", "__spec__", "__loader__"}
+paths = sys.argv[1:] or sorted(glob.glob("packs/*/tools/*/*.py") + glob.glob("tool-library/*/*.py"))
 bad = []
-for p in sorted(glob.glob("packs/*/tools/*/*.py") + glob.glob("tool-library/*/*.py")):
+for p in paths:
     src = open(p, encoding="utf-8", errors="replace").read()
     st = symtable.symtable(src, p, "exec")
     for s in st.get_symbols():
-        if s.is_referenced() and not (s.is_assigned() or s.is_imported() or s.is_parameter()) and s.get_name() not in dir(builtins):
+        if s.is_referenced() and not (s.is_assigned() or s.is_imported() or s.is_parameter()) and s.get_name() not in known:
             bad.append("%s: %s" % (p, s.get_name()))
 print("\\n".join(bad))
 `;
   const r = spawnSync("python3", ["-c", scan], { cwd: join(LIB, ".."), encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), "", `unbound names:\n${r.stdout}`);
+
+  // The scan still sees a real unbound name and lets the module attributes by.
+  await withCwd(async (cwd) => {
+    const probe = join(cwd, "probe.py");
+    await writeFile(probe, "import os\nHERE = os.path.dirname(__file__)\nprint(__name__, __doc__, __package__, __spec__, __loader__)\nprint(never_bound_name)\n");
+    const n = spawnSync("python3", ["-c", scan, probe], { cwd: join(LIB, ".."), encoding: "utf8" });
+    assert.equal(n.status, 0, n.stderr);
+    assert.equal(n.stdout.trim(), `${probe}: never_bound_name`);
+  });
 });
 
 test("catalog_search finds the filesystem the catalogue names by its sector, and asks which when there are several", async () => {
@@ -1169,7 +1185,10 @@ test("sqlite_query says a file is not SQLite, and whether it looks encrypted, in
       assert.equal(body.header_hex.slice(0, 8), "504b0304");
       assert.match(body.reading, /another format/);
       r = await runPy(script, cwd, { db_path: "work/none.db", sql: "select 1;" });
-      assert.deepEqual(JSON.parse(r.stdout), { ok: false, error: "database not found", db_path: "work/none.db" });
+      assert.deepEqual(JSON.parse(r.stdout), {
+        ok: false, error: "database not found", db_path: "work/none.db",
+        status: "failed", status_basis: "the tool stopped with an error or a refusal and returned no result of the request (see error)",
+      });
     });
   }
 });
@@ -1243,7 +1262,7 @@ test("browser_history runs several statements one by one, and still refuses one 
       assert.equal(one.results, undefined, "one statement answers as it always has");
       r = await runPy(script, cwd, { path: "work/h.db", sql: "select 1; delete from urls" });
       assert.notEqual(r.code, 0);
-      assert.deepEqual(JSON.parse(r.stdout), { error: "sql must be a SELECT, WITH or PRAGMA", statement: "delete from urls" });
+      assert.deepEqual(JSON.parse(r.stdout), { error: "sql must be a SELECT, WITH or PRAGMA", statement: "delete from urls", status: "failed", status_basis: "the tool stopped with an error and returned no rows (see error)" });
     });
   }
 });
@@ -1298,7 +1317,10 @@ test("catalog_search takes a catalogue by the name the index gives it, and bad i
     assert.match(r.stdout, /Data\/secret\.txt/);
     r = await runPy(join(tools, "catalog_search", "run.py"), cwd, { pattern: "x", which: "filelist", catalog: "Case5.E01" });
     assert.notEqual(r.code, 0);
-    assert.deepEqual(JSON.parse(r.stdout + r.stderr), { ok: false, error: "no catalogue Case5.E01", candidates: ["Case4.E01", "memdump.mem"] });
+    assert.deepEqual(JSON.parse(r.stdout + r.stderr), {
+      ok: false, error: "no catalogue Case5.E01", candidates: ["Case4.E01", "memdump.mem"],
+      status: "failed", status_basis: "the tool stopped with an error and read no result (see error)",
+    });
     // A disk and a memory catalogue: the disk's is the one with filesystems.
     await writeFile(join(cwd, "catalog", "Case4.E01", "partitions.txt"), "002:  000:000   0000002048   ...   NTFS\n");
     r = await runPy(join(tools, "catalog_search", "run.py"), cwd, { pattern: "NTUSER", which: "filelist", partition: "p2048" });
@@ -1318,7 +1340,7 @@ test("catalog_search takes a catalogue by the name the index gives it, and bad i
     assert.match(JSON.parse(r.stdout).error, /a directory, not a file/);
     for (const lnk of [join(LIB, "lnk_parse", "run.py"), join(LIB, "..", "packs", "windows-forensics", "tools", "lnk_parse", "run.py")]) {
       r = await runPy(lnk, cwd, { path: "work/missing.lnk" });
-      assert.deepEqual(JSON.parse(r.stdout), { error: "no such file", path: "work/missing.lnk" }, lnk);
+      assert.deepEqual(JSON.parse(r.stdout), { error: "no such file", path: "work/missing.lnk", status: "failed", status_basis: "the tool stopped with an error and read no result (see error)" }, lnk);
     }
     r = await runPy(join(tools, "sqlite_query", "run.py"), cwd, { db_path: "work/x.db", query: "tables" });
     assert.notEqual(r.code, 0);
@@ -1450,8 +1472,11 @@ test("a paging library tool runs from a copy of its own directory, as a run seed
   // directory, a full disk) and escapes a lone surrogate. The Windows pack's tools carry the second, and so do their library
   // copies (tests/tool-library-twins.test.ts holds them byte-identical); the other library tools take it when they are next
   // changed. No third generation may appear.
+  // The Windows pack's pager also removes its hidden temporary file before it answers (the clean-up block); a library tool that still
+  // carries the older _cannot_write without it is the same generation, so the block is not part of the comparison.
+  const CLEAN_UP = /        # The hidden temp file goes first[^\n]*\n(?:.*\n)*?        except OSError:\n            pass\n/;
   const generations = new Map<string, string[]>();
-  for (const pager of pagers) generations.set(pager, [...(generations.get(pager) ?? []), pager]);
+  for (const pager of pagers) generations.set(pager.replace(CLEAN_UP, ""), [...(generations.get(pager.replace(CLEAN_UP, "")) ?? []), pager]);
   assert.ok(generations.size <= 2, "every tool carries one of the two pagers");
   assert.ok([...generations.keys()].filter((pager) => pager.includes("_cannot_write")).length <= 1, "only one generation is the newer one");
   await withCwd(async (cwd) => {

@@ -89,7 +89,7 @@ def describe(exc):
 
 def fail(message, **extra):
     """An error answer: JSON, exit 1, never a traceback. A name in it that is shaped like a credential is withheld."""
-    write_answer({"error": scrub(str(message)), "status": "failed", **extra})
+    write_answer({"error": scrub(str(message)), "status": "failed", "status_basis": "the tool stopped with an error: %s" % scrub(str(message)), **extra})
     raise SystemExit(1)
 
 
@@ -107,7 +107,7 @@ def scrub_all(value):
 def _stopped_by_signal(signum, frame):
     """A kill leaves no half-written file (atexit runs on SystemExit) and no empty answer."""
     print(json.dumps({"error": "the tool was stopped by signal %d before it finished; nothing it was writing was published" % signum,
-                      "status": "failed"}))
+                      "status": "failed", "status_basis": "stopped by signal %d before the answer was complete" % signum}))
     raise SystemExit(128 + signum)
 
 
@@ -219,19 +219,33 @@ def shown_output(path):
         return str(path)
 
 
-def same_bytes(a, b):
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
     try:
-        if os.path.getsize(a) != os.path.getsize(b):
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
             return False
-        with open(a, "rb") as fa, open(b, "rb") as fb:
-            while True:
-                x, y = fa.read(CHUNK), fb.read(CHUNK)
-                if x != y:
-                    return False
-                if not x:
-                    return True
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(CHUNK), fb.read(CHUNK)
+            if x != y:
+                return False
+            if not x:
+                return True
     except OSError:
         return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
 
 
 def publish(tmp, path):
@@ -1098,6 +1112,8 @@ def _b_named_secret(flat):
     size = len(flat)
     for m in _B_DELIM.finditer(flat):
         i = m.start()
+        if i > 0 and flat[i - 1] in "=:":                 # a delimiter right after a delimiter has no name before it: a run of 2 MiB of them is skipped, not judged one by one
+            continue
         j = i + 1
         while j < size and j - i <= 5 and flat[j] in " \t\"'\\":
             j += 1

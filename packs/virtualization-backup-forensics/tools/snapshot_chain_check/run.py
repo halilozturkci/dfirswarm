@@ -84,11 +84,16 @@ VOCABULARY = CREATE_TYPES   # words the way out shows as they are (see SHARED BO
 WITHHELD_CONFIG_NOTE = "other keys of a .vmx are not read: they can hold a password or a token"
 
 # BEGIN SHARED WITHHOLDING
-# The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
-# reverse-engineering packs), so that they withhold the same strings; the tests that hold the copies equal are
-# tests/pack-network-withholding.test.ts, tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts and
-# tests/pack-re-process.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a
-# path component, a URL, a message that quotes either.
+# The same text is in every tool that withholds identifier-shaped strings and credentials (the network, base, encrypted-containers,
+# memory, virtualization, ransomware and reverse-engineering packs, and the three tools of the cloud pack), so that they withhold the
+# same strings; the tests that hold the copies equal are tests/shared-blocks-census.test.ts (how many carry it),
+# tests/pack-re-delta10.test.ts (every copy equal, found by the marker), tests/pack-network-withholding.test.ts,
+# tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts, tests/pack-re-process.test.ts and
+# tests/pack-cloud-shared.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a path
+# component, a URL, a message that quotes either; and a credential (a value given to a password, a token, a cookie, a pair, a
+# switch) by the name it is given under. A carrier may set two names above this block: WITHHOLD_LIMIT, the length past which a text is
+# withheld whole (65536 when it sets none), and WITHHOLD_TICK, a hook that long scans call and that may raise to end them at the
+# carrier's deadline (none when it sets none). Nothing else in the block is a carrier's to change.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
 # A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
 # `/` joins pieces of a base64 token and is handled apart, below.
@@ -152,7 +157,7 @@ _SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
 # long, and the answer says how long the text was. Every rule below reads a text of this length in well under a second whatever its
 # characters are, so that no call of `scrub` or `token_spans` can run for long on a text a file chose; the limit is the backstop for
 # a shape of text that no rule was tried on, and the rules themselves are linear.
-TEXT_LIMIT = 65536
+TEXT_LIMIT = globals().get("WITHHOLD_LIMIT", 65536)
 
 
 def _prefixed_spans(text, tail=None):
@@ -309,10 +314,342 @@ def token_shaped(text):
     return bool(token_spans(text))
 
 
+# ---- credentials: a value is withheld by the name it is given under and by the text around it ----------------------------------
+# The rules above find strings that are shaped like an identifier. These find a secret that has no shape, because of what it is
+# assigned to (`password=`, a `Name`/`Value` pair, a `-Password` switch, `curl -u user:pass`, `mysql -pSECRET`), and the common
+# token families, private key blocks and hashes of an account database. A name decides whether a value is a secret, a value
+# decides nothing. Every rule runs in time linear in the text (a bounded stretch after each anchor, no nested repeat), and a
+# carrier whose texts are long (a cloud log: a megabyte) sets WITHHOLD_TICK to a hook that ends the work at its deadline.
+_CRED_CHECKSUM_NAME = re.compile(r"(?i)checksum|digest|sha[0-9]|md5|etag|crc[0-9]")
+_CRED_REDACTED = re.compile(r"^\W*(?:hidden_due_to_security_reasons|redacted|masked|removed|\*+|x{3,}|\[\])\W*$", re.I)
+_CRED_NOT_A_VALUE = frozenset(("true", "false", "null", "none", "nil", "undefined", "required", "optional", "enabled", "disabled"))
+_CRED_EXACT = {
+    "password", "newpassword", "oldpassword", "currentpassword", "passwd", "pwd", "passphrase", "passcode", "pin", "otp",
+    "pass", "dbpass", "userpass", "adminpass", "rootpass", "plaintext",
+    "secret", "clientsecret", "secretkey", "secretaccesskey", "awssecretaccesskey", "awssecretkey", "secretstring",
+    "secretbinary", "secrettext", "secretvalue", "accesskeysecret",
+    "sessiontoken", "securitytoken", "accesstoken", "refreshtoken", "idtoken", "bearertoken", "authtoken", "token",
+    "tokencode", "mfacode", "verificationcode", "authorizationcode",
+    "authorization", "proxyauthorization", "cookie", "setcookie", "apikey", "privatekey", "privatekeypem",
+    "sharedaccesskey", "sharedaccesssignature", "accountkey", "primarykey", "secondarykey", "keyvalue", "masterkey",
+    "storagekey", "subscriptionkey", "ocpapimsubscriptionkey",
+    "connectionstring", "credential", "credentials", "assertion", "samlresponse", "mfasecret",
+    "sastoken", "sassignature", "signature", "sig",
+    "passwordhash", "nthash", "ntlmhash", "lmhash",
+}
+_CRED_SUFFIX = ("password", "passwd", "passphrase", "secret", "apikey", "privatekey", "sessiontoken", "securitytoken",
+                "accesstoken", "refreshtoken", "clientsecret", "token", "secrettext", "secretkey", "secretaccesskey",
+                "primarykey", "secondarykey", "accountkey", "sharedaccesskey", "subscriptionkey", "passwordhash",
+                "ntlmhash", "nthash", "passcode", "signature", "cookie")
+# a position or an idempotency key under a name that ends in `token`
+_CRED_NOT_SECRET = ("nexttoken", "pagetoken", "continuationtoken", "paginationtoken", "nextpagetoken", "pagingtoken",
+                    "startingtoken", "nextmarkertoken", "clienttoken", "clientrequesttoken", "idempotencytoken",
+                    "nextforwardtoken", "nextbackwardtoken", "requesttoken")
+_CRED_CONTAINERS = ("credential", "credentials")
+_CRED_NAME_CACHE = {}
+_CRED_NAME_KEYS = ("Name", "name", "Key", "key")
+_CRED_VALUE_KEYS = ("Value", "NewValue", "OldValue", "value", "newValue", "oldValue")
+
+
+def is_container_name(name):
+    """`credentials` names a group of fields (an access key id, an expiry, a token): each is judged by its own name."""
+    return re.sub(r"[^a-z0-9]", "", str(name).lower()) in _CRED_CONTAINERS
+
+
+def name_is_sensitive(name):
+    """Does a field or a parameter of this name hold a secret? (`Password`, `client_secret`, `x-api-key`; not `nextToken`.)"""
+    hit = _CRED_NAME_CACHE.get(name)
+    if hit is None:
+        flat = re.sub(r"[^a-z0-9]", "", str(name).lower())
+        hit = flat in _CRED_EXACT or (len(flat) > 6 and flat.endswith(_CRED_SUFFIX) and not flat.endswith(_CRED_NOT_SECRET))
+        if len(_CRED_NAME_CACHE) < 20000:
+            _CRED_NAME_CACHE[name] = hit
+    return hit
+
+
+_CRED_B64 = "A-Za-z0-9+/_-"
+_CRED_B64_RUN = re.compile(r"(?<![%s])[%s]{128,}={0,2}(?![%s])" % (_CRED_B64, _CRED_B64, _CRED_B64))
+_CRED_B64_EDGE = "(?<![A-Za-z0-9+/=_-])"
+_CRED_B64_END = "(?![A-Za-z0-9+/=_-])"
+# The names an assignment is recognised by. A long compound name may carry any prefix (dbPassword=, apiToken=, adminSecret:);
+# a short one needs the edge of a word (sig= is not design=).
+_CRED_STRONG = (r"password|passwd|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|"
+                r"security[_-]?token|auth[_-]?token|bearer[_-]?token|account[_-]?key|shared[_-]?access[_-]?key|primary[_-]?key|"
+                r"secondary[_-]?key|private[_-]?key|subscription[_-]?key|sas[_-]?token|password[_-]?hash|nt[_-]?hash|ntlm[_-]?hash|"
+                r"lm[_-]?hash|client[_-]?secret|secret[_-]?access[_-]?key|secret[_-]?key|secret[_-]?text|secret[_-]?value|token|signature|plaintext")
+_CRED_SHORT = r"(?<![A-Za-z0-9])(?:pwd|pass|sig|pin|otp|sas)"
+_CRED_SEP = r"""(?:\\*["']|["'])?\s*(?:[:=]|%3[dD]|%3[aA])\s*"""
+# a short name is a name only as `pwd=value` or `pass:value`: "pass: 3 attempts" is prose
+_CRED_SEPS = r"""(?:\\*["']|["'])?(?:\s*(?:=|%3[dD])\s*|:(?=\S))"""
+_CRED_NAME = r"(?:(?:%s)%s|%s%s)" % (_CRED_STRONG, _CRED_SEP, _CRED_SHORT, _CRED_SEPS)
+_CRED_ARN_TAIL = re.compile(r"arn:[A-Za-z0-9-]+:[A-Za-z0-9-]+:[A-Za-z0-9-]*:[0-9]*:$")
+_CRED_PAIR_WHY = "a value paired with a credential name"
+_CRED_RULES = [
+    # anchored at the start of a run and possessive, so that a megabyte of `eyJ` is read once, not once per `eyJ`
+    ("a JSON Web Token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+\.[A-Za-z0-9_-]{2,}+(?:\.[A-Za-z0-9_-]*+)?"), 0),
+    ("a JSON Web Encryption token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+(?:\.[A-Za-z0-9_-]*+){4}"), 0),
+    ("a password in a URL", re.compile(r"(?i)(?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,20}://[^\s:/@\"'<>\\]{0,256}:([^\s/\"'<>\\]{1,1024})@(?=[^\s/@\"'<>]{1,255})"), 1),
+    ("an Azure Functions key", re.compile(r"""(?i)(?:x-functions-key["']?\s*[:=]\s*(?:\\*["'])?|[?&;]code=)([A-Za-z0-9_/+=-]{16,512})"""), 1),
+    ("a private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|[\s\S]*)"), 0),
+    ("a base64 block of key lines", re.compile(r"(?:[A-Za-z0-9+/]{60,80}={0,2}\r?\n){2,}[A-Za-z0-9+/]{2,80}={0,2}"), 0),
+    ("an authorization header value", re.compile(
+        r"""(?i)authorization["']?\s*[:=]\s*(?:\\*["'])?(?:(?:bearer|basic|digest|negotiate|ntlm|token)\s+)?([^\s"'&,;\\]{1,4096})"""), 1),
+    ("a cookie header value", re.compile(r"""(?i)cookie["']?\s*[:=]\s*(?:\\*["'])?([^\r\n"'\\]{1,4096})"""), 1),
+    ("a scheme and its credential", re.compile(r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{3,4096})|\b(?:negotiate|ntlm|digest)\s+([A-Za-z0-9._~+/=-]{24,4096})"), -2),
+    ("a value assigned to a credential name (quoted)", re.compile(
+        r"""(?i)%s\\*(["'])(.{1,4096}?)(?=\\*\1)""" % _CRED_NAME), 2),
+    ("a value assigned to a credential name", re.compile(
+        r"""(?i)%s((?:(?!%%26)[^\s"'&<>\\]){1,4096})""" % _CRED_NAME), 1),
+    ("a value given to a credential switch", re.compile(
+        r"""(?i)(?<![A-Za-z0-9_])-(?:password|pass|pwd|passphrase|secret|clientsecret|apikey|accesstoken|token)\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    ("a secret given to ConvertTo-SecureString", re.compile(
+        r"""(?i)ConvertTo-SecureString\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    # `mysql -u<user> -p<password>`: with `-p` glued to its value, and only as an option of a MySQL or MariaDB client (`ssh -p 22`,
+    # `nc -p 80` and `mysql -p` alone, which asks for the password, name a port or nothing). The options are read up to the next
+    # command of the kind, so that a text of many of them is read once, not once for each
+    ("a password given to a MySQL client", re.compile(
+        r"""(?i:(?<![\w.-])(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mysqlshow|mariadb|mariadb-dump|mariadb-admin)(?:\.exe)?(?=\s))(?:(?!(?i:mysql|mariadb)\b)[^\n]){0,512}?(?<=\s)-p(?=[^\s`,;)])(?:"([^"\n]{1,256})"|'([^'\n]{1,256})'|([^\s"']{1,256}))"""), -3),
+    # `curl -u user:password`: the part after the colon, and only when there is one (`curl -u user` asks for it)
+    ("a password given to curl", re.compile(
+        r"""(?i:(?<![\w.-])curl(?:\.exe)?(?=\s))(?:(?!(?i:curl)\b)[^\n]){0,512}?(?<=\s)(?:-u|-U|--user|--proxy-user)(?:\s+|=)(?:"[^":\n]*:([^"\n]{1,256})"|'[^':\n]*:([^'\n]{1,256})'|[^\s:"']*:([^\s"']{1,256}))"""), -3),
+    ("a hash pair of an account database", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}:([0-9a-fA-F]{32})(?![0-9a-fA-F])"), 1),
+    ("a bcrypt hash", re.compile(r"(?<![A-Za-z0-9$])\$2[abxy]?\$[0-9]{2}\$[./A-Za-z0-9]{53}(?![./A-Za-z0-9])"), 0),
+    ("a token of a known family", re.compile(
+        r"(?:GOCSPX-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])|"
+        r"ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{30,}|(?:IQoJb3JpZ2lu|FQoGZXIvYXdz|FwoGZXIvYXdz)[A-Za-z0-9+/=]{40,}|"
+        r"[A-Za-z0-9_.~-]{3}[0-9]Q~[A-Za-z0-9_.~-]{30,}|[01]\.A[A-Za-z0-9_-]{50,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})"), 0),
+]
+_CRED_GROUPS = {-1: (1, 2, 3), -2: (1, 2), -3: (1, 2, 3)}
+# A random-looking run of an exact length that keys have: 32, 40 (an AWS secret access key), 43 + "=" and 86 + "==" (a base64 key).
+_CRED_SHAPES = [
+    ("a key-length base64 string", re.compile(_CRED_B64_EDGE + r"(?:[A-Za-z0-9+/]{32}|[A-Za-z0-9+/]{40}|[A-Za-z0-9+/]{43}=|[A-Za-z0-9+/]{86}==)" + _CRED_B64_END), True),
+]
+# A Name/Value pair written as JSON text inside a string (an AuditData in a column of another name, a parameter list in a cell): the
+# structure rule (clean_value) cannot see it, so the text rule reads the head of the pair, and the name decides as it does there. The
+# value is read by hand, not by an expression: a string up to its first quote (the backslashes before the quote are not part of it), a
+# number, a flat array of up to 4,096 characters, or a literal; and the next value of the same pair (`OldValue`, then `NewValue`).
+_CRED_PAIR_HEAD = re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})\\*"\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_NEXT_VALUE = re.compile(r"""(?i)\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_QUOTE = re.compile(r'\\*"')
+# a format directive (`%s`, `%d`), a template field (`{0}`, `{name}`) or a `%VAR%` is where a value goes, not a value
+_CRED_PLACEHOLDER = re.compile(r"%[-+ #0-9.]*[sdiuxXfeEgGcr](?![A-Za-z0-9])|\{\w*\}|%\w+%$|\.{2,}|\u2026")
+_CRED_BARE = re.compile(r"-?[0-9][0-9.eE+-]{0,39}|\[[^\[\]]{0,4096}\]|(?:null|true|false)\b")
+# What a text must hold for a rule to match it: a literal (lower case) of which one must be in the text, checked before the rule runs, so
+# that a text with none of them (most names, addresses and ids) costs a few substring tests and no expression. An assignment rule also
+# needs a separator in the text. Each is a necessary condition of its rule.
+_CRED_ASSIGN = ("pass", "pwd", "secret", "key", "token", "signature", "plaintext", "sig", "pin", "otp", "sas", "hash")
+_CRED_NEEDLES = {
+    "a JSON Web Token": ("eyj",), "a JSON Web Encryption token": ("eyj",), "a password in a URL": ("://",),
+    "an Azure Functions key": ("x-functions-key", "code="), "a private key block": ("-----begin",), "a base64 block of key lines": ("\n",),
+    "an authorization header value": ("authorization",), "a cookie header value": ("cookie",),
+    "a scheme and its credential": ("bearer", "basic", "negotiate", "ntlm", "digest"),
+    "a value assigned to a credential name (quoted)": _CRED_ASSIGN, "a value assigned to a credential name": _CRED_ASSIGN,
+    "a value given to a credential switch": ("password", "pass", "pwd", "secret", "apikey", "accesstoken", "token"),
+    "a secret given to ConvertTo-SecureString": ("securestring",), "a password given to a MySQL client": ("mysql", "mariadb"),
+    "a password given to curl": ("curl",), "a hash pair of an account database": (":",), "a bcrypt hash": ("$2",),
+    "a token of a known family": ("gocspx-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xoxa-", "xoxb-", "xoxp-", "xoxr-", "xoxs-",
+                                  "aiza", "ya29.", "1//0", "iqojb3", "fqogzx", "fwogzx", "q~", "0.a", "1.a", "sk_", "rk_"),
+}
+_CRED_CLEAN = set()               # short texts already judged to hold nothing (names, addresses and ids repeat)
+_CRED_GATE = 4096                 # a text longer than this is scanned with the carrier's hook in view, rule by rule
+# The carrier's hook for long scans: called with the work done so far (1 per stretch found, 4096 between rules over a long text); it may
+# raise to end the scan at the carrier's deadline. Most carriers set none and the calls do nothing.
+_tick = globals().get("WITHHOLD_TICK") or (lambda units=1: None)
+
+
+def _cred_json_value(text, at):
+    """(start, end, after) of the JSON value whose text starts at `at`: `end` is where what is withheld ends, `after` where the next
+    token of the pair begins. None when no value starts there."""
+    q = _CRED_QUOTE.match(text, at)
+    if q:
+        start = q.end()
+        close = text.find('"', start)
+        if close < 0:
+            return start, len(text), len(text)      # a value that is cut off: the rest of the text is the value
+        return start, start + len(text[start:close].rstrip("\\")), close + 1
+    m = _CRED_BARE.match(text, at)
+    if m is None:
+        return None
+    if m.group()[0] in "nft":
+        return at, at, m.end()                     # null, true and false are not secrets
+    return m.start(), m.end(), m.end()
+
+
+def _cred_pair_spans(text, spans):
+    for head in _CRED_PAIR_HEAD.finditer(text):
+        if not name_is_sensitive(head.group(1)):
+            continue
+        at = head.end()
+        for _ in range(3):
+            got = _cred_json_value(text, at)
+            if got is None:
+                break
+            start, end, after = got
+            if end > start:
+                value = text[start:end]
+                if not (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    spans.append((start, end, _CRED_PAIR_WHY))
+            more = _CRED_NEXT_VALUE.match(text, after)
+            if more is None:
+                break
+            at = more.end()
+
+
+def _cred_random_like(run):
+    """A run that looks like random base64 and not like a path, a name or a hash: mixed case and digits in the proportions
+    random text has (a long path is mostly lower case with few capitals; a hex digest has no case to mix)."""
+    n = len(run)
+    upper = sum(1 for ch in run if "A" <= ch <= "Z")
+    lower = sum(1 for ch in run if "a" <= ch <= "z")
+    digit = sum(1 for ch in run if "0" <= ch <= "9")
+    return upper * 100 >= 15 * n and lower * 100 >= 15 * n and digit * 100 >= 5 * n
+
+
+def _cred_name_before(text, at):
+    """The letters and digits of the name an assigned value follows (`nextToken=` gives `nexttoken`)."""
+    return re.sub(r"[^a-z0-9]", "", text[max(0, at - 64):at].lower())
+
+
+def _cred_spans(text, shapes, skip=()):
+    spans = []
+    big = len(text) > _CRED_GATE
+    low = text.lower()
+    sep = "=" in text or ":" in text or "%3" in low
+    if "value" in low:
+        _cred_pair_spans(text, spans)
+    for why, rx, group in _CRED_RULES:
+        if why in skip:
+            continue
+        need = _CRED_NEEDLES[why]
+        if need is _CRED_ASSIGN and not sep:
+            continue
+        for n in need:
+            if n in low:
+                break
+        else:
+            continue
+        if big:
+            _tick(4096)
+        for m in rx.finditer(text):
+            if big:
+                _tick(1)
+            if "assigned to a credential name" in why:
+                if _CRED_ARN_TAIL.search(text[max(0, m.start() - 120):m.start()]):
+                    continue                              # arn:aws:secretsmanager:...:secret:NAME is a name, not a value
+                if _cred_name_before(text, m.start(m.lastindex or 0)).endswith(_CRED_NOT_SECRET):
+                    continue                              # nextToken=, pageToken=, clientToken=: a position or an idempotency key
+            for g in _CRED_GROUPS.get(group, (group,)):
+                if g and m.group(g) is None:
+                    continue
+                start, end = m.span(g)
+                value = text[start:end]
+                if g and (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    continue
+                if why == "a scheme and its credential" and g == 1 and not (re.search(r"[0-9+/=_.~-]", value) or len(value) >= 16):
+                    continue                              # "basic authentication" is prose, "Basic dXNlcjpwYXNz" is not
+                if g == 1 and group == -1 and len(m.groups()) >= 2 and m.group(1) in ("'", '"'):
+                    continue                              # group 1 of the switch rules is the quote
+                spans.append((start, end, why))
+    if big:
+        _tick(4096)
+    for m in (_CRED_B64_RUN.finditer(text) if len(text) >= 128 and "a long unbroken base64-like run" not in skip else ()):
+        if _cred_random_like(m.group(0)):
+            spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
+    if shapes and len(text) >= 32 and "a key-length base64 string" not in skip:
+        for why, rx, check in _CRED_SHAPES:
+            for m in rx.finditer(text):
+                if not check or _cred_random_like(m.group(0)):
+                    spans.append((m.start(), m.end(), why))
+    spans.sort()
+    merged = []
+    for s in spans:
+        if merged and s[0] < merged[-1][1]:
+            if s[1] > merged[-1][1]:
+                merged[-1] = (merged[-1][0], s[1], merged[-1][2])
+            continue
+        merged.append(s)
+    return merged
+
+
+def credential_spans(text, shapes=True, skip=()):
+    """(start, end, why) of each stretch of `text` that is a credential by the name it is given under or by its text, in order and
+    not overlapping. `shapes` False leaves out the rules that recognise a key by its length alone (a value that is named a checksum or
+    a digest is not scanned for them). This is not `token_spans`: an identifier (a GUID, a hex digest, an access key id, an ARN) is
+    not a credential here, and a tool that prints identifiers on purpose asks only for these."""
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text), "text longer than %d characters" % TEXT_LIMIT)]
+    if shapes and not skip and text in _CRED_CLEAN:
+        return []
+    spans = _cred_spans(text, shapes, skip)
+    if shapes and not skip and not spans and len(text) <= 256 and len(_CRED_CLEAN) < 100000:
+        _CRED_CLEAN.add(text)
+    return spans
+
+
+def clean_value(value, leaf, note, key=None, pointer="", depth=0, shapes=True, max_depth=200):
+    """The structure rule: `value` (what a JSON document decoded to) with every credential in it replaced. A string goes to
+    `leaf(text, pointer, shapes)`, which returns what is printed for it. A field whose name says it holds a secret (or a `Value` whose
+    `Name` does), at any depth, is not read at all: `note(pointer, why, original)` returns what is printed for it (a number under such
+    a name is withheld too: 0 and 1 are not nothing). A key goes through `key(text)` when one is given. A value nested deeper than
+    `max_depth` is replaced the same way."""
+    if isinstance(value, str):
+        return leaf(value, pointer, shapes)
+    _tick(1)
+    if depth > max_depth and isinstance(value, (dict, list)):
+        return note(pointer, "nested deeper than %d levels" % max_depth, value)
+    if isinstance(value, dict):
+        named = None
+        for k in _CRED_NAME_KEYS:
+            if isinstance(value.get(k), str):
+                named = value[k]
+                break
+        pair_secret = named is not None and name_is_sensitive(named)
+        out = {}
+        for k, v in value.items():
+            ks = str(k)
+            point = "%s/%s" % (pointer, ks.replace("~", "~0").replace("/", "~1"))
+            safe_key = key(ks) if key is not None else ks
+            if safe_key in out:
+                safe_key = "%s#%d" % (safe_key, len(out))
+            sensitive = name_is_sensitive(ks) or (pair_secret and ks in _CRED_VALUE_KEYS)
+            if sensitive and is_container_name(ks) and isinstance(v, (dict, list)):
+                sensitive = False
+            if sensitive and not (v is None or isinstance(v, bool) or v == "") and not (isinstance(v, str) and (_CRED_REDACTED.match(v) or v.lower() in _CRED_NOT_A_VALUE)):
+                out[safe_key] = note(point, "credential-named field", v)
+            else:
+                out[safe_key] = clean_value(v, leaf, note, key, point, depth + 1, shapes and not _CRED_CHECKSUM_NAME.search(ks), max_depth)
+        return out
+    if isinstance(value, list):
+        return [clean_value(v, leaf, note, key, "%s/%d" % (pointer, i), depth + 1, shapes, max_depth) for i, v in enumerate(value)]
+    return value
+
+
+# what the rules of the block above already withhold whole, with their own markers: the first pass leaves these to them
+_CRED_OLD_COVERS = frozenset(("a JSON Web Token", "a password in a URL", "an authorization header value", "a scheme and its credential",
+                              "a long unbroken base64-like run", "a key-length base64 string"))
+
+
+def _credentials_withheld(text, kind, skip=()):
+    """`text` with each credential in it withheld. It runs after the rules above, on text that may hold their markers: a stretch that
+    begins at a marker is theirs already."""
+    out, last = [], 0
+    for start, end, why in credential_spans(text, True, skip):
+        if text.startswith("<", start):
+            continue
+        out.append(text[last:start])
+        out.append(_withheld(why, end - start, kind))
+        last = end
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
+
+
 def scrub(text, kind="text"):
-    """The text with every token-shaped run and every user-info withheld."""
+    """The text with every token-shaped run, every user-info and every credential withheld."""
     if len(text) > TEXT_LIMIT:
         return _withheld("over-long text", len(text), kind)
+    text = _credentials_withheld(text, kind, _CRED_OLD_COVERS)     # first: the rules above cut a secret into pieces that no rule for a whole one can match
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
@@ -321,7 +658,7 @@ def scrub(text, kind="text"):
         out.append(_withheld("token-shaped text", end - start, kind))
         last = end
     out.append(text[last:])
-    return "".join(out)
+    return _credentials_withheld("".join(out), kind)
 
 
 def redact_url(url):
@@ -810,100 +1147,200 @@ def withheld_summary(shower):
                      "like a token (a short password in a name) is not recognised, so run the tool as a job with secret_output: true.") % shower.limit}
 # END SHARED COMMON
 # BEGIN SHARED BOUNDARY
-# The same text is in virtualization_inventory, snapshot_chain_check and backup_audit_normalise; tests/pack-virtualization-
-# shared.test.ts holds the copies equal. The one way out. Every key and every value of an answer, of an error answer and of
-# every row a paging file holds is sealed when it is serialised, whatever code made it, in three layers:
+# BOUNDARY v2, the one text: the same text is in every tool that prints names, paths, event data, registry data, identifiers or table
+# cells from evidence (tests/pack-boundary-shared.test.ts finds every copy under packs/ and tool-library/ and holds them equal: one variant, 16 carriers).
+# It is the owner-approved HYBRID design: an allow-list for
+# identifier-shaped fields, a deny-list for free text, and an independent backstop on the way out.
 #
-# LAYER 1, an allow-list per field type. A string the evidence supplied is classified by the field it fills (the JSON key, or
-# the label a call site gives the Shower; _FIELDS below): a name (VM, host, datastore, snapshot, network, key), a path or a file
-# name, an identifier of a declared kind (GUID, VMFS volume id, naa./eui./t10./wwn- device ids, a VMware uuid, a MAC, a CID, a
-# number), or a simple value (an enum word, a version, a time). It is shown as it is only when it fits the plain grammar of
-# its type: printable letters, digits, space and . _ - ( ) + [ ] ' # , & ~ % $ (a path adds / \ { }, a drive or storage prefix
-# and host:port), no `=`, no `@`, no `:` before a value, a bounded length (160 characters for a name, 96 for a simple value,
-# 255 for each component of a path), no known token prefix, no named secret, and no run of 16 or more letters and digits that
-# changes class (capitals, small letters, digits) as random text does, unless it is words or a well-formed identifier of a kind
-# (a GUID in a Hyper-V file name, the volume id of /vmfs/volumes/<id>/, naa.<hex>, the name Windows gives a machine nobody named).
-# Anything else is shown as <withheld: N bytes, field F>; a path is judged component by component, and when a component is
-# withheld as a piece of a base64 key the key's other pieces next to it (across a `/`) are withheld with it. The original goes to the
-# values file when one was asked for (write_text, a job). A key piece with something glued to it (`local:`, `[ds1] `, a quote, a
-# JSON brace) is judged by the stretch of key at its end next to the `/`. An iqn. or t10. id is shown as an id only when what it holds
-# is a name and not a stretch of random text. A name shorter than the run threshold is shown whatever it is: a short password used
-# as a VM name is not recognised.
+# Names defined here start with _b_ or _B_ where another shared block of a tool could define the same name (the WITHHOLDING block has _withheld and _USERINFO).
+# THE CALLS A TOOL MAKES, and what the virtualization block called each (the three virtualization tools moved onto this text; the table is what they map to):
+#   FIELDS, KEY_KINDS, bind_fields(table, key_kinds)           the table of field kinds, which the CALLER passes in (this text holds no tool's table);
+#                                                              it was _FIELDS, _INHERIT and field_kind(); a digit run in a field name stands for any number
+#                                                              (`ethernet#.address`), and a field the table does not list has the kind of the field above it
+#   T(kind, text), show(s, kind, field)                        one string judged by its kind                         (the Shower, boundary_text, seal_text, seal_head)
+#   sealed_text(text, kind, field), print_order(items, ...)    what an answer prints for a string; nothing counted    (seal_text without the count)
+#   bind_values(enabled, tool), close_values(), values_summary()  the values file of a secret_output job            (bind_run(values, seconds))
+#   seal_stop_after(seconds)                                   the clock: nothing is judged after it                  (bind_run's seconds, RUN["deadline"])
+#   row_object(row)                                            one row of a paging file                               (row_text(row, where))
+#   answer_object(doc), emit(doc)                              an answer, sealed and read back                        (answer_text(doc), backstop(value, where))
+#   boundary_summary()                                         the "boundary" object; stopped_by is in it when judging stopped
+#   OWN_NAMES                                                  the exact strings the run made and shows as they are   (OWN_NAMES)
+# The kinds of a field: text (the default), name, path, key, url, host, hex, id (one of several forms of identifier: a GUID, a VMFS volume id, a device id, a VMware uuid, a MAC, a content id of 32 hexadecimal digits or a number; else a name), and the typed ones guid, digest, sid, mac, ip, time, number, version
+# and, for virtualized storage and machines, vmfs (a VMFS volume id), device (naa., eui., wwn-0x, vml. and t10. ids), iqn, vmuuid (the VMware
+# uuid of a machine), cid (a disk's content id), winhost (the name Windows gives a machine nobody named).
 #
-# LAYER 2, a deny-list, for every other string (a description, an annotation, an audit action or actor, a message, any text
-# the tool wrote around a name). The string is first normalised by Unicode property, not by a list: characters of the
-# categories Cf, Cc, Mn, Me, Cs, Co, Cn, Zl, Zp, the Hangul and half-width fillers and the escapes of any of them (\u2066,
-# \x00) are taken out, and when that reading has something to withhold it is the one shown (a token split by bidi isolates,
-# variation selectors, tag characters or combining marks is a token). Then, in linear time: user-info up to the last `@`
-# before the host; the shared block's token rules and the shapes added here (a base64 key with its padding, a slashed run,
-# the head of a prefixed token, a run of more than 18 digits, a PEM key); and the value after a name that says it is a secret,
-# found ANYWHERE in the string (the secret word first, then what follows `=` or `:`; password, passwd, passphrase, pwd, secret,
-# token, credential, api/access/account/private/secret/master/shared/signing/encryption key, authorization, bearer, dsn,
-# webhook url, connection string, ssh key, snmp community, and pass, pw, auth, sig, sas, otp, psk, pin at the start of a word,
-# in any case, glued or CamelCase, with up to two digits after the name: vncPassword=, adminPassword=, SecretAccessKey:,
-# PGPASSWORD=, MYSQL_PWD=, sig=, cipassword:, password1=, pass_word:, and `--password <value>`, `-password <value>`, `--passphrase <value>`,
-# `set password <value>`; a value in angle brackets is a value, unless it is a placeholder word: <redacted>, <password>). A name not in this list (a bare key, community, webhook or url; "the password is X") is not
-# recognised. The rules are applied until they change nothing more.
+# LAYER 1, an allow-list per field type. A string the evidence supplied is shown as it is only when it fits the plain grammar of the
+# type of the field it fills: a name (registry key and value names, event field names, provider and channel names, table and column
+# names), a path (file names and paths, a registry path, a URL path), a key, a URL, or a typed id (GUID, SID, MAC, IP address, digest,
+# time, number, version). The grammar is: letters of any script, digits, space and `_ - . $ @ ? : ~ + , # ( ) [ ] { } ' < > *`, at
+# most 128 characters a component, no user-info shape (a `:` before an `@`), and no chain of 16 or more characters made of
+# random-looking pieces (pieces that break into one- and two-character parts, flip between letters and digits, or are letters with
+# no pronounceable word in them; a 16-hex id, a GUID or a number up to 18 digits is plain). Below 16 characters a chain is shown
+# whatever it looks like: a short random password in a name is not recognised. A path is judged component by component and only the
+# offending span is replaced; a string with a format, control or combining character is withheld whole.
 #
-# LAYER 3, the backstop, written apart from the two layers above (its own normaliser, patterns, named-secret search and
-# class-transition check; none is reused): the serialised text is read back, and a string it still finds suspect is replaced
-# by <withheld: N bytes>, its place and the check that fired are listed in boundary.replaced_at, and the answer is partial.
+# LAYER 2, for every kind, and it reads the string FIRST, as the evidence wrote it (the deny-list and the grammar cut spans out of a string
+# and take with them the context these rules need: the user of `user:password@host`, the characters glued before `glpat-`): user-info up
+# to the last `@` before the host (the password may hold a `/`, not a port); the value after a secret's name (password, secret, token,
+# api/access/account/private key, credential, auth) found anywhere, up to a space or quote, and past a `& ; ,` that no `name=` follows;
+# a PEM private key; a vendor token with its own prefix (AKIA, gh?_, github_pat_, xox?-, glpat-, sk_live_, SG., AIza, npm_, dop_v1_,
+# ya29., sk-, JWT) in any case; a base64 key with its padding; and the same rules on a copy with invisible characters taken out and NFKC
+# applied (a hit withholds the whole string). FREE TEXT (event data, messages, command lines, registry data strings, table cells) is on
+# the deny-list: the same chain test applied to the text with its typed ids (GUID, SID, IP address, time, labelled digest, number) left
+# alone, plus layer 2, and no character grammar.
 #
-# Shown as they are by every layer: the exact names of the files this run made, a word of the tool's own closed vocabulary
-# (VOCABULARY), a marker this block wrote. A run is bounded: the strings of one run share max_seconds (plus a short grace for
-# the final answer) and a cap on the characters judged; past either, a string not judged before is withheld by its length and
-# the answer is partial and names the stop. A string over 256 KiB is judged in its first 256 KiB and its rest is withheld.
-BOUNDARY = {"withheld": 0, "replaced": 0, "where": [], "not_listed": 0, "by": collections.Counter()}
-RUN = {"values": None, "deadline": None, "stop": None, "stopped_strings": 0, "chars": 0, "cap": 400000000, "record": True}
-OWN_NAMES = set()               # the exact names of the files this run made, as the answer shows them
-MAX_REPLACED_LISTED = 1000
+# LAYER 3, the backstop, written apart from the layers above: every key and value of what is about to be written is read once more
+# by its own normaliser and patterns (a PEM marker, a named secret, a run of 19 or more digits, a token prefix in any case, user-info, a
+# run of 40 or more hex digits outside a typed field, a base64 run, a run that changes class as random text does; a typed field must hold
+# the characters of its type; data written as hexadecimal is decoded and its printable text is read as text). It reads the shown string
+# AND the original: a window of 12 characters of anything it calls secret in the original that is still in the shown string means the
+# layers above left a piece of a secret between two cuts. A string it finds suspect is replaced by <withheld N bytes: backstop: why>,
+# counted, its place named in boundary.replaced_at (built from the keys on the way as they are SHOWN, or their positions), and the
+# answer is partial. A placeholder is only a placeholder when its reason is one of the fixed list. The names of the components of the Windows
+# component store (WinSxS: lower case, a public key token, a language or `none`, a hash) are not judged by the backstop in a name or key slot:
+# a real SOFTWARE hive lists them by the thousand and their hash looked random to it; layer 1 judges them as it does every name.
+#
+# ONE WAY OUT: emit() writes an answer, row_object() makes a row of a paging file, and both seal every key and value first (a value that is not
+# a string, a number or a container is sealed as the text str() makes of it). Binary data written as hex (a REG_BINARY value, an ESE
+# binary column) is decoded and its printable views (Latin-1, UTF-16LE and UTF-16BE, and runs holding full-width characters read as UTF-8 and UTF-16LE with
+# the width folded) are judged by the free-text rules, by both layers and the
+# backstop; hex that holds a secret-shaped text is withheld, and any other hex is shown (random bytes with no text in them are printed).
+# What is withheld is a placeholder with its length and the reason; its original goes to the values file only when write_values was
+# asked for in a job run as secret output. A list of names is printed in the order of the text shown for each, the placeholders of
+# withheld names in a random order that is new every run (print_order); a `contains` filter is applied to the text the answer PRINTS (the
+# string after the layers and the backstop, sealed_text), never to what is withheld or replaced, and contains_check says when the needle
+# could have been in what is hidden. Every string is judged in linear time (a string is read to 256 KiB, the pieces the backstop compares
+# are at most 64, a PEM body at most 20,000 characters), and an answer or a row that takes longer than SEAL_BUDGET seconds to seal, or that is
+# still being sealed at the seal stop of the tool (seal_stop_after: a point in time after which nothing is judged, not a stop of the tool's own
+# work, which has its own clock), has the rest of its strings replaced whole (<withheld N bytes: backstop: the judging time ran out>) and is
+# partial; what stays readable past that point is the names the tool made itself (OWN_NAMES) and strings of 15 characters or fewer of letters,
+# digits, `_` and `.` that do not start like a vendor token (and, in a field of a typed kind, fit the grammar of its type). The seal stop is 3.5 seconds before the
+# tool's time limit: the string in progress finishes after it, and one string of 256 KiB takes up to 2.3 seconds to judge on a loaded machine (the worst measured).
+# A run has a second bound: past MAX_JUDGED_CHARS characters judged (the final answer is always judged), a string not judged before is withheld by its size in the
+# same way. boundary.stopped_by says which bound stopped the judging and boundary.strings_withheld_by_the_stop how many strings it withheld; the answer is partial.
+# NOT RECOGNISED, by design: a secret that does not look like one (a plain password, a pronounceable passphrase, a UUID-shaped key,
+# anything under 16 characters in a name, a secret hidden in words or in an encoding this block does not read).
+import collections
+import hashlib
+import signal
+import time
+import unicodedata
+
+LMIN = 16
 MAX_ONE_STRING = 1 << 18
+MAX_HEX_JUDGED = 1 << 20
+MAX_PIECES = 64                 # the pieces of a string the backstop compares with what was shown (it stops collecting at this many)
+MAX_PEM_BODY = 20000            # a PEM body is read to this many characters (a 16,384-bit RSA key is about 13,000)
+SEAL_BUDGET = 10.0              # seconds one answer, or one row of a paging file, may take to be sealed; a tool may set another
+_CLOCK = {"deadline": None, "stop": None}
+_BIGRAMS_TEXT = "aaabacadaeafagahaiajakalamanaoapaqarasatauavawaxayazbabbbcbdbebfbhbibjblbmbnbobpbrbsbtbubvbycacbcccdcecfchcickclcncocqcrcsctcucydadbdcdddedfdgdhdidjdldmdndodpdrdsdtdudvdwdyeaebecedeeefegeheiejekelemeneoepeqereseteuevewexeyezfafbfcfdfefffiflfofrftfufygagbgdgegfggghgiglgmgngogrgsgtgugwgyhahbhchdhehfhhhihlhmhnhohphrhshthuhwhyiaibicidieifigihiiijikiliminioipiqirisitiuiviwixizjajejijojukakbkekfkhkikkklkmknkokpkrksktkukwkylalblcldlelflglhlilklllmlnlolplrlsltlulvlwlymambmemfmimlmmmnmompmrmsmumwmynanbncndnenfngnhninjnknlnmnnnonpnqnrnsntnunvnwnxnynzoaobocodoeofogohoiojokolomonooopoqorosotouovowoxoyozpapbpcpepfphpiplpmpnpoppprpsptpupwpyqurarbrcrdrerfrgrhrirjrkrlrmrnrorprqrrrsrtrurvrwryrzsasbscsdsesfsgshsiskslsmsnsospsqsrssstsusvswsytatbtctdtetftgthtitltmtntotptrtstttutvtwtytzuaubucudueufuguhuiukulumunuoupurusutuvuxuyuzvavevivovuvywawbwdwewfwhwiwkwlwmwnwowrwswtwuwyxaxcxexhxixoxpxtxuxxxyyaybycydyeyfygyhyiylymynyoypyrysytyuywyxyyyzzazezizlzozuzyzz"           # the 474 letter pairs that words and identifiers use (the system word list and Python identifiers)
+_BIGRAMS = frozenset(_BIGRAMS_TEXT[i:i + 2] for i in range(0, len(_BIGRAMS_TEXT), 2))
+BOUNDARY = {"withheld": 0, "by": collections.Counter(), "replaced": 0, "replaced_by": collections.Counter(), "where": [], "not_listed": 0}
+OWN_NAMES = set()               # exact strings this run made and shows as they are (file names of its own results)
+FIELDS = {}                     # a JSON key -> the kind of what it holds (a tool fills this in, or passes it to bind_fields); a key it does not list has the kind of the key above it (text at the top)
+KEY_KINDS = {}                  # a JSON key holding a dict -> the kind of that dict's own keys (registry value names are paths); default: name
+MAX_WHERE = 200
+MAX_JUDGED_CHARS = 400000000    # characters one run may have judged (every string of its answers and paging files); past it a string not judged before is withheld by its size
+FINAL_GRACE_CHARS = 4000000     # the final answer may always be judged: the cap is raised by this much, and is not spent again by the strings already withheld
+_STOP = {"cap": MAX_JUDGED_CHARS, "chars": 0, "by": None, "strings": 0}   # why judging stopped (None: it did not), and how many strings it withheld by their size
 
 
-def bind_run(values, seconds):
-    """The run's values file and clock: the strings of this run are judged within `seconds` (and a grace for the answer)."""
-    RUN["values"] = values
-    RUN["deadline"] = time.monotonic() + seconds
+class T(str):
+    """A string with its field type, made by the tool where it knows the type (a registry type, an event field, a column)."""
+    kind = "text"
+
+    def __new__(cls, kind, text):
+        self = super().__new__(cls, text)
+        self.kind = kind
+        return self
 
 
-# ---- field types ---------------------------------------------------------------------------------------------------------
-# A JSON key or a Shower label -> the type of what it holds (a digit run in a label stands for any number: ethernet0.address).
-# A key that is not listed holds free text (layer 2): description, annotation, audit action, actor, message, a tool's own words.
-_FIELDS = {}
-for _kind, _names in (
-    ("name", "name|display_name|domain_name|job|storage|storage name|networkName|ethernet#.networkName|snapshot name|disk key|displayName"
-             "|current_parent_snapshot|snapshot_sections|snapshot|parent snapshot name|domain name|datastore|pool|vgname|thinpool|key"),
-    ("path", "file|leaf_file|rel|root|links|special|unreadable|too_deep|lock directory|parent_hint|parentFileNameHint|parent name|parent_name|backing_file|backing_filename"
-             "|external_data_file|parent_absolute_win32_path|parent_relative_path|parent_volume_path|disk_files|snapshot disk file|state_file|snapshot state file"
-             "|extent file name|configuration_path|vmxCfgPath|datastore_hint|datastore path|nvram|disk file|volume|vm_state_volume|vmstate|path|named|export|special_sections|section|disk source|source_name|object"),
-    ("id", "uid|snapshot uid|snapshot parent|snapshot id|parent_uid|uuid|bios_uuid|location_uuid|vcenter_instance_uuid|cid_raw|parent_cid_raw|CID|parentCID|entry_id|object_id|vmid"
-           "|ddb.uuid|ddb.longContentID|current|lastuid|lastUID|numsnapshots|numSnapshots|source_id|own_id|leaf|base|child|ethernet#.address|ethernet#.generatedAddress|address"
-           "|virtual_disk_id|unique_id|parent_unique_id|data_write_guid|file_write_guid|log_guid|parent_identity|parent_identity_2|recorded_by_child|carried_by_parent|descriptor_id"),
-    ("simple", "create_type|createType|encoding|backing_format|backing format|native_snapshot|isNativeSnapshot|version|hardware_version|config_version|arch|bios|firmware|machine"
-               "|os_type|virt_type|guest_os|guestOS|cores|vcpus|memory_mb|memory|device|device_type|deviceType|disk_format|mode|present|snapshot_mode|bus|backup|size|state|type"
-               "|source_protocol|ddb.adapterType|ddb.virtualHWVersion|ddb.toolsVersion|ddb.thinProvisioned|time_raw|createTimeHigh|createTimeLow|create_time_high_raw"
-               "|create_time_low_raw|extent type|type_raw|content|shared|disable|maxfiles|mkdir|is_mountpoint|nodes|ethernet#.virtualDev|ethernet#.present|ethernet#.addressType"),
-):
-    for _n in _names.split("|"):
-        _FIELDS[_n] = _kind
-# a value under these keys is judged as the key above it (the rows of an aggregate)
-_INHERIT = frozenset(("top", "value"))
-_IDENT_KINDS = frozenset(("name", "path", "id", "simple", "key"))
-_DIGITS = re.compile(r"[0-9]+")
+def _mark(n, label, unit="characters"):
+    return "<withheld %d %s: %s>" % (n, unit, label)
 
 
-def field_kind(field):
-    if not isinstance(field, str):
+# the reasons a placeholder can give: a fixed list, so that text which only looks like a placeholder is not taken for one (and not skipped by the rules)
+_CHECKS = ("a PEM marker", "a named secret", "a token prefix", "user-info", "not the typed grammar", "a long digit run", "a long hexadecimal run",
+           "a base64 run with / and +", "a padded base64 run", "a random-looking run", "a part of a secret-shaped text", "the judging time ran out")
+_LABELS = ("not a plain name", "token-shaped text", "user-info", "secret value", "private key", "long number", "rest of a long string",
+           "binary data over the judged size", "binary data holding a secret-shaped text", "invisible characters in a name", "not a port", "query value", "fragment",
+           "not a guid", "not a digest", "not a sid", "not a mac", "not a ip", "not a time", "not a number", "not a version",
+           "not a vmfs", "not a device", "not a iqn", "not a vmuuid", "not a cid", "not a winhost") + \
+          tuple("backstop: " + c for c in _CHECKS) + tuple("backstop: in binary data: " + c for c in _CHECKS)
+_MARK = re.compile(r"<withheld [0-9]{1,10} (?:characters|bytes)(?:: (?:%s))?>|\[withheld: [0-9]{1,10} (?:characters|bytes)\]"
+                   % "|".join(re.escape(x) for x in sorted(_LABELS, key=len, reverse=True)))
+_VALUES = {"fh": None, "shown": None, "written": 0, "seen": set(), "count": 0}   # "seen": 16-byte digests of the originals written (at most 200,000)
+
+
+class ValuesRefused(Exception):
+    pass
+
+
+def bind_values(enabled, tool):
+    """The values file: the originals of what the boundary withheld, in a job run as secret output and only when asked for. Decided before
+    anything is opened or created (the harness sets SECRET_OUTPUT=1 for a secret job's process)."""
+    if not enabled:
         return None
-    kind = _FIELDS.get(field)
-    if kind is None and field != "key" and any(c.isdigit() for c in field):
-        kind = _FIELDS.get(_DIGITS.sub("#", field))
-    return kind
+    job, out = os.environ.get("JOB_ID") or "", os.environ.get("OUT") or ""
+    if not (job and out) or os.environ.get("SECRET_OUTPUT") != "1":
+        raise ValuesRefused("write_values is refused: the originals of what was withheld are written only in a job the harness runs as secret output "
+                            "(job_run with secret_output: true), where the file is a sealed secret output. Nothing was written.")
+    name = "%s-values.jsonl" % re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+    path = Path(out) / name
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except FileExistsError:
+        raise ValuesRefused("the values file already exists: %s" % path)
+    except OSError as exc:
+        raise ValuesRefused("the values file could not be created: %s: %s" % (path, exc.strerror or exc))
+    _VALUES["fh"] = os.fdopen(fd, "w", encoding="utf-8")
+    _VALUES["shown"] = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
+    return _VALUES["shown"]
 
 
-# ---- the normalisers -------------------------------------------------------------------------------------------------------
-# Layer 2's: characters of invisible or formatting categories, by Unicode property (not by a list of code points), and the
-# fillers that render blank. The translate table is filled one code point at a time and bounded.
+def close_values():
+    fh = _VALUES["fh"]
+    if fh is not None:
+        fh.flush()
+        os.fsync(fh.fileno())
+        fh.close()
+        _VALUES["fh"] = None
+
+
+def values_summary():
+    return {"requested": _VALUES["shown"] is not None, "values_file": _VALUES["shown"], "written": _VALUES["written"], "contains_secret_values": _VALUES["written"] > 0,
+            "format": "JSON Lines, mode 0600: id, field, label, length, value (the original text that was withheld)" if _VALUES["shown"] else None}
+
+
+_EVENTS = [None]               # while a string is judged only to see what the answer would print (sealed_text): its withholdings, counted when the answer prints it
+_QUIET = [False]
+
+
+def _b_withheld(original, label, field=""):
+    n = len(original)
+    if _EVENTS[0] is not None:
+        _EVENTS[0].append((original, label, field))
+        return _mark(n, label)
+    BOUNDARY["withheld"] += 1
+    BOUNDARY["by"][label] += 1
+    fh = _VALUES["fh"]
+    digest = hashlib.blake2b(original.encode("utf-8", "surrogatepass"), digest_size=16).digest() if fh is not None else None
+    if fh is not None and digest not in _VALUES["seen"]:
+        if len(_VALUES["seen"]) < 200000:
+            _VALUES["seen"].add(digest)
+        _VALUES["count"] += 1
+        text = json.dumps({"id": _VALUES["count"], "field": field, "label": label, "length": n, "value": original}, ensure_ascii=False)
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            text = json.dumps({"id": _VALUES["count"], "field": field, "label": label, "length": n, "value": original}, ensure_ascii=True)
+        fh.write(text + "\n")
+        _VALUES["written"] += 1
+    return _mark(n, label)
+
+
+# ---- normalisation ----------------------------------------------------------------------------------------------------------------
 _STRIP_CATS = frozenset(("Cf", "Cc", "Mn", "Me", "Cs", "Co", "Cn", "Zl", "Zp"))
 _FILLERS = frozenset((0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800))
 
@@ -918,7 +1355,6 @@ class _Strip(dict):
 
 
 _STRIP = _Strip()
-# the escape of such a character written as text: \u2066, \U000e0041, \x00, \u{200b}
 _ESCAPED = re.compile(r"(?<!\\)\\+(?:u([0-9A-Fa-f]{4})|U([0-9A-Fa-f]{8})|x([0-9A-Fa-f]{2})|u\{([0-9A-Fa-f]{1,6})\})")
 
 
@@ -930,131 +1366,628 @@ def _unescape_invisible(m):
     return "" if (unicodedata.category(c) in _STRIP_CATS or ord(c) in _FILLERS) else m.group(0)
 
 
-_ESCAPED_PRINTABLE = re.compile(r"(?<!\\)\\+(?:x|u00)([2-7][0-9A-Fa-f])")
-
-
-def _flat(text, nfkc=True, decode=True):
-    """The text with invisible characters, and the escapes of such characters, taken out (and, past ASCII, in NFKC form); with
-    `decode`, an escape of a printable ASCII character (\\x41, \\u0041) is the character, so that a token written in escapes is read."""
-    if "\\" in text:
+def _flat(text):
+    """The text with invisible characters (and the escapes of such characters) taken out, and past ASCII in NFKC form."""
+    if "\\u" in text or "\\U" in text or "\\x" in text:          # (the escape pattern needs a backslash and one of these)
         text = _ESCAPED.sub(_unescape_invisible, text)
-        if decode:
-            text = _ESCAPED_PRINTABLE.sub(lambda m: chr(int(m.group(1), 16)), text)
     if text.isascii():
-        if text.isprintable():
-            return text
-        return text.translate(_STRIP)
+        return text if text.isprintable() else text.translate(_STRIP)
     out = text.translate(_STRIP)
-    return unicodedata.normalize("NFKC", out) if nfkc and not out.isascii() else out
+    return unicodedata.normalize("NFKC", out) if not out.isascii() else out
 
 
-# ---- layer 2: the deny-list rules ----------------------------------------------------------------------------------------
-# a GUID, or a VMFS volume id (8-8-4-12 hexadecimal digits), standing alone or after `_` as a Hyper-V file name puts it
-_GUID_ALONE = re.compile(r"(?<![A-Za-z0-9+%/=-])(?:\{?[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}?|[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{12})(?![A-Za-z0-9_+%/=-])")
-_MARKER = re.compile(r"<(?:[a-z][a-z -]{0,40} )?withheld(?: \d+ characters|: \d+ bytes(?:, [a-z][a-z .]{0,60})?|: an integer of \d+ bits)>")
-_CUT_NOTE = re.compile(r"\.\.\.\(whole text: \d+ characters\)$")
-# name:secret@host, the secret running to the last `@` before the host (an `@` inside a password is part of it)
-_ANY_USERINFO = re.compile(r"(?<![A-Za-z0-9._%+-])(?!mailto:)[^\s/@:<>\"'`]{1,64}:[^\s/<>\"'`]{1,128}(?=@[^\s/@<>\"'`]*(?:[\s/<>\"'`?#]|$))")
-_SLASHED_RANDOM = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+=])")
-_BASE64_KEY = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,}={1,2}(?![A-Za-z0-9+=])")
-_TOKEN_HEAD = re.compile(r"(?i:(?:AKIA|ASIA)[0-9A-Z]{4,}|gh[pousr]_[A-Za-z0-9]{4,}|github_pat_[A-Za-z0-9_]{4,}|xox[abeprs]-[A-Za-z0-9-]{6,}|eyJ[A-Za-z0-9_-]{10,}"
-                         r"|glpat-[A-Za-z0-9_-]{4,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{4,}|SG\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?|AIza[0-9A-Za-z_-]{8,}"
-                         r"|npm_[A-Za-z0-9]{8,}|pypi-[A-Za-z0-9_-]{8,}|shpat_[A-Za-z0-9]{8,}|dop_v1_[A-Za-z0-9]{8,}|ya29\.[A-Za-z0-9_-]{8,})")
-# the pairs of letters that fewer than 50 words in 236,000 of an English word list hold (qz, jx, vk, ...): a word has none of them, random letters have some
-_RARE_PAIRS = frozenset((
-    "bg bk bq bw bx bz cb cd cf cg cj cm cp cv cw cx cz dk dq dx dz fb fc fd fg fh fj fk fm fn fp fq fs fv fw fx fz gc gj gk gp gq gv gx gz hg hj "
-    "hk hq hv hx hz jb jc jd jf jg jh jj jk jl jm jn jp jq jr js jt jv jw jx jy jz kc kd kg kj kq kv kx kz lj lq lx lz md mg mh mj mk mq mt mv mx "
-    "mz pd pg pj pk pq pv px pz qa qb qc qd qe qf qg qh qi qj qk ql qm qn qo qp qq qr qs qt qv qw qx qy qz rx sj sx sz tj tk tq tv tx uj uq uu uw "
-    "vb vc vd vf vg vh vj vk vl vm vn vp vq vr vs vt vv vw vx vz wc wg wj wp wq wv wx wz xb xd xf xg xj xk xl xm xn xq xr xv xw xx xz yj yk yq yv "
-    "yy zb zc zd zf zg zh zj zk zm zn zp zq zr zs zt zv zw zx "
-).split())
-
-# The pairs above as a pattern: a letter and one of the letters that rarely follow it (`b[gkqwxz]|c[bdfgjmpvwxz]|...`), for the words a placeholder is followed by.
-def _rare_alternatives():
-    by_first = {}
-    for pair in _RARE_PAIRS:
-        by_first.setdefault(pair[0], []).append(pair[1])
-    return "|".join("%s[%s]" % (first, "".join(sorted(by_first[first]))) for first in sorted(by_first))
+# ---- layer 1: the allow-list ------------------------------------------------------------------------------------------------------
+_PIECE = re.compile(r"[A-Z]{2,}s(?![a-z])|[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")        # (GPOs, an acronym in the plural, is one piece)
+_GUID = re.compile(r"\{?[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\}?|[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{12}")
+_SID = re.compile(r"S-1-[0-9]{1,2}(?:-[0-9]{1,10}){1,15}")
+_IPV4 = re.compile(r"(?<![0-9A-Za-z.])[0-9]{1,3}(?:\.[0-9]{1,3}){3}(?![0-9A-Za-z])")
+_HEX_NUMBER = re.compile(r"(?<![0-9A-Za-z])0[xX][0-9A-Fa-f]{1,16}(?![0-9A-Za-z])")
+# the publisher ids that follow the name of an AppX package family (the hash of the publisher's name), and the assembly public key tokens of Microsoft
+_KNOWN_ID_WORDS = ("0x", "8wekyb", "cw5n1h", "kzf8qx", "31bf38", "b77a5c", "b03f5f")
+_KNOWN_ID = re.compile(r"(?<![0-9A-Za-z])(?:8wekyb3d8bbwe|cw5n1h2txyewy|kzf8qxf38zg5c|31bf3856ad364e35|b77a5c561934e089|b03f5f7f11d50a3a|0x[0-9A-Fa-f]{1,16})(?![0-9A-Za-z])")
+_NAME_SEPS = " _-.$@?:~+,#()[]{}'`<>*"
+_PATH_EXTRA = "&!';=^%\""
+_PCT = re.compile(r"%[0-9A-Fa-f]{2}")
+_PCT_UNRESERVED = re.compile(r"%((?:4[1-9A-Fa-f]|5[0-9Aa]|6[1-9A-Fa-f]|7[0-9Aa]|3[0-9]|2[DdEe]|5[Ff]|7[Ee]))")
+_JOIN_NAME, _JOIN_PATH = "-_+", "-_+/\\"
+_CTRL = "\x01\x02\x03\x04\x05\x06\x07\x08\x09"
 
 
-_RARE_RE = _rare_alternatives()
-# The value after a name that says it is a secret, found anywhere in the string: the secret word first (glued to whatever comes
-# before it, in any case: vncPassword, adminpass, dbPwd; `pass` not after by, com, over, under, tres, encom, sur or im, so that
-# bypass: and compass: are words), then `=` or `:` (quotes and a little space allowed), then the value and up to three more words
-# of it. An error message's `token: line 3, column 5` is not a value. A value in angle brackets is a value, whatever it holds: only a
-# placeholder word the tool knows (<redacted>, <password>, <secret>, <token>, <hidden>, <masked>, <value>, <your-password>, <***> ...) is
-# not (_PLACEHOLDER).
+def _has(words, text):
+    """Whether one of `words` is in `text` (a loop: a generator inside any() costs twice as much for the thousands of strings of a hive)."""
+    for w in words:
+        if w in text:
+            return True
+    return False
+
+
+def _pronounceable(piece):
+    p = piece.lower()
+    bad = sum(1 for a, b in zip(p, p[1:]) if (a + b) not in _BIGRAMS)
+    return bad <= 1 + len(p) // 10
+
+
+_HEX_LOW_OR_UP = re.compile(r"[0-9a-f]+|[0-9A-F]+")
+_HEX_ANY = re.compile(r"[0-9A-Fa-f]+")
+_SEGMENT_MEMO = {}
+
+
+def _structure_ok(seg):
+    if seg.isdigit() and seg.isascii():
+        return len(seg) <= 18
+    if len(seg) <= 24 and _HEX_LOW_OR_UP.fullmatch(seg):
+        return True                       # a hexadecimal id up to 24 digits (a USB serial, a 16-digit object id, a hash of a few bytes) is plain
+    if len(seg) >= 20 and _HEX_ANY.fullmatch(seg):
+        return False
+    pieces = _PIECE.findall(seg)
+    short = sum(1 for p in pieces if len(p) <= 2)
+    if short > max(2, 0.4 * len(pieces)):
+        return False
+    flips = sum(1 for a, b in zip(seg, seg[1:]) if a.isdigit() != b.isdigit())
+    if flips > 3 + len(seg) // 16:
+        return False
+    alpha = [p for p in pieces if p.isalpha()]
+    if sum(len(p) for p in alpha) >= 12 and sum(len(p) for p in alpha) < 3.4 * len(alpha):
+        return False
+    return True
+
+
+def _plain_segment(seg, lmin=None):
+    lmin = LMIN if lmin is None else lmin
+    if len(seg) < lmin:
+        return True
+    memo = (seg, lmin) if len(seg) <= 64 else None          # the same words come again and again in the records of one log
+    if memo is not None:
+        hit = _SEGMENT_MEMO.get(memo)
+        if hit is not None:
+            return hit
+    if not _structure_ok(seg):
+        ok = False
+    else:
+        ok = all(not (p.isalpha() and len(p) >= 6) or _pronounceable(p) for p in _PIECE.findall(seg))
+    if memo is not None:
+        if len(_SEGMENT_MEMO) >= 100000:
+            _SEGMENT_MEMO.clear()
+        _SEGMENT_MEMO[memo] = ok
+    return ok
+
+
+_EMBEDDED_ID = re.compile(r"(?<![A-Za-z0-9])(?:naa\.(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{16})|eui\.[0-9a-fA-F]{16}|wwn-0x[0-9a-fA-F]{16}|vml\.[0-9a-fA-F]{20,40}|vsan:[0-9a-f]{16}-[0-9a-f]{16})(?![A-Za-z0-9])")
+_EMBEDDED_T10 = re.compile(r"(?<![A-Za-z0-9])t10\.[A-Za-z0-9_.+-]{8,120}")
+_EMBEDDED_WORDS = ("naa.", "eui.", "wwn-0x", "vml.", "vsan:", "t10.")
+
+
+def _t10_plain(text):
+    """Whether a t10. id reads as the id of a drive: every piece between underscores is 19 characters or fewer, and the serial (the last) is not a run of 17 or more hexadecimal digits."""
+    pieces = text.split("_")
+    return all(len(piece) <= 19 for piece in pieces) and not (len(pieces[-1]) >= 17 and _HEX_ANY.fullmatch(pieces[-1]) is not None)
+
+
+_ONE_CASE_TAIL = re.compile(r"[A-Za-z]{20,64}")
+
+
+def _letter_serial_spans(t):
+    """The t10. and iqn. ids in `t` whose serial (the last piece of a t10. id) or target (after the last colon of an iqn. name) is 20 or more letters of one case that do not read as a word."""
+    if "t10." not in t and "iqn." not in t:
+        return []
+    spans = []
+    for m in _EMBEDDED_T10.finditer(t):
+        last = m.group().split("_")[-1]
+        if _ONE_CASE_TAIL.fullmatch(last) and (last.islower() or last.isupper()) and not _word_letters(last):
+            spans.append((m.start(), m.end()))
+    for m in _IQN_NAME.finditer(t):
+        last = m.group().rsplit(":", 1)[-1]
+        if _ONE_CASE_TAIL.fullmatch(last) and (last.islower() or last.isupper()) and not _word_letters(last):
+            spans.append((m.start(), m.end()))
+    return spans
+
+
+_IQN_NAME = re.compile(r"(?<![A-Za-z0-9])iqn[.][0-9]{4}-[0-9]{2}[.][a-z0-9.-]{1,60}(?::[A-Za-z0-9._-]{1,64})?")
+
+
+def _t10_hex_spans(t):
+    """The t10. ids in `t` whose serial is a run of 17 or more hexadecimal digits: a drive's serial is not one (a random one is), and a run of hexadecimal digits is otherwise plain."""
+    if "t10." not in t and "iqn." not in t:
+        return []
+    spans = []
+    for m in _EMBEDDED_T10.finditer(t):
+        last = m.group().split("_")[-1]
+        if len(last) >= 17 and _HEX_ANY.fullmatch(last) is not None:
+            spans.append((m.start(), m.end()))
+    return spans + _letter_serial_spans(t)
+
+
+def _mask_embedded(t):
+    """`t` with the well-formed ids of devices in it (naa., eui., wwn-0x, vml., vsan: and a t10. id of a drive) replaced by `~`, so that the judging of a name or a path does not take their digits for a random run."""
+    if not _has(_EMBEDDED_WORDS, t):
+        return t
+    t = _EMBEDDED_ID.sub(lambda m: "~" * len(m.group()), t)
+    return _EMBEDDED_T10.sub(lambda m: "~" * len(m.group()) if _t10_plain(m.group()) else m.group(), t)
+
+
+def _prepare(s, typed=True):
+    """A same-length copy of `s` in which a GUID, a SID, an IPv4 address and a %XX escape are replaced by `~` and a non-ASCII letter by `e`;
+    None when `s` holds a format, control or combining character, a non-NFKC character or a stray space character."""
+    if not s.isascii():
+        for ch in s:
+            cat = unicodedata.category(ch)
+            if cat[0] in "CM" or (cat[0] == "Z" and ch != " "):
+                return None
+        if unicodedata.normalize("NFKC", s) != s:
+            return None
+        s = "".join(ch if ch.isascii() else "e" for ch in s)
+    t = _GUID.sub(lambda m: "~" * len(m.group()), s) if s.count("-") >= 3 else s    # (each pattern is tried only when the text holds what it cannot match without: a GUID has three hyphens or more)
+    if typed:
+        if "S-1-" in t:
+            t = _SID.sub(lambda m: "~" * len(m.group()), t)
+        if "." in t:
+            t = _IPV4.sub(lambda m: "~" * len(m.group()), t)
+        if _has(_KNOWN_ID_WORDS, t):
+            t = _KNOWN_ID.sub(lambda m: "~" * len(m.group()), t)
+        t = _mask_embedded(t)
+    return _PCT.sub("   ", t) if "%" in t else t
+
+
+def _unpercent(s):
+    if "%" not in s:
+        return None
+    out = _PCT_UNRESERVED.sub(lambda m: chr(int(m.group(1), 16)), s)
+    return out if out != s else None
+
+
+_CHAINS = {}
+_SEGMENT = re.compile(r"[A-Za-z0-9]+")
+
+
+_SEGMENT_PLAIN = {}
+
+
+def _is_plain_segment(seg):
+    """_plain_segment(seg, 0), remembered for the plain ones only (a dict that is asked a hundred thousand times for the same words)."""
+    if not _plain_segment(seg, 0):
+        return False
+    if len(seg) <= 64:
+        if len(_SEGMENT_PLAIN) >= 100000:
+            _SEGMENT_PLAIN.clear()
+        _SEGMENT_PLAIN[seg] = True
+    return True
+
+
+def _bad_runs(t, join):
+    """Intervals of `t` that are not plain, judged on CHAINS: maximal sequences of alphanumeric segments joined only by `join` characters. A
+    chain is bad when (A) its random-looking segments, adjacent ones taken together, add up to LMIN characters or more, or (B) it is LMIN
+    characters or longer, holds 8 or more characters of letter-and-digit-mixed segments, and holds no word of five or more letters."""
+    pattern = _CHAINS.get(join)
+    if pattern is None:
+        pattern = _CHAINS[join] = re.compile(r"[A-Za-z0-9]+(?:[%s]+[A-Za-z0-9]+)*" % "".join(re.escape(c) for c in join))
+    plain = _SEGMENT_PLAIN
+    if all(plain.get(seg) or _is_plain_segment(seg) for seg in _SEGMENT.findall(t)):
+        return []                                       # no chain holds a random-looking segment, so none is bad (the same answer as the loop below, without building the chains)
+    bad = []
+    for found in pattern.finditer(t):
+        if found.end() - found.start() < LMIN:
+            continue                                    # a chain shorter than LMIN is neither a run of LMIN random characters nor a long mixed chain
+        chain = [(m.start(), m.end()) for m in _SEGMENT.finditer(t, found.start(), found.end())]
+        total = sum(b - a for a, b in chain)
+        if total < LMIN:
+            continue
+        rnd = [not _plain_segment(t[a:b], 0) for a, b in chain]
+        if not any(rnd):
+            continue
+        run = None
+        for (a, b), r in zip(chain, rnd):
+            if r:
+                run = [a, b, b - a] if run is None else [run[0], b, run[2] + (b - a)]
+            else:
+                if run is not None and run[2] >= LMIN:
+                    bad.append((run[0], run[1]))
+                run = None
+        if run is not None and run[2] >= LMIN:
+            bad.append((run[0], run[1]))
+        mixed = sum(b - a for a, b in chain if not _structure_ok(t[a:b]))
+        if total >= LMIN and mixed >= 8 and not any(len(p) >= 5 and p.isalpha() and _pronounceable(p) for a, b in chain for p in _PIECE.findall(t[a:b])):
+            bad.append((chain[0][0], chain[-1][1]))
+    return bad
+
+
+_CHARS = {}
+
+
+def _chars_ok(comp, extra_ok):
+    if comp.isascii():
+        pattern = _CHARS.get(extra_ok)
+        if pattern is None:
+            pattern = _CHARS[extra_ok] = re.compile("[A-Za-z0-9%s]*" % re.escape(_NAME_SEPS + extra_ok))
+        return pattern.fullmatch(comp) is not None
+    return all(ch.isalnum() or ch in _NAME_SEPS or ch in extra_ok for ch in comp)
+
+
+def _userinfo_shape(t):
+    return ":" in t and "@" in t and t.index(":") < t.rindex("@")
+
+
+def _plain_name(s, extra_ok=""):
+    if not s or len(s) > 128:
+        return False
+    t = _prepare(s)
+    if t is None or not _chars_ok(t, extra_ok) or _userinfo_shape(t) or _secret_in_ident(t) or _t10_hex_spans(t):
+        return False
+    u = _unpercent(s)
+    if u is not None:
+        pu = _prepare(u)
+        if pu is None or _bad_runs(pu, _JOIN_NAME):
+            return False
+    return not _bad_runs(t, _JOIN_NAME)
+
+
+def _merge(spans):
+    merged = []
+    for a, b in sorted(spans):
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return merged
+
+
+_SPLIT = re.compile(r"([\\/])")
+_DRIVE = re.compile(r"[A-Za-z]:|\?|\.")
+
+
+def _path_spans(s, extra_ok=_PATH_EXTRA):
+    t = _prepare(s)
+    if t is None:
+        return [(0, len(s))]
+    bad, pos = [], 0
+    if len(t) <= 255 and "@" not in t and t.isascii() and _chars_ok(t, extra_ok + "\\/") and not _secret_in_ident(t):
+        parts = ()                       # (every character is allowed, no part is long and none can hold a user-info shape: no part is bad)
+    else:
+        parts = _SPLIT.split(t)
+    for part in parts:
+        a, b = pos, pos + len(part)
+        pos = b
+        judged = part.lstrip(_CTRL)
+        if part in ("\\", "/") or part == "" or _DRIVE.fullmatch(part):
+            continue
+        if len(part) - len(judged) > 1 or len(part) > 255 or not _chars_ok(judged, extra_ok) or _userinfo_shape(judged) or _secret_in_ident(judged):
+            bad.append((a, b))
+    bad += _bad_runs(t, _JOIN_PATH) + _t10_hex_spans(t)
+    u = _unpercent(s)
+    if u is not None:
+        pu = _prepare(u)
+        if pu is None or _bad_runs(pu, _JOIN_PATH):
+            bad.append((0, len(s)))
+    return _merge(bad)
+
+
+def _replace_spans(s, spans, label, field):
+    out, last = [], 0
+    for a, b in spans:
+        out.append(s[last:a])
+        out.append(_b_withheld(s[a:b], label, field))
+        last = b
+    out.append(s[last:])
+    return "".join(out)
+
+
+def _show_name(s, field):
+    return s if _plain_name(s) else _b_withheld(s, "not a plain name", field)
+
+
+def _show_path(s, field, extra_ok=_PATH_EXTRA):
+    return _replace_spans(s, _path_spans(s, extra_ok), "not a plain name", field)
+
+
+def _show_key(s, field):
+    return _show_path(s, field, _PATH_EXTRA + "*^<>")
+
+
+_URL = re.compile(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)(?:([^/?#]*)@)?([^/?#]*)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$", re.S)
+
+
+def _show_host(s, field):
+    """A host name is on the deny-list: a random-looking label of a host is evidence (a C2 name), not a secret. Layer 2 reads it first: the deny-list
+    would replace a random user of `user:password@host` and leave the context layer 2 needs."""
+    return _deny_text(_layer2(s, field), field)
+
+
+def _show_value(v):
+    return v if re.fullmatch(r"[0-9]{1,12}|true|false|null|yes|no", v) or (v.isalpha() and len(v) <= 24 and _plain_name(v)) else None
+
+
+def _show_url(s, field):
+    m = _URL.match(s)
+    if not m:
+        return _show_path(s, field)
+    scheme, userinfo, host, path, query, frag = m.groups()
+    out = scheme
+    if userinfo is not None:
+        out += (userinfo if _MARK.fullmatch(userinfo) else _b_withheld(userinfo, "user-info", field)) + "@"
+    hostname, colon, port = host.partition(":") if not host.startswith("[") else (host, "", "")
+    out += _show_host(hostname, field) + (colon + (port if port.isdigit() else _b_withheld(port, "not a port", field)) if colon else "")
+    out += _show_path(path, field)
+    if query is not None:
+        pairs = []
+        for pair in query.split("&"):
+            k, eq, v = pair.partition("=")
+            kk = _show_name(k, field) if k else k
+            if eq:
+                sv = _show_value(v)
+                pairs.append(kk + "=" + (sv if sv is not None else _b_withheld(v, "query value", field)))
+            else:
+                pairs.append(kk)
+        out += "?" + "&".join(pairs)
+    if frag is not None:
+        sv = _show_value(frag)
+        out += "#" + (sv if sv is not None else _b_withheld(frag, "fragment", field))
+    return out
+
+
+_TYPED = {
+    "guid": re.compile(_GUID.pattern),
+    "digest": re.compile(r"(?:sha256:|sha1:|md5:)?[0-9A-Fa-f]{32,128}|T1[0-9A-Fa-f]{60,72}|[0-9]{1,6}:[A-Za-z0-9+/]{3,}:[A-Za-z0-9+/]{3,}"),
+    "sid": re.compile(_SID.pattern),
+    "mac": re.compile(r"(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}"),
+    "ip": re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}|[0-9A-Fa-f:.]{2,45}(?:%[0-9A-Za-z_.-]{1,16})?"),
+    "time": re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T ][0-9:.]+(?:Z|[+-][0-9:]+)?)?|D:[0-9]{8,14}(?:[Zz+-][0-9']*)?|[0-9]{1,18}"),
+    "number": re.compile(r"-?[0-9]{1,18}(?:\.[0-9]{1,18})?|0x[0-9A-Fa-f]{1,16}|(?:true|false|null)"),
+    "version": re.compile(r"v?[0-9]+(?:\.[0-9A-Za-z]+){1,4}(?:[-+][0-9A-Za-z.]+)?"),
+    # the identifiers of virtualized storage and machines: a VMFS volume id (8-8-4-12 hexadecimal digits), a SCSI device id (naa. with 16 or 32 digits, eui. and
+    # wwn-0x with 16, vml. with 20 to 40, t10. with a vendor, a model and a serial), an iSCSI name, the VMware uuid of a machine (16 bytes, a `-` after the
+    # eighth), the content id of a disk (8 digits) and the name Windows gives a machine nobody named (WIN- and 11 capitals and digits)
+    "vmfs": re.compile(r"[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{12}"),
+    "device": re.compile(r"naa\.(?:[0-9a-fA-F]{16}|[0-9a-fA-F]{32})|eui\.[0-9a-fA-F]{16}|wwn-0x[0-9a-fA-F]{16}|vml\.[0-9a-fA-F]{20,40}|t10\.[A-Za-z0-9_.+-]{8,120}"),
+    "iqn": re.compile(r"iqn\.[0-9]{4}-[0-9]{2}\.[a-z0-9][a-z0-9.-]{0,60}(?::[A-Za-z0-9._-]{1,40})?"),
+    "vmuuid": re.compile(r"[0-9a-f]{2}(?: [0-9a-f]{2}){7}-[0-9a-f]{2}(?: [0-9a-f]{2}){7}"),
+    "cid": re.compile(r"[0-9a-f]{8}"),
+    "winhost": re.compile(r"WIN-[A-Z0-9]{11}"),
+}
+_ID_FORMS = ("guid", "vmfs", "vmuuid", "device", "mac", "cid", "number")      # the forms a field of kind `id` may hold (the kind of a field that holds one of several forms of identifier), else it is judged as a name
+_CONTENT_ID = re.compile(r"[0-9A-Fa-f]{32}")
+_NAMING_IDS = frozenset(("device", "iqn"))          # the ids that hold a name a person chose (a t10. vendor, model and serial; an iSCSI name): what they hold must read as a name, not as random text
+_KNOWN_KINDS = frozenset(("text", "name", "path", "key", "url", "host", "hex", "label", "id")) | frozenset(_TYPED)
+_NUMBER_RUN = re.compile(r"[0-9]+")
+
+
+def bind_fields(table, key_kinds=None):
+    """The field kinds of a tool, passed in by the tool (this text holds none): `table` maps a JSON key to the kind of what it holds, or to a function of
+    the key of one item for a dict whose items have kinds of their own; `key_kinds` maps a key holding a dict to the kind of that dict's own keys. A kind
+    this text does not know is refused (a misspelt kind would judge the field as free text without a word)."""
+    for name, kind in list(table.items()) + list((key_kinds or {}).items()):
+        if not isinstance(name, str) or not (callable(kind) or kind in _KNOWN_KINDS):
+            raise ValueError("a field kind this text does not know: %r" % (name,))
+    FIELDS.update(table)
+    KEY_KINDS.update(key_kinds or {})
+
+
+def _field_entry(name):
+    """What FIELDS says of the field `name`; a digit run in a name stands for any number (`ethernet0.address` is `ethernet#.address`)."""
+    entry = FIELDS.get(name)
+    if entry is None and name and any(c.isdigit() for c in name):
+        entry = FIELDS.get(_NUMBER_RUN.sub("#", name))
+    return entry
+
+
+# ---- layer 2: position and prefix rules -------------------------------------------------------------------------------------------
+# user-info whose password holds a `/` (RFC 3986 says to encode it; people do not): after `//`, a user, a `:`, then everything up to the last `@` that is
+# followed by a host; not `host:8080/...@...` (a port), whose first word after the colon is a number
+_URL_USERINFO_SLASH = re.compile(r"(?<=//)(?![^\s/@:<>\"'`]*:[0-9]{1,5}(?:[/?#@]|$))[^\s/@:<>\"'`]{1,64}:[^\s<>\"'`]{1,128}(?=@[^\s/@<>\"'`]*(?:[\s/<>\"'`?#]|$))")
+# a user the deny-list already replaced: `<withheld ...>:password@host`
+_MARK_USERINFO = re.compile(r"(?P<mark><withheld \d+ (?:characters|bytes)[^<>]{0,70}>|\[withheld: \d+ characters\]):(?P<pw>[^\s/<>\"'`]{1,128})(?=@[^\s/@<>\"'`]*(?:[\s/<>\"'`?#]|$))")
+_B_USERINFO = re.compile(r"(?<![A-Za-z0-9._%+-])(?!mailto:)[^\s/@:<>\"'`]{1,64}:[^\s/<>\"'`]{1,128}(?=@[^\s/@<>\"'`]*(?:[\s/<>\"'`?#]|$))")
+_URL_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_NAMED_HEAD = r"(?i:(?<![Bb]y)(?<![Cc]om)(?<![Oo]ver)(?<![Uu]nder)(?<![Tt]res)(?<![Ee]ncom)(?<![Ss]ur)(?<![Ii]m)pass(?:word|wd|phrase)?|pwd|secret|token|api[_-]?key|access[_-]?key|account[_-]?key|private[_-]?key|client[_-]?secret|credential|auth(?:orization)?|(?<![A-Za-z])(?:pw|sig|sas|otp|psk))" r"s?[0-9]{0,2}[\"']?[ \t]{0,3}[=:][ \t]{0,3}[\"']?"
+_NAMED = re.compile(_NAMED_HEAD + r"(?!line[ \t]+[0-9])" + r"(?P<value>(?:(?i:token|bearer|basic|negotiate)[ \t]+(?=[A-Za-z0-9+/._~=-]{8}))?(?:[^\s\"'<>;,&]|[;,&](?![A-Za-z0-9_. -]{1,40}=)){1,512})")
+# a placeholder (<redacted>, <password>, <***>) is not a value, but what is glued behind it is
 _PLACEHOLDER = r"<(?i:redacted|hidden|masked|removed|omitted|secret|password|passwd|passphrase|pwd|pass|token|key|value|placeholder|empty|none|null|unset|your[ _-]?(?:password|secret|token|key)|\*{1,16})?>"
-# A placeholder ends where a token ends: `<redacted>Zq7kP2mR` is a value that starts with brackets, and so is `<redacted> Zq7kP2mR` when the word after it is
-# built like a secret: 8 or more letters and digits with a digit in them or a small letter before a capital, 8 or more digits, or 8 or more letters of one case
-# that are not a word (a pair of letters that fewer than 50 words hold, or four consonants in a row: `<redacted> kqmzvtrb`). Neither is the placeholder, the whole of it is the value.
-# A word of one case that reads as a word (`<redacted> successfully`) leaves the placeholder as it is.
-_PH_TAIL = (r"(?-i:[ \t]+(?:(?=[A-Za-z0-9]{0,32}[A-Za-z])(?=[A-Za-z0-9]{0,32}(?:[0-9]|[a-z][A-Z]))[A-Za-z0-9]{8,}|[0-9]{8,40}(?![A-Za-z0-9])"
-            r"|(?=(?:[a-z]{8,40}|[A-Z]{8,40})(?![A-Za-z0-9]))(?=[A-Za-z]{0,38}(?i:" + _RARE_RE + r"|[b-df-hj-np-tv-xz]{4}))[A-Za-z]{8}))")
-_PH_END = r"(?=[\s\"';,&\\<>)\]}]|\.(?:\s|$)|$)(?!" + _PH_TAIL + r")"
-# The name of a flag that takes a secret (`-password x`, `--token x`, `--api-key x`): the words below, any word with `secret` in it or ending in `token`, `key` (`-key x`) or `Key`,
-# `Token`, `Password`, `Passwd`, `Pwd`, `Pass`, `Passphrase`, `Secret` after a letter or a digit (`--sshKey x`, `--apiToken x`, `-AdminPassword x`, `--sshPass x`), also `pw` and `otp`, also after up to four
-# words joined by `-` or `_` (`--db-password x`, `--ssh-key x`, `--master-key x`, `--secret-access-key x`); `--key-file x`, `--keyboard x` and `-keep-alive x` are not (the name ends
-# where the flag's value begins).
+_PH_END = r"(?=[\s\"';,&\\<>)\]}]|\.(?:\s|$)|$)"
+# a value in angle brackets after a secret's name (password=<hJaXeuQz>): withheld unless it reads as a placeholder word
+_ANGLE_SPLIT = re.compile(r"[-_.+/=~]")
+_NAMED_ANGLE = re.compile(_NAMED_HEAD + r"(?!" + _PLACEHOLDER + r")(?P<value><(?P<inner>[A-Za-z0-9+/_.~=-]{6,128})>)")
+_NAMED_PH = re.compile(_NAMED_HEAD + _PLACEHOLDER + r"(?P<value>[^\s\"'<>;,&\\]{1,512})")
+# the name of a flag that takes a secret (`-password x`, `--token x`, `--api-key x`, `-auth x`): the words below, any word with `secret` in it or ending in `token`, `key` or
+# (after a letter or a digit) Key, Token, Password, Pwd, Pass, Secret, also after up to four words joined by `-` or `_`; `--key-file x` and `--keyboard x` are not (the name ends where the value begins)
 _FLAG_NAME = (r"(?:[A-Za-z0-9]{1,20}[-_]){0,4}(?:(?i:passw(?:or)?d|passwd|pass(?:[-_]?phrase)?|pwd|pw|otp|[A-Za-z0-9]{0,20}secret[A-Za-z0-9]{0,20}|[A-Za-z0-9]{0,20}token|api[-_]?key|access[-_]?key|key|keypass|storepass|userpass|auth|authorization|bearer|psk|credentials?|community)"
               r"|[A-Za-z0-9]{1,20}(?-i:Key|Token|Password|Passwd|Pwd|Pass|Passphrase|Secret))")
-_NAMED_SECRET = re.compile(
-    r"(?:(?i:pass[_-]?w(?:or)?d|passwd|passphrase|pwd|secret|token|credentials?|api[_-]?key|access[_-]?key|account[_-]?key|private[_-]?key|master[_-]?key"
-    r"|shared[_-]?key|signing[_-]?key|encryption[_-]?key|secret[_-]?key|authorization|bearer|dsn|webhook[_-]?url|connection[_-]?string|ssh[_-]?key"
-    r"|snmp[_-]?community|community[_-]?string)"
-    r"|(?<![Bb]y)(?<![Cc]om)(?<![Oo]ver)(?<![Uu]nder)(?<![Tt]res)(?<![Ee]ncom)(?<![Ss]ur)(?<![Ii]m)(?i:pass)"
-    r"|(?i:pw|auth|sig|sas|otp|psk|pin))s?[0-9]{0,2}(?:\\{0,3}[\"'])?[ \t]{0,2}[=:][ \t]{0,2}(?:\\{0,3}[\"'])?"
-    r"((?!line[ \t]+[0-9])(?!" + _PLACEHOLDER + _PH_END + r")(?:(?:<[^<>\"'\n]{0,200}>[^\s\"'<>;,&\\]*|[^\s\"'>;,&\\][^\s\"'<>;,&]*)(?:[ \t]+[^\s\"'<>;,&=:]+){0,3}))")
-_NAMED_FLAG = re.compile(r"(?<![\w-])--?" + _FLAG_NAME + r"(?:=|[ \t]+)(?!-)(?!" + _PLACEHOLDER + _PH_END + r")(<[^\s\"']*(?:[ \t]+[^\s\"'<>;,&=:]+)?|[^\s\"']+)")
-_NAMED_SET = re.compile(r"(?<![\w-])(?i:set|enable)[ \t]+(?i:passw(?:or)?d|secret|passphrase|token)[ \t]+(?:[0-9][ \t]+)?(?!" + _PLACEHOLDER + _PH_END + r")(<[^\s\"']*(?:[ \t]+[^\s\"'<>;,&=:]+)?|[^\s\"']+)")
-# The path of a file given to a flag that takes a key (`--key client.key`, `-key server.key`, `--client-key=admin.key`, `--tls-auth ta.key`, `--private-key ~/.ssh/id_rsa`) is a path and not a key: a name
-# that ends in .key .pem .pub .crt .p12 .pfx or .jks (to any flag), or, to a flag that ends in `key`, a path that starts with `~/`, `./`, `../`, `/` and one more `/`, or a drive. No part of it is token-like
-# or looks like a stretch of a key.
-_KEY_FLAG_END = re.compile(r"key[=\s]*$", re.I)
-_KEY_FILE_EXT = re.compile(r"[A-Za-z0-9_./~:\\-]{1,120}\.(?:key|pem|pub|crt|p12|pfx|jks)", re.I)
-_KEY_FILE_PATH = re.compile(r"(?:~|\.{1,2})/[A-Za-z0-9_./-]{1,120}|/[A-Za-z0-9_.-]{1,40}(?:/[A-Za-z0-9_.-]{1,40})+|[A-Za-z]:\\[A-Za-z0-9_.\\-]{1,120}", re.I)
-_KEY_FILE_PIECES = re.compile(r"[/\\._-]")
+# a placeholder, a space and a value built like a secret: the placeholder is not the value, the word after it is
+_PH_SPACE = re.compile(r"(?:" + _NAMED_HEAD + r"|(?<![\w-])--?" + _FLAG_NAME + r"[ \t]+|(?<![\w-])(?i:set|enable)[ \t]+(?i:passw(?:or)?d|secret|passphrase|token)[ \t]+)"
+                       + _PLACEHOLDER + r"[ \t]+(?P<value>[A-Za-z0-9]{8,40})(?![A-Za-z0-9])")
+_NAMED_FLAG = re.compile(r"(?<![\w-])--?" + _FLAG_NAME + r"(?:=|[ \t]+)(?!-)(?!" + _PLACEHOLDER + _PH_END + r")(?![\x5ca-zA-Z0-9_./~:-]{1,120}[.](?i:key|pem|pub|crt|p12|pfx|jks)(?![A-Za-z0-9]))(?!(?:~|[.]{1,2})/[A-Za-z0-9_./-]{1,120}|/[A-Za-z0-9_.-]{1,40}(?:/[A-Za-z0-9_.-]{1,40})+)(?P<value>[^\s\"']+)")
+_NAMED_SET = re.compile(r"(?<![\w-])(?i:set|enable)[ \t]+(?i:passw(?:or)?d|secret|passphrase|token)[ \t]+(?:[0-9][ \t]+)?(?!" + _PLACEHOLDER + _PH_END + r")(?P<value>[^\s\"']+)")
+# in a name or a path component: a secret's name and, glued or after a separator or a space, something that is not a word (password-Zq7kP2mR, Token Zq7kP2mR, pwdZq7kP2mR), or a flag with its value
+# (-password x, d--pwd x): a name that holds one is a command line, not a name
+_IDENT_FLAG = re.compile(r"(?<![A-Za-z0-9])--?" + _FLAG_NAME + r"[ \t]+(?!-)\S")
+_SECRET_THEN = re.compile(r"(?:(?i:passw(?:or)?d|passphrase|pwd|secret|token|credential|api[_-]?key|private[_-]?key|access[_-]?key|account[_-]?key)|(?<=-)(?i:pass|auth|bearer|psk))"
+                          r"(?=s?[ \t_.-]*['\"(\[]?([A-Za-z0-9]{1,40}))")
+_SECRET_THEN_TEXT = re.compile(r"(?<![A-Za-z0-9])(?i:passw(?:or)?d|passphrase|pwd|secret|token|credential|api[_-]?key|private[_-]?key|access[_-]?key|account[_-]?key)s?[ \t_.-]{1,3}['\"(\[]?(?P<value>[A-Za-z0-9]{7,40})(?![A-Za-z0-9])")
+_GLUED_FLAG = re.compile(r"(?<![A-Za-z0-9])--?(?:[A-Za-z0-9]{1,20}[-_]){0,4}(?i:key|token|pass|password|pwd|secret)(?P<value>[A-Za-z0-9]{8,40})(?![A-Za-z0-9])")
+_FLAG_THEN = re.compile(r"(?<![A-Za-z0-9])--?" + _FLAG_NAME + r"(?=[ \t_.-]*['\"(\[]?([A-Za-z0-9]{1,40}))")
+_ID_SECRET_WORDS = ("pass", "pwd", "secret", "token", "key", "cred", "auth", "bearer", "psk", "otp", "pw", "community")
+_WORD_PARTS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 
 
-def _random_piece(piece):
-    """A part of a path that is a stretch of a key: 8 or more letters and digits with a digit among the letters and either both cases or the class changing three times (ed25519 is not one)."""
-    if len(piece) < 8 or not piece.isalnum() or _HAS_DIGIT.search(piece) is None or piece.isdigit():
+_FIVE_CONSONANTS = re.compile(r"[^aeiouy]{5}")
+_VEEAM_GLUE = re.compile(r"D(?:19|20)[0-9]{2}$")
+_DATE8 = re.compile(r"(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])(?:[0-2][0-9][0-5][0-9][0-5][0-9])?")
+
+
+def _value_like(tok):
+    """Whether a run of letters and digits after a secret's name is built like a secret and not like words: 7 or more characters with a digit among them (not the one to four
+    digits of a counter at the end), or only digits, or a run of capitals of other than two or three, or a word of lower case letters that is not pronounceable."""
+    if len(tok) < 7:
         return False
-    return (_HAS_UPPER.search(piece) is not None and _HAS_LOWER.search(piece) is not None) or sum(1 for a, b in zip(piece, piece[1:]) if _cls(a) != _cls(b)) >= 3
+    tok = _VEEAM_GLUE.sub("", tok)                       # (the D2024 that Veeam glues to a job name before its time stamp)
+    if len(tok) < 7:
+        return False
+    if tok.isdigit():
+        return _DATE8.fullmatch(tok) is None             # (a date, 20240312, with or without a time of day, is not a value)
+    parts = _WORD_PARTS.findall(tok)
+    if parts and parts[-1].isdigit():
+        if len(parts[-1]) > 4:
+            return True
+        parts.pop()
+    for n, part in enumerate(parts):
+        if part.isdigit():
+            return True
+        if part.isupper():
+            if not 2 <= len(part) <= 3:
+                return True
+        elif len(part) < 3 or (n > 0 and not part[0].isupper()) or not _word_letters(part):
+            return True
+    return False
 
 
-def _key_file(flag, value):
-    """Whether `value` given to `flag` is the path of a key file and not a key."""
-    return (len(value) <= 120 and (_KEY_FILE_EXT.fullmatch(value) is not None or (_KEY_FLAG_END.search(flag) is not None and _KEY_FILE_PATH.fullmatch(value) is not None))
-            and not any(_token_like(run) for run in _RUN_CAND.findall(value)) and not any(_random_piece(piece) for piece in _KEY_FILE_PIECES.split(value)))
+_TECH_WORDS = re.compile("vmware|vcenter|vsphere|vsan|proxmox|nextcloud|splunk|openvpn|pfsense|opnsense|switch|postgres(?:ql)?|pgsql|mysql|mssql|sqlserver|rabbitmq|kafka|"
+                         "upgrad(?:e|ed|es|ing)|updat(?:e|ed|es|ing)|workstation|helpdesk|cloudhsm|hyperv|xenserver|netapp|nutanix|veeam|commvault|cohesity|wsus|sccm|pgbouncer|mongodb|redis|"
+                         "kubernetes|openshift|jumpbox|gitlab|github|jfrog|zabbix|ldaps?|radius|kerberos|tacacs|cifs|ntnx|qemu|esxi|smtp|sftp|dhcp|https?|iscsi|ntfs|sshd|nightly|monthly|fortnightly|midnight|lightweight|scratch|snmp|crowdstrike|etcd|vmfs|btrfs|openbsd")
+_NAME_TOKEN = re.compile(r"[A-Za-z0-9]+")
+_TAG = re.compile(r"(?:[a-z]{3,5}|[A-Z]{3,5}|[A-Z][a-z]{2,4})[0-9]{1,4}|[A-Z][0-9][A-Z][0-9]")
+_DATE_STAMP = re.compile(r"D?(?:19|20)[0-9]{2}[-_.]?(?:0[1-9]|1[0-2])[-_.]?(?:0[1-9]|[12][0-9]|3[01])(?:[-_.T ]?[0-2][0-9][0-5][0-9][0-5][0-9])?(?:_[0-9A-Fa-f]{4}(?![0-9A-Za-z]))?")
 
 
+def _word_letters(word):
+    """Whether a run of letters reads as a word: every pair of letters is one that words hold (the names of products and services are taken out first), and there are no five consonants in a row."""
+    low = _TECH_WORDS.sub("", word.lower())
+    for k in range(len(low) - 1):
+        if low[k:k + 2] not in _BIGRAMS:
+            return False
+    return _FIVE_CONSONANTS.search(low) is None
+
+
+_FILE_EXTS = frozenset(("vmdk", "vmx", "vmsd", "vmsn", "vmem", "vmss", "nvram", "log", "qcow2", "qcow", "vhdx", "avhdx", "vhd", "vdi", "ovf", "ova", "json", "jsonl", "yaml", "conf", "cfg", "flat", "delta", "sesparse", "iso", "img", "raw", "bak", "tmp"))
+
+
+def _groupish(tok):
+    """A run of 4 or more letters and digits that is not a tag (srv01, db02 are tags): the part of a value written in groups (ab12-cd34-ef56)."""
+    if len(tok) < 4 or _TAG.fullmatch(tok) is not None:
+        return False
+    if tok.isalpha() and tok.isupper():
+        return _TECH_WORDS.fullmatch(tok.lower()) is None            # (capitals of 4 or more letters are not a word: KHIL, not ESXI)
+    if tok.isalpha() and not tok[1:].islower():
+        return True                                                  # (a word is not written with a capital in the middle: paUn)
+    base = tok.rstrip("0123456789")
+    return not (base.isalpha() and len(base) >= 4 and len(tok) - len(base) <= 4 and _word_letters(base))
+
+
+def _words_value(text, start):
+    """Whether any word after a secret's name, from `start` on, is a value: built like a secret by itself, or one of two or more groups in a row (ab12-cd34), which are one value written in parts."""
+    tokens = _NAME_TOKEN.findall(_DATE_STAMP.sub(" ", text[start:start + 400]))
+    group, run, seen = [], [], False
+    for tok in tokens[:40]:
+        if _value_like(tok):
+            return True
+        if tok.lower() in _FILE_EXTS:
+            run, seen = [], False                                    # (the end of a file name is not a part of a value)
+        elif 4 <= len(tok) <= 6:                                     # (a short word between two groups, or next to one, is part of the value: yIgK-paUn)
+            run.append(tok)
+            seen = seen or (_groupish(tok) and not tok.isdigit())
+            if seen and len(run) >= 2 and _value_like("".join(run)):
+                return True
+        else:
+            run, seen = [], False
+        if len(tok) == 5 or len(tok) == 6:
+            if tok.isdigit() and tok[0] != "0":
+                return True              # 5 or 6 digits that do not start like a counter (000001)
+        if _groupish(tok):
+            group.append(tok)
+            if len(group) >= 2 and _value_like("".join(group)):
+                return True
+        else:
+            group = []
+    return False
+
+
+def _secret_in_ident(text):
+    """Whether a name or a path component holds a secret's name with a value after it (see above). Linear: each pattern is anchored on a name and reads at most 400 characters after it."""
+    if not _has(_ID_SECRET_WORDS, text.lower()):
+        return False
+    if _IDENT_FLAG.search(text) is not None or _NAMED_SET.search(text) is not None:
+        return True
+    for pattern in (_SECRET_THEN, _FLAG_THEN):
+        m = pattern.search(text)
+        if m is not None and _words_value(text, m.start(1)):
+            return True
+    return False
+_PEM = re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|$)", re.S)
+_PREFIX = re.compile(r"(?i:(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abeprs]-[A-Za-z0-9-]{10,}|glpat-[A-Za-z0-9_-]{20,}"
+                     r"|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|AIza[0-9A-Za-z_-]{30,}|npm_[A-Za-z0-9]{30,}"
+                     r"|dop_v1_[0-9a-f]{40,}|ya29\.[0-9A-Za-z_-]{30,})|sk-(?=[A-Za-z0-9_-]{0,39}[0-9])[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{8,300}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?")
+_BASE64_PADDED = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,}={1,2}(?![A-Za-z0-9+=])")
 _LONG_DIGITS = re.compile(r"(?<![0-9])[0-9]{19,}(?![0-9])")
-_PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|$)", re.S)
-# A string none of whose rules can match is passed without the slow path: every rule needs one of these.
-_QUICK = re.compile(r"[A-Za-z0-9_+%/=-]{14,}|@|AKIA|ASIA|gh[pousr]_|github_pat_|xox[abeprs]-|sk-|eyJ|(?i:basic|bearer)\s|(?i:set|enable)[ \t]+(?i:pass|secret|token)|[0-9]{19}|[=:]|[-_](?i:pass|pwd|secret|token|api|access|client|auth|bearer|psk)|(?i:key|secret|pass|passw(?:or)?d|passwd|pwd|pw|otp|token|community|credentials?|authorization)[ \t]|[a-z0-9](?:Key|Token|Password|Passwd|Pwd|Pass|Passphrase|Secret)[ \t]|-----BEGIN")
-_PIECE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+%-")
-_DIGIT_PLUS = re.compile(r"[0-9+]")
-_SEALED = {}
 
 
-def _random_slashed(run):
-    """A base64 run holding `/`: random when its letters change case as random text does, or digits sit among them."""
-    if "/" not in run:
-        return False
-    flat = run.replace("/", "").rstrip("=")
-    letters = [c for c in flat if c.isalpha()]
-    if not (any(c.islower() for c in letters) and any(c.isupper() for c in letters)):
-        return False
-    if not any(c.isdigit() for c in flat):          # a key of letters only: long, and its case changes as random text does
-        return len(letters) >= 24 and sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower()) >= 0.45 * len(letters)
-    flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
-    packed = len(re.findall(r"(?<=[A-Za-z])[0-9]{1,3}(?=[A-Za-z])", flat))
-    return len(letters) >= 14 and (flips >= 0.33 * len(letters) or (packed and flips >= 0.25 * len(letters))) or _token_run(flat)
+_BASE64_PADDED_PATH = re.compile(r"[A-Za-z0-9+/]{22,90}={1,2}(?![A-Za-z0-9+=])")           # (bounded: a long run of these characters costs a step for each of the 90 before a start, not the rest of the run)
+
+
+def _padded_in_path(field):
+    """A padded base64 key that stands behind a `/` (a path ends in the key, or the key's own `/` cut it): the last 22 characters before two pads, 27 before one, are withheld."""
+    def sub(m):
+        body = m.group().rstrip("=")
+        pad = len(m.group()) - len(body)
+        keep = len(body) - (22 if pad == 2 else 27)
+        if keep < 0:
+            return m.group()
+        tail = body[keep:]
+        if "/" not in tail or len({"d" if c.isdigit() else "u" if c.isupper() else "l" for c in tail if c.isalnum()}) < 2 or not _b64_shape(tail + "=" * pad):
+            return m.group()
+        return body[:keep] + _b_withheld(tail + "=" * pad, "token-shaped text", field)
+    return sub
+
+
+def _b64_shape(run):
+    """Whether a padded run can be base64 of random bytes: its length with the padding is a multiple of 4, and it holds a digit, `+` or `/` (a long
+    identifier before an `=` in a line of text, RelatedActivityID=, is not one)."""
+    return len(run) % 4 == 0 and re.search(r"[0-9+/]", run) is not None
+
+
+_NAMED_WORDS = ("pass", "pwd", "secret", "token", "key", "credential", "auth")
+_PREFIX_HINTS = ("akia", "asia", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xox", "glpat-", "_live_", "_test_", "sg.", "aiza", "npm_", "dop_v1_",
+                 "ya29.", "sk-", "eyj")
+
+
+def _layer2_once(s, field):
+    # each rule is tried only when the text holds what it needs (a character or a word it cannot match without): the same result, a lot less reading
+    if "withheld" in s:
+        s = _MARK_USERINFO.sub(lambda m: m.group("mark") + ":" + _b_withheld(m.group("pw"), "user-info", field), s)
+    if "-----" in s:
+        s = _outside(s, _MARK, lambda p: _PEM.sub(lambda m: _b_withheld(m.group(), "private key", field), p))
+    if "@" in s:
+        s = _outside(s, _MARK, lambda p: _URL_USERINFO_SLASH.sub(lambda m: _b_withheld(m.group(), "user-info", field), p))
+        s = _outside(s, _MARK, lambda p: _URL_USERINFO.sub(lambda m: _b_withheld(m.group(), "user-info", field), p))
+        s = _outside(s, _MARK, lambda p: _B_USERINFO.sub(lambda m: _b_withheld(m.group(), "user-info", field), p))
+    low = s.lower()
+    if _has(_NAMED_WORDS, low):
+        s = _outside(s, _MARK, lambda p: _NAMED.sub(lambda m: m.group()[:m.start("value") - m.start()] + _b_withheld(m.group("value"), "secret value", field), p))
+        if "<" in s:
+            s = _outside(s, _MARK, lambda p: _PH_SPACE.sub(lambda m: m.group()[:m.start("value") - m.start()] + (_b_withheld(m.group("value"), "secret value", field) if _value_like(m.group("value")) else m.group("value")), p))
+            s = _outside(s, _MARK, lambda p: _NAMED_ANGLE.sub(lambda m: m.group()[:m.start("value") - m.start()] + (_b_withheld(m.group("value"), "secret value", field) if any(_value_like(x) for x in _ANGLE_SPLIT.split(m.group("inner"))) else m.group("value")), p))
+            s = _outside(s, _MARK, lambda p: _NAMED_PH.sub(lambda m: m.group()[:m.start("value") - m.start()] + _b_withheld(m.group("value"), "secret value", field), p))
+    if _has(("pass", "pwd", "secret", "token", "credential", "key"), low):
+        s = _outside(s, _MARK, lambda p: _SECRET_THEN_TEXT.sub(lambda m: m.group()[:m.start("value") - m.start()] + (_b_withheld(m.group("value"), "secret value", field) if _value_like(m.group("value")) else m.group("value")), p))
+        if "-" in s:
+            s = _outside(s, _MARK, lambda p: _GLUED_FLAG.sub(lambda m: m.group()[:m.start("value") - m.start()] + (_b_withheld(m.group("value"), "secret value", field) if _value_like(m.group("value")) else m.group("value")), p))
+    if "-" in s or "set" in low or "enable" in low:
+        s = _outside(s, _MARK, lambda p: _NAMED_FLAG.sub(lambda m: m.group()[:m.start("value") - m.start()] + _b_withheld(m.group("value"), "secret value", field), p))
+        s = _outside(s, _MARK, lambda p: _NAMED_SET.sub(lambda m: m.group()[:m.start("value") - m.start()] + _b_withheld(m.group("value"), "secret value", field), p))
+    if "=" in s:
+        s = _outside(s, _MARK, lambda p: _BASE64_PADDED.sub(lambda m: _b_withheld(m.group(), "token-shaped text", field) if _b64_shape(m.group()) else m.group(), p))
+        if "/" in s:
+            s = _outside(s, _MARK, lambda p: _BASE64_PADDED_PATH.sub(_padded_in_path(field), p))
+    s = _outside(s, _MARK, lambda p: _LONG_DIGITS.sub(lambda m: _b_withheld(m.group(), "long number", field), p))
+    low = s.lower()
+    if _has(_PREFIX_HINTS, low):
+        s = _outside(s, _MARK, lambda p: _PREFIX.sub(lambda m: _b_withheld(m.group(), "token-shaped text", field), p))
+    if "t10." in s or "iqn." in s:
+        spans = _t10_hex_spans(s)
+        if spans:
+            s = _replace_spans(s, _merge(spans), "token-shaped text", field)
+    return s
 
 
 def _outside(text, pattern, fn):
     """`fn` applied to the parts of `text` that `pattern` does not match; the matches are kept as they are."""
+    if "withheld" not in text:
+        return fn(text)
     out, last = [], 0
     for m in pattern.finditer(text):
         out.append(fn(text[last:m.start()]) if m.start() > last else "")
@@ -1064,788 +1997,225 @@ def _outside(text, pattern, fn):
     return "".join(out)
 
 
-def _shared_spans(text):
-    """What the shared block's token_spans finds, in linear time: the same rules, but a flagged span takes the random-looking
-    pieces next to it across a `/` by a reverse and a forward character scan that never reads a character twice (the shared
-    grow loop slices and searches the text again for every piece)."""
-    spans = _prefixed_spans(text)
-    for m in _RUN.finditer(text):
-        if _token_run(m.group()):
-            spans.append(m.span())
-    for m in _SLASHED.finditer(text):
-        run = m.group()
-        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and _DIGIT_PLUS.search(run):
-            spans.append(m.span())
-    if not spans:
-        return []
-    spans.sort()
-    n, floor, grown = len(text), 0, []
-    for start, end in spans:
-        if grown and end <= grown[-1][1] and start >= grown[-1][0]:
-            continue                                  # inside what the last span already took
-        while start > max(1, floor) and text[start - 1] == "/":
-            j = start - 2
-            while j >= floor and text[j] in _PIECE:
-                j -= 1
-            piece = text[j + 1:start - 1]
-            if not piece or not _randomish(piece):
-                break
-            start = j + 1
-        while end < n - 1 and text[end] == "/":
-            k = end + 1
-            while k < n and text[k] in _PIECE:
-                k += 1
-            e2 = k
-            while e2 < n and e2 - k < 2 and text[e2] == "=":
-                e2 += 1
-            if k == end + 1 or not _randomish(text[end + 1:e2]):
-                break
-            end = e2
-        if grown and start <= grown[-1][1]:
-            grown[-1] = (grown[-1][0], max(grown[-1][1], end))
-        else:
-            grown.append((start, end))
-        floor = grown[-1][1]
-    return grown
-
-
-def _rules_piece(piece, kind):
-    if not piece or not _QUICK.search(piece):
-        return piece
-    piece = _ANY_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), piece)
-    # the shared block's user-info rules, then every token rule on the same text: what any of them takes is withheld as one
-    # run, so that no rule's order leaves a piece of what another would have taken
-    piece = _outside(piece, _MARKER, lambda part: _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind),
-                                                                      _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), part)))
-    return _outside(piece, _MARKER, lambda part: _spans_withheld(part, kind))
-
-
-def _spans_withheld(part, kind):
-    """Every span the shared block's token rules and the shapes added here find in `part`, joined where they touch or
-    overlap, each withheld once."""
-    spans = [(a, b, "token-shaped text") for a, b in _shared_spans(part)]
-    spans += [m.span() + ("token-shaped text",) for m in _SLASHED_RANDOM.finditer(part) if _random_slashed(m.group())]
-    spans += [m.span() + ("token-shaped text",) for m in _BASE64_KEY.finditer(part) if "/" in m.group() or "+" in m.group()]
-    spans += [m.span() + ("token-shaped text",) for m in _TOKEN_HEAD.finditer(part)]
-    spans += [m.span(1) + ("secret",) for m in _NAMED_SECRET.finditer(part)]
-    spans += [m.span(1) + ("secret",) for m in _NAMED_FLAG.finditer(part) if not _key_file(part[m.start():m.start(1)], m.group(1))]
-    spans += [m.span(1) + ("secret",) for m in _NAMED_SET.finditer(part)]
-    spans += [m.span() + ("token-shaped text",) for m in _RUN_CAND.finditer(part) if _token_like(m.group(), False)]
-    spans += [(m.start(), m.start() + len(m.group().rstrip(".-")), "token-shaped text") for m in _ID_FREE.finditer(part) if not _id_plausible(m.group().rstrip(".-"), True)]
-    spans += [m.span() + ("long number",) for m in _LONG_DIGITS.finditer(part)]
-    spans += [m.span() + ("private key",) for m in _PRIVATE_KEY.finditer(part)]
-    if not spans:
-        return part
-    spans.sort()
-    merged = []
-    for a, b, what in spans:
-        if merged and a <= merged[-1][1]:
-            prev = merged[-1]
-            merged[-1] = (prev[0], max(prev[1], b), prev[2] if prev[2] == what else "token-shaped text")
-        else:
-            merged.append((a, b, what))
-    out, last = [], 0
-    for a, b, what in merged:
-        out.append(part[last:a])
-        out.append(_withheld(what, b - a, kind))
-        last = b
-    out.append(part[last:])
-    return "".join(out)
-
-
-def _free_once(text, kind):
-    """One application of the layer 2 rules to a whole string. A string with invisible characters is judged with them taken
-    out; when that reading has something to withhold, it is the one shown."""
-    flat = _flat(text)
-    if flat is not text and flat != text:
-        sealed = _free_once(flat, kind)
-        if sealed != flat:
-            return sealed
-    if not _QUICK.search(text):
-        return text
-    hit = _outside(text, _GUID_ALONE, lambda piece: _rules_piece(piece, kind))
-    if kind == "boundary":
-        COUNTS.pop("boundary", None)
-    return hit
-
-
-# ---- layer 1: the allow-list ---------------------------------------------------------------------------------------------
-_NAME_PLAIN = re.compile(r"[A-Za-z0-9 ._()+\[\]'#,&~%$-]*")
-_PATH_PLAIN = re.compile(r"[A-Za-z0-9 ._()+\[\]'#,&~%{}$-]*")
-_VERSION_PLAIN = re.compile(r"[A-Za-z0-9 ._()+\[\]'#,&~%/-]*")
-_SEP_DIGITS = re.compile(r"(?<=[0-9])[:/](?=[0-9])")
-_RUN_CAND = re.compile(r"[A-Za-z0-9_+=-]{16,}")
-_SECRET_WORD = re.compile(r"(?i:passw|pwd|secret|token|credential|api[_-]?key|private[_-]?key|access[_-]?key)(?:ord|wd|phrase)?")
-_ALNUM_RUN = re.compile(r"[A-Za-z0-9]+")
-_PATH_RUN = re.compile(r"[A-Za-z0-9_+=/-]{18,}")
-_DRIVE = re.compile(r"[A-Za-z0-9_.-]{1,40}")
-# identifiers of a kind that stay readable inside a name or a path: a GUID (a Hyper-V file name holds one), the volume id of
-# /vmfs/volumes/<id>/, the device ids naa. eui. wwn- vml., and the name Windows gives a machine that was not named (WIN-, DESKTOP-
-# or LAPTOP- and capitals and digits: 15 characters, which a VM's disk, snapshot and configuration file names repeat).
-_ID_EMBEDDED = re.compile(
-    r"(?<![A-Za-z0-9])(?:WIN-[A-Z0-9]{11}|DESKTOP-[A-Z0-9]{7}|LAPTOP-[A-Z0-9]{8}|\{?[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}?|[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{12}"
-    r"|naa\.[0-9a-fA-F]{16,32}|eui\.[0-9a-fA-F]{16}|wwn-0x[0-9a-fA-F]{16}|vml\.[0-9a-fA-F]{20,40}|vsan:[0-9a-f]{16}-[0-9a-f]{16}"
-    r"|iqn\.[0-9]{4}-[0-9]{2}\.[a-z0-9][a-z0-9.-]{0,60}(?::[A-Za-z0-9._-]{1,40})?"
-    r"|t10\.[A-Za-z]{2,12}_[A-Za-z0-9 _.-]{1,50}_[A-Za-z0-9]{4,24})(?![A-Za-z0-9])")
-# A run of underscores in a t10. id is read by the class beside it, never by two `_+` around it: that pair tried every split of the run
-# (`t10.AB` and 4,000 underscores took 3 s). An iqn. or t10. form carries a name the evidence chose, so it is accepted as an id only
-# when what it carries is a name and not a stretch of random text (_id_plausible); otherwise it is judged like any other text.
-_ID_SEGMENT = re.compile(r"[^_ ]+")
-
-
-# A piece of a t10. id of 16 to 24 characters that drives really carry and random text is not mistaken for by chance: a 16-digit hexadecimal id (an EUI-64) or a WWN of a maker (Kingston
-# 50026B, Samsung 5002538, Crucial 500A075, SanDisk 5001B44, Seagate 5000C5, HGST 5000CCA, WD 50014E, Toshiba 5000039), a run of one or two characters
-# (zeros), and a model or serial in which ESXi wrote a hyphen as 2D (WDC_WD40EFRX2D68N32N0, ..._____WD2DWCC7K1234567), in the forms below.
-_HEX_ONLY = re.compile(r"[0-9A-Fa-f]+")
-_T10_KNOWN = re.compile(r"(?:50026B|5002538|500A075|5001B44|5000C5|5000CCA|50014E|5000039)[0-9A-F]{8,10}")
-
-
-# A model or a serial in which ESXi wrote a hyphen as 2D is plain only in the forms drives carry: a maker's 2 to 4 letters, the digits that start a model, letters and digits in blocks as models write them, then one or two
-# `2D` and a part of 2 to 10 characters (WD40EFRX2D68N32N0, ST4000DM0042D2CV104, MZ7LN256HCHP2D000L2), or a maker's two letters, `2D` and a serial or the rest of a model
-# (WD2DWCC7K1234567, MZ2D7LN256HCHP2D000L2); a piece of 22 characters or more is never one. A piece that holds `2D` by chance is judged whole, as every other piece is.
-_T10_2D = re.compile(r"[A-Z]{2,4}[0-9]{1,6}(?:[A-Z]{1,5}[0-9]{1,4}){0,2}[A-Z]{0,5}(?:2D[A-Z0-9]{2,10}){1,2}|[A-Z]{2}(?:2D[A-Z0-9]{2,14}){1,2}")
-
-
-def _letters_plain(piece):
-    """Whether a run of letters of one case, 16 or more, reads as words and not as random letters: fewer than two pairs of letters that words rarely hold
-    (a compound of two or three words has one at most where they meet), a vowel in one letter of five, and no run of five consonants (y is a consonant here, as in the token test)."""
-    low = piece.lower()
-    return (sum(1 for k in range(len(low) - 1) if low[k:k + 2] in _RARE_PAIRS) < 2 and sum(c in "aeiou" for c in low) >= 0.2 * len(low) and _NO_VOWEL5.search(low) is None)
-
-
-def _t10_piece_plain(piece):
-    """Whether a piece of a t10. id of 16 characters or more is a model or a serial and not random text: not token-like, or one of the known forms above."""
-    if len(set(piece)) <= 2 or _T10_KNOWN.fullmatch(piece) is not None or (len(piece) == 16 and _HEX_ONLY.fullmatch(piece)):      # 16 hexadecimal digits are a 64-bit id (an EUI-64), as in an identifier field
-        return True
-    if "2D" in piece and len(piece) <= 21 and _HEX_ONLY.fullmatch(piece) is None and _T10_2D.fullmatch(piece) is not None:
-        return True
-    if piece.isalpha() and (piece.islower() or piece.isupper()):          # one case of letters: the test for a lower-case run is the words' one
-        return _letters_plain(piece) and not _token_like(piece)
-    return not _token_like(piece)
-
-
-_LETTER_RUNS = re.compile(r"[a-z]{16,40}|[A-Z]{16,40}")
-# A t10. or iqn. id in free text is read by the judgement above too: random text in a serial, a model or a target is not made readable by the id around it.
-_ID_FREE = re.compile(r"(?<![A-Za-z0-9])(?:t10\.[A-Za-z0-9_.-]{8,120}|iqn\.[0-9]{4}-[0-9]{2}\.[a-z0-9][a-z0-9.-]{0,60}(?::[A-Za-z0-9._-]{1,40})?)")
-_NO_VOWEL5 = re.compile(r"[^aeiou]{5}")
-
-
-def _id_plausible(text, free=False):
-    """Whether an iqn. or t10. id holds names: an iqn. whose domain and target have no token-like run and no run of letters of one case that is not words, a t10. whose vendor, model and
-    serial pieces are short or do not mix capitals, small letters and digits as random text does. A GUID or a hexadecimal id is as it is. `free`: the id is in free text, where the
-    serial a maker puts after the colon of an iqn. (16 to 31 hexadecimal digits: flasharray.3fa2b1c4d5e6f708) is read as it is, as a bare run of them is."""
-    if text.startswith("iqn."):
-        return (not any(_token_like(run) for run in _RUN_CAND.findall(text[12:]) if not (free and len(run) < 32 and _HEX_ONLY.fullmatch(run)))
-                and all(_letters_plain(run) for run in _LETTER_RUNS.findall(text[12:])))
-    if text.startswith("t10."):
-        for piece in _ID_SEGMENT.findall(text[4:]):
-            if len(piece) >= 16 and (len(piece) > 24 or not _t10_piece_plain(piece)):
-                return False
-    return True
-
-
-def _ids_plausible(text):
-    """Whether every iqn. and t10. id in `text` holds names. One that holds random text makes the whole string not a name: the words around a random serial
-    (t10.ATA_____Model_X_____<serial>) are what made the run of it look like words."""
-    return all(_id_plausible(m.group()) for m in _ID_EMBEDDED.finditer(text)) and all(_id_plausible(m.group().rstrip(".-")) for m in _ID_FREE.finditer(text))
-
-
-def _id_sub(text, fill):
-    """`text` with each id of a kind in it replaced by fill(id); an iqn. or t10. form that is not plausible stays as the text it is."""
-    return _ID_EMBEDDED.sub(lambda m: fill(m.group()) if _id_plausible(m.group()) else m.group(), text)
-
-
-def _id_is(text):
-    return _ID_EMBEDDED.fullmatch(text) is not None and _id_plausible(text)
-
-
-# the forms an identifier field may hold: a GUID, a VMFS volume id, VMware's uuid bytes, up to 16 hexadecimal digits (a CID), 32 (a
-# content id), a number, a MAC or WWN, a device id, a counter (S000001), a short word (snapshot0, current, vm-100)
-_ID_FORMS = re.compile(
-    r"\{?[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}?|[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{12}"
-    r"|(?:[0-9A-Fa-f]{2} ){7}[0-9A-Fa-f]{2}-(?:[0-9A-Fa-f]{2} ){7}[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{2} ){15}[0-9A-Fa-f]{2}"
-    r"|[0-9A-Fa-f]{1,16}|[0-9A-Fa-f]{32}|[0-9]{1,18}|(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}|(?:[0-9A-Fa-f]{2}:){7}[0-9A-Fa-f]{2}"
-    r"|naa\.[0-9a-fA-F]{16,32}|eui\.[0-9a-fA-F]{16}|wwn-0x[0-9a-fA-F]{16}|vml\.[0-9a-fA-F]{20,40}|mpx\.vmhba[0-9]+:C[0-9]+:T[0-9]+:L[0-9]+"
-    r"|[A-Za-z][A-Za-z0-9_.-]{0,15}[0-9]{0,6}")
-_DENY_IN_IDENT = re.compile(r"(?i:(?:AKIA|ASIA)[0-9A-Z]{4,}|gh[pousr]_[A-Za-z0-9]{4,}|github_pat_|xox[abeprs]-|glpat-|(?:sk|rk|pk)_(?:live|test)_|SG\.[A-Za-z0-9_-]{8,}"
-                            r"|AIza|npm_|pypi-|shpat_|dop_v1_|ya29\.|sk-[A-Za-z0-9_-]{8,})|eyJ[A-Za-z0-9_-]{10,}|-----BEGIN|[A-Za-z0-9_-]{0,40}(?i:passw|pwd|secret|token|credential|api[_-]?key|private[_-]?key|access[_-]?key|account[_-]?key)[A-Za-z0-9_-]{0,3}[=:]"
-                            r"|(?<![A-Za-z])(?i:pass|pw|auth|sig|sas)s?[=:]")
-_VOWELS = frozenset("aeiouAEIOU")
-
-
-def _cls(c):
-    return 0 if c.isdigit() else 1 if c.isupper() else 2
-
-
-def _token_like(run, hex_too=True, words=True):
-    """Whether a run of letters and digits (joined across - _ + =) of 16 or more is a token and not words, a date, a version or a
-    counter: hexadecimal, digits packed between letters, class changes (capital, small letter, digit) as random text has them,
-    capitals in pairs, or letters with no word structure. Thresholds were set on a corpus of VM, host, datastore, snapshot and
-    file names against random text of 14 to 40 characters (the measured rates are in the pack's changelog)."""
-    if len(run) >= 16:
-        run = _DATE.sub("-", run)                    # a date or a time stamp in a file name (Veeam's D2022-03-28T152355) is not a token
-    alnum = "".join(c for c in run if c.isalnum())
-    n = len(alnum)
-    if n < 16:
-        return False
-    nd = sum(1 for c in alnum if c.isdigit())
-    if nd == n:
-        return n >= 19
-    if all(c in "0123456789abcdefABCDEF" for c in alnum):
-        return hex_too
-    if hex_too and _HEX32.search(alnum):
-        return True                                 # a digest or a key written in hexadecimal inside a longer name
-    kinds = {_cls(c) for c in alnum}
-    changes = sum(1 for a, b in zip(alnum, alnum[1:]) if _cls(a) != _cls(b)) / (n - 1)
-    packed = len(_PACKED.findall(alnum))
-    if kinds >= {1, 2} and sum(len(w) for w in _WORDS.findall(alnum)) >= 0.7 * n:
-        return False                                # capitalised words written together (ProxyK8sMgmtNode10), not a token
-    if words and n >= 28 and len(kinds) >= 2 and sum(len(w) for w in _WORDISH.findall(alnum)) < 0.6 * max(1, n - nd):
-        return True                                 # a long run whose letters are not made of words (a counter's digits do not count)
-    if len(kinds) == 3:
-        if n < 18:
-            return changes >= 0.5
-        upper_pairs = sum(1 for a, b in zip(alnum, alnum[1:]) if a.isupper() and b.isupper()) / (n - 1)
-        return changes >= 0.45 or (changes >= 0.30 and upper_pairs >= 0.08) or packed >= 4 or (n < 20 and changes >= 0.5)
-    if n < 18:
-        return kinds == {0, 1} and nd >= 3 and (changes >= 0.3 or packed >= 2)      # 16 or 17 capitals and digits (a base32 seed)
-    if kinds == {1, 2}:
-        upper_pairs = sum(1 for a, b in zip(alnum, alnum[1:]) if a.isupper() and b.isupper()) / (n - 1)
-        return changes >= 0.45 or (changes >= 0.35 and upper_pairs >= 0.10)
-    if len(kinds) == 2:
-        return nd >= 3 and (changes >= 0.30 or packed >= 2)
-    for piece in ([run] if run.isalnum() else re.split(r"[_+=-]+", run)):    # words joined by - or _ (esxi_vm_inventory_xml) are judged one by one
-        piece = piece.lower()
-        if len(piece) < (18 if piece is not run else 14):
-            continue
-        vowels = sum(1 for c in piece if c in _VOWELS)
-        longest = cons = 0
-        for c in piece:
-            cons = 0 if c in _VOWELS else cons + 1
-            longest = max(longest, cons)
-        if vowels / len(piece) < 0.2 or longest >= 5:
-            return True
-    return False
-
-
-_PACKED = re.compile(r"(?<=[A-Za-z])[0-9]{1,2}(?=[A-Za-z])")
-_WORDS = re.compile(r"[A-Z][a-z]{2,}")
-_HEX32 = re.compile(r"[0-9a-fA-F]{32,}")
-_DATE = re.compile(r"(?:19|20)[0-9]{2}[-_.]?[0-1][0-9][-_.]?[0-3][0-9](?:[T_-]?[0-2][0-9][:.]?[0-5][0-9][:.]?[0-5][0-9])?(?![0-9])")
-_WORDISH = re.compile(r"[A-Z]{2,4}(?=[A-Z][a-z]{3,})|[A-Z][a-z]{3,}|[a-z]{5,}")
-
-
-def _piece_random(piece):
-    """A piece of a path that looks like a stretch of a base64 key: 6 or more characters with a digit, a capital and a small letter,
-    no word of four small letters, and class changes as random text has them."""
-    if len(piece) < 6 or not ((_HAS_DIGIT.search(piece) and _HAS_UPPER.search(piece) and _HAS_LOWER.search(piece)) or ("+" in piece and _HAS_UPPER.search(piece) and _HAS_LOWER.search(piece))) or _WORD4.search(piece):
-        return False
-    alnum = [c for c in piece if c.isalnum()]
-    return len(alnum) >= 5 and sum(1 for a, b in zip(alnum, alnum[1:]) if _cls(a) != _cls(b)) / (len(alnum) - 1) >= 0.5
-
-
-_HAS_DIGIT, _HAS_UPPER, _HAS_LOWER, _WORD4 = re.compile(r"[0-9]"), re.compile(r"[A-Z]"), re.compile(r"[a-z]"), re.compile(r"[a-z]{4,}")
-
-
-def _cross_slash_token(run):
-    """A run of letters and digits that goes across `/` and is random as a whole: a base64 key cut by its slashes. A path of words and
-    counters, or of capitals and digits only (SAN-LUN10/FILE8), is not one."""
-    if "/" not in run or _HAS_UPPER.search(run) is None or _HAS_LOWER.search(run) is None:
-        return False
-    if sum(len(w) for w in _WORDISH.findall("".join(c for c in run if c.isalnum()))) >= 0.6 * max(1, sum(c.isalpha() for c in run)):
-        return len(run) >= 36 and _random_run(run)
-    return ((len(run) >= 30 and _HAS_DIGIT.search(run) is not None and _token_like(run.replace("/", ""), True, False)) or (len(run) >= 30 and _random_run(run))
-            or (len(run) >= 20 and "+" in run))
-
-
-# a secret's name and the word after it, glued or behind a separator or a space (pwd-Zq7kP2mR, Token Zq7kP2mR, passwordZq7kP2mR); -pass, -auth, -bearer and -psk count
-# only with a dash before them, being words (a bypass, an authority) otherwise
-_SECRET_THEN = re.compile(r"(?:(?i:passw(?:or)?d|passphrase|pwd|secret|token|credential|api[_-]?key|private[_-]?key|access[_-]?key|account[_-]?key)|(?<=-)(?i:pass|auth|bearer|psk))"
-                          r"(?=s?[ \t_.-]*['\"(\[]?([A-Za-z0-9]{1,40}))")
-# a flag with its value, after anything but a letter or a digit (`d--pwd x` is a directory named d- and a flag): the layers of free text look at a flag after a space or a quote only
-_IDENT_FLAG = re.compile(r"(?<![A-Za-z0-9])--?" + _FLAG_NAME + r"[ \t]+(?!-)\S")
-_WORD_PARTS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
-_NO_VOWEL = re.compile(r"[^aeiouy]{4}")
-
-
-# What a VM, a file or a job is called after the name of a secret and is not a value: a file extension (`Password.vmdk`, `Token.vhdx`, `Secret.qcow2`), a snapshot counter (`-000001`),
-# a date (`-20240312`), a short host or service tag (`srv01`, `db02`, `pg14`, `7d4f`), and the `D2024` that Veeam glues to a job name before its time stamp (`Password ManagerD2024-...vbk`).
-_FILE_EXT = frozenset((
-    "vmdk vmx vmxf vmsd vmsn vmem vmss vmtx vmpl vswp nvram vhd vhdx avhd avhdx vsv vfd vmrs vmcx vrsv qcow qcow2 qed vdi raw img iso ova ovf ovpn bin dat db sql json xml yaml yml toml "
-    "ini cfg conf log txt csv bak old tmp lck lock zip gz tar tgz bz2 xz zst 7z vbk vib vbm vrb vsb vlb vcb xva ova pdf key pem crt cer pfx".split()))
-_VEEAM_GLUE = re.compile(r"D(?:19|20)[0-9]{2}$")
-_DATE8 = re.compile(r"(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])(?:[0-2][0-9][0-5][0-9][0-5][0-9])?")
-_TAG = re.compile(r"(?:[a-z]{2,5}|[A-Z]{2,5}|[A-Z][a-z]{1,4})[0-9]{1,4}")
-# product and service words that hold a pair of letters English words rarely do (vmware, vcenter, sqlserver, upgrade, update ...): taken out of a word before it is judged
-_TECH_WORDS = re.compile("vmware|vcenter|vsphere|vsan|proxmox|nextcloud|splunk|openvpn|pfsense|opnsense|switch|postgres(?:ql)?|pgsql|mysql|mssql|sqlserver|rabbitmq|kafka|"
-                         "upgrad(?:e|ed|es|ing)|updat(?:e|ed|es|ing)|workstation|helpdesk|cloudhsm|hyperv|xenserver|netapp|nutanix|veeam|commvault|cohesity|wsus|sccm|pgbouncer|mongodb|redis|"
-                         "kubernetes|openshift|jumpbox|gitlab|github|jfrog|zabbix|ldaps?|radius|kerberos|tacacs|cifs|ntnx|qemu|esxi|smtp|sftp|dhcp|https?|iscsi|ntfs|sshd|nightly|monthly|fortnightly|midnight|lightweight|scratch|snmp|crowdstrike|etcd|vmfs|btrfs|openbsd")
-
-
-_SHORT_ONE_CASE = re.compile(r"[a-z0-9]{1,4}|[A-Z0-9]{1,4}")
-_SHORT_TAG = re.compile(r"[a-z0-9]{1,4}|[A-Z0-9]{1,4}|[A-Z][a-z0-9]{0,3}")
-_NAME_TOKEN = re.compile(r"[A-Za-z0-9]+")
-_HAS_VOWEL = re.compile(r"[aeiouyAEIOUY]")
-_HAS_DIGIT_ANY = re.compile(r"[0-9]")
-_YEAR = re.compile(r"(?:19|20)[0-9]{2}")
-_PERIOD = re.compile(r"(?:19|20)[0-9]{2}(?:[Qq][1-4]|[Hh][12]|[Ww][0-5][0-9])")        # 2024Q3, 2024H2, 2024W07
-# the words a copy, a clone, a template, a backup or a disk file of a snapshot is named with: a tag of four characters (z3r0, A1B2) may be followed by them and by nothing else
-_SUFFIX_WORD = re.compile("(?:copy|clone|cloned|template|old|new|bak|backup|snap|snapshot|replica|restore|restored|temp|tmp|test|prod|dev|stage|staging|lab|flat|delta|sesparse|final|orig|archive|disk|base|veeam)[0-9]{0,3}")
-_DATE_STAMP = re.compile("D?" + _DATE.pattern + "(?:_[0-9A-Fa-f]{4}(?![0-9A-Za-z]))?")        # Veeam's D2024-10-04T020013_AB12 (before .vbk)
-
-
-def _word_like(token):
-    """Whether a token with letters in it reads as words: letters in words of three or more with vowels (a capitals run of two or three is an acronym), at most four digits and only
-    at the end (Vault, Ring, DB, Server01, KeePass); the product words in _TECH_WORDS are taken out before a word is judged."""
-    parts = _WORD_PARTS.findall(token)
-    if not parts:
-        return False
-    if parts[-1].isdigit():
-        if len(parts[-1]) > 4:
-            return False
-        parts.pop()
-    for i, p in enumerate(parts):
-        if p.isdigit():
-            return False
-        if p.isupper():
-            if not 2 <= len(p) <= 3:
-                return False
-        else:
-            low = p.lower()
-            if len(p) < 3 or (i > 0 and not p[0].isupper()):
-                return False
-            if sum(c in "aeiouy" for c in low) < 0.2 * len(p) and _TECH_WORDS.sub("", low):
-                return False
-            for rest in _TECH_WORDS.sub(" ", low).split():
-                if _NO_VOWEL.search(rest) or any(rest[k:k + 2] in _RARE_PAIRS for k in range(len(rest) - 1)):
-                    return False
-    return True
-
-
-def _name_class(token, dotted=False, tail="", last=True):
-    """What a token after a secret's name is in a name. W: a word (Vault, Ring, DB, Server01, KeePass). E: the extension of a file after a dot. C: a counter or a year (five or six digits that start
-    with 0, as a snapshot's -000001; 1900 to 2039; a year with a quarter, a half or a week: 2024Q3). G: a group that is a tag and not a value (a number of up to four digits; a date of eight digits or a time stamp of fourteen; 2 to 5 letters of one
-    case and 1 to 4 digits, 7 characters at most; a Veeam job name before the `D2024` its time stamp starts with; and, as the last word of the name only (`last`), four characters or fewer of capitals
-    and digits or with a digit among them). V: a value. G, C and E are not given when `+` or `=` follows the token (`tail`), and with a `/` after it the four-character group only of one case: the value
-    goes on in the alphabet of a key. A token of more than 40 characters is a value."""
-    if len(token) > 40:
-        return "V"
-    free = tail not in ("+", "=")
-    if free and dotted and token.lower() in _FILE_EXT:
-        return "E"
-    if len(token) <= 3:
-        return "W" if token.isalpha() and (token[0].isupper() or _HAS_VOWEL.search(token) is not None) else "G"
-    if _VEEAM_GLUE.search(token):
-        token = token[:-5]
-        if len(token) <= 4 and free:
-            return "G"
-    if free and _PERIOD.fullmatch(token):
-        return "C"
-    if token.isdigit():
-        if not free:
-            return "V"
-        if (token[0] == "0" and len(token) <= 6) or _YEAR.fullmatch(token) is not None:
-            return "C"
-        return "G" if len(token) <= 4 or _DATE8.fullmatch(token) is not None else "V"
-    if _word_like(token):
-        return "W"
-    if free and len(token) <= 7 and _TAG.fullmatch(token) is not None:
-        return "G"
-    if free and last and (_SHORT_TAG if tail == "" else _SHORT_ONE_CASE).fullmatch(token) is not None and (token.isupper() or _HAS_DIGIT_ANY.search(token) is not None):
-        return "G"
-    return "V"
-
-
-def _plain_word(token, dotted=False, tail=""):
-    """Whether one word after a secret's name in a name is a word, a tag, a counter, a date or an extension and not a value (see _name_class); as the last word of the name."""
-    return _name_class(token, dotted, tail) != "V"
-
-
-def _bracket_end(rest):
-    """Where the bracket (or parenthesis) that is open before `rest` closes: the first `]` or `)` that no `[` or `(` in `rest` opened."""
-    depth = 0
-    for i, c in enumerate(rest):
-        if c in "[(":
-            depth += 1
-        elif c in "])":
-            if depth == 0:
-                return i
-            depth -= 1
-    return len(rest)
-
-
-def _words_after(text, start, more):
-    """Whether every word of `text` from `start` on (the first one after a secret's name or a key flag) is a word, a tag, a counter, a date or an extension, and not a value; two or more groups of 4
-    characters or more in a row (`ab12-cd34-ef56`, `1234-5678`) are one value written in parts and are judged as the one word they make together. A date and a time stamp are taken out first.
-    The word before a `/` in a path has one more characters in it to come (`more`). Inside brackets the words stop at the closing one."""
-    rest = text[start:]
-    if text.rfind("[", 0, start) > text.rfind("]", 0, start) or text.rfind("(", 0, start) > text.rfind(")", 0, start):
-        rest = rest[:_bracket_end(rest)]                  # the name of a secret inside brackets: what comes after the closing bracket is another name
-    body = _DATE_STAMP.sub("-", rest)
-    tokens = list(_NAME_TOKEN.finditer(body))
-    ends = "/" if more else ""
-    dotted = [(body[m.start() - 1] if m.start() else text[start - 1:start]) == "." for m in tokens]
-    lasts = [False] * len(tokens)                         # whether only the extension of a file, a figure or two, or a word like `copy` and `template` comes after the token
-    after = True
-    for i in range(len(tokens) - 1, -1, -1):
-        lasts[i] = after
-        m = tokens[i]
-        word = m.group().lower()
-        after = after and (len(word) <= 2 or _SUFFIX_WORD.fullmatch(word) is not None or (dotted[i] and word in _FILE_EXT) or (word[0] == "0" and word.isdigit() and len(word) <= 6)) and body[m.end():m.end() + 1] not in ("+", "=")
-    group, last = [], 0
-    for i, m in enumerate(tokens):
-        token, end = m.group(), m.end()
-        kind = _name_class(token, dotted[i], body[end:end + 1] or ends, lasts[i])
-        if kind == "V":
-            return False
-        if kind == "G" and len(token) >= 4:
-            group.append(token)
-            last = end
-        elif kind != "G":
-            if len(group) >= 2 and _name_class("".join(group), False, body[last:last + 1] or ends) == "V":
-                return False
-            group = []
-    return len(group) < 2 or _name_class("".join(group), False, body[last:last + 1] or ends) != "V"
-
-
-# a flag that takes a secret with the value glued to it or after a space (`--master-key X`, `--master-keyX`, `-keyX`, `--sshKeyX`, `--userpassX`, `--communityX`): a name that holds one is a command line.
-# The word after the flag is judged like the word after a secret's name; `--key-file`, `--keyboard`, `--keyring-backend` and `--key-size` are words after `--key`. A name without a dash before
-# the flag is a name.
-_FLAG_THEN = re.compile(r"(?<![A-Za-z0-9])--?" + _FLAG_NAME + r"(?=[ \t_.-]*['\"(\[]?([A-Za-z0-9]{1,40}))")
-
-
-def _secret_then_value(text, more=False):
-    """A name or a path piece that holds a secret's name and then, glued or after a separator or a space, something that is not a word
-    (password-Zq7kP2mR, Token Zq7kP2mR, pwdZq7kP2mR, password-srv01-Zq7kP2mR, password-ab12-cd34-ef56) or a flag with its value (-password x, --token x, --master-keyZq7kP2mR, set password x):
-    a command line, not a name. Every word after the first secret's name is judged, not the first alone. `more`: a `/` follows the piece in the path it is cut from."""
-    if _IDENT_FLAG.search(text) is not None or _NAMED_SET.search(text) is not None:
-        return True
-    m = _SECRET_THEN.search(text)
-    if m is not None and not _words_after(text, m.start(1), more):
-        return True
-    m = _FLAG_THEN.search(text)
-    return m is not None and not _words_after(text, m.start(1), more)
-
-
-def _ident_text_ok(text, limit, path, slash=False, more=False):
-    """The grammar of a name or of one path component."""
-    if len(text) > limit:
-        return False
-    if not text.isascii():
-        n = unicodedata.normalize("NFKC", text)
-        if any(unicodedata.category(c) in _STRIP_CATS or ord(c) in _FILLERS or not (c.isascii() or c.isalnum()) for c in n):
-            return False
-        text = "".join(c if c.isascii() else "a" for c in n)
-    if len(text) >= 12 and not _ids_plausible(text):
-        return False
-    probe = _SEP_DIGITS.sub("", _id_sub(text, lambda _: "x")) if len(text) >= 12 else _SEP_DIGITS.sub("", text)
-    if path and ":" in probe:
-        head, _, tail = probe.partition(":")       # a drive (C:), a storage id (local-lvm:vm-100-disk-0), host:port
-        if ":" in tail or not _DRIVE.fullmatch(head):
-            return False
-        probe = head + tail
-    if not (_PATH_PLAIN if path else _VERSION_PLAIN if slash else _NAME_PLAIN).fullmatch(probe) or _DENY_IN_IDENT.search(_id_sub(text, lambda _: "x")):
-        return False
-    scan = _id_sub(text, lambda _: " ") if len(text) >= 15 else text
-    for m in _RUN_CAND.finditer(scan):
-        if _token_like(m.group()):
-            return False
-    if slash:
-        for m in _PATH_RUN.finditer(scan):
-            if _cross_slash_token(m.group()):
-                return False
-    if _secret_then_value(text, more):             # the name of a secret and a value after it: a flag (-password x), a word that is not a word (password-Zq7kP2mR)
-        return False
-    if _SECRET_WORD.search(text):                  # the name of a secret in a name: no random-looking piece beside it (words are not)
-        for piece in _ALNUM_RUN.findall(_SECRET_WORD.sub(" ", text)):
-            if len(piece) >= 10 and len({_cls(c) for c in piece}) >= 2 and sum(len(w) for w in _WORDS.findall(piece)) < 0.7 * len(piece):
-                return False
-    return True
-
-
-def _ident(text, kind, field, where):
-    """A string of an identifier-shaped field: shown as it is when it fits the grammar of its type, else withheld by its size
-    and field (a path component by component)."""
-    orig = text
-    if kind == "path" and not text.isascii():
-        text = _SURROGATE_BYTE.sub(lambda m: "\\x%02x" % (ord(m.group()) - 0xDC00), text)       # a byte that was not UTF-8, as \xNN
-    marker = _CUT_NOTE.search(text)
-    body = text[:marker.start()] if marker else text
-    if not body or body in OWN_NAMES or body in VOCABULARY or _MARKER.fullmatch(body):
-        return text
-    if _flat(body, False, False) != body:           # an invisible character, or the escape of one, is not part of a plain name
-        _keep_original(orig, field, where)
-        return "<withheld: %d bytes, field %s>" % (blen(orig), field if field_kind(field) else "name")
+def _layer2(s, field):
+    out = s
+    for _ in range(3):
+        nxt = _layer2_once(out, field)
+        if nxt == out:
+            break
+        out = nxt
+    return out
+
+
+# ---- free text: the deny-list ------------------------------------------------------------------------------------------------------
+_LABELLED_DIGEST = re.compile(r"(?i)(?:md5|sha-?1|sha-?256|sha-?384|sha-?512|imphash|hashes?|filehash|ssdeep|tlsh)[\"'=:> \t]{1,6}(?:(?:md5|sha-?1|sha-?256|imphash)=)?([0-9a-f]{32,128})")
+_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.,][0-9]{1,9})?(?:Z|[+-][0-9]{2}:?[0-9]{2})?")
+_HEX_RUN = re.compile(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{32,}(?![0-9A-Za-z])")
+
+
+def _mask_typed(s):
+    """A same-length copy of free text in which what is a typed id (GUID, SID, IPv4, time, labelled digest) is `~`."""
+    t = s
+    if "-" in s:
+        t = _GUID.sub(lambda m: "~" * len(m.group()), t)
+        if "S-1-" in s:
+            t = _SID.sub(lambda m: "~" * len(m.group()), t)
+        if ":" in s:
+            t = _TIME.sub(lambda m: "~" * len(m.group()), t)
+    if "." in s:
+        t = _IPV4.sub(lambda m: "~" * len(m.group()), t)
+    low = s.lower()
+    if _has(_KNOWN_ID_WORDS, low):
+        t = _KNOWN_ID.sub(lambda m: "~" * len(m.group()), t)
+    if "ash" in low or "md5" in low or "sha" in low:
+        t = _LABELLED_DIGEST.sub(lambda m: m.group().replace(m.group(1), "~" * len(m.group(1))), t)
+    return t
+
+
+def _deny_text(s, field):
+    t = _mask_typed(s)
+    t = t.replace("\x00", " ")
+    spans = _bad_runs(t, _JOIN_PATH)
+    spans += [m.span() for m in _HEX_RUN.finditer(t)]
+    return _replace_spans(s, _merge(spans), "token-shaped text", field) if spans else s
+
+
+# ---- the entry point for one string ---------------------------------------------------------------------------------------------------
+_MEMO = {}
+
+
+_WIDE_RUN = re.compile(r"[\x20-\x7e\uff01-\uff5e]{4,}")
+
+
+def _wide_views(raw):
+    """Runs of ASCII and full-width ASCII in `raw` read as UTF-8 and as UTF-16LE (at both byte offsets), when it holds a full-width character at
+    all: width is folded afterwards (NFKC), so a full-width token written as hexadecimal is read like a plain one."""
+    views = []
+    if b"\xef\xbc" in raw or b"\xef\xbd" in raw:
+        views += _WIDE_RUN.findall(raw.decode("utf-8", "replace"))
+    if b"\xff" in raw:
+        for offset in (0, 1):
+            views += _WIDE_RUN.findall(raw[offset:len(raw) - (len(raw) - offset) % 2].decode("utf-16-le", "replace"))
+    return [unicodedata.normalize("NFKC", v) for v in views]
+
+
+def _hex_views(s):
+    """The printable views of binary data written as hex: Latin-1 runs of 6 or more, UTF-16LE and UTF-16BE runs of 4 or more, and the runs that hold
+    full-width characters (UTF-8 and UTF-16LE), width folded."""
+    try:
+        raw = bytes.fromhex(s[: MAX_HEX_JUDGED])
+    except ValueError:
+        return None
+    views = [m.group().decode("latin-1") for m in re.finditer(rb"[\x20-\x7e]{6,}", raw)]
+    views += [m.group().decode("utf-16-le", "replace") for m in re.finditer(rb"(?:[\x20-\x7e]\x00){4,}", raw)]
+    views += [m.group().decode("utf-16-be", "replace") for m in re.finditer(rb"(?:\x00[\x20-\x7e]){4,}", raw)]
+    return views + _wide_views(raw)
+
+
+def _show_hex(s, field):
+    if not s or not re.fullmatch(r"(?:[0-9A-Fa-f]{2})+", s):
+        return s if re.fullmatch(r"[0-9A-Fa-f]*", s) else _show_text(s, field)
+    if len(s) > MAX_HEX_JUDGED:
+        return _b_withheld(s, "binary data over the judged size", field)
+    for v in _hex_views(s) or ():
+        if _layer2(v, "") != v or _deny_text(v, "") != v or _suspect(v):
+            return _b_withheld(s, "binary data holding a secret-shaped text", field)
+    return s
+
+
+def _show_text(s, field):
+    # layer 2 reads the string as the evidence wrote it: the deny-list replaces a span and takes with it the context (`user:` of `user:pw@host`, the
+    # characters glued before `glpat-`) the position and prefix rules need; what it leaves is read once more
+    out = _layer2(s, field)
+    denied = _deny_text(out, field)
+    return _layer2(denied, field) if denied != out else out
+
+
+def _show(s, kind, field):
+    if s in OWN_NAMES or _MARK.fullmatch(s):
+        return s
+    if len(s) > MAX_ONE_STRING:
+        return _show(s[:MAX_ONE_STRING], kind, field) + _b_withheld(s[MAX_ONE_STRING:], "rest of a long string", field)
     if kind == "id":
-        if (_ID_FORMS.fullmatch(body) or _id_is(body)) and not _DENY_IN_IDENT.search(body) and not _secret_then_value(body):        # the ids a name or a path shows (t10., iqn.) are shown in an id field too
-            return text
-        return _withhold_field(text, field, where)
-    if kind == "path":
-        parts = _SEP.split(body)
-        ok = [i % 2 == 1 or not p or _MARKER.fullmatch(p) is not None or p in OWN_NAMES or _ident_text_ok(p, 255, True, False, parts[i + 1:i + 2] == ["/"]) for i, p in enumerate(parts)]
-        # What each piece holds at the edge a key's neighbour would join: a piece of the key alphabet alone is all key; a piece with
-        # something glued to it (`local:`, `[ds1] `, `C:`, a quote or a brace, an error message) holds a stretch of key at the end that
-        # is not glued (its tail, for the piece left of a `/`, its head for the piece right of one). A withheld piece whose edge is
-        # a stretch of key seeds the sweeps below like a withheld piece of the key alphabet alone.
-        pure, heads, tails, seeds_r, seeds_l = set(), {}, {}, set(), set()
-        for i in range(0, len(parts), 2):
-            stem = parts[i].partition(".")[0]
-            if _KEY_PIECE.fullmatch(stem):
-                pure.add(i)
-                heads[i] = tails[i] = stem
-                if not ok[i]:                       # a piece withheld that a key's pieces are made of
-                    seeds_r.add(i)
-                    seeds_l.add(i)
-            else:
-                heads[i], tails[i] = _key_head(stem), _key_tail(parts[i])
-                if not ok[i]:
-                    if _key_edge(tails[i]):
-                        seeds_r.add(i)
-                    if _key_edge(heads[i]) or (len(heads[i]) >= 2 and heads[i].endswith("=") and heads[i].rstrip("=")):      # the padding of a key
-                        seeds_l.add(i)
-        run = []                                    # two pieces in a row that look like stretches of a base64 key: the key was cut by its `/`
-        for i in range(0, len(parts), 2):
-            if ok[i] and _piece_random(_id_sub(parts[i], lambda _: "")):          # a GUID, a volume id or a default machine name in a piece is not a stretch of a key
-                run.append(i)
-                continue
-            if len(run) >= 2:
-                for j in run:
-                    ok[j] = False
-                    seeds_r.add(j)
-                    seeds_l.add(j)
-            run = []
-        if len(run) >= 2:
-            for j in run:
-                ok[j] = False
-                seeds_r.add(j)
-                seeds_l.add(j)
-        scan = _id_sub(body, lambda found: " " * len(found))
-        i0 = pos0 = 0                                    # the first piece that can overlap the next run (runs come in order: each piece is passed once)
-        for m in _PATH_RUN.finditer(scan):               # a run of letters and digits that goes across `/` is judged as one: a base64 key cut by its slashes
-            while i0 < len(parts) and pos0 + len(parts[i0]) <= m.start():
-                pos0 += len(parts[i0])
-                i0 += 1
-            if _cross_slash_token(m.group()):
-                pos, hit = pos0, []
-                for i in range(i0, len(parts)):
-                    if pos >= m.end():
-                        break
-                    if i % 2 == 0 and parts[i]:
-                        hit.append((i, body[max(pos, m.start()):min(pos + len(parts[i]), m.end())]))      # the piece, and the part of it the run covers
-                    pos += len(parts[i])
-                while len(hit) > 1 and not _randomish(hit[0][1]):       # the plain words either side of the key (vmfs, volumes, a datastore) stay readable
-                    hit.pop(0)
-                while len(hit) > 1 and not _randomish(hit[-1][1]):
-                    hit.pop()
-                for i, _ in hit:
-                    ok[i] = False
-                    seeds_r.add(i)
-                    seeds_l.add(i)
-        # A key cut by its `/` is withheld in every piece: from a withheld piece whose edge is key, the pieces next to it across a
-        # `/` (an empty one for `//`, a short one only if a random-looking one follows it) are withheld as far as the last random-looking
-        # one; a piece with something glued to it ends the key, and is withheld when the edge toward the key is a random-looking stretch.
-        # One sweep to the right and one to the left, each piece read twice at most.
-        for step in (2, -2):
-            seeds = seeds_r if step == 2 else seeds_l
-            active, pending = False, []
-            for k in (range(0, len(parts), 2) if step == 2 else range(len(parts) - 1, -1, -2)):
-                before = k - 1 if step == 2 else k + 1
-                if not 0 <= before < len(parts) or parts[before] != "/":
-                    active, pending = False, []
-                stem = parts[k].partition(".")[0]
-                if k in seeds:
-                    take, active, pending = pending, True, []
-                elif not active:
-                    continue
-                elif not parts[k]:
-                    pending.append(k)                   # `//` inside a key: an empty piece
-                    continue
-                elif not ok[k]:
-                    take, pending = pending, []
-                elif k not in pure or _id_is(parts[k]):
-                    edge = heads[k] if step == 2 else tails[k]
-                    take = pending + [k] if k not in pure and _key_edge(edge, 4) else []
-                    active, pending = False, []
-                elif _randomish(stem):
-                    take, pending = pending + [k], []
-                elif len(stem) <= 8:
-                    pending.append(k)                   # a short piece belongs to the key only if a random-looking one follows it
-                    continue
-                else:
-                    active, pending = False, []
-                    continue
-                for j in take:
-                    ok[j] = ok[j] and not parts[j]
-        for i in range(2, len(parts) - 2, 2):       # one random-looking piece between two that are withheld is the middle of the key
-            if ok[i] and i in pure and parts[i - 1] == "/" == parts[i + 1] and not ok[i - 2] and not ok[i + 2] and len(heads[i]) >= 8 and _randomish(heads[i]) and not _id_is(parts[i]):
-                ok[i] = False
-        if all(ok):
-            return text
-        _keep_original(orig, field, where)
-        out = [p if ok[i] else "<withheld: %d bytes, field %s>" % (blen(p), field if field_kind(field) else "path") for i, p in enumerate(parts)]
-        return "".join(out) + (marker.group() if marker else "")
-    if _ident_text_ok(body, 160 if kind in ("name", "key") else 96, False, slash=(kind == "simple")):
-        return text
-    return _withhold_field(text, field, where)
-
-
-_SEP = re.compile(r"([/\\])")
-_KEY_PIECE = re.compile(r"[A-Za-z0-9+=_-]+")
-_KEY_SET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+=_-")
-
-
-def _key_edge(edge, least=8):
-    """The end of a piece that has something glued to it, next to a `/`: `least` or more characters of the key alphabet that mix capitals,
-    small letters and digits or capitals inside a word as a stretch of a key does (a time stamp, `vm-100-disk-0` and a plain word do not)."""
-    if len(edge) >= 8 and least < 8 and _randomish(edge):                 # beside a withheld piece: eight or more characters of one case and digits are a stretch of a key too
-        return True
-    return len(edge) >= least and _randomish(edge) and _HAS_UPPER.search(edge) is not None and _HAS_LOWER.search(edge) is not None
-
-
-def _key_head(text):
-    """The longest start of `text` made of the key alphabet [A-Za-z0-9+=_-] (a scan, not a pattern: linear whatever follows)."""
-    n = 0
-    while n < len(text) and text[n] in _KEY_SET:
-        n += 1
-    return text[:n]
-
-
-def _key_tail(text):
-    """The longest end of `text` made of the key alphabet."""
-    n = len(text)
-    while n > 0 and text[n - 1] in _KEY_SET:
-        n -= 1
-    return text[n:]
-_SURROGATE_BYTE = re.compile("[\udc80-\udcff]")
-
-
-def _keep_original(text, field, where):
-    COUNTS["identifiers"] = COUNTS.get("identifiers", 0) + 1
-    values = RUN["values"]
-    if RUN["record"] and values is not None and values.enabled:
-        values.add({"record_type": "original", "where": where or None, "field": field, "value": text})
-
-
-def _withhold_field(text, field, where):
-    _keep_original(text, field, where)
-    return "<withheld: %d bytes, field %s>" % (blen(text), field if field_kind(field) else "name")
-
-
-# ---- the judgement of one string ------------------------------------------------------------------------------------------
-
-def _out_of_budget(text):
-    """True when this string was not judged before and the run's time or character budget is spent: it is withheld by its size."""
-    RUN["chars"] += len(text)
-    stop = RUN["stop"]
-    if stop is None:
-        if RUN["chars"] > RUN["cap"]:
-            RUN["stop"] = stop = "the cap of %d characters judged in one run" % RUN["cap"]
-        elif RUN["deadline"] is not None and time.monotonic() > RUN["deadline"]:
-            RUN["stop"] = stop = "max_seconds"
-    return stop is not None
-
-
-def seal_text(text, kind="boundary", field=None, where=""):
-    """The rules for the type of `field` applied to a whole string: layer 1 for an identifier-shaped field, else layer 2 until it
-    changes nothing (a string that keeps changing is withheld whole), so that the check after it finds nothing to change.
-    The Shower uses this too, so that what it shows and what the way out lets through are judged by the same rules."""
-    if not isinstance(text, str):
-        text = str(text)
-    fk = field_kind(field) if field else None
-    if field == "key":
-        fk = "key"
-    key = (fk, text) if len(text) <= 512 else None
-    hit = _SEALED.get(key) if key else None
-    if hit is not None:
-        return hit
-    if text in OWN_NAMES or text in VOCABULARY:
-        return text
-    if _out_of_budget(text):
-        RUN["stopped_strings"] += 1
-        return "<withheld: %d bytes, run limit>" % blen(text)
-    rest = ""
-    if len(text) > MAX_ONE_STRING:
-        rest, text = _withheld("rest of a long text", len(text) - MAX_ONE_STRING, kind), text[:MAX_ONE_STRING]
-    if fk in _IDENT_KINDS:
-        hit = _ident(text, fk, field, where)
+        if len(s) <= 3 or _CONTENT_ID.fullmatch(s):
+            return s
+        for form in _ID_FORMS:
+            if _TYPED[form].fullmatch(s) and not (form in _NAMING_IDS and s[:4] in ("t10.", "iqn.") and _bad_runs(s, _JOIN_NAME)):
+                return s
+        kind = "name"
+    if kind in _TYPED:
+        if len(s) <= 3 or (_TYPED[kind].fullmatch(s) and not (kind in _NAMING_IDS and s[:4] in ("t10.", "iqn.") and _bad_runs(s, _JOIN_NAME))):
+            return s
+        return _b_withheld(s, "not a %s" % kind, field)
+    if kind == "hex":
+        return _show_hex(s, field)
+    flat = _flat(s)
+    if flat != s:
+        # an invisible character, or the escape of one: identifiers fail closed; free text is judged without it
+        if kind in ("name", "path", "key", "url"):
+            return _b_withheld(s, "invisible characters in a name", field)
+        sealed = _show_text(flat, field)
+        return sealed if sealed != flat else s
+    if kind not in ("name", "path", "key", "url", "host"):
+        return _show_text(s, field)
+    pre = _layer2(s, field)
+    if kind == "name":
+        base = _show_name(pre, field)
+    elif kind == "path":
+        base = _show_path(pre, field)
+    elif kind == "key":
+        base = _show_key(pre, field)
+    elif kind == "url":
+        base = _show_url(pre, field)
     else:
-        hit = text
-        for _ in range(6):
-            before, hit = hit, _free_once(hit, kind)
-            if hit == before:
-                break
-        else:
-            hit = "<withheld: %d bytes>" % blen(text)
-    hit += rest
-    if key:
-        if len(_SEALED) >= 30000:
-            _SEALED.clear()
-        _SEALED[key] = hit
-    return hit
+        base = _show_host(pre, field)
+    return _layer2(base, field) if base != pre else base
 
 
-def seal_head(text, kind="boundary", field=None, where=""):
-    """seal_text for a call site that reads a piece of a string the evidence supplied (a name, a path, a message) and is not
-    the Shower: at most the first Shower.EXAMINED characters are judged (the cut leaves no open run), and a longer text is
-    shown with its whole length, as the Shower shows it. A text that long is never an identifier, so nothing legitimate is lost."""
-    if not isinstance(text, str):
-        text = str(text)
-    if len(text) <= Shower.EXAMINED:
-        return seal_text(text, kind, field, where)
-    return seal_text(cut_safely(text, Shower.EXAMINED), kind, field, where) + "...(whole text: %d characters)" % len(text)
+def show(s, kind="text", field=""):
+    """The text the answer may show for the string `s` of a field of type `kind` (a T carries its own)."""
+    if not isinstance(s, str) or not s:
+        return s
+    kind = getattr(s, "kind", kind)
+    memo = (kind, field, s) if len(s) <= 512 and kind not in _TYPED else None            # (a typed id is judged by one match: it is not worth a place in the memo)
+    quiet = _QUIET[0]
+    if memo is not None:
+        hit = _MEMO.get(memo)
+        if hit is not None:
+            out, pending = hit
+            if pending and not quiet:
+                # judged earlier only to see what would be printed: it is withheld, counted and written to the values file now that it is printed (once)
+                for original, label, where in pending:
+                    _b_withheld(original, label, where)
+                _MEMO[memo] = (out, None)
+            return out
+    events = _EVENTS[0] = [] if quiet and memo is not None else None
+    try:
+        out = _show(str(s), kind, field)
+    finally:
+        _EVENTS[0] = None
+    if memo is not None:
+        if len(_MEMO) > 40000:
+            _MEMO.clear()
+        _MEMO[memo] = (out, events or None)
+    return out
 
 
-def boundary_text(text, field=None, where=""):
-    """The seal of one string at the way out, counted when it changed something. A string the Shower judged is not judged again."""
-    if getattr(text, "judged", False):
+_ORDER_SALT = os.urandom(16)
+
+
+def _quietly(fn):
+    """`fn()` with nothing counted, listed or written: judging a string to see what an answer would show of it is not withholding it."""
+    saved = (BOUNDARY["withheld"], BOUNDARY["by"].copy(), BOUNDARY["replaced"], BOUNDARY["replaced_by"].copy(), BOUNDARY["where"][:], BOUNDARY["not_listed"], _VALUES["fh"])
+    _VALUES["fh"] = None
+    was, _QUIET[0] = _QUIET[0], True
+    try:
+        return fn()
+    finally:
+        _QUIET[0] = was
+        (BOUNDARY["withheld"], BOUNDARY["by"], BOUNDARY["replaced"], BOUNDARY["replaced_by"], BOUNDARY["where"], BOUNDARY["not_listed"], _VALUES["fh"]) = saved
+
+
+def sealed_text(text, kind="text", field=""):
+    """The exact text an answer prints for the string `text` of a field of type `kind`: the layers, then the backstop (a string it replaces comes
+    out as its placeholder). Nothing is counted, listed or written to the values file: this is for what must see what the answer shows (a
+    `contains` filter, the order of a list)."""
+    if not isinstance(text, str) or not text:
         return text
-    hit = seal_text(text, "boundary", field, where)
-    if hit != text:
-        BOUNDARY["withheld"] += 1
-    return hit
+    return _quietly(lambda: _seal(text, kind, field, (), True))
 
 
-def big_int(value):
-    """An integer of more than 18 digits: no format this pack reads carries one, and its digits can be a secret's."""
-    return isinstance(value, int) and not isinstance(value, bool) and abs(value) >= 10 ** 18
-
-
-def seal(value, depth=0, field=None, where=""):
-    """Every key and every value of a structure, as JSON will write it, through boundary_text; a key two keys seal to is
-    numbered (`<key> #2`), never merged. `field` is the key the value sits under (a list's items sit under its key)."""
-    if isinstance(value, str):
-        return boundary_text(value, field, where)
-    if big_int(value):
-        BOUNDARY["withheld"] += 1
-        return "<withheld: an integer of %d bits>" % value.bit_length()
-    if value is None or isinstance(value, (bool, int)):
-        return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else boundary_text(repr(value))
-    if depth > 64:
-        return boundary_text(json.dumps(value, default=str))
-    if isinstance(value, dict):
-        out, taken = {}, {}
-        for k, v in value.items():
-            raw = k if isinstance(k, str) else json.dumps(k) if isinstance(k, (bool, type(None))) else str(k)
-            key = raw if raw in _FIELDS and raw != "key" else boundary_text(raw, "key", where + "/(key)")
-            if key in out:
-                n = taken.get(key, 1) + 1
-                while "%s #%d" % (key, n) in out:
-                    n += 1
-                taken[key] = n
-                key = "%s #%d" % (key, n)
-            out[key] = seal(v, depth + 1, field if raw in _INHERIT else raw, where + "/" + key)
+def print_order(items, kind="name", text=str):
+    """`items` in the order an answer prints them: by the text the answer PRINTS for each (the layers and the backstop, sealed_text), and the items
+    whose text is the same placeholder in a random order that is new for every run. The rank of the withheld texts themselves (the order `sorted`
+    would give, the order a directory or a hive lists them in) must never show in what an answer lists. `kind` is the kind of the field the items
+    are printed in; `text` gives the string of an item."""
+    def judge():
+        out = []
+        for n, i in enumerate(items):
+            raw = text(i)
+            shown = _seal(raw, kind, "", (), True) if isinstance(raw, str) and raw else raw
+            out.append((shown, hashlib.blake2b(_ORDER_SALT + raw.encode("utf-8", "surrogatepass"), digest_size=8).digest(), n, i))
         return out
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [seal(v, depth + 1, field, "%s/%d" % (where, i)) for i, v in enumerate(value)]
-    return boundary_text(str(value), field, where)
+    items = list(items)
+    keyed = _quietly(judge)
+    keyed.sort(key=lambda k: (k[0], k[1], k[2]))
+    return [k[3] for k in keyed]
 
 
-# ---- layer 3: the backstop, written apart from the layers above -----------------------------------------------------------
-# Its own normaliser: every character of a C category, a mark that combines or encloses, a line or paragraph separator, a blank
-# filler; and the escapes \uXXXX \UXXXXXXXX \xNN of such a character.
-_S_ESC = re.compile(r"(?<!\\)\\+(?:u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8})|u\{([0-9a-fA-F]{1,6})\}|x([0-9a-fA-F]{2}))")
+def contains_check(needle_lower, text, kind="text", field=""):
+    """(matched, blind) for a `contains` filter: the needle is looked for in the text the answer will PRINT for `text` (sealed_text: after the layers
+    AND the backstop), never in what either of them withheld or replaced, so that a count of matches cannot tell a true guess of a hidden piece from
+    a wrong one. `blind` is true when it was not found and that text holds a placeholder: the needle may be in what is hidden. It is the same
+    whatever the needle, so counting it opens no way to test a guess."""
+    sealed = sealed_text(text, kind, field)
+    if needle_lower in sealed.lower():
+        return True, False
+    return False, _MARK.search(sealed) is not None
+
+
+# ---- layer 3: the backstop, written apart from the layers above ------------------------------------------------------------------------
+_S_ESC = re.compile(r"(?<!\\)\\+(?:u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8})|[uU]\{([0-9a-fA-F]{1,8})\}|x([0-9a-fA-F]{2}))")
 _S_FILL = "\u115f\u1160\u3164\uffa0\u2800"
 
 
@@ -1863,7 +2233,7 @@ def _s_unesc(m):
 
 
 def _s_normal(text):
-    if "\\" in text:
+    if "\\u" in text or "\\U" in text or "\\x" in text:
         text = _S_ESC.sub(_s_unesc, text)
     if text.isascii() and text.isprintable():
         return text
@@ -1872,276 +2242,703 @@ def _s_normal(text):
 
 
 _S_PEM = re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY|PRIVATE KEY-----")
-# A secret's name, read from the delimiter back: the name is the run of name characters before an `=` or a `:`
 _S_DELIM = re.compile(r"[=:]")
+_S_NAME_WORDS = ("pass", "pw", "auth", "sig", "sas", "secret", "token", "credential", "key", "psk", "otp", "bearer", "community", "dsn", "pin", "connection_string", "webhook_url")        # a name that ends in a word of _S_STRONG or _S_WEAK holds one of these
+_S_FLAGWORD = (r"(?:[a-z0-9]{1,20}[-_]){0,4}(?:passw(?:or)?d|passwd|pass(?:[-_]?phrase)?|pwd|pw|otp|[a-z0-9]{0,20}secret[a-z0-9]{0,20}|[a-z0-9]{0,20}token|api[-_]?key|access[-_]?key|key|keypass|storepass|userpass|auth|authorization|bearer|psk|credentials?|community)")
+_S_FLAGCAMEL = r"[A-Za-z0-9]{1,20}(?-i:Key|Token|Password|Passwd|Pwd|Pass|Passphrase|Secret)"
+_S_NOVALUE = r"(?!<[^<>\s]{0,40}>(?:[\s;,]|$))(?![A-Za-z0-9_./~:-]{1,120}[.](?i:key|pem|pub|crt|p12|pfx|jks)(?![A-Za-z0-9]))(?!(?:~|[.]{1,2})/[A-Za-z0-9_./-]{1,120}|/[A-Za-z0-9_.-]{1,40}(?:/[A-Za-z0-9_.-]{1,40})+)"
+_S_ARGNAME = re.compile(r"(?<![A-Za-z0-9])--?(?i:" + _S_FLAGWORD + r")[= ]" + _S_NOVALUE + r"\S|(?<![A-Za-z0-9])--?" + _S_FLAGCAMEL + r"[= ]" + _S_NOVALUE + r"\S")
+_S_PREFIX_WORDS = ("akia", "asia", "agpa", "aida", "aroa", "anpa", "anva", "aipa", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "glpat-", "xox", "xapp-",
+                   "sk_live_", "rk_live_", "pk_live_", "sk_test_", "npm_", "pypi-", "shpat_", "dop_v1_", "aiza", "ya29.", "sg.", "sk-", "eyj")
 _S_LINE = re.compile(r"[ \t]*line[ \t]+[0-9]")
 _S_NAME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-")
 _S_STRONG = ("password", "passwd", "passphrase", "passw", "pwd", "secret", "token", "credential", "apikey", "api_key", "api-key", "accesskey", "access_key", "access-key",
              "accountkey", "account_key", "account-key", "privatekey", "private_key", "private-key", "masterkey", "master_key", "sharedkey", "shared_key", "signingkey", "encryptionkey",
-             "secretkey", "secret_key", "secret-key", "pass_word", "pass-word", "authorization", "bearer", "psk", "otp", "dsn", "webhook_url", "webhookurl", "webhook-url",
-             "connection_string", "connectionstring", "connection-string", "ssh_key", "sshkey", "ssh-key", "snmp_community", "snmpcommunity", "community_string")
-_S_WEAK = ("pass", "pw", "auth", "sig", "sas", "pin")
+             "secretkey", "secret_key", "secret-key")
+_S_WEAK = ("pass", "pw", "auth", "sig", "sas")
 _S_NOT_PASS = ("bypass", "compass", "overpass", "underpass", "trespass", "encompass", "surpass", "impass")
-_S_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+_S_STRONG_ENDS = tuple(w + p for w in _S_STRONG for p in ("", "s"))       # a name that ends in one of these, or in one of them plural
+_S_WEAK_ENDS = tuple(w + p for w in _S_WEAK for p in ("", "s"))
+_S_NOT_PASS_ENDS = tuple(w + p for w in _S_NOT_PASS for p in ("", "s"))
+_S_VALUEY_ENDS = ("psk", "otp", "bearer", "authorization", "sshkey", "ssh_key", "ssh-key", "snmp_community", "pass_word", "pass-word", "connection_string", "webhook_url", "dsn", "pin")        # names after which only a value built like a secret counts (a log line says `authorization: failed`)
 _S_DIGITS = re.compile(r"[0-9]{19}")
 _S_HEXRUN = re.compile(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{40,}(?![0-9A-Za-z])")
 _S_B64NOPAD = re.compile(r"[A-Za-z0-9+/]{20,}")
+_S_B64PADPATH = re.compile(r"[A-Za-z0-9+/]{22,90}={1,2}(?![A-Za-z0-9+=])")
 _S_B64PAD = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{15,}={1,2}(?![A-Za-z0-9+=])")
-_S_PREFIX = re.compile(r"(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{12}|(?:gh[pousr]_|github_pat_|glpat-|xox[a-z]-|xapp-|sk-|sk_live_|rk_live_|pk_live_|sk_test_"
-                       r"|npm_|pypi-|shpat_|dop_v1_|AIza|ya29\.|SG\.)[A-Za-z0-9_-]{12}|eyJ[A-Za-z0-9_-]{12}")
-_S_USERINFO = re.compile(r"[^\s/@:<>\"']{1,64}:[^\s/<>\"']{1,128}@[^\s/@<>\"']")
+# in any case where an upper-case spelling of a lower-case prefix is a likely leak (the vendors' prefixes with a body of 12 or more characters)
+_S_PREFIX = re.compile(r"(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{12}|(?i:(?<![A-Za-z0-9])(?:akia|asia)[a-z0-9]{12}|(?:gh[pousr]_|github_pat_|glpat-|xox[a-z]-|xapp-|sk_live_|rk_live_|pk_live_|sk_test_)[A-Za-z0-9_-]{12})"
+                       r"|(?:npm_|pypi-|shpat_|dop_v1_|AIza|ya29\.|SG\.)[A-Za-z0-9_-]{12}|sk-(?=[A-Za-z0-9_-]{0,39}[0-9])[A-Za-z0-9_-]{12}|eyJ[A-Za-z0-9_-]{12}")
+_S_TOKEN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-")
+_S_PWHOST = re.compile(r"(?<![A-Za-z0-9._%+-])([A-Za-z0-9]{12,64})@[^\s/@<>\"']")
+_S_USERINFO = re.compile(r"[^\s/@:<>\"']{1,64}:(?P<pw>[^\s/<>\"']{1,128})@[^\s/@<>\"']")
+_S_USERINFO_MARK = re.compile(r"<>:(?P<pw>[^\s/<>\"']{1,128})@[^\s/@<>\"']")
+_S_USERINFO_URL = re.compile(r"(?<=//)(?![^\s/@:<>\"']*:[0-9]{1,5}(?:[/?#@]|$))[^\s/@:<>\"']{1,64}:(?P<pw>[^\s<>\"']{1,128})@[^\s/@<>\"']")
+_S_VALUE = re.compile(r"(?:[^\s\"'<>;,&]|[;,&](?![A-Za-z0-9_. -]{1,40}=)){1,512}")
+_S_ARGVAL = re.compile(r"(?<![A-Za-z0-9])--?(?:(?i:" + _S_FLAGWORD + r")|" + _S_FLAGCAMEL + r")[= ]" + _S_NOVALUE + r"(\S{1,512})")
+# `set password x` and `enable secret x`, and a value glued behind a placeholder (password=<redacted>x, --password <redacted>x, token: <secret>x)
+_S_PH_SPACE = re.compile(r"(?:pass|pwd|secret|token|credential|key|auth|psk|otp|pw|sig|sas)[a-z]{0,10}[0-9]{0,2}[\"']?[ \t]{0,2}(?:[=:]|[ \t])[ \t]{0,2}<[^<>\s]{0,40}>[ \t]+([A-Za-z0-9]{8,40})(?![A-Za-z0-9])", re.I)
+_S_GLUED = re.compile(r"(?<![A-Za-z0-9])--?(?:[A-Za-z0-9]{1,20}[-_]){0,4}(?:(?i:key|token|pass|password|pwd|secret)|[A-Za-z]{1,20}(?:Key|Token|Pass|Password|Pwd|Secret))([A-Za-z0-9]{8,40})(?![A-Za-z0-9])")
+_S_AUTHZ = re.compile(r"(?i:authorization)[\"']?[ \t]{0,2}[=:][ \t]{0,2}[\"']?(?i:token|bearer|basic|negotiate)[ \t]+[A-Za-z0-9+/._~=-]{8,}")
+_S_T10TAIL = re.compile(r"t10[.][A-Za-z0-9_.+-]{0,100}?_([A-Za-z]{20,64})(?![A-Za-z0-9])|iqn[.][0-9]{4}-[0-9]{2}[.][a-z0-9.-]{1,60}:([A-Za-z]{20,64})(?![A-Za-z0-9])|iqn[.][0-9]{4}-[0-9]{2}[.]([A-Za-z]{20,64})(?![A-Za-z0-9])")
+_S_SET = re.compile(r"(?<![\w-])(?:set|enable)[ \t]+(?:passw(?:or)?d|secret|passphrase|token)[ \t]+(?:[0-9][ \t]+)?[^\s<]", re.I)
+_S_ANGLE = re.compile(r"(?:pass|pwd|secret|token|credential|key|auth|psk|otp|pw|sig|sas)[a-z]{0,10}[0-9]{0,2}[\"']?[ \t]{0,2}(?:[=:]|[ \t])[ \t]{0,2}<([A-Za-z0-9+/_.~=-]{6,128})>", re.I)
+_S_PH_GLUED = re.compile(r"(?:pass|pwd|secret|token|credential|key|auth|psk|otp|pw|sig|sas)[a-z]{0,10}[0-9]{0,2}[\"']?[ \t]{0,2}(?:[=:]|[ \t])[ \t]{0,2}<[^<>\s]{0,40}>[^\s<>;,&\"']", re.I)
+_S_PEMLINE = re.compile(r"[A-Za-z0-9+/=]{12,}")
+_S_SHORTRUN = re.compile(r"[A-Za-z0-9]{16,19}")
 _S_RUN = re.compile(r"[A-Za-z0-9+/_-]{20,}")
 _S_HEX = re.compile(r"[0-9A-Fa-f-]+")
-_S_IDS = re.compile(r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|(?:naa|eui|wwn-0x|vml)\.?[0-9A-Fa-f]{16,40}|vsan:[0-9a-f]{16}-[0-9a-f]{16}|t10\.[A-Za-z0-9_.]{8,120}"
-                    r"|iqn\.[0-9]{4}-[0-9]{2}\.[a-z0-9][a-z0-9.-]{0,60}(?::[A-Za-z0-9._-]{1,40})?")
-_S_MARK = re.compile(r"<[^<>]{0,80}withheld[^<>]{0,100}>")
-# a value in angle brackets is a value; only the empty brackets (what a marker leaves) and a placeholder word are not
-_S_PH = r"<(?:redacted|hidden|masked|removed|omitted|secret|password|passwd|passphrase|pwd|pass|token|key|value|placeholder|empty|none|null|unset|your[ _-]?(?:password|secret|token|key)|\*{1,16})?>"
-# The tail the second check reads after a placeholder as a value (the same judgement as the layers above, written again): a word of 8 or more characters with a digit
-# or a small letter before a capital, 8 or more digits, or 8 or more letters of one case that hold a pair of letters words rarely hold or four consonants in a row.
-_S_RARE = "|".join("%s[%s]" % (a, "".join(sorted(p[1] for p in _RARE_PAIRS if p[0] == a))) for a in sorted({p[0] for p in _RARE_PAIRS}))
-_S_PH_TAIL = (r"(?-i:[ \t]+(?:(?=[A-Za-z0-9]{0,32}[A-Za-z])(?=[A-Za-z0-9]{0,32}(?:[0-9]|[a-z][A-Z]))[A-Za-z0-9]{8,}|[0-9]{8,40}(?![A-Za-z0-9])"
-              r"|(?=(?:[a-z]{8,40}|[A-Z]{8,40})(?![A-Za-z0-9]))(?=[A-Za-z]{0,38}(?i:" + _S_RARE + r"|[b-df-hj-np-tv-xz]{4}))[A-Za-z]{8}))")
-_S_PH_END = r"(?=[\s\"';,&\\<>)\]}]|\.(?:\s|$)|$)(?!" + _S_PH_TAIL + r")"
-# a flag that takes a secret (`-password x`, `--token x`, `--db-password x`, `--ssh-key x`, `-key x`, `--apiToken x`; not `--key-file x` or `--keyboard x`)
-_S_FLAG_NAME = (r"(?:[a-z0-9]{1,20}[-_]){0,4}(?:pass(?:w(?:or)?d|[-_]?phrase)?|pwd|pw|otp|[a-z0-9]{0,20}secret[a-z0-9]{0,20}|[a-z0-9]{0,20}token|api[-_]?key|access[-_]?key|key|keypass|storepass|userpass|auth|authorization|bearer|psk|credentials?|community"
-                r"|[a-z0-9]{1,20}(?-i:Key|Token|Password|Passwd|Pwd|Pass|Passphrase|Secret))")
-_S_FLAG = re.compile(r"(?<![\w-])(?:--?" + _S_FLAG_NAME + r"|(?:set|enable)[ \t]+(?:password|secret|passphrase|token))(?:=|[ \t]+)(?!" + _S_PH + _S_PH_END + r")\S", re.I)
-_S_PHM = re.compile(_S_PH + _S_PH_END, re.I)
-_S_VALUE = re.compile(r"[^\s\"']+")
-# a flag that takes a secret with the value glued to it (`--master-keyX`, `-keyX`, `--sshKeyX`, `--userpassX`): the word glued to it
-_S_FLAG_GLUED = re.compile(r"(?<![A-Za-z0-9])--?" + _S_FLAG_NAME + r"([A-Za-z0-9]{5,40})", re.I)
-
-
-def _s_flag(flat):
-    """Whether `flat` holds a flag that takes a secret with a value, except a key file given to a flag that takes a key (--key client.key, --private-key ~/.ssh/id_rsa)."""
-    for m in _S_FLAG.finditer(flat):
-        v = _S_VALUE.match(flat, m.end() - 1)
-        if v is None or not _key_file(m.group()[:-1], v.group()):
-            return True
-    return False
-
-
-def _s_glued_random(word):
-    """Whether the word glued to a flag that takes a secret is a value and not a word: digits among its letters (two at the end are a counter), capitals among small letters more than once, two of the
-    pairs of letters words rarely hold, a run of five consonants or a vowel in fewer than one letter of five; five digits or more."""
-    core = word.rstrip("0123456789")
-    if not core:
-        return len(word) >= 5
-    if len(word) - len(core) > 2 or not core.isalpha():
-        return True
-    low = core.lower()
-    return (sum(1 for a, b in zip(core, core[1:]) if a.islower() and b.isupper()) >= 2 or sum(1 for k in range(len(low) - 1) if low[k:k + 2] in _RARE_PAIRS) >= 2
-            or _NO_VOWEL5.search(low) is not None or (len(low) >= 6 and sum(c in "aeiou" for c in low) < 0.2 * len(low)))
+_S_IDS = re.compile(r"\{?[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\}?|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|S-1-[0-9]{1,2}(?:-[0-9]{1,10}){1,15}|[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.]+Z?")
+_S_MARK = re.compile(r"<withheld [0-9]{1,10} (?:characters|bytes)(?:: [a-z][a-z ,/+-]{0,60}(?:: [a-z][a-z ,/+-]{0,60})?)?>|\[withheld: [0-9]{1,10} (?:characters|bytes)\]")
+_S_DIGEST_LABEL = re.compile(r"(?i)(?:md5|sha-?1|sha-?256|sha-?384|sha-?512|imphash|hashes?|filehash|ssdeep|tlsh)[\"'=:> \t]{1,6}(?:(?:md5|sha-?1|sha-?256|imphash)=)?[0-9a-f]{32,128}")
+_TYPED_KINDS = frozenset(("guid", "digest", "sid", "mac", "ip", "time", "number", "version", "hex", "label", "vmfs", "device", "iqn", "vmuuid", "cid", "winhost"))
+# what a typed field may hold, by the characters of its type (apart from the grammar the first layer checks, and wider than it)
+_S_TYPED = {
+    "guid": re.compile(r"[0-9A-Fa-f{}-]{1,64}"), "sid": re.compile(r"[Ss0-9-]{1,400}"), "mac": re.compile(r"[0-9A-Fa-f:-]{1,64}"),
+    "ip": re.compile(r"[0-9A-Fa-f:.]{1,64}(?:%[0-9A-Za-z_.-]{1,16})?"), "time": re.compile(r"[0-9TtZzDd:.,+' -]{1,64}"),
+    "number": re.compile(r"-?[0-9.]{1,64}|0[xX][0-9A-Fa-f]{1,16}|true|false|null"), "version": re.compile(r"(?=.{1,64}\Z)[vV]?[0-9]+(?:\.[0-9A-Za-z]{1,16}){0,6}(?:[-+][0-9A-Za-z.]{1,32}){0,3}"),
+    "digest": re.compile(r"(?:sha256:|sha1:|md5:)?[0-9A-Fa-f]{16,128}|T1[0-9A-Fa-f]{16,80}|[0-9]{1,6}:[A-Za-z0-9+/]+:[A-Za-z0-9+/]+"),
+    "vmfs": re.compile(r"[0-9A-Fa-f-]{1,40}"), "cid": re.compile(r"[0-9A-Fa-f]{1,16}"), "vmuuid": re.compile(r"[0-9A-Fa-f -]{1,64}"),
+    "winhost": re.compile(r"[Ww][Ii][Nn]-[A-Za-z0-9]{1,16}"), "iqn": re.compile(r"iqn\.[0-9A-Za-z.:_-]{1,120}"),
+    "device": re.compile(r"(?:naa|eui|vml|t10)\.[A-Za-z0-9_.+-]{1,130}|wwn-0x[0-9A-Fa-f]{1,32}"),
+}
+_S_LONG = re.compile(r"[A-Za-z0-9+/_-]{19}")           # the shortest run any check below needs (19 digits); the hexadecimal run needs 40, the others 20
+_S_PLAIN_NUM = re.compile(r"[0-9TZ:.+ -]+")
+_S_HEXONLY = re.compile(r"(?:[0-9A-Fa-f]{2})+")
+_S_PRINT_L1 = re.compile(rb"[\x20-\x7e]{6,}")
+_S_PRINT_U16 = re.compile(rb"(?:[\x20-\x7e]\x00){4,}")
+_S_PRINT_U16BE = re.compile(rb"(?:\x00[\x20-\x7e]){4,}")
 
 
 def _class(c):
     return 0 if c.isdigit() else 1 if c.isupper() else 2
 
 
-def _random_run(run):
-    """A run that changes between capitals, small letters and digits as random text does (an English name, a path, a
-    version or a hexadecimal identifier does not)."""
+def _random_run(run, shortest=20):
     if _S_HEX.fullmatch(run):
         return False
     pieces = [p for p in re.split(r"[/_+-]", run) if p]
     alnum = "".join(pieces)
-    if len(alnum) < 20 or max(len(p) for p in pieces) < 12:
+    if len(alnum) < shortest or max(len(p) for p in pieces) < 12:
         return False
     kinds = {_class(c) for c in alnum}
     if len(kinds) < 2:
         return False
     lower = [len(r) for r in re.findall(r"[a-z]+", alnum)]
     if lower and sum(lower) >= 3 * len(lower) and not re.search(r"[A-Z]{2}", alnum):
-        return False                        # words written together (WebServerPrimary01): capitals one at a time, words of three letters or more
+        return False
     changes = sum(1 for a, b in zip(alnum, alnum[1:]) if _class(a) != _class(b)) / (len(alnum) - 1)
     digit_runs = len(re.findall(r"[0-9]+", alnum))
     if kinds == {0, 1, 2}:
         return changes >= 0.42 or (changes >= 0.3 and digit_runs >= 4 and len(set(alnum)) >= 0.6 * len(alnum))
-    if kinds == {1, 2}:                    # letters only: only a case pattern no word has
+    if kinds == {1, 2}:
         return changes >= 0.5 and len(alnum) >= 24
-    return changes >= 0.4 and digit_runs >= 5 and len(set(alnum)) >= 0.5 * len(alnum)     # one case of letters and digits
+    return changes >= 0.4 and digit_runs >= 5 and len(set(alnum)) >= 0.5 * len(alnum)
 
 
-def _s_named(flat):
-    """A secret's name right before an `=` or a `:` that has something after it: the name is the run of name characters that ends
-    at the delimiter (read from the delimiter back, not from the secret word forward)."""
-    pos = 0
+def _s_letters_random(word):
+    """Letters of one case that no word is made of: some pair of them is one that words do not hold (the second check's own test of the serial of a t10. id and the target of an iqn. name)."""
+    if not (word.islower() or word.isupper()):
+        return False
+    low = word.lower()
+    return any(low[k:k + 2] not in _BIGRAMS for k in range(len(low) - 1))
+
+
+def _s_valuey(tok):
+    """Whether a run after a placeholder is built like a secret (the second check's own test): a digit among letters that is not a counter at the end, 8 or more digits, or letters with a pair no word holds."""
+    body = tok.rstrip("0123456789")
+    if not body:
+        return len(tok) >= 8
+    if len(tok) - len(body) > 4 or any(c.isdigit() for c in body):
+        return True
+    low = body.lower()
+    return any(low[k:k + 2] not in _BIGRAMS for k in range(len(low) - 1)) or re.search("[^aeiouy]{4}", low) is not None
+
+
+def _s_named(flat, values=None):
+    """Whether `flat` holds a value after a secret's name; with a list, the values themselves are added to it (until it holds MAX_PIECES)."""
+    pos, found = 0, False
     while True:
         m = _S_DELIM.search(flat, pos)
-        if not m:
-            return False
+        if not m or (values is not None and len(values) >= MAX_PIECES):
+            return found
         i = m.start()
         pos = m.end()
-        raw = flat[i + 1:i + 6]
-        after = raw.lstrip(" \t\"'\\")
-        if not after or after[0] == ">" or _S_LINE.match(flat, i + 1) or (after[0] == "<" and _S_PHM.match(flat, i + 1 + len(raw) - len(after))):
-            continue                                  # nothing after it, a placeholder or what a marker leaves, or an error message's `: line 3, column 5`
+        after = flat[i + 1:i + 6].lstrip(" \t\"'\\")
+        if not after or after[0] in "<>" or _S_LINE.match(flat, i + 1):
+            continue
         j = i
         while j > 0 and flat[j - 1] in " \t\"'\\" and i - j < 5:
             j -= 1
         k = j
         while k > 0 and j - k < 64 and flat[k - 1] in _S_NAME_CHARS:
             k -= 1
-        name = flat[k:j]
-        low = name.lower()
-        for plural in ("", "s"):
-            for word in (low, low.rstrip("0123456789")):          # password1, pass2
-                if word.endswith(tuple(w + plural for w in _S_STRONG)):
+        low = flat[k:j].lower()
+        if low.endswith(_S_STRONG_ENDS) or (low.endswith(_S_WEAK_ENDS) and not low.endswith(_S_NOT_PASS_ENDS)):
+            if values is None:
+                return True
+            found = True
+            v = i + 1
+            while v < len(flat) and flat[v] in " \t\"'\\" and v - i <= 6:
+                v += 1
+            vm = _S_VALUE.match(flat, v)
+            if vm:
+                values.append(vm.group())
+        elif low.rstrip("0123456789").endswith(_S_VALUEY_ENDS) or low.rstrip("0123456789").endswith(_S_STRONG_ENDS):
+            v = i + 1
+            while v < len(flat) and flat[v] in " \t\"'\\" and v - i <= 6:
+                v += 1
+            vm = _S_VALUE.match(flat, v)
+            if vm and _s_valuey(vm.group()):
+                if values is None:
                     return True
-                if word.endswith(tuple(w + plural for w in _S_WEAK)) and not word.endswith(tuple(w + plural for w in _S_NOT_PASS)):
-                    return True
+                found = True
+                values.append(vm.group())
 
 
-_S_T10_PIECES = re.compile(r"[A-Za-z0-9]+")
-_S_LETTERS = re.compile(r"[a-z]{16,40}|[A-Z]{16,40}")
+def _s_hex_views(text):
+    """The printable text inside data written as hexadecimal (Latin-1 runs of 6 or more, UTF-16LE and UTF-16BE runs of 4 or more), or None when `text` is not such data."""
+    if len(text) < 2 or not _S_HEXONLY.fullmatch(text[:MAX_HEX_JUDGED]):
+        return None
+    try:
+        raw = bytes.fromhex(text[:MAX_HEX_JUDGED])
+    except ValueError:
+        return None
+    return ([m.group().decode("latin-1") for m in _S_PRINT_L1.finditer(raw)] + [m.group().decode("utf-16-le", "replace") for m in _S_PRINT_U16.finditer(raw)]
+            + [m.group().decode("utf-16-be", "replace") for m in _S_PRINT_U16BE.finditer(raw)] + _wide_views(raw))
 
 
-def _s_random_letters(run):
-    """16 or more letters of one case with two or more of the pairs words rarely hold (a compound of words has one where they meet at most)."""
-    low = run.lower()
-    return sum(1 for k in range(len(low) - 1) if low[k:k + 2] in _RARE_PAIRS) >= 2
-
-
-def _s_id_random(s):
-    """Whether a device id of a kind holds random text: for a t10. id a piece of more than 24 characters, or 16 to 24 characters that change class as random text does or
-    are letters of one case that are not words; for an iqn. id letters of one case that are not words."""
-    if s.startswith("t10."):
-        return any(len(piece) > 24 or (len(piece) >= 16 and (_random_run(piece) or (_S_LETTERS.fullmatch(piece) and _s_random_letters(piece)))) for piece in _S_T10_PIECES.findall(s[4:]))
-    return s.startswith("iqn.") and any(_s_random_letters(run) for run in _S_LETTERS.findall(s[12:]))
-
-
-def _s_id_out(m):
-    """What a device id of a kind leaves in the text the checks below read: a blank. (One that holds random text is found before this, by _s_id_random.)"""
-    return " "
-
-
-def _suspect(text):
-    """The name of the check a string fails, or None."""
-    if text in OWN_NAMES or text in VOCABULARY or not text:
+def _suspect(text, kind="text"):
+    """The name of the check a string fails, or None. A string of a typed kind is not tested for runs of hexadecimal digits or random-looking runs, but
+    for the characters of its type; data written as hexadecimal is decoded and its printable text is tested as text."""
+    if not text or text in OWN_NAMES:
         return None
     if len(text) > MAX_ONE_STRING:
         text = text[:MAX_ONE_STRING]
+    if kind == "hex":
+        views = _s_hex_views(text)
+        if views is not None:
+            for view in views:
+                hit = _suspect(view, "text")
+                if hit:
+                    return "in binary data: " + hit
+            return None
+        kind = "text"
+    if kind in _S_TYPED and len(text) <= 64 and _S_PLAIN_NUM.fullmatch(text):
+        # digits, `. : + -`, a space, T and Z: no rule above the typed grammar can fire on these (no name, no prefix, no `@`), so the grammar alone decides
+        return None if len(text) <= 3 or _S_TYPED[kind].fullmatch(text) else "not the typed grammar"
     flat = _s_normal(text)
-    if _S_MARK.search(flat):
+    if "withheld" in flat:
         flat = _S_MARK.sub("<>", flat)
-    if _S_PEM.search(flat):
+    low = flat.lower()
+    if "private key" in low and _S_PEM.search(flat):
         return "a PEM marker"
-    bare = _S_IDS.sub(_s_id_out, flat)
-    if _s_named(bare) or _s_flag(flat) or any(_s_glued_random(m.group(1)) for m in _S_FLAG_GLUED.finditer(flat)):
+    bare = _S_IDS.sub(" ", flat) if "-" in flat else flat            # (all three kinds of id hold a `-`)
+    bare = _mask_embedded(bare)
+    named_words = _has(_S_NAME_WORDS, low)
+    if named_words and _S_AUTHZ.search(flat):
         return "a named secret"
-    if ("t10." in flat or "iqn." in flat) and any(_s_id_random(m.group()) for m in _S_IDS.finditer(flat)):
+    if (named_words and ("=" in bare or ":" in bare) and _s_named(bare)) or ("-" in flat and named_words and _S_ARGNAME.search(flat))             or (named_words and "-" in flat and any(_s_valuey(m.group(1)) for m in _S_GLUED.finditer(flat)))             or (named_words and ("<" in flat and (_S_PH_GLUED.search(flat) or any(_s_valuey(x) for m in _S_ANGLE.finditer(flat) for x in _ANGLE_SPLIT.split(m.group(1))) or any(_s_valuey(m.group(1)) for m in _S_PH_SPACE.finditer(flat))) or ("set" in low or "enable" in low) and _S_SET.search(flat))):
+        return "a named secret"
+    if _has(_S_PREFIX_WORDS, low) and _S_PREFIX.search(flat):
+        return "a token prefix"
+    if ("t10." in flat or "iqn." in flat) and any(_s_letters_random(m.group(1) or m.group(2) or m.group(3)) for m in _S_T10TAIL.finditer(flat)):
         return "a random-looking run"
+    if "@" in flat:
+        flat_user = re.sub("(?i)mailto:", "mailto ", flat)
+        if _S_USERINFO.search(flat_user) or _S_USERINFO_URL.search(flat_user) or _S_USERINFO_MARK.search(flat_user):       # (the last: a user that was replaced is still a user)
+            return "user-info"
+        for m in _S_PWHOST.finditer(flat_user):
+            word = m.group(1)
+            if len({_class(c) for c in word}) == 3 and sum(1 for a, b2 in zip(word, word[1:]) if _class(a) != _class(b2)) >= 0.3 * len(word):
+                return "user-info"            # (the password of a user-info whose user was cut off at a colon: a long run of capitals, small letters and digits before the host)
+    if kind in _TYPED_KINDS:
+        grammar = _S_TYPED.get(kind)
+        return "not the typed grammar" if grammar is not None and len(text) > 3 and not grammar.fullmatch(text) else None
+    if 16 <= len(bare) <= 19 and _S_SHORTRUN.fullmatch(bare) and _random_run(bare, 16):
+        return "a random-looking run"          # (a whole value of 16 to 19 characters: the length of a generated password, as the first layer takes it too)
+    if "=" not in bare and not _S_LONG.search(bare):
+        return None                       # no run of 19 characters of these, and no `=` for a padded run: none of the checks below can find anything
     if _S_DIGITS.search(bare):
         return "a long digit run"
-    if _S_PREFIX.search(flat):
-        return "a token prefix"
-    if _S_USERINFO.search(flat):
-        return "user-info"
-    if _S_HEXRUN.search(bare):
+    labelled = _S_DIGEST_LABEL.sub(" ", bare) if "ash" in low or "sha" in low or "md5" in low else bare
+    if _S_HEXRUN.search(labelled):
         return "a long hexadecimal run"
-    for m in _S_B64NOPAD.finditer(bare):
+    for m in _S_B64NOPAD.finditer(labelled):
         if "/" in m.group() and "+" in m.group() and len({_class(c) for c in m.group() if c.isalnum()}) == 3:
             return "a base64 run with / and +"
-    for m in _S_B64PAD.finditer(bare):
+    for m in _S_B64PAD.finditer(labelled):
         body = m.group().rstrip("=")
-        if len({_class(c) for c in body}) >= 2 and (("/" in body or "+" in body) or len(body) >= 20):
+        if len(m.group()) % 4 == 0 and re.search(r"[0-9+/]", body) and len({_class(c) for c in body}) >= 2 and (("/" in body or "+" in body) or len(body) >= 20):
             return "a padded base64 run"
-    for m in _S_RUN.finditer(bare):
+    if "=" in labelled:
+        for m in _S_B64PADPATH.finditer(labelled):
+            # a padded key behind the `/` of a path (inputs/Zk0khEa1Ge/Do3O4Hd43iH==): the key is the last 22 (two pads) or 27 (one pad) characters before the padding
+            pad = len(m.group()) - len(m.group().rstrip("="))
+            tail = m.group().rstrip("=")[-(22 if pad == 2 else 27):]
+            if len(tail) >= 22 and "/" in tail and len({_class(c) for c in tail if c.isalnum()}) >= 2:
+                return "a padded base64 run"
+    for m in _S_RUN.finditer(labelled):
         if _random_run(m.group()):
             return "a random-looking run"
     return None
 
 
-def _replace(value, where, check):
+def _where_text(where, names=True):
+    return "/" + "/".join((w[0][:60] if names else str(w[1])) for w in where)
+
+
+def _replace(value, where, check, positions=False):
     BOUNDARY["replaced"] += 1
-    BOUNDARY["by"][check] += 1
-    if len(BOUNDARY["where"]) < MAX_REPLACED_LISTED:
-        BOUNDARY["where"].append({"at": where or "/", "check": check})
+    BOUNDARY["replaced_by"][check] += 1
+    if len(BOUNDARY["where"]) < MAX_WHERE:
+        # the place is the keys on the way, each of them already sealed; their joining is read once more, and when it is not clean the place is the
+        # positions (a key that was replaced or withheld must never come back whole through the report of where something was replaced)
+        at = _where_text(where, False) if positions else _where_text(where)
+        if not positions and _suspect(at, "label"):
+            at = _where_text(where, False)
+        BOUNDARY["where"].append({"at": at, "check": check})
     else:
         BOUNDARY["not_listed"] += 1
-    return "<withheld: %d bytes>" % blen(value)
+    return _mark(len(value.encode("utf-8", "replace")), "backstop: %s" % check, "bytes")
 
 
 _CHECKED = {}
+_SHORT_PLAIN = re.compile(r"[A-Za-z0-9_.]{0,15}")      # what the late path may print unjudged: 15 characters or fewer of letters, digits, `_` and `.` (no space, no `-`, so no
+                                                          # argument after a flag and no `xox?-` token), and not starting like a vendor token (_unjudged)
 
 
-def _verdict(text):
-    """None when the string passes the check, else the check it fails; remembered per string (keys and values repeat across rows)."""
-    hit = _CHECKED.get(text, False)
+def _unjudged(text, kind=None):
+    """Whether a string may be printed past the judging time: a name this run made itself (OWN_NAMES: its schema keys, its file names), or a short plain
+    string that does not start like one of the vendor tokens the block knows (a prefix and 12 characters are 15) and, in a field of a typed kind (a SID, a
+    GUID, a digest ...), fits the grammar of that type as the backstop checks it."""
+    if text in OWN_NAMES:
+        return True
+    if _SHORT_PLAIN.fullmatch(text) is None or text.lower().startswith(_S_PREFIX_WORDS):
+        return False
+    grammar = _S_TYPED.get(kind)
+    return grammar is None or len(text) <= 3 or grammar.fullmatch(text) is not None
+
+
+def _late(n=0):
+    """Whether judging must stop for the string about to be judged, which has `n` characters (counted against the cap of the run, unless the string is
+    only being judged to see what an answer would print). It says why, once, in _STOP["by"]: the cap of characters, or the clock of the seal."""
+    if n and not _QUIET[0]:
+        _STOP["chars"] += n
+        if _STOP["chars"] > _STOP["cap"]:
+            if _STOP["by"] is None:
+                _STOP["by"] = "the cap of %d characters judged in one run" % MAX_JUDGED_CHARS
+            return True
+    deadline = _CLOCK["deadline"]
+    if deadline is not None and time.monotonic() > deadline:
+        if _STOP["by"] is None:
+            _STOP["by"] = "the judging time (the budget of one answer or row, or the seal stop of the tool)"
+        return True
+    return False
+
+
+def _stopped(value, where):
+    """A string not judged because judging stopped: withheld whole, by its size, counted (what is let through is only _unjudged)."""
+    if not _QUIET[0]:
+        _STOP["strings"] += 1
+    return _replace(value, where, "the judging time ran out", True)
+
+
+def seal_stop_after(seconds):
+    """The seal stop of a tool: no seal runs on past `seconds` from now (its manifest's time limit less 3.5 seconds); what is left is withheld whole,
+    except what _unjudged lets through. It stops the judging only, not the tool's own work: that has its own clock, which must run out first."""
+    _CLOCK["stop"] = time.monotonic() + seconds
+
+
+def _timed(fn):
+    """`fn()` with the clock of the seal running: SEAL_BUDGET seconds from the outermost call, and never past the seal stop of the tool."""
+    first = _CLOCK["deadline"] is None
+    if first:
+        _CLOCK["deadline"] = time.monotonic() + SEAL_BUDGET
+        if _CLOCK["stop"] is not None:
+            _CLOCK["deadline"] = min(_CLOCK["deadline"], _CLOCK["stop"])
+    try:
+        return fn()
+    finally:
+        if first:
+            _CLOCK["deadline"] = None
+
+
+# the name of a component of the Windows component store (WinSxS), as a whole name or as a component of a key or a path: architecture, words (lower case, letters up
+# to 40 or letters and digits up to 16, with `.`, `-` or `_` between them, never a hexadecimal hash), the 16-digit public key token, a four-part version (not always
+# there), a language or `none`, and a hash of 8 to 16 hexadecimal digits; a placeholder that layer 1 put in the place of a word, or of the architecture and a word (a
+# 32-digit hash), stands for it. A real SOFTWARE hive lists them by the thousand and the backstop took their hash for a random run, so it judges the text with such a
+# component taken out; layer 1 judges them as it does every name. Names, keys and paths only, lower case only; every alternative starts with a different character,
+# so that a failing match is not retried in a second way.
+_WORD = r"(?:[a-z]{1,40}|(?=[a-z0-9]*[0-9])[a-z0-9]{1,16}|<withheld [0-9]{1,10} (?:characters|bytes): not a plain name>)"
+_WINSXS = re.compile(r"(?<![^\\/])(?:(?:amd64|x86|wow64|msil|arm64|arm|ia64)_(?![0-9a-f]+_)%s(?:[._-]{1,3}%s){0,12}|<withheld [0-9]{1,10} (?:characters|bytes): not a plain name>)"
+                     r"_[0-9a-f]{16}(?:_[0-9]{1,5}(?:\.[0-9]{1,5}){3})?_[a-z0-9-]{2,12}_[0-9a-f]{8,16}(?![^\\/])" % (_WORD, _WORD))
+
+
+def _without_components(text, kind):
+    """`text` as the backstop judges a name, key or path: a component of the component store is one plain word."""
+    return _WINSXS.sub("w", text) if kind in ("name", "key", "path") and text.count("_") >= 3 else text
+
+
+def _verdict(text, kind):
+    memo = (kind, text) if len(text) <= 512 and kind not in _S_TYPED else None
+    hit = _CHECKED.get(memo, False) if memo else False
     if hit is False:
-        if _MARKER.fullmatch(text):
-            return None
-        if _out_of_budget(text):
-            RUN["stopped_strings"] += 1
-            return "run limit"
-        check = _suspect(text)
-        hit = "second check: %s" % check if check else None
-        if len(text) <= 512:
+        hit = None if _MARK.fullmatch(text) else _suspect(_without_components(text, kind), kind)
+        if memo:
             if len(_CHECKED) >= 30000:
                 _CHECKED.clear()
-            _CHECKED[text] = hit
+            _CHECKED[memo] = hit
     return hit
 
 
-def backstop(value, where=""):
-    """The serialised answer read back and checked: a string it finds suspect (a key or a value) is replaced by
-    <withheld: N bytes>, counted, and its place named."""
+# ---- the backstop reads the original too: what of a secret-shaped text is still in what was shown
+def _pem_pieces(flat, found):
+    """The base64 lines of the bodies of PEM keys: after each `PRIVATE KEY-----` (found with str.find, at most MAX_PIECES of them) up to the next
+    `-----END` or MAX_PEM_BODY characters."""
+    pos, bodies = 0, 0
+    while bodies < MAX_PIECES and len(found) < MAX_PIECES:
+        i = flat.find("PRIVATE KEY-----", pos)
+        if i < 0:
+            return
+        start = i + 16
+        end = flat.find("-----END", start, start + MAX_PEM_BODY)
+        stop = start + MAX_PEM_BODY if end < 0 else end
+        bodies += 1
+        for m in _S_PEMLINE.finditer(flat, start, stop):
+            found.append(m.group())
+            if len(found) >= MAX_PIECES:
+                return
+        pos = max(stop, start)
+
+
+def _s_pieces(flat, kind):
+    """The parts of `flat` (the original text, normalised) the backstop's own rules call secret: a value after a secret's name, the password of
+    user-info, a vendor token, a key's base64, and (outside typed fields) the long random-looking runs. At most MAX_PIECES of them, in this
+    order; every walk over the text stops when the list is full."""
+    found = []
+    bare = _S_IDS.sub(" ", flat)
+    _s_named(bare, found)
+    for pattern, group in ((_S_ARGVAL, 1), (_S_USERINFO, "pw"), (_S_USERINFO_URL, "pw")):
+        for m in pattern.finditer(flat):
+            if len(found) >= MAX_PIECES:
+                return found
+            found.append(m.group(group))
+    for m in _S_PREFIX.finditer(flat):
+        if len(found) >= MAX_PIECES:
+            return found
+        end = m.end()
+        stop = min(len(flat), end + 512)
+        while end < stop and flat[end] in _S_TOKEN_CHARS:
+            end += 1
+        found.append(flat[m.start():end])
+    _pem_pieces(flat, found)
+    if kind not in _TYPED_KINDS:
+        labelled = _S_DIGEST_LABEL.sub(" ", bare) if "ash" in bare or "sha" in bare.lower() or "md5" in bare.lower() or "ASH" in bare else bare
+        for m in _S_B64PAD.finditer(labelled):
+            if len(found) >= MAX_PIECES:
+                return found
+            if _b64_shape(m.group()):
+                found.append(m.group())
+        for m in _S_HEXRUN.finditer(labelled):
+            if len(found) >= MAX_PIECES:
+                return found
+            found.append(m.group())
+        for m in _S_B64NOPAD.finditer(labelled):
+            if len(found) >= MAX_PIECES:
+                return found
+            if "/" in m.group() and "+" in m.group():
+                found.append(m.group())
+        for m in _S_RUN.finditer(labelled):
+            if len(found) >= MAX_PIECES:
+                return found
+            if _random_run(m.group()):
+                found.append(m.group())
+    return found
+
+
+_RESIDUE = {}
+
+
+def _residue_worthy(win):
+    """Whether a window of a piece is a secret's and not the words of a path the piece ran into (a run of base64 characters takes in `/vmfs/volumes/ds1/` before a key): a window with a `/` needs 3 capitals, digits or `+`."""
+    return "/" not in win or sum(1 for c in win if c.isupper() or c.isdigit() or c == "+") >= 3
+
+
+def _residue(original, shown, kind):
+    """A window of 12 characters (the whole piece when it is shorter, from 8) of something the backstop calls secret in the ORIGINAL that is still
+    in what was shown: the layers above cut spans out of a string and can leave a piece of a secret between two cuts."""
+    memo = (kind, original) if len(original) <= 512 else None
+    if memo is not None and memo in _RESIDUE:
+        return _RESIDUE[memo]
+    verdict = None
+    flat = _s_normal(original[:MAX_ONE_STRING])
+    pieces = _s_pieces(flat, kind)[:MAX_PIECES]
+    if pieces:
+        kept = _S_MARK.sub("\x00", _s_normal(shown[:MAX_ONE_STRING]))
+        rest = flat                                    # the original without those parts: a window that is also here is the text's own words, not the secret
+        for piece in sorted(set(pieces), key=len, reverse=True):
+            rest = rest.replace(piece, "\x00")
+        for piece in pieces:
+            n = len(piece)
+            if n < 8:
+                continue
+            w = min(12, n)
+            step = 1 if n * len(kept) <= 4000000 else max(1, (n - w + 1) // 64)       # a long piece in a long string: 64 windows, spread over it
+            if any(piece[i:i + w] in kept and piece[i:i + w] not in rest and _residue_worthy(piece[i:i + w]) for i in range(0, n - w + 1, step)):
+                verdict = "a part of a secret-shaped text"
+                break
+    if memo is not None:
+        if len(_RESIDUE) >= 30000:
+            _RESIDUE.clear()
+        _RESIDUE[memo] = verdict
+    return verdict
+
+
+# ---- the walker ----------------------------------------------------------------------------------------------------------------------------
+_SCALARS = (bool, int, float)
+_SCALAR_TYPES = frozenset(_SCALARS)
+
+
+_KEYS = {}
+
+
+def _seal(value, kind, field, where, guard, fname=""):
+    """`value` with every string sealed by the type of its field, and (guard) read back by the backstop. Keys are names. FIELDS maps a JSON key to the
+    kind of what it holds, or to a function of the key of one item for a dict whose items have kinds of their own (event data, registry values).
+    `where` is the tuple of (sealed key or position, position) on the way down."""
     if isinstance(value, str):
-        check = _verdict(value)
-        return _replace(value, where, check) if check else value
-    if big_int(value):
-        return _replace(str(value), where, "second check: a long digit run")
-    if isinstance(value, dict):
-        out = {}
-        for k, v in value.items():
-            key = backstop(k, where + "/(key)")
-            while key in out:
-                key += " #"
-            out[key] = backstop(v, where + "/" + key)
+        k = getattr(value, "kind", kind)
+        if _late(len(value)):
+            # past the budget the rest is withheld whole, fail closed; what is let through is only a name of this run's own and a short plain string (_unjudged)
+            return value if _unjudged(value, k) else _stopped(value, where)
+        out = show(value, k, field)
+        if guard:
+            check = _verdict(out, k)
+            if not check and out != value:
+                check = _residue(str(value), out, k)
+            if check:
+                return _replace(out, where, check)
         return out
-    if isinstance(value, list):
-        return [backstop(v, "%s/%d" % (where, i)) for i, v in enumerate(value)]
+    if value is None or isinstance(value, _SCALARS):
+        return value
+    if isinstance(value, dict):
+        hook = _field_entry(fname)
+        hook = hook if callable(hook) else None
+        kk = KEY_KINDS.get(fname, "name")
+        out, dupes = {}, {}
+        for idx, (key, v) in enumerate(value.items()):
+            if isinstance(key, str):
+                if _late(len(key)):
+                    sk = key if _unjudged(key) else _stopped(key, where + (("(key)", idx),))
+                else:
+                    sk = _KEYS.get((kk, field, key, guard))
+                    if sk is None:
+                        sk = show(key, kk, field)
+                        if guard:
+                            check = _verdict(sk, kk)
+                            if check:
+                                sk = _replace(sk, where + (("(key)", idx),), check)
+                        if sk == key and len(key) <= 128:
+                            # a key that comes out as it went in changed nothing (no count, no list): its judging is not repeated for the next row
+                            if len(_KEYS) >= 20000:
+                                _KEYS.clear()
+                            _KEYS[(kk, field, key, guard)] = sk
+            elif key is None or isinstance(key, _SCALARS):
+                sk = key
+            else:
+                key = str(key)
+                sk = show(key, "name", field)
+            if sk in out:
+                # many names become one placeholder: the next free " #n" of that placeholder, counted (a probe from the first would be quadratic)
+                n = dupes.get(sk, 1)
+                while True:
+                    n += 1
+                    renamed = "%s #%d" % (sk, n)
+                    if renamed not in out:
+                        break
+                dupes[sk] = n
+                sk = renamed
+            if v is None or type(v) in _SCALAR_TYPES:
+                out[sk] = v                               # (a number, a truth value or nothing: there is no string to seal)
+                continue
+            fk = key if isinstance(key, str) else ""
+            sub_kind = (hook(key) if hook else None) or _kind_of(fk, kind)
+            label = sk if isinstance(sk, str) else str(sk)
+            out[sk] = _seal(v, sub_kind, (field + "." + fk) if field and fk else (fk or field), where + ((label, idx),), guard, fk)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_seal(v, kind, field, where + ((str(i), i),), guard, fname) for i, v in enumerate(value)]
+    return _seal(str(value), "text", field, where, guard, fname)       # anything else the serialiser would have printed with str()
+
+
+def _kind_of(field, inherited):
+    k = _field_entry(field)
+    return k if isinstance(k, str) else inherited
+
+
+def seal(value, kind="text", field=""):
+    return _timed(lambda: _seal(value, kind, field, (), True))
+
+
+_ROW_TYPES = frozenset((str, int, float, bool))
+_ROW = [None, None]             # the last row of plain scalars that was sealed without anything being replaced, and what it came out as
+
+
+def row_object(row):
+    """A row of a paging file, sealed and read back: what the file may hold. A tool that writes the same row to two files (every key listed, and
+    the nodes of a walk) has it judged once: the second is the first's result, the same judging with nothing to count or list."""
+    key = None
+    if isinstance(row, dict):
+        for k, v in row.items():
+            if type(k) is not str or (v is not None and type(v) not in _ROW_TYPES):
+                break
+        else:
+            # (the type is part of the key: 1, True and 1.0 are equal and print differently; a float by its repr, as -0.0 equals 0.0)
+            key = tuple((k, type(v), repr(v) if type(v) is float else v) for k, v in row.items())
+    if key is not None and _ROW[0] == key:
+        return dict(_ROW[1])
+    replaced = BOUNDARY["replaced"]
+    out = _timed(lambda: _seal(row, "text", "", (), True))
+    if key is not None and BOUNDARY["replaced"] == replaced:
+        _ROW[0], _ROW[1] = key, dict(out)
+    return out
+
+
+def boundary_summary():
+    stopped = {"stopped_by": _STOP["by"], "strings_withheld_by_the_stop": _STOP["strings"]} if _STOP["by"] is not None else {}
+    return {"strings_withheld": BOUNDARY["withheld"], "withheld_by_reason": dict(BOUNDARY["by"]),
+            "strings_replaced_by_the_backstop": BOUNDARY["replaced"], "replaced_by_check": dict(BOUNDARY["replaced_by"]),
+            "replaced_at": list(BOUNDARY["where"]), "replaced_not_listed": BOUNDARY["not_listed"], "values": values_summary(), **stopped,
+            "note": "every key and value of this answer and of its paging files was judged by the type of its field: a name, path, key or URL is shown only when it "
+                    "fits a plain grammar (a path component by component), free text has token-shaped runs, user-info and the value after a secret's name withheld, "
+                    "and a second check written apart from both read it back. A withheld text is <withheld N characters: reason>. Not recognised: a secret that does "
+                    "not look like one (a plain password or passphrase, a UUID-shaped key, anything under 16 characters in a name)."}
+
+
+def _last_look(obj):
+    """What this block adds to an answer after the walker (the report of what it did) is read once more by the backstop, keys and values."""
+    if isinstance(obj, str):
+        return _mark(len(obj), "backstop: a part of a secret-shaped text") if _suspect(obj, "label") else obj
+    if isinstance(obj, dict):
+        return {_last_look(k): _last_look(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_last_look(v) for v in obj]
+    return obj
+
+
+def answer_object(doc):
+    """The answer (or an error answer), sealed and read back. A string the backstop had to replace makes a complete answer partial."""
+    _STOP["cap"] = max(_STOP["cap"], _STOP["chars"]) + FINAL_GRACE_CHARS            # (the final answer is always judged: the cap of the run does not take it)
+    out = _timed(lambda: _seal(doc, "text", "", (), True))
+    if isinstance(out, dict):
+        out["boundary"] = _last_look(boundary_summary())
+        if (BOUNDARY["replaced"] > 0 or _STOP["by"] is not None) and out.get("status") == "complete":
+            out["status"] = "partial"
+            basis = out.get("status_basis")
+            why = []
+            if BOUNDARY["replaced"] > 0:
+                why.append("%d string(s) still held a secret-shaped text when the answer was checked on its way out and were replaced" % BOUNDARY["replaced"])
+            if _STOP["by"] is not None:
+                why.append("judging the strings stopped at %s: %d string(s) after it were withheld by their size" % (_STOP["by"], _STOP["strings"]))
+            out["status_basis"] = "%s%s (see boundary)" % (basis + "; " if isinstance(basis, str) and basis else "", "; ".join(why))
+    return out
+
+
+def emit(doc, **dumps_kwargs):
+    """Print an answer through the boundary (the only way an answer leaves a tool that carries this block)."""
+    obj = answer_object(doc)
+    try:
+        text = json.dumps(obj, ensure_ascii=False, default=str, **dumps_kwargs)
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        text = json.dumps(obj, ensure_ascii=True, default=str, **dumps_kwargs)
+    try:
+        # a signal that arrives while the answer is being written must not start a second one: signals are held from here (the answer is whole)
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    print(text, flush=True)
+# END SHARED BOUNDARY
+# ---- this tool's side of the one way out ------------------------------------------------------------------------------------------------
+# The table of field kinds is this tool's, not the block's: a JSON key or the label a call site gives the Shower -> the kind of what it holds
+# (a digit run in a name stands for any number: ethernet0.address is ethernet#.address). A field not listed has the kind of the key above it (text at the
+# top: a description, an annotation, an audit action or actor, a message, a tool's own words are judged as free text).
+_FIELD_KINDS = (
+    # a name a person chose (a machine, a snapshot, a datastore): may hold a `/` (a date in a snapshot name), so it is judged as a path, component by component
+    ("path", "name|display_name|displayName|snapshot name|parent snapshot name|current_parent_snapshot|snapshot_sections|snapshot|version"
+             "|file|leaf_file|rel|root|links|special|unreadable|too_deep|lock directory|parent_hint|parentFileNameHint|parent name|parent_name|backing_file|backing_filename"
+             "|external_data_file|parent_absolute_win32_path|parent_relative_path|parent_volume_path|disk_files|snapshot disk file|state_file|snapshot state file"
+             "|extent file name|configuration_path|vmxCfgPath|datastore_hint|datastore path|nvram|disk file|volume|vm_state_volume|vmstate|path|named|export|special_sections|section|disk source|source_name|object"),
+    ("name", "domain_name|job|storage|storage name|networkName|ethernet#.networkName|disk key|domain name|datastore|pool|vgname|thinpool|key"
+             "|create_type|createType|encoding|backing_format|backing format|native_snapshot|isNativeSnapshot|hardware_version|config_version|arch|bios|firmware|machine"
+             "|os_type|virt_type|guest_os|guestOS|cores|vcpus|memory_mb|memory|device|device_type|deviceType|disk_format|mode|present|snapshot_mode|bus|backup|size|state|type"
+             "|source_protocol|ddb.adapterType|ddb.virtualHWVersion|ddb.toolsVersion|ddb.thinProvisioned|time_raw|createTimeHigh|createTimeLow|create_time_high_raw"
+             "|create_time_low_raw|extent type|type_raw|content|shared|disable|maxfiles|mkdir|is_mountpoint|nodes|ethernet#.virtualDev|ethernet#.present|ethernet#.addressType"),
+    # an identifier: one of several forms (a GUID, a VMFS volume id, a device id, a VMware uuid, a MAC, a content id, a number), else a name
+    ("id", "uid|snapshot uid|snapshot parent|snapshot id|parent_uid|uuid|bios_uuid|location_uuid|vcenter_instance_uuid|cid_raw|parent_cid_raw|CID|parentCID|entry_id|object_id|vmid"
+           "|ddb.uuid|ddb.longContentID|current|lastuid|lastUID|numsnapshots|numSnapshots|source_id|own_id|leaf|base|child|ethernet#.address|ethernet#.generatedAddress|address"
+           "|virtual_disk_id|unique_id|parent_unique_id|data_write_guid|file_write_guid|log_guid|parent_identity|parent_identity_2|recorded_by_child|carried_by_parent|descriptor_id"),
+)
+_FIELD_TABLE = {}
+for _kind, _names in _FIELD_KINDS:
+    for _n in _names.split("|"):
+        _FIELD_TABLE[_n] = _kind
+bind_fields(_FIELD_TABLE, {})
+OWN_NAMES.update(VOCABULARY)        # a word of the tool's own closed vocabulary is shown as it is
+RUN = {"record": True}              # the Shower of the COMMON block sets this; the originals of what the boundary withheld are written by the block itself (bind_values)
+_DIGIT_RUN = re.compile(r"[0-9]+")
+
+
+def field_kind(field):
+    """The kind of the field a call site names (the label the Shower is given): the table above, `text` for a field it does not list."""
+    if not isinstance(field, str) or not field:
+        return "text"
+    kind = _FIELD_TABLE.get(field)
+    if kind is None and any(c.isdigit() for c in field):
+        kind = _FIELD_TABLE.get(_DIGIT_RUN.sub("#", field))
+    return kind or "text"
+
+
+# The calls the COMMON block makes (it stays as it is in the three tools): each is the one text's call under the name COMMON uses.
+def seal_text(text, kind="text", field=None, where=""):
+    """One string judged by the kind of its field, the layers and the backstop (counted; the original goes to the values file when one was asked for)."""
+    return seal(text if isinstance(text, str) else str(text), field_kind(field), field or "")
+
+
+def seal_head(text, kind="text", field=None, where=""):
+    """seal_text for a text a call site reads a piece of: at most the first Shower.EXAMINED characters are judged and a longer text is shown with its whole length."""
+    if not isinstance(text, str):
+        text = str(text)
+    if len(text) <= Shower.EXAMINED:
+        return seal_text(text, kind, field, where)
+    return seal_text(cut_safely(text, Shower.EXAMINED), kind, field, where) + "...(whole text: %d characters)" % len(text)
+
+
+def big_ints(value, depth=0):
+    """`value` with every integer of more than 18 digits turned into text (the one text then withholds it as a long number): no format this pack reads carries one,
+    and its digits can be a secret's. A structure deeper than 64 levels is written as text."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value) if abs(value) >= 10 ** 18 else value
+    if depth > 64 and isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, default=str)
+    if isinstance(value, dict):
+        return {k: big_ints(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [big_ints(v, depth + 1) for v in value]
     return value
 
 
-def row_text(row, where):
-    """One row of a paging file: sealed, serialised, read back and checked."""
-    text = json.dumps(seal(row))
-    before = BOUNDARY["replaced"]
-    checked = backstop(json.loads(text), where)
-    return text if BOUNDARY["replaced"] == before else json.dumps(checked)
+def row_text(row, where=""):
+    """One row of a paging file: sealed, read back by the backstop, serialised."""
+    return json.dumps(row_object(big_ints(row)))
 
 
 def answer_text(doc):
-    """The answer (or an error answer): sealed, serialised, read back and checked; a string the check had to replace, or a
-    string withheld because the run's time or character budget was spent, makes a complete answer partial, and the answer says so."""
-    if RUN["deadline"] is not None:
-        RUN["deadline"] = max(RUN["deadline"], time.monotonic()) + 1.5      # a short grace for the final answer
-    RUN["cap"] += 4000000
-    stop = RUN["stop"]
-    if stop is not None:
-        RUN["stop"] = None
-    text = json.dumps(seal(doc), indent=2)
-    checked = backstop(json.loads(text), "")
-    stop = RUN["stop"] or stop
-    checked["boundary"] = {"strings_withheld_at_the_way_out": BOUNDARY["withheld"], "strings_replaced_by_the_check": BOUNDARY["replaced"],
-                           "replaced_by_check": dict(BOUNDARY["by"]), "replaced_at": list(BOUNDARY["where"]), "replaced_not_listed": BOUNDARY["not_listed"],
-                           "stopped_by": stop, "strings_withheld_by_the_stop": RUN["stopped_strings"],
-                           "note": "every key and value of this answer and of its paging files was judged by the type of its field (a name, a path or an identifier is shown only "
-                                   "when it fits a plain grammar, else it is <withheld: N bytes, field F>; any other text has token-shaped runs, user-info and the value after "
-                                   "a secret's name withheld), then read back and checked by a second check written apart from them; a string the check replaced is "
-                                   "<withheld: N bytes> and its place is in replaced_at (the first %d)" % MAX_REPLACED_LISTED}
-    if (BOUNDARY["replaced"] or stop) and checked.get("status") == "complete":
-        checked["status"] = "partial"
-        why = []
-        if BOUNDARY["replaced"]:
-            why.append("%d string(s) still held a token-shaped text when the answer was checked on its way out and were replaced by <withheld: N bytes>" % BOUNDARY["replaced"])
-        if stop:
-            why.append("judging the strings stopped at %s: %d string(s) after it are withheld by their size" % (stop, RUN["stopped_strings"]))
-        checked["status_basis"] = "%s; %s (see boundary)" % (checked.get("status_basis") or "", "; ".join(why))
-    return json.dumps(checked, indent=2)
-# END SHARED BOUNDARY
+    """An answer that COMMON prints itself (an error answer, the last word of a signal): sealed and read back, with the values file closed."""
+    text = json.dumps(answer_object(big_ints(doc)), indent=2)
+    close_values()
+    return text
 # BEGIN SHARED FILES
 # The same text is in virtualization_inventory and snapshot_chain_check; tests/pack-virtualization-shared.test.ts holds the
 # copies equal. The evidence is a set of files: a directory walked without following a link, and/or files named one by one.
@@ -2323,13 +3120,56 @@ def ext_of(rel):
 # walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word. Only what is
 # below a program this tool started and has not yet waited for is ever signalled: the walk starts at that program's pid
 # and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
-# walk has no bound but the number of processes. Two cases leave the tree running: a ps that needs more than PS_WAIT
-# seconds, and a sandbox that denies both libproc and ps (macOS). A stop signal is the one case that reaches further: it also
+# walk is bounded (MAX_ROUNDS and WALK_SECONDS, below). A stop signal is the one case that reaches further: it also
 # ends everything below the tool itself (a program that was forked a moment before it was entered in ACTIVE is among it) and what
 # the tool started and lost (reap_orphans): a process that was seen below the tool, in the tool's own group, and whose parent has since
 # ended. Nothing else is ever ended: a process the tool never saw in its tree (the next stage of a pipeline the tool heads, a process a
 # launcher put in the group) is left alone, whoever leads the group. A program that has ended while something it started still
-# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds and goes on without them.
+# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds (and POST_EXIT_BYTES bytes) and goes on without them.
+# The walk below a program is bounded: MAX_ROUNDS rounds and WALK_SECONDS seconds. Each process is stopped (SIGSTOP) as the walk finds it,
+# so one that forks fast cannot outrun the walk; the walk is repeated for what the stopped ones had already forked, and the stopped set is
+# then killed. A tree that is still growing at the bound is left, and process_notes() says so.
+# Before a pid other than the program itself is signalled, its identity is read again (same_process(pid, ident)): the start time, from
+# /proc/<pid>/stat (field 22, counted after the last ")") on Linux, from libproc's PROC_PIDTBSDINFO (pbi_start_tvsec, pbi_start_tvusec;
+# written from <sys/proc_info.h>, not run on macOS in this repository's tests) on macOS, and from `ps -o lstart=` (to the second: coarse)
+# where neither answers. The parent is no part of it: a child is re-parented when its parent ends, and is still the process that was
+# listed. A pid that is gone, or whose start time is not the listed one, is left alone; a pid whose start time could not be read when it
+# was listed is signalled only if it can be read now and is in the tool's own group; a ps listing that gave no start time (a minimal ps) is
+# checked only for the pid still being there.
+# A tree that cannot be listed (ps fails, lists nothing or needs more than PS_WAIT seconds, /proc cannot be read or takes more than
+# TABLE_SECONDS) is never taken as an empty one: list_descendants raises TreeNotListed, the program itself is still ended, and a sentence
+# in process_notes() says that the tree could not be listed (communicate_bounded also appends it to the stderr bytes it returns when it
+# ended the program at its deadline). descendants() is list_descendants for a caller that cannot take an exception (a signal handler): its
+# list is empty and has not_listed = True when the tree could not be listed.
+# Open: a pid that ends and is reused between the identity check and the signal (two calls) is signalled; the Linux rule that a member of
+# the tool's own group that holds the tool's pipe is ended; on macOS a daemon that holds the pipes of a finished program is not found (no
+# /proc/<pid>/fd); a tool SIGKILLed between the stop and the kill leaves the program and the stopped set stopped (the harness ends the
+# tool's group, and with it the stopped ones that are in it); a carrier's answer carries program_group (process_verdict, process_notes)
+# only where that carrier's own code calls process_apply (without the call a program's leftovers are ended but not reported); the start of the interpreter, before any handler is in, is a window a signal can land in.
+# What a program leaves behind (settle). A program can exit by itself and leave a process that goes on writing a file the answer then reports:
+# one in a session of its own, or one that holds none of the tool's descriptors, which neither the walk nor the pipes reach. On Linux spawn()
+# makes the tool a subreaper (become_subreaper, PR_SET_CHILD_SUBREAPER): such a process is adopted by the tool, so it is a direct child of the
+# tool, and settle() ends it: when a program leaves ACTIVE after it has ended or been killed (ACTIVE is a list whose remove() does it), and at
+# the end of communicate_bounded and inside kill_all. It ends only a child of the tool that is no program's own: not a program spawn() started
+# (SPAWNED: Popen reaps those, their returncode is never taken), not one kept (KEEP, process_keep(pid), spawn(argv, leaves=True) for a
+# program that leaves a process on purpose) and not a child the tool already had (PRE_KIDS). It stops each one, what it started with it (the
+# walk above), kills and reaps them, for at most LEFTOVER_SECONDS, reading the clock for every process. While another program is running in
+# ACTIVE nothing is ended and the answer says it is unproven. process_verdict() says what was found; process_apply(answer) puts it into an
+# answer as program_group and turns a complete answer partial when a program left something or that could not be ruled out: a carrier
+# calls it once where it prints its answer. Where nothing is adopted (not Linux, or the kernel refuses) settle() ends only what the tool saw
+# below a program whose parent is gone, and the answer is unproven (NONLINUX_UNPROVEN_DOWNGRADE below is the one line that decides whether
+# that alone makes a complete answer partial on a host that is not Linux). Not reached by any of this: a process that is not a descendant of
+# a program (started through a service manager, a socket, another PID namespace), and the tool itself being killed (the harness ends its group).
+# What a program's pipes deliver after it ended (the byte cap). communicate_bounded reads the pipes itself (a selector, not
+# Popen.communicate) and looks at the program after every read. From the moment the program has ended, or been killed at its deadline, it
+# takes at most POST_EXIT_BYTES (1 MiB) more bytes from its two pipes together and at most PIPE_GRACE seconds, whichever comes first; a
+# program's own last words are in the pipe already (a pipe holds far less than the cap), so only what a process that went on holding the
+# pipe wrote can be cut. At the cap the tool stops reading, ends the holder (reap_orphans, settle) and lets the pipes go: PIPE_CUT["cut"]
+# counts the calls cut that way, process_notes() says so, and process_apply turns a complete answer partial. The bytes kept are the ones
+# read, not a whole stream: a caller that parses the output sees the program's output and at most 1 MiB of what a leftover wrote. While the
+# program is still alive nothing is capped here (a program's own output is its caller's to bound); the timing is unchanged.
+import select as _select
+import selectors as _selectors
 import time
 
 try:
@@ -2338,8 +3178,36 @@ except ImportError:  # pragma: no cover
     ctypes = None
 
 STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
-ACTIVE = []                    # the programs running now
+class _Active(list):
+    """The programs running now. A program that leaves the list after it has ended or been killed (a carrier removes it when it has waited
+    for it) is followed by settle(): what it left behind is ended before the carrier reads what the program wrote. One that is still
+    running when it is removed is not looked at."""
+
+    def remove(self, proc):
+        list.remove(self, proc)
+        if proc.poll() is not None:
+            settle()
+
+
+ACTIVE = _Active()             # the programs running now
+SPAWNED = {}                   # the programs spawn() started: pid -> identity (Popen reaps them, settle() never does)
+KEEP = {}                      # the processes left on purpose: pid -> identity (settle() leaves them)
+PRE_KIDS = {}                  # the children the tool already had when the first program was spawned: pid -> identity
+LEAVES = {}                    # the programs started with leaves=True that have not ended yet: pid -> Popen
+LEFT = {"left_behind": 0, "unproven": []}   # how many live processes settle() ended, and why nothing-left-behind cannot be proven
+SUB = {"tried": False, "on": False, "note": None}        # whether the subreaper was asked for, and is on
+SETTLING = [False]             # settle() is running (the stop signal's own call goes through)
+LEFTOVER_SECONDS = 3              # the most one settle() works, in seconds; the clock is read for every process it ends, not once per pass
+SETTLE_LOOK = 0.05             # the pause before the look that follows an ending: a fork that was under way when the first process died
+# The one line the owner decides: on a host that cannot adopt orphaned processes (not Linux) a program may have left a process nobody can find.
+# True: that alone is `unproven`, and process_apply turns a complete answer partial. False: the answer only carries a note.
+NONLINUX_UNPROVEN_DOWNGRADE = True
 SEEN = set()                   # the pids seen below a program this tool started: the only ones reap_orphans may end once their parent is gone
+SEEN_IDENT = {}                # what each pid in SEEN was (its start time) when it was seen below the tool: a pid that ended and was reused does not match
+NOTES = []                     # what this block could not do, as sentences for an answer (process_notes())
+MAX_ROUNDS, WALK_SECONDS = 8, 15   # the bound of the walk below a program: rounds, and seconds
+TABLE_SECONDS = 10             # the longest reading of /proc (or of a process table) is given
+SEEN_MAX = 1 << 16             # the most pids SEEN holds
 
 def _die_with_parent():  # runs in the child between fork and exec
     try:
@@ -2348,13 +3216,156 @@ def _die_with_parent():  # runs in the child between fork and exec
         pass
 
 
-def spawn(argv, **kwargs):
+def spawn(argv, leaves=False, **kwargs):
     kwargs.setdefault("stdin", subprocess.DEVNULL)
+    become_subreaper()
     if sys.platform.startswith("linux") and ctypes is not None:
         kwargs["preexec_fn"] = _die_with_parent
     proc = subprocess.Popen(argv, **kwargs)
     SEEN.add(proc.pid)
+    started = _read_ident(proc.pid, "proc" if os.path.isdir("/proc/self") else "libproc")
+    if started is not None:
+        SEEN_IDENT[proc.pid] = started
+    SPAWNED[proc.pid] = started
+    if leaves:
+        LEAVES[proc.pid] = proc     # what this program leaves behind stays (settle() keeps it)
     return proc
+
+
+class TreeNotListed(Exception):
+    """The processes could not be listed: ps failed, listed nothing or needed more than PS_WAIT seconds, /proc could not be read, or reading
+    it took more than TABLE_SECONDS. It is never to be read as a tree with nothing below it."""
+
+
+class _Listing(list):
+    """The pids below a process, as a list; .ident holds each pid's identity from the same reading, .not_listed says the tree could not be listed."""
+    ident = None
+    not_listed = False
+
+
+class _Table(dict):
+    """{pid: (parent pid, process group)}; .ident holds each pid's identity from the same reading."""
+    ident = None
+
+
+def _note(text):
+    """Record a sentence about what this block could not do (once, at most 20) and return it."""
+    if text not in NOTES and len(NOTES) < 20:
+        NOTES.append(text)
+    return text
+
+
+def process_notes():
+    """What this block could not do so far, as sentences (a tree that could not be listed, a walk that was cut), for an answer."""
+    return list(NOTES)
+
+
+def _libproc_start(pid):
+    """(seconds, microseconds) of the start of `pid` from libproc's PROC_PIDTBSDINFO (macOS), or None. Written from <sys/proc_info.h>
+    (struct proc_bsdinfo, 136 bytes, flavor 3); not run on macOS in this repository's tests."""
+    try:
+        import ctypes.util
+
+        class BsdInfo(ctypes.Structure):
+            _fields_ = [("pbi_flags", ctypes.c_uint32), ("pbi_status", ctypes.c_uint32), ("pbi_xstatus", ctypes.c_uint32),
+                        ("pbi_pid", ctypes.c_uint32), ("pbi_ppid", ctypes.c_uint32), ("pbi_uid", ctypes.c_uint32),
+                        ("pbi_gid", ctypes.c_uint32), ("pbi_ruid", ctypes.c_uint32), ("pbi_rgid", ctypes.c_uint32),
+                        ("pbi_svuid", ctypes.c_uint32), ("pbi_svgid", ctypes.c_uint32), ("rfu_1", ctypes.c_uint32),
+                        ("pbi_comm", ctypes.c_char * 16), ("pbi_name", ctypes.c_char * 32), ("pbi_nfiles", ctypes.c_uint32),
+                        ("pbi_pgid", ctypes.c_uint32), ("pbi_pjobc", ctypes.c_uint32), ("e_tdev", ctypes.c_uint32),
+                        ("e_tpgid", ctypes.c_uint32), ("pbi_nice", ctypes.c_int32), ("pbi_start_tvsec", ctypes.c_uint64),
+                        ("pbi_start_tvusec", ctypes.c_uint64)]
+
+        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+        lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_pidinfo.restype = ctypes.c_int
+        info = BsdInfo()
+        if lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
+            return None
+        return (int(info.pbi_start_tvsec), int(info.pbi_start_tvusec))
+    except Exception:  # noqa: BLE001 - no library, no symbol, a sandbox: the caller falls back
+        return None
+
+
+def _ps_start(pid):
+    """The start time `ps -o lstart= -p <pid>` prints, to the second (coarse), or None when ps fails, takes more than PS_WAIT seconds or prints none."""
+    try:
+        done = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=PS_WAIT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = " ".join(done.stdout.split())
+    return text if done.returncode == 0 and text else None
+
+
+def _read_ident(pid, kind):
+    """The identity of `pid` read the way `kind` ("proc", "libproc" or "ps") says, or None when the process is gone or the way fails."""
+    if kind == "proc":
+        try:
+            with open("/proc/%d/stat" % pid, "rb") as fh:
+                data = fh.read()
+            return ("proc", int(data[data.rindex(b")") + 2:].split()[19]))   # field 22, counted after the last ")": the name may hold one
+        except (OSError, ValueError, IndexError):
+            return None
+    if kind == "libproc":
+        started = _libproc_start(pid)
+        return None if started is None else ("libproc", started)
+    started = _ps_start(pid)
+    return None if started is None else ("ps", started)
+
+
+def process_ident(pid):
+    """What tells the process that has `pid` now from a later one that gets the same pid: its start time. Linux: field 22 of /proc/<pid>/stat;
+    macOS: libproc's pbi_start_tvsec and pbi_start_tvusec; where neither answers, the start time ps prints (to the second). The parent is no
+    part of it: a child is re-parented when its parent ends, and is still the process that was listed. None where the process is gone or
+    cannot be read."""
+    if os.path.isdir("/proc/self"):
+        return _read_ident(pid, "proc")
+    return _read_ident(pid, "libproc") or _read_ident(pid, "ps")
+
+
+def same_process(pid, ident):
+    """Whether `pid` is still the process `ident` was read from (process_ident, or the listing a walk made): a pid that is gone, or that
+    another process has taken since (another start time), is not. An `ident` of None (it could not be read when the process was listed) is
+    not vouched for either: the pid is signalled only if it can be read now and is in this process's own group. A listing by plain ps that
+    gave no start time ("listed") can only be checked for the pid still being there."""
+    if ident is None:
+        try:
+            return process_ident(pid) is not None and os.getpgid(pid) == os.getpgrp()
+        except OSError:
+            return False
+    if ident[0] == "listed":
+        try:
+            os.kill(pid, 0)
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+    return _read_ident(pid, ident[0]) == ident
+
+
+def _seen_below(pids, ident):
+    """Enter pids seen below the tool in SEEN, with the identity the listing that showed them gave."""
+    for pid in pids:
+        if pid in SEEN or len(SEEN) < SEEN_MAX:
+            SEEN.add(pid)
+            if ident.get(pid) is not None:
+                SEEN_IDENT[pid] = ident[pid]
+
+
+def _ps_rows(columns):
+    """The rows of `ps -A -o <columns>` as lists of fields. Raises TreeNotListed when ps cannot be run, fails, takes more than PS_WAIT seconds
+    or lists nothing."""
+    try:
+        done = subprocess.run(["ps", "-A", "-o", columns], capture_output=True, text=True, timeout=PS_WAIT)
+    except subprocess.TimeoutExpired as exc:
+        raise TreeNotListed("ps took more than %d seconds" % PS_WAIT) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise TreeNotListed("ps could not be run: %s" % type(exc).__name__) from exc
+    rows = [line.split() for line in done.stdout.splitlines() if line.split()]
+    if done.returncode != 0 or not rows:
+        raise TreeNotListed("ps %s" % ("exited %d" % done.returncode if done.returncode != 0 else "listed nothing"))
+    return rows
 
 
 def _children_libproc(pid):
@@ -2388,13 +3399,14 @@ PS_WAIT = 10    # seconds the ps fallback is given: ps is slow on a heavily load
 
 
 def _below(kids, pid):
-    found, seen, stack = [], {pid}, [pid]
-    while stack:
-        for child in kids.get(stack.pop(), []):
+    """Every process below `pid` in `kids` ({parent: [children]}), a parent before its children."""
+    found, seen, queue = [], {pid}, [pid]
+    for parent in queue:
+        for child in kids.get(parent, []):
             if child not in seen:
                 seen.add(child)
                 found.append(child)
-                stack.append(child)
+                queue.append(child)
     return found
 
 
@@ -2407,20 +3419,25 @@ def _libproc_works(pid):
     return pid == os.getpid() and os.getpid() in (_children_libproc(os.getppid()) or [])
 
 
-def descendants(pid):
-    """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps
-    (given PS_WAIT seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has
-    just listed this tool's own child `pid` (a library that answers nothing for a live child is not working, as in a
-    sandbox that denies it), and otherwise ps is asked."""
-    kids = {}
+def list_descendants(pid):
+    """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps (given PS_WAIT
+    seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has just listed this tool's own child
+    `pid` (a library that answers nothing for a live child is not working, as in a sandbox that denies it), and otherwise ps is asked. The
+    list carries .ident, the identity of each pid from the same reading. Raises TreeNotListed when the processes cannot be listed: that is
+    never an empty list."""
+    kids, ident = {}, {}
     try:
         if os.path.isdir("/proc/self"):
+            started = time.monotonic()
             for entry in os.listdir("/proc"):
+                if time.monotonic() - started > TABLE_SECONDS:
+                    raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
                 if entry.isdigit():
                     try:
                         with open("/proc/%s/stat" % entry, "rb") as fh:
                             fields = fh.read().rsplit(b")", 1)[1].split()
                         kids.setdefault(int(fields[1]), []).append(int(entry))
+                        ident[int(entry)] = ("proc", int(fields[19]))
                     except (OSError, IndexError, ValueError):
                         continue
         else:
@@ -2433,41 +3450,67 @@ def descendants(pid):
                             seen.add(child)
                             found.append(child)
                             stack.append(child)
-                return found
+                listing = _Listing(found)
+                listing.ident = {}
+                for child in found:
+                    started = _libproc_start(child)
+                    if started is not None:
+                        listing.ident[child] = ("libproc", started)
+                return listing
             if first is not None and _libproc_works(pid):
-                return []
-            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                    kids.setdefault(int(parts[1]), []).append(int(parts[0]))
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return _below(kids, pid)
+                listing = _Listing()
+                listing.ident = {}
+                return listing
+            for row in _ps_rows("pid=,ppid=,lstart="):
+                if len(row) >= 2 and row[0].isdigit() and row[1].isdigit():
+                    kids.setdefault(int(row[1]), []).append(int(row[0]))
+                    ident[int(row[0])] = ("ps", " ".join(row[2:])) if len(row) >= 6 else ("listed", None)
+    except OSError as exc:
+        raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    listing = _Listing(_below(kids, pid))
+    listing.ident = {child: ident[child] for child in listing if child in ident}
+    return listing
+
+
+def descendants(pid):
+    """list_descendants for a caller that cannot take an exception (a signal handler): the same list, but when the tree cannot be listed the
+    list is empty, has not_listed = True, and process_notes() says so."""
+    try:
+        return list_descendants(pid)
+    except TreeNotListed as exc:
+        _note("the processes below pid %d could not be listed (%s)" % (pid, exc))
+        listing = _Listing()
+        listing.ident = {}
+        listing.not_listed = True
+        return listing
 
 
 def _process_table():
-    """{pid: (parent pid, process group)} for every process, from /proc where there is one, else from ps (given PS_WAIT seconds);
-    None when neither answers."""
-    table = {}
+    """{pid: (parent pid, process group)} for every process, from /proc where there is one, else from ps (given PS_WAIT seconds); .ident holds
+    each pid's identity from the same reading. Raises TreeNotListed when neither answers."""
+    table, ident = _Table(), {}
     try:
         if os.path.isdir("/proc/self"):
+            started = time.monotonic()
             for entry in os.listdir("/proc"):
+                if time.monotonic() - started > TABLE_SECONDS:
+                    raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
                 if entry.isdigit():
                     try:
                         with open("/proc/%s/stat" % entry, "rb") as fh:
                             fields = fh.read().rsplit(b")", 1)[1].split()
                         table[int(entry)] = (int(fields[1]), int(fields[2]))
+                        ident[int(entry)] = ("proc", int(fields[19]))
                     except (OSError, IndexError, ValueError):
                         continue
         else:
-            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) == 3 and all(part.isdigit() for part in parts):
-                    table[int(parts[0])] = (int(parts[1]), int(parts[2]))
-    except (OSError, subprocess.SubprocessError):
-        return None
+            for row in _ps_rows("pid=,ppid=,pgid=,lstart="):
+                if len(row) >= 3 and all(part.isdigit() for part in row[:3]):
+                    table[int(row[0])] = (int(row[1]), int(row[2]))
+                    ident[int(row[0])] = ("ps", " ".join(row[3:])) if len(row) >= 8 else ("listed", None)
+    except OSError as exc:
+        raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    table.ident = ident
     return table
 
 
@@ -2476,10 +3519,11 @@ def _sample(pid):
     here and later loses its parent is the tool's to end, and one that was never seen is not."""
     try:
         if os.path.isdir("/proc/self"):
+            table = _process_table()
             kids = {}
-            for child, (parent, _group) in (_process_table() or {}).items():
+            for child, (parent, _group) in table.items():
                 kids.setdefault(parent, []).append(child)
-            SEEN.update(_below(kids, pid))
+            _seen_below(_below(kids, pid), table.ident)
         else:
             seen, stack = {pid}, [pid]
             while stack:
@@ -2487,7 +3531,8 @@ def _sample(pid):
                     if child not in seen:
                         seen.add(child)
                         stack.append(child)
-            SEEN.update(seen - {pid})
+            idents = {child: ("libproc", started) for child in seen - {pid} for started in [_libproc_start(child)] if started is not None}
+            _seen_below(seen - {pid}, idents)
     except Exception:  # noqa: BLE001 - a sample is best effort
         pass
 
@@ -2519,21 +3564,33 @@ def _holds_pipe(pid, inodes):
     return False
 
 
+def _same_ident(pid, before, listed):
+    """Whether `pid` is still the process `before` was read from. `listed` is the identity the table just read gave it: when it is the same
+    kind of identity (a start time from /proc, from libproc or from ps) the two are compared; when it is not (macOS: a process is seen
+    through libproc and listed through ps, and the two give different texts for one start time) the pid is read again the way `before` was."""
+    if listed is not None and listed[0] == before[0]:
+        return listed == before
+    return same_process(pid, before)
+
+
 def reap_orphans(inodes=None):
     """Kill what this tool started and lost: a process of the tool's own group that is no longer below the tool (its parent ended and
     init adopted it, so the walk from a program's pid cannot find it) and that the tool knows to be its own: it was seen below the tool
     (SEEN: the programs it started, the trees it listed, the samples taken while it waited), or, on Linux, it holds one of `inodes`,
     the pipes the tool made. A process the tool never saw in its tree is not touched, whoever leads the group: the next stage of a
     pipeline the tool heads, or a process a launcher put in the group, is not the tool's. A process outside the group is never looked
-    at, and a pid is checked against the group again at the moment it is signalled. Returns the pids signalled."""
+    at, and a pid is checked against the group, and against the identity it had when it was seen (same_process), at the moment it is
+    signalled. Returns the pids signalled; when the processes cannot be listed it signals none and process_notes() says so."""
     me = os.getpid()
     try:
         if os.getpgrp() != me:
             return []
     except OSError:
         return []
-    table = _process_table()
-    if not table:
+    try:
+        table = _process_table()
+    except TreeNotListed as exc:
+        _note("what the tool started and lost could not be looked for: the processes could not be listed (%s)" % exc)
         return []
     kids = {}
     for pid, (parent, _group) in table.items():
@@ -2541,13 +3598,27 @@ def reap_orphans(inodes=None):
     below = set(_below(kids, me))
     on_linux = os.path.isdir("/proc/self")
     killed = []
+    started = time.monotonic()
     for pid, (_parent, group) in table.items():
+        if time.monotonic() - started > TABLE_SECONDS:
+            _note("the look for what the tool started and lost was cut after %d seconds" % TABLE_SECONDS)
+            break
         if group != me or pid == me or pid in below:
             continue
-        if pid not in SEEN and not (inodes and on_linux and _holds_pipe(pid, inodes)):
+        listed = table.ident.get(pid)
+        holder = False
+        if pid in SEEN:
+            before = SEEN_IDENT.get(pid)
+            if before is not None and not _same_ident(pid, before, listed):
+                continue                           # the pid is another process's now: one the tool never saw
+        elif inodes and on_linux and _holds_pipe(pid, inodes):
+            holder = True
+        else:
             continue
         try:
             if os.getpgid(pid) != me:
+                continue
+            if not same_process(pid, listed) or (holder and not _holds_pipe(pid, inodes)):
                 continue
             os.kill(pid, signal.SIGKILL)
             killed.append(pid)
@@ -2556,86 +3627,512 @@ def reap_orphans(inodes=None):
     return killed
 
 
+def _stop_below(root, stopped):
+    """Stop (SIGSTOP) every process below `root` as the walk finds it, so one that forks fast cannot outrun the walk, and repeat the walk
+    for what the stopped ones had already forked, for at most MAX_ROUNDS rounds and WALK_SECONDS seconds. `stopped` gets {pid: identity}.
+    Returns None, or the sentence that says the tree could not be listed or that the walk was cut."""
+    began = time.monotonic()
+    for _round in range(MAX_ROUNDS):
+        try:
+            found = list_descendants(root)
+        except TreeNotListed as exc:
+            return _note("the processes below pid %d could not be listed (%s): the program itself was ended, nothing below it" % (root, exc))
+        listed = getattr(found, "ident", None) or {}
+        _seen_below(found, listed)
+        fresh = [pid for pid in found if pid not in stopped]
+        if not fresh:
+            return None
+        for pid in fresh:
+            if not same_process(pid, listed.get(pid)):
+                continue
+            try:
+                os.kill(pid, signal.SIGSTOP)
+                stopped[pid] = listed.get(pid)
+            except OSError:
+                pass
+        if time.monotonic() - began > WALK_SECONDS:
+            break
+    return _note("the walk below pid %d was cut at %d rounds or %d seconds: a process started after it may be running" % (root, MAX_ROUNDS, WALK_SECONDS))
+
+
+def _end(stopped):
+    """Kill the stopped set, each pid only if it is still the process that was stopped."""
+    for pid, ident in list(stopped.items()):
+        if same_process(pid, ident):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+
 def kill_tree(proc):
-    """Kill the program and everything it started. The children are listed first: once the parent is gone they are
-    adopted by init and can no longer be found below it. A program already waited for is not touched: its pid is free to
-    be another process's, and the walk below it would be that process's children."""
+    """Kill the program and everything it started. The program is stopped first and then each process below it as the walk finds it
+    (_stop_below), so the tree does not grow while it is listed; the stopped set is killed after the program. A pid is killed only if it
+    is still the process that was listed (same_process). A program already waited for is not touched: its pid is free to be another
+    process's, and the walk below it would be that process's children. Returns None, or a sentence when the tree could not be listed or
+    the walk was cut."""
     if proc.poll() is not None:
-        return
+        return None
     try:
         proc.send_signal(signal.SIGSTOP)    # a program that is stopped forks nothing more while its tree is listed
     except OSError:
         pass
+    stopped, note = {}, None
     try:
-        victims = descendants(proc.pid)
-        SEEN.update(victims)
+        note = _stop_below(proc.pid, stopped)
     finally:
         try:
             proc.kill()
         except OSError:
             pass
-    for pid in victims:
+        _end(stopped)
+    return note
+
+
+def _stat_row(pid):
+    """(state letter, parent pid, identity) of `pid` from /proc/<pid>/stat, or None when it is gone or cannot be read. The identity is the one
+    process_ident gives (field 22, counted after the last ")")."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            data = fh.read()
+        rest = data[data.rindex(b")") + 2:].split()
+        return rest[0].decode("ascii", "replace"), int(rest[1]), ("proc", int(rest[19]))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _children_of_me():
+    """{pid: (state, identity)} of the direct children of this process (Linux). The kernel's own list of each thread's children is read where
+    there is one (no scan of every process), and every pid it names is checked against /proc/<pid>/stat; where there is none, /proc is
+    scanned. Raises TreeNotListed when /proc cannot be read or takes more than TABLE_SECONDS."""
+    me = os.getpid()
+    pids = None
+    try:
+        named = set()
+        for tid in os.listdir("/proc/%d/task" % me):
+            with open("/proc/%d/task/%s/children" % (me, tid)) as fh:
+                named.update(int(part) for part in fh.read().split())
+        pids = sorted(named)
+    except (OSError, ValueError):
+        pids = None
+    if pids is None:
+        try:
+            pids = [int(entry) for entry in os.listdir("/proc") if entry.isdigit()]
+        except OSError as exc:
+            raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    found, started = {}, time.monotonic()
+    for pid in pids:
+        if time.monotonic() - started > TABLE_SECONDS:
+            raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
+        row = _stat_row(pid)
+        if row is not None and row[1] == me:
+            found[pid] = (row[0], row[2])
+    return found
+
+
+def _unproven(text):
+    """Record why this block cannot say that no program left a process behind (once, at most 20) and return it."""
+    if text not in LEFT["unproven"] and len(LEFT["unproven"]) < 20:
+        LEFT["unproven"].append(text)
+    return text
+
+
+def become_subreaper():
+    """On Linux ask the kernel to make this process the parent of every process a program leaves behind (PR_SET_CHILD_SUBREAPER = 36), so that
+    one that left the tool's group or session, or holds none of its descriptors, is a child of the tool and settle() can find it. Called by
+    spawn() before the first program; once. PRE_KIDS records the children the tool already had (pid and start time): they are not a program's
+    and settle() leaves them. Where the kernel refuses, or the host is not Linux, nothing is adopted: settle() falls back to what the tool
+    saw below a program (SEEN), and the answer cannot prove that nothing was left (process_verdict()['unproven']). Returns whether it is on."""
+    if SUB["tried"]:
+        return SUB["on"]
+    SUB["tried"] = True
+    if sys.platform.startswith("linux") and ctypes is not None:
+        try:
+            SUB["on"] = ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
+        except Exception:  # noqa: BLE001 - no libc symbol, a sandbox: the caller falls back
+            SUB["on"] = False
+        if SUB["on"]:
+            try:
+                PRE_KIDS.update({pid: ident for pid, (_state, ident) in _children_of_me().items()})
+            except TreeNotListed as exc:
+                _unproven(_note("the children the tool already had could not be listed (%s): one of them may be taken for a program's" % exc))
+        else:
+            _unproven("this host refused PR_SET_CHILD_SUBREAPER: a process a program left behind outside the walk is not adopted and may not be found")
+    else:
+        reason = "this host cannot adopt orphaned processes (no PR_SET_CHILD_SUBREAPER): a process a program left behind may not be found"
+        SUB["note"] = reason              # in process_verdict()["notes"], never in process_notes(): a tool that reads only what a program printed is not made partial by it
+        if NONLINUX_UNPROVEN_DOWNGRADE:
+            _unproven(reason)
+    return SUB["on"]
+
+
+def process_keep(pid):
+    """Let `pid` stay: settle() does not end it. For a process a program leaves on purpose (a daemon the tool stops itself); spawn(argv,
+    leaves=True) does it for what that program leaves. A kept process is still ended by a stop signal (kill_all)."""
+    ident = process_ident(pid)
+    if ident is not None:
+        KEEP[pid] = ident
+
+
+def _exempt(pid, ident, active):
+    """Whether the process `pid` (identity `ident`) is the tool's own and not a program's leftover: a program spawn() started (Popen owns it
+    and reaps it), one in ACTIVE (`active`, their pids), one kept (KEEP) or one the tool already had (PRE_KIDS). A pid whose identity differs is
+    another process that has the number now."""
+    if pid in active:
+        return True
+    for table in (SPAWNED, KEEP, PRE_KIDS):
+        if pid in table and (table[pid] is None or (table[pid] == ident if ident is None or table[pid][0] == ident[0] else same_process(pid, table[pid]))):
+            return True
+    return False
+
+
+def _victims_children(active):
+    """[(pid, state, identity)]: the children of this tool that are no program's own (Linux, with the subreaper on)."""
+    return [(pid, state, ident) for pid, (state, ident) in sorted(_children_of_me().items()) if not _exempt(pid, ident, active)]
+
+
+def _victims_seen(active):
+    """[(pid, state, identity)]: where nothing is adopted, the processes that were seen below a program, are still the ones that were seen, and
+    have lost their parent (the parent is not the tool and is not a live process the tool saw). Raises TreeNotListed."""
+    me = os.getpid()
+    candidates = [pid for pid in list(SEEN) if pid != me and SEEN_IDENT.get(pid) is not None and not _exempt(pid, SEEN_IDENT[pid], active)]
+    if not candidates:
+        return []
+    table = _process_table()
+    found = []
+    for pid in candidates:
+        row, listed = table.get(pid), table.ident.get(pid)
+        if row is None or not _same_ident(pid, SEEN_IDENT[pid], listed) or row[0] == me:
+            continue
+        parent = row[0]
+        if parent in table and SEEN_IDENT.get(parent) is not None and _same_ident(parent, SEEN_IDENT[parent], table.ident.get(parent)):
+            continue                               # its parent is a live process of a program's tree: the program has not ended
+        found.append((pid, "S", listed))
+    return found
+
+
+def _stop_under(roots, stopped, deadline):
+    """_stop_below for several roots at once with one reading of the processes per round (a program may leave thousands): stop (SIGSTOP)
+    every process below any of `roots` as the walk finds it, for at most MAX_ROUNDS rounds, WALK_SECONDS seconds and until `deadline`.
+    `stopped` gets {pid: identity}. Returns None, or the sentence that says the tree could not be listed or that the walk was cut."""
+    began = time.monotonic()
+    for _round in range(MAX_ROUNDS):
+        try:
+            table = _process_table()
+        except TreeNotListed as exc:
+            return _unproven(_note("the processes below what a program left behind could not be listed (%s): the leftovers were ended, nothing below them" % exc))
+        kids = {}
+        for child, (parent, _group) in table.items():
+            kids.setdefault(parent, []).append(child)
+        fresh = []
+        for root in roots:
+            fresh.extend(pid for pid in _below(kids, root) if pid not in stopped)
+        if not fresh:
+            return None
+        for pid in fresh:
+            ident = table.ident.get(pid)
+            if pid not in stopped and same_process(pid, ident):
+                try:
+                    os.kill(pid, signal.SIGSTOP)
+                    stopped[pid] = ident
+                except OSError:
+                    pass
+        if time.monotonic() > min(deadline, began + WALK_SECONDS):
+            break
+    return _unproven(_note("the walk below what a program left behind was cut at %d rounds or %d seconds: a process started after it may be running" % (MAX_ROUNDS, WALK_SECONDS)))
+
+
+def _end_counting(stopped):
+    """Kill the stopped set, each pid only if it is still the process that was stopped. How many were alive (a zombie was not left running)."""
+    alive = 0
+    for pid, ident in list(stopped.items()):
+        row = _stat_row(pid)
+        if not same_process(pid, ident):
+            continue
         try:
             os.kill(pid, signal.SIGKILL)
+            if row is None or row[0] not in ("Z", "X"):
+                alive += 1
         except OSError:
             pass
+    return alive
+
+
+def _end_children(victims, deadline):
+    """End the leftovers that are this tool's children: each is stopped (its identity and parent read again first), what it started is stopped
+    with it (_stop_under), the set is killed, and the children are reaped (waitpid WNOHANG: the tool is their parent). The clock is read for
+    every one, so a program that left thousands is cut at `deadline`, not after a pass. Returns how many live processes were killed."""
+    me = os.getpid()
+    stopped, reap, cut = {}, [], False
+    try:
+        for pid, _state, ident in victims:
+            if time.monotonic() >= deadline:
+                cut = True
+                break
+            row = _stat_row(pid)
+            if row is None or row[1] != me or row[2] != ident:
+                continue                           # gone, or not this tool's child any more
+            if row[0] in ("Z", "X"):
+                reap.append(pid)
+                continue
+            try:
+                os.kill(pid, signal.SIGSTOP)
+            except OSError:
+                continue
+            stopped[pid] = ident
+            reap.append(pid)
+        _stop_under(list(stopped), stopped, deadline)
+    finally:
+        alive = _end_counting(stopped)
+    pending = set(reap)
+    while pending:
+        for pid in list(pending):
+            try:
+                done, _status = os.waitpid(pid, os.WNOHANG)
+            except OSError:
+                pending.discard(pid)               # not this tool's child (any more): nothing to reap
+                continue
+            if done:
+                pending.discard(pid)
+        if not pending:
+            break
+        if time.monotonic() >= deadline:
+            _unproven(_note("%d processes a program left behind did not end within %d seconds" % (len(pending), LEFTOVER_SECONDS)))
+            break
+        time.sleep(0.005)
+    if cut:
+        _unproven(_note("a program left more processes than could be ended within %d seconds: some are still running" % LEFTOVER_SECONDS))
+    return alive
+
+
+def _end_seen(victims, deadline):
+    """End the leftovers where nothing is adopted: stopped, what they started stopped with them, then killed (each only if it is still the
+    process that was seen). Returns how many live processes were killed."""
+    stopped = {}
+    try:
+        for pid, _state, ident in victims:
+            if time.monotonic() >= deadline:
+                _unproven(_note("a program left more processes than could be ended within %d seconds: some are still running" % LEFTOVER_SECONDS))
+                break
+            if same_process(pid, ident):
+                try:
+                    os.kill(pid, signal.SIGSTOP)
+                    stopped[pid] = ident
+                except OSError:
+                    pass
+        _stop_under(list(stopped), stopped, deadline)
+    finally:
+        alive = _end_counting(stopped)
+    return alive
+
+
+def _settle(final):
+    active = {proc.pid for proc in list(ACTIVE)}
+    if not final and any(proc.poll() is None for proc in list(ACTIVE)):
+        _unproven(_note("a program was still running when another one ended: what is left behind cannot be told from what that program started, so nothing was ended"))
+        return 0
+    deadline = time.monotonic() + LEFTOVER_SECONDS
+    victims = _victims_children if SUB["on"] else _victims_seen
+    ended, looked = 0, False
+    ready = [proc for proc in list(LEAVES.values()) if proc.poll() is not None]
+    if ready:
+        for proc in ready:                         # a program that leaves a process on purpose: what it left stays
+            LEAVES.pop(proc.pid, None)
+        for pid, state, ident in victims(active):
+            if state not in ("Z", "X"):
+                KEEP[pid] = ident
+    while True:
+        found = victims(active)
+        if not found:
+            if ended and not looked:
+                looked = True                      # one more look after a short pause: a fork that was under way when the first one died
+                time.sleep(SETTLE_LOOK)
+                continue
+            return ended
+        if time.monotonic() >= deadline:
+            _unproven(_note("%d processes a program left behind were still there after %d seconds: they were not all ended" % (len(found), LEFTOVER_SECONDS)))
+            return ended
+        ended += (_end_children if SUB["on"] else _end_seen)(found, deadline)
+        if not SUB["on"]:
+            return ended                           # nothing is adopted: one pass, the processes are not this tool's to reap
+
+
+def settle(final=False):
+    """Look for what the programs this tool ran have left behind, and end it: the processes that are the tool's children and no program's own
+    (the subreaper adopted them) are stopped, what they started with them, killed and reaped, for at most LEFTOVER_SECONDS (the clock is read for
+    every process, and one more look follows an ending). Never a process of another program: while another program is running in ACTIVE nothing
+    is ended and process_verdict() says it is unproven. Never a program spawn() started (Popen owns its exit status: its returncode is never
+    taken), nor KEEP, PRE_KIDS or a process outside the tool's own children. final=True is the stop signal's own call (kill_all). Runs on the
+    caller's thread, joins none and never raises. Returns how many live processes it ended; process_verdict() holds the totals."""
+    if SETTLING[0] and not final:
+        return 0
+    SETTLING[0] = True
+    try:
+        ended = _settle(final)
+        LEFT["left_behind"] += ended
+        return ended
+    except Exception as exc:  # noqa: BLE001 - never into the finally of a carrier: say it could not be proven
+        _unproven(_note("the look for what a program left behind failed (%s)" % type(exc).__name__))
+        return 0
+    finally:
+        SETTLING[0] = False
+
+
+def process_verdict():
+    """What an answer says about the programs the tool ran: {"subreaper": whether orphans were adopted, "left_behind": how many live processes
+    settle() ended, "unproven": why 'nothing was left behind' cannot be claimed (empty when it can), "notes": process_notes()}."""
+    return {"subreaper": SUB["on"], "left_behind": LEFT["left_behind"], "unproven": list(LEFT["unproven"]), "notes": process_notes() + ([SUB["note"]] if SUB["note"] else [])}
+
+
+def process_apply(answer):
+    """Put process_verdict() into `answer` as answer["program_group"] and, when a program left a process behind or that cannot be ruled out,
+    turn a complete answer into a partial one (status "partial", the ok and complete flags that are there false, a sentence in status_basis;
+    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT):
+    what a program wrote while the tool read it is not a complete result. A carrier calls it once where it prints its answer. Returns `answer`."""
+    verdict = process_verdict()
+    answer["program_group"] = verdict
+    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"]) and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        for flag in ("ok", "complete"):
+            if flag in answer:
+                answer[flag] = False
+        if verdict["left_behind"] > 0:
+            sentence = "a program left %d process%s running after it ended; the tool ended them, and what they wrote before that is in the files named here" % (
+                verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es")
+        elif PIPE_CUT["cut"]:
+            sentence = "a process that held a program's pipe after it ended went on writing; the tool read no more than %d bytes of it and let the pipe go" % POST_EXIT_BYTES
+        else:
+            sentence = "the tool cannot prove that no program left a process behind (see program_group.unproven)"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = "%s; %s" % (basis, sentence) if isinstance(basis, str) and basis else sentence
+    return answer
 
 
 PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
+POST_EXIT_BYTES = 1 << 20    # the most bytes (both pipes together) read from the pipes of a program that has ended
+PIPE_CUT = {"cut": 0}        # how many calls stopped reading at POST_EXIT_BYTES because a process still held the pipes and went on writing
 
 
 def communicate_bounded(proc, seconds, input=None):
     """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
     are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
-    inherited them) does not hold the tool: the pipes are given PIPE_GRACE seconds, what the program wrote is kept, what the tool
-    lost is killed (reap_orphans), and the pipes are let go. The pipes are read here and by nothing else, so letting them go is safe."""
+    inherited them) does not hold the tool: from the moment the program has ended (or was killed) the pipes are given PIPE_GRACE seconds
+    and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept, what the tool lost is killed (reap_orphans,
+    settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted (process_notes()); the return shape is the
+    same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them go is safe. `input` is written while
+    the program runs and is dropped once it has ended."""
     deadline = time.monotonic() + max(0.1, seconds)
-    out = err = b""
-    started, timed_out = False, False
-    while proc.poll() is None:
-        now = time.monotonic()
-        if now >= deadline:
-            timed_out = True
-            kill_tree(proc)
-            break
-        _sample(proc.pid)
-        try:
-            out, err = proc.communicate(None if started else input, timeout=max(0.01, min(0.2, deadline - now)))
-            return out or b"", err or b"", False
-        except subprocess.TimeoutExpired as exc:
-            started = True
-            out, err = exc.stdout or b"", exc.stderr or b""
+    bufs = (bytearray(), bytearray())
+    sel = _selectors.DefaultSelector()
+    pending = memoryview(input) if input and proc.stdin is not None else None
+    for index, stream in enumerate((proc.stdout, proc.stderr)):
+        if stream is not None:
+            sel.register(stream, _selectors.EVENT_READ, index)
+    if proc.stdin is not None:
+        if pending:
+            sel.register(proc.stdin, _selectors.EVENT_WRITE, 2)
+        else:
+            _close_pipe(proc.stdin)
+    timed_out, note, ended, extra, cut, sampled = False, None, None, 0, False, 0.0
     try:
-        out, err = proc.communicate(None if started else input, timeout=PIPE_GRACE)
-    except subprocess.TimeoutExpired as exc:
-        out, err = exc.stdout or b"", exc.stderr or b""
-        reap_orphans(_pipe_inodes(proc))
+        while True:
+            now = time.monotonic()
+            if ended is None:
+                if proc.poll() is not None:
+                    ended = now
+                elif now >= deadline:
+                    timed_out = True
+                    note = kill_tree(proc)
+                    ended = time.monotonic()
+                elif now - sampled >= 0.2:
+                    sampled = now
+                    _sample(proc.pid)
+            if ended is not None:
+                if pending is not None:
+                    sel.unregister(proc.stdin)
+                    _close_pipe(proc.stdin)
+                    pending = None
+                if not any(key.data != 2 for key in sel.get_map().values()) or extra >= POST_EXIT_BYTES or now - ended >= PIPE_GRACE:
+                    cut = extra >= POST_EXIT_BYTES and any(key.data != 2 for key in sel.get_map().values())
+                    break
+            wait = max(0.01, min(0.2, (deadline if ended is None else ended + PIPE_GRACE) - now))
+            if not sel.get_map():
+                try:
+                    proc.wait(timeout=wait)
+                except subprocess.TimeoutExpired:
+                    pass
+                continue
+            for key, _mask in sel.select(wait):
+                if key.data == 2:
+                    try:
+                        pending = pending[os.write(key.fd, pending[:_select.PIPE_BUF]):]
+                    except OSError:
+                        pending = None
+                    if not pending:
+                        sel.unregister(proc.stdin)
+                        _close_pipe(proc.stdin)
+                        pending = None
+                    continue
+                if ended is not None and extra >= POST_EXIT_BYTES:
+                    break
+                try:
+                    data = os.read(key.fd, 65536 if ended is None else min(65536, POST_EXIT_BYTES - extra))
+                except OSError:
+                    data = b""
+                if not data:
+                    sel.unregister(key.fileobj)
+                    continue
+                bufs[key.data].extend(data)
+                if ended is not None:
+                    extra += len(data)
+        if any(key.data != 2 for key in sel.get_map().values()):
+            reap_orphans(_pipe_inodes(proc))
+            settle()
+    finally:
+        sel.close()
         for pipe in (proc.stdin, proc.stdout, proc.stderr):
-            try:
-                if pipe is not None:
-                    pipe.close()
-            except (OSError, ValueError):
-                pass
+            _close_pipe(pipe)
+    if cut:
+        PIPE_CUT["cut"] += 1
+        _note("a process that held a program's pipe after the program ended went on writing: the tool read %d bytes more and let the pipe go" % POST_EXIT_BYTES)
     try:
         proc.wait(timeout=PIPE_GRACE)
     except subprocess.TimeoutExpired:
         pass
-    return out or b"", err or b"", timed_out
+    settle()
+    err = bytes(bufs[1])
+    if note:
+        err = err + (b"\n" if err else b"") + note.encode("utf-8", "replace")
+    return bytes(bufs[0]), err, timed_out
+
+
+def _close_pipe(pipe):
+    try:
+        if pipe is not None:
+            pipe.close()
+    except (OSError, ValueError):
+        pass
 
 
 def kill_all():
     """End every program the tool has running, with what each started. Then everything below the tool itself, which is the tool's own: a
-    program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans)."""
+    program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans).
+    Returns the sentences for what could not be done (also in process_notes())."""
+    notes = []
     for proc in list(ACTIVE):
-        kill_tree(proc)
-    below = descendants(os.getpid())
-    SEEN.update(below)
-    for pid in below:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
+        note = kill_tree(proc)
+        if note:
+            notes.append(note)
+    stopped = {}
+    try:
+        note = _stop_below(os.getpid(), stopped)
+        if note:
+            notes.append(note)
+    finally:
+        _end(stopped)
     reap_orphans()
+    settle(True)     # what the stop ended below the tool is reaped (bounded; settle never raises)
+    return notes
 
 
 def _on_signal(signum, _frame):
@@ -2684,6 +4181,11 @@ def install_signal_handlers():
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
+# The process block's handlers (they end the programs the tool runs, then give the last word) are in as soon as the module has
+# run this far, not when main() starts: a signal from here on gives one answer and exit 128 plus the signal number. What stays
+# open is the start of the interpreter and the compiling of this file.
+STATE["last_word"] = stop_word
+install_signal_handlers()
 
 
 # A value that is a number, a UUID or a run of hex bytes is shown as it is.
@@ -3445,8 +4947,6 @@ CHAIN_DETAIL = {
 
 
 def main():
-    STATE["last_word"] = stop_word
-    install_signal_handlers()
     args = read_args()
     root = want_str(args, "root")
     paths = want_str_list(args, "paths", 100000)
@@ -3469,8 +4969,13 @@ def main():
                           "original text of a name, hint or snapshot name the answer shows withheld or shortened)")
     except TextRefused as exc:
         fail(str(exc))
+    try:
+        bind_values(write_text, TOOL)         # the originals of what the one way out withholds (the same job and secret-output rules as the text file: it was checked first)
+    except ValuesRefused as exc:
+        values.close()
+        fail(str(exc))
+    seal_stop_after(seconds + 6.5)            # no judging runs on past this (the manifest allows 60); the tool's own clock below runs out first
     shown = Shower(values)
-    bind_run(values, seconds)
     # The reading stops at four fifths of max_seconds; the rest is for writing the rows and the answer, which stop at
     # max_seconds itself, so that the call ends near the time asked for even when a stop leaves many rows to write.
     clock = Clock(seconds * 0.8)
@@ -4055,6 +5560,14 @@ def main():
                     partial.append("qemu-img was not run on %d eligible image(s) (%s; first %s)" % (skipped[why], "qemu_img_max_images (%d) was reached" % qemu_max if why != "max_seconds" else "max_seconds was near", skipped_first[why]))
             if qemu_report["checked"] == 0 and not failed_runs:
                 qemu_report["note"] += "; no parsed image was eligible"
+        if SUB["tried"]:
+            # qemu-img's second reading is what it printed on a pipe, so a host that cannot show that nothing was left does not make the answer partial (program_group says so);
+            # a process settle() ended is a fact: the pipe was let go at the grace, and what the process would still have printed is not in the second reading.
+            if PIPE_CUT["cut"] and not process_verdict()["left_behind"]:
+                partial.append("a process that held qemu-img's pipe after it ended went on writing: the tool read %d bytes of it and let the pipe go, so the second reading is not trusted" % POST_EXIT_BYTES)
+            if process_verdict()["left_behind"]:
+                partial.append("qemu-img left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block stopped, "
+                               "killed and reaped them, so what they would still have printed is not in the second reading" % process_verdict()["left_behind"])
 
     # ---- disks page ------------------------------------------------------------------------------------------------
     listed = 0
@@ -4098,7 +5611,7 @@ def main():
         skipped = sum(files.skipped_counts.values())
         outcome = ({"status": "partial", "status_basis": "the set holds no file that could be read; %d entr(ies) were skipped (links, special files, directories too deep, unreadable)%s: the answer names them" % (skipped, ("; " + "; ".join(partial)) if partial else "")}
                    if skipped or partial else {"status": "failed", "status_basis": "the set holds no file"})
-    print(answer_text({
+    emit(big_ints({
         "parser": PARSER, **outcome,
         "root": files.root_shown, "files_in_set": len(files.files), "kinds": dict(kinds), "other_files_by_extension": dict(other_ext.most_common(20)),
         "other_files_note": "files of no kind this tool reads are counted by extension and not examined (an extension that is not 1 to 10 letters or digits is counted under (other extensions) and not shown); absence of a disk here is not absence of a disk",
@@ -4118,13 +5631,14 @@ def main():
                        "format as qcow2 over a file that is raw (or any file this tool does not read as a disk) is `parent_unreadable`: the file found is not the format the child "
                        "declares, and no identity of it is compared."),
         "walk": files.skipped_summary(), "walk_truncated": files.truncated, "partial_reasons": partial, "lock_directories_total": files.lock_dirs_total,
-        "qemu_img": qemu_report,
+        "qemu_img": qemu_report, **({"program_group": process_verdict()} if SUB["tried"] else {}),
         "text": values.summary(), "withheld": withheld_summary(shown),
         "truncated": any(p["truncated"] for p in result_pages.values()),
         "limits": {"max_files": max_files, "max_entries": max_entries, "max_depth": max_depth, "max_snapshots": max_snapshots, "max_chain_depth": max_chain, "descriptor_read_cap": MAX_DESCRIPTOR},
         "note": "Markers are candidates with the observation beside them. A header or a descriptor says what its writer recorded; it does not say who or what wrote it, when, or why. "
                 "Corroborate with the hypervisor's own task and event records before calling a snapshot deleted, a consolidation failed or a disk tampered with.",
-    }))
+    }), indent=2)
+    close_values()
     return 0 if outcome["status"] != "failed" else 1
 
 

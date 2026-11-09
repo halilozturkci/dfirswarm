@@ -1,6 +1,6 @@
 {
   "name": "yara_scan",
-  "description": "Sweep a file or directory with a YARA rule file the caller names, and report where each rule matched: rule, file, and per string match the identifier, offset and length. A rule match says the rule's condition held, not that the file is malicious. SENSITIVE: yara -s prints the bytes a string matched, so a rule that finds a password or a key puts it in the output; the answer carries no matched bytes at all, and yara's text is read as a stream and dropped. write_matches: true writes them (as yara prints them) to $OUT/yara-matched-strings.jsonl, mode 0600, one row per string match with the answer's finding_id, only when this runs as a job (run it with secret_output: true) and refused anywhere else. A second run in the same job scans all the same and writes yara-matched-strings-2.jsonl (then -3, ...): an earlier file is never replaced and secret_values.values_file names this run's. Warnings and errors are kept whole in a stderr file (never over an earlier run's: the next free number names it); every `error scanning <file>: <reason>` line yara prints (it exits 0 all the same) is counted in scan_error_count and listed in scan_errors, and makes the run partial with complete: false. A FIFO, socket or device in a scanned directory, and a link yara does not follow (-N), is named under not_attempted (complete: false); a target that is itself one is refused. A run stopped by its time limit says complete: false and keeps what was read; status is complete, partial or failed with yara's exit status. It records the rules file's sha256 and yara's version; links inside a scanned directory are not followed where yara has -N. No rules ship with it. The program runs in the tool's own process group (never a session of its own), so the harness ending the tool ends it; the tool's own deadline kills it and what it started, and SIGTERM, SIGINT or SIGHUP do the same and the answer is then status interrupted.",
+  "description": "Sweep a file or directory with a YARA rule file the caller names, and report where each rule matched: rule, file, and per string match the identifier, offset and length. A rule match says the rule's condition held, not that the file is malicious. SENSITIVE: yara -s prints the bytes a string matched, so a rule that finds a password or a key puts it in the output; the answer carries no matched bytes at all, and yara's text is read as a stream and dropped: yara is run with -q (console output off) where it has it, a line of its output counts as a rule line only when it names a rule and a path that is the target or lies under it, and any other line is counted (ignored_lines) and never shown, so a rule's console message is not taken for a rule name. write_matches: true writes them (as yara prints them) to $OUT/yara-matched-strings.jsonl, mode 0600, one row per string match with the answer's finding_id, only when this runs as a job (run it with secret_output: true) and refused anywhere else. A second run in the same job scans all the same and writes yara-matched-strings-2.jsonl (then -3, ...): an earlier file is never replaced and secret_values.values_file names this run's. Warnings and errors are kept whole in a stderr file (never over an earlier run's: the next free number names it); every `error scanning <file>: <reason>` line yara prints (it exits 0 all the same) is counted in scan_error_count and listed in scan_errors, and makes the run partial with complete: false. A FIFO, socket or device in a scanned directory, and a link yara does not follow (-N), is named under not_attempted (complete: false); a target that is itself one is refused. A run stopped by its time limit says complete: false and keeps what was read; status is complete, partial or failed with yara's exit status. It records the rules file's sha256 and yara's version; links inside a scanned directory are not followed where yara has -N. No rules ship with it. The program runs in the tool's own process group (never a session of its own), so the harness ending the tool ends it; the tool's own deadline kills it and what it started, and SIGTERM, SIGINT or SIGHUP do the same and the answer is then status interrupted. One clock covers the whole run (112 s of the manifest's 120): the --version and --help probes, the walk of the target for what yara skips, yara itself (given what is left less a reserve), the read of its standard error and the digest of the rules; a phase the clock cuts makes the run partial and status_basis says which. Every answer carries status and status_basis; a wrong-type argument is refused as JSON; SIGTERM, SIGINT and SIGHUP end yara and what it started, remove the temporary files and answer with one JSON document (status interrupted, exit 128 plus the signal). A result file is never replaced: a rerun whose result differs (a shorter timeout_seconds) takes the next free -n name and the first file keeps its bytes. SENSITIVE: write_matches is declared secret output (a job that sets it runs as secret output). `complete` also needs that yara left nothing behind: a process it leaves running (in the tool's process group or in a session of its own) is stopped, killed and reaped by the shared process block's settle() before its standard error file is read and its output is waited for; one found makes the answer `partial` (program_group.left_behind and status_basis), and a process that holds yara's output pipe open does not hold the tool (the reader thread is released when the process is ended); on a host that is not Linux, or where the kernel refuses PR_SET_CHILD_SUBREAPER, the absence of a leftover cannot be proven and the answer is at most `partial` (program_group.unproven).",
   "params": {
     "rules": {
       "type": "string",
@@ -12,15 +12,15 @@
     },
     "timeout_seconds": {
       "type": "integer",
-      "description": "How long to let yara run (default 60, at most 110); a run that is stopped keeps what it printed"
+      "description": "How long to let yara run (default 60, at most 110, and never past what is left of the tool's own 112 s clock less a reserve); a run that is stopped keeps what it printed"
     },
     "limit": {
       "type": "integer",
-      "description": "Rule matches and string matches shown inline, each (default 200, an inline page size); every one is kept, and when there are more the whole list is written as JSON Lines and named in the page's all_results"
+      "description": "Rule matches and string matches shown inline, each (default 200, 1 to 10000, an inline page size); every one is kept, and when there are more the whole list is written as JSON Lines and named in the page's all_results"
     },
     "write_matches": {
       "type": "boolean",
-      "description": "Write the matched bytes to $OUT/yara-matched-strings.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the answer never carries a value"
+      "description": "Write the matched bytes to $OUT/yara-matched-strings.jsonl (default false). Secret output: refused as JSON, before anything is opened or created, unless the job runs with secret_output (the manifest declares it for this parameter); the answer never carries a value"
     }
   },
   "runtime": "python3",
@@ -29,9 +29,14 @@
   "example": "{\"rules\": \"work/rules/webshells.yar\", \"target\": \"work/extracted\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 5,
-  "sha256": "759248956c8415c30d53480088f0975b70a409c89c7db304aa24ea192f34e2f1",
+  "version": 13,
+  "sha256": "35b8de54804100030987c8dc83ec4aa1858839769edaccc7a3e42e7c8f28c037",
   "requires": [
     "yara"
-  ]
+  ],
+  "secret_output": {
+    "when_args": [
+      "write_matches"
+    ]
+  }
 }

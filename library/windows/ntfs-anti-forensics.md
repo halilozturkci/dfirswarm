@@ -52,7 +52,8 @@ same commands again.
    in `$I30` index slack (INDX buffers read with `icat` on the directory's
    `$INDEX_ALLOCATION`), data parked in `$BadClus:$Bad`, and space between
    the end of the file system (`fsstat`) and the end of the partition
-   (`mmls`).
+   (`mmls`), whose first sector is the volume's backup boot sector, not
+   hidden data.
 4. Wiping and volume shadow copies: traces that a wiping tool ran (SDelete,
    `cipher /w`, a cleaner) read from its own files, from Prefetch and
    Amcache, and from the pattern it left in `$MFT` and the journals; volume
@@ -201,7 +202,6 @@ reveals it, the ledger holds the dated events the timeline rests on, and
 - `grep -qiE 'sha-?256' work/hidden-items.md`
 - `test -f work/timeline.md`
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 23`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 18`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies

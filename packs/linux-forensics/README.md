@@ -7,28 +7,49 @@ Depends on the Computer Forensics Base Pack, which carries the method that is tr
 
 ## What it carries
 
-**Ten skills, fifteen second-level leaves and the router `linux/router`** (at most 400 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf), in eight families. Each skill opens with a decision-rule note; a
+**Nineteen skills, fifteen second-level leaves and the router `linux/router`** (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf), in eleven families. Each skill opens with a decision-rule note; a
 second-level leaf (listed after it, opened only when its question arises) holds the reference material the first points to.
 
 | Family | Skills |
 | --- | --- |
-| Triage | `triage/system-profile`; then `triage/identity-files`, `triage/clocks-boots` |
-| Logs | `logs/auth`, `logs/journal`; then `logs/auth-lines`, `logs/auth-time`, `logs/journal-clocks-verify` |
-| Accounts | `accounts/users`; then `accounts/sessions-histories` |
-| Persistence | `persistence/mechanisms`; then `persistence/cron-timers`, `persistence/quieter-routes` |
-| File system | `filesystem/ext`, `filesystem/storage`; then `filesystem/ext-deleted`, `filesystem/storage-lvm-luks`, `filesystem/storage-xfs-btrfs-virtual` |
-| Containers | `containers/docker`; then `containers/layers-times`, `containers/removed-logs` |
+| Triage | `triage/system-profile`, `triage/volatile-state`; then `triage/identity-files`, `triage/clocks-boots` |
+| Logs | `logs/auth`, `logs/journal`, `logs/auditd`; then `logs/auth-lines`, `logs/auth-time`, `logs/journal-clocks-verify` |
+| Accounts | `accounts/users`, `accounts/session-accounting`; then `accounts/sessions-histories` |
+| Execution | `execution/history` |
+| Persistence | `persistence/mechanisms`, `persistence/systemd`; then `persistence/cron-timers`, `persistence/quieter-routes` |
+| File system | `filesystem/ext`, `filesystem/storage`, `filesystem/timestamp-anomalies`; then `filesystem/ext-deleted`, `filesystem/storage-lvm-luks`, `filesystem/storage-xfs-btrfs-virtual` |
+| Containers | `containers/docker`, `containers/runtime-orchestration`; then `containers/layers-times`, `containers/removed-logs` |
+| Applications | `applications/server-logs` |
+| Cloud | `cloud/host-artifacts` |
 | Packages | `packages/integrity`; then `packages/baseline` |
 | Timeline | `timeline/linux`; then `timeline/linux-normalise` |
 
-**Six tools.** Each answers with fields and locators (file, line or record, byte offset), says what it did not
+**Eleven tools.** Each answers with fields and locators (file, line or record, byte offset), says what it did not
 read, and keeps the whole result in a file when the answer is a page of it.
 
 - `auth_log` reads `auth.log` and `secure`, rotated and gzipped, record by record: ssh acceptances with the key type
   and fingerprint, failures, disconnects, sudo and su, PAM failures and sessions with their service. It says which
   year it applied to a stamp that has none, and on what basis.
 - `utmp_parse` reads classic `wtmp`, `btmp`, `utmp` and `lastlog` in the layouts it names, says how it chose the layout
-  and byte order, and refuses what it cannot tell apart. It does not read `wtmpdb` or `lastlog2` (SQLite).
+  and byte order, and refuses what it cannot tell apart. In a job it also reads `wtmpdb` and `lastlog2` (SQLite) from a copy of the database and its `-wal`, under a
+  select-only authorizer, listing a schema it does not know.
+- `audit_events` reads the audit log (`audit.log` and its rotations, in the order the caller names them, gzip allowed) with the standard
+  library and groups its records into events by their stamp, across rotation boundaries. It shows record types, locators, the grammar's
+  numeric fields and the lengths of command lines, never their text (that goes to a sealed file on `write_text`), and reports
+  rotation gaps, serial restarts, `lost=` counters and time that runs backwards. With `compare_ausearch` (in a job run as secret
+  output) it runs the installed `ausearch` on a sample and says `agree`, `disagree` or `not_run`.
+- `linux_persistence` lists the places a root starts programs from (cron, systemd units with their drop-ins, links, masks and aliases, `.path` and
+  `.socket` units, `rc.local`, `init.d`, XDG autostart) with file, line and byte offset, keeps configuration apart from execution, leaves the
+  effective state unresolved, and says when a copy without links cannot show enablement. Command lines and environments are lengths.
+- `container_inventory` reads a Docker or Podman tree and a Kubernetes node's CRI logs: containers with their config locators, lifecycle times, mounts, capabilities and
+  log files, images, and layers by chain id with the ones the store no longer holds. Commands, arguments, environments, labels and log text are lengths, and a bind or mount path is shown when it has the shape of a path (the text
+  goes to a 0600 file on `write_text` in a secret-output job). containerd's bolt database is listed and not read.
+- `container_layers` builds the effective view of an image's layers from an explicit chain (or overlay2's `lower` files): for each path the layer that supplies it
+  and what each layer did to it, OCI whiteouts and opaque directories told apart from overlayfs native ones, every missing layer named. It starts and mounts
+  nothing; files are copied only to `$OUT`, on `copy`, in a secret-output job.
+- `package_verify` runs the installed `debsums` (`-r` on the acquired root) or `rpm -V` (`--root`, `--dbpath`, `--noscripts --nodeps`) in its own process group and gives the exact
+  scope, every difference (rpm's flags decoded) and where each expected hash came from. It says it has not confirmed that `rpm` suppresses `%verifyscript`, and the expected
+  values are the acquired database's, so a match is not the distribution's file.
 - `shell_history` reads shell and client history files (bash, zsh, fish and plain client files) record by record,
   with how each record's boundaries were found, and does not call a directory name an account.
 - `cron_dump` inventories cron tables and systemd timers as candidates, with what it looked in and what it did not.
@@ -51,6 +72,8 @@ unallocated data, and encrypted volumes without their key. An empty plugin resul
 absent, and a detect step that could not read the OS does not close the route.
 
 **Two goal templates**: `server-compromise.md`, `what-was-scheduled.md`.
+
+**What a program leaves behind.** The tools that run a program end, through the shared process block, what it left running after it exited, before they read, size or hash what it wrote. `linux_triage`, the `linux-target` recipe, `journal_export`, `package_verify` and `audit_events` carry it; the three that read a pipe let it go a second after the program ended. A tool that reports files a program wrote answers at most `partial` where the host cannot show no process was left (not Linux, `PR_SET_CHILD_SUBREAPER` refused), and one that reports only what a program printed on a pipe does not; every one is `partial` for a process that was ended, and says so in `program_group` and its status basis. A pipe cut at the block's byte cap (a process that held it after the program ended went on writing, and the tool let it go after 1 MiB) makes `package_verify`, `audit_events`, the `linux-target` detect step and the recipe's reading of its wrapper `partial` as well, on any host, with a sentence of its own; the cut is counted once for the whole run, so one made while a version was read counts too. A process that is not a descendant of the program (started through a service manager) is not found.
 
 ## Install and use
 

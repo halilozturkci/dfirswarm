@@ -48,6 +48,11 @@ const OLD_IDS = [
   "accounts/users", "containers/docker", "filesystem/ext", "filesystem/storage", "logs/auth", "logs/journal",
   "packages/integrity", "persistence/mechanisms", "timeline/linux", "triage/system-profile",
 ];
+// The nine leaves added after the router (C-linux-S1): each is a first-level leaf that opens "Use when ... Not for ...", and the router names each once.
+const NEW = [
+  "logs/auditd", "persistence/systemd", "filesystem/timestamp-anomalies", "cloud/host-artifacts", "accounts/session-accounting",
+  "execution/history", "containers/runtime-orchestration", "triage/volatile-state", "applications/server-logs",
+];
 const CHILDREN: Record<string, string> = {
   "triage/identity-files": "triage/system-profile",
   "triage/clocks-boots": "triage/system-profile",
@@ -68,7 +73,8 @@ const CHILDREN: Record<string, string> = {
 
 test("every skill is a leaf within the budget, opens with Use when/only if ... Not for ..., has a short index entry, and old ids stay", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, OLD_IDS.length + Object.keys(CHILDREN).length + 1, "the pack's leaves and its router");
+  assert.equal(skills.size, OLD_IDS.length + Object.keys(CHILDREN).length + NEW.length + 1, "the pack's leaves and its router");
+  for (const id of NEW) assert.ok(skills.has(id), `new leaf ${id} exists`);
   for (const id of OLD_IDS) assert.ok(skills.has(id), `old id ${id} is alive`);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= 800, `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
@@ -132,6 +138,12 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["journal_export", "logs/journal", ["boots", "realtime_us", "monotonic_us", "native_line", "oversized_lines", "write_text", "preview_text", "journal-native.jsonl"]],
   ["journal_export", "logs/journal-clocks-verify", ["verify"]],
   ["utmp_parse", "accounts/sessions-histories", ["layout", "byte_order"]],
+  ["utmp_parse", "accounts/session-accounting", ["layout", "byte_order"]],
+  ["audit_events", "logs/auditd", ["missing_components", "serial_resets", "continued_group", "time_regression_runs", "lost_and_daemon_records", "rotation_gaps", "gaps_between_files", "compare_ausearch", "write_text", "unset"]],
+  ["linux_persistence", "persistence/systemd", ["list_resets", "account_in_passwd", "locations", "execution_rows", "write_text"]],
+  ["shell_history", "execution/history", ["write_commands"]],
+  ["container_inventory", "containers/runtime-orchestration", ["unsupported", "storage_roots"]],
+  ["linux_triage", "triage/volatile-state", ["execution_complete"]],
   ["shell_history", "accounts/sessions-histories", ["write_commands"]],
   ["linux_triage", "triage/system-profile", ["execution_complete", "coverage", "parsed"]],
   ["cron_dump", "persistence/cron-timers", ["unsupported", "write_text"]],
@@ -189,11 +201,23 @@ test("the rules the split keeps: observation against verdict, bounded negatives,
   has("persistence/cron-timers", /so an empty result there is not a negative/);
   has("timeline/linux", /a clean run is no evidence of RPM, newer accounting or full container coverage/);
   has("timeline/linux-normalise", /An empty parser result supports an absence only when/);
+  // The nine leaves added with the router: the one rule of each that a reader must not lose.
+  has("logs/auditd", /A SYSCALL's `success` is that system call's result and not the command's/);
+  has("logs/auditd", /an absent event is bounded by those rules/);
+  has("persistence/systemd", /Its effective state is never resolved/);
+  has("filesystem/timestamp-anomalies", /A nanosecond field is precision, not accuracy/);
+  has("cloud/host-artifacts", /Never contact a metadata endpoint/);
+  has("accounts/session-accounting", /an empty slot is not proof the account never logged in/);
+  has("execution/history", /treat an empty or missing file as a question, not a finding/);
+  has("containers/runtime-orchestration", /containerd's bolt metadata database is listed under `unsupported` and not read/);
+  has("triage/volatile-state", /one source never stands in for another/);
+  has("applications/server-logs", /Transaction-log examination \(database write-ahead and binary logs\) is not provided/);
 });
 
 test("a skill that can reach secrets says the job runs with secret_output and cites a locator, never a value, a fragment or a hash", async () => {
   const skills = await load(SKILLS);
-  for (const id of ["accounts/users", "accounts/sessions-histories", "logs/auth", "logs/journal", "persistence/mechanisms", "persistence/cron-timers", "timeline/linux", "triage/system-profile"]) {
+  for (const id of ["accounts/users", "accounts/sessions-histories", "logs/auth", "logs/journal", "persistence/mechanisms", "persistence/cron-timers", "timeline/linux", "triage/system-profile",
+    "logs/auditd", "persistence/systemd", "cloud/host-artifacts", "accounts/session-accounting", "execution/history", "containers/runtime-orchestration", "triage/volatile-state", "applications/server-logs"]) {
     const body = skills.get(id)!.body;
     assert.match(body, /secret_output/, `${id} names secret_output`);
     assert.match(body, /(never|no) [^.]*(hash|value)/i, `${id} forbids a value or hash`);
@@ -218,12 +242,12 @@ const BEFORE = [
   "timeline/linux-normalise", "triage/clocks-boots", "triage/identity-files", "triage/system-profile",
 ];
 
-test("linux/router is the pack's only router, within 400 tokens, holds no rule, and names every other skill exactly once; every old id is alive", async () => {
+test("linux/router is the pack's only router, within 500 tokens, holds no rule, and names every other skill exactly once; every old id is alive", async () => {
   const skills = await load(SKILLS);
   const routers = [...skills.values()].filter((s) => s.meta.router === "true");
   assert.deepEqual(routers.map((s) => s.id), [ROUTER], "one router, and it is linux/router");
   const router = skills.get(ROUTER)!;
-  assert.ok(TOKENS(router.text) <= 400, `the router is ${Math.round(TOKENS(router.text))} tokens`);
+  assert.ok(TOKENS(router.text) <= 500, `the router is ${Math.round(TOKENS(router.text))} tokens`);
   assert.match(router.body.trim().split("\n")[0], /^Use when .*\bNot for\b/);
   assert.deepEqual(router.meta.tools ?? [], [], "the router names no tool");
   // No rule content: after its first line the body is group headings and lines that start with a skill id and say when to read it.
@@ -238,12 +262,12 @@ test("linux/router is the pack's only router, within 400 tokens, holds no rule, 
   assert.deepEqual([...named].sort(), [...skills.keys()].filter((id) => id !== ROUTER).sort());
   assert.equal(BEFORE.length, 25);
   for (const id of BEFORE) assert.ok(skills.has(id), `${id} is still a skill`);
-  assert.equal(skills.size, BEFORE.length + 1, "the router is the only skill added");
+  assert.equal(skills.size, BEFORE.length + NEW.length + 1, "the router and the nine leaves are the skills added");
   // The generated index names it as the pack's router, which is the line the harness reads.
   assert.match(await readFile(join(SKILLS, "INDEX.md"), "utf8"), /^Router: `linux\/router`$/m);
 });
 
-test("the pack index is at most 1,000 tokens counted as the harness counts it: the entry lines of INDEX.md, not the whole file", async () => {
+test("the pack index lists the entry lines of INDEX.md as the harness counts them, each at most 40 tokens (the index may pass 1,000: the pack is then shown by its router alone)", async () => {
   // Past 1,000 the harness shows the pack by its router alone in every run, the pack alone included. The budget is on the entries
   // (extensions/skills.ts readPackIndex): the file's header lines are not in it. The harness's entries are exactly the file's
   // "- `id`" lines, each counted as bytes / 4.245 rounded up, and their sum is the pack's count.
@@ -251,10 +275,9 @@ test("the pack index is at most 1,000 tokens counted as the harness counts it: t
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => /^- `[^`]+`/.test(l));
   const parsed = await readPackIndex(PACK);
   assert.deepEqual(parsed.entries.map((e) => e.line), lines, "the harness reads every entry line of the file, and no other");
-  assert.equal(parsed.entries.length, BEFORE.length + 1);
+  assert.equal(parsed.entries.length, BEFORE.length + NEW.length + 1);
   assert.equal(parsed.router, ROUTER);
   assert.equal(lines.reduce((n, l) => n + estimateTokens(l), 0), parsed.tokens);
-  assert.ok(parsed.tokens <= SKILL_BUDGET.pack, `the pack index is ${parsed.tokens} tokens of entries, over ${SKILL_BUDGET.pack}`);
   assert.ok(parsed.entries.every((e) => e.tokens <= SKILL_BUDGET.entry), "every entry is within the entry budget");
 });
 
@@ -296,4 +319,40 @@ test("a run that carries this pack with others is over the run's index budget, a
   assert.ok(fits.shown_tokens <= SKILL_BUDGET.run, `with the routers the section is ${fits.shown_tokens} tokens`);
   const bare = await section(family, FAMILY);
   assert.ok(bare.shown_tokens > SKILL_BUDGET.run, `without the family's routers the section is ${bare.shown_tokens} tokens, over the run's ${SKILL_BUDGET.run}`);
+});
+
+test("the pack's goals and skills never call the intruder \"the operator\": in this repository the operator is the person running the case", async () => {
+  const found: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      if (e.isDirectory()) await walk(join(dir, e.name));
+      else if (e.name.endsWith(".md") && (await readFile(join(dir, e.name), "utf8")).match(/\boperators?\b/i)) found.push(join(dir, e.name).slice(PACK.length + 1));
+    }
+  };
+  await walk(join(PACK, "goals"));
+  await walk(SKILLS);
+  assert.deepEqual(found, [], "a goal or skill of the pack uses \"operator\"; name the intruder (whoever gained access) or the person running the case");
+  // The question names whoever gained access.
+  assert.match(await readFile(join(PACK, "goals", "server-compromise.md"), "utf8"), /how whoever gained access first reached this host/);
+});
+
+test("filesystem/storage-lvm-luks names every term of a logical volume's offset, in sectors, with the command that gives it, and the recipe agrees", async () => {
+  // The offset of a linear logical volume on the image is the sum of three terms. A rule over the terms, not one wording: each term with its
+  // command, the unit, and the warning that seg_start is no place on the PV (it is 0 for a first segment, so the sum is wrong for any volume
+  // that begins past extent 0 when the third term is left out).
+  const leaf = await readFile(join(SKILLS, "filesystem", "storage-lvm-luks.md"), "utf8");
+  const sentence = leaf.split("\n").find((l) => /fls -o/.test(l)) ?? "";
+  assert.ok(sentence, "the leaf says how a volume is read with fls -o");
+  assert.match(sentence, /\bmmls\b/, "the partition's start, and the command that gives it");
+  assert.match(sentence, /pvs --units s -o\+pe_start/, "the PV's data start, in sectors");
+  assert.match(sentence, /(?:lvs -o\+devices|seg_pe_ranges)/, "the segment's first extent, and where it is read");
+  assert.match(sentence, /vgs --units s -o\+vg_extent_size/, "the extent size, in sectors");
+  assert.match(sentence, /first extent[^.;]*times[^.;]*extent size|extent size[^.;]*times[^.;]*first extent/i, "the third term is a product of the two");
+  assert.match(sentence, /seg_start[^.]*(?:not a place on the PV|offset within)/i, "seg_start is named for what it is");
+  assert.match(sentence, /sectors/, "the unit");
+  assert.doesNotMatch(sentence, /plus the segment's start/, "the old wording is gone");
+  const recipe = await readFile(join(PACK, "recipes", "linux-target", "run.py"), "utf8");
+  const files = recipe.slice(recipe.indexOf("FILES_BY_PATH = ("), recipe.indexOf("def answer("));
+  assert.match(files, /partition start plus the PV's data start plus the volume's first extent times the extent size/, "the recipe's text names the same three terms");
+  assert.match(files, /storage-lvm-luks/, "and says where the commands are");
 });

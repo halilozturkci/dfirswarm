@@ -14,6 +14,7 @@
  *   - PDF and RTF: the literal tokens of ISO 32000 and the RTF specification.
  */
 import assert from "node:assert/strict";
+import { PYTHON3 } from "./host-gates.ts";
 import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -27,6 +28,8 @@ export const PE_INFO = join(TOOLS, "pe_info", "run.py");
 export const DOC_PROBE = join(TOOLS, "doc_probe", "run.py");
 export const DOC_STRUCTURE = join(TOOLS, "doc_structure", "run.py");
 export const PE_DIRECTORIES = join(TOOLS, "pe_directories", "run.py");
+export const ELF_DIRECTORIES = join(TOOLS, "elf_directories", "run.py");
+export const MACHO_DIRECTORIES = join(TOOLS, "macho_directories", "run.py");
 export const ENTROPY = join(TOOLS, "entropy_map", "run.py");
 export const FUZZY = join(TOOLS, "fuzzy_hash", "run.py");
 export const RECIPE = join(RE, "recipes", "static-binary", "run.py");
@@ -45,7 +48,10 @@ let jobs = 0;
 export async function asJob(script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): Promise<Run> {
   await mkdir(join(cwd, outName), { recursive: true });
   jobs += 1;
-  return tool(script, cwd, args, { JOB_ID: `j${String(jobs).padStart(6, "0")}`, OUT: join(cwd, outName), ...env }, bin);
+  // The job service runs a job whose tool declares secret_output for write_values (doc_probe, doc_structure, pe_directories, elf_directories and macho_directories do, as go_buildinfo and
+  // marshal_inspect test it for themselves) as secret output, and puts SECRET_OUTPUT=1 in its environment (docs/packs.md, section 8).
+  const values = /\/(doc_probe|doc_structure|pe_directories|elf_directories|macho_directories)\/run\.py$/.test(script) && Boolean(args && typeof args === "object" && (args as Record<string, unknown>).write_values === true);
+  return tool(script, cwd, args, { JOB_ID: `j${String(jobs).padStart(6, "0")}`, OUT: join(cwd, outName), ...(values ? { SECRET_OUTPUT: "1" } : {}), ...env }, bin);
 }
 
 export function body(out: Run): Json {
@@ -67,7 +73,7 @@ export function refused(out: Run): Json {
  * own is not in that group and outlives it; one started in the tool's own group is ended with it.
  */
 export function startDetached(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, bin?: string, argv: string[] = []): { pid: number; closed: Promise<number | null>; stdout: () => string; killGroup: () => void; signal: (s: NodeJS.Signals) => void } {
-  const child = spawn("python3", [script, ...argv], { cwd, env: { ...process.env, ...(bin ? { PATH: `${bin}:${process.env.PATH ?? ""}` } : {}), ...AGENT, ...env }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(PYTHON3, [script, ...argv], { cwd, env: { ...process.env, ...(bin ? { PATH: `${bin}:${process.env.PATH ?? ""}` } : {}), ...AGENT, ...env }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   const chunks: Buffer[] = [];
   child.stdout.on("data", (c: Buffer) => chunks.push(c));
   child.stderr.on("data", () => undefined);
@@ -80,6 +86,25 @@ export function startDetached(script: string, cwd: string, args: unknown, env: R
     killGroup: () => process.kill(-(child.pid as number), "SIGKILL"),
     signal: (sig) => process.kill(child.pid as number, sig),
   };
+}
+
+/**
+ * Waits until the process has a SIGTERM handler (the kernel's own account, SigCgt in /proc/<pid>/status), so that a stop is sent to a tool that
+ * has started and not to an interpreter still loading, which on a loaded runner takes longer than any fixed delay. Where /proc is not there a
+ * fixed two seconds stand in. Gives up after 15 s (the signal is then sent anyway and the case fails on its own).
+ */
+export async function termHandlerIn(pid: number): Promise<void> {
+  const until = Date.now() + 15_000;
+  while (Date.now() < until) {
+    try {
+      const m = /SigCgt:\s+([0-9a-f]+)/.exec(await readFile(`/proc/${pid}/status`, "utf8"));
+      if (m && (BigInt(`0x${m[1]}`) & 0x4000n) === 0x4000n) return;
+    } catch {
+      if (process.platform !== "linux") await new Promise((r) => setTimeout(r, 2000));
+      return;                                 // no /proc, or the process is gone already
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
 }
 
 /** Whether a process is gone, giving it a moment (a killed process is reaped by its parent or by init). */

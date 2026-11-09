@@ -16,6 +16,7 @@ import {
   vhdFixed, vhdx, vmdkDescriptor, vmdkSparse, vmsd, vmx, withCwd, gone, pidFile, startDetached,
 } from "./pack-virtualization-harness.ts";
 import type { Json } from "./pack-virtualization-harness.ts";
+import { interpreterDir } from "./host-gates.ts";
 
 const BASE = "aabbccdd", MID = "11223344", TOP = "55667788";
 
@@ -521,7 +522,7 @@ test("qemu_img: absent from PATH is said, auto goes on natively, require fails b
     await put(cwd, "inputs/q/base.qcow2", qcow2({}));
     const empty = join(cwd, "emptybin");
     await mkdir(empty, { recursive: true });
-    const env = { PATH: `${empty}:/usr/bin:/bin` };
+    const env = { PATH: `${await interpreterDir(empty)}:/usr/bin:/bin` };
     // python3 must still run: the PATH keeps the system directories, which do not carry qemu-img in the test environment
     const probe = spawnSync("sh", ["-c", "command -v qemu-img"], { env });
     if (probe.status === 0) return; // this host has a real qemu-img on the system path: the absent case cannot be made here
@@ -937,7 +938,7 @@ test("a file name never reaches the answer through its extension, and a .vmsd va
     }
     // the marker that quotes the database's count still fires, with the count withheld
     const m = (await rowsOf(cwd, out, "markers")).find((r) => r.kind === "running_disk_is_a_delta_without_snapshots");
-    assert.match(m.observation, /<(?:token-shaped text withheld \d+ characters|withheld: \d+ bytes, field numsnapshots)> snapshot\(s\)/);
+    assert.match(m.observation, /<(?:token-shaped text withheld \d+ characters|withheld \d+ (?:characters|bytes): [a-z0-9 :,-]+)> snapshot\(s\)/);
   });
 });
 

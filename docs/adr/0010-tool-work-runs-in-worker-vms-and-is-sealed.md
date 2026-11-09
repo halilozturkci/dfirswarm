@@ -163,7 +163,9 @@ After the review:
 
 - **The tool-mode A/B** (pack tools only through jobs): after the queue
   changes are measured. The deciding numbers are named before it runs:
-  findings with refs, tokens, and answers.
+  findings with refs, tokens, and answers. A pilot exists since 2026-11-01:
+  `--pack-tools-as-jobs PACK` takes one pack's tools out of Pi's tool schemas
+  and runs them through `job_run`; the comparison itself is still to be run.
 - **Result caching**: not built. Identical requests are measured first
   (`job_deduplicated` lines, and identical commands in the journal).
 - **Exclusive sessions** (a worker kept for iterative work): not built.
@@ -237,16 +239,11 @@ tool-output/ that the agent could still rewrite.
 - **An import is a declared job of its source.** The worker copies the
   hub's snapshot, and the record says so (`copied_live: false`).
 - **Observation stays open.** What a job read within its scope is not
-  observed. A prototype observes opens with fanotify inside the worker
-  (`scripts/job-observe.py` and `scripts/job-observe.ts`, on with
-  `SWARM_JOB_OBSERVE=fanotify-experimental`, off by default): the job runs
-  unprivileged, the collector keys its log, a canary must be seen, and
-  dropped events, an unmarked mount or a stall read as partial, a dead
-  collector, a forged line or no fanotify as unknown, never complete. It was
-  written without booting a VM and is untested in one. Its acceptance tests
-  (`tests/job-observe-vm.test.ts`) run on the host's own kernel and
-  virtio-fs; until they pass, nothing it says is evidence. LD_PRELOAD, or a
-  log the job could write, never is.
+  observed. A fanotify prototype that observed opens inside the worker was
+  deleted on 2026-11-03: it never ran in a worker VM, and reads within a
+  declared scope are not observed. It stays in git history if a case ever
+  needs kernel-level observation. LD_PRELOAD, or a log the job could write,
+  never is evidence of a read.
 - **A brain's own output a finding cites is sealed.** `tool:<seat>/<file>`
   names a whole output the harness kept under tool-output/<seat>/, and
   `trace:<sha256>` one line of the trace.

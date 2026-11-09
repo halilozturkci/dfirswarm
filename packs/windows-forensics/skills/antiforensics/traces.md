@@ -32,4 +32,4 @@ A driver, service, Prefetch entry or file made by acquisition, mounting or colle
 
 Shows: that something is missing or inconsistent, and what the sources can and cannot rule out. Does not show: who, why, or even that anything was removed. Record: the detection opportunity for each artefact, parser status, routes tried, the alternatives still open.
 
-Sensitive output: `evtx_query` and `mft_records` (with `with_resident`) can return command lines and file content; run them as jobs (`secret_output: true`).
+Sensitive output: `evtx_query` and `mft_records` (with `with_resident`) can return command lines and file content; run them as jobs (`secret_output: true`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

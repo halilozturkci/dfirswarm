@@ -651,3 +651,20 @@ test("a note a permissions refusal keeps from being read is rejected with its re
     }
   });
 });
+
+test("the parser is ransom_note_scan/4, the template groups are tables of the answer, and the exact-duplicate groups and the occurrences are as before", async () => {
+  await withCwd(async (cwd) => {
+    const ev = join(cwd, "work", "ev");
+    await mkdir(ev, { recursive: true });
+    const text = (id: string): string => `All your files are encrypted. To restore them write to us and quote your personal ID: ${id}. Do not rename the files.\n`;
+    await writeFile(join(ev, "readme_a.txt"), text("QAZWSX123456"));
+    await writeFile(join(ev, "readme_b.txt"), text("EDCRFV654321"));
+    await writeFile(join(ev, "readme_c.txt"), text("EDCRFV654321"));
+    const out = body<NoteScan & { parser: string; template_groups: Array<{ copies: number }>; distinct_note_contents: Array<{ copies: number }> }>(await tool(NOTES, cwd, { root: "work/ev" }));
+    assert.equal(out.parser, "ransom_note_scan/4");
+    assert.deepEqual(out.template_groups.map((g) => g.copies), [3]);
+    assert.deepEqual(out.distinct_note_contents.map((g) => g.copies).sort(), [1, 2], "two notes are byte-identical, one differs only in its id");
+    const rows = out.notes as unknown as Array<{ parser: string }>;
+    assert.ok(rows.every((r) => r.parser === "ransom_note_scan/4"));
+  });
+});

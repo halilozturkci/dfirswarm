@@ -39,8 +39,10 @@
  * Nothing here knows a tool or an evidence format.
  */
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { attestationHash, disputeHash, ledgerHash, readLedger, sensitiveTokens, type LedgerAttestation, type LedgerDispute, type LedgerEntry, type SensitiveToken } from "../extensions/protocol.ts";
 import { leadEventHash, type LeadEvent } from "../extensions/leads.ts";
@@ -49,6 +51,9 @@ import { REVIEW_ACTIONS } from "./review.ts";
 import { packageLayout, verifyReleases } from "./release-record.ts";
 import { outputWords, sensitiveEntries, sensitiveIndex, withheldPaths } from "./output-hygiene.ts";
 import { MultiMatch } from "./multi-match.ts";
+import { accessCounts, accessRecord, type AccessRecord } from "./sensitive-access.ts";
+import { createReadStream } from "node:fs";
+import { jsonlLines } from "../extensions/jsonl-lines.ts";
 
 const sha256 = (b: string | Buffer) => createHash("sha256").update(b).digest("hex");
 
@@ -103,6 +108,63 @@ export type LeakHit = { path: string; entry: number; token_sha256: string; as: s
 export type ScanToken = SensitiveToken & { output?: string; id?: string };
 /** What a redacted package withheld whole, and why: never its bytes, always its sha256. */
 export type Withheld = { path: string; job: string | null; why: string; sha256_of_original: string; bytes: number };
+
+/**
+ * Every sensitive digest in a text, found in one pass. A digest is 64 hex
+ * characters, so it stands only inside a run of hex characters of 64 or more:
+ * the runs are found with one scan of the text and each window of 64 inside a
+ * run is looked up in a Set, so the cost grows with the text and not with the
+ * number of digests (it used to search the whole text once per digest: 65,579
+ * digests over a 25.5 MB report did not finish). The replacement inside a run
+ * keeps the old order (the digests in their list order, each replaced
+ * wherever it stands in the run), which only matters where two digests
+ * overlap. `replaced` gets one record per digest, in list order, with its
+ * count over the whole text, as before. `hide` gives (and records) the keyed
+ * id of a digest.
+ */
+export function makeDigestReplacer(digests: Iterable<string>, hide: (sha: string) => string): { holds: (text: string) => boolean; replace: (text: string, replaced: Replaced[]) => string } {
+  const order = new Map<string, number>();
+  for (const d of digests) if (!order.has(d)) order.set(d, order.size);
+  const RUN = /[0-9a-fA-F]{64,}/g;
+  /** The digests standing as a window of 64 in a run, in list order. */
+  const inRun = (run: string): string[] => {
+    let found: Set<string> | null = null;
+    for (let i = 0; i + 64 <= run.length; i += 1) {
+      const w = run.slice(i, i + 64);
+      if (order.has(w)) (found ??= new Set()).add(w);
+    }
+    return found ? [...found].sort((a, b) => order.get(a)! - order.get(b)!) : [];
+  };
+  return {
+    holds(text: string): boolean {
+      if (!order.size) return false;
+      for (const m of text.matchAll(RUN)) if (inRun(m[0]).length) return true;
+      return false;
+    },
+    replace(text: string, replaced: Replaced[]): string {
+      if (!order.size) return text;
+      const counts = new Map<string, number>();
+      let out = "";
+      let from = 0;
+      for (const m of text.matchAll(RUN)) {
+        const shas = inRun(m[0]);
+        if (!shas.length) continue;
+        let run = m[0];
+        for (const sha of shas) {
+          if (!run.includes(sha)) continue;
+          const count = run.split(sha).length - 1;
+          run = run.split(sha).join(hide(sha));
+          counts.set(sha, (counts.get(sha) ?? 0) + count);
+        }
+        out += text.slice(from, m.index!) + run;
+        from = m.index! + m[0].length;
+      }
+      if (!counts.size) return text;
+      for (const sha of [...counts.keys()].sort((a, b) => order.get(a)! - order.get(b)!)) replaced.push({ what: "text", entry: null, sha256_of_original: hide(sha), count: counts.get(sha), why: "the digest of a sensitive output" });
+      return out + text.slice(from);
+    },
+  };
+}
 
 /** A sensitive entry's words as they may stand in a file: as written, JSON-escaped. */
 const forms = (t: string) => [...new Set([t, JSON.stringify(t).slice(1, -1)])];
@@ -211,6 +273,70 @@ function bytesHoldWord(buf: Buffer, word: Buffer, unit: 1 | 2, short: boolean): 
 function sealedAsIs(rel: string): boolean {
   if (["MANIFEST.txt", "MANIFEST.txt.sig", "SIGNER.txt", "signer.pub", "REDACTIONS.txt", "REDACTIONS.json", "COMPONENTS.json", "custody.json.sig", "custody.json.tsr"].includes(rel)) return true;
   return /^release\/v\d+\/(release\.json(\.sig(\.tsr|\.ots)?)?|timestamp\.json|mirror-\d+\.json|print-\d+\.json|transparency-\d+\.json|case-file\.txt)$/.test(rel);
+}
+
+const MAX_MARK_FILE = 8 * 1024 * 1024;
+
+/**
+ * The files a coverage or receipt marks secret_bearing: its `secret_bearing` object, `{ "<file>": "<why>" }`, read by shape. A name must be a plain relative
+ * path (no `..`, not absolute, no NUL) and the reason a string, one line, cut at 160 characters; any other entry is no mark, and every mark of the file is read
+ * (a file is read whole up to 8 MiB). A file that carries the word `secret_bearing` and cannot be read as a mark (over 8 MiB, or not JSON) is `unread`: the
+ * caller withholds what stands beside it, never lets it through.
+ */
+export function secretBearingMarks(file: string): { marks: Array<{ name: string; why: string }>; unread: string | null } {
+  const none = { marks: [], unread: null };
+  let size: number;
+  try {
+    size = statSync(file).size;
+  } catch {
+    return none;
+  }
+  if (size > MAX_MARK_FILE) {
+    // too big to parse: is it a mark file at all? The word is looked for in the bytes, a block at a time.
+    let found = false;
+    let fd = -1;
+    try {
+      fd = openSync(file, "r");
+      const buf = Buffer.alloc(1 << 20);
+      let tail = "";
+      for (;;) {
+        const n = readSync(fd, buf, 0, buf.length, null);
+        if (n <= 0) break;
+        const text = tail + buf.subarray(0, n).toString("latin1");
+        if (text.includes("secret_bearing")) {
+          found = true;
+          break;
+        }
+        tail = text.slice(-16);
+      }
+    } catch {
+      found = true; // a file that cannot be read to the end is not shown to be no mark
+    } finally {
+      if (fd >= 0) closeSync(fd);
+    }
+    return found ? { marks: [], unread: `larger than ${MAX_MARK_FILE} bytes` } : none;
+  }
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return { marks: [], unread: "it could not be read" };
+  }
+  if (!text.includes("secret_bearing")) return none;
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return { marks: [], unread: "it is not JSON that parses" };
+  }
+  const mark = doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as Record<string, unknown>).secret_bearing : undefined;
+  if (!mark || typeof mark !== "object" || Array.isArray(mark)) return none;
+  const marks: Array<{ name: string; why: string }> = [];
+  for (const [name, why] of Object.entries(mark as Record<string, unknown>)) {
+    if (typeof why !== "string" || !name || name.includes("\0") || isAbsolute(name) || name.split(/[\\/]/).includes("..")) continue;
+    marks.push({ name, why: why.replace(/\s+/g, " ").slice(0, 160) });
+  }
+  return { marks, unread: null };
 }
 
 /** A JSON value with every string that holds a sensitive entry's words replaced whole; each replacement recorded by its pointer. */
@@ -385,6 +511,48 @@ function byteAt(buf: Buffer, start: number, unit: 1 | 2): (k: number) => number 
  * every file is scanned for what should have been taken out: `leaks: fail`
  * (the default) refuses the package on a hit, `list` records the hits.
  */
+/** A trace row as the access record names it: the seat, its session, its sequence number and the tool. */
+const rowMark = (agent: unknown, sid: unknown, seq: unknown, tool: unknown): string => `${String(agent)}\0${typeof sid === "string" ? sid : ""}\0${typeof seq === "number" ? seq : ""}\0${String(tool)}`;
+
+/**
+ * What the access record marks in a package's trace and tool-output (the
+ * second predicate of --redact, docs/adr/0018 decision 9): the seats' own
+ * tool-result rows that reached a sensitive output, by `{agent, sid, seq,
+ * tool}` from the record's `tool_row`, the possible reaches and the commands
+ * that name it included, and the whole copy each was kept as
+ * (`kept_as`, under tool-output/). The rows the hub wrote itself carry
+ * a job id and a path, never a value, and are not marked. A run with no
+ * sensitive output has none.
+ */
+export function accessMarks(rec: AccessRecord | null): { rows: Set<string>; kept: Set<string> } {
+  const rows = new Set<string>();
+  const kept = new Set<string>();
+  for (const e of rec?.events ?? []) {
+    if (e.source !== "trace") continue;
+    if (e.tool_row) rows.add(rowMark(e.tool_row.agent, e.tool_row.sid, e.tool_row.seq, e.tool_row.tool));
+    if (e.kept_as) kept.add(e.kept_as);
+  }
+  return { rows, kept };
+}
+
+/** The trace lines of a file the marks name, counted (a regular file, streamed: a trace can be gigabytes). */
+async function countMarkedLines(file: string, marks: Set<string>): Promise<number> {
+  if (!marks.size) return 0;
+  const st = lstatSync(file, { throwIfNoEntry: false });
+  if (!st?.isFile()) return 0;
+  let n = 0;
+  for await (const line of jsonlLines(createReadStream(file))) {
+    if (!line.includes('"agent"')) continue;
+    try {
+      const o = JSON.parse(line) as Record<string, unknown>;
+      if (marks.has(rowMark(o.agent, o.sid, o.seq, o.tool))) n += 1;
+    } catch {
+      // not a line of the trace's shape: not counted
+    }
+  }
+  return n;
+}
+
 export async function redactPackage(sandbox: string, dir: string, opts: { leaks?: "fail" | "list" } = {}): Promise<{ entries: number; files: number; lines: number; leaks: LeakHit[]; scanned: number; withheld: Withheld[] }> {
   // An entry citing a sensitive output is sensitive whether or not it was
   // recorded so (an entry from before the harness marked such entries):
@@ -394,6 +562,8 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
   const entries = raw.map((e) => (derived.has(e.seq) && !e.sensitive ? { ...e, sensitive: true } : e));
   const index = await sensitiveIndex(sandbox);
   const words = await outputWords(sandbox);
+  // The access record's marks on the trace (a second predicate beside the words): what a seat's tool result returned of a sensitive output.
+  const marks = accessMarks(await accessRecord(sandbox, { derive: true }).catch(() => null));
   const sensitiveSeqs = new Set(entries.filter((e) => e.sensitive).map((e) => e.seq));
   const unmarked = raw.filter((e) => !e.sensitive && derived.has(e.seq)).map((e) => e.seq);
   const sensitiveHashes = new Set(entries.filter((e) => e.sensitive && e.hash).map((e) => e.hash as string));
@@ -448,7 +618,18 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
   const changes: RedactionChange[] = [];
   let lines = 0;
   const change = (rel: string, before: Buffer, after: Buffer | string, why: string, replaced: Replaced[]) => {
-    writeFileSync(join(dir, rel), after);
+    // The package's copy of a sealed file is read-only (0444): it is replaced by a temporary file renamed over it, never written in place.
+    // The run's own files are never touched; the new file is the copy's mode with the owner's write bit.
+    const target = join(dir, rel);
+    const tmp = `${target}.tmp-${randomBytes(6).toString("hex")}`;
+    const mode = (lstatSync(target).mode & 0o777) | 0o200;
+    try {
+      writeFileSync(tmp, after, { mode });
+      renameSync(tmp, target);
+    } catch (err) {
+      rmSync(tmp, { force: true });
+      throw err;
+    }
     changes.push({ path: rel, before_sha256: sha256(before), after_sha256: sha256(after), why, replaced });
   };
   const holds = (l: string) => tokens.find((t) => forms(t.token).some((f) => holdsWord(l, f)));
@@ -521,6 +702,11 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
     "line",
     "store sweep(s) of a sensitive record, or holding a sensitive word or a sensitive output's ref, replaced keeping seq, target, state, prev and hash",
   );
+  // The trace: a line that holds a sensitive entry's words, or that is a seat's tool-result row the access record marks, replaced by its own sha256 (the chain still verifies).
+  const traceJudge = (o: Record<string, unknown>, l: string) => byWords(l) ?? (marks.rows.has(rowMark(o.agent, o.sid, o.seq, o.tool)) ? { seq: null, why: "a seat's tool-result row that the access record marks as reaching a sensitive output" } : null);
+  const traceKeep = (_o: Record<string, unknown>, l: string) => ({ redacted: true, line_sha256: sha256(l) });
+  const traceWhy = "line(s) holding a sensitive entry's words, or a seat's tool result the access record marks as reaching a sensitive output, replaced by their own sha256";
+  if (!tokens.length && marks.rows.size) chained("trace/events.jsonl", traceJudge, traceKeep, "line", traceWhy);
   if (tokens.length) {
     // The finish register: an event that repeats a sensitive entry's words (an ack's why, a resolution), kept by what chains it.
     chained("finish.jsonl", (_o, l) => byWords(l), (o, l) => ({ v: o.v, seq: o.seq, ev: o.ev, redacted: true, line_sha256: sha256(l), prev: o.prev, hash: o.hash }), "line", "finish event(s) holding a sensitive entry's words replaced, keeping seq, ev, prev and hash");
@@ -540,7 +726,7 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
       handled.add("leads.md");
       if (hit) change("leads.md", before, `${REDACTED}: the rendered lead register repeats a sensitive entry's words; leads.jsonl carries every event (those redacted by their hashes); its sha256 before redaction is ${sha256(before)}\n`, "the rendered register holds a sensitive entry's words, replaced whole", [{ what: "file", entry: hit.seq, sha256_of_original: sha256(before), why: "repeats a sensitive entry's words" }]);
     }
-    chained("trace/events.jsonl", (_o, l) => byWords(l), (_o, l) => ({ redacted: true, line_sha256: sha256(l) }), "line", "line(s) holding a sensitive entry's words replaced by their own sha256");
+    chained("trace/events.jsonl", traceJudge, traceKeep, "line", traceWhy);
     chained("store/journal.jsonl", (_o, l) => byWords(l), (o, l) => ({ v: o.v, seq: o.seq, type: o.type, ...(o.job ? { job: o.job } : {}), redacted: true, line_sha256: sha256(l), prev: o.prev ?? null }), "line", "journal line(s) holding a sensitive entry's words replaced, keeping seq, prev and their own sha256");
     chained("review.jsonl", (_o, l) => byWords(l), (o, l) => ({ v: o.v, seq: o.seq, action: o.action, redacted: true, line_sha256: sha256(l), prev: o.prev ?? null }), "line", "review line(s) holding a sensitive entry's words replaced, keeping seq, action, prev and their own sha256");
   }
@@ -572,30 +758,77 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
       else if (byPath) withholdPath(rel, before, byPath.why, byPath.job);
     }
   }
+  // A file a recipe's coverage or receipt marks secret_bearing, whole, by the mark's shape and never by the name of a tool or a recipe: a JSON file with a
+  // `secret_bearing` object that maps a file name (a plain relative path beside the JSON) to the reason as a string. A recipe cannot declare secret_output
+  // (the seal refuses the key in recipe.json), so this mark is how it says "this file holds what the evidence holds"; the file is withheld the way a
+  // sensitive job's output is, its digest and path in the private sidecar. A `secret_bearing` of counts (a number) or a list is an answer field, not a mark.
+  // A mark that cannot be honoured fails closed: a file that carries the word and cannot be read as a mark (over 8 MiB, not JSON), and a mark that names a
+  // link or anything but a regular file inside the package, withhold every file of the directory the mark file stands in, and below it. The record says so.
+  const besideUnreadable = (markRel: string, why: string) => {
+    const root = markRel.includes("/") ? markRel.slice(0, markRel.lastIndexOf("/") + 1) : "";
+    for (const abs2 of walk(dir)) {
+      const rel2 = relative(dir, abs2).split("\\").join("/");
+      if (rel2 === markRel || handled.has(rel2) || sealedAsIs(rel2) || (root && !rel2.startsWith(root))) continue;
+      withholdPath(rel2, readFileSync(abs2), `beside ${markRel}, a secret_bearing mark that was not honoured whole (${why})`, null);
+    }
+  };
+  for (const abs of walk(dir)) {
+    const rel = relative(dir, abs).split("\\").join("/");
+    if (!/\.json$/i.test(rel) || handled.has(rel) || sealedAsIs(rel)) continue;
+    const read = secretBearingMarks(abs);
+    if (read.unread) {
+      besideUnreadable(rel, read.unread);
+      continue;
+    }
+    for (const m of read.marks) {
+      const target = relative(dir, resolve(dirname(abs), m.name)).split("\\").join("/");
+      if (target.startsWith("..") || isAbsolute(target) || sealedAsIs(target)) continue;
+      if (handled.has(target) || !existsSync(join(dir, target))) continue;
+      if (!lstatSync(join(dir, target)).isFile()) {
+        besideUnreadable(rel, `it names ${JSON.stringify(m.name.slice(0, 80))}, which is not a regular file`);
+        continue;
+      }
+      withholdPath(target, readFileSync(join(dir, target)), `marked secret_bearing by ${rel}: ${m.why}`, null);
+    }
+  }
   // A file a sensitive entry cites, whole; by a keyed id, its digest and path in the sidecar.
-  for (const c of citedPaths(entries)) {
-    if (!existsSync(join(dir, c.path)) || handled.has(c.path)) continue;
+  // A citation may name a file or, in a package made --with-outputs, a directory of a job's output (job:j000001/archive/contact/): the path's kind is
+  // read with lstat, a directory expands to every regular file under it (each withheld by its own keyed id), and a link or a device anywhere there is
+  // refused and named, never followed.
+  const citedFiles: Array<{ path: string; seq: number }> = [];
+  const expandCited = (rel: string, seq: number, top: string): void => {
+    const abs = join(dir, rel);
+    const st = lstatSync(abs, { throwIfNoEntry: false });
+    if (!st) return;
+    if (st.isFile()) citedFiles.push({ path: rel, seq });
+    else if (st.isDirectory()) for (const name of readdirSync(abs).sort()) expandCited(`${rel.replace(/\/$/, "")}/${name}`, seq, top);
+    else throw new Error(`a sensitive entry (E-${seq}) cites ${safePath(top.replace(/\/$/, ""))}, which holds ${safePath(rel)}: ${st.isSymbolicLink() ? "a symbolic link" : "neither a regular file nor a directory"}; redaction refuses it and does not follow it`);
+  };
+  for (const c of citedPaths(entries)) expandCited(c.path, c.seq, c.path);
+  for (const c of citedFiles) {
+    if (handled.has(c.path)) continue;
     const before = readFileSync(join(dir, c.path));
     const id = hideDigest(sha256(before), `cited by a sensitive entry (E-${c.seq})`, c.path);
     handled.add(c.path);
     change(c.path, before, `${REDACTED}: cited by a sensitive ledger entry (E-${c.seq}); matched ${id} (its bytes and digest are in the run owner's private sidecar)\n`, "cited by a sensitive entry, replaced whole", [{ what: "file", entry: c.seq, sha256_of_original: id, why: "cited by a sensitive entry" }]);
   }
+  // The whole copy a hub line says a read was kept as (tool-output/<seat>/…): withheld whole, by a keyed id.
+  for (const rel of [...marks.kept].sort()) {
+    if (handled.has(rel) || sealedAsIs(rel) || rel.startsWith("/") || rel.split("/").includes("..")) continue;
+    const abs = join(dir, rel);
+    const st = lstatSync(abs, { throwIfNoEntry: false });
+    if (!st?.isFile()) continue;
+    const before = readFileSync(abs);
+    const id = hideDigest(sha256(before), "a whole output kept from a read the access record marks", rel);
+    handled.add(rel);
+    change(rel, before, `${REDACTED}: a whole output kept from a seat's read of a sensitive output (the access record marks it); matched ${id} (its bytes and digest are in the run owner's private sidecar)\n`, "kept from a read the access record marks, replaced whole", [{ what: "file", entry: null, sha256_of_original: id, why: "kept from a read the access record marks" }]);
+  }
   // Every occurrence of a sensitive digest in a text file (a manifest, a
   // job record, the store journal, a revision index) is the content's name:
   // replaced by its keyed id, so the handover carries no digest a low-entropy
   // value could be brute-forced from.
-  const digestList = [...sensitiveDigests];
-  const replaceDigests = (text: string, replaced: Replaced[]): string => {
-    let t = text;
-    for (const sha of digestList) {
-      if (!t.includes(sha)) continue;
-      const id = hideDigest(sha, "the digest of a sensitive output");
-      const count = t.split(sha).length - 1;
-      t = t.split(sha).join(id);
-      replaced.push({ what: "text", entry: null, sha256_of_original: id, count, why: "the digest of a sensitive output" });
-    }
-    return t;
-  };
+  const digests = makeDigestReplacer(sensitiveDigests, (sha) => hideDigest(sha, "the digest of a sensitive output"));
+  const replaceDigests = digests.replace;
   let files = 0;
   if (sensitiveSeqs.size || tokens.length || withheld.length || sensitiveDigests.size) {
     for (const abs of walk(dir)) {
@@ -611,7 +844,7 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
       if (before.subarray(0, 8192).includes(0)) continue;
       const text = before.toString("utf8");
       const hasWord = tokens.length > 0 && Boolean(holds(text));
-      const hasDigest = digestList.some((d) => text.includes(d));
+      const hasDigest = digests.holds(text);
       if (!hasWord && !hasDigest) continue;
       const replaced: Replaced[] = [];
       let after: string | null = null;
@@ -628,7 +861,7 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
         const out: string[] = [];
         let ok = true;
         text.split("\n").forEach((l, i) => {
-          if (!l.trim() || (!holds(l) && !digestList.some((d) => l.includes(d)))) return out.push(l);
+          if (!l.trim() || (!holds(l) && !digests.holds(l))) return out.push(l);
           try {
             const v = holds(l) ? redactJsonValue(JSON.parse(l), `${i + 1}`, tokens, replaced) : JSON.parse(l);
             out.push(replaceDigests(JSON.stringify(v), replaced));
@@ -727,6 +960,13 @@ export async function redactPackage(sandbox: string, dir: string, opts: { leaks?
  * under the manifest. A package to hand over is made with --redact.
  */
 export async function hygieneReport(sandbox: string, dir: string): Promise<{ entries: number; outputs: number; carried: number; hits: LeakHit[]; scanned: number }> {
+  // Who reached a sensitive output, as whole counts (scripts/sensitive-access.ts): no seat, job or path is named here. The counts are of what the
+  // chains record; the marks (what --redact would replace) are of what the rules read now, a run from before the hub's lines included.
+  const accessAll = await accessRecord(sandbox, { derive: true }).catch(() => null);
+  const accessRec = accessAll ? { ...accessAll, events: accessAll.events.filter((e) => e.recorded) } : null;
+  const marks = accessMarks(accessAll);
+  const markedLines = await countMarkedLines(join(dir, "trace", "events.jsonl"), marks.rows).catch(() => 0);
+  const markedKept = [...marks.kept].filter((rel) => !rel.startsWith("/") && !rel.split("/").includes("..") && lstatSync(join(dir, rel), { throwIfNoEntry: false })?.isFile()).length;
   const raw = await readLedger(sandbox, { raw: true });
   const derived = await sensitiveEntries(sandbox, raw);
   const entries = raw.map((e) => (derived.has(e.seq) && !e.sensitive ? { ...e, sensitive: true } : e));
@@ -768,6 +1008,16 @@ export async function hygieneReport(sandbox: string, dir: string): Promise<{ ent
           entries: [...derived.entries()].map(([seq, why]) => ({ seq, why })),
           sensitive_outputs: [...index.jobs.values()].map((j) => ({ job: j.id, why: j.sensitivity.why, from: j.sensitivity.from, status: j.status, files: j.files.length, carried: carriedPaths.filter((c) => c.startsWith(`store/jobs/${j.id}/`)).length })),
           carried: carriedPaths.length,
+          access: accessRec
+            ? {
+                ...accessCounts(accessRec),
+                marked_trace_lines: markedLines,
+                marked_kept_copies: markedKept,
+                ...(markedLines || markedKept
+                  ? { advice: `${markedLines} trace line(s) of seats' tool results and ${markedKept} kept whole output(s) in this package reach a sensitive output (the access record marks them) and are in it as they were; a package made with --redact replaces them` }
+                  : {}),
+              }
+            : null,
           scan: { files: scan.files, words: tokens.length, hits: scan.hits },
         },
         null,
@@ -1010,6 +1260,7 @@ export const PACKAGE_COMPONENTS: ReadonlyArray<{ path: string; source: string; w
   { path: "trace/model-gateway.jsonl", source: "traces/model-gateway.jsonl", what: "the model gateway's call log (a chain of its own, sealed by custody by its lines and their sha256)", absent: "the run had no model gateway (a host run)", sealed: "model_gateway", since: "2026-09-29" },
   { path: "trace/journal-anchor.json", source: "<sandbox>.journal-anchor.json", what: "the journal's anchor", absent: "the run had no job service" },
   { path: "review.jsonl", source: "<runs>/reviews/<run>.jsonl", what: "the examiner's review", absent: "no examiner has reviewed this run", since: "2026-09-27" },
+  { path: "sessions", source: "<opt-in>", what: "the agents' sessions (.pi-sessions/), masked, for an internal handover: one archive and a manifest of each file's size and sha256", absent: "not requested: sessions travel only with swarm.sh package --with-sessions, and never in a --redact package" },
   { path: "release", source: "release/", what: "the report's releases: the machine's drafts and the examiner's adoptions, each signed", absent: "no release was sealed for this run (no custody taken, or a run from before releases)", since: "2026-09-27" },
 ];
 
@@ -1374,6 +1625,12 @@ export function verifyPackage(dir: string): { ok: boolean; lines: string[] } {
       out.push(`Review:       ${r.detail}; signed by ${r.signed.examiner ?? "?"} at ${r.signed.at ?? "?"} over ${overLedger} and ${overReport}`);
     }
   }
+  // The sessions component, when the package carries one: the archive and every member held to its manifest.
+  const sessions = verifySessions(dir);
+  if (sessions.present) {
+    out.push(...sessions.lines);
+    ok &&= sessions.ok;
+  }
   if (existsSync(join(dir, "REDACTIONS.txt"))) {
     // What each redaction replaced, and what the scan after it found.
     let lineage = "";
@@ -1394,6 +1651,556 @@ export function verifyPackage(dir: string): { ok: boolean; lines: string[] } {
   return { ok, lines: out };
 }
 
+// --- the sessions component (swarm.sh package --with-sessions) ------------------------------------
+
+/**
+ * An opt-in component for an internal handover (docs/data-protection.md): the
+ * agents' sessions (`.pi-sessions/`, everything the models saw), copied as
+ * regular files at a cutoff, every recorded sensitive value replaced by its
+ * keyed id, compressed losslessly into one archive, and described in a
+ * manifest: per file its size and sha256 as copied and as masked, how many
+ * values were masked, and where it goes back. Never in a package made with
+ * --redact: that is the copy that leaves the organisation. Masking removes
+ * the recorded sensitive values, not the evidence text the models read.
+ */
+export const SESSIONS_ARCHIVE = "sessions/sessions.tar.gz";
+export const SESSIONS_MANIFEST = "sessions/sessions.manifest.json";
+/** The most one session file may hold, read whole to be masked; a bigger one fails the component, never cut. */
+export const SESSION_FILE_MAX = 1024 * 1024 * 1024;
+const SESSIONS_ROOT = ".pi-sessions";
+
+export type SessionFileRecord = {
+  /** The member's path in the archive, and the place it goes back to in a sandbox. */
+  path: string;
+  restore_to: string;
+  size_before: number;
+  sha256_before: string;
+  size_after: number;
+  sha256_after: string;
+  masked: number;
+  name_masked: boolean;
+  /** Set when the file changed while it was copied: the size listed at the cutoff and the size copied. */
+  changed_during_copy?: { listed_bytes: number; copied_bytes: number; modified_after_cutoff: boolean };
+};
+export type SessionsManifest = {
+  v: 1;
+  note: string;
+  cutoff: string;
+  cutoff_ms: number;
+  archive: { path: string; format: "tar+gzip"; sha256: string; bytes: number };
+  restore: string;
+  masking: { values: number; digests: number; masked: number; note: string };
+  files: SessionFileRecord[];
+  skipped: Array<{ path: string; why: string }>;
+};
+
+/** The ways a value may stand in JSON text: as written, escaped, escaped to ASCII (either case of hex), with solidus escaped. */
+function sessionForms(t: string): string[] {
+  const json = JSON.stringify(t).slice(1, -1);
+  const ascii = (hex: (n: number) => string) => json.replace(/[^\x20-\x7e]/g, (c) => `\\u${hex(c.charCodeAt(0)).padStart(4, "0")}`);
+  const base = [t, json, ascii((n) => n.toString(16)), ascii((n) => n.toString(16).toUpperCase())];
+  return [...new Set([...base, ...base.map((f) => f.replace(/\//g, "\\/"))])].filter((f) => f.length > 0);
+}
+
+type TextEncoding = "utf8" | "utf16le" | "utf16be";
+type MaskPattern = { owner: number; bytes: Buffer; chars: number };
+type Masker = {
+  /** A file's bytes with every sensitive value replaced, and how many places. */
+  mask(buf: Buffer): { buf: Buffer; count: number };
+  /** A string (a path segment, a JSON string) with every sensitive value replaced. */
+  maskText(text: string): { text: string; count: number };
+};
+
+/** Which text encoding a file looks to be in: BOM first, then NULs on one parity of the first 4 KiB. */
+function textEncodingOf(buf: Buffer): TextEncoding {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return "utf16le";
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) return "utf16be";
+  const n = Math.min(buf.length, 4096) & ~1;
+  if (n < 4) return "utf8";
+  let even = 0;
+  let odd = 0;
+  for (let i = 0; i < n; i += 2) {
+    if (buf[i] === 0) even += 1;
+    if (buf[i + 1] === 0) odd += 1;
+  }
+  const pairs = n / 2;
+  if (odd * 10 >= pairs * 3 && even * 20 <= pairs) return "utf16le";
+  if (even * 10 >= pairs * 3 && odd * 20 <= pairs) return "utf16be";
+  return "utf8";
+}
+
+/**
+ * A masker for the words, outputs' texts and digests of a run: each found in
+ * one pass over the bytes (one automaton per encoding), a short word judged
+ * by the same rule as redaction (`partOfLongerRun`), the leftmost and longest
+ * match kept. A JSON line that still holds a value in a form the bytes do
+ * not show (a `\u` escape of an ASCII character) is parsed and masked
+ * string by string.
+ */
+function makeMasker(tokens: Array<{ token: string; id: string }>, digests: Array<{ digest: string; id: string }>): Masker {
+  const subjects: Array<{ text: string; id: string; short: boolean }> = [];
+  for (const t of tokens) for (const f of sessionForms(t.token)) subjects.push({ text: f, id: t.id, short: t.token.length < SHORT_WORD });
+  for (const d of digests) for (const f of new Set([d.digest, d.digest.toUpperCase()])) subjects.push({ text: f, id: d.id, short: false });
+  const swap = (b: Buffer) => Buffer.from(b).swap16();
+  const encode = (text: string, enc: TextEncoding): Buffer => (enc === "utf8" ? Buffer.from(text, "utf8") : enc === "utf16le" ? Buffer.from(text, "utf16le") : swap(Buffer.from(text, "utf16le")));
+  const patterns: Record<TextEncoding, MaskPattern[]> = { utf8: [], utf16le: [], utf16be: [] };
+  subjects.forEach((s, owner) => {
+    for (const enc of ["utf8", "utf16le", "utf16be"] as const) patterns[enc].push({ owner, bytes: encode(s.text, enc), chars: s.text.length });
+  });
+  const automata = {
+    utf8: new MultiMatch(patterns.utf8.map((p) => p.bytes)),
+    utf16le: new MultiMatch(patterns.utf16le.map((p) => p.bytes)),
+    utf16be: new MultiMatch(patterns.utf16be.map((p) => p.bytes)),
+  };
+  const maskAs = (buf: Buffer, enc: TextEncoding): { buf: Buffer; count: number } => {
+    if (!subjects.length || !buf.length) return { buf, count: 0 };
+    const unit = enc === "utf8" ? 1 : 2;
+    const origin = (enc === "utf16le" && buf[0] === 0xff && buf[1] === 0xfe) || (enc === "utf16be" && buf[0] === 0xfe && buf[1] === 0xff) ? 2 : 0;
+    const ps = patterns[enc];
+    const found: Array<{ start: number; end: number; subject: number }> = [];
+    automata[enc].scan(buf, (id, end) => {
+      const start = end - automata[enc].lengths[id]!;
+      if (unit === 2 && (start - origin) % 2 !== 0) return;
+      for (const k of automata[enc].owners[id]!) {
+        const p = ps[k]!;
+        if (subjects[p.owner]!.short) {
+          const at = (j: number): number | undefined => {
+            const q = start + j * unit;
+            if (q < 0 || q + unit > buf.length) return undefined;
+            return unit === 1 ? buf[q]! : enc === "utf16le" ? buf[q]! | (buf[q + 1]! << 8) : (buf[q]! << 8) | buf[q + 1]!;
+          };
+          if (partOfLongerRun(at, p.chars)) continue;
+        }
+        found.push({ start, end, subject: p.owner });
+        break;
+      }
+    });
+    if (!found.length) return { buf, count: 0 };
+    found.sort((a, b) => a.start - b.start || b.end - a.end);
+    const parts: Buffer[] = [];
+    let from = 0;
+    let count = 0;
+    for (const m of found) {
+      if (m.start < from) continue;
+      parts.push(buf.subarray(from, m.start), encode(subjects[m.subject]!.id, enc));
+      from = m.end;
+      count += 1;
+    }
+    parts.push(buf.subarray(from));
+    return { buf: Buffer.concat(parts), count };
+  };
+  const maskText = (text: string) => {
+    const r = maskAs(Buffer.from(text, "utf8"), "utf8");
+    return { text: r.count ? r.buf.toString("utf8") : text, count: r.count };
+  };
+  /** A parsed JSON value with the strings (and keys) that still hold a value masked. */
+  const maskJson = (v: unknown, tally: { n: number }): unknown => {
+    if (typeof v === "string") {
+      const r = maskText(v);
+      tally.n += r.count;
+      return r.text;
+    }
+    if (Array.isArray(v)) return v.map((x) => maskJson(x, tally));
+    if (v && typeof v === "object") {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([k, x]) => {
+          const r = maskText(k);
+          tally.n += r.count;
+          return [r.text, maskJson(x, tally)];
+        }),
+      );
+    }
+    return v;
+  };
+  const ESCAPED = Buffer.from("\\u");
+  const SOLIDUS = Buffer.from("\\/");
+  return {
+    maskText,
+    mask(buf: Buffer) {
+      const enc = textEncodingOf(buf);
+      const first = maskAs(buf, enc);
+      if (enc !== "utf8" || !subjects.length || (!first.buf.includes(ESCAPED) && !first.buf.includes(SOLIDUS))) return first;
+      // A JSON line that holds an escaped form the bytes do not show: parsed, masked string by string, written again.
+      const text = first.buf.toString("utf8");
+      if (Buffer.from(text, "utf8").compare(first.buf) !== 0) return first;
+      let count = first.count;
+      let changed = false;
+      const lines = text.split("\n").map((line) => {
+        if (!line.includes("\\u") && !line.includes("\\/")) return line;
+        if (!/^\s*[[{]/.test(line)) return line;
+        let o: unknown;
+        try {
+          o = JSON.parse(line);
+        } catch {
+          return line;
+        }
+        const tally = { n: 0 };
+        const masked = maskJson(o, tally);
+        if (!tally.n) return line;
+        count += tally.n;
+        changed = true;
+        return JSON.stringify(masked);
+      });
+      return changed ? { buf: Buffer.from(lines.join("\n"), "utf8"), count } : first;
+    },
+  };
+}
+
+type TarMember = { name: string; type: string; size: number; sha256: string };
+
+/** The members of a tar file, read in blocks: a regular file is hashed as it streams, anything else is named by its type. */
+export function readTarMembers(tarFile: string): { members: TarMember[]; error: string | null } {
+  const members: TarMember[] = [];
+  const total = statSync(tarFile).size;
+  const fd = openSync(tarFile, "r");
+  const block = Buffer.alloc(512);
+  let pos = 0;
+  let longName: string | null = null;
+  let paxPath: string | null = null;
+  const cstr = (b: Buffer) => {
+    const z = b.indexOf(0);
+    return b.subarray(0, z < 0 ? b.length : z).toString("utf8");
+  };
+  try {
+    for (;;) {
+      if (pos + 512 > total) return { members, error: pos === 0 || pos === total ? null : "the archive ends inside a header" };
+      readSync(fd, block, 0, 512, pos);
+      pos += 512;
+      if (block.every((x) => x === 0)) return { members, error: null };
+      let size: number;
+      if (block[124]! & 0x80) {
+        size = 0;
+        for (let i = 125; i < 136; i += 1) size = size * 256 + block[i]!;
+      } else size = parseInt(cstr(block.subarray(124, 136)).trim() || "0", 8);
+      if (!Number.isFinite(size) || size < 0) return { members, error: "a header with a size that is not a number" };
+      const type = block[156] === 0 ? "0" : String.fromCharCode(block[156]!);
+      let name = cstr(block.subarray(0, 100));
+      if (block.subarray(257, 262).toString("latin1") === "ustar") {
+        const prefix = cstr(block.subarray(345, 500));
+        if (prefix) name = `${prefix}/${name}`;
+      }
+      const padded = Math.ceil(size / 512) * 512;
+      if (type === "L" || type === "x" || type === "g") {
+        if (pos + size > total) return { members, error: "a header is cut short" };
+        const data = Buffer.alloc(size);
+        readSync(fd, data, 0, size, pos);
+        pos += padded;
+        if (type === "L") longName = cstr(data);
+        else if (type === "x") {
+          paxPath = null;
+          for (let at = 0; at < data.length; ) {
+            const sp = data.indexOf(0x20, at);
+            if (sp < 0) break;
+            const len = parseInt(data.subarray(at, sp).toString("latin1"), 10);
+            if (!Number.isFinite(len) || len <= 0) break;
+            const rec = data.subarray(sp + 1, at + len - 1).toString("utf8");
+            const eq = rec.indexOf("=");
+            if (eq > 0 && rec.slice(0, eq) === "path") paxPath = rec.slice(eq + 1);
+            at += len;
+          }
+        }
+        continue;
+      }
+      if (longName !== null) name = longName;
+      if (paxPath !== null) name = paxPath;
+      longName = null;
+      paxPath = null;
+      if (type === "0" || type === "7") {
+        if (pos + size > total) return { members, error: `${JSON.stringify(name)} is cut short` };
+        const h = createHash("sha256");
+        const chunk = Buffer.allocUnsafe(1024 * 1024);
+        for (let left = size, at = pos; left > 0; ) {
+          const n = readSync(fd, chunk, 0, Math.min(chunk.length, left), at);
+          if (n <= 0) return { members, error: `${JSON.stringify(name)} is cut short` };
+          h.update(chunk.subarray(0, n));
+          at += n;
+          left -= n;
+        }
+        members.push({ name, type: "0", size, sha256: h.digest("hex") });
+        pos += padded;
+      } else members.push({ name, type, size: 0, sha256: "" });
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** The archive's members: gunzipped to a temporary file and read there, so nothing is held whole in memory. */
+export function archiveMembers(archive: string): { members: TarMember[]; error: string | null } {
+  const tmpDir = mkdtempSync(join(tmpdir(), "pkg-sessions-"));
+  try {
+    const tarFile = join(tmpDir, "members.tar");
+    const out = openSync(tarFile, "w", 0o600);
+    let r;
+    try {
+      r = spawnSync("gzip", ["-dc", archive], { stdio: ["ignore", out, "pipe"], encoding: "utf8" });
+    } finally {
+      closeSync(out);
+    }
+    if (r.error) return { members: [], error: `gzip could not run (${r.error.message})` };
+    if (r.status !== 0) return { members: [], error: `the archive does not gunzip (${String(r.stderr ?? "").trim().split("\n")[0] || `exit ${r.status}`})` };
+    return readTarMembers(tarFile);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/** Whether a member's name is one a restore may write: under .pi-sessions/, relative, no `..`, no NUL, no empty segment. */
+function memberNameOk(name: string): boolean {
+  if (!name.startsWith(`${SESSIONS_ROOT}/`) || name.includes("\0")) return false;
+  return name.split("/").every((s, i) => (i === 0 ? s === SESSIONS_ROOT : s.length > 0 && s !== "." && s !== ".."));
+}
+
+/** What the component's check says of a package directory: its lines, and whether it holds. */
+export function verifySessions(dir: string): { ok: boolean; lines: string[]; present: boolean } {
+  const lines: string[] = [];
+  let ok = true;
+  const fail = (l: string) => {
+    lines.push(l);
+    ok = false;
+  };
+  const archive = join(dir, SESSIONS_ARCHIVE);
+  const manifestPath = join(dir, SESSIONS_MANIFEST);
+  const hasArchive = existsSync(archive);
+  const hasManifest = existsSync(manifestPath);
+  if (!hasArchive && !hasManifest && !existsSync(join(dir, "sessions"))) return { ok: true, lines, present: false };
+  if (existsSync(join(dir, "REDACTIONS.txt"))) fail("Sessions:     THIS PACKAGE WAS MADE WITH --redact AND HOLDS SESSIONS: a disclosure copy never carries them");
+  if (!hasManifest) {
+    fail(`Sessions:     ${hasArchive ? SESSIONS_ARCHIVE : "sessions/"} is there and ${SESSIONS_MANIFEST} is not`);
+    return { ok, lines, present: true };
+  }
+  let manifest: SessionsManifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as SessionsManifest;
+    if (!Array.isArray(manifest.files) || !manifest.archive || typeof manifest.archive.sha256 !== "string") throw new Error("not a sessions manifest");
+  } catch (err) {
+    fail(`Sessions:     ${SESSIONS_MANIFEST} cannot be read (${(err as Error).message})`);
+    return { ok, lines, present: true };
+  }
+  if (!hasArchive) {
+    if (manifest.files.length) fail(`Sessions:     ${SESSIONS_ARCHIVE} IS MISSING, and ${SESSIONS_MANIFEST} lists ${manifest.files.length} file(s)`);
+    else lines.push("Sessions:     no session file was carried (the manifest lists none)");
+    return { ok, lines, present: true };
+  }
+  if (!lstatSync(archive).isFile()) {
+    fail(`Sessions:     ${SESSIONS_ARCHIVE} is not a regular file`);
+    return { ok, lines, present: true };
+  }
+  const have = sha256FileSync(archive);
+  if (have !== manifest.archive.sha256) fail(`Sessions:     ${SESSIONS_ARCHIVE} DOES NOT MATCH ITS MANIFEST (sha256 ${have}; the manifest says ${manifest.archive.sha256})`);
+  const read = archiveMembers(archive);
+  if (read.error) fail(`Sessions:     ${SESSIONS_ARCHIVE}: ${read.error}`);
+  const byName = new Map<string, TarMember>();
+  for (const m of read.members) {
+    if (byName.has(m.name)) fail(`Sessions:     member ${JSON.stringify(m.name)} is in the archive twice`);
+    byName.set(m.name, m);
+  }
+  const listed = new Set<string>();
+  for (const f of manifest.files) {
+    listed.add(f.path);
+    const m = byName.get(f.path);
+    if (!m) fail(`Sessions:     member ${f.path} IS MISSING from the archive (the manifest lists it)`);
+    else if (m.type !== "0") fail(`Sessions:     member ${f.path} is not a regular file in the archive`);
+    else if (m.sha256 !== f.sha256_after || m.size !== f.size_after) fail(`Sessions:     member ${f.path} DIFFERS FROM THE MANIFEST (sha256 ${m.sha256}, ${m.size} bytes; the manifest says ${f.sha256_after}, ${f.size_after} bytes)`);
+  }
+  for (const m of read.members) {
+    if (m.type === "5" && (m.name.replace(/\/$/, "") === SESSIONS_ROOT || memberNameOk(m.name.replace(/\/$/, "")))) continue;
+    if (!memberNameOk(m.name)) fail(`Sessions:     member ${JSON.stringify(m.name)} is not a path a restore may write (it must stay under ${SESSIONS_ROOT}/)`);
+    else if (m.type !== "0") fail(`Sessions:     member ${m.name} is not a regular file (type ${JSON.stringify(m.type)})`);
+    else if (!listed.has(m.name)) fail(`Sessions:     member ${m.name} IS IN THE ARCHIVE AND NOT IN THE MANIFEST`);
+  }
+  if (ok) lines.push(`Sessions:     ${manifest.files.length} file(s) in ${SESSIONS_ARCHIVE} (sha256 ${have.slice(0, 16)}...), cut off at ${manifest.cutoff}, ${manifest.masking?.masked ?? 0} value(s) masked; the archive and every member match the manifest`);
+  const grown = manifest.files.filter((f) => f.changed_during_copy);
+  if (grown.length) lines.push(`Sessions:     ${grown.length} file(s) changed while they were copied: ${grown.map((f) => `${f.path} (${f.changed_during_copy!.listed_bytes} bytes at the cutoff, ${f.changed_during_copy!.copied_bytes} copied)`).join("; ")}`);
+  return { ok, lines, present: true };
+}
+
+/**
+ * Copy `.pi-sessions/` of a run into a package as the sessions component.
+ * Regular files only, opened with O_NOFOLLOW and never through a link; the
+ * cutoff is the time the copy starts. Returns what was carried; throws when
+ * the component cannot be made whole (it is never made partly).
+ */
+export async function packSessions(
+  sandbox: string,
+  dir: string,
+  opts: { cutoffMs?: number; afterListed?: () => void } = {},
+): Promise<{ files: number; masked: number; bytes: number; changed: number; skipped: number; archive: string | null; sha256: string | null; changed_files: Array<{ path: string; listed_bytes: number; copied_bytes: number }> }> {
+  const none = { files: 0, masked: 0, bytes: 0, changed: 0, skipped: 0, archive: null, sha256: null, changed_files: [] };
+  const root = join(sandbox, SESSIONS_ROOT);
+  const rootStat = existsSync(root) ? lstatSync(root) : null;
+  if (!rootStat || !rootStat.isDirectory()) return none;
+  const cutoff = opts.cutoffMs ?? Date.now();
+  // The same word sources redaction uses (redactPackage), minted under a key of this component's own.
+  const raw = await readLedger(sandbox, { raw: true });
+  const derived = await sensitiveEntries(sandbox, raw);
+  const entries = raw.map((e) => (derived.has(e.seq) && !e.sensitive ? { ...e, sensitive: true } : e));
+  const index = await sensitiveIndex(sandbox);
+  const words = await outputWords(sandbox);
+  const EMPTY = sha256(Buffer.alloc(0));
+  const key = randomBytes(32);
+  const idFor = (value: string) => `hidden-${createHmac("sha256", key).update(value).digest("hex").slice(0, 24)}`;
+  const privateMap: Record<string, { of: "digest" | "path" | "word"; sha256?: string; path?: string; why?: string }> = {};
+  const tokens: Array<{ token: string; id: string }> = [];
+  const seenToken = new Set<string>();
+  for (const t of sensitiveTokens(entries)) {
+    if (seenToken.has(t.token)) continue;
+    seenToken.add(t.token);
+    const id = idFor(`word:${t.token}`);
+    privateMap[id] = { of: "word", why: `a sensitive entry's words (E-${t.seq})` };
+    tokens.push({ token: t.token, id });
+  }
+  for (const w of words) {
+    if (seenToken.has(w.token)) continue;
+    seenToken.add(w.token);
+    const id = idFor(`word:${w.token}`);
+    privateMap[id] = { of: "word", why: `the text of a sensitive output (job ${w.job}, ${w.path})` };
+    tokens.push({ token: w.token, id });
+  }
+  const digests: Array<{ digest: string; id: string }> = [];
+  for (const d of index.content.keys()) {
+    if (d === EMPTY) continue;
+    const id = idFor(`digest:${d}`);
+    privateMap[id] = { of: "digest", sha256: d, why: "the digest of a sensitive job's output" };
+    digests.push({ digest: d, id });
+  }
+  const masker = makeMasker(tokens, digests);
+  const maskedNameOf = (rel: string): { name: string; masked: boolean } => {
+    let any = false;
+    const name = rel
+      .split("/")
+      .map((seg) => {
+        const r = masker.maskText(seg);
+        if (r.count) any = true;
+        return r.text;
+      })
+      .join("/");
+    if (any) privateMap[`path:${name}`] = { of: "path", path: rel, why: "a session path whose name holds a sensitive value" };
+    return { name, masked: any };
+  };
+
+  // The listing at the cutoff: regular files by lstat, anything else named and left.
+  const listed: Array<{ rel: string; size: number }> = [];
+  const skipped: Array<{ path: string; why: string }> = [];
+  const listDir = (rel: string, depth: number): void => {
+    if (depth > 32) {
+      skipped.push({ path: maskedNameOf(rel).name, why: "nested deeper than 32 directories" });
+      return;
+    }
+    for (const d of readdirSync(join(sandbox, rel), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const r = `${rel}/${d.name}`;
+      if (d.isDirectory()) listDir(r, depth + 1);
+      else if (d.isFile()) listed.push({ rel: r, size: lstatSync(join(sandbox, r)).size });
+      else skipped.push({ path: maskedNameOf(r).name, why: d.isSymbolicLink() ? "a symbolic link: never followed" : d.isFIFO() ? "a FIFO" : d.isSocket() ? "a socket" : "not a regular file" });
+    }
+  };
+  listDir(SESSIONS_ROOT, 0);
+  opts.afterListed?.();
+
+  const stage = mkdtempSync(`${dir.replace(/\/$/, "")}.sessions-stage-`);
+  const cleanup = () => rmSync(stage, { recursive: true, force: true });
+  const onSignal = (sig: NodeJS.Signals) => {
+    cleanup();
+    rmSync(join(dir, "sessions"), { recursive: true, force: true });
+    process.exit(128 + (sig === "SIGINT" ? 2 : sig === "SIGTERM" ? 15 : 1));
+  };
+  for (const s of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.once(s, onSignal);
+  try {
+    const records: SessionFileRecord[] = [];
+    let masked = 0;
+    let bytes = 0;
+    for (const f of listed) {
+      let data: Buffer;
+      let mtimeMs: number;
+      let fd: number;
+      try {
+        fd = openSync(join(sandbox, f.rel), constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+      } catch (err) {
+        skipped.push({ path: maskedNameOf(f.rel).name, why: `could not be opened as a regular file (${(err as NodeJS.ErrnoException).code ?? "error"})` });
+        continue;
+      }
+      try {
+        const st = fstatSync(fd);
+        if (!st.isFile()) {
+          skipped.push({ path: maskedNameOf(f.rel).name, why: "not a regular file when opened" });
+          continue;
+        }
+        if (st.size > SESSION_FILE_MAX) throw new Error(`${maskedNameOf(f.rel).name} is ${st.size} bytes, over the ${SESSION_FILE_MAX} the component masks in one piece: nothing was carried`);
+        const chunks: Buffer[] = [];
+        let got = 0;
+        const chunk = Buffer.allocUnsafe(1024 * 1024);
+        for (;;) {
+          const n = readSync(fd, chunk, 0, chunk.length, null);
+          if (n <= 0) break;
+          got += n;
+          if (got > SESSION_FILE_MAX) throw new Error(`${maskedNameOf(f.rel).name} grew past ${SESSION_FILE_MAX} bytes while it was copied: nothing was carried`);
+          chunks.push(Buffer.from(chunk.subarray(0, n)));
+        }
+        data = Buffer.concat(chunks);
+        mtimeMs = fstatSync(fd).mtimeMs;
+      } finally {
+        closeSync(fd);
+      }
+      const after = masker.mask(data);
+      const named = maskedNameOf(f.rel);
+      const target = join(stage, named.name);
+      mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+      writeFileSync(target, after.buf, { mode: 0o600 });
+      const changed = data.length !== f.size || mtimeMs > cutoff;
+      records.push({
+        path: named.name,
+        restore_to: named.name,
+        size_before: data.length,
+        sha256_before: sha256(data),
+        size_after: after.buf.length,
+        sha256_after: sha256(after.buf),
+        masked: after.count,
+        name_masked: named.masked,
+        ...(changed ? { changed_during_copy: { listed_bytes: f.size, copied_bytes: data.length, modified_after_cutoff: mtimeMs > cutoff } } : {}),
+      });
+      masked += after.count;
+      bytes += data.length;
+    }
+    mkdirSync(join(dir, "sessions"), { recursive: true });
+    let archiveSha: string | null = null;
+    let archiveBytes = 0;
+    if (records.length) {
+      const version = spawnSync("tar", ["--version"], { encoding: "utf8" });
+      if (version.error) throw new Error(`tar could not run (${version.error.message})`);
+      const flags = String(version.stdout).includes("GNU") ? ["--sort=name", "--owner=0", "--group=0", "--numeric-owner", `--mtime=@${Math.floor(cutoff / 1000)}`] : [];
+      const made = spawnSync("tar", ["-czf", join(dir, SESSIONS_ARCHIVE), ...flags, "-C", stage, SESSIONS_ROOT], { encoding: "utf8" });
+      if (made.status !== 0) throw new Error(`tar could not write the archive (${String(made.stderr ?? "").trim().split("\n")[0] || `exit ${made.status}`})`);
+      archiveSha = sha256FileSync(join(dir, SESSIONS_ARCHIVE));
+      archiveBytes = statSync(join(dir, SESSIONS_ARCHIVE)).size;
+    }
+    const manifest: SessionsManifest = {
+      v: 1,
+      note: "The agents' sessions (.pi-sessions/) for an internal handover, never a disclosure copy. Each file was copied as a regular file at the cutoff and every recorded sensitive value in it was replaced by a keyed id; the evidence text the models read is not removed. sha256_before is the file as copied, sha256_after the masked file as archived. The key and the id map are in the run owner's private sidecar, outside this package.",
+      cutoff: new Date(cutoff).toISOString(),
+      cutoff_ms: cutoff,
+      archive: { path: SESSIONS_ARCHIVE, format: "tar+gzip", sha256: archiveSha ?? "", bytes: archiveBytes },
+      restore: `Extract the archive at the root of an empty sandbox (tar -xzf ${SESSIONS_ARCHIVE} -C <sandbox>): each member goes back to its restore_to path, .pi-sessions/<seat>/<file>.`,
+      masking: { values: tokens.length, digests: digests.length, masked, note: "values: the sensitive words and output texts looked for; digests: the sensitive outputs' sha256; masked: the places replaced in these files" },
+      files: records,
+      skipped,
+    };
+    writeFileSync(join(dir, SESSIONS_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+    writeFileSync(
+      `${dir.replace(/\/$/, "")}.sessions.private.json`,
+      `${JSON.stringify({ v: 1, note: "Kept by the run's owner, NEVER handed over: the keyed ids the sessions component uses, each to the digest, path or word it stands for.", key_note: "The ids are HMAC-SHA256 of the value under a per-package key held only here.", map: privateMap }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    const changedFiles = records.filter((r) => r.changed_during_copy).map((r) => ({ path: r.path, listed_bytes: r.changed_during_copy!.listed_bytes, copied_bytes: r.changed_during_copy!.copied_bytes }));
+    return { files: records.length, masked, bytes, changed: changedFiles.length, skipped: skipped.length, archive: records.length ? SESSIONS_ARCHIVE : null, sha256: archiveSha, changed_files: changedFiles };
+  } catch (err) {
+    rmSync(join(dir, "sessions"), { recursive: true, force: true });
+    throw err;
+  } finally {
+    for (const s of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.removeListener(s, onSignal);
+    cleanup();
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [cmd, a, b] = process.argv.slice(2);
   if (cmd === "redact" && a && b) {
@@ -1410,6 +2217,20 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else if (cmd === "hygiene" && a && b) {
     const r = await hygieneReport(a, b);
     console.log(JSON.stringify({ entries: r.entries, outputs: r.outputs, carried: r.carried, hits: r.hits.length, scanned: r.scanned }));
+  } else if (cmd === "sessions" && a && b) {
+    const at = process.argv.indexOf("--cutoff-ms");
+    const cutoffMs = at >= 0 ? Number(process.argv[at + 1]) : undefined;
+    if (cutoffMs !== undefined && !Number.isFinite(cutoffMs)) {
+      console.error("sessions: --cutoff-ms takes a number of milliseconds since the epoch");
+      process.exit(2);
+    }
+    try {
+      const r = await packSessions(a, b, { cutoffMs });
+      console.log(JSON.stringify(r));
+    } catch (err) {
+      console.error(`sessions: ${(err as Error).message}`);
+      process.exit(1);
+    }
   } else if (cmd === "components" && a && b) {
     console.log(JSON.stringify(writeComponents(a, b)));
   } else if (cmd === "verify" && a) {
@@ -1423,7 +2244,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const unchecked = rel.signatures.some((s) => s.adopted && s.state !== "verified");
     process.exit(!r.ok || !rel.ok ? 1 : unchecked && opt("--allowed-signers") ? 3 : 0);
   } else {
-    console.error("usage: package-tools.ts redact <sandbox> <package dir> | hygiene <sandbox> <package dir> | components <sandbox> <package dir> | verify <package dir>");
+    console.error("usage: package-tools.ts redact <sandbox> <package dir> | hygiene <sandbox> <package dir> | sessions <sandbox> <package dir> | components <sandbox> <package dir> | verify <package dir>");
     process.exit(2);
   }
 }

@@ -2,7 +2,7 @@
 id: capture/carve-from-images
 title: Recovering packet records from disk or memory
 when: No capture was supplied, but a memory image or disk image may retain packet buffers.
-needs: [capture/what-you-have]
+needs: [capture/what-you-have, evidence/captured-secrets]
 tools: [feature_scan, pcap_summary]
 requires_host: [bulk_extractor, capinfos, tshark]
 ---

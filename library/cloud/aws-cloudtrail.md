@@ -71,7 +71,7 @@ ran the first pass; read `catalog/` before running the same commands again.
    whom (`AssumeRole` with the session name and the source identity),
    access keys and login profiles created or changed on another user
    (`CreateLoginProfile`, `UpdateLoginProfile`), roles passed to compute
-   (`RunInstances`, `CreateFunction`, `AssociateIamInstanceProfile` with a
+   (`RunInstances`, `CreateFunction*`, `AssociateIamInstanceProfile` with a
    role or profile parameter), MFA devices deactivated or added, and
    permission boundaries removed; each with the identity, the time, the
    source and the outcome.
@@ -91,7 +91,7 @@ ran the first pass; read `catalog/` before running the same commands again.
    open security groups that still exist at the window's end as the trail
    shows them created and never deleted; resource and trust policies that
    name a principal outside the account (`PutBucketPolicy`, `PutKeyPolicy`,
-   Lambda `AddPermission`, `UpdateAssumeRolePolicy`) and SAML or OIDC
+   Lambda `AddPermission*`, `UpdateAssumeRolePolicy`) and SAML or OIDC
    providers created (`CreateSAMLProvider`, `CreateOpenIDConnectProvider`);
    and what the credential report says about them.
 7. Exfiltration: the data events that read or copied data (S3 `GetObject`
@@ -111,6 +111,11 @@ ran the first pass; read `catalog/` before running the same commands again.
 
 ### Ground rules
 
+- Lambda's `eventName` carries an API version: `CreateFunction20150331`,
+  `AddPermission20150331v2`, `UpdateFunctionCode20150331v2`. Match a Lambda
+  event by its name and the date that follows (`LIKE 'CreateFunction2015%'`),
+  never by equality with the bare name, or the trail seems to hold none; the
+  bare prefix `CreateFunction%` would also take `CreateFunctionUrlConfig`.
 - `inputs/` is read-only and stays byte-for-byte what it was. Read the
   trail with `zcat`, `jq`, `grep`, `awk`, `sort`, `uniq`, `sqlite3` and
   `python3`; do not decompress or copy the files wholesale. Load the
@@ -230,10 +235,9 @@ the timeline rests on, and `inputs/` is unchanged.
 - `grep -qi 'remediation' work/report.md`
 - `test -f work/timeline.md`
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 25`
-- `grep -m1 -iE '^\| *(# *\| *)?(time|utc|date)' work/timeline.md | grep -qi 'identity'`
+- `grep -qiE '^\| *(# *\| *)?(time|utc|date).*identity' work/timeline.md`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 19`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,8,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies

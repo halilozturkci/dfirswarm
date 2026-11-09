@@ -1,0 +1,50 @@
+name: apt snapshot
+
+# Moves the Debian snapshot date the images install from
+# (images/debian-snapshot, scripts/apt-snapshot-bump.sh) once a month, as a pull
+# request. A pull request opened with GITHUB_TOKEN starts no pull_request run, so
+# this workflow starts ci.yml and images.yml on the branch itself with
+# workflow_dispatch: their `CI green` lands on the same head sha. The base image
+# digests are not moved here (Dependabot's docker ecosystem, or by hand with
+# `scripts/apt-snapshot-bump.sh --digests`).
+
+on:
+  schedule:
+    # Monthly, on the 1st at 05:17 UTC. Change the day or the month step here.
+    - cron: "17 5 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  bump:
+    name: move the snapshot date
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Bump the date and open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/apt-snapshot-bump.sh
+          stamp="$(tr -d '[:space:]' < images/debian-snapshot)"
+          if git diff --quiet; then
+            echo "the date is already $stamp"
+            exit 0
+          fi
+          branch="claude/apt-snapshot-${stamp%%T*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "images: apt installs resolve from the Debian snapshot of $stamp"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "images: apt snapshot $stamp" \
+            --body "Moves the Debian snapshot date the images install from to $stamp (images/debian-snapshot and the ARG in images/base.Dockerfile). Opened by the apt snapshot workflow; ci.yml and images.yml are started on this branch by hand because a pull request opened with GITHUB_TOKEN starts none. Merge once their CI green and the image builds are green."
+          gh workflow run ci.yml --ref "$branch"
+          gh workflow run images.yml --ref "$branch"

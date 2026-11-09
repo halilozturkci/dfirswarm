@@ -29,8 +29,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-PARSER = "mam_scan/3"
+PARSER = "mam_scan/4"
 MAX_CHUNK = 256 * 1024 * 1024
+DEADLINE_SECONDS = 114            # the manifest allows 120: the scan and every inflate stop here, so that the pages are placed and the answer printed before the harness ends it
+MAX_HITS = 10000                  # the largest inline page; the whole result is in the file the answer names
+MAX_NAME_FILTER = 256
+PROGRESS = {"offset": 0, "candidates": 0}
 
 # Lossless paging (the same in every library tool that pages): the page an
 # agent reads stays small, and when there are more rows the whole result is
@@ -70,6 +74,18 @@ class LosslessPage:
     def _cannot_write(self, exc: BaseException) -> None:
         """The whole result cannot be kept: say so as JSON and stop, never a traceback."""
         import sys as _sys
+        # The hidden temp file goes first: a page that cannot be written leaves nothing behind (a full disk, a quota).
+        out, self._out = self._out, None
+        try:
+            if out is not None:
+                out.close()
+        except BaseException:
+            pass
+        try:
+            if self._tmp is not None:
+                os.unlink(self._tmp)
+        except OSError:
+            pass
         _sys.stdout.write(json.dumps({
             "error": "the whole result (%d rows so far) cannot be written to %s: %s. Outside a job the place is your own "
                      "work/<your id>/ directory; in a job it is $OUT." % (self.total, self.shown, exc),
@@ -128,6 +144,213 @@ class LosslessPage:
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
+
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. A result written at the same moment cannot be replaced either: taking a name fails when it is there.
+# Only regular files are ever compared: both names are opened with O_NONBLOCK and O_NOFOLLOW and looked at with fstat before a byte is
+# read, so a FIFO, a device, a directory or a link at a name (the caller's own results_to, say) is another result's and cannot hold the
+# tool. The comparing of one call has PLACE_COMPARE_SECONDS in all; past it an earlier result is taken as different and this one takes
+# the next free name (nothing is replaced, but an identical rerun may then be named anew).
+# The name is taken with a hard link of the finished file, so it never holds an empty file, whatever stops the tool and when (SIGKILL
+# included). Where the file system refuses the link, the name is taken with an exclusive create and the file is moved over it: a stop
+# that unwinds (an exception) takes the empty name back while it is still the empty file this call made; a stop that ends the process
+# without unwinding (SIGKILL, the handlers of the STOP block) between the create and the move leaves the empty name, and the next run takes -2.
+PLACE_COMPARE_SECONDS = 5   # all the comparing one call to place_without_replacing does; past it an earlier result is taken as different
+
+
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
+    try:
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
+            return False
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
+    except OSError:
+        return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
+
+
+def _take_name(tmp, candidate):
+    """Give the finished `tmp` the name `candidate` if it is free, and say whether it now has it (False: the name is taken, by a file, a
+    link, a FIFO or a directory). The name is taken with a hard link, so it never holds an empty file; where the file system refuses the
+    link it is taken with an exclusive create and the file is moved over it, and a stop that unwinds in between takes the empty name back."""
+    try:
+        os.link(tmp, candidate)
+    except FileExistsError:
+        return False
+    except OSError:
+        pass                                   # no hard links here: the older way, below
+    else:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass                               # the hidden name stays beside the placed file; the stop path of the page removes it
+        return True
+    fd = made = None
+    try:
+        fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        made = os.fstat(fd)
+        closing, fd = fd, None
+        os.close(closing)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return True
+    except FileExistsError:
+        return False
+    except BaseException:
+        try:
+            if made is None and fd is not None:
+                made = os.fstat(fd)
+        except OSError:
+            pass
+        try:
+            if fd is not None:
+                os.close(fd)
+        except OSError:
+            pass
+        try:
+            now = os.lstat(candidate)
+            if made is not None and (now.st_mode & 0o170000) == 0o100000 and now.st_size == 0 and (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino):
+                os.unlink(candidate)           # the empty name this call took is not left behind
+        except OSError:
+            pass
+        raise
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. A name that is taken (by a file, a link, a FIFO or a directory) is
+    left as it is: a regular file of the same bytes is named again, any other result takes the next free <stem>-<n><suffix>. Returns the
+    path that holds it. The comparing with earlier results has PLACE_COMPARE_SECONDS in all: past it an earlier result is taken as
+    different and this one takes the next free name."""
+    deadline = time.monotonic() + PLACE_COMPARE_SECONDS
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        if _take_name(tmp, candidate):
+            return candidate
+        if not os.path.islink(candidate) and same_bytes(tmp, candidate, deadline):
+            os.unlink(tmp)
+            return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
 
 
 # ---- Shared by prefetch_mam and mam_scan: the same text in both (the tools are standalone; a test holds
@@ -189,6 +412,14 @@ class OutputCapExceeded(Exception):
     """The decompressor produced more than its cap."""
 
 
+class DecoderOutOfTime(Exception):
+    """The tool's own clock ran out inside the decompressor; `produced` is how many bytes of output it had made."""
+
+    def __init__(self, produced):
+        super().__init__("the clock ran out inside the decompressor")
+        self.produced = produced
+
+
 class EnoughOutput(Exception):
     """The decompressor reached the declared size (soft mode); `data` is what it had."""
 
@@ -204,8 +435,13 @@ class _CappedBytes(bytearray):
 
     cap = 0
     soft = False
+    ticks = 0
 
     def _after(self):
+        # The decoder is pure Python (about 2 seconds a megabyte of output): the clock is looked at every 256 symbols, so it stops within a match.
+        _CappedBytes.ticks += 1
+        if not (_CappedBytes.ticks & 255) and out_of_time():
+            raise DecoderOutOfTime(len(self))
         if self.soft:
             if len(self) >= self.cap:
                 raise EnoughOutput(bytes(self)[:self.cap])
@@ -372,9 +608,34 @@ SIG84 = MAM_MAGIC + b"\x84"
 OVERLAP = MAM_HEADER - 1
 
 
+class ClockStop(Exception):
+    """The tool's own clock ran out; `where` says in what, `inflated` how many bytes of a stream had been inflated."""
+
+    def __init__(self, where, inflated=None, declared=None):
+        super().__init__(where)
+        self.where, self.inflated, self.declared = where, inflated, declared
+
+
+def drop_pages():
+    """Remove the temporary files of the pages that were being written (the STOP block does the same on a signal)."""
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            page._tmp = None
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, "ok": False, **extra}))
+    drop_pages()
+    print_answer({"error": message, "ok": False, "status": "failed", "status_basis": "the tool stopped with an error and scanned nothing it can report (see error)", **extra})
     raise SystemExit(1)
+
+
+def last_word(signum):
+    interrupted_answer(signum, offset_reached=PROGRESS["offset"], candidates=PROGRESS["candidates"])
 
 
 def whole(args, name, default, low, high=None):
@@ -382,7 +643,7 @@ def whole(args, name, default, low, high=None):
     if v is None:
         v = default
     if isinstance(v, bool) or not isinstance(v, int) or v < low or (high is not None and v > high):
-        fail("%s must be a whole number%s" % (name, " from %d to %d" % (low, high) if high is not None else " of at least %d" % low), got=args.get(name))
+        fail("%s must be a whole number%s" % (name, " from %d to %d" % (low, high) if high is not None else " of at least %d" % low))
     return v
 
 
@@ -398,6 +659,8 @@ def read_candidate(path, offset, declared):
     attempted = [offset + MAM_HEADER, offset + MAM_HEADER + len(payload)]
     try:
         dec = bounded_decompress(payload, declared, soft=True)
+    except DecoderOutOfTime as stop:
+        raise ClockStop("inside the inflate of the candidate at byte %d" % offset, stop.produced, declared)
     except Exception as exc:                                   # the decoder's own errors on rubbish
         return None, "decompress_failed: %s" % type(exc).__name__, attempted
     if len(dec) < declared:
@@ -408,6 +671,8 @@ def read_candidate(path, offset, declared):
 
 
 def main():
+    set_deadline(DEADLINE_SECONDS)
+    install_signal_handlers(last_word)
     try:
         args = json.loads(sys.stdin.read() or "{}")
     except ValueError as exc:
@@ -415,34 +680,43 @@ def main():
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")
     path = args.get("path")
-    if not path:
-        print(json.dumps({"ok": False, "error": "path is required: the raw dump or image to scan"}))
-        raise SystemExit(0)
-    if not isinstance(path, str) or not os.path.isfile(path):
+    if not isinstance(path, str) or not path:
+        fail("path is required: the raw dump or image to scan")
+    if not os.path.isfile(path):
         fail("no such file", path=path)
     start = whole(args, "start", 0, 0)
     length = args.get("length")
     if length is not None:
         length = whole(args, "length", 0, 0)
-    max_hits = whole(args, "max_hits", 80, 1)
+    max_hits = whole(args, "max_hits", 80, 1, MAX_HITS)
     chunk = whole(args, "chunk", 8 * 1024 * 1024, 4096, MAX_CHUNK)
-    parse = bool(args.get("parse", True))
-    min_uncomp = whole(args, "min_uncomp", 1024, 1)
+    parse = args.get("parse", True)
+    if not isinstance(parse, bool):
+        fail("parse must be true or false")
+    min_uncomp = whole(args, "min_uncomp", 1024, 1, MAX_DECLARED)
     max_uncomp = whole(args, "max_uncomp", 2_000_000, 1, MAX_DECLARED)
-    needle = (args.get("name_filter") or "").upper()
+    name_filter = args.get("name_filter")
+    if name_filter is not None and (not isinstance(name_filter, str) or len(name_filter) > MAX_NAME_FILTER):
+        fail("name_filter must be a string of at most %d characters" % MAX_NAME_FILTER)
+    needle = (name_filter or "").upper()
     key = [path, start, length, parse, min_uncomp, max_uncomp, needle]
-    hits = LosslessPage("mam_scan", key, max_hits)
-    failures = LosslessPage("mam_scan-failures", key, 40)
+    hits = NoReplacePage("mam_scan", key, max_hits)
+    failures = NoReplacePage("mam_scan-failures", key, 40)
     counts = {"candidates": 0, "size_out_of_range": 0, "parsed": 0, "filtered_by_name": 0, "unsupported_variant_signatures": 0}
     failed_by_reason = {}
     pos = start
+    stopped = None
     try:
         with open(path, "rb") as f:
             f.seek(start)
             file_size = os.fstat(f.fileno()).st_size
             remaining = length
             carry = b""
+            ticks = 0
             while remaining is None or remaining > 0:
+                if out_of_time():
+                    stopped = ClockStop("between two windows of the scan")
+                    break
                 toread = chunk if remaining is None else min(chunk, remaining)
                 toread = min(toread, max(file_size - pos, 0))          # never a buffer for bytes the file does not have
                 if not toread:
@@ -458,38 +732,47 @@ def main():
                 abs_base = pos - len(carry)
                 counts["unsupported_variant_signatures"] += _count84(buf, len(carry))
                 i = 0
-                while True:
-                    j = buf.find(SIG4, i)
-                    if j < 0:
-                        break
-                    i = j + 4
-                    if j + MAM_HEADER > len(buf):
-                        continue                                   # its size field is in the next window: found there, once
-                    declared = struct.unpack_from("<I", buf, j + 4)[0]
-                    off = abs_base + j
-                    if not min_uncomp <= declared <= max_uncomp:
-                        counts["size_out_of_range"] += 1
-                        continue
-                    counts["candidates"] += 1
-                    rec = {"offset": off, "uncomp": declared}
-                    if parse:
-                        dec, why, attempted = read_candidate(path, off, declared)
-                        if dec is None:
-                            failed_by_reason[why] = failed_by_reason.get(why, 0) + 1
-                            failures.add({"offset": off, "uncomp": declared, "reason": why, "attempted_range": attempted})
+                try:
+                    while True:
+                        j = buf.find(SIG4, i)
+                        if j < 0:
+                            break
+                        i = j + 4
+                        ticks += 1
+                        if not (ticks & 1023) and out_of_time():
+                            raise ClockStop("inside a window of the scan, at byte %d" % (abs_base + j))
+                        PROGRESS["offset"] = abs_base + j
+                        if j + MAM_HEADER > len(buf):
+                            continue                                   # its size field is in the next window: found there, once
+                        declared = struct.unpack_from("<I", buf, j + 4)[0]
+                        off = abs_base + j
+                        if not min_uncomp <= declared <= max_uncomp:
+                            counts["size_out_of_range"] += 1
                             continue
-                        scca = parse_scca(dec)
-                        scca.pop("scca", None)
-                        rec.update(scca)
-                        rec["name"] = rec.get("exe_name")
-                        rec["dec_len"] = len(dec)
-                        rec["attempted_range"] = attempted
-                        counts["parsed"] += 1
-                        if needle and needle not in (rec.get("exe_name") or "").upper() and \
-                                needle not in " ".join(rec.get("filename_strings") or []).upper():
-                            counts["filtered_by_name"] += 1
-                            continue
-                    hits.add(rec)
+                        counts["candidates"] += 1
+                        PROGRESS["candidates"] = counts["candidates"]
+                        rec = {"offset": off, "uncomp": declared}
+                        if parse:
+                            dec, why, attempted = read_candidate(path, off, declared)
+                            if dec is None:
+                                failed_by_reason[why] = failed_by_reason.get(why, 0) + 1
+                                failures.add({"offset": off, "uncomp": declared, "reason": why, "attempted_range": attempted})
+                                continue
+                            scca = parse_scca(dec)
+                            scca.pop("scca", None)
+                            rec.update(scca)
+                            rec["name"] = rec.get("exe_name")
+                            rec["dec_len"] = len(dec)
+                            rec["attempted_range"] = attempted
+                            counts["parsed"] += 1
+                            if needle and needle not in (rec.get("exe_name") or "").upper() and \
+                                    needle not in " ".join(rec.get("filename_strings") or []).upper():
+                                counts["filtered_by_name"] += 1
+                                continue
+                        hits.add(rec)
+                except ClockStop as stop:
+                    stopped = stop
+                    break
                 pos += got
                 if remaining is not None:
                     remaining -= got
@@ -503,9 +786,17 @@ def main():
     page = hits.finish()
     failure_page = failures.finish()
     failed_total = sum(failed_by_reason.values())
+    reasons = []
+    if stopped:
+        detail = "" if stopped.inflated is None else ": %d of the declared %d bytes of that stream had been inflated, and it is counted as neither parsed nor failed" % (stopped.inflated, stopped.declared)
+        reasons.append("the tool's own clock (%d s) ran out %s%s; the scan reached about byte %d and the rest was not scanned" % (DEADLINE_SECONDS, stopped.where, detail, PROGRESS["offset"]))
+    if failed_total:
+        reasons.append("%d candidate(s) did not inflate to a Prefetch structure (failed_by_reason)" % failed_total)
     out = {
         "parser": PARSER,
-        "status": "complete" if not failed_total else "partial",
+        "status": "partial" if reasons else "complete",
+        "status_basis": "; ".join(reasons) if reasons else "every byte from %d to %d was scanned and every candidate (%d) inflated to a Prefetch structure or was counted out by the name filter" % (start, pos, counts["candidates"]),
+        "stopped_by_time_limit": bool(stopped),
         "count": page["matched"],
         "hits": hits.page,
         "scanned_from": start,
@@ -524,7 +815,7 @@ def main():
     }
     if failure_page.get("all_results"):
         out["all_failures"] = failure_page["all_results"]
-    json.dump(out, sys.stdout)
+    print_answer(out)
 
 
 def _count84(buf, already):
@@ -540,4 +831,12 @@ def _count84(buf, already):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        drop_pages()
+        print_answer({"error": "the scan failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)

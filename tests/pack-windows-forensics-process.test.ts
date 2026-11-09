@@ -13,10 +13,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { AGENT, WIN, stub } from "./windows-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const TOOLS = ["esedb_query", "extract_stream", "sigma_hunt", "vss_stores", "yara_scan"];
 /** The two newer tools and the recipe hold the same block; their own group-kill, clock and signal cases are in their own suites (the program they start is optional, and a stand-in is wired to their arguments there). */
-const BLOCK_TOOLS = [...TOOLS, "registry_recover", "lnk_jumplist"];
+const BLOCK_TOOLS = [...TOOLS, "registry_recover", "lnk_jumplist", "vss_materialise", "srum_reader"];
 const RECIPE = join(WIN, "..", "recipes", "windows-artefacts", "run.py");
 
 const stripped = (text: string): string => text.replace(/"""[\s\S]*?"""/g, "").replace(/^\s*#.*$/gm, "");
@@ -215,7 +216,7 @@ for (const tool of Object.keys(DEADLINE)) {
   });
 }
 
-test("esedb_query makes again an export that a signal stopped, instead of handing the exporter a directory that exists", async () => {
+test("esedb_query makes again an export that a signal stopped, instead of handing the exporter a directory that exists", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const pids = join(cwd, "pids");
     await mkdir(pids, { recursive: true });

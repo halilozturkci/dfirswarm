@@ -17,4 +17,4 @@ Use when the evidence holds WebCacheV01.dat or legacy index.dat files. Not for c
 
 Shows: that a component of the Windows internet stack stored or fetched that URL, with the container's record type and times. Does not show: a visit by a person, a download, or where a time cell's zone comes from until the schema says. Record: database digest, export status, container, record type, raw time cell.
 
-Sensitive output: URLs here can carry tokens; run `esedb_query` as a job (`secret_output: true`). Its own withholding is in `execution/esedb`.
+Sensitive output: URLs here can carry tokens; run `esedb_query` as a job (`secret_output: true`). Its own withholding is in `execution/esedb`. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

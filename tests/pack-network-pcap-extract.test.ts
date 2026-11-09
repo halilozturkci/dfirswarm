@@ -24,6 +24,7 @@ import type { Pkt } from "./pack-network-harness.ts";
 import { EXTRACT, asJob, body, drop, everythingUnder, exists, filesUnder, frameTcp4, gone, ngBlock, ngInterface, ngPacket, ngSection, pcapClassic, pidFile, refused, startDetached, stub, ticks, tool, TCP, u32, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 import { runPySnippet } from "./tool-library-harness.ts";
+import { NO_ADOPTION, CLEAN, NO_PROC } from "./host-gates.ts";
 
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 const BODY_A = Buffer.from("A".repeat(200));
@@ -155,7 +156,7 @@ test("an exported object is tied to the frame and stream whose body it matches; 
     });
     const out = body(await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }, env(cwd), bin));
     assert.equal(out.objects, 4);
-    assert.equal(out.ok, true);
+    assert.equal(out.ok, CLEAN === "complete");
     const rows = await index(cwd, "work/x");
     const by = Object.fromEntries(rows.map((r) => [r.name, r]));
     assert.equal(by["a.html"].association, "matched_by_content");
@@ -217,7 +218,7 @@ test("a build whose exporter list cannot be read is said, and the passes still r
     await stage(cwd, bin, { exporters: [], export: { http: { "a.html": BODY_A } }, exits: { smb2: 2 } });
     const out = body(await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }, env(cwd), bin));
     assert.equal(out.exporters_discovered, false);
-    assert.equal(out.ok, true);
+    assert.equal(out.ok, CLEAN === "complete");
   });
 });
 
@@ -469,8 +470,7 @@ test("a stop signal kills the pass and leaves a receipt that says it was interru
     child.stdout.on("data", (c: Buffer) => stdout.push(c));
     child.stdin.end(await readFile(join(cwd, "args.json")));
     // The stand-in writes "started" after its pids: waiting for it (as long as a loaded machine needs) is waiting for a state.
-    for (let i = 0; i < 600 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
-    assert.ok(await exists(join(dir, "started")), "the pass started");
+    await untilExists(join(dir, "started"));
     const pid = await pidFile(join(dir, "child.pid"));
     try {
       const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); child.kill("SIGTERM"); });
@@ -623,7 +623,7 @@ test("a named pipe in the export tree is listed and not opened; a cell over the 
     const whole = JSON.parse((await readFile(join(cwd, "work/x/index-long-cells.jsonl"), "utf8")).trimEnd());
     assert.equal(whole.id, "L000001");
     assert.ok(whole.value.length > 8192 && whole.value.startsWith("/get?p0=<withheld 1 characters>"));
-    assert.equal(out.ok, true);
+    assert.equal(out.ok, CLEAN === "complete");
   });
 });
 
@@ -671,7 +671,7 @@ test("a build that lists only the older URI field is asked for that one; a build
     assert.equal((await index(cwd, "work/old"))[0].request_uri, "/a.html");
     await stage(cwd, bin, { fields: AVAILABLE.filter((f) => f !== "http.request.full_uri"), export: { http: { "a.html": BODY_A } }, assoc: [row(7, 0, "/a.html", BODY_A)] });
     const none = body(await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/none", protocols: ["http"] }, env(cwd), bin));
-    assert.equal(none.ok, true, "a missing optional field is a named reason, not a failure");
+    assert.equal(none.ok, CLEAN === "complete", "a missing optional field is a named reason, not a failure");
     assert.equal(none.association.matched_by_content, 1);
     assert.deepEqual(none.association_pass.fields_missing, ["http.request.full_uri", "http.response_for.uri"]);
     assert.match(none.association_pass.note, /does not list/);
@@ -725,7 +725,7 @@ test("a response frame with no Host: the host is the authority of the request UR
     assert.equal(x.host.includes(token), false, "a token in a sub-domain is withheld in the host column");
     assert.equal(x.request_uri.includes(token), false, "and in the URL's authority");
     assert.match(x.host, /withheld/);
-    assert.equal(out.ok, true);
+    assert.equal(out.ok, CLEAN === "complete");
   });
 });
 
@@ -791,7 +791,7 @@ test("Decryption Secrets Blocks in a pcapng are counted and said: tshark applies
   });
 });
 
-test("every answer carries status and status_basis: a finished run, a refusal, and a run stopped by a signal (partial JSON on stdout, the receipt says interrupted)", async () => {
+test("every answer carries status and status_basis: a finished run, a refusal, and a run stopped by a signal (partial JSON on stdout, the receipt says interrupted)", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const { dir } = await stage(cwd, bin, { spawns: ["http"], export: { http: { "a.html": BODY_A } } });
     const refusal = refused(await tool(EXTRACT, cwd, { path: "work/missing.pcap", out_dir: "work/r" }, env(cwd), bin));
@@ -801,7 +801,7 @@ test("every answer carries status and status_basis: a finished run, a refusal, a
     const stdout: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => stdout.push(c));
     child.stdin.end(JSON.stringify({ path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }));
-    for (let i = 0; i < 100 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
+    await untilExists(join(dir, "started"));
     const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); child.kill("SIGTERM"); });
     assert.equal(code, 143);
     const last = JSON.parse(Buffer.concat(stdout).toString("utf8"));
@@ -892,22 +892,21 @@ test("against the real tshark: a three-session HTTP capture is tied to its frame
   });
 });
 
-test("a stop signal still ends the pass's children when ps is slow: the tree is found without waiting on a program (libproc on macOS, /proc on Linux)", async () => {
+test("a stop signal still ends the pass's children when ps is slow: the tree is found without waiting on a program (libproc on macOS, /proc on Linux)", { skip: NO_PROC }, async () => {
   await withCwd(async (cwd, bin) => {
     const { dir } = await stage(cwd, bin, { spawns: ["http"] });
     await stub(bin, "ps", "sleep 30\n");
     const child = spawn("python3", [EXTRACT], { cwd, env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}`, ...env(cwd) } });
     child.stdout.on("data", () => undefined);
     child.stdin.end(JSON.stringify({ path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }));
-    for (let i = 0; i < 100 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
-    assert.ok(await exists(join(dir, "started")));
+    await untilExists(join(dir, "started"));
     const began = Date.now();
     const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); child.kill("SIGTERM"); });
     assert.equal(code, 143);
-    assert.ok(Date.now() - began < 8_000, `took ${Date.now() - began} ms: the tree walk waited on ps`);
+    // ps here sleeps 30 s: a walk that waited on it would take that long, so the bound is under it and far over what a loaded runner needs.
+    assert.ok(Date.now() - began < 20_000, `took ${Date.now() - began} ms: the tree walk waited on ps`);
     const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
-    await new Promise((r) => setTimeout(r, 300));
-    assert.throws(() => process.kill(pid, 0), /ESRCH/, "the sleeper the pass started is gone");
+    assert.equal(await gone(pid), true, "the sleeper the pass started is gone");
   });
 });
 
@@ -968,3 +967,12 @@ test("a request URI over 64 KiB keeps its host and path and has its query withhe
   assert.match(longPath, /^<over-long text withheld 70002 characters>$/);
   assert.equal(speed, "fast");
 });
+
+/** Waits for a file the stand-in writes once it is in the state a test needs; fails by name after a minute rather than going on without it. */
+async function untilExists(path: string, ms = 60_000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!(await exists(path))) {
+    if (Date.now() > until) assert.fail(`${path} was not written within ${ms} ms`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}

@@ -25,6 +25,6 @@ Use when an event log is cleared or damaged and you look elsewhere for its recor
 - **The clearing itself.** A 1102 (Security) or 104 (System) in the surviving log shows a clearing was recorded, with the account the audit named; the cleared channel is a field of the record. It can be missing from what you hold. A recorded clearing does not guarantee surviving chunks, and an empty channel with neither record does not show the clearing APIs were not used (`logs/coverage`).
 - To read a whole recovered file use `evtx_query`. The pack does not convert carved records into an `.evtx` for a rule engine: read the carved XML directly (`logs/hunting`).
 
-Sensitive output: `evtx_carve` and `evtx_query` return event XML that can hold a command line or a secret; run them as a job with `secret_output: true` (`logs/carving`).
+Sensitive output: `evtx_carve` and `evtx_query` return event XML that can hold a command line or a secret; run them as a job with `secret_output: true` (`logs/carving`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 
 Shows: records that survive in a named source, each with its own channel and computer. Does not show: that the log is whole, that the records belong to this machine, who cleared the log or why; a deletion, a clearing and a rollover can look alike, and only other sources tell them apart (`antiforensics/log-clearing`). Record: each route, source object and range, and the result.

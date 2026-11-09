@@ -1,6 +1,6 @@
 {
   "name": "vss_stores",
-  "description": "List the volume shadow copies of a raw volume or disk image through vshadowinfo: one store per snapshot with the identifier, creation time and volume size vshadowinfo prints, and, for each, the argv of the vshadowmount command that would expose it under your own work/<your id>/ directory. It LISTS and suggests; it mounts nothing, and a listed store is not an examined one. vshadowinfo reads raw data (an E01 has to be exposed raw first). The answer is judged: vshadowinfo's exit status and time limit, its whole stdout and stderr (kept in files), and the stores it claims against the stores that could be read; a failed or unrecognised run is status failed (exit 1) and never an answer that there are no stores, a mismatch is partial, and zero stores is said only when vshadowinfo exited 0 and itself reported zero, worded as what this reader found at this offset and not as proof that none existed. A FUSE mount may be unavailable in a worker. Its output files are never replaced: a run with the same arguments keeps its own pair under the next free number and earlier_output_files names the ones already there. The program runs in the tool's own process group (never a session of its own), so the harness ending the tool ends it; the tool's own deadline kills it and what it started, and SIGTERM, SIGINT or SIGHUP do the same and the answer is then status interrupted.",
+  "description": "List the volume shadow copies of a raw volume or disk image through vshadowinfo: one store per snapshot with the identifier, creation time and volume size vshadowinfo prints, and, for each, the argv of the vshadowmount command that would expose it under your own work/<your id>/ directory. It LISTS and suggests; it mounts nothing, and a listed store is not an examined one. vshadowinfo reads raw data (an E01 has to be exposed raw first). The answer is judged: vshadowinfo's exit status and time limit, its whole stdout and stderr (kept in files), and the stores it claims against the stores that could be read; a failed or unrecognised run is status failed (exit 1) and never an answer that there are no stores, a mismatch is partial, and zero stores is said only when vshadowinfo exited 0 and itself reported zero, worded as what this reader found at this offset and not as proof that none existed. A FUSE mount may be unavailable in a worker. Its output files are never replaced: a run with the same arguments keeps its own pair under the next free number and earlier_output_files names the ones already there. The program runs in the tool's own process group (never a session of its own), so the harness ending the tool ends it; the tool's own deadline kills it and what it started, and SIGTERM, SIGINT or SIGHUP do the same and the answer is then status interrupted. One clock covers the whole run: vshadowinfo is given at most what is left of 285 of the manifest's 300 seconds less 20 s kept for reading its output (its own limit is 240 s), and the clock is looked at while its output is read; a clock that cuts the reading leaves the status partial with the stores read so far. Every answer has status and status_basis; a wrong-type argument (a top-level array included) is refused as JSON (status failed); the output files are mode 0600; SIGTERM, SIGINT and SIGHUP end vshadowinfo and give one JSON document (status interrupted, exit 128 plus the signal), with the handlers in from the moment the module has loaded, before any file is made. `complete` also needs that vshadowinfo left nothing behind: a process it leaves running (in the tool's process group or in a session of its own) is stopped, killed and reaped by the shared process block's settle() before stdout_file and stderr_file are read; one found makes the answer `partial` (program_group.left_behind and a line under problems), the list being read from the file as it was when the process was ended; on a host that is not Linux, or where the kernel refuses PR_SET_CHILD_SUBREAPER, the absence of a leftover cannot be proven and the answer is at most `partial` (program_group.unproven).",
   "params": {
     "image": {
       "type": "string",
@@ -21,10 +21,14 @@
   "example": "{\"image\": \"inputs/disk.raw\", \"offset\": 1048576}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 5,
-  "sha256": "792b6209ca67dd3c2151bdcc40d320805ec6a4c86c3871f781be7a66856aa96b",
+  "version": 13,
+  "sha256": "6d9d1fbfa6919f704325fedc7b2a547105b1c5450a605ad397ec2f0e3f7c5bd9",
+  "needs": [
+    "fuse"
+  ],
   "requires": [
-    "vshadowinfo"
+    "vshadowinfo",
+    "vshadowmount"
   ],
   "use": {
     "extensions": [

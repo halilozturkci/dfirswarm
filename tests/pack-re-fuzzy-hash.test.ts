@@ -17,8 +17,9 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { FUZZY, asJob, body, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { FUZZY, TOOLS, asJob, body, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const TLSH_DIGEST = "T1" + "A1B2C3D4E5".repeat(7); // T1 and 70 hexadecimal digits: the digest of 128 buckets and a one-byte checksum
 const SSDEEP_DIGEST = "96:aBcDeF0123456789+/aBcDeF0123456789+/:XyZ0123456789+/";
@@ -46,7 +47,7 @@ function sha256(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
 }
 
-test("valid digests are accepted, SHA-256 is computed from the bytes, and each engine's argv and version are recorded", async () => {
+test("valid digests are accepted, SHA-256 is computed from the bytes, and each engine's argv and version are recorded", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await engines(bin);
     const data = Buffer.from("some bytes ".repeat(500));
@@ -99,7 +100,7 @@ echo 'not-a-digest,"x"'`,
   });
 });
 
-test("TNULL is the engine saying the file is too short or too uniform, and that is not a failure", async () => {
+test("TNULL is the engine saying the file is too short or too uniform, and that is not a failure", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await engines(bin, { tlsh: `printf 'TNULL\\t%s\\n' "$2"` });
     await put(cwd, "work/tiny.bin", "abc");
@@ -289,7 +290,7 @@ test("a stop signal keeps the digests already computed in its last word", async 
       run.signal("SIGTERM");
       await run.closed;
       const word = JSON.parse(run.stdout()) as Json;
-      assert.equal(word.status, "failed");
+      assert.equal(word.status, "interrupted");
       assert.equal(word.files[0].sha256, createHash("sha256").update("x".repeat(2000)).digest("hex"));
       assert.equal(word.files[0].ssdeep, SSDEEP_DIGEST, "the ssdeep digest finished before tlsh was stopped");
       assert.equal(word.files[0].tlsh, undefined);
@@ -306,5 +307,111 @@ test("a directory is not 'no such file', and the manifest says the whole call is
     assert.match(refused(await tool(FUZZY, cwd, { path: "work/d" }, {}, bin)).error, /not a regular file \(a directory\)/);
     const manifest = JSON.parse(await readFile(join(FUZZY, "..", "manifest.json"), "utf8")) as Json;
     assert.match(manifest.params.engine_timeout_seconds.description, /270/);
+  });
+});
+
+// --- status_basis on every answer -------------------------------------------------------------------------------------------------
+
+const oneSentence = (basis: unknown, where: string): void => {
+  assert.ok(typeof basis === "string" && basis.length > 10 && !basis.includes("\n"), `${where}: ${JSON.stringify(basis)}`);
+};
+
+test("every answer carries a status_basis that names what decided the status: complete, an engine that printed junk, an engine that timed out, an input too short", { skip: NO_ADOPTION }, async () => {
+  await withCwd(async (cwd, bin) => {
+    await put(cwd, "work/sample.bin", "x".repeat(2000));
+    await engines(bin);
+    const complete = body(await tool(FUZZY, cwd, { path: "work/sample.bin" }, {}, bin));
+    assert.equal(complete.status, "complete");
+    oneSentence(complete.status_basis, "complete");
+    assert.match(complete.status_basis, /ssdeep and tlsh each ran on every file within the call's 270-second budget/);
+    await engines(bin, { tlsh: `if [ "$1" = "-version" ]; then exit 1; fi\necho "error: foo"` });
+    const junk = body(await tool(FUZZY, cwd, { path: "work/sample.bin" }, {}, bin));
+    assert.equal(junk.status, "partial");
+    oneSentence(junk.status_basis, "junk");
+    assert.match(junk.status_basis, /tlsh of path: unrecognised_output/);
+    await engines(bin, { tlsh: `if [ "$1" = "-version" ]; then echo "tlsh 4.12.0"; exit 0; fi\nsleep 8\nprintf '${TLSH_DIGEST}\\t%s\\n' "$2"` });
+    const slow = body(await tool(FUZZY, cwd, { path: "work/sample.bin", engine_timeout_seconds: 1 }, {}, bin));
+    assert.equal(slow.status, "partial");
+    oneSentence(slow.status_basis, "timeout");
+    assert.match(slow.status_basis, /tlsh of path: timeout/);
+    await engines(bin, { tlsh: `printf 'TNULL\\t%s\\n' "$2"` });
+    await put(cwd, "work/tiny.bin", "abc");
+    const tiny = body(await tool(FUZZY, cwd, { path: "work/tiny.bin" }, {}, bin));
+    assert.equal(tiny.status, "complete");
+    assert.match(tiny.status_basis, /insufficient_input/);
+  });
+});
+
+test("every refusal carries a status_basis: a missing file, a directory, a bad argument, a missing program", async () => {
+  await withCwd(async (cwd, bin) => {
+    await engines(bin);
+    await put(cwd, "work/sample.bin", "x".repeat(2000));
+    await mkdir(join(cwd, "work", "d"), { recursive: true });
+    for (const args of [{ path: "work/none.bin" }, { path: "work/d" }, { path: "work/sample.bin", engine_timeout_seconds: 0 }, { path: "work/sample.bin", compare_to: 5 }, {}, { path: 5 }]) {
+      const out = refused(await tool(FUZZY, cwd, args, {}, bin));
+      assert.equal(out.status, "failed", JSON.stringify(args));
+      oneSentence(out.status_basis, JSON.stringify(args));
+    }
+    const python = spawnSync("sh", ["-c", "command -v python3"], { encoding: "utf8" }).stdout.trim();
+    const bare = join(cwd, "bare");
+    await mkdir(bare);
+    await symlink(python, join(bare, "python3"));
+    const missing = refused(await tool(FUZZY, cwd, { path: "work/sample.bin" }, { PATH: bare }));
+    oneSentence(missing.status_basis, "missing program");
+    assert.match(missing.status_basis, /is not installed/);
+  });
+});
+
+test("a stop signal's last word carries a status_basis that says it was stopped by the signal", async () => {
+  await withCwd(async (cwd, bin) => {
+    const dir = join(cwd, "pids");
+    await put(cwd, "pids/.keep", "");
+    await put(cwd, "work/sample.bin", "x".repeat(2000));
+    await engines(bin, { tlsh: `if [ "$1" = "-version" ]; then exit 1; fi\necho $$ > "$PIDS/engine.pid"\nsleep 30` });
+    const run = startDetached(FUZZY, cwd, { path: "work/sample.bin" }, { PIDS: dir }, bin);
+    try {
+      await pidFile(join(dir, "engine.pid"));
+      run.signal("SIGTERM");
+      await run.closed;
+      const word = JSON.parse(run.stdout()) as Json;
+      assert.equal(word.status, "interrupted");
+      oneSentence(word.status_basis, "signal");
+      assert.match(word.status_basis, /stopped by signal 15/);
+    } finally {
+      try { run.signal("SIGKILL"); } catch { /* gone */ }
+    }
+  });
+});
+
+test("P3 the manifest says a stop by signal is answered with status interrupted", async () => {
+  const text = JSON.parse(await readFile(join(TOOLS, "fuzzy_hash", "manifest.json"), "utf8")).description as string;
+  assert.match(text, /a stop by signal \(status `interrupted`\)/);
+});
+
+test("a process an engine leaves behind is ended before its output is read: the engine is failed, the log stops growing, nothing is left running", { skip: NO_ADOPTION }, async () => {
+  await withCwd(async (cwd, bin) => {
+    await mkdir(join(cwd, "pids"), { recursive: true });
+    await engines(bin, {
+      ssdeep: `if [ "$1" = "-V" ]; then echo "2.14.1"; exit 0; fi
+( while :; do printf 'late\\n'; sleep 0.05; done ) & echo $! > "${cwd}/pids/kid.pid"
+echo 'ssdeep,1.1--blocksize:hash:hash,filename'
+echo "${SSDEEP_DIGEST},\\"$(basename "$3")\\""
+exit 0`,
+    });
+    await put(cwd, "work/s.bin", Buffer.from("x".repeat(5000)));
+    let kid = 0;
+    try {
+      const out = body(await tool(FUZZY, cwd, { path: "work/s.bin" }, {}, bin));
+      kid = await pidFile(join(cwd, "pids", "kid.pid"), 3_000).catch(() => 0);
+      assert.ok(kid, "the engine recorded its child's pid");
+      const f = out.files[0];
+      assert.equal(f.ssdeep, null);
+      assert.equal(f.ssdeep_status, "failed");
+      assert.match(f.ssdeep_unavailable, /left \d+ process/);
+      assert.ok(await gone(kid, 3_000), "the child is ended by the tool");
+      assert.equal(f.tlsh, TLSH_DIGEST, "the other engine's result stands");
+    } finally {
+      if (kid) { try { process.kill(kid, "SIGKILL"); } catch { /* gone */ } }
+    }
   });
 });

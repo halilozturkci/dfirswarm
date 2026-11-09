@@ -5,6 +5,7 @@
  * the Reports API's activity) and never from a tool's output.
  */
 import assert from "node:assert/strict";
+import { PYTHON3 } from "./host-gates.ts";
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,7 +43,7 @@ export const DEADLINE_MS = 120_000;
 
 /** Start a tool and return its process and the promise of its result; the process is killed (SIGKILL) at the deadline. */
 export function spawnTool(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, deadlineMs = DEADLINE_MS): { child: ChildProcess; done: Promise<Run> } {
-  const child = spawn("python3", [script], { cwd, env: { ...process.env, ...AGENT, ...env } });
+  const child = spawn(PYTHON3, [script], { cwd, env: { ...process.env, ...AGENT, ...env } });
   const out: Buffer[] = [];
   const err: Buffer[] = [];
   child.stdout?.on("data", (c: Buffer) => out.push(c));

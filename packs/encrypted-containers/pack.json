@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.6.4",
+  "version": "1.14.7",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -15,66 +15,65 @@
     "python": "requires/python.txt"
   },
   "secrets": [],
-  "unreferenced_ok": [
-    {
-      "name": "john",
-      "why": "declared for a recovery capability the owner has not decided on; no skill instructs its use (archives/protected states only the recovery gate, without a program)"
-    },
-    {
-      "name": "gpg",
-      "why": "declared for agents' own offline OpenPGP work; the skill that names it (messages/openpgp) is planned for a later change to this pack"
-    },
-    {
-      "name": "libvhdi-python",
-      "why": "imported by an agent's own scripts (pyvhdi); the layered-reading skill that names it is planned for a later change to this pack"
-    },
-    {
-      "name": "libluksde-python",
-      "why": "imported by an agent's own scripts (pyluksde); the LUKS skill that names it is planned for a later change to this pack"
-    },
-    {
-      "name": "pytsk3",
-      "why": "imported by an agent's own scripts and by dfvfs; the layered-reading skill that names it is planned for a later change to this pack"
-    },
-    {
-      "name": "pyAesCrypt",
-      "why": "imported by an agent's own scripts; the AES Crypt skill that names it is planned for a later change to this pack"
-    }
-  ],
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "ebd3f5c5b564a63e5d31428458fac1bfe7d070c947b72cc8d54986d30db23bd6",
-      "tools/recovery_key_scan/manifest.json": "f2216e420b4f5310af3ff3e258fb28da5fc8ed90ab602686569b68aa2402b3a3",
-      "tools/recovery_key_scan/run.py": "1ae778a73cf5f6cba7fe99cbeb00c1fc7e3c5f2707eb304f7be0d20cb3a7d249",
-      "tools/archive_probe/manifest.json": "5fbe6e61ac5eeaff88988b278e490d566137b236f38d1d5878620160a6b55a15",
-      "tools/archive_probe/run.py": "d01c236f87a67aca0026f54b9e61751c66ad1efbf5ffe8f75a187657e510338d",
-      "tools/crypto_id/manifest.json": "0b2d7fd4f39b16b9ace93695049924901c325f10f07d4ad1bfd51f7bac7906a6",
-      "tools/crypto_id/run.py": "366a68da4fc0273eb47b7ca9f6028c69a2df5cdf0705e610874597fb720a73c8",
+      "README.md": "1d4ea15cae4018b362d8eaaa10ea84e0a282127e0dde849ce65acadef4c79f51",
       "goals/what-is-locked.md": "0c9e1377f093ab6fe998a9502df2c351ed6a150edce2029f02517173348f59f2",
-      "skills/identify/by-format.md": "6cb24899bf2988d40466415b8c3d24e2fa8297a1459a5f23e5638757428046d8",
+      "requires/host.json": "d1864e00ecded97cdced4e21e3e8b045bd1f0f57068ffd58b7cdd2f09a33b94b",
+      "requires/python.lock": "9f06e0e55ca7ab284d195939fbda51c285e6aac9138cd361bfa8501318ad5853",
+      "requires/python.txt": "a573194936f26a664ac073e14a59618e7ac0a725b2729ea3785b6fafecd60bb4",
+      "skills/INDEX.md": "574a422efffd3e3539393c8dc03ec7ca4715eb251078cc36ba1858cddc473820",
+      "skills/archives/formats.md": "d023dee1a24db24d3873d9c4d0bff1edb03b6a21459decb3cb9527ed1aa2a4ba",
+      "skills/archives/protected.md": "5edc7d5b1b3ed3efbbc5476e75f5c248685ad41e2e11ab2f9a714d6f2ed3f9f1",
+      "skills/encrypted/router.md": "5f7651e3e01d0e1d9b465b9080bdca23f6d5ade1a662834495262c1bece0f294",
+      "skills/files/aescrypt.md": "1a40603a6bccc0702fb488d558cfe89c8bdf14eefd12affd1c3f0de514e31d35",
+      "skills/identify/by-format.md": "2b07f41624d479e7aacac9a1be9ff4fb3cfdff09cd383f8d3b12ca0d740a7511",
       "skills/identify/headers.md": "63589019145d78b8f67d6ee21c11bf893b844cc02d36553c4393d8a08d87ad51",
-      "skills/archives/formats.md": "29296400a2c8cb3655b8488cd77c83f1bf4c521ac59689439f131bfc8a1f6a83",
-      "skills/archives/protected.md": "b41cdaa13f191b8ef3ae71c287c06c657a69e597d71ce686d66d339d6192905d",
-      "skills/encrypted/router.md": "441e76c7c90a11f1822c752476083e2f7da679ce91034546c80a846e42efbe89",
       "skills/keys/other-sources.md": "e29540952ad5b51a7e2b0ca0d27ce7dcdd1fd17144b92ad0a3dca91e522fee82",
-      "skills/keys/recovery-key-scan.md": "7a7a04488879a820f6878edf8a971850d0a1ac81a9a9c0dc879fe1470d06fa1b",
+      "skills/keys/recovery-key-scan.md": "20ef32793301e983b2877226fb0bcddec96f5e1f49098741e06bceb09211c3e2",
       "skills/keys/where-they-hide.md": "023f7e0071013f934b8618cb225170cca3c81a69c912007b237291c67c117947",
-      "skills/volumes/bitlocker-opening.md": "3fd51f50d904a699e08215beebc30558ccc912f54d6f74907431010e198cf6ba",
-      "skills/volumes/bitlocker.md": "fadc5aeb13dcff3ec61a6b997db9e411a40085a6ef26cec09e88fcc8bb466553",
-      "skills/volumes/filevault-apfs.md": "7604310ad397d391651aef8d010788fb29079b25aa15f0c49b5383fd467b1764",
-      "skills/volumes/luks-filevault.md": "24fe2e2197fcf087d3fb225ec01713a873f6ff827411e6c6fce3b2f218bc67ae",
-      "requires/host.json": "edb236cf6608a7b000196ac78d14ce5a464dbfac39749b72bbb1e07d9d7b4256",
-      "requires/python.txt": "5f0b11bd01ea0400f7948b789c74181bf5f9b226c5afe61733deb25e0287a239",
-      "skills/INDEX.md": "4ca9eb89a4cd46f80559c4d4a9f46121a7cd47d00649b81d6ebdefb62fb53d54"
+      "skills/messages/openpgp.md": "b0a28c87e3f15a12ce8e830cad5fbddc7daa5abe18e99a378da69c5555081a6c",
+      "skills/recovery/authorised.md": "3452b9fc9cd8d2af5a5ef10ec100e5e01a3c9f2aa13581f2d410e440b5da6e35",
+      "skills/volumes/bitlocker-opening.md": "5e609b1912ab16414bc6a1e17695487023bc6686631548f0f1b3e3cf773f0b91",
+      "skills/volumes/bitlocker.md": "88a2351b9f83c05b274f8c5e1e63021b6e7aad6fcc6e60423fd1680c3062f146",
+      "skills/volumes/filevault-apfs.md": "9ff862b69d4e1c780890aa4c5cdeb3e5d6022c6cd9cd8d4e2a5f961563aaf708",
+      "skills/volumes/layered-reading.md": "a8966d770a636e91eb2d67d77e71f8939ca2c5067ff49e50c1b29b2abba788ec",
+      "skills/volumes/luks-filevault.md": "79f6d8b20108e89e9b173b7d0ae9a997527a39df791b7fbb0ad12052cab16bcc",
+      "skills/volumes/luks.md": "edfec1f4d242ca50eeb32ca37af062ea35f5fdbe79f824cd694e9c67f4cd28ef",
+      "skills/volumes/veracrypt-truecrypt.md": "8233543a86f6506ce64c1f2a7c60f3370df4cbec1ecf829bdeb80939294e4d36",
+      "tools/archive_metadata/manifest.json": "8d920f913dac8e0dd9bbb4c42bddad05088b3bacd241e09c375ddec7af61147b",
+      "tools/archive_metadata/run.py": "e457295ca3045cb8762e886550ccddc31c8fb16b761189b953ef77c4af11da76",
+      "tools/archive_probe/manifest.json": "f6d71dc41de35f9a182835996867f36fcae449840fd2942ca9d9b2e801c87805",
+      "tools/archive_probe/run.py": "8c9ca27585fabcdd3369e8326e0328187407996bb36e404929d3a550e81d9edb",
+      "tools/crypto_id/manifest.json": "0ce6b22b622f10bdcc0900b2766b12c90cb584bdb7e1fb7aee417d7af56cb105",
+      "tools/crypto_id/run.py": "ba404d4b6cb64da3da51f20d83a38efa4588cf943519f700d815fd6fbcac3546",
+      "tools/crypto_metadata/manifest.json": "6669faad88a16324ba806e1a2c2a6c99a2f5f3b35df2b49bce99c3183c076af8",
+      "tools/crypto_metadata/run.py": "3810818ca0831e6ab86ea95888f9a7dd544a9c4ba1eb7cf643d62d77373fab71",
+      "tools/crypto_selftest/manifest.json": "d2479540db5ef8b1b2b6f50f749c36391e2619002e661dcb9a335d439f553b85",
+      "tools/crypto_selftest/run.py": "bdedee8fa3b3686c9ca66928f61a56e99fbaaea56e63029f927c750003e3fd9f",
+      "tools/materialise_decrypted/manifest.json": "434cf5040311c44e5ba449fe3a4fb11815cf4b54e73bad057396d64ca769efe7",
+      "tools/materialise_decrypted/run.py": "fc6c1788cbbb1802103fab5fc8f4172ba992ef9e14df5da48422904226520f19",
+      "tools/password_recover/manifest.json": "c94362858a5317ab30c29aa0063eac2b0680011379e7666737c6094fa3cff99f",
+      "tools/password_recover/run.py": "27bcd7c3ca1d483a4674d17c9b04b5a24f891d0e7fb451397ae680bea3b2a960",
+      "tools/recovery_key_scan/manifest.json": "b3a784908c22adeb601feb82f66f605418ade5ada1609c3399e24d26bdf16691",
+      "tools/recovery_key_scan/run.py": "731c51f87741386ee4e7c81d6274f450a9a8e0bdb37bd052a82f061cef19dc3e",
+      "tools/tcrypt_header/manifest.json": "e68a8871279c12bbf115b0528184978f39af9b0f5a8426b744adf387492fac73",
+      "tools/tcrypt_header/run.py": "d82898cadda8273de92f5d247cceb088574084dd57e5333cee29e85d94ae6e94"
     }
   },
   "tools": [
+    "archive_metadata",
     "archive_probe",
     "crypto_id",
-    "recovery_key_scan"
+    "crypto_metadata",
+    "crypto_selftest",
+    "materialise_decrypted",
+    "password_recover",
+    "recovery_key_scan",
+    "tcrypt_header"
   ],
-  "skills": 12,
+  "skills": 18,
   "method_only": [
     {
       "path": "skills/encrypted/router.md",

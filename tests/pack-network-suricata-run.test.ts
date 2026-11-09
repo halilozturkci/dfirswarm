@@ -12,7 +12,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -102,7 +102,7 @@ test("a configuration is written by key, tested with -T before the run, and reco
     assert.equal(out.checksum_mode, "none");
     assert.deepEqual(out.rule_load.configuration_test, { loaded: 2, failed: 0, from: "suricata-test.stderr" });
     assert.equal(out.rule_load.run, null, "a number the engine did not print is not a zero");
-    assert.equal(out.ok, true);
+    assert.equal(out.ok, CLEAN === "complete");
     // The configuration the engine tested is the one it ran.
     assert.equal(await readFile(join(cwd, "stub/seen-config-run.yaml"), "utf8"), config);
     const all = body(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s2", checksum_mode: "all" }, env(cwd), bin));
@@ -361,6 +361,7 @@ test("the harness ends a tool by killing its process group, and that ends Surica
 // --- D-network-F1 ----------------------------------------------------------------------------------------------------------
 
 import { createRng, planted } from "./pack-network-canaries.ts";
+import { NO_ADOPTION, CLEAN } from "./host-gates.ts";
 
 test("a line nested 100,000 deep is counted as not read, named with its line, and the other events are still read", async () => {
   await withCwd(async (cwd, bin) => {
@@ -390,7 +391,7 @@ test("a line is refused for its nesting at 65 levels and read at 64, whatever th
   });
 });
 
-test("every EVE line that was not read as an event is in a file with its line number, however many there are: the answer shows ten and says where the rest are", async () => {
+test("every EVE line that was not read as an event is in a file with its line number, however many there are: the answer shows ten and says where the rest are", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const bad = Array.from({ length: 25 }, (_, i) => (i % 2 ? "not json " + i : "[1,2]"));
     await stage(cwd, bin, { eve: [ALERT(1), ...bad, ev({ foo: 1 }), ""].join("\n"), loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
@@ -442,7 +443,8 @@ test("a stop signal prints partial JSON with the stage and the files on disk, an
       const dir = await stage(cwd, bin, { sleep: true, eve: ALERT(1) + "\n" });
       const { path, rules } = await inputs(cwd);
       const run = startDetached(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
-      for (let i = 0; i < 100 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
+      // A state, waited for as long as a loaded runner needs (the signal is meant to land after the stand-in has started its program).
+      await untilExists(join(dir, "started"));
       run.signal(sig);
       assert.equal(await run.closed, code, sig);
       const last = JSON.parse(run.stdout());
@@ -451,11 +453,19 @@ test("a stop signal prints partial JSON with the stage and the files on disk, an
       assert.equal(last.stage, "running Suricata");
       assert.ok(last.files_on_disk.includes("suricata.yaml"));
       const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
-      await new Promise((r) => setTimeout(r, 300));
-      assert.throws(() => process.kill(pid, 0), /ESRCH/);
+      assert.equal(await gone(pid), true, `${sig}: what Suricata started is gone`);
     });
   }
 });
+
+/** Waits for a file the stand-in writes once it is in the state a test needs; fails by name after a minute rather than going on without it. */
+async function untilExists(path: string, ms = 60_000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!(await exists(path))) {
+    if (Date.now() > until) assert.fail(`${path} was not written within ${ms} ms`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
 
 test("a bad home_net entry is named by its position and length, never echoed", async () => {
   await withCwd(async (cwd, bin) => {
@@ -470,7 +480,7 @@ test("a bad home_net entry is named by its position and length, never echoed", a
   });
 });
 
-test("eve.json is read under the tool's own clock: it is read in part when the clock runs out, and says so (partial, eve_read_to_the_end false), the file whole on disk", async () => {
+test("eve.json is read under the tool's own clock: it is read in part when the clock runs out, and says so (partial, eve_read_to_the_end false), the file whole on disk", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const eve = Array.from({ length: 120_000 }, (_, i) => ALERT(i % 100)).join("\n") + "\n";
     await stage(cwd, bin, { eve, loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n", loadRun: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
@@ -517,4 +527,323 @@ test("a stop signal that arrives while the answer is being written adds no secon
     assert.equal(answer.tool.name, "suricata_run");
     assert.equal(answer.interrupted_by_signal, undefined, "one document: the answer, not a last word after it");
   });
+});
+
+// --- dry_run: the engine receipt without a capture (the stand-in prints what Suricata's documentation says: a version line for --build-info, a
+// --- usage text for --help that lists --dump-config on builds that have it, a test (-T) that prints the rule-load line; a run over a capture
+// --- (-r) is the thing a dry run must never start) ----------------------------------------------------------------------------------
+
+const DRY_STUB = `#!/bin/sh
+printf '%s\\n' "$*" >> "$STUB_LOG"
+for a in "$@"; do
+  case "$a" in
+    -r) echo "a capture was named" > "$STUB_DIR/capture-read"; exit 9;;
+  esac
+done
+mode=run
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --build-info) printf 'This is Suricata version 7.0.0-stand-in RELEASE\\n'; exit 0;;
+    --help)
+      printf 'USAGE: suricata [OPTIONS] [BPF FILTER]\\n  -T   test configuration file\\n'
+      [ -f "$STUB_DIR/no-dump" ] || printf '  --dump-config   show the running configuration\\n'
+      exit 0;;
+    --dump-config) [ -f "$STUB_DIR/dump-fail" ] && { echo "dump failed on request" >&2; exit 4; }; printf 'vars.address-groups.HOME_NET = [192.168.0.0/16]\\n'; exit 0;;
+    -T) mode=test;;
+  esac
+  shift
+done
+if [ -f "$STUB_DIR/sleep" ]; then echo $$ > "$STUB_DIR/engine.pid"; sleep 300 & echo $! > "$STUB_DIR/child.pid"; echo started > "$STUB_DIR/started"; wait; fi
+[ -f "$STUB_DIR/test-stderr" ] && cat "$STUB_DIR/test-stderr" >&2
+if [ -f "$STUB_DIR/test-exit" ]; then exit "$(cat "$STUB_DIR/test-exit")"; fi
+exit 0
+`;
+
+type Dry = { noDump?: boolean; dumpFail?: boolean; stderr?: string; testExit?: number; sleep?: boolean };
+
+async function stageDry(cwd: string, bin: string, o: Dry = {}): Promise<string> {
+  const dir = join(cwd, "stub");
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  await stub(bin, "suricata", DRY_STUB);
+  if (o.noDump) await writeFile(join(dir, "no-dump"), "1");
+  if (o.dumpFail) await writeFile(join(dir, "dump-fail"), "1");
+  if (o.stderr !== undefined) await writeFile(join(dir, "test-stderr"), o.stderr);
+  if (o.testExit !== undefined) await writeFile(join(dir, "test-exit"), String(o.testExit));
+  if (o.sleep) await writeFile(join(dir, "sleep"), "1");
+  await writeFile(join(cwd, "suricata-calls.txt"), "");
+  return dir;
+}
+
+const LOADED_LINE = (n: number, failed = 0, skipped = 0): string => `<Info> - ${n} rules successfully loaded, ${failed} rules failed, ${skipped} rules skipped\n`;
+
+// The rules file the receipt is checked against. The expected numbers below are counted by hand from these lines (see the comments), not by the tool.
+const DRY_RULES = [
+  'alert tcp any any -> any any (msg:"a"; sid:1000001; rev:2;)', //                 1  alert, sid 1000001, rev 2
+  'alert udp any any -> any 53 (msg:"b"; sid:1000002; rev:1;)', //                  2  alert, sid 1000002, rev 1
+  'drop tcp any any -> any 22 (msg:"c"; sid:1000003; rev:1;)', //                   3  drop, sid 1000003, rev 1
+  '# alert tcp any any -> any 80 (msg:"d"; sid:1000004; rev:1;)', //                4  disabled alert, sid 1000004
+  '#drop ip any any -> any any (msg:"e"; sid:1000010; rev:3;)', //                  5  disabled drop, sid 1000010
+  "# this is prose about alert rules and their sids", //                           6  a comment, not a rule
+  'pass tcp any any -> any 443 (msg:"f"; \\', //                                    7  pass, continued on the next line
+  "   sid:1000005; rev:1;)", //                                                    8  (sid 1000005, rev 1)
+  'alert http any any -> any any (msg:"no rev"; sid:2000001;)', //                  9  alert, sid 2000001, no rev
+  'alert tcp any any -> any any (msg:"dup"; sid:1000001; rev:2;)', //               10 alert, a repeated sid
+  'reject tcp any any -> any 25 (msg:"g"; sid:2000003; rev:1;)', //                 11 reject, sid 2000003, rev 1
+  'alert dns any any -> any any (msg:"no sid"; rev:1;)', //                         12 alert, no sid, rev 1
+  "garbage line that is not a rule", //                                            13 active, not a rule
+].join("\n") + "\n";
+
+async function dryInputs(cwd: string, rules: string | Buffer = DRY_RULES): Promise<string> {
+  await put(cwd, "work/case.rules", rules);
+  return "work/case.rules";
+}
+
+test("dry_run refuses a path, reads no capture and starts no run over one", async () => {
+  await withCwd(async (cwd, bin) => {
+    const dir = await stageDry(cwd, bin, { stderr: LOADED_LINE(8) });
+    const rules = await dryInputs(cwd);
+    await put(cwd, "work/c.pcap", Buffer.from("not read"));
+    const err = refused(await tool(SURICATA, cwd, { dry_run: true, path: "work/c.pcap", rules, out_dir: "work/s" }, env(cwd), bin));
+    assert.equal(err.status, "failed");
+    assert.match(err.error, /path is not taken with dry_run/);
+    assert.equal(await exists(join(cwd, "work/s")), false, "a refusal wrote nothing");
+    assert.equal(await readFile(join(cwd, "suricata-calls.txt"), "utf8"), "", "a refusal started nothing");
+    assert.match(refused(await tool(SURICATA, cwd, { dry_run: 1, rules, out_dir: "work/s" }, env(cwd), bin)).error, /dry_run must be true or false/);
+    const out = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/s" }, env(cwd), bin));
+    assert.equal(out.dry_run, true);
+    assert.equal("path" in out, false);
+    assert.equal(await exists(join(dir, "capture-read")), false);
+    assert.equal(await exists(join(cwd, "work/s/eve.json")), false);
+    const calls = (await readFile(join(cwd, "suricata-calls.txt"), "utf8")).trimEnd().split("\n");
+    for (const c of calls) assert.doesNotMatch(c, /(^| )-r( |$)/, c);
+    // without dry_run the same call (no path) is still the old refusal
+    assert.match(refused(await tool(SURICATA, cwd, { rules, out_dir: "work/t" }, env(cwd), bin)).error, /path must name a readable file/);
+  });
+});
+
+test("dry_run writes only under out_dir and gives each part of the receipt: identities, the effective configuration, the rule-load status, the log outputs and what is not covered", { skip: NO_ADOPTION }, async () => {
+  await withCwd(async (cwd, bin) => {
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(8) });
+    const rules = await dryInputs(cwd);
+    const before = await filesUnder(cwd);
+    const out = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/s" }, env(cwd), bin));
+    const after = await filesUnder(cwd);
+    const created = after.filter((f) => !before.includes(f) && !f.startsWith("stub/") && f !== "suricata-calls.txt");
+    assert.ok(created.length > 0 && created.every((f) => f.startsWith("work/s/")), `only out_dir: ${created.join(", ")}`);
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.equal(out.ok, true);
+
+    // identities: the file's digest, size and rule line count (physical lines that are not empty or comments), and by hand the rest
+    const id = out.identities.rules;
+    assert.equal(id.sha256, sha(DRY_RULES));
+    assert.equal(id.bytes, Buffer.byteLength(DRY_RULES));
+    assert.equal(id.rule_lines, 10);
+    const a = id.analysis;
+    assert.equal(a.whole, true);
+    assert.equal(a.rules_active, 8);
+    assert.deepEqual(a.active_by_action, { alert: 5, drop: 1, pass: 1, reject: 1 });
+    assert.equal(a.active_lines_that_are_not_rules, 1);
+    assert.equal(a.rules_disabled, 2, "a # line with an action word and a sid is a disabled rule; prose after a # is not");
+    assert.deepEqual(a.disabled_by_action, { alert: 1, drop: 1 });
+    assert.equal(a.disabled_sid_min, 1000004);
+    assert.equal(a.disabled_sid_max, 1000010);
+    assert.deepEqual(a.sid.ranges, [[1000001, 1000003], [1000005, 1000005], [2000001, 2000001], [2000003, 2000003]]);
+    assert.equal(a.sid.count, 7);
+    assert.equal(a.sid.distinct, 6);
+    assert.equal(a.sid.duplicates, 1);
+    assert.equal(a.sid.min, 1000001);
+    assert.equal(a.sid.max, 2000003);
+    assert.equal(a.sid.without_sid, 1);
+    assert.deepEqual(a.rev.values, { "1": 5, "2": 2 });
+    assert.equal(a.rev.without_rev, 1);
+    assert.equal(a.sid.ranges_file, null, "four ranges are all inline");
+    const config = await readFile(join(cwd, "work/s/suricata.yaml"), "utf8");
+    assert.equal(out.identities.configuration.sha256, sha(config));
+    assert.match(out.identities.engine.suricata_version, /version 7\.0\.0-stand-in/);
+
+    // the effective configuration: the -T test with its status, and the dump where the build has the command
+    const eff = out.effective_configuration;
+    assert.equal(eff.test.exit_code, 0);
+    assert.match(eff.test.command.join(" "), /-T -c .*suricata\.yaml -S .*case\.rules/);
+    assert.equal(eff.dump_config.available, true);
+    assert.equal(eff.dump_config.exit_code, 0);
+    const dump = await readFile(join(cwd, "work/s/suricata-dump-config.txt"));
+    assert.equal(eff.dump_config.sha256, sha(dump));
+    assert.equal(eff.dump_config.bytes, dump.length);
+    assert.ok(await exists(join(cwd, "work/s/suricata-help.txt")));
+
+    // the rule-load status
+    assert.deepEqual(out.rule_load.configuration_test, { loaded: 8, failed: 0, skipped: 0, from: "suricata-test.stderr" });
+    assert.equal(out.rule_load.known, true);
+    assert.equal(out.rule_load.disabled_in_file, 2);
+
+    // the log outputs are those of the written configuration
+    const types = [...config.matchAll(/^        - (\w+):?$/gm)].map((m) => m[1]);
+    assert.deepEqual(out.log_outputs.files[0].types, types);
+    assert.equal(out.log_outputs.files[0].name, "eve.json");
+
+    // what is not covered
+    const gaps = out.not_covered.join("\n");
+    assert.match(gaps, /No ruleset ships/);
+    assert.match(gaps, /no automatic download and no suricata-update/);
+    assert.match(gaps, /No capture was read/);
+  });
+});
+
+test("dry_run names a build without --dump-config, and a dump that fails makes the receipt partial", { skip: NO_ADOPTION }, async () => {
+  await withCwd(async (cwd, bin) => {
+    await stageDry(cwd, bin, { noDump: true, stderr: LOADED_LINE(8) });
+    const rules = await dryInputs(cwd);
+    const out = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/s" }, env(cwd), bin));
+    assert.equal(out.effective_configuration.dump_config.available, false);
+    assert.match(out.effective_configuration.dump_config.reason, /does not list --dump-config/);
+    assert.equal(out.status, "complete", "a command the build lacks is named, not a failure");
+    assert.match(out.status_basis, /no --dump-config/);
+    assert.equal(await exists(join(cwd, "work/s/suricata-dump-config.txt")), false);
+    assert.doesNotMatch(await readFile(join(cwd, "suricata-calls.txt"), "utf8"), /--dump-config -c/);
+    await stageDry(cwd, bin, { dumpFail: true, stderr: LOADED_LINE(8) });
+    const failed = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/t" }, env(cwd), bin));
+    assert.equal(failed.status, "partial");
+    assert.match(failed.status_basis, /--dump-config` exited 4/);
+    assert.equal(failed.effective_configuration.dump_config.sha256, null);
+  });
+});
+
+test("dry_run: rules that fail to load make a partial receipt with the engine's first failures, withheld by shape, and the rest in the files", async () => {
+  await withCwd(async (cwd, bin) => {
+    const canary = "k".repeat(8) + randomBytes(24).toString("hex");
+    const stderr = [
+      `<Error> - [ERRCODE: SC_ERR_INVALID_SIGNATURE(39)] - error parsing signature "alert tcp any any -> any any (msg:\\"${canary}\\"; sid:3;" from file work/case.rules at line 13`,
+      `<Error> - [ERRCODE: SC_ERR_NO_RULES(42)] - failed to load rules`,
+      LOADED_LINE(7, 1, 0).trimEnd(),
+    ].join("\n") + "\n";
+    await stageDry(cwd, bin, { stderr, testExit: 1 });
+    const rules = await dryInputs(cwd);
+    const out = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/s" }, env(cwd), bin));
+    assert.equal(out.status, "partial");
+    assert.equal(out.ok, false);
+    assert.match(out.status_basis, /configuration test \(suricata -T\) failed with exit code 1/);
+    assert.deepEqual(out.rule_load.configuration_test, { loaded: 7, failed: 1, skipped: 0, from: "suricata-test.stderr" });
+    assert.equal(out.rule_load.failure_lines_total, 2);
+    assert.equal(out.rule_load.first_failures[0].rules_line, 13);
+    assert.match(out.rule_load.first_failures[1].text, /failed to load rules/);
+    assert.equal(JSON.stringify(out).includes(canary), false, "a token-shaped run in the engine's text is withheld from the answer");
+    assert.ok((await readFile(join(cwd, "work/s/suricata-test.stderr"), "utf8")).includes(canary), "the whole stays in the file");
+  });
+});
+
+test("dry_run: a rule longer than the limit is located and not read, a NUL in a rule is no obstacle, and 5,000 ranges are all in a file the answer names", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(1) });
+    const huge = Buffer.concat([
+      Buffer.from('alert tcp any any -> any any (msg:"'), Buffer.alloc(10 << 20, 0x41), Buffer.from('"; sid:9;)\n'),
+      Buffer.from('alert tcp any any -> any any (msg:"a\0b"; sid:7; rev:1;)\n'),
+    ]);
+    const rules = await dryInputs(cwd, huge);
+    const t0 = Date.now();
+    const out = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/s" }, env(cwd), bin));
+    assert.ok(Date.now() - t0 < 30_000);
+    const a = out.identities.rules.analysis;
+    assert.deepEqual(a.over_limit_lines, [1]);
+    assert.equal(a.over_limit_total, 1);
+    assert.equal(a.rules_active, 1, "the rule with a NUL is read; the 10 MB one is in no count");
+    assert.deepEqual(a.sid.ranges, [[7, 7]]);
+    assert.equal(a.whole, false);
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /longer than 1048576 bytes were located by line number/);
+    assert.equal(out.identities.rules.bytes, huge.length);
+    assert.equal(out.identities.rules.rule_lines, 2);
+
+    // many ranges: the answer holds the first 100, the file holds every one, and the two counts agree
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(5000) });
+    const many = Array.from({ length: 5000 }, (_, i) => `alert ip any any -> any any (msg:"r"; sid:${2 * i + 1}; rev:1;)`).join("\n") + "\n";
+    await put(cwd, "work/many.rules", many);
+    const m = body(await tool(SURICATA, cwd, { dry_run: true, rules: "work/many.rules", out_dir: "work/m" }, env(cwd), bin)).identities.rules.analysis;
+    assert.equal(m.sid.ranges_total, 5000);
+    assert.equal(m.sid.ranges.length, 100);
+    assert.equal(m.sid.ranges_in_file, 5000);
+    const lines = (await readFile(join(cwd, "work/m/sid-ranges.txt"), "utf8")).trimEnd().split("\n");
+    assert.equal(lines.length, 5000);
+    assert.equal(lines[0], "1-1");
+    assert.equal(lines[4999], "9999-9999");
+    assert.equal((await stat(join(cwd, "work/m/sid-ranges.txt"))).mode & 0o777, 0o600);
+  });
+});
+
+test("dry_run: 200,000 continuation lines of one rule take linear time, and a rule file read past the tool's own clock is a partial receipt", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(0) });
+    const rules = await dryInputs(cwd, "x\\\n".repeat(200_000) + "y\n");
+    const t0 = Date.now();
+    const out = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/s" }, env(cwd), bin));
+    assert.ok(Date.now() - t0 < 20_000, `took ${Date.now() - t0} ms`);
+    assert.equal(out.identities.rules.analysis.active_lines_that_are_not_rules, 1);
+    const big = Array.from({ length: 300_000 }, (_, i) => `alert ip any any -> any any (msg:"r"; sid:${i + 1}; rev:1;)`).join("\n") + "\n";
+    await put(cwd, "work/big.rules", big);
+    const cut = body(await tool(SURICATA, cwd, { dry_run: true, rules: "work/big.rules", out_dir: "work/c" }, { ...env(cwd), SURICATA_RUN_DRY_SECONDS: "0" }, bin));
+    assert.equal(cut.status, "partial");
+    assert.notEqual(cut.identities.rules.analysis.cut_by_its_clock, null);
+    assert.match(cut.status_basis, /clock ran out while the rules file was read/);
+  });
+});
+
+test("dry_run: a refused write of the sid-range file is named and the file is not left half-written", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(5000) });
+    const many = Array.from({ length: 5000 }, (_, i) => `alert ip any any -> any any (msg:"r"; sid:${2 * i + 1}; rev:1;)`).join("\n") + "\n";
+    await put(cwd, "work/many.rules", many);
+    // RLIMIT_FSIZE of 20 KiB (dash counts 512-byte blocks): the 5,000 range lines are about 55 KB, so the write is refused; Python ignores SIGXFSZ, so it is an OSError
+    const run = spawnSync("sh", ["-c", "ulimit -f 40 && exec python3 \"$0\"", SURICATA], {
+      cwd, input: JSON.stringify({ dry_run: true, rules: "work/many.rules", out_dir: "work/m" }), encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, AGENT_ID: "s1", ...env(cwd) },
+    });
+    assert.equal(run.status, 0, run.stderr + run.stdout);
+    const out = JSON.parse(run.stdout);
+    const a = out.identities.rules.analysis;
+    assert.equal(out.status, "partial");
+    assert.equal(a.sid.ranges_file, null);
+    assert.equal(a.sid.ranges.length, 100);
+    assert.equal(a.sid.ranges_total, 5000);
+    assert.match(a.problems.join(" "), /file of all sid ranges could not be written/);
+    assert.equal(await exists(join(cwd, "work/m/sid-ranges.txt")), false, "a file that holds fewer ranges than the answer counts is removed");
+  });
+});
+
+test("dry_run: skipped rules, or fewer rules loaded than the file has, are a partial receipt that names both numbers; an exact match is complete", { skip: NO_ADOPTION }, async () => {
+  await withCwd(async (cwd, bin) => {
+    const rules = await dryInputs(cwd);
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(3, 0, 4) });
+    const skipped = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/a" }, env(cwd), bin));
+    assert.equal(skipped.status, "partial");
+    assert.match(skipped.status_basis, /4 rule\(s\) skipped \(3 loaded\)/);
+    assert.deepEqual(skipped.rule_load.configuration_test, { loaded: 3, failed: 0, skipped: 4, from: "suricata-test.stderr" });
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(1) });
+    const short = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/b" }, env(cwd), bin));
+    assert.equal(short.status, "partial");
+    assert.match(short.status_basis, /loaded 1 rule\(s\) but the rules file has 8 active rule\(s\)/);
+    await stageDry(cwd, bin, { stderr: LOADED_LINE(8) });
+    const exact = body(await tool(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/c" }, env(cwd), bin));
+    assert.equal(exact.status, "complete", exact.status_basis);
+  });
+});
+
+test("dry_run: a stop signal gives one JSON answer with the stage, exit 128 + signal, and kills the engine and what it started", async () => {
+  for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]] as const) {
+    await withCwd(async (cwd, bin) => {
+      const dir = await stageDry(cwd, bin, { sleep: true });
+      const rules = await dryInputs(cwd);
+      const run = startDetached(SURICATA, cwd, { dry_run: true, rules, out_dir: "work/s" }, env(cwd), bin);
+      await untilExists(join(dir, "started"));
+      run.signal(sig);
+      assert.equal(await run.closed, code, sig);
+      const last = JSON.parse(run.stdout());
+      assert.equal(last.status, "partial");
+      assert.equal(last.interrupted_by_signal, code - 128);
+      assert.equal(last.stage, "testing the configuration");
+      assert.ok(last.files_on_disk.includes("suricata.yaml"));
+      const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
+      assert.equal(await gone(pid), true, `${sig}: what Suricata started is gone`);
+    });
+  }
 });

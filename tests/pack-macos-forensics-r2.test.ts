@@ -487,11 +487,137 @@ test("unified_log refuses a FIFO as path instead of handing it to a reader that 
 
 // ---- the goal template: P1-5 ------------------------------------------------------------------------------------------------------------------------
 
-test("the goal's question 4 does not promise TCC states that no tool or skill of the pack provides", async () => {
+test("the goal's question 4 names the one TCC tool the pack has and points to the security/tcc skill the pack now has", async () => {
   const goal = await readFile(join(ROOT, "packs", "macos-forensics", "goals", "mac-compromise.md"), "utf8");
   const q4 = /\n4\. Privacy authorization[\s\S]*?\n5\. /.exec(goal)?.[0] ?? "";
   assert.ok(q4, "question 4 is there");
   assert.match(q4, /cannot answer\s+the question/, "it carries the clause question 7 carries");
-  assert.match(q4, /no TCC parser or skill/);
-  assert.ok((await readdir(join(ROOT, "packs", "macos-forensics", "tools"))).every((t) => !/tcc/i.test(t)), "and the pack has no TCC tool");
+  assert.match(q4, /macos_tcc/);
+  assert.match(q4, /`security\/tcc`/, "it points to the TCC skill");
+  assert.deepEqual((await readdir(join(ROOT, "packs", "macos-forensics", "tools"))).filter((t) => /tcc/i.test(t)), ["macos_tcc"], "and the pack has exactly the one TCC tool");
+  assert.deepEqual((await readdir(join(ROOT, "packs", "macos-forensics", "skills"), { recursive: true })).map((f) => String(f).split("\\").join("/")).filter((f) => /tcc/i.test(f)), ["security/tcc.md"], "and the one TCC skill");
+});
+
+// ---- knowledgec_query: the private copies live in a directory only the tool makes; an unusable sidecar is named --------------------------------------
+
+/** The pid of a process that has ended (a name for a dead run's directory). */
+function deadPid(): number {
+  const done = spawnSync("python3", ["-c", "import os; print(os.getpid())"], { encoding: "utf8" });
+  return Number(done.stdout.trim());
+}
+
+async function agentDir(cwd: string, name: string, files: Record<string, string> = {}, mode = 0o700): Promise<string> {
+  const dir = join(cwd, "work", "s1", name);
+  await mkdir(dir, { recursive: true, mode });
+  await chmod(dir, mode);
+  for (const [file, text] of Object.entries(files)) await writeFile(join(dir, file), text, { mode: 0o600 });
+  return dir;
+}
+
+const old = (when = 60): { atime: Date; mtime: Date } => ({ atime: new Date(Date.now() - when * 1000), mtime: new Date(Date.now() - when * 1000) });
+
+test("knowledgec_query's sweep runs only in a directory the tool made: an agent's directory with a stale .lock, and an empty one with a dead pid, are left alone", async () => {
+  // Outside a job the copies were made in work/<id>, which the agent writes too; the sweep took any directory there that looked like a copy.
+  const { utimes } = await import("node:fs/promises");
+  await withCwd(async (cwd) => {
+    const db = await kcDb(cwd, "wal.db", 10, 0, {}, "wal");
+    const pid = deadPid();
+    const locked = await agentDir(cwd, `knowledgec-${pid}-agentlk`, { ".lock": "", "notes.md": "my notes\n" });
+    await utimes(join(locked, ".lock"), old().atime, old().mtime);
+    const empty = await agentDir(cwd, `knowledgec-${pid}-agentem`);
+    const answer = ok(await tool(KC, cwd, { db }));
+    assert.equal(answer.entry_count, 11);
+    assert.equal(await exists(join(locked, "notes.md")), true, "(a) the agent's directory with a stale .lock was removed");
+    assert.equal(await exists(empty), true, "(b) the agent's empty directory with a dead pid in its name was removed");
+  });
+});
+
+test("knowledgec_query names a copy with files and no lock file in its own directory, removes a dead copy of its own there, and leaves a live one", async () => {
+  const { utimes } = await import("node:fs/promises");
+  await withCwd(async (cwd) => {
+    const db = await kcDb(cwd, "wal.db", 10, 0, {}, "wal");
+    ok(await tool(KC, cwd, { db }));                                                     // the first run makes work/s1/.knowledgec-stage
+    const parent = join(cwd, "work", "s1", ".knowledgec-stage");
+    assert.equal(((await stat(parent)).mode & 0o777).toString(8), "700");
+    const pid = deadPid();
+    const nolock = join(parent, `knowledgec-${pid}-nolock01`);
+    await mkdir(nolock, { mode: 0o700 });
+    await chmod(nolock, 0o700);
+    await writeFile(join(nolock, "k.db"), "x".repeat(1234), { mode: 0o600 });
+    const ours = join(parent, `knowledgec-${pid}-ours0001`);
+    await mkdir(ours, { mode: 0o700 });
+    await chmod(ours, 0o700);
+    await writeFile(join(ours, ".lock"), "", { mode: 0o600 });
+    await writeFile(join(ours, "k.db"), "y", { mode: 0o600 });
+    await utimes(join(ours, ".lock"), old().atime, old().mtime);
+    const answer = ok(await tool(KC, cwd, { db }));
+    const left = answer.source_used.copies_without_lock_not_removed;
+    assert.equal(left.count, 1);
+    assert.equal(left.listed[0].bytes, 1234);
+    assert.match(left.listed[0].copy_dir, /nolock01$/);
+    assert.equal(await exists(join(nolock, "k.db")), true, "named, not removed");
+    assert.equal(await exists(ours), false, "a dead copy of the tool's own (its lock is free) is removed");
+    assert.equal(answer.status, "complete", "a leftover of an earlier run does not make this run partial");
+  });
+});
+
+test("knowledgec_query does not sweep a .knowledgec-stage directory the agent made (no marker, not mode 0700)", async () => {
+  const { utimes } = await import("node:fs/promises");
+  await withCwd(async (cwd) => {
+    const db = await kcDb(cwd, "wal.db", 10, 0, {}, "wal");
+    const parent = join(cwd, "work", "s1", ".knowledgec-stage");
+    await mkdir(parent, { recursive: true });
+    await chmod(parent, 0o755);
+    const pid = deadPid();
+    const mine = join(parent, `knowledgec-${pid}-mine0001`);
+    await mkdir(mine, { mode: 0o700 });
+    await chmod(mine, 0o700);
+    await writeFile(join(mine, ".lock"), "", { mode: 0o600 });
+    await writeFile(join(mine, "findings"), "keep", { mode: 0o600 });
+    await utimes(join(mine, ".lock"), old().atime, old().mtime);
+    ok(await tool(KC, cwd, { db }));
+    assert.equal(await exists(join(mine, "findings")), true);
+  });
+});
+
+test("knowledgec_query names a -wal that is a FIFO, does not open it and does not say complete", async () => {
+  await withCwd(async (cwd) => {
+    const db = await kcDb(cwd, "plain.db", 10);
+    assert.equal(spawnSync("mkfifo", [join(cwd, "work", "plain.db-wal")]).status, 0);
+    const run = await limited(KC, cwd, { db }, 60);
+    assert.equal(run.killed, false, "the tool waited on the FIFO");
+    const answer = JSON.parse(run.stdout) as Json;
+    assert.equal(answer.source_used.sidecars_not_used["-wal"], "a FIFO");
+    assert.notEqual(answer.status, "complete");
+    assert.match(JSON.stringify(answer.problems), /-wal file beside the database is a FIFO/);
+    assert.equal(answer.entry_count, 10, "the database itself is still read");
+  });
+});
+
+test("knowledgec_query does not follow a -wal that is a symbolic link: its target is not copied, read or changed, and the answer is not complete", async () => {
+  const { rename, symlink } = await import("node:fs/promises");
+  await withCwd(async (cwd) => {
+    // A database whose tables are all in its WAL: the main file has none, and the refusal must not say the file is not a knowledgeC database.
+    await kcDb(cwd, "wal.db", 10, 0, {}, "wal");
+    await rename(join(cwd, "work", "wal.db-wal"), join(cwd, "work", "elsewhere.bin"));
+    await symlink("elsewhere.bin", join(cwd, "work", "wal.db-wal"));
+    const before = await stat(join(cwd, "work", "elsewhere.bin"));
+    const refused = body(await tool(KC, cwd, { db: "work/wal.db" }));
+    assert.equal(refused.status, "failed");
+    assert.equal(refused.sidecars_not_used["-wal"], "a symbolic link");
+    assert.match(refused.error, /does not say the file is not a knowledgeC database/);
+    // A complete main file with a linked WAL beside it: read in place, the link named, the answer partial.
+    await kcDb(cwd, "plain.db", 10);
+    await writeFile(join(cwd, "work", "target.bin"), "not a wal at all");
+    await symlink("target.bin", join(cwd, "work", "plain.db-wal"));
+    const answer = body(await tool(KC, cwd, { db: "work/plain.db" }));
+    assert.equal(answer.source_used.sidecars_not_used["-wal"], "a symbolic link");
+    assert.equal(answer.source_used.staged, false, "nothing was staged: the link was not followed into a private copy");
+    assert.equal(answer.entry_count, 10);
+    assert.equal(answer.status, "partial");
+    assert.match(JSON.stringify(answer.problems), /-wal file beside the database is a symbolic link/);
+    const after = await stat(join(cwd, "work", "elsewhere.bin"));
+    assert.equal(after.mtimeMs, before.mtimeMs);
+    assert.equal(after.size, before.size);
+  });
 });

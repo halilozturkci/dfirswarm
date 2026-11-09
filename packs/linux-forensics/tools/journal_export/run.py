@@ -37,6 +37,7 @@ running after the tool is gone. The deadline (max_seconds, at most 270 of the ma
 and SIGHUP end journalctl and what it started.
 """
 import datetime
+import hashlib
 import json
 import math
 import os
@@ -53,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "journal_export"
-PARSER = "journal_export/6"
+PARSER = "journal_export/20"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 240.0
 MAX_SECONDS = 270.0           # the most a caller may ask for (the manifest allows 300)
@@ -74,11 +75,16 @@ EPOCH = datetime.datetime(1970, 1, 1)
 BOUND = re.compile(r"^(?:@\d+(?:\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s+UTC)$")
 
 
+# BEGIN LINUX PARTS
 # ---- The parts every tool of this pack that pages or keeps text copies (a tool is standalone; none imports another) ----
+# The same text is in auth_log, cron_dump, journal_export, shell_history and utmp_parse (tests/pack-linux-parts.test.ts holds the copies
+# equal). It uses STATE, _writing and _written, which are LINUX STOP's in four tools and, in journal_export, whose stop is its SHARED PROCESS
+# block, two stand-ins below the SHARED PROCESS block's STATE.
 
 
 def fail(message, **extra):
     """An error answer: JSON, exit 1, and the same `status` every answer of this pack carries."""
+    STATE["answering"] = True       # a signal from here on is not answered: this answer stands alone
     print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -179,18 +185,28 @@ def touches_withheld_text(has_filter):
     return bool(has_filter) and in_job()
 
 
+MAX_PAGING_BYTES = 128 << 20  # all the paging files of one call hold this much together; a row past it is counted and located, not written
+MAX_TEXT_BYTES = 256 << 20    # the text file of one call holds this much; a record past it is counted and located, not written
+PAGING = {"left": MAX_PAGING_BYTES}      # what the paging files of this call may still hold, in bytes, all of them together
+TEXTING = {"left": MAX_TEXT_BYTES}       # what the text file may still hold, in bytes
+
+
 # Lossless paging (the same in every library tool that pages): the page an agent reads stays small, and when
 # there are more rows the whole result is written as JSON Lines under work/<agent>/tool-output (in a job,
 # $OUT/tool-output) and named. The file name is random: it is never a digest of anything asked for. A write
-# that fails is an error answer naming the file, never a traceback and never a silent loss.
+# that fails is an error answer naming the file, never a traceback and never a silent loss: the rows written
+# before the error are kept under the file's name and the answer says so, or says the temporary was removed.
 class LosslessPage:
     def __init__(self, tool, key, limit):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError("limit must be a positive integer")
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
+        self.key = key
         self.page = []
         self.total = 0
+        self.not_written = 0        # rows after the paging cap: counted in `total`, not in the file
+        self.stop_error = None
         self._out = None
         self._tmp = None
         name = "%s-%s.jsonl" % (self.tool, secrets.token_hex(8))
@@ -203,13 +219,46 @@ class LosslessPage:
             agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
+        self._done = False
+        STATE.setdefault("pages", []).append(self)     # every page is the last word's to name, from the moment it exists
 
-    def _write(self, row):
+    def _abandon(self):
+        """A write failed (ENOSPC, EIO): what is already in the temporary is kept under the file's own name, or the temporary is removed.
+        Returns what the answer says about it."""
+        out, self._out = self._out, None
+        if out is not None:
+            try:
+                out.close()
+            except OSError:
+                pass
+        if self._tmp is None:
+            return "no paging file was left"
         try:
-            self._out.write(json.dumps(row, ensure_ascii=False, default=str))
-            self._out.write("\n")
+            os.replace(self._tmp, self.path)
+            self._done = True
+            return "the rows written before the error are in %s (the last row may be cut)" % self.path
+        except OSError:
+            pass
+        try:
+            os.unlink(self._tmp)
+            return "the temporary paging file was removed"
         except OSError as exc:
-            fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
+            return "the temporary paging file %s could not be renamed or removed (%s)" % (self._tmp, describe(exc))
+
+    def _write(self, row, kept=False):
+        data = json.dumps(row, ensure_ascii=False, default=str) + "\n"
+        size = len(data.encode("utf-8", "backslashreplace"))
+        if not kept and (self.not_written or size > PAGING["left"]):
+            self.not_written += 1       # once a row is refused no later one is written: the file stays the first rows in order
+            return
+        PAGING["left"] = max(0, PAGING["left"] - size)
+        _writing()
+        try:
+            self._out.write(data)     # one write: a stop never leaves half a row
+        except OSError as exc:
+            fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=self._abandon())
+        finally:
+            _written()
 
     def add(self, row):
         self.total += 1
@@ -219,37 +268,77 @@ class LosslessPage:
         if self._out is None:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-                self._tmp = Path(name)
+                # The name is known before the file exists, so a signal at any point after this line finds the file by it.
+                self._tmp = self.path.parent / (".%s-%s" % (self.path.name, secrets.token_hex(8)))
+                fd = os.open(str(self._tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace")
             except OSError as exc:
-                fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path))
+                state = "no paging file was left" if self._tmp is None or not os.path.lexists(self._tmp) else self._abandon()
+                fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=state)
             for kept in self.page:
-                self._write(kept)
+                self._write(kept, kept=True)
         self._write(row)
+
+    def stop_here(self):
+        """The rows written so far, kept under the final name (a signal ended the tool): the path as shown, or None where nothing was written.
+        A file that cannot be flushed is still renamed (what reached the disk is kept) and `stop_error` says it."""
+        if self._tmp is None:
+            return None
+        if self._done:
+            return self.shown           # finish() had put it under its name: it holds every row
+        out, self._out = self._out, None
+        if out is not None:
+            try:
+                out.flush()
+                os.fsync(out.fileno())
+            except OSError as exc:
+                self.stop_error = describe(exc)
+            try:
+                out.close()
+            except OSError as exc:
+                self.stop_error = self.stop_error or describe(exc)
+        if not os.path.exists(self._tmp):
+            return None
+        os.replace(self._tmp, self.path)
+        return self.shown
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
         if self._out is not None:
+            _writing()
             try:
                 self._out.flush()
                 os.fsync(self._out.fileno())
                 self._out.close()
                 os.replace(self._tmp, self.path)
+                self._done = True
             except OSError as exc:
-                fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
+                fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path), paging_file_state=self._abandon())
+            finally:
+                _written()
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
+        if self.not_written:
+            result["not_written"] = self.not_written
+            result["not_written_why"] = ("the paging files of one call hold at most %d bytes together: the first %d rows are in the file, in order; "
+                                         "the %d after them are counted in `matched` and are in the evidence at the file and line each entry names"
+                                         % (MAX_PAGING_BYTES, self.total - self.not_written, self.not_written))
         return result
 
 
 def require_job(flag):
     """What leaves a record's text is held to the secret-safe output pattern (docs/packs.md, "Secrets and
     sensitive output"): the text goes into the answer or into a file only in a job, whose output the skill
-    says to seal with secret_output: true. Outside a job the request is refused and nothing is written."""
+    says to seal with secret_output: true. Outside a job, and in a job the harness did not run as secret output (it sets
+    SECRET_OUTPUT=1 in the environment of such a job's process, from the manifest's declaration or the agent's flag), the
+    request is refused and nothing is written."""
     if not in_job():
         fail("%s is refused outside a job: a command line, a message or an environment value written or "
              "printed here would be an ordinary file or an ordinary answer, not a sealed output. Run this as "
+             "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
+    if os.environ.get("SECRET_OUTPUT") != "1":
+        fail("%s is refused: this job was not run as secret output, so what it wrote or printed would be sealed as an ordinary "
+             "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run this as "
              "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
 
 
@@ -265,11 +354,18 @@ class TextFile:
     created before anything is read (mode 0600, exclusively: a file or a link already at that name is
     refused by name) under $OUT, and the answer names it and says it may hold secrets. A byte that is not
     UTF-8 is written as a JSON escape of its lone surrogate and reads back as the byte: the file keeps the whole.
+    The file holds at most MAX_TEXT_BYTES: once a record would pass it, that record and every one after it are
+    counted in `not_written` and not written (the file stays the first records, in order), and `summary()` says so.
     """
 
     def __init__(self, name, enabled, what, flag="write_text"):
         self.enabled = enabled
         self.written = 0
+        self.not_written = 0        # records after the cap: counted, not in the file
+        self.capped = False
+        self.cut_record = False     # a record's first pieces (add_bytes_raw) were written and the cap came before its last
+        self._open_piece = False
+        self.close_error = None
         self.what = what
         self.flag = flag
         self._fh = None
@@ -282,6 +378,10 @@ class TextFile:
             raise TextRefused("%s is refused outside a job: the text of the records written here would be an "
                               "ordinary file, not a sealed output. Run this as job_run tool=%s with secret_output: "
                               "true, and ask again there. Nothing was written." % (flag, TOOL))
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise TextRefused("%s is refused: this job was not run as secret output, so the text of the records written here would be sealed "
+                              "as an ordinary output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. "
+                              "Run this as job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
         self.path = Path(out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
         try:
@@ -294,42 +394,76 @@ class TextFile:
         self._fh = os.fdopen(fd, "wb")
 
     def _put(self, data):
+        _writing()
         try:
             self._fh.write(data)
         except OSError as exc:
             fail("the text file could not be written: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
+        finally:
+            _written()
+
+    def _room(self, size):
+        """Whether `size` more bytes fit under the cap; the first that does not closes the file to every later record."""
+        if self.capped or size > TEXTING["left"]:
+            self.capped = True
+            return False
+        TEXTING["left"] -= size
+        return True
 
     def add(self, row):
         if self._fh is None:
             return
-        self._put(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n")
+        data = json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n"
+        if not self._room(len(data)):
+            self.not_written += 1
+            return
         self.written += 1
+        self._put(data)
 
     def add_bytes_raw(self, data):
         """A piece of a source's own bytes, written as it came; the record it belongs to is counted by count_record."""
-        if self._fh is not None:
+        if self._fh is None:
+            return
+        if self._room(len(data)):
+            self._open_piece = True
             self._put(data)
+        elif self._open_piece:
+            self.cut_record = True
 
     def count_record(self):
         if self._fh is not None:
-            self.written += 1
+            self._open_piece = False
+            if self.capped:
+                self.not_written += 1
+            else:
+                self.written += 1
 
     def add_bytes(self, data):
         """One record exactly as its source wrote it (a native export's line, newline included)."""
         if self._fh is None:
             return
-        self._put(data)
+        if not self._room(len(data)):
+            self.not_written += 1
+            return
         self.written += 1
+        self._put(data)
 
     def close(self):
         if self._fh is not None:
+            _writing()
             try:
                 self._fh.flush()
                 os.fsync(self._fh.fileno())
                 self._fh.close()
+                self._fh = None
             except OSError as exc:
-                fail("the text file could not be closed: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
-            self._fh = None
+                if STATE.get("stopping"):
+                    self.close_error = describe(exc)    # the last word names it: one document, not an error document and then the last word
+                    self._fh = None
+                else:
+                    fail("the text file could not be closed: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
+            finally:
+                _written()
 
     def summary(self, preview=False):
         """What the answer says about text. `preview` is true when the answer itself carries it (preview_text)."""
@@ -339,8 +473,53 @@ class TextFile:
                     "The answer's records carry their text (preview); no file of it was written, and the paging file, if there is one, holds none.")
             return {"requested": False, "written": 0, "file": None, "contains_text_that_may_hold_secrets": False, **shown,
                     "hint": hint + " %s: true, in a job run with secret_output: true, keeps the whole of each record in a private file under $OUT." % self.flag}
-        return {"requested": True, "written": self.written, "file": self.shown,
-                "contains_text_that_may_hold_secrets": self.written > 0, **shown, "format": self.what}
+        result = {"requested": True, "written": self.written, "file": self.shown,
+                  "contains_text_that_may_hold_secrets": self.written > 0, **shown, "format": self.what}
+        if self.not_written or self.capped:
+            result["not_written"] = self.not_written
+            result["not_written_why"] = ("the text file of one call holds at most %d bytes: the first %d records are in it, in order; the %d after them are "
+                                         "counted and are in the evidence at the file and line each record names%s"
+                                         % (MAX_TEXT_BYTES, self.written, self.not_written,
+                                            "; the last record in the file may be cut short" if self.cut_record else ""))
+        return result
+
+
+def capped_why(pages, text=None):
+    """The sentence for an answer that is partial because a cap was reached (the paging files' or the text file's), or None. `pages` is
+    the answer's `pages` dictionary; `text` the TextFile."""
+    cut = ["%d of %s" % (page["not_written"], name) for name, page in pages.items() if page.get("not_written")]
+    held = []
+    if cut:
+        held.append("the paging files reached their cap of %d bytes: %s row(s) are counted and are not in a paging file (see not_written in `pages`)"
+                    % (MAX_PAGING_BYTES, ", ".join(cut)))
+    if text is not None and (text.not_written or text.capped):
+        held.append("the text file reached its cap of %d bytes: %d record(s) are counted and are not in it (see not_written in `text`)"
+                    % (MAX_TEXT_BYTES, text.not_written))
+    if not held:
+        return None
+    return "; ".join(held) + "; each is in the evidence at the file and line it names"
+
+
+INLINE_LIST = 200       # items of any list that grows with the evidence (files, homes, errors, links) kept inline in the answer
+
+
+class Listed(list):
+    """A list of the answer that grows with the evidence (one item per file, home, link or error): its first INLINE_LIST items are the list, and
+    every item, those too, is kept in a paging file that the answer names under pages.<key> (`page.total` is how many there were; `settle()`
+    finishes the file and returns the page's entry for the answer's `pages`)."""
+
+    def __init__(self, key):
+        super().__init__()
+        self.page = LosslessPage(TOOL, key, INLINE_LIST)
+
+    def append(self, item):
+        self.page.add(item)
+        if len(self) < INLINE_LIST:
+            super().append(item)
+
+    def settle(self):
+        return self.page.finish()
+# END LINUX PARTS
 
 
 # BEGIN SHARED PROCESS
@@ -353,13 +532,56 @@ class TextFile:
 # walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word. Only what is
 # below a program this tool started and has not yet waited for is ever signalled: the walk starts at that program's pid
 # and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
-# walk has no bound but the number of processes. Two cases leave the tree running: a ps that needs more than PS_WAIT
-# seconds, and a sandbox that denies both libproc and ps (macOS). A stop signal is the one case that reaches further: it also
+# walk is bounded (MAX_ROUNDS and WALK_SECONDS, below). A stop signal is the one case that reaches further: it also
 # ends everything below the tool itself (a program that was forked a moment before it was entered in ACTIVE is among it) and what
 # the tool started and lost (reap_orphans): a process that was seen below the tool, in the tool's own group, and whose parent has since
 # ended. Nothing else is ever ended: a process the tool never saw in its tree (the next stage of a pipeline the tool heads, a process a
 # launcher put in the group) is left alone, whoever leads the group. A program that has ended while something it started still
-# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds and goes on without them.
+# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds (and POST_EXIT_BYTES bytes) and goes on without them.
+# The walk below a program is bounded: MAX_ROUNDS rounds and WALK_SECONDS seconds. Each process is stopped (SIGSTOP) as the walk finds it,
+# so one that forks fast cannot outrun the walk; the walk is repeated for what the stopped ones had already forked, and the stopped set is
+# then killed. A tree that is still growing at the bound is left, and process_notes() says so.
+# Before a pid other than the program itself is signalled, its identity is read again (same_process(pid, ident)): the start time, from
+# /proc/<pid>/stat (field 22, counted after the last ")") on Linux, from libproc's PROC_PIDTBSDINFO (pbi_start_tvsec, pbi_start_tvusec;
+# written from <sys/proc_info.h>, not run on macOS in this repository's tests) on macOS, and from `ps -o lstart=` (to the second: coarse)
+# where neither answers. The parent is no part of it: a child is re-parented when its parent ends, and is still the process that was
+# listed. A pid that is gone, or whose start time is not the listed one, is left alone; a pid whose start time could not be read when it
+# was listed is signalled only if it can be read now and is in the tool's own group; a ps listing that gave no start time (a minimal ps) is
+# checked only for the pid still being there.
+# A tree that cannot be listed (ps fails, lists nothing or needs more than PS_WAIT seconds, /proc cannot be read or takes more than
+# TABLE_SECONDS) is never taken as an empty one: list_descendants raises TreeNotListed, the program itself is still ended, and a sentence
+# in process_notes() says that the tree could not be listed (communicate_bounded also appends it to the stderr bytes it returns when it
+# ended the program at its deadline). descendants() is list_descendants for a caller that cannot take an exception (a signal handler): its
+# list is empty and has not_listed = True when the tree could not be listed.
+# Open: a pid that ends and is reused between the identity check and the signal (two calls) is signalled; the Linux rule that a member of
+# the tool's own group that holds the tool's pipe is ended; on macOS a daemon that holds the pipes of a finished program is not found (no
+# /proc/<pid>/fd); a tool SIGKILLed between the stop and the kill leaves the program and the stopped set stopped (the harness ends the
+# tool's group, and with it the stopped ones that are in it); a carrier's answer carries program_group (process_verdict, process_notes)
+# only where that carrier's own code calls process_apply (without the call a program's leftovers are ended but not reported); the start of the interpreter, before any handler is in, is a window a signal can land in.
+# What a program leaves behind (settle). A program can exit by itself and leave a process that goes on writing a file the answer then reports:
+# one in a session of its own, or one that holds none of the tool's descriptors, which neither the walk nor the pipes reach. On Linux spawn()
+# makes the tool a subreaper (become_subreaper, PR_SET_CHILD_SUBREAPER): such a process is adopted by the tool, so it is a direct child of the
+# tool, and settle() ends it: when a program leaves ACTIVE after it has ended or been killed (ACTIVE is a list whose remove() does it), and at
+# the end of communicate_bounded and inside kill_all. It ends only a child of the tool that is no program's own: not a program spawn() started
+# (SPAWNED: Popen reaps those, their returncode is never taken), not one kept (KEEP, process_keep(pid), spawn(argv, leaves=True) for a
+# program that leaves a process on purpose) and not a child the tool already had (PRE_KIDS). It stops each one, what it started with it (the
+# walk above), kills and reaps them, for at most LEFTOVER_SECONDS, reading the clock for every process. While another program is running in
+# ACTIVE nothing is ended and the answer says it is unproven. process_verdict() says what was found; process_apply(answer) puts it into an
+# answer as program_group and turns a complete answer partial when a program left something or that could not be ruled out: a carrier
+# calls it once where it prints its answer. Where nothing is adopted (not Linux, or the kernel refuses) settle() ends only what the tool saw
+# below a program whose parent is gone, and the answer is unproven (NONLINUX_UNPROVEN_DOWNGRADE below is the one line that decides whether
+# that alone makes a complete answer partial on a host that is not Linux). Not reached by any of this: a process that is not a descendant of
+# a program (started through a service manager, a socket, another PID namespace), and the tool itself being killed (the harness ends its group).
+# What a program's pipes deliver after it ended (the byte cap). communicate_bounded reads the pipes itself (a selector, not
+# Popen.communicate) and looks at the program after every read. From the moment the program has ended, or been killed at its deadline, it
+# takes at most POST_EXIT_BYTES (1 MiB) more bytes from its two pipes together and at most PIPE_GRACE seconds, whichever comes first; a
+# program's own last words are in the pipe already (a pipe holds far less than the cap), so only what a process that went on holding the
+# pipe wrote can be cut. At the cap the tool stops reading, ends the holder (reap_orphans, settle) and lets the pipes go: PIPE_CUT["cut"]
+# counts the calls cut that way, process_notes() says so, and process_apply turns a complete answer partial. The bytes kept are the ones
+# read, not a whole stream: a caller that parses the output sees the program's output and at most 1 MiB of what a leftover wrote. While the
+# program is still alive nothing is capped here (a program's own output is its caller's to bound); the timing is unchanged.
+import select as _select
+import selectors as _selectors
 import time
 
 try:
@@ -368,8 +590,36 @@ except ImportError:  # pragma: no cover
     ctypes = None
 
 STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
-ACTIVE = []                    # the programs running now
+class _Active(list):
+    """The programs running now. A program that leaves the list after it has ended or been killed (a carrier removes it when it has waited
+    for it) is followed by settle(): what it left behind is ended before the carrier reads what the program wrote. One that is still
+    running when it is removed is not looked at."""
+
+    def remove(self, proc):
+        list.remove(self, proc)
+        if proc.poll() is not None:
+            settle()
+
+
+ACTIVE = _Active()             # the programs running now
+SPAWNED = {}                   # the programs spawn() started: pid -> identity (Popen reaps them, settle() never does)
+KEEP = {}                      # the processes left on purpose: pid -> identity (settle() leaves them)
+PRE_KIDS = {}                  # the children the tool already had when the first program was spawned: pid -> identity
+LEAVES = {}                    # the programs started with leaves=True that have not ended yet: pid -> Popen
+LEFT = {"left_behind": 0, "unproven": []}   # how many live processes settle() ended, and why nothing-left-behind cannot be proven
+SUB = {"tried": False, "on": False, "note": None}        # whether the subreaper was asked for, and is on
+SETTLING = [False]             # settle() is running (the stop signal's own call goes through)
+LEFTOVER_SECONDS = 3              # the most one settle() works, in seconds; the clock is read for every process it ends, not once per pass
+SETTLE_LOOK = 0.05             # the pause before the look that follows an ending: a fork that was under way when the first process died
+# The one line the owner decides: on a host that cannot adopt orphaned processes (not Linux) a program may have left a process nobody can find.
+# True: that alone is `unproven`, and process_apply turns a complete answer partial. False: the answer only carries a note.
+NONLINUX_UNPROVEN_DOWNGRADE = True
 SEEN = set()                   # the pids seen below a program this tool started: the only ones reap_orphans may end once their parent is gone
+SEEN_IDENT = {}                # what each pid in SEEN was (its start time) when it was seen below the tool: a pid that ended and was reused does not match
+NOTES = []                     # what this block could not do, as sentences for an answer (process_notes())
+MAX_ROUNDS, WALK_SECONDS = 8, 15   # the bound of the walk below a program: rounds, and seconds
+TABLE_SECONDS = 10             # the longest reading of /proc (or of a process table) is given
+SEEN_MAX = 1 << 16             # the most pids SEEN holds
 
 def _die_with_parent():  # runs in the child between fork and exec
     try:
@@ -378,13 +628,156 @@ def _die_with_parent():  # runs in the child between fork and exec
         pass
 
 
-def spawn(argv, **kwargs):
+def spawn(argv, leaves=False, **kwargs):
     kwargs.setdefault("stdin", subprocess.DEVNULL)
+    become_subreaper()
     if sys.platform.startswith("linux") and ctypes is not None:
         kwargs["preexec_fn"] = _die_with_parent
     proc = subprocess.Popen(argv, **kwargs)
     SEEN.add(proc.pid)
+    started = _read_ident(proc.pid, "proc" if os.path.isdir("/proc/self") else "libproc")
+    if started is not None:
+        SEEN_IDENT[proc.pid] = started
+    SPAWNED[proc.pid] = started
+    if leaves:
+        LEAVES[proc.pid] = proc     # what this program leaves behind stays (settle() keeps it)
     return proc
+
+
+class TreeNotListed(Exception):
+    """The processes could not be listed: ps failed, listed nothing or needed more than PS_WAIT seconds, /proc could not be read, or reading
+    it took more than TABLE_SECONDS. It is never to be read as a tree with nothing below it."""
+
+
+class _Listing(list):
+    """The pids below a process, as a list; .ident holds each pid's identity from the same reading, .not_listed says the tree could not be listed."""
+    ident = None
+    not_listed = False
+
+
+class _Table(dict):
+    """{pid: (parent pid, process group)}; .ident holds each pid's identity from the same reading."""
+    ident = None
+
+
+def _note(text):
+    """Record a sentence about what this block could not do (once, at most 20) and return it."""
+    if text not in NOTES and len(NOTES) < 20:
+        NOTES.append(text)
+    return text
+
+
+def process_notes():
+    """What this block could not do so far, as sentences (a tree that could not be listed, a walk that was cut), for an answer."""
+    return list(NOTES)
+
+
+def _libproc_start(pid):
+    """(seconds, microseconds) of the start of `pid` from libproc's PROC_PIDTBSDINFO (macOS), or None. Written from <sys/proc_info.h>
+    (struct proc_bsdinfo, 136 bytes, flavor 3); not run on macOS in this repository's tests."""
+    try:
+        import ctypes.util
+
+        class BsdInfo(ctypes.Structure):
+            _fields_ = [("pbi_flags", ctypes.c_uint32), ("pbi_status", ctypes.c_uint32), ("pbi_xstatus", ctypes.c_uint32),
+                        ("pbi_pid", ctypes.c_uint32), ("pbi_ppid", ctypes.c_uint32), ("pbi_uid", ctypes.c_uint32),
+                        ("pbi_gid", ctypes.c_uint32), ("pbi_ruid", ctypes.c_uint32), ("pbi_rgid", ctypes.c_uint32),
+                        ("pbi_svuid", ctypes.c_uint32), ("pbi_svgid", ctypes.c_uint32), ("rfu_1", ctypes.c_uint32),
+                        ("pbi_comm", ctypes.c_char * 16), ("pbi_name", ctypes.c_char * 32), ("pbi_nfiles", ctypes.c_uint32),
+                        ("pbi_pgid", ctypes.c_uint32), ("pbi_pjobc", ctypes.c_uint32), ("e_tdev", ctypes.c_uint32),
+                        ("e_tpgid", ctypes.c_uint32), ("pbi_nice", ctypes.c_int32), ("pbi_start_tvsec", ctypes.c_uint64),
+                        ("pbi_start_tvusec", ctypes.c_uint64)]
+
+        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+        lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_pidinfo.restype = ctypes.c_int
+        info = BsdInfo()
+        if lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
+            return None
+        return (int(info.pbi_start_tvsec), int(info.pbi_start_tvusec))
+    except Exception:  # noqa: BLE001 - no library, no symbol, a sandbox: the caller falls back
+        return None
+
+
+def _ps_start(pid):
+    """The start time `ps -o lstart= -p <pid>` prints, to the second (coarse), or None when ps fails, takes more than PS_WAIT seconds or prints none."""
+    try:
+        done = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=PS_WAIT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = " ".join(done.stdout.split())
+    return text if done.returncode == 0 and text else None
+
+
+def _read_ident(pid, kind):
+    """The identity of `pid` read the way `kind` ("proc", "libproc" or "ps") says, or None when the process is gone or the way fails."""
+    if kind == "proc":
+        try:
+            with open("/proc/%d/stat" % pid, "rb") as fh:
+                data = fh.read()
+            return ("proc", int(data[data.rindex(b")") + 2:].split()[19]))   # field 22, counted after the last ")": the name may hold one
+        except (OSError, ValueError, IndexError):
+            return None
+    if kind == "libproc":
+        started = _libproc_start(pid)
+        return None if started is None else ("libproc", started)
+    started = _ps_start(pid)
+    return None if started is None else ("ps", started)
+
+
+def process_ident(pid):
+    """What tells the process that has `pid` now from a later one that gets the same pid: its start time. Linux: field 22 of /proc/<pid>/stat;
+    macOS: libproc's pbi_start_tvsec and pbi_start_tvusec; where neither answers, the start time ps prints (to the second). The parent is no
+    part of it: a child is re-parented when its parent ends, and is still the process that was listed. None where the process is gone or
+    cannot be read."""
+    if os.path.isdir("/proc/self"):
+        return _read_ident(pid, "proc")
+    return _read_ident(pid, "libproc") or _read_ident(pid, "ps")
+
+
+def same_process(pid, ident):
+    """Whether `pid` is still the process `ident` was read from (process_ident, or the listing a walk made): a pid that is gone, or that
+    another process has taken since (another start time), is not. An `ident` of None (it could not be read when the process was listed) is
+    not vouched for either: the pid is signalled only if it can be read now and is in this process's own group. A listing by plain ps that
+    gave no start time ("listed") can only be checked for the pid still being there."""
+    if ident is None:
+        try:
+            return process_ident(pid) is not None and os.getpgid(pid) == os.getpgrp()
+        except OSError:
+            return False
+    if ident[0] == "listed":
+        try:
+            os.kill(pid, 0)
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+    return _read_ident(pid, ident[0]) == ident
+
+
+def _seen_below(pids, ident):
+    """Enter pids seen below the tool in SEEN, with the identity the listing that showed them gave."""
+    for pid in pids:
+        if pid in SEEN or len(SEEN) < SEEN_MAX:
+            SEEN.add(pid)
+            if ident.get(pid) is not None:
+                SEEN_IDENT[pid] = ident[pid]
+
+
+def _ps_rows(columns):
+    """The rows of `ps -A -o <columns>` as lists of fields. Raises TreeNotListed when ps cannot be run, fails, takes more than PS_WAIT seconds
+    or lists nothing."""
+    try:
+        done = subprocess.run(["ps", "-A", "-o", columns], capture_output=True, text=True, timeout=PS_WAIT)
+    except subprocess.TimeoutExpired as exc:
+        raise TreeNotListed("ps took more than %d seconds" % PS_WAIT) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise TreeNotListed("ps could not be run: %s" % type(exc).__name__) from exc
+    rows = [line.split() for line in done.stdout.splitlines() if line.split()]
+    if done.returncode != 0 or not rows:
+        raise TreeNotListed("ps %s" % ("exited %d" % done.returncode if done.returncode != 0 else "listed nothing"))
+    return rows
 
 
 def _children_libproc(pid):
@@ -418,13 +811,14 @@ PS_WAIT = 10    # seconds the ps fallback is given: ps is slow on a heavily load
 
 
 def _below(kids, pid):
-    found, seen, stack = [], {pid}, [pid]
-    while stack:
-        for child in kids.get(stack.pop(), []):
+    """Every process below `pid` in `kids` ({parent: [children]}), a parent before its children."""
+    found, seen, queue = [], {pid}, [pid]
+    for parent in queue:
+        for child in kids.get(parent, []):
             if child not in seen:
                 seen.add(child)
                 found.append(child)
-                stack.append(child)
+                queue.append(child)
     return found
 
 
@@ -437,20 +831,25 @@ def _libproc_works(pid):
     return pid == os.getpid() and os.getpid() in (_children_libproc(os.getppid()) or [])
 
 
-def descendants(pid):
-    """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps
-    (given PS_WAIT seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has
-    just listed this tool's own child `pid` (a library that answers nothing for a live child is not working, as in a
-    sandbox that denies it), and otherwise ps is asked."""
-    kids = {}
+def list_descendants(pid):
+    """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps (given PS_WAIT
+    seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has just listed this tool's own child
+    `pid` (a library that answers nothing for a live child is not working, as in a sandbox that denies it), and otherwise ps is asked. The
+    list carries .ident, the identity of each pid from the same reading. Raises TreeNotListed when the processes cannot be listed: that is
+    never an empty list."""
+    kids, ident = {}, {}
     try:
         if os.path.isdir("/proc/self"):
+            started = time.monotonic()
             for entry in os.listdir("/proc"):
+                if time.monotonic() - started > TABLE_SECONDS:
+                    raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
                 if entry.isdigit():
                     try:
                         with open("/proc/%s/stat" % entry, "rb") as fh:
                             fields = fh.read().rsplit(b")", 1)[1].split()
                         kids.setdefault(int(fields[1]), []).append(int(entry))
+                        ident[int(entry)] = ("proc", int(fields[19]))
                     except (OSError, IndexError, ValueError):
                         continue
         else:
@@ -463,41 +862,67 @@ def descendants(pid):
                             seen.add(child)
                             found.append(child)
                             stack.append(child)
-                return found
+                listing = _Listing(found)
+                listing.ident = {}
+                for child in found:
+                    started = _libproc_start(child)
+                    if started is not None:
+                        listing.ident[child] = ("libproc", started)
+                return listing
             if first is not None and _libproc_works(pid):
-                return []
-            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                    kids.setdefault(int(parts[1]), []).append(int(parts[0]))
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return _below(kids, pid)
+                listing = _Listing()
+                listing.ident = {}
+                return listing
+            for row in _ps_rows("pid=,ppid=,lstart="):
+                if len(row) >= 2 and row[0].isdigit() and row[1].isdigit():
+                    kids.setdefault(int(row[1]), []).append(int(row[0]))
+                    ident[int(row[0])] = ("ps", " ".join(row[2:])) if len(row) >= 6 else ("listed", None)
+    except OSError as exc:
+        raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    listing = _Listing(_below(kids, pid))
+    listing.ident = {child: ident[child] for child in listing if child in ident}
+    return listing
+
+
+def descendants(pid):
+    """list_descendants for a caller that cannot take an exception (a signal handler): the same list, but when the tree cannot be listed the
+    list is empty, has not_listed = True, and process_notes() says so."""
+    try:
+        return list_descendants(pid)
+    except TreeNotListed as exc:
+        _note("the processes below pid %d could not be listed (%s)" % (pid, exc))
+        listing = _Listing()
+        listing.ident = {}
+        listing.not_listed = True
+        return listing
 
 
 def _process_table():
-    """{pid: (parent pid, process group)} for every process, from /proc where there is one, else from ps (given PS_WAIT seconds);
-    None when neither answers."""
-    table = {}
+    """{pid: (parent pid, process group)} for every process, from /proc where there is one, else from ps (given PS_WAIT seconds); .ident holds
+    each pid's identity from the same reading. Raises TreeNotListed when neither answers."""
+    table, ident = _Table(), {}
     try:
         if os.path.isdir("/proc/self"):
+            started = time.monotonic()
             for entry in os.listdir("/proc"):
+                if time.monotonic() - started > TABLE_SECONDS:
+                    raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
                 if entry.isdigit():
                     try:
                         with open("/proc/%s/stat" % entry, "rb") as fh:
                             fields = fh.read().rsplit(b")", 1)[1].split()
                         table[int(entry)] = (int(fields[1]), int(fields[2]))
+                        ident[int(entry)] = ("proc", int(fields[19]))
                     except (OSError, IndexError, ValueError):
                         continue
         else:
-            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) == 3 and all(part.isdigit() for part in parts):
-                    table[int(parts[0])] = (int(parts[1]), int(parts[2]))
-    except (OSError, subprocess.SubprocessError):
-        return None
+            for row in _ps_rows("pid=,ppid=,pgid=,lstart="):
+                if len(row) >= 3 and all(part.isdigit() for part in row[:3]):
+                    table[int(row[0])] = (int(row[1]), int(row[2]))
+                    ident[int(row[0])] = ("ps", " ".join(row[3:])) if len(row) >= 8 else ("listed", None)
+    except OSError as exc:
+        raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    table.ident = ident
     return table
 
 
@@ -506,10 +931,11 @@ def _sample(pid):
     here and later loses its parent is the tool's to end, and one that was never seen is not."""
     try:
         if os.path.isdir("/proc/self"):
+            table = _process_table()
             kids = {}
-            for child, (parent, _group) in (_process_table() or {}).items():
+            for child, (parent, _group) in table.items():
                 kids.setdefault(parent, []).append(child)
-            SEEN.update(_below(kids, pid))
+            _seen_below(_below(kids, pid), table.ident)
         else:
             seen, stack = {pid}, [pid]
             while stack:
@@ -517,7 +943,8 @@ def _sample(pid):
                     if child not in seen:
                         seen.add(child)
                         stack.append(child)
-            SEEN.update(seen - {pid})
+            idents = {child: ("libproc", started) for child in seen - {pid} for started in [_libproc_start(child)] if started is not None}
+            _seen_below(seen - {pid}, idents)
     except Exception:  # noqa: BLE001 - a sample is best effort
         pass
 
@@ -549,21 +976,33 @@ def _holds_pipe(pid, inodes):
     return False
 
 
+def _same_ident(pid, before, listed):
+    """Whether `pid` is still the process `before` was read from. `listed` is the identity the table just read gave it: when it is the same
+    kind of identity (a start time from /proc, from libproc or from ps) the two are compared; when it is not (macOS: a process is seen
+    through libproc and listed through ps, and the two give different texts for one start time) the pid is read again the way `before` was."""
+    if listed is not None and listed[0] == before[0]:
+        return listed == before
+    return same_process(pid, before)
+
+
 def reap_orphans(inodes=None):
     """Kill what this tool started and lost: a process of the tool's own group that is no longer below the tool (its parent ended and
     init adopted it, so the walk from a program's pid cannot find it) and that the tool knows to be its own: it was seen below the tool
     (SEEN: the programs it started, the trees it listed, the samples taken while it waited), or, on Linux, it holds one of `inodes`,
     the pipes the tool made. A process the tool never saw in its tree is not touched, whoever leads the group: the next stage of a
     pipeline the tool heads, or a process a launcher put in the group, is not the tool's. A process outside the group is never looked
-    at, and a pid is checked against the group again at the moment it is signalled. Returns the pids signalled."""
+    at, and a pid is checked against the group, and against the identity it had when it was seen (same_process), at the moment it is
+    signalled. Returns the pids signalled; when the processes cannot be listed it signals none and process_notes() says so."""
     me = os.getpid()
     try:
         if os.getpgrp() != me:
             return []
     except OSError:
         return []
-    table = _process_table()
-    if not table:
+    try:
+        table = _process_table()
+    except TreeNotListed as exc:
+        _note("what the tool started and lost could not be looked for: the processes could not be listed (%s)" % exc)
         return []
     kids = {}
     for pid, (parent, _group) in table.items():
@@ -571,13 +1010,27 @@ def reap_orphans(inodes=None):
     below = set(_below(kids, me))
     on_linux = os.path.isdir("/proc/self")
     killed = []
+    started = time.monotonic()
     for pid, (_parent, group) in table.items():
+        if time.monotonic() - started > TABLE_SECONDS:
+            _note("the look for what the tool started and lost was cut after %d seconds" % TABLE_SECONDS)
+            break
         if group != me or pid == me or pid in below:
             continue
-        if pid not in SEEN and not (inodes and on_linux and _holds_pipe(pid, inodes)):
+        listed = table.ident.get(pid)
+        holder = False
+        if pid in SEEN:
+            before = SEEN_IDENT.get(pid)
+            if before is not None and not _same_ident(pid, before, listed):
+                continue                           # the pid is another process's now: one the tool never saw
+        elif inodes and on_linux and _holds_pipe(pid, inodes):
+            holder = True
+        else:
             continue
         try:
             if os.getpgid(pid) != me:
+                continue
+            if not same_process(pid, listed) or (holder and not _holds_pipe(pid, inodes)):
                 continue
             os.kill(pid, signal.SIGKILL)
             killed.append(pid)
@@ -586,86 +1039,512 @@ def reap_orphans(inodes=None):
     return killed
 
 
+def _stop_below(root, stopped):
+    """Stop (SIGSTOP) every process below `root` as the walk finds it, so one that forks fast cannot outrun the walk, and repeat the walk
+    for what the stopped ones had already forked, for at most MAX_ROUNDS rounds and WALK_SECONDS seconds. `stopped` gets {pid: identity}.
+    Returns None, or the sentence that says the tree could not be listed or that the walk was cut."""
+    began = time.monotonic()
+    for _round in range(MAX_ROUNDS):
+        try:
+            found = list_descendants(root)
+        except TreeNotListed as exc:
+            return _note("the processes below pid %d could not be listed (%s): the program itself was ended, nothing below it" % (root, exc))
+        listed = getattr(found, "ident", None) or {}
+        _seen_below(found, listed)
+        fresh = [pid for pid in found if pid not in stopped]
+        if not fresh:
+            return None
+        for pid in fresh:
+            if not same_process(pid, listed.get(pid)):
+                continue
+            try:
+                os.kill(pid, signal.SIGSTOP)
+                stopped[pid] = listed.get(pid)
+            except OSError:
+                pass
+        if time.monotonic() - began > WALK_SECONDS:
+            break
+    return _note("the walk below pid %d was cut at %d rounds or %d seconds: a process started after it may be running" % (root, MAX_ROUNDS, WALK_SECONDS))
+
+
+def _end(stopped):
+    """Kill the stopped set, each pid only if it is still the process that was stopped."""
+    for pid, ident in list(stopped.items()):
+        if same_process(pid, ident):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+
 def kill_tree(proc):
-    """Kill the program and everything it started. The children are listed first: once the parent is gone they are
-    adopted by init and can no longer be found below it. A program already waited for is not touched: its pid is free to
-    be another process's, and the walk below it would be that process's children."""
+    """Kill the program and everything it started. The program is stopped first and then each process below it as the walk finds it
+    (_stop_below), so the tree does not grow while it is listed; the stopped set is killed after the program. A pid is killed only if it
+    is still the process that was listed (same_process). A program already waited for is not touched: its pid is free to be another
+    process's, and the walk below it would be that process's children. Returns None, or a sentence when the tree could not be listed or
+    the walk was cut."""
     if proc.poll() is not None:
-        return
+        return None
     try:
         proc.send_signal(signal.SIGSTOP)    # a program that is stopped forks nothing more while its tree is listed
     except OSError:
         pass
+    stopped, note = {}, None
     try:
-        victims = descendants(proc.pid)
-        SEEN.update(victims)
+        note = _stop_below(proc.pid, stopped)
     finally:
         try:
             proc.kill()
         except OSError:
             pass
-    for pid in victims:
+        _end(stopped)
+    return note
+
+
+def _stat_row(pid):
+    """(state letter, parent pid, identity) of `pid` from /proc/<pid>/stat, or None when it is gone or cannot be read. The identity is the one
+    process_ident gives (field 22, counted after the last ")")."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            data = fh.read()
+        rest = data[data.rindex(b")") + 2:].split()
+        return rest[0].decode("ascii", "replace"), int(rest[1]), ("proc", int(rest[19]))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _children_of_me():
+    """{pid: (state, identity)} of the direct children of this process (Linux). The kernel's own list of each thread's children is read where
+    there is one (no scan of every process), and every pid it names is checked against /proc/<pid>/stat; where there is none, /proc is
+    scanned. Raises TreeNotListed when /proc cannot be read or takes more than TABLE_SECONDS."""
+    me = os.getpid()
+    pids = None
+    try:
+        named = set()
+        for tid in os.listdir("/proc/%d/task" % me):
+            with open("/proc/%d/task/%s/children" % (me, tid)) as fh:
+                named.update(int(part) for part in fh.read().split())
+        pids = sorted(named)
+    except (OSError, ValueError):
+        pids = None
+    if pids is None:
+        try:
+            pids = [int(entry) for entry in os.listdir("/proc") if entry.isdigit()]
+        except OSError as exc:
+            raise TreeNotListed("the processes could not be read: %s" % type(exc).__name__) from exc
+    found, started = {}, time.monotonic()
+    for pid in pids:
+        if time.monotonic() - started > TABLE_SECONDS:
+            raise TreeNotListed("reading /proc took more than %d seconds" % TABLE_SECONDS)
+        row = _stat_row(pid)
+        if row is not None and row[1] == me:
+            found[pid] = (row[0], row[2])
+    return found
+
+
+def _unproven(text):
+    """Record why this block cannot say that no program left a process behind (once, at most 20) and return it."""
+    if text not in LEFT["unproven"] and len(LEFT["unproven"]) < 20:
+        LEFT["unproven"].append(text)
+    return text
+
+
+def become_subreaper():
+    """On Linux ask the kernel to make this process the parent of every process a program leaves behind (PR_SET_CHILD_SUBREAPER = 36), so that
+    one that left the tool's group or session, or holds none of its descriptors, is a child of the tool and settle() can find it. Called by
+    spawn() before the first program; once. PRE_KIDS records the children the tool already had (pid and start time): they are not a program's
+    and settle() leaves them. Where the kernel refuses, or the host is not Linux, nothing is adopted: settle() falls back to what the tool
+    saw below a program (SEEN), and the answer cannot prove that nothing was left (process_verdict()['unproven']). Returns whether it is on."""
+    if SUB["tried"]:
+        return SUB["on"]
+    SUB["tried"] = True
+    if sys.platform.startswith("linux") and ctypes is not None:
+        try:
+            SUB["on"] = ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
+        except Exception:  # noqa: BLE001 - no libc symbol, a sandbox: the caller falls back
+            SUB["on"] = False
+        if SUB["on"]:
+            try:
+                PRE_KIDS.update({pid: ident for pid, (_state, ident) in _children_of_me().items()})
+            except TreeNotListed as exc:
+                _unproven(_note("the children the tool already had could not be listed (%s): one of them may be taken for a program's" % exc))
+        else:
+            _unproven("this host refused PR_SET_CHILD_SUBREAPER: a process a program left behind outside the walk is not adopted and may not be found")
+    else:
+        reason = "this host cannot adopt orphaned processes (no PR_SET_CHILD_SUBREAPER): a process a program left behind may not be found"
+        SUB["note"] = reason              # in process_verdict()["notes"], never in process_notes(): a tool that reads only what a program printed is not made partial by it
+        if NONLINUX_UNPROVEN_DOWNGRADE:
+            _unproven(reason)
+    return SUB["on"]
+
+
+def process_keep(pid):
+    """Let `pid` stay: settle() does not end it. For a process a program leaves on purpose (a daemon the tool stops itself); spawn(argv,
+    leaves=True) does it for what that program leaves. A kept process is still ended by a stop signal (kill_all)."""
+    ident = process_ident(pid)
+    if ident is not None:
+        KEEP[pid] = ident
+
+
+def _exempt(pid, ident, active):
+    """Whether the process `pid` (identity `ident`) is the tool's own and not a program's leftover: a program spawn() started (Popen owns it
+    and reaps it), one in ACTIVE (`active`, their pids), one kept (KEEP) or one the tool already had (PRE_KIDS). A pid whose identity differs is
+    another process that has the number now."""
+    if pid in active:
+        return True
+    for table in (SPAWNED, KEEP, PRE_KIDS):
+        if pid in table and (table[pid] is None or (table[pid] == ident if ident is None or table[pid][0] == ident[0] else same_process(pid, table[pid]))):
+            return True
+    return False
+
+
+def _victims_children(active):
+    """[(pid, state, identity)]: the children of this tool that are no program's own (Linux, with the subreaper on)."""
+    return [(pid, state, ident) for pid, (state, ident) in sorted(_children_of_me().items()) if not _exempt(pid, ident, active)]
+
+
+def _victims_seen(active):
+    """[(pid, state, identity)]: where nothing is adopted, the processes that were seen below a program, are still the ones that were seen, and
+    have lost their parent (the parent is not the tool and is not a live process the tool saw). Raises TreeNotListed."""
+    me = os.getpid()
+    candidates = [pid for pid in list(SEEN) if pid != me and SEEN_IDENT.get(pid) is not None and not _exempt(pid, SEEN_IDENT[pid], active)]
+    if not candidates:
+        return []
+    table = _process_table()
+    found = []
+    for pid in candidates:
+        row, listed = table.get(pid), table.ident.get(pid)
+        if row is None or not _same_ident(pid, SEEN_IDENT[pid], listed) or row[0] == me:
+            continue
+        parent = row[0]
+        if parent in table and SEEN_IDENT.get(parent) is not None and _same_ident(parent, SEEN_IDENT[parent], table.ident.get(parent)):
+            continue                               # its parent is a live process of a program's tree: the program has not ended
+        found.append((pid, "S", listed))
+    return found
+
+
+def _stop_under(roots, stopped, deadline):
+    """_stop_below for several roots at once with one reading of the processes per round (a program may leave thousands): stop (SIGSTOP)
+    every process below any of `roots` as the walk finds it, for at most MAX_ROUNDS rounds, WALK_SECONDS seconds and until `deadline`.
+    `stopped` gets {pid: identity}. Returns None, or the sentence that says the tree could not be listed or that the walk was cut."""
+    began = time.monotonic()
+    for _round in range(MAX_ROUNDS):
+        try:
+            table = _process_table()
+        except TreeNotListed as exc:
+            return _unproven(_note("the processes below what a program left behind could not be listed (%s): the leftovers were ended, nothing below them" % exc))
+        kids = {}
+        for child, (parent, _group) in table.items():
+            kids.setdefault(parent, []).append(child)
+        fresh = []
+        for root in roots:
+            fresh.extend(pid for pid in _below(kids, root) if pid not in stopped)
+        if not fresh:
+            return None
+        for pid in fresh:
+            ident = table.ident.get(pid)
+            if pid not in stopped and same_process(pid, ident):
+                try:
+                    os.kill(pid, signal.SIGSTOP)
+                    stopped[pid] = ident
+                except OSError:
+                    pass
+        if time.monotonic() > min(deadline, began + WALK_SECONDS):
+            break
+    return _unproven(_note("the walk below what a program left behind was cut at %d rounds or %d seconds: a process started after it may be running" % (MAX_ROUNDS, WALK_SECONDS)))
+
+
+def _end_counting(stopped):
+    """Kill the stopped set, each pid only if it is still the process that was stopped. How many were alive (a zombie was not left running)."""
+    alive = 0
+    for pid, ident in list(stopped.items()):
+        row = _stat_row(pid)
+        if not same_process(pid, ident):
+            continue
         try:
             os.kill(pid, signal.SIGKILL)
+            if row is None or row[0] not in ("Z", "X"):
+                alive += 1
         except OSError:
             pass
+    return alive
+
+
+def _end_children(victims, deadline):
+    """End the leftovers that are this tool's children: each is stopped (its identity and parent read again first), what it started is stopped
+    with it (_stop_under), the set is killed, and the children are reaped (waitpid WNOHANG: the tool is their parent). The clock is read for
+    every one, so a program that left thousands is cut at `deadline`, not after a pass. Returns how many live processes were killed."""
+    me = os.getpid()
+    stopped, reap, cut = {}, [], False
+    try:
+        for pid, _state, ident in victims:
+            if time.monotonic() >= deadline:
+                cut = True
+                break
+            row = _stat_row(pid)
+            if row is None or row[1] != me or row[2] != ident:
+                continue                           # gone, or not this tool's child any more
+            if row[0] in ("Z", "X"):
+                reap.append(pid)
+                continue
+            try:
+                os.kill(pid, signal.SIGSTOP)
+            except OSError:
+                continue
+            stopped[pid] = ident
+            reap.append(pid)
+        _stop_under(list(stopped), stopped, deadline)
+    finally:
+        alive = _end_counting(stopped)
+    pending = set(reap)
+    while pending:
+        for pid in list(pending):
+            try:
+                done, _status = os.waitpid(pid, os.WNOHANG)
+            except OSError:
+                pending.discard(pid)               # not this tool's child (any more): nothing to reap
+                continue
+            if done:
+                pending.discard(pid)
+        if not pending:
+            break
+        if time.monotonic() >= deadline:
+            _unproven(_note("%d processes a program left behind did not end within %d seconds" % (len(pending), LEFTOVER_SECONDS)))
+            break
+        time.sleep(0.005)
+    if cut:
+        _unproven(_note("a program left more processes than could be ended within %d seconds: some are still running" % LEFTOVER_SECONDS))
+    return alive
+
+
+def _end_seen(victims, deadline):
+    """End the leftovers where nothing is adopted: stopped, what they started stopped with them, then killed (each only if it is still the
+    process that was seen). Returns how many live processes were killed."""
+    stopped = {}
+    try:
+        for pid, _state, ident in victims:
+            if time.monotonic() >= deadline:
+                _unproven(_note("a program left more processes than could be ended within %d seconds: some are still running" % LEFTOVER_SECONDS))
+                break
+            if same_process(pid, ident):
+                try:
+                    os.kill(pid, signal.SIGSTOP)
+                    stopped[pid] = ident
+                except OSError:
+                    pass
+        _stop_under(list(stopped), stopped, deadline)
+    finally:
+        alive = _end_counting(stopped)
+    return alive
+
+
+def _settle(final):
+    active = {proc.pid for proc in list(ACTIVE)}
+    if not final and any(proc.poll() is None for proc in list(ACTIVE)):
+        _unproven(_note("a program was still running when another one ended: what is left behind cannot be told from what that program started, so nothing was ended"))
+        return 0
+    deadline = time.monotonic() + LEFTOVER_SECONDS
+    victims = _victims_children if SUB["on"] else _victims_seen
+    ended, looked = 0, False
+    ready = [proc for proc in list(LEAVES.values()) if proc.poll() is not None]
+    if ready:
+        for proc in ready:                         # a program that leaves a process on purpose: what it left stays
+            LEAVES.pop(proc.pid, None)
+        for pid, state, ident in victims(active):
+            if state not in ("Z", "X"):
+                KEEP[pid] = ident
+    while True:
+        found = victims(active)
+        if not found:
+            if ended and not looked:
+                looked = True                      # one more look after a short pause: a fork that was under way when the first one died
+                time.sleep(SETTLE_LOOK)
+                continue
+            return ended
+        if time.monotonic() >= deadline:
+            _unproven(_note("%d processes a program left behind were still there after %d seconds: they were not all ended" % (len(found), LEFTOVER_SECONDS)))
+            return ended
+        ended += (_end_children if SUB["on"] else _end_seen)(found, deadline)
+        if not SUB["on"]:
+            return ended                           # nothing is adopted: one pass, the processes are not this tool's to reap
+
+
+def settle(final=False):
+    """Look for what the programs this tool ran have left behind, and end it: the processes that are the tool's children and no program's own
+    (the subreaper adopted them) are stopped, what they started with them, killed and reaped, for at most LEFTOVER_SECONDS (the clock is read for
+    every process, and one more look follows an ending). Never a process of another program: while another program is running in ACTIVE nothing
+    is ended and process_verdict() says it is unproven. Never a program spawn() started (Popen owns its exit status: its returncode is never
+    taken), nor KEEP, PRE_KIDS or a process outside the tool's own children. final=True is the stop signal's own call (kill_all). Runs on the
+    caller's thread, joins none and never raises. Returns how many live processes it ended; process_verdict() holds the totals."""
+    if SETTLING[0] and not final:
+        return 0
+    SETTLING[0] = True
+    try:
+        ended = _settle(final)
+        LEFT["left_behind"] += ended
+        return ended
+    except Exception as exc:  # noqa: BLE001 - never into the finally of a carrier: say it could not be proven
+        _unproven(_note("the look for what a program left behind failed (%s)" % type(exc).__name__))
+        return 0
+    finally:
+        SETTLING[0] = False
+
+
+def process_verdict():
+    """What an answer says about the programs the tool ran: {"subreaper": whether orphans were adopted, "left_behind": how many live processes
+    settle() ended, "unproven": why 'nothing was left behind' cannot be claimed (empty when it can), "notes": process_notes()}."""
+    return {"subreaper": SUB["on"], "left_behind": LEFT["left_behind"], "unproven": list(LEFT["unproven"]), "notes": process_notes() + ([SUB["note"]] if SUB["note"] else [])}
+
+
+def process_apply(answer):
+    """Put process_verdict() into `answer` as answer["program_group"] and, when a program left a process behind or that cannot be ruled out,
+    turn a complete answer into a partial one (status "partial", the ok and complete flags that are there false, a sentence in status_basis;
+    a call of communicate_bounded that was cut at POST_EXIT_BYTES counts, PIPE_CUT):
+    what a program wrote while the tool read it is not a complete result. A carrier calls it once where it prints its answer. Returns `answer`."""
+    verdict = process_verdict()
+    answer["program_group"] = verdict
+    if (verdict["left_behind"] > 0 or verdict["unproven"] or PIPE_CUT["cut"]) and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        for flag in ("ok", "complete"):
+            if flag in answer:
+                answer[flag] = False
+        if verdict["left_behind"] > 0:
+            sentence = "a program left %d process%s running after it ended; the tool ended them, and what they wrote before that is in the files named here" % (
+                verdict["left_behind"], "" if verdict["left_behind"] == 1 else "es")
+        elif PIPE_CUT["cut"]:
+            sentence = "a process that held a program's pipe after it ended went on writing; the tool read no more than %d bytes of it and let the pipe go" % POST_EXIT_BYTES
+        else:
+            sentence = "the tool cannot prove that no program left a process behind (see program_group.unproven)"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = "%s; %s" % (basis, sentence) if isinstance(basis, str) and basis else sentence
+    return answer
 
 
 PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
+POST_EXIT_BYTES = 1 << 20    # the most bytes (both pipes together) read from the pipes of a program that has ended
+PIPE_CUT = {"cut": 0}        # how many calls stopped reading at POST_EXIT_BYTES because a process still held the pipes and went on writing
 
 
 def communicate_bounded(proc, seconds, input=None):
     """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
     are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
-    inherited them) does not hold the tool: the pipes are given PIPE_GRACE seconds, what the program wrote is kept, what the tool
-    lost is killed (reap_orphans), and the pipes are let go. The pipes are read here and by nothing else, so letting them go is safe."""
+    inherited them) does not hold the tool: from the moment the program has ended (or was killed) the pipes are given PIPE_GRACE seconds
+    and POST_EXIT_BYTES bytes, whichever is used up first; what the program wrote is kept, what the tool lost is killed (reap_orphans,
+    settle), and the pipes are let go. A cut at the byte cap is counted in PIPE_CUT and noted (process_notes()); the return shape is the
+    same. The pipes are read here and by nothing else (not by Popen.communicate), so letting them go is safe. `input` is written while
+    the program runs and is dropped once it has ended."""
     deadline = time.monotonic() + max(0.1, seconds)
-    out = err = b""
-    started, timed_out = False, False
-    while proc.poll() is None:
-        now = time.monotonic()
-        if now >= deadline:
-            timed_out = True
-            kill_tree(proc)
-            break
-        _sample(proc.pid)
-        try:
-            out, err = proc.communicate(None if started else input, timeout=max(0.01, min(0.2, deadline - now)))
-            return out or b"", err or b"", False
-        except subprocess.TimeoutExpired as exc:
-            started = True
-            out, err = exc.stdout or b"", exc.stderr or b""
+    bufs = (bytearray(), bytearray())
+    sel = _selectors.DefaultSelector()
+    pending = memoryview(input) if input and proc.stdin is not None else None
+    for index, stream in enumerate((proc.stdout, proc.stderr)):
+        if stream is not None:
+            sel.register(stream, _selectors.EVENT_READ, index)
+    if proc.stdin is not None:
+        if pending:
+            sel.register(proc.stdin, _selectors.EVENT_WRITE, 2)
+        else:
+            _close_pipe(proc.stdin)
+    timed_out, note, ended, extra, cut, sampled = False, None, None, 0, False, 0.0
     try:
-        out, err = proc.communicate(None if started else input, timeout=PIPE_GRACE)
-    except subprocess.TimeoutExpired as exc:
-        out, err = exc.stdout or b"", exc.stderr or b""
-        reap_orphans(_pipe_inodes(proc))
+        while True:
+            now = time.monotonic()
+            if ended is None:
+                if proc.poll() is not None:
+                    ended = now
+                elif now >= deadline:
+                    timed_out = True
+                    note = kill_tree(proc)
+                    ended = time.monotonic()
+                elif now - sampled >= 0.2:
+                    sampled = now
+                    _sample(proc.pid)
+            if ended is not None:
+                if pending is not None:
+                    sel.unregister(proc.stdin)
+                    _close_pipe(proc.stdin)
+                    pending = None
+                if not any(key.data != 2 for key in sel.get_map().values()) or extra >= POST_EXIT_BYTES or now - ended >= PIPE_GRACE:
+                    cut = extra >= POST_EXIT_BYTES and any(key.data != 2 for key in sel.get_map().values())
+                    break
+            wait = max(0.01, min(0.2, (deadline if ended is None else ended + PIPE_GRACE) - now))
+            if not sel.get_map():
+                try:
+                    proc.wait(timeout=wait)
+                except subprocess.TimeoutExpired:
+                    pass
+                continue
+            for key, _mask in sel.select(wait):
+                if key.data == 2:
+                    try:
+                        pending = pending[os.write(key.fd, pending[:_select.PIPE_BUF]):]
+                    except OSError:
+                        pending = None
+                    if not pending:
+                        sel.unregister(proc.stdin)
+                        _close_pipe(proc.stdin)
+                        pending = None
+                    continue
+                if ended is not None and extra >= POST_EXIT_BYTES:
+                    break
+                try:
+                    data = os.read(key.fd, 65536 if ended is None else min(65536, POST_EXIT_BYTES - extra))
+                except OSError:
+                    data = b""
+                if not data:
+                    sel.unregister(key.fileobj)
+                    continue
+                bufs[key.data].extend(data)
+                if ended is not None:
+                    extra += len(data)
+        if any(key.data != 2 for key in sel.get_map().values()):
+            reap_orphans(_pipe_inodes(proc))
+            settle()
+    finally:
+        sel.close()
         for pipe in (proc.stdin, proc.stdout, proc.stderr):
-            try:
-                if pipe is not None:
-                    pipe.close()
-            except (OSError, ValueError):
-                pass
+            _close_pipe(pipe)
+    if cut:
+        PIPE_CUT["cut"] += 1
+        _note("a process that held a program's pipe after the program ended went on writing: the tool read %d bytes more and let the pipe go" % POST_EXIT_BYTES)
     try:
         proc.wait(timeout=PIPE_GRACE)
     except subprocess.TimeoutExpired:
         pass
-    return out or b"", err or b"", timed_out
+    settle()
+    err = bytes(bufs[1])
+    if note:
+        err = err + (b"\n" if err else b"") + note.encode("utf-8", "replace")
+    return bytes(bufs[0]), err, timed_out
+
+
+def _close_pipe(pipe):
+    try:
+        if pipe is not None:
+            pipe.close()
+    except (OSError, ValueError):
+        pass
 
 
 def kill_all():
     """End every program the tool has running, with what each started. Then everything below the tool itself, which is the tool's own: a
-    program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans)."""
+    program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans).
+    Returns the sentences for what could not be done (also in process_notes())."""
+    notes = []
     for proc in list(ACTIVE):
-        kill_tree(proc)
-    below = descendants(os.getpid())
-    SEEN.update(below)
-    for pid in below:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
+        note = kill_tree(proc)
+        if note:
+            notes.append(note)
+    stopped = {}
+    try:
+        note = _stop_below(os.getpid(), stopped)
+        if note:
+            notes.append(note)
+    finally:
+        _end(stopped)
     reap_orphans()
+    settle(True)     # what the stop ended below the tool is reaped (bounded; settle never raises)
+    return notes
 
 
 def _on_signal(signum, _frame):
@@ -716,14 +1595,86 @@ def install_signal_handlers():
 # END SHARED PROCESS
 
 
-def is_own_journal(path, own_journals=None):
-    """Whether `path`, or the place it really is once every link in it is followed, is under where this machine keeps its own
-    journal (the directory itself, or either spelling of it: a link in /var may lead /var/log elsewhere). A path that is only
-    spelled differently (/var/log/../log/journal, /tmp/x -> /var/log/journal, /proc/self/root/var/log/journal) is the same place."""
-    own_journals = OWN_JOURNALS if own_journals is None else own_journals
-    spellings = {os.path.abspath(path), os.path.realpath(path)}
-    homes = set(own_journals) | {os.path.realpath(o) for o in own_journals}
-    return any(spelling == home or spelling.startswith(home.rstrip(os.sep) + os.sep) for spelling in spellings for home in homes)
+# journal_export's stop is the SHARED PROCESS block above, which has no deferral of a signal during a write; the parts below are written for
+# the stop of LINUX STOP and need these two names, which here do nothing.
+def _writing():
+    pass
+
+
+def _written():
+    pass
+
+
+MACHINE_ID_FILES = ("/etc/machine-id", "/var/lib/dbus/machine-id")
+JOURNAL_MAGIC = b"LPKSHHRH"
+JOURNAL_MACHINE_ID_AT = 40          # the machine_id field of the journal file header (systemd's journal file format: 16 bytes at offset 40)
+MAX_OWN_CHECK_FILES = 200           # how many journal files are read for their machine id
+MAX_OWN_CHECK_ENTRIES = 5000        # how many directory entries are looked at to find them (no link is followed)
+
+
+def this_machines_id():
+    """The 32 hex digits of this machine's id, or None where it cannot be read."""
+    for name in MACHINE_ID_FILES:
+        try:
+            with open(name, "rb") as fh:
+                text = fh.read(64).decode("ascii", "replace").strip().lower()
+        except OSError:
+            continue
+        if re.fullmatch(r"[0-9a-f]{32}", text):
+            return text
+    return None
+
+
+def journal_machine_ids(path):
+    """The machine ids (32 hex digits) that the journal files at `path` carry in their headers: `path` is a journal file or a directory,
+    searched below for files that begin with the journal signature, without following a link, within MAX_OWN_CHECK_FILES files and
+    MAX_OWN_CHECK_ENTRIES entries. An all-zero id is no id."""
+    found, files, entries = set(), 0, 0
+    stack = [path]
+    while stack and files < MAX_OWN_CHECK_FILES and entries < MAX_OWN_CHECK_ENTRIES:
+        here = stack.pop()
+        try:
+            if os.path.isdir(here) and not os.path.islink(here):
+                with os.scandir(here) as listing:
+                    for entry in listing:
+                        entries += 1
+                        if entries >= MAX_OWN_CHECK_ENTRIES:
+                            break
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            stack.append(entry.path)
+                continue
+            if os.path.islink(here) or not os.path.isfile(here):
+                continue
+            files += 1
+            fd = os.open(here, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+            try:
+                head = os.read(fd, JOURNAL_MACHINE_ID_AT + 16)
+            finally:
+                os.close(fd)
+        except (OSError, ValueError):
+            continue
+        if head[:8] == JOURNAL_MAGIC and len(head) >= JOURNAL_MACHINE_ID_AT + 16:
+            ident = head[JOURNAL_MACHINE_ID_AT:JOURNAL_MACHINE_ID_AT + 16]
+            if any(ident):
+                found.add(ident.hex())
+    return found
+
+
+def is_own_journal(path, own_journals=None, machine_id="this machine"):
+    """Whether the journal at `path` (a file, or a directory with journal files below it) is this machine's own: the machine id its files
+    carry in their headers is the id in this machine's /etc/machine-id, or the directory is named by that id (/var/log/journal/<id>).
+    The place is not the test: a run directory under /var/log/journal holds evidence whatever its prefix, and a copy of this machine's own
+    journal is found wherever it was put. Only where this machine's id cannot be read is the old test used, the place (`own_journals`
+    and the places the path is a link to), since nothing else can tell. `machine_id` is this machine's id for a caller that knows it."""
+    mine = this_machines_id() if machine_id == "this machine" else machine_id
+    if mine is None:
+        own_journals = OWN_JOURNALS if own_journals is None else own_journals
+        spellings = {os.path.abspath(path), os.path.realpath(path)}
+        homes = set(own_journals) | {os.path.realpath(o) for o in own_journals}
+        return any(spelling == home or spelling.startswith(home.rstrip(os.sep) + os.sep) for spelling in spellings for home in homes)
+    return os.path.basename(os.path.realpath(path)).lower() == mine or mine in journal_machine_ids(path)
 
 
 def refuse_root_directory(path):
@@ -882,6 +1833,22 @@ def output_file(name):
     fail("no free name for %s in %s" % (name, base))
 
 
+def program_group_problems(what, held=True):
+    """Sentences for the answer's problems from the shared process block's verdict, for an answer that reports `what`. A process settle() ended means what the program
+    wrote (or printed on a pipe it held) was cut where it was ended; where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) files a program
+    wrote cannot be shown to be final. held=False is a tool that reports only what a program printed on a pipe: it is not held to the second rule (program_group still
+    says why), but processes that were adopted and could not all be ended are still named."""
+    verdict = process_verdict()
+    found = []
+    if verdict["left_behind"]:
+        found.append("a program left %d process(es) running after it ended (in the tool's process group, in a session of its own, or after a double fork); the shared process block "
+                     "stopped, killed and reaped them before %s were read, so what they would still have written is missing from %s" % (verdict["left_behind"], what, what))
+    for why in verdict["unproven"]:
+        if held or verdict["subreaper"]:
+            found.append("%s: %s cannot be shown to be final" % (why, what))
+    return found
+
+
 def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, seconds):
     """Run journalctl in this tool's process group (spawn, below: the harness ends a tool by killing its group), with a
     deadline that ends it and what it started. Every byte of stdout goes to `raw_sink` in order; each line within MAX_LINE
@@ -895,6 +1862,7 @@ def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, secon
             fd = proc.stdout.fileno()
             end = time.monotonic() + seconds
             pending, size = [], 0
+            exited, release = None, None
             while True:
                 left = end - time.monotonic()
                 if left <= 0 and not timed_out:
@@ -905,7 +1873,16 @@ def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, secon
                     continue
                 if left <= 0:
                     break
-                ready, _w, _x = select.select([fd], [], [], min(left, 0.5))
+                now = time.monotonic()
+                if release is not None and now >= release:
+                    break           # the holder was ended and the pipe still has no end: it is let go
+                if exited is None and proc.poll() is not None:
+                    exited = now    # counted from journalctl's end whether bytes keep coming or not: a leftover that writes slowly does not hold the tool to its deadline
+                if release is None and exited is not None and now - exited >= PIPE_GRACE:
+                    reap_orphans(_pipe_inodes(proc))
+                    settle()        # a process that holds the pipe is ended (program_group.left_behind), and the pipe gets its end
+                    release = time.monotonic() + 1.0
+                ready, _w, _x = select.select([fd], [], [], min(left, 0.2))
                 if not ready:
                     continue
                 chunk = os.read(fd, 1 << 20)
@@ -942,14 +1919,21 @@ def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, secon
     return proc.returncode, timed_out
 
 
-def first_lines(path, count=20):
+def size_and_sha256(path):
+    """(bytes, sha256 hex) of journalctl's stderr file: the answer names the file and says how long it is and which bytes it holds, and never quotes
+    its lines (they can carry paths and the text of entries). (None, None) where the file cannot be read."""
+    digest, size = hashlib.sha256(), 0
     try:
         with open(path, "rb") as fh:
-            return [l.decode("utf-8", "replace").rstrip("\n") for _, l in zip(range(count), fh)]
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(block)
+                size += len(block)
     except OSError:
-        return []
+        return None, None
+    return size, digest.hexdigest()
 
 
+# BEGIN LINUX IMAGE
 # ---- A disk image given where this tool reads a file or an extracted root (the same in every such tool of this pack) ----
 
 # What linux_triage takes as an image: these first bytes, or one of its names with a boot sector's signature at 510.
@@ -982,6 +1966,7 @@ def refuse_disk_image(path, key):
     named = path.lower().endswith(IMAGE_SUFFIXES)
     if any(head[o:o + len(m)] == m for o, m in IMAGE_MAGIC) or (named and head[510:512] == b"\x55\xaa"):
         fail("%s is a disk image: %s" % (key, IMAGE_ROUTES), **{key: path})
+# END LINUX IMAGE
 
 
 def main():
@@ -1028,7 +2013,15 @@ def main():
         fail("grep is refused outside a job: it matches the text of the messages, which this answer withholds, so a count of what "
              "it matched would be an oracle on that text. Run this as job_run tool=journal_export with secret_output: true, and ask again there.")
     for name in ("unit", "grep", "priority", "since", "until"):
-        want_str(args, name)
+        given = want_str(args, name)
+        if given is not None:
+            # These become arguments of journalctl: a NUL byte or a lone surrogate cannot be one (it would end the call with a traceback).
+            try:
+                given.encode("utf-8")
+            except UnicodeEncodeError:
+                fail("%s holds a character that is not text (a lone surrogate): journalctl cannot be given it" % name)
+            if "\x00" in given:
+                fail("%s holds a NUL byte: journalctl cannot be given it" % name)
     bounds = {}
     for key in ("since", "until"):
         if args.get(key):
@@ -1065,13 +2058,16 @@ def main():
                 code, timed_out = run_journalctl(argv, sink.write, lambda raw: None, lambda size: None, err_path, max(1.0, seconds - (time.monotonic() - started)))
         except OSError as exc:
             fail("journalctl could not be run: %s" % describe(exc), argv=argv)
-        outcome = status_of(not timed_out, False,
+        # the output is journalctl's, copied from the pipe by this tool, and its stderr is a file journalctl wrote: a process it left behind (ended by settle() before the files were
+        # sized and hashed), or one that cannot be ruled out (not Linux, PR_SET_CHILD_SUBREAPER refused), keeps the answer from `complete`
+        group = program_group_problems("the output and the stderr file")
+        outcome = status_of(not timed_out and not group, False,
                             "journalctl --verify ran to its end; its exit code and whole output are kept (a clean result is not a complete journal)",
-                            "journalctl --verify did not finish within max_seconds: the output so far is kept", "")
+                            "; ".join((["journalctl --verify did not finish within max_seconds: the output so far is kept"] if timed_out else []) + group), "")
         print(json.dumps({
-            "parser": PARSER, "mode": "verify", **outcome, "path": path, "argv": argv, "exit_code": code, "timed_out": timed_out,
+            "parser": PARSER, "mode": "verify", **outcome, "program_group": process_verdict(), "problems": group, "path": path, "argv": argv, "exit_code": code, "timed_out": timed_out,
             "verify": {"output_file": out_shown, "output_bytes": os.path.getsize(out_path), "stderr_file": err_shown,
-                       "stderr_bytes": os.path.getsize(err_path), "stderr_first_lines": first_lines(err_path)},
+                       "stderr_bytes": size_and_sha256(err_path)[0], "stderr_sha256": size_and_sha256(err_path)[1]},
             "claims": "journalctl --verify checks the internal, structural consistency of the journal files it was given, and, "
                       "for a sealed journal with the verification key, the seal. The exit code and the whole output are kept.",
             "does_not_show": "that no journal file or entry is missing or was removed, that the host kept a persistent journal, "
@@ -1165,17 +2161,25 @@ def main():
     text.close()
     stderr_bytes = os.path.getsize(err_path)
     if code != 0 and not timed_out and st["entries"] == 0:
-        fail("journalctl refused this journal", exit_code=code, stderr_file=err_shown, stderr_first_lines=first_lines(err_path), argv=argv)
+        stderr_size, stderr_digest = size_and_sha256(err_path)
+        fail("journalctl refused this journal", exit_code=code, stderr_file=err_shown, stderr_bytes=stderr_size, stderr_sha256=stderr_digest, argv=argv)
     pages = {"records": page.finish()}
-    complete = code == 0 and not timed_out and st["bad_count"] == 0
+    capped = capped_why(pages, text)
+    # the native export is journalctl's output copied from the pipe by this tool, and its stderr is a file journalctl wrote: a process it left behind (ended by settle() before the
+    # files were sized and hashed), or one that cannot be ruled out (not Linux, PR_SET_CHILD_SUBREAPER refused), keeps the answer from `complete`
+    group = program_group_problems("the export and the stderr file")
+    complete = code == 0 and not timed_out and st["bad_count"] == 0 and not capped and not group
     outcome = status_of(
         complete, False,
         "journalctl exited 0 within the deadline and every line it wrote parsed; this says nothing about journal files that were not in "
         "what you collected, or entries rotated away or never written",
-        "journalctl exited %s%s and %d line(s) did not parse: what was read is kept and the files are named" % (code, " after the deadline" if timed_out else "", st["bad_count"]), "")
+        "journalctl exited %s%s and %d line(s) did not parse%s: what was read is kept and the files are named"
+        % (code, " after the deadline" if timed_out else "", st["bad_count"], "; " + capped if capped else "") + ("; " + "; ".join(group) if group else ""), "")
     print(json.dumps({
         "parser": PARSER,
         "mode": "export",
+        "program_group": process_verdict(),
+        "problems": group,
         "path": path,
         "argv": argv,
         "time_bounds": {**bounds, "interpretation": "as written, with its own zone"} if bounds else None,
@@ -1195,7 +2199,7 @@ def main():
         "parse_errors": {"count": st["bad_count"], "first": st["bad"], "oversized_lines": st["oversized"]},
         "entries_with_a_boot_id_that_is_not_text": st["boot_not_text"],
         "entries_with_a_boot_id_over_%d_characters" % MAX_BOOT_ID: st["boot_overlong"],
-        "stderr": {"file": err_shown, "bytes": stderr_bytes, "first_lines": first_lines(err_path)},
+        "stderr": {"file": err_shown, "bytes": stderr_bytes, "sha256": size_and_sha256(err_path)[1]},
         "records": preview_rows if preview_text else page.page,
         "record_count": pages["records"]["matched"],
         "pages": pages,

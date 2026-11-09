@@ -11,6 +11,7 @@ import { compact, dateTime, liveElapsed, money, providerGlyph, shortDuration } f
 import { useNow } from "@/lib/hooks";
 import { useLive, useResource } from "@/lib/live";
 import type { SwarmRow } from "@/lib/types";
+import { meteringWords } from "@/lib/metering";
 import { cn } from "@/lib/utils";
 import { harnessStopLabel, isCertifiedDone, isHarnessStop, phaseGroup, reachedDone } from "@/lib/overview-status";
 
@@ -26,6 +27,7 @@ function FleetBand({ rows }: { rows: SwarmRow[] }) {
   // cap to count, and saying "$0.00 of $0.00" about it would be a lie twice.
   const metered = rows.filter((r) => r.metered !== false);
   const free = rows.length - metered.length;
+  const subscribed = rows.filter((r) => r.metered === false && r.unmetered_why === "subscription").length;
   const spent = metered.reduce((a, r) => a + r.spent_usd, 0);
   const cap = metered.reduce((a, r) => a + r.cap_usd, 0);
   const violations = rows.reduce((a, r) => a + r.violations, 0);
@@ -48,7 +50,7 @@ function FleetBand({ rows }: { rows: SwarmRow[] }) {
       <div className="mx-auto grid w-full max-w-[1680px] grid-cols-2 gap-y-5 px-4 py-[26px] sm:px-10 lg:grid-cols-4" aria-label="Fleet vitals">
         {cell("Running now", String(running.length), `of ${rows.length} swarm${rows.length === 1 ? "" : "s"}`)}
         {cell("Agents working", String(working), `· ${done} done · ${dead} dead${vmRunning.length ? ` · ${vmsUp} in VMs${hubsDown ? ` · ${hubsDown} hub${hubsDown === 1 ? "" : "s"} DOWN` : ""}` : ""}`)}
-        {cell("Spend across the fleet", money(spent, 2), `of ${money(cap, 2)} in caps${free ? ` · ${free} free` : ""}`)}
+        {cell("Spend across the fleet", money(spent, 2), `of ${money(cap, 2)} in caps${free ? ` · ${free - subscribed ? `${free - subscribed} unmetered` : ""}${free - subscribed && subscribed ? ", " : ""}${subscribed ? `${subscribed} on a subscription` : ""}` : ""}`)}
         {cell("Harness interventions", String(violations + capStops), `· ${violations} blocked · ${capStops} cap stop${capStops === 1 ? "" : "s"}`, true)}
       </div>
     </VitalsBand>
@@ -80,6 +82,7 @@ function statusChip(row: SwarmRow, now: number) {
 function SwarmLine({ row, now }: { row: SwarmRow; now: number }) {
   const overCap = overCapOf(row);
   const free = row.metered === false;
+  const metering = meteringWords(row);
   const pct = free ? (row.cap_tokens > 0 ? (row.tokens / row.cap_tokens) * 100 : 0) : row.cap_usd > 0 ? (row.spent_usd / row.cap_usd) * 100 : 0;
   const certified = isCertifiedDone(row);
   const last = row.last_post;
@@ -154,7 +157,7 @@ function SwarmLine({ row, now }: { row: SwarmRow; now: number }) {
         <span className={cn("text-[12.5px]", overCap ? "text-brick-ink" : "text-ink-2")}>
           {free ? (
             <>
-              free · <span className="font-mono">{compact(row.tokens)}</span> of {row.cap_tokens > 0 ? `${compact(row.cap_tokens)} tokens` : "no token cap"} · {overCap ? "over cap" : row.cap_tokens > 0 ? `${Math.round(pct)}%` : "local"}
+              {metering.label} · <span className="font-mono">{compact(row.tokens)}</span> of {row.cap_tokens > 0 ? `${compact(row.cap_tokens)} tokens` : "no token cap"} · {overCap ? "over cap" : row.cap_tokens > 0 ? `${Math.round(pct)}%` : "local"}
             </>
           ) : (
             <>

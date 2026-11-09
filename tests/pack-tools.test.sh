@@ -262,7 +262,7 @@ out = record(40, 1, True, [
 open(sys.argv[1], "wb").write(out)
 EOF
 
-got="$(echo "{\"path\":\"$WORK/MFT\",\"with_resident\":true}" | run_tool "$WIN/tools/mft_records")"
+got="$(echo "{\"path\":\"$WORK/MFT\",\"with_resident\":true}" | SECRET_OUTPUT=1 run_tool "$WIN/tools/mft_records")"
 echo "$got" | "$PY" -c '
 import json, sys
 d = json.load(sys.stdin)
@@ -529,7 +529,8 @@ carve work/c.bin >/dev/null || fail "file_carver refused an output under work/"
 # mem_carve writes only inside an agent's own directory, the one its VM may write.
 memc work/m >/dev/null 2>&1 && fail "mem_carve wrote into work/ itself rather than an agent's directory"
 memc work/a1/m >/dev/null || fail "mem_carve refused an extract_to under work/<agent>/"
-plaso work/p >/dev/null || fail "timeline_super refused an out_dir under work/"
+# a host that cannot adopt orphaned processes (not Linux) answers partial (exit 1) for a clean run: what matters here is that the out_dir was accepted
+plaso work/p >/dev/null || { [[ "$(uname -s)" != Linux && -d "$OUT/run/work/p" ]]; } || fail "timeline_super refused an out_dir under work/"
 [[ -s "$OUT/run/work/c.bin" && -n "$(ls "$OUT/run/work/a1/m")" && -f "$OUT/run/work/p/timeline.plaso" ]] || fail "outputs under work/ were not written"
 cmp -s "$BASE/tools/file_carver/run.py" "$ROOT/tool-library/file_carver/run.py" || fail "the tool-library copy of file_carver has drifted from the pack's"
 pass "file_carver, mem_carve and timeline_super write under the run directory and never under inputs/"
@@ -541,7 +542,8 @@ pass "file_carver, mem_carve and timeline_super write under the run directory an
 chmod a-w "$OUT/run"
 got="$(plaso work/ro 2>&1)"; rc=$?
 chmod u+w "$OUT/run"
-[[ "$rc" -eq 0 ]] || fail "timeline_super should run with the run directory read-only: $got"
+# (a host that cannot adopt orphaned processes answers partial for a clean run, which is exit 1: the logs below are still the proof that it ran)
+{ [[ "$rc" -eq 0 ]] || [[ "$(uname -s)" != Linux && "$rc" -eq 1 ]]; } || fail "timeline_super should run with the run directory read-only: $got"
 [[ -s "$OUT/run/work/ro/log2timeline.log.gz" && -s "$OUT/run/work/ro/psort.log.gz" ]] || fail "timeline_super should keep each step's log in out_dir (--logfile): $(ls "$OUT/run/work/ro")"
 [[ -z "$(find "$OUT/run" -maxdepth 1 -name '*.log.gz')" ]] || fail "timeline_super let Plaso write its log in the run directory"
 jq -e '.logs | length == 2' <<<"$got" >/dev/null || fail "timeline_super should name the logs it kept: $got"
@@ -698,13 +700,16 @@ import hashlib, json, os, sys
 d, run = json.loads(sys.argv[1]), sys.argv[2]
 # forty rules and the one the stand-in always fires
 assert d["detection_count"] == 41 and d["returned"] == 5 and d["truncated"], d
-assert len(d["rules_that_fired"]) == 41 and d["rules_fired"] == 41, d["rules_that_fired"]
+# the rules shown inline are a page of `limit`; every rule that fired is in the file the answer names
+assert len(d["rules_that_fired"]) == 5 and d["rules_fired"] == 41, d["rules_that_fired"]
 wide = [x for x in d["detections"] if x["rule"].startswith("Rule ")]
 assert wide and all(len(x["detail"]) == 15 for x in wide), d["detections"]
 def named(ref):
     data = open(os.path.join(run, ref["path"]), "rb").read()
     assert ref["bytes"] == len(data) and ref["sha256"] == hashlib.sha256(data).hexdigest(), ref
     return data
+fired = named(d["rules_fired_file"]).decode().splitlines()
+assert len(fired) == 41 == d["rules_fired_file"]["rows"], len(fired)
 rows = [json.loads(l) for l in named(d["all_detections"]).decode().splitlines()]
 assert len(rows) == 41 == d["all_detections"]["rows"], len(rows)
 assert sum(1 for r in rows if len(r["detail"]) == 15) == 40, rows
@@ -794,7 +799,8 @@ ulog x.logarchive a > "$UL/a.json" || fail "unified_log could not run unifiedlog
 "$PY" -c '
 import json, sys
 r = json.load(open(sys.argv[1]))
-assert r["engine"] == "unifiedlog_iterator" and r["status"] == "complete" and r["entry_count"] == 3, r
+# (a host that cannot adopt the orphans of a program, macOS, answers partial and says why: the engine, the entries and the file are what this case is about)
+assert r["engine"] == "unifiedlog_iterator" and r["status"] == ("complete" if sys.platform == "linux" else "partial") and r["entry_count"] == 3, r
 first = json.loads(open(sys.argv[2] + "/" + r["output"]).readline())
 assert first["input"] == "x.logarchive" and first["argv"][first["argv"].index("--format") + 1] == "jsonl", first
 ' "$UL/a.json" "$UL/run" || fail "unified_log did not give unifiedlog_iterator the .logarchive and keep its JSONL"

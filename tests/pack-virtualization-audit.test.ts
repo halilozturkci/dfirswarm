@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { AUDIT, CANARY, asJob, body, everythingBut, filesUnder, json, put, refused, rowsOf, tool, withCwd } from "./pack-virtualization-harness.ts";
 import type { Json } from "./pack-virtualization-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const hex = (n: number, width = 8): string => n.toString(16).toUpperCase().padStart(width, "0");
 
@@ -87,7 +88,8 @@ test("byte offsets and lengths find each line in the evidence; CRLF, a missing f
       assert.match(slice, /^UPID:/, `event ${e.seq} starts where its locator says`);
     }
     assert.equal(out.events.length, 4);
-    assert.equal(out.events[2].object.startsWith("caf"), true, "non-UTF-8 bytes are escapes, not a crash");
+    // CHANGED with the one text: a name holding a lone surrogate (what a non-UTF-8 byte becomes) is withheld whole as invisible characters in a name; it was shown with the bytes escaped
+    assert.match(out.events[2].object, /^<withheld \d+ characters: invisible characters in a name>$/, "non-UTF-8 bytes in a name are withheld, not a crash");
     assert.equal(out.events[3].result, "unknown");
   });
 });
@@ -399,14 +401,14 @@ test("names the answer shows are shape-checked: an actor, an object, a host, a r
     const timeRun = await tool(AUDIT, cwd, { path: "inputs/y.csv", format: "declared_csv", mapping: { time: "t", action: "a" } });
     const timeOut = body(timeRun);
     for (const needle of [C.github, C.aws, C.hex]) assert.equal(timeRun.stdout.includes(needle), false, "a raw time that looks like a token is withheld too");
-    assert.match(timeOut.events[0].time_raw, /<(?:token-shaped text withheld \d+ characters|withheld: \d+ bytes, field time_raw)>/);
+    assert.match(timeOut.events[0].time_raw, /<(?:token-shaped text withheld \d+ characters|withheld \d+ characters: token-shaped text)>/);
     await put(cwd, "inputs/x.csv", `t,a,o,u,h,r,j\n2024-01-05T02:00:00Z,run,/srv/${C.aws}/${C.hex},${C.github},host-${C.hex},fail ${C.userinfo}@h,job-${C.aws}\n`);
     const run = await tool(AUDIT, cwd, { path: "inputs/x.csv", format: "declared_csv", mapping: { time: "t", action: "a", object: "o", actor: "u", host: "h", result: "r", job: "j" } });
     const out = body(run);
     const all = await everythingBut(cwd, run.stdout + run.stderr, []);
     for (const needle of [C.github, C.aws, C.hex, "S3cr3tPassw0rd"]) assert.equal(all.includes(needle), false, needle.slice(0, 6));
     assert.ok(out.withheld.strings_changed >= 4);
-    assert.match(out.events[0].actor, /<token-shaped text withheld \d+ characters>/);
+    assert.match(out.events[0].actor, /<(?:token-shaped text withheld \d+ characters|withheld \d+ characters: token-shaped text)>/);
   });
 });
 
@@ -464,7 +466,7 @@ test("a declared XML record is bounded in bytes: one record of many large childr
   await withCwd(async (cwd) => {
     const big = "x".repeat(1 << 20);
     await put(cwd, "inputs/big.xml", `<A><R when="2024-01-05T02:00:00Z"><Op>a</Op></R><R when="2024-01-05T03:00:00Z">${`<T>${big}</T>`.repeat(60)}<Op>b</Op></R><R when="2024-01-05T04:00:00Z"><Op>c</Op></R></A>`);
-    const wrapper = "import os,sys,resource\npid=os.fork()\nif pid==0:\n os.execvp('python3',['python3',sys.argv[1]])\n_,st,ru=os.wait4(pid,0)\nsys.stderr.write('RSS %d\\n' % ru.ru_maxrss)\nsys.exit(os.waitstatus_to_exitcode(st))\n";
+    const wrapper = peakRssPrelude() + "p, peak = run_peak(['python3', sys.argv[1]])\nsys.stderr.write('RSS %d\\n' % peak)\nsys.exit(p.returncode)\n";
     const run = await new Promise<{ stdout: string; stderr: string }>((resolve) => {
       const child = spawn("python3", ["-c", wrapper, AUDIT], { cwd, env: { ...process.env, AGENT_ID: "s1" } });
       const o: Buffer[] = [], e: Buffer[] = [];
@@ -480,7 +482,7 @@ test("a declared XML record is bounded in bytes: one record of many large childr
     assert.equal(out.problem_lines[0].record, 2);
     assert.equal(out.status, "partial");
     const raw = Number(/RSS (\d+)/.exec(run.stderr)?.[1] ?? 0);
-    const mb = process.platform === "darwin" ? raw / (1 << 20) : raw / 1024;
+    const mb = raw / (1 << 20);
     assert.ok(mb < 160, `resident size ${mb.toFixed(0)} MB`);
   });
 });

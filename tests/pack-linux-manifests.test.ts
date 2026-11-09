@@ -14,7 +14,7 @@ import type { Json } from "./linux-pack-harness.ts";
 test("every manifest says what its tool reads, the sha256 of its script, and a version above the one before", async () => {
   const expected: Record<string, { names?: string[]; magic?: string[]; extensions?: string[] }> = {
     auth_log: { names: ["auth.log*", "secure*"] },
-    utmp_parse: { names: ["utmp", "wtmp", "btmp", "lastlog", "wtmp.*", "btmp.*", "lastlog.*"] },
+    utmp_parse: { names: ["utmp", "wtmp", "btmp", "lastlog", "wtmp.*", "btmp.*", "lastlog.*", "wtmp.db", "lastlog2.db"] },
     shell_history: { names: [".bash_history", ".zsh_history", ".sh_history", ".ash_history", ".history", ".python_history", ".mysql_history", ".psql_history", ".rediscli_history", ".node_repl_history", "fish_history"] },
     cron_dump: { names: ["crontab", "*.timer"] },
     journal_export: { extensions: [".journal", ".journal~"], magic: ["4c504b5348485248"] },
@@ -28,6 +28,20 @@ test("every manifest says what its tool reads, the sha256 of its script, and a v
     const script = await readFile(join(TOOLS, name, "run.py"));
     assert.equal(manifest.sha256, createHash("sha256").update(script).digest("hex"), `${name} sha256`);
     assert.ok(manifest.version >= 4 || name === "linux_triage" || name === "cron_dump", `${name} version raised`);
+  }
+});
+
+test("every tool of the pack says its own manifest version in PARSER, so a record's provenance names the behaviour that made it", async () => {
+  // `docs/packs.md` asks a record's provenance to carry the parser's name and version. The tools are found by walking tools/.
+  const { readdir } = await import("node:fs/promises");
+  const names = (await readdir(TOOLS, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  assert.ok(names.length >= 6, `${names.length} tools found`);
+  for (const name of names) {
+    const manifest = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
+    const script = await readFile(join(TOOLS, name, "run.py"), "utf8");
+    const parsers = [...script.matchAll(/^PARSER = "([^"]*)"$/gm)].map((m) => m[1]);
+    assert.deepEqual(parsers, [`${manifest.name}/${manifest.version}`], `${name}: PARSER and the manifest's version`);
+    assert.equal(manifest.name, name);
   }
 });
 

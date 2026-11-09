@@ -421,3 +421,85 @@ test("the job service's own journal is read: a declared job, a job that named on
   assert.equal(prov.roots[0].used_by.find((c) => c.node.job === declared.id)?.node.used_by[0].node.job, chained.id);
   assert.equal(prov.roots[0].used_by.find((c) => c.node.job === declared.id)?.node.used_by[0].node.claims.length, 1);
 });
+
+// --- the recorded ways held to the scope manifest of their job (PKG-ACC-01) ---------------------------------------
+
+/** The fixture's files with its journal rewritten line by line: `edit` gets each parsed line and returns it, another, or null to drop it. */
+async function scoped(edit: (line: Record<string, unknown>) => Record<string, unknown> | null, more: (files: Record<string, string>) => void = () => undefined): Promise<Fixture> {
+  const base = await tempBase("access-scope-");
+  dirs.push(base);
+  const files = fixtureFiles();
+  const kept: unknown[] = [];
+  for (const l of files["run1/store/journal.jsonl"].trim().split("\n")) {
+    const out = edit(JSON.parse(l) as Record<string, unknown>);
+    if (out) kept.push(out);
+  }
+  files["run1/store/journal.jsonl"] = jl(...kept);
+  more(files);
+  return { base, S: await writeFiles(base, files) };
+}
+
+const kinds = async (S: string) => (await verifyAccess(S)).scope_disagreement.map((d) => [d.job, d.how, d.kind]);
+
+test("each recorded way is held to the scope manifest of its job_started: the fixture agrees, and each kind of disagreement is told on its own", async () => {
+  const { S } = await fixture();
+  const v = await verifyAccess(S);
+  assert.deepEqual([v.scope_disagreement, v.scope_disagreement_total, v.incomplete, v.sensitive_jobs], [[], 0, null, 4], "declared, digest and text ways all agree with their jobs' manifests (or lack of one)");
+
+  // The manifest does not hold the object the record says matched.
+  const moved = await scoped((l) => (l.type === "job_committed" && l.job === "j000034" ? { ...l, sensitive: { ...(l.sensitive as object), because: [{ from: "j000001", how: "declared", object: "store/jobs/j000001/out/other.jsonl" }] } } : l));
+  assert.deepEqual(await kinds(moved.S), [["j000034", "declared", "object_not_in_manifest"]]);
+  assert.equal((await verifyAccess(moved.S)).ok, false);
+  assert.equal((await verifyAccess(moved.S)).scope_disagreement[0].object, "store/jobs/j000001/out/other.jsonl");
+
+  // A way that needs a declared scope, and a job_started that names none; or no job_started at all.
+  const noScope = await scoped((l) => (l.type === "job_started" && l.job === "j000034" ? { ...l, scope: { kind: "all" } } : l));
+  assert.deepEqual(await kinds(noScope.S), [["j000034", "declared", "no_manifest"]]);
+  const noStart = await scoped((l) => (l.type === "job_started" && l.job === "j000040" ? null : l));
+  const ns = await verifyAccess(noStart.S);
+  assert.deepEqual(ns.scope_disagreement.map((d) => [d.kind, d.why]), [["no_manifest", "no job_started line for the job"]]);
+
+  // A way that is only for a job with no scope (the text named it), and a job_started that names a manifest: on `because` and on `auto_declared`.
+  const textWithScope = await scoped((l) => (l.type === "job_started" && l.job === "j000037" ? { ...l, scope: { ...(l.scope as object), manifest: "store/jobs/j000037/scope.1.json", manifest_sha256: sha("x") } } : l));
+  assert.deepEqual((await kinds(textWithScope.S)).sort(), [["j000037", "auto_declared", "scope_declared"], ["j000037", "named_in_text", "scope_declared"]]);
+
+  // The manifest is changed after the start recorded its hash; is not there; is a link; is a FIFO; is too large; is not JSON.
+  const changed = await scoped((l) => l, (f) => (f["run1/store/jobs/j000034/scope.1.json"] += " "));
+  assert.deepEqual((await verifyAccess(changed.S)).scope_disagreement.map((d) => [d.job, d.kind, d.why]), [["j000034", "manifest_unverified", "the manifest does not hash to scope.manifest_sha256"]]);
+  const gone = await scoped((l) => l, (f) => delete f["run1/store/jobs/j000034/scope.1.json"]);
+  assert.deepEqual((await verifyAccess(gone.S)).scope_disagreement.map((d) => [d.job, d.kind, d.why]), [["j000034", "manifest_unverified", "the manifest is not there"]]);
+  const text = "not json\n";
+  const notJson = await scoped((l) => (l.type === "job_started" && l.job === "j000034" ? { ...l, scope: { ...(l.scope as object), manifest_sha256: sha(text) } } : l), (f) => (f["run1/store/jobs/j000034/scope.1.json"] = text));
+  assert.deepEqual((await verifyAccess(notJson.S)).scope_disagreement.map((d) => d.why), ["the manifest is not a JSON object"]);
+
+  const linked = await scoped((l) => l, (f) => delete f["run1/store/jobs/j000034/scope.1.json"]);
+  await symlink("/etc/hostname", join(linked.S, "store/jobs/j000034/scope.1.json"));
+  assert.deepEqual((await verifyAccess(linked.S)).scope_disagreement.map((d) => d.why), ["the manifest is not a regular file"]);
+  const fifo = await scoped((l) => l, (f) => delete f["run1/store/jobs/j000034/scope.1.json"]);
+  assert.equal(spawnSync("mkfifo", [join(fifo.S, "store/jobs/j000034/scope.1.json")]).status, 0);
+  const t0 = Date.now();
+  assert.deepEqual((await verifyAccess(fifo.S)).scope_disagreement.map((d) => d.why), ["the manifest is not a regular file"]);
+  assert.ok(Date.now() - t0 < 5000, "a FIFO where the manifest should be is told, not opened");
+  const big = await scoped((l) => l, (f) => delete f["run1/store/jobs/j000034/scope.1.json"]);
+  assert.equal(spawnSync("truncate", ["-s", "70M", join(big.S, "store/jobs/j000034/scope.1.json")]).status, 0);
+  assert.deepEqual((await verifyAccess(big.S)).scope_disagreement.map((d) => d.why), ["the manifest is larger than the check reads"]);
+});
+
+test("the check keeps to the caller's clock: a stop ends it as incomplete, in the trace and between the manifests, and says so", async () => {
+  const { S } = await fixture();
+  const between = await verifyAccess(S, { stop: () => true });
+  assert.equal(between.incomplete, "the deadline passed while the scope manifests were read");
+  assert.equal(between.ok, false);
+  const rows = Array.from({ length: 600 }, (_, i) => traceRow("agent-2", i + 1, "read", { path: "store/jobs/j000010/out/x" }, T(10)));
+  const long = await fixture({ trace: rows });
+  const inTrace = await verifyAccess(long.S, { stop: () => true });
+  assert.equal(inTrace.incomplete, "the deadline passed while the trace was read");
+  assert.equal(inTrace.ok, false);
+  assert.equal((await verifyAccess(long.S)).incomplete, null, "no stop: all of it is read");
+});
+
+test("the command line tells a disagreement with the scope manifest and an unfinished check", async () => {
+  const moved = await scoped((l) => (l.type === "job_committed" && l.job === "j000034" ? { ...l, sensitive: { ...(l.sensitive as object), because: [{ from: "j000001", how: "declared", object: "store/jobs/j000001/out/other.jsonl" }] } } : l));
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", SCRIPT, moved.S, "--verify"], { encoding: "utf8" });
+  assert.match(r.stdout, /Verification against the trace: differences.*1 recorded way\(s\) a job was made from a sensitive output do not agree with the scope manifest of its job_started/);
+});

@@ -519,7 +519,7 @@ test("write_values is refused outside a job, with nothing written; in a job an e
     const file = (await filesUnder(join(cwd, "out"))).find((f) => f.endsWith("doc-structure-values.jsonl"))!;
     assert.equal(((await stat(join(cwd, "out", file))).mode & 0o777), 0o600);
     assert.equal((await readFile(join(cwd, "out", file))).length, 0);
-    const second = refused(await tool(DOC_STRUCTURE, cwd, { path: "work/v.bin", write_values: true }, { JOB_ID: "j000001", OUT: join(cwd, "out") }));
+    const second = refused(await tool(DOC_STRUCTURE, cwd, { path: "work/v.bin", write_values: true }, { JOB_ID: "j000001", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" }));
     assert.match(second.error, /already exists/);
   });
 });
@@ -546,7 +546,7 @@ test("things that are not documents are JSON: unsupported formats, empty files, 
   await withCwd(async (cwd) => {
     await put(cwd, "work/junk.bin", Buffer.from("this is not a document at all"));
     const unsup = refused(await tool(DOC_STRUCTURE, cwd, { path: "work/junk.bin" }));
-    assert.equal(unsup.status, "unsupported");
+    assert.equal(unsup.status, "failed");
     await put(cwd, "work/empty.bin", "");
     assert.match(refused(await tool(DOC_STRUCTURE, cwd, { path: "work/empty.bin" })).error, /empty/);
     assert.match(refused(await tool(DOC_STRUCTURE, cwd, { path: "work" })).error, /not a regular file/);

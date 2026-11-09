@@ -1,0 +1,67 @@
+name: pinned downloads
+
+# Once a week, every URL a pack pins (packs/*/requires/host.json: downloads,
+# sources, builds, data and their patches) is asked with HEAD, and a URL that
+# names no version (Eric Zimmerman's net/<tool>.zip, which upstream replaces at
+# the same address) is fetched and its sha256 compared. A pin that rotted or
+# changed fails the run and is named in the job summary, so it is found here
+# and not by the next pull request's image build. Re-pinning is a manual change:
+# images/README.md, "Re-pinning a download". A failed scheduled run opens one
+# tracking issue labelled ci-failure (or comments on the open one), the next
+# green one closes it (scripts/ci-report-failure.sh, as ci.yml and
+# image-boot.yml do); a run by hand is not reported.
+
+on:
+  schedule:
+    # Mondays at 04:41 UTC.
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check the pins
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: HEAD every pin, fetch the ones that name no version
+        run: |
+          set -o pipefail
+          status=0
+          node --experimental-strip-types scripts/check-pins.ts | tee pins.txt || status=$?
+          {
+            echo "## Pinned downloads"
+            echo
+            echo '```'
+            cat pins.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+  report-failure:
+    name: tracking issue for a failed run
+    needs: [check]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open or comment on the tracking issue, or close it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW: ${{ github.workflow }}
+        run: bash scripts/ci-report-failure.sh

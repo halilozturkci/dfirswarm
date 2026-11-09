@@ -230,7 +230,7 @@ test("P2-2 the cheap pre-test of the secret-named key rule holds every name the 
   }
 });
 
-test("P2-2 the secret-named key rule and the element rule take time linear in the text: 128 KB and 512 KB of each hostile shape, the larger at most 8 times the smaller (never taken as less than 0.05 s; best CPU time of up to three rounds), and none over 5 s", () => {
+test("P2-2 the secret-named key rule and the element rule take time linear in the text: 128 KB and 512 KB of each hostile shape, the larger at most 8 times the smaller (never taken as less than 0.05 s; median CPU time of three rounds), and none over 5 s", () => {
   for (const path of COPIES) {
     const r = py(path, [
       GROWTH_PY,

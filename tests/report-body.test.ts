@@ -20,6 +20,8 @@ import { after, test } from "node:test";
 import { humanReviewFrom, parseGoal, renderReportBody, renderReportBodyMarkdown, reportBodyDocument, type HumanReview } from "../scripts/report-body.ts";
 import type { ReviewState } from "../scripts/report.ts";
 import { ledgerHash, type LedgerEntry } from "../extensions/protocol.ts";
+import { HARNESS_READS_SENTENCE, LOWER_BOUND_SENTENCE } from "../scripts/sensitive-access.ts";
+import { T, fixtureFiles, jl, writeFiles } from "./sensitive-access-fixture.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE = join(ROOT, "tests", "fixtures", "ledger-v4");
@@ -563,4 +565,74 @@ test("§4 says how the investigation proceeded: each finding, the leads it opene
   assert.match(mdSlice(md, "### How the investigation proceeded"), /Review: attested by a2\./);
   const html = await renderReportBody(d);
   assert.match(html.html ?? JSON.stringify(html), /How the investigation proceeded/);
+});
+
+// --- Sensitive outputs and who used them (PKG-ACC-02) ------------------------------------------------------------
+
+/** The access-record fixture as a run the body can render: job records, a team with models, a custody verdict that says microVM. */
+async function accessRun(o: { sensitive?: boolean } = {}): Promise<string> {
+  const base = await tempDir();
+  const files = fixtureFiles();
+  if (o.sensitive === false) {
+    files["run1/store/journal.jsonl"] = jl({ v: 1, seq: 0, at: T(0), type: "job_accepted", job: "j000010", spec: { kind: "command" }, requester: { agent: "agent-2" } });
+    delete files["run1/store/jobs/j000001/manifest.json"];
+  }
+  for (const [id, spec, agent] of [["j000001", { kind: "tool", tool: "extract-keys" }, "agent-2"], ["j000034", { kind: "command", command: "openssl x509" }, "agent-3"], ["j000037", { kind: "command", command: "cat store/jobs/j000001/out/values.jsonl" }, "agent-4"], ["j000040", { kind: "command", command: "wc" }, "agent-3"]] as const) {
+    files[`run1/store/jobs/${id}/job.json`] = JSON.stringify({ id, spec, status: "ok", requester: { agent } });
+  }
+  files["run1/team.json"] = JSON.stringify({ swarm_id: "run1", n: 3, agents: [{ id: "agent-2", model: "model-two" }, { id: "agent-3", model: "model-three" }, { id: "agent-4", model: "model-four" }] });
+  files["run1/custody.json"] = JSON.stringify({ at: T(40), isolation: "microvm", summary: "s" });
+  return writeFiles(base, files);
+}
+
+test("the report body has the section 'Sensitive outputs and who used them': per job, who asked, why it is sensitive, who read it, the jobs made from it, the entries that cite it, the operator's views", async () => {
+  const S = await accessRun();
+  const body = await renderReportBody(S);
+  const limits = body.sections.find((s) => s.title === "The limits of this run" || s.html.includes("Sensitive outputs and who used them"));
+  assert.ok(limits, "the section is in the report");
+  const md = await renderReportBodyMarkdown(S);
+  const sec = mdSlice(md, "### Sensitive outputs and who used them");
+  assert.match(sec, /4 jobs of this run are sensitive/);
+  assert.match(sec, /Job j000001/);
+  assert.match(sec, /asked for by agent-2, under no lead the register holds/);
+  assert.match(sec, /Sensitive because[^\n]*run as secret output: the seat that asked for it marked its output secret/);
+  assert.match(sec, /Read by[^\n]*agent-2 \(model-two, on its own microVM\): 1 time, first 2026-10-21 14:10:01, last 2026-10-21 14:10:01; through a path it was given; a named path; observed by the harness/);
+  assert.match(sec, /Made into[^\n]*job j000034 took it as an input \(declared\), asked for by agent-3; a link the harness verified/);
+  assert.match(sec, /Operator's views[^\n]*examiner@h1: 1 view in the console/);
+  assert.match(sec, /Cited by[^\n]*E-57 by agent-3 cites it: the agent's own claim that it opened it, not something the harness observed/);
+  assert.match(sec, /Sensitive because[^\n]*derived: made from the sensitive output of j000001 \(declared\)/);
+  assert.match(sec, /Inference[^\n]*agent-2 read it and later asked for job j000060/);
+  // Ends with the two fixed sentences, exactly, the lower bound last.
+  assert.ok(sec.trimEnd().endsWith(`${HARNESS_READS_SENTENCE}\n\n${LOWER_BOUND_SENTENCE}`), sec.slice(-400));
+  // "Opened" is said only of an agent's claim (and in the fixed sentence).
+  const opened = sec.split("\n").filter((l) => /\bopened\b/.test(l) && !l.includes(LOWER_BOUND_SENTENCE));
+  assert.ok(opened.length > 0 && opened.every((l) => /the agent's own claim that it opened it/.test(l)), opened.join("\n"));
+  // The HTML carries the same section, whole.
+  assert.match(body.html, /Sensitive outputs and who used them/);
+  assert.match(body.html, new RegExp(LOWER_BOUND_SENTENCE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("the entry's Sensitive row and the job's say where the sensitivity is derived from", async () => {
+  const S = await accessRun();
+  const md = await renderReportBodyMarkdown(S);
+  assert.match(md, /Sensitive[^\n]*it, or what it cites, holds a credential, a key or personal data; it cites job j000001 \(run as secret output: the seat that asked for it marked its output secret\); job j000034 \(derived: made from the sensitive output of j000001 \(declared\)\)/);
+  // A job that is not sensitive has no such row.
+  const plain = await accessRun({ sensitive: false });
+  const none = await renderReportBodyMarkdown(plain);
+  assert.doesNotMatch(none, /derived: made from the sensitive output/);
+});
+
+test("a run with no sensitive output says so in one line, and the section ends there", async () => {
+  const S = await accessRun({ sensitive: false });
+  const md = await renderReportBodyMarkdown(S);
+  const sec = mdSlice(md, "### Sensitive outputs and who used them");
+  assert.match(sec, /No job of this run produced a sensitive output or was made from one\./);
+  assert.doesNotMatch(sec, /lower bound/);
+  assert.equal(sec.trim().split("\n").filter((l) => l.trim()).length, 2, "the heading and one line");
+});
+
+test("when the caller gives the access record the body reads none of its own; a null record is told", async () => {
+  const S = await accessRun();
+  const md = await renderReportBodyMarkdown(S, { access: null });
+  assert.match(mdSlice(md, "### Sensitive outputs and who used them"), /The access record could not be read for this run/);
 });

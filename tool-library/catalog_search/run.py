@@ -1,64 +1,316 @@
 #!/usr/bin/env python3
 import hashlib, json, re, signal, sys, os, tempfile, time
 
-TOOL = {"name": "catalog_search", "version": 11}
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+import os as _os
+import sys as _sys
+import threading as _threading
+
+# ---- the one protected printer of an answer (outside the shared block) ------------------------------------------------------------
+# The stop signals are held while the answer is written, so that a signal cannot cut the document. A reader that stops taking it (a full
+# pipe) would make that tool unkillable by SIGTERM: the held write is therefore bounded. If a stop signal is waiting when
+# HELD_WRITE_SECONDS have passed, the tool says so on stderr and ends with 128 plus that signal; nothing is claimed about the answer.
+HELD_WRITE_SECONDS = int(_os.environ.get("TOOL_HELD_WRITE_SECONDS") or 30)       # the environment variable is for the tests
+_STOPS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _unstick():
+    try:
+        waiting = signal.sigpending()
+    except (AttributeError, OSError):
+        waiting = set()
+    held = [s for s in _STOPS if s in waiting]
+    if held:
+        try:
+            _os.write(2, ("the answer could not be written in %d seconds (the reader is not taking it); ended by the stop signal that was held\n" % HELD_WRITE_SECONDS).encode())
+        except OSError:
+            pass
+        _os._exit(128 + int(held[0]))
+    again = _threading.Timer(1.0, _unstick)
+    again.daemon = True
+    again.start()
+
+
+ERROR_FLAGS = ("all_results_error", "all_matches_error", "receipt_error", "receipts_error", "rows_file_error", "rows_error", "invalid_lines_file_error",
+               "write_error", "values_error")
+
+
+def _flagged(node, depth=0):
+    """The first error flag found in an answer (top level, and two levels of dicts below it), or None."""
+    if not isinstance(node, dict) or depth > 2:
+        return None
+    for key in ERROR_FLAGS:
+        if node.get(key):
+            return key
+    for value in node.values():
+        found = _flagged(value, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _reconcile(answer):
+    """status, complete and ok are one fact: an error flag in the answer (a file that should hold the rest could not be written) is not a
+    complete answer, and a complete or ok that survives a partial or failed status is a wrong claim. Said once, here, for every answer."""
+    if not isinstance(answer, dict):
+        return
+    flag = _flagged(answer)
+    if flag and answer.get("status") == "complete":
+        answer["status"] = "partial"
+        basis = answer.get("status_basis")
+        answer["status_basis"] = ("%s; but %s says part of what was asked for could not be kept" % (basis, flag)) if basis else "%s says part of what was asked for could not be kept" % flag
+    if answer.get("status") in ("partial", "failed") or flag:
+        if answer.get("complete") is True:
+            answer["complete"] = False
+    if answer.get("status") == "failed" and answer.get("ok") is True:
+        answer["ok"] = False
+
+
+# BEGIN SHARED TEMPS
+# One lifecycle for the hidden temporary files of a run. A file is made by temp_create (or its name is registered with temp_hold before it is
+# made), it is registered before anything else is done with it, and it stays registered until temp_done says it was renamed into place. What is
+# still registered when the run ends is removed: by atexit on a normal end or any exception, by drop_temporaries in the last-resort handler, and
+# by the stop signal's own cleanup, which removes the _tmp of every object in PAGES (a registered name is one such object).
+import atexit
+import tempfile
+
+if "PAGES" not in globals():
+    PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _HeldTemp:
+    def __init__(self, name):
+        self._tmp = name
+
+
+def temp_hold(name):
+    """Register a temporary file that is about to be made (or has been): it is removed on every way out unless temp_done is called."""
+    held = _HeldTemp(os.fspath(name))
+    PAGES.append(held)
+    return held._tmp
+
+
+def temp_create(directory, prefix, suffix=""):
+    """tempfile.mkstemp with the new name registered at once: (fd, name)."""
+    fd, name = tempfile.mkstemp(dir=os.fspath(directory), prefix=prefix, suffix=suffix)
+    temp_hold(name)
+    return fd, name
+
+
+def temp_done(name):
+    """The file was renamed into place (or is kept on purpose): it is no longer a temporary."""
+    name = os.fspath(name)
+    PAGES[:] = [p for p in PAGES if not (isinstance(p, _HeldTemp) and p._tmp == name)]
+
+
+def temp_drop(name):
+    """Remove one temporary now; False when it could not be removed (it stays registered, and the end of the run tries again)."""
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    temp_done(name)
+    return True
+
+
+def temp_replace(tmp, dest):
+    os.replace(tmp, dest)
+    temp_done(tmp)
+
+
+def drop_temporaries():
+    """Remove every temporary still registered (the pages being written and the held names); the names that could not be removed come back."""
+    left = []
+    for page in list(PAGES):
+        tmp = None
+        try:
+            tmp = getattr(page, "_tmp", None)
+            if tmp is not None:
+                os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except Exception:   # noqa: BLE001 - every one is tried
+            left.append(str(tmp))
+    return left
+
+
+atexit.register(drop_temporaries)
+# END SHARED TEMPS
+
+
+def _guarded_write(write):
+    try:
+        before = signal.pthread_sigmask(signal.SIG_BLOCK, set(_STOPS))      # before the timer thread exists, so that the thread holds them too
+    except (AttributeError, ValueError, OSError):
+        before = None
+    watch = _threading.Timer(HELD_WRITE_SECONDS, _unstick)
+    watch.daemon = True
+    watch.start()
+    try:
+        write()
+        _sys.stdout.flush()
+    except BrokenPipeError:                       # the reader is gone: there is nobody to tell
+        _os._exit(1)
+    watch.cancel()
+    if before is not None:
+        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
+        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+
+_shared_print_answer = print_answer
+
+
+def print_answer(answer, **dumps_kwargs):
+    _reconcile(answer)
+    _guarded_write(lambda: _shared_print_answer(answer, **dumps_kwargs))
+
+PAGES = []                 # objects with a hidden temporary file (_tmp) that a stop removes
+
+
+class _Held:
+    _tmp = None
+
+
+HELD = _Held()             # the hidden file of the match list being written
+PAGES.append(HELD)
+
+TOOL = {"name": "catalog_search", "version": 19}
 PATTERN_MAX = 4096
 LINE_MAX = 1 << 20
 BUDGET_SECONDS = 25
 # What reading a revision's index could not do, said in the answer instead of read as an empty list.
 INDEX_PROBLEMS = {}
-
-def _catalogue_slug(path):
-    """The directory name the kickoff's catalogue gives an input: its path under
-    inputs/ with every byte outside [A-Za-z0-9._-] made "_" (evidence-catalog.sh)."""
-    import os, re
-    rel = os.fsencode(os.path.relpath(path, "inputs"))
-    return os.fsdecode(re.sub(rb"[^A-Za-z0-9._-]", b"_", rel))
+# A refusal lists the names it could have taken (catalogues, revisions, filesystems): at most this many, with the count.
+LISTED_MAX = 200
 
 
-def _inputs_roots():
-    """inputs/, and each set held in place as a link directly under it (inputs.json names the sets): the only links followed.
-    Any other link under inputs/ is a name and not a place to walk: following one could leave the evidence for the rest of the file system."""
-    import json, os
-    roots = ["inputs"]
-    try:
-        with open("inputs.json", encoding="utf-8") as fh:
-            sets = json.load(fh).get("sets") or []
-    except (OSError, ValueError, AttributeError):
-        sets = []
-    for entry in sets:
-        name = entry.get("name") if isinstance(entry, dict) else None
-        if isinstance(name, str) and name and "/" not in name and os.path.islink(os.path.join("inputs", name)):
-            roots.append(os.path.join("inputs", name))
-    return roots
+def _status(result):
+    """status and status_basis for an answer that has none (docs/packs.md, "The tool contract"): failed on a refusal or an error;
+    partial when the clock, an unsearchable line or a match file that could not be written left something undone; complete otherwise."""
+    if result.get("ok") is False or "error" in result:
+        return "failed", "the tool stopped with an error and read no result (see error)"
+    if result.get("interrupted"):
+        return "partial", ("the search stopped at its time budget (see interrupted): matched is a lower bound, and the matches found up to there "
+                           "are counted and paged%s" % (", with every one in the file all_matches names" if result.get("all_matches") else ""))
+    if result.get("lines_not_searched"):
+        return "partial", ("%d line(s) were longer than the tool reads and were not searched (lines_not_searched); every other line was, "
+                           "so matched is a lower bound" % result["lines_not_searched"])
+    if result.get("all_matches_error"):
+        return "partial", ("the search finished and this page is right, but the file that should hold every match could not be written "
+                           "(all_matches_error): the rest is reached only by paging with offset=")
+    if result.get("which") == "generations":
+        return "complete", "every generation the revision lists was checked against the pattern; matched counts all of them and this page holds %d" % result.get("returned", 0)
+    if result.get("all_matches"):
+        return "complete", ("every line of the catalogue file was searched; matched counts all of them, this page holds %d, and every match is in the "
+                            "file all_matches names" % result.get("returned", 0))
+    return "complete", ("every line of the catalogue file was searched; matched counts all of them and this page holds %d%s"
+                        % (result.get("returned", 0), "" if result.get("next_offset") is None else ", the rest by next_offset"))
 
 
-def _resolve_image(explicit=None):
-    """A pack tool belongs to no case: find the image under inputs/ instead of
-    baking one in. One candidate is used; several mean the caller must say which.
-    An image is known by its extension or, lacking one (a raw `dd` of a web
-    server named after the host), by the catalogue: the kickoff writes
-    catalog/<input>/partitions.txt for every input it read as a disk."""
-    import glob, os
-    if explicit:
-        return explicit
-    cands = []
-    for ext in ("*.E01", "*.e01", "*.raw", "*.dd", "*.001", "*.img", "*.vhd", "*.vhdx"):
-        cands += glob.glob(os.path.join("inputs", ext))
-    for root_dir in _inputs_roots():
-        for base, _dirs, files in os.walk(root_dir, followlinks=False):
-            for f in files:
-                p = os.path.join(base, f)
-                if os.path.isfile(os.path.join("catalog", _catalogue_slug(p), "partitions.txt")):
-                    cands.append(p)
-    cands = sorted(set(cands))
-    if len(cands) == 1:
-        return cands[0]
-    if not cands:
-        raise SystemExit('{"ok": false, "error": "no disk image under inputs/; pass image="}')
-    raise SystemExit('{"ok": false, "error": "several images under inputs/; pass image=", "candidates": %s}' % json.dumps(cands))
+def _answer(result, code=0):
+    """Print the one answer, with its status and status_basis, and end. A refusal's lists of names are cut at LISTED_MAX with
+    their count (the catalogue holds the whole)."""
+    result = dict(result)
+    if result.get("ok") is False or "error" in result:
+        for key in [k for k, v in result.items() if isinstance(v, list) and len(v) > LISTED_MAX]:
+            result[key + "_total"] = len(result[key])
+            result[key] = result[key][:LISTED_MAX]
+    if "status" not in result:
+        result["status"], result["status_basis"] = _status(result)
+    print_answer(result)
+    sys.exit(code)
 
 
+def _unexpected(kind, value, _tb):
+    """An exception nobody expected is an answer too: the class only, never a message, which could quote the evidence."""
+    for page in list(globals().get("PAGES", ())):          # the hidden file of the match list is not left behind
+        held = getattr(page, "_tmp", None)
+        if held is not None:
+            try:
+                os.unlink(held)
+            except OSError:
+                pass
+    budget_class = globals().get("_Budget")
+    if budget_class is not None and issubclass(kind, budget_class):
+        sys.stdout.write(json.dumps({"ok": False, "error": "the time budget ran out before the search began", "status": "partial",
+                                     "status_basis": "the search's time budget ran out while the catalogue was being located, so no file was searched"}) + "\n")
+    else:
+        sys.stdout.write(json.dumps({"ok": False, "error": ("a path or file could not be used: %s" if issubclass(kind, (OSError, ValueError)) else "internal error: %s") % kind.__name__, "status": "failed",
+                                     "status_basis": "the tool stopped with an error and read no result (see error)"}) + "\n")
+    sys.stdout.flush()
+    os._exit(1)
+
+
+sys.excepthook = _unexpected
 
 # Directories of catalog/ that are the catalogue's machinery, not a catalogue.
 RESERVED = {"gen", "revisions", "probes"}
@@ -74,9 +326,9 @@ def _revision(wanted=None):
         try:
             n = int(wanted)
         except (TypeError, ValueError):
-            raise SystemExit(json.dumps({"ok": False, "error": "revision is a whole number", "revisions": done}))
+            _answer({"ok": False, "error": "revision is a whole number", "revisions": done}, 1)
         if n not in done:
-            raise SystemExit(json.dumps({"ok": False, "error": "no complete revision %s here (yet)" % n, "revisions": done}))
+            _answer({"ok": False, "error": "no complete revision %s here (yet)" % n, "revisions": done}, 1)
         return n
     return done[-1] if done else None
 
@@ -99,8 +351,8 @@ def _index(rev, strict=False):
         why = "%s: %s" % (path, getattr(e, "strerror", None) or e)
         INDEX_PROBLEMS[rev] = why
         if strict:
-            raise SystemExit(json.dumps({"ok": False, "error": "revision_unavailable", "revision": rev, "why": why,
-                                         "hint": "the revision's index could not be read; nothing here says the catalogue holds no generations"}))
+            _answer({"ok": False, "error": "revision_unavailable", "revision": rev, "why": why,
+                                         "hint": "the revision's index could not be read; nothing here says the catalogue holds no generations"}, 1)
         return []
     return [g for g in listed if isinstance(g, dict) and g.get("id")]
 
@@ -150,8 +402,8 @@ def _resolve_catalog(explicit=None, rev=None):
     if explicit:
         if explicit in gens:
             if not os.path.isdir(gens[explicit]):
-                raise SystemExit(json.dumps({"ok": False, "error": "generation %s is listed by revision %s but its directory %s is not here" % (explicit, rev, gens[explicit]),
-                                             "hint": "the catalogue was copied without it, or it was removed; nothing here says what it held"}))
+                _answer({"ok": False, "error": "generation %s is listed by revision %s but its directory %s is not here" % (explicit, rev, gens[explicit]),
+                                             "hint": "the catalogue was copied without it, or it was removed; nothing here says what it held"}, 1)
             return gens[explicit]
         catalog_real = os.path.realpath(root)
         for cand in (explicit, os.path.join(root, explicit)):
@@ -165,30 +417,28 @@ def _resolve_catalog(explicit=None, rev=None):
                 if gid:
                     listed = {g["id"] for g in _index(rev, strict=True)} if rev is not None else set()
                     if gid not in listed:
-                        raise SystemExit(json.dumps({"ok": False, "error": "%s is not in catalogue revision %s" % (gid, rev), "candidates": sorted(listed)}))
+                        _answer({"ok": False, "error": "%s is not in catalogue revision %s" % (gid, rev), "candidates": sorted(listed)}, 1)
                 return cand
-        raise SystemExit(json.dumps({"ok": False, "error": "no catalogue %s" % explicit, "candidates": subs + sorted(gens)}))
+        _answer({"ok": False, "error": "no catalogue %s" % explicit, "candidates": subs + sorted(gens)}, 1)
     if not os.path.isdir(root):
-        raise SystemExit('{"ok": false, "error": "no catalog/ in this run; pass catalog="}')
+        _answer({"ok": False, "error": "no catalog/ in this run; pass catalog="}, 1)
     if len(subs) == 1:
         return os.path.join(root, subs[0])
     if not subs:
-        raise SystemExit(json.dumps({"ok": False, "error": "no catalogue here yet%s; pass catalog=" % (" (the kickoff's recipes may still be running: each revision is announced on the board)" if rev is not None else ""), "candidates": sorted(gens)}))
+        _answer({"ok": False, "error": "no catalogue here yet%s; pass catalog=" % (" (the kickoff's recipes may still be running: each revision is announced on the board)" if rev is not None else ""), "candidates": sorted(gens)}, 1)
     # A disk and a memory image catalogue two directories, and only the
     # disk's has filesystems (partitions.txt): with one such, it is the one.
     disks = [d for d in subs if os.path.isfile(os.path.join(root, d, "partitions.txt"))]
     if len(disks) == 1:
         return os.path.join(root, disks[0])
-    raise SystemExit('{"ok": false, "error": "several catalogues; pass catalog=", "candidates": %s}' % json.dumps(subs + sorted(gens)))
+    _answer({"ok": False, "error": "several catalogues; pass catalog=", "candidates": subs + sorted(gens)}, 1)
 
 try:
     args = json.load(sys.stdin)
-except ValueError as exc:
-    print(json.dumps({"ok": False, "error": "arguments are not valid JSON", "reason": str(exc)}))
-    sys.exit(1)
+except (ValueError, RecursionError) as exc:
+    _answer({"ok": False, "error": "arguments are not valid JSON", "reason": str(exc)}, 1)
 if not isinstance(args, dict):
-    print(json.dumps({"ok": False, "error": "arguments are a JSON object"}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "arguments are a JSON object"}, 1)
 pattern = args.get("pattern") or ""
 which = args.get("which") or "filelist"
 flags = re.IGNORECASE if args.get("ignore_case", True) else 0
@@ -196,37 +446,33 @@ LIMIT_MAX = 1000
 try:
     limit = 50 if args.get("limit") is None else int(args["limit"])
     offset = 0 if args.get("offset") is None else int(args["offset"])
-except (TypeError, ValueError):
-    print(json.dumps({"ok": False, "error": "limit and offset must be whole numbers"}))
-    sys.exit(1)
+except (TypeError, ValueError, OverflowError):
+    _answer({"ok": False, "error": "limit and offset must be whole numbers"}, 1)
 if not 1 <= limit <= LIMIT_MAX or offset < 0:
-    print(json.dumps({"ok": False, "error": "limit is a whole number from 1 to %d (every match is kept in a file when the page is not all of them) and offset is not negative" % LIMIT_MAX}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "limit is a whole number from 1 to %d (every match is kept in a file when the page is not all of them) and offset is not negative" % LIMIT_MAX}, 1)
 exclude = args.get("exclude") or ""
 if not isinstance(pattern, str) or not isinstance(exclude, str):
-    print(json.dumps({"ok": False, "error": "pattern and exclude are strings"}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "pattern and exclude are strings"}, 1)
+for name in ("which", "catalog", "partition"):
+    if args.get(name) is not None and not isinstance(args[name], str):
+        _answer({"ok": False, "error": "%s is a string" % name}, 1)
 for name, text in (("pattern", pattern), ("exclude", exclude)):
     if len(text) > PATTERN_MAX:
-        print(json.dumps({"ok": False, "error": "%s is %d characters; this tool takes at most %d" % (name, len(text), PATTERN_MAX)}))
-        sys.exit(1)
+        _answer({"ok": False, "error": "%s is %d characters; this tool takes at most %d" % (name, len(text), PATTERN_MAX)}, 1)
 try:
     budget = int(args.get("max_seconds") or BUDGET_SECONDS)
     if not 1 <= budget <= BUDGET_SECONDS:
         raise ValueError
-except (TypeError, ValueError):
-    print(json.dumps({"ok": False, "error": "max_seconds is a whole number from 1 to %d" % BUDGET_SECONDS}))
-    sys.exit(1)
+except (TypeError, ValueError, OverflowError):
+    _answer({"ok": False, "error": "max_seconds is a whole number from 1 to %d" % BUDGET_SECONDS}, 1)
 try:
     rx = re.compile(pattern, flags)
 except re.error as e:
-    print(json.dumps({"error": str(e)}))
-    sys.exit(1)
+    _answer({"error": str(e)}, 1)
 try:
     ex = re.compile(exclude, flags) if exclude else None
 except re.error as e:
-    print(json.dumps({"ok": False, "error": "exclude is not a regular expression: %s" % e}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "exclude is not a regular expression: %s" % e}, 1)
 
 
 def earlier_answers(path):
@@ -241,20 +487,33 @@ def earlier_answers(path):
         return 0
 
 
-def _same_bytes(a, b):
-    """Two files with the same bytes (compared in blocks, never whole)."""
+def _same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
     try:
-        if os.path.getsize(a) != os.path.getsize(b):
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
             return False
-        with open(a, "rb") as fa, open(b, "rb") as fb:
-            while True:
-                x, y = fa.read(1 << 20), fb.read(1 << 20)
-                if x != y:
-                    return False
-                if not x:
-                    return True
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
     except OSError:
         return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
 
 
 class _Budget(Exception):
@@ -293,8 +552,7 @@ if which == "generations":
                                  "(a pattern that backtracks badly does this; simplify it)" % budget)
     if offset + len(page) < len(kept):
         result["next_offset"] = offset + len(page)
-    print(json.dumps(result))
-    sys.exit(0)
+    _answer(result)
 base = os.path.normpath(_resolve_catalog(args.get("catalog") if isinstance(args, dict) else None, revision))
 
 
@@ -319,18 +577,15 @@ if which in ("partitions", "members"):
     part = None
 elif want:
     if want not in parts:
-        print(json.dumps({"ok": False, "error": "no filesystem at %s in %s; pass partition= one of these" % (want, base), "partitions": parts}))
-        sys.exit(1)
+        _answer({"ok": False, "error": "no filesystem at %s in %s; pass partition= one of these" % (want, base), "partitions": parts}, 1)
     part = want
 elif len(parts) == 1:
     part = parts[0]
 elif not parts:
     about = _this_generation()
-    print(json.dumps({"ok": False, "error": "the catalogue %s holds no filesystem listing (see its partitions.txt and README.md)" % base, **({"generation": about} if about else {})}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "the catalogue %s holds no filesystem listing (see its partitions.txt and README.md)" % base, **({"generation": about} if about else {})}, 1)
 else:
-    print(json.dumps({"ok": False, "error": "several filesystems in %s; pass partition= one of these" % base, "partitions": parts}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "several filesystems in %s; pass partition= one of these" % base, "partitions": parts}, 1)
 files = {"filelist": "filelist.txt", "timeline": "timeline.csv", "bodyfile": "bodyfile.txt", "fsstat": "fsstat.txt"}
 if which == "partitions":
     path = os.path.join(base, "partitions.txt")
@@ -340,14 +595,12 @@ elif which == "members":
 elif which in files:
     path = os.path.join(base, part, files[which])
 else:
-    print(json.dumps({"error": "which must be filelist|timeline|bodyfile|fsstat|partitions|members|generations"}))
-    sys.exit(1)
+    _answer({"error": "which must be filelist|timeline|bodyfile|fsstat|partitions|members|generations"}, 1)
 if not os.path.isfile(path):
     have = sorted(os.listdir(os.path.dirname(path))) if os.path.isdir(os.path.dirname(path)) else []
     # A partial generation says why, and where its readable form is.
     about = _this_generation()
-    print(json.dumps({"ok": False, "error": "%s is not in the catalogue" % path, **({"generation": about} if about else {}), "there": have}))
-    sys.exit(1)
+    _answer({"ok": False, "error": "%s is not in the catalogue" % path, **({"generation": about} if about else {}), "there": have}, 1)
 # Every match goes to a file as it is found; the call returns one page of
 # them. When that page is not all of them, the file is kept and named, so the
 # rest is read from it (or paged with offset=) instead of searched for again
@@ -371,10 +624,40 @@ tmp = None
 stopped_at = None
 too_long = 0
 last_line = 0
+
+
+def _stopped(signum):
+    print(json.dumps({"tool": TOOL, "status": "partial", "interrupted": True, "signal": signum, "which": which, "file": path,
+                      "matched_so_far": total, "searched_to_line": last_line,
+                      "status_basis": "the tool was stopped by signal %d during the search: the matches counted so far are a lower bound, and the file of every match was not kept" % signum}), flush=True)
+
+
+def _drop_matches(err):
+    """The file of every match cannot be written (a full disk, a file-size limit): it is closed, removed, and the answer says so."""
+    global all_out, keep_error
+    keep_error = "%s: %s" % (keep_dir, getattr(err, "strerror", None) or err.__class__.__name__)
+    if all_out is not None:
+        try:
+            all_out.close()
+        except OSError:
+            pass
+    all_out = None
+    HELD._tmp = None
+    try:
+        os.unlink(tmp)
+    except (OSError, TypeError):
+        pass
+
+
+install_signal_handlers(_stopped)
 try:
     os.makedirs(keep_dir, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=keep_dir, prefix=".catalog-search-")
-    all_out = os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape")
+    fd, tmp = temp_create(keep_dir, ".catalog-search-")
+    try:
+        all_out = os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape")
+    except BaseException:
+        os.close(fd)
+        raise
 except OSError as e:
     all_out, keep_error = None, "%s: %s" % (keep_dir, e.strerror or e)
 try:
@@ -402,7 +685,10 @@ try:
                 total += 1
                 text = line
                 if all_out:
-                    all_out.write("%d\t%s\n" % (i, text))
+                    try:
+                        all_out.write("%d\t%s\n" % (i, text))
+                    except (OSError, ValueError) as e:      # ENOSPC, EFBIG: the page is still right, the whole set is not kept
+                        _drop_matches(e)
                 if total > offset and len(hits) < limit:
                     hits.append({"n": i, "line": text})
 except _Budget:
@@ -422,12 +708,17 @@ if INDEX_PROBLEMS.get(revision):
 more = offset + len(hits) < total
 result["next_offset"] = offset + len(hits) if more else None
 if all_out:
-    all_out.close()
+    try:
+        all_out.close()                      # the last buffered bytes are written here, and can fail like any other
+    except OSError as e:
+        _drop_matches(e)
+if all_out:
     if more or offset or stopped_at is not None:
         # Nothing already at the name is replaced: an earlier answer to this search, complete, stays when this one was cut short.
         keep_stem, keep_ext = os.path.splitext(keep)
         shown_stem, _ = os.path.splitext(shown)
         k = 1
+        published = True
         while True:
             suffix = "" if k == 1 else ".%d" % k
             held = keep_stem + suffix + keep_ext
@@ -446,15 +737,23 @@ if all_out:
                         break
                     k += 1
                     continue
-                os.rename(tmp, held)
+                try:
+                    os.rename(tmp, held)
+                    temp_done(tmp)
+                except OSError as e:
+                    _drop_matches(e)
+                    published = False
             else:
                 os.unlink(tmp)
             break
-        result["all_matches"] = shown_stem + suffix + keep_ext
-        result["earlier_answers"] = earlier_answers(held)
-        result["all_matches_format"] = "one match per line: the line number in the catalogue file, a tab, the line"
+        if published:
+            result["all_matches"] = shown_stem + suffix + keep_ext
+            result["earlier_answers"] = earlier_answers(held)
+            result["all_matches_format"] = "one match per line: the line number in the catalogue file, a tab, the line"
+        else:
+            result["all_matches_error"] = "the whole match set could not be written (%s); page through it with offset=" % keep_error
     else:
         os.unlink(tmp)
-elif more or offset:
+elif more or offset or stopped_at is not None:
     result["all_matches_error"] = "the whole match set could not be written (%s); page through it with offset=" % keep_error
-print(json.dumps(result))
+_answer(result)

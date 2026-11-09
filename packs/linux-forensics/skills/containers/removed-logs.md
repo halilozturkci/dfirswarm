@@ -7,7 +7,7 @@ tools: [journal_export]
 requires_host: []
 ---
 
-Use only if the container or its metadata is gone, or you need the daemon's log. Not for locating live evidence (`containers/docker`).
+Use only if the container or its metadata is gone, or you need the daemon's log. Not for locating live evidence (`containers/docker`) or for correlating containerd, Podman and Kubernetes records (`containers/runtime-orchestration`).
 
 **What is not there.** A disk image holds no process memory and no live `/proc`; those need an acquisition of their own. Removing a container (a `--rm` run, for one) removes its active metadata and writable layer, but other evidence can survive: volumes, bind mounts, rotated or remote logs, snapshots, orchestration records, deleted filesystem remnants and the daemon's own log. Read the daemon's log from the evidence with `journal_export` and `unit: "docker.service"` (never the analysis host's own journal), and check which logging driver was in use: a `json-file` path does not cover the other drivers or the CRI log formats. Name the retention and the missing sources before stating a bounded negative, and do not let a missing Docker directory clear the other runtimes.
 

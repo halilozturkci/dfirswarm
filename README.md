@@ -85,24 +85,24 @@ When the evidence cannot answer something a reference service can (a domain's re
 
 | Pack | Skills | Tools | Goals |
 | --- | --- | --- | --- |
-| `computer-forensics-base` | 29 | 16 | — |
-| `windows-forensics` | 53 | 22 | 3 |
-| `linux-forensics` | 26 | 6 | 2 |
-| `macos-forensics` | 18 | 4 | 1 |
-| `mobile-forensics` | 11 | 3 | 1 |
-| `memory-forensics` | 20 | 3 | 1 |
-| `network-forensics` | 13 | 6 | 1 |
-| `reverse-engineering` | 21 | 6 | 1 |
-| `encrypted-containers` | 12 | 3 | 1 |
-| `cloud-forensics` | 10 | 3 | 1 |
-| `ransomware-response` | 18 | 2 | 1 |
-| `triage-collection` | 20 | 6 | 1 |
-| `virtualization-backup-forensics` | 11 | 3 | 1 |
+| `computer-forensics-base` | 30 | 20 | — |
+| `windows-forensics` | 53 | 27 | 3 |
+| `linux-forensics` | 35 | 11 | 2 |
+| `macos-forensics` | 25 | 11 | 1 |
+| `mobile-forensics` | 18 | 7 | 1 |
+| `memory-forensics` | 28 | 8 | 1 |
+| `network-forensics` | 19 | 11 | 1 |
+| `reverse-engineering` | 25 | 13 | 1 |
+| `encrypted-containers` | 18 | 9 | 1 |
+| `cloud-forensics` | 20 | 6 | 1 |
+| `ransomware-response` | 25 | 8 | 1 |
+| `triage-collection` | 20 | 8 | 1 |
+| `virtualization-backup-forensics` | 12 | 3 | 1 |
 
 A **pack** is a directory an operator installs once and names at kickoff: skills
 an agent fetches by name, tools seeded into the run, the host binaries the case
 needs, and goal templates with their own checks. **Thirteen ship in this
-repository** under the same licence as the harness: 262 skills, 83 tools and 15
+repository** under the same licence as the harness: 328 skills, 142 tools and 15
 goal templates across Windows, Linux, macOS, mobile, memory, network, reverse
 engineering, encrypted containers, cloud, ransomware, triage collections, and
 virtualization and backup, all on one base pack.
@@ -219,6 +219,7 @@ scripts/swarm.sh unpause <id>               # and let it go on
 ```
 
 The goal is a markdown file that carries its own `## Definition of done` and `## Checks`; a goal without one does not start. The agents boot the base image; a run with packs runs its tool work in job images, one per profile, which you build the same way ([images/README.md](images/README.md)) and which list their programs for the agents. `scripts/swarm.sh --help` lists the commands, `swarm.sh help start` every option, and the quick start has the ones for a case [while it runs](docs/quick-start.md#3c-while-the-case-runs-and-after-it-stops): a question, a premise, a request answered, evidence added, extend, pause, unpause, resume, and after it stops the metrics and a replay. `swarm.sh start … --check` runs every refusal and preflight of that start and writes nothing, and `swarm.sh image-for --pack …` names the image the agents would boot and the job images that hold those packs. The console's **New swarm** form starts a swarm the same way, and defaults to a model Pi can use.
+The prebuilt container images once published on GitHub's container registry were withdrawn on 2026-10-06; build the images from source ([images/README.md](images/README.md)).
 
 In a VM the network is closed but for the model's hosts and the ones you allow. In a host run the egress guard is, on macOS, a proxy the panes are pointed at, which a process can ignore, and on Linux a network namespace with no other route out. The kickoff line and the run record say which one you got. Step by step, with the dry run and the no-key proof run: [docs/quick-start.md](docs/quick-start.md).
 

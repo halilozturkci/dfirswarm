@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { interpreterDir } from "./host-gates.ts";
 import { LIB, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
 
 test("recyclebin_i parses $I metadata and refuses to guess at an unknown header", async () => {
@@ -272,7 +273,7 @@ test("esedb_query and yara_scan say the binary is missing instead of reporting n
     await writeFile(join(cwd, "work", "rules.yar"), "rule r { strings: $a = \"MZ\" condition: $a }", "utf8");
     // A PATH with python3 but neither of the two binaries. "No matches"
     // from a tool that is not installed would be a lie.
-    const noPath = { PATH: `${bin}:/usr/bin:/bin` };
+    const noPath = { PATH: `${bin}:${await interpreterDir(join(cwd, "py"))}` };
     const esedb = await runPy(join(LIB, "esedb_query", "run.py"), cwd, { path: "work/WebCacheV01.dat" }, undefined, noPath);
     assert.notEqual(esedb.code, 0);
     assert.match(esedb.stdout, /esedbexport is not on PATH/);

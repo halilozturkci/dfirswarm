@@ -1,10 +1,30 @@
 {
   "binaries": [
     {
+      "name": "chainbreaker",
+      "package": "chainbreaker",
+      "optional": true,
+      "why": "Open a macOS login or System keychain offline, when the case supplies its password or the SystemKey file, and list every item: metadata, and the secret of each record that holds one. Only keychain_open runs it, in a secret_output job. It reads the older keychain file format (the file begins with 'kych': login.keychain-db, login.keychain, System.keychain); it does not read the Local Items store (keychain-2.db, SQLite), and which versions of the format it parses is not established here. Pinned to the project's newest commit, 2eb467d (2023-03-30; its version file says 3.0.3, and its only release, v0.9, is older), installed in an environment of its own with pycryptodome 3.23.0 in a hash lock (requires/locks/chainbreaker.txt; the project's own requirements file, which pins an old pycryptodome, is not used). The project takes a password only on its command line or at a terminal prompt, so keychain_open imports it and hands the password over as a function argument, from a file of the job. Its licence is GPL version 2 (its setup.py says GPL-2.0, its source files say version 2 or any later version); it runs as a program of its own, never inside the image's Python.",
+      "install": {
+        "brew": "https://github.com/n0fate/chainbreaker",
+        "apt": "pinned source commit 2eb467d (install.source), with pycryptodome in a hash lock",
+        "source": {
+          "version": "3.0.3",
+          "url": "https://github.com/n0fate/chainbreaker/archive/2eb467d9355e61f1dfecee1cec41b06033186326.tar.gz",
+          "sha256": "b2b65dc21114eaa85ae1770bdc17d91fbe5f396e0aaff5a276d61222387fb405",
+          "entry": "chainbreaker/__main__.py",
+          "run": "python",
+          "pip_lock": "requires/locks/chainbreaker.txt"
+        }
+      },
+      "licence": "GPL-2.0",
+      "redistributable": false
+    },
+    {
       "name": "fsapfsinfo",
       "package": "libfsapfs",
       "optional": true,
-      "why": "Inspect an APFS container and its volumes. This experimental libfsapfs build does not support snapshots, Fusion drives or T2 encryption: those are limits of the build, not findings about the evidence, and what it lists is what the installed build parsed (say which). No macOS install route is declared.",
+      "why": "Inspect an APFS container and its volumes. This experimental libfsapfs build does not support snapshots, Fusion drives or T2 encryption: those are limits of the build, not findings about the evidence, and what it lists is what the installed build parsed (say which). The apt package carries no version in its line: it is the version the image's apt snapshot date (images/debian-snapshot) provides, so say the build the image reports. No macOS install route is declared.",
       "install": {
         "apt": "apt-get install -y libfsapfs-utils"
       },
@@ -28,7 +48,7 @@
       "name": "mac_apt.py",
       "package": "mac_apt",
       "optional": true,
-      "why": "A plugin-based artefact parser for macOS and iOS evidence, pinned at 1.33.2 and installed in the amd64 worker image only: its statx helper stops at import on Linux arm64. The project describes its input as E01, DMG and sparse images and UAC and Velociraptor collections; none of that is tested in this repository. Its Python dependencies are installed from its requirements file without a hash lock. Whether a plugin supports the subject's macOS build is for the examiner to establish; no wrapper or skill of this pack drives it beyond naming it in triage/system-profile.",
+      "why": "A plugin-based artefact parser for macOS and iOS evidence, pinned at 1.33.2 and installed in the amd64 worker image only: its statx helper stops at import on Linux arm64. The project describes its input as E01, DMG and sparse images and UAC and Velociraptor collections; none of that is tested in this repository. Its Python dependencies are installed into a venv of its own from a hash lock (requires/locks/mac_apt.txt, pip --require-hashes), so a file whose sha256 is not in the lock does not install. The lock was written from PyPI's metadata, not from an install: it has not been installed yet, and the first install is the image build; the names the tag's requirements file leaves unpinned are at the newest version PyPI listed on 2026-11-04 for CPython 3.11, and 1.33.2 was not run against them. The bundled pyaff4 zip is installed after the lock with --no-deps and is not hash-locked, and its own dependencies are not in the lock, so whether AFF4 input can be read is not established. Whether a plugin supports the subject's macOS build is for the examiner to establish; the tool macos_triage and the recipe macos-artefacts run it and read its log for a status per plugin. Both were written from the 1.33.2 source (the argument shape and the texts of the start, plugin start, plugin end, plugin exception and finish log lines) and tested only with stand-in programs: no run of mac_apt was ever observed here, so the prefix of a log line, the wording of an empty or unsupported plugin and the per-plugin file names are unverified.",
       "install": {
         "brew": "https://github.com/ydkhatri/mac_apt",
         "apt": "pinned source 1.33.2 (install.source), amd64 only: its statx helper knows no aarch64 syscall number, so it stops at import on Linux arm64",
@@ -38,9 +58,10 @@
           "sha256": "a2fff756df22236c03ab427424f565987749b711dece2c490184265c5a620be1",
           "entry": "mac_apt.py",
           "run": "python",
-          "pip": [
-            "-r",
-            "requirements.txt"
+          "pip_lock": "requires/locks/mac_apt.txt",
+          "pip_after": [
+            "--no-deps",
+            "./other_dependencies/pyaff4-0.31.2-yk-20251206.zip"
           ],
           "arches": [
             "amd64"

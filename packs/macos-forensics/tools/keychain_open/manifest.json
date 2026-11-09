@@ -1,0 +1,43 @@
+{
+  "name": "keychain_open",
+  "description": "SENSITIVE: open a macOS login or System keychain (a file that begins with 'kych': login.keychain-db, login.keychain, System.keychain) with the password the case supplies, and write every item, metadata and value, to a sealed file. Every job of this tool is run as secret output (`secret_output: \"required\"`); it refuses as JSON, before it reads or creates anything, when the call is not such a job (SECRET_OUTPUT=1). The case supplies the secret as a job input file: `password_file` (the keychain's password, mode 0600, at most 4096 bytes, one trailing newline dropped; never a value in the arguments, argv or the environment) or, for System.keychain, `system_key` (the SystemKey file kept under /var/db, mode 0600). This tool never guesses, recovers or cracks a password, and it never reads the password itself: the reader's own process reads the file and hands the password to the reader as a function argument. The reader is chainbreaker (pinned in this pack's requires/host.json, installed in an environment of its own), run in this tool's process group. Items go to `keychain-items.jsonl` under $OUT, one JSON object per line (class, index, the reader's fields, and for a class that holds a secret the value and its encoding, or null when it could not be decrypted), mode 0600, created exclusively and never replacing an earlier file (a different result takes the next free name). The answer holds the outcome, counts per record class (records, decrypted, not decrypted, value bytes), and the items file's name, size, line count and sha256; never a name, a value or a hash of one, and no path it was given. Outcomes, told apart: `opened` (status complete: unlocked, every record read, every secret decrypted), `partial` (unlocked, some records not decrypted or not read, or the reader or the clock ended with items written), `wrong_secret` (the reader could not unlock it with what was given: not proof about the password), `unsupported_format` (the file does not begin with 'kych'; the Local Items store, keychain-2.db, an SQLite database, is answered so with its reason and is not opened), `damaged` (too short, or the reader could not parse it), `unavailable` (the reader is not installed or not importable), `secret_unreadable`, `reader_failed`, `storage_refused`, `timed_out` and `interrupted`. Only `opened` is `complete`; every other outcome with nothing written is `failed`. `complete` also needs that the reader left nothing behind: a child of the reader that holds the items file's descriptor, or one in a session of its own, is stopped, killed and reaped by the shared process block's settle() before the items file is counted and hashed; one found makes the answer `partial` (the outcome stays `opened`; program_group.left_behind and a line under problems say it), and on a host that is not Linux, or where the kernel refuses PR_SET_CHILD_SUBREAPER, the absence of a leftover cannot be proven and the answer is at most `partial` (program_group.unproven). A file over 256 MiB is refused, not cut (the reader reads a keychain whole into memory). Which versions and layouts of the keychain file the reader parses is not established here: a keychain it cannot parse is `damaged` or `partial`, not a finding about the evidence. `max_seconds` (default 60, at most 90; the manifest's timeout is 120) is the tool's own clock for the reader; it ends the reader and what it started at that time and answers. SIGTERM, SIGINT and SIGHUP end the reader, keep the whole lines written, and end with one JSON answer and exit 128 + the signal. A missing reader answers `unavailable`, naming the program.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The keychain file: a regular file (a link is refused) that begins with 'kych'"
+    },
+    "password_file": {
+      "type": "string",
+      "description": "A job input file holding the keychain's password (mode 0600, at most 4096 bytes; one trailing newline is dropped). Never a value given inline"
+    },
+    "system_key": {
+      "type": "string",
+      "description": "A job input file holding the SystemKey file for System.keychain (mode 0600, at most 4096 bytes). Give it, the password file, or both"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The tool's own time limit for the reader in seconds (default 60, above 0 and at most 90; the manifest's timeout is 120)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "secret_output": "required",
+  "example": "{\"path\": \"work/extracted/login.keychain-db\", \"password_file\": \"work/case/keychain-password.txt\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T12:00:00.000Z",
+  "version": 5,
+  "sha256": "2484ae1753273a580a3fb3b323ac8c1e9b2e3c66beeb14b8171b0ecee28ed90e",
+  "use": {
+    "extensions": [],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "6b796368"
+      }
+    ]
+  },
+  "requires": [
+    "chainbreaker"
+  ]
+}

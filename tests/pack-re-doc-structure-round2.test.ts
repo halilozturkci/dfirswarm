@@ -19,6 +19,7 @@ import { DOC_STRUCTURE, asJob, body, buildZip, filesUnder, put, tool, withCwd } 
 import type { Json, Run } from "./pack-re-harness.ts";
 import { buildCfb, buildPdf, buildVbaProject, hex, ole1Object } from "./pack-re-doc-fixtures.ts";
 import type { PdfObj } from "./pack-re-doc-fixtures.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const AKIA = "AKIAIOSFODNN7EXAMPLE";
 const GHP = "ghp_Ab3dEf5hIj7lMn9pQr1tUv3xYz5bCd7fGh9j";
@@ -43,16 +44,16 @@ async function run(cwd: string, name: string, data: Buffer | string, args: Recor
 
 /** The tool with a hard limit on its wall time (killed past it, so a hang fails the case instead of the suite) and the child's peak RSS. */
 function bounded(cwd: string, args: Record<string, unknown>, killAfterMs: number, env: Record<string, string> = {}): { run: Run; seconds: number; rssMb: number } {
-  const wrapper = [
-    "import json, resource, subprocess, sys, time",
+  const wrapper = peakRssPrelude() + [
+    "import json, subprocess, time",
     "t = time.monotonic()",
     "try:",
-    "    p = subprocess.run([sys.executable, sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True, timeout=float(sys.argv[2]))",
+    "    p, peak = run_peak([sys.executable, sys.argv[1]], input=sys.stdin.buffer.read(), capture_output=True, timeout=float(sys.argv[2]))",
     "    code, out, err = p.returncode, p.stdout.decode('utf-8', 'replace'), p.stderr.decode('utf-8', 'replace')",
     "except subprocess.TimeoutExpired as exc:",
+    "    peak = exc.peak_bytes",
     "    code, out, err = None, (exc.stdout or b'').decode('utf-8', 'replace'), 'killed at the case limit'",
-    "r = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss",
-    "print(json.dumps({'code': code, 'stdout': out, 'stderr': err, 'seconds': time.monotonic() - t, 'rss_mb': r / (1 << 20) if sys.platform == 'darwin' else r / 1024}))",
+    "print(json.dumps({'code': code, 'stdout': out, 'stderr': err, 'seconds': time.monotonic() - t, 'rss_mb': peak / (1 << 20)}))",
   ].join("\n");
   const r = spawnSync("python3", ["-c", wrapper, DOC_STRUCTURE, String(killAfterMs / 1000)], { cwd, input: JSON.stringify(args), encoding: "utf8", maxBuffer: 1 << 28, env: { ...process.env, AGENT_ID: "s1", ...env } });
   assert.equal(r.status, 0, r.stderr);

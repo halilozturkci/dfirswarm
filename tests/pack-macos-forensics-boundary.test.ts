@@ -1,7 +1,7 @@
 /**
  * fsevents_parse, knowledgec_query and unified_log print paths, stream names, column names, values and log messages from evidence. They carry the
  * shared boundary block of the windows-forensics pack byte for byte (an allow-list per field type, a deny-list for free text, an independent
- * backstop), and this suite holds: the copies equal; the values modes declared in the manifests and refused unless the harness runs the job as
+ * backstop; tests/pack-boundary-shared.test.ts holds the copies equal), and this suite holds: the values modes declared in the manifests and refused unless the harness runs the job as
  * secret output; random canaries of 23 shapes planted in the slots each tool prints, the share printed whole asserted per family, the shapes the
  * boundary does not claim asserted to be printed; a `contains` that reads what is printed; hostile strings of 4,096 and 32,768 characters judged in
  * bounded CPU time; real strings left as they are. The stop block is held equal across the four tools.
@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ROOT, withCwd } from "./tool-library-harness.ts";
+import { withCwd } from "./tool-library-harness.ts";
 import { parseSecretDeclaration } from "../scripts/output-hygiene.ts";
 import { CREATED, FS, KC, MAC, PLIST, UL, body, filesUnder, fsDir, fsPage, fsRecord, gz, kcDb, measured, ok, plainJob, reachable, secretJob, tool, ul, ulStandin, logarchive } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
@@ -27,19 +27,12 @@ async function block(path: string, begin: string, end: string): Promise<string> 
   return text.slice(start, stop + end.length);
 }
 
-const TOOLS = ["plist_read", "fsevents_parse", "knowledgec_query", "unified_log"];
-const BOUNDARY = ["fsevents_parse", "knowledgec_query", "unified_log"];
+const TOOLS = ["plist_read", "fsevents_parse", "knowledgec_query", "unified_log", "macos_tcc", "macos_login_items", "safari_history", "segb_read", "apfs_inventory", "keychain_open", "macos_triage"];
 
-test("the four tools carry the same stop block, byte for byte", async () => {
+test("the tools carry the same stop block, byte for byte", async () => {
   const blocks = await Promise.all(TOOLS.map((t) => block(join(MAC, t, "run.py"), "# BEGIN SHARED STOP", "# END SHARED STOP")));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   assert.ok(blocks[0].length > 2000);
-});
-
-test("the three tools that print evidence carry the windows-forensics boundary block, byte for byte, as shipped there", async () => {
-  const reference = await block(join(ROOT, "packs", "windows-forensics", "tools", "regkv", "run.py"), "# BEGIN SHARED BOUNDARY", "# END SHARED BOUNDARY");
-  assert.ok(reference.length > 60_000);
-  for (const t of BOUNDARY) assert.equal(await block(join(MAC, t, "run.py"), "# BEGIN SHARED BOUNDARY", "# END SHARED BOUNDARY"), reference, t);
 });
 
 // ---- the values modes are declared, and refused unless the job is secret output ----------------------------------------------------------------

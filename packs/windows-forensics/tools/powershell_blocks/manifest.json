@@ -1,0 +1,55 @@
+{
+  "name": "powershell_blocks",
+  "description": "Reassemble PowerShell Script Block Logging records (event 4104) into script blocks and say how whole each block is. The input is an .evtx file (read with the chunk code evtx_query and evtx_carve carry: the file is read to its end, a chunk the reader cannot read is a problem and makes the answer partial) or a JSON Lines file of evtx_query rows, by path (input_format auto, evtx or jsonl; auto looks at the first bytes). The records of Microsoft-Windows-PowerShell/Operational (source windows_powershell) and of PowerShellCore/Operational (powershell_core) are kept apart; records of any other channel are grouped as source other, and a block shows every channel its records name (channels, at most 4); a block is the records that share a source, a Computer and a ScriptBlockId, in the order of MessageNumber. Per block: expected_fragments (the MessageTotal the records agree on, else null), the distinct numbers seen, the missing numbers as ranges (missing_ranges, the count whole in missing_count), numbers seen more than once with whether the copies have the same text, MessageTotal values that disagree (message_totals), numbers outside 1..MessageTotal, the Path values (at most 16 per block, the rest counted), the Level values (3 is a Warning: PowerShell logged that block by itself; auto_logged_warning), the text length in characters and bytes of the first copy of every number (of the rows of evtx_query, the length of the text that tool stripped of surrounding white space), and block_status: complete (every number from 1 to the one total present; extra copies of equal text are listed under duplicates and named in status_basis), gaps (numbers missing) or conflict (totals that disagree, a number out of range, or copies with different text). A missing fragment is a fact about the log (it wrapped, was cleared or was carved), not about the script. Every fragment's EventRecordID and record byte offset are in the fragments file (fragments_file); a block of 50 fragments or fewer lists them inline. The whole list of blocks is in blocks_file (written whenever a block was found); the inline blocks are a page of `limit`. CONTENT: the text of a block is never evaluated, decoded or shown, and no hash or digest of a block or fragment is written anywhere; fragments are compared for equality in memory with a value that exists for one run. The answer and its files carry metadata only. write_text: true writes the reassembled text (one JSON Lines line per block, numbers in order, the first copy of each number, lone surrogates escaped) to a file under $OUT with mode 0600, and is accepted only in a job the harness runs as secret output (the manifest declares it; SECRET_OUTPUT=1); anywhere else it is refused as JSON before anything is made. Bounds, all counted and all making the answer partial: at most 200,000 fragments in at most 100,000 blocks are kept, a Computer or ScriptBlockId over 256 characters is not grouped, a JSON Lines row over 16 MiB is not read, the reading stops at its own clock (36 seconds), the listing of blocks at 48 (a block not listed is counted in blocks_not_listed and its rows are in no file) and the whole run is held to 54 (the manifest allows 60). A 4104 record without a usable MessageNumber, MessageTotal or ScriptBlockId is counted (fragments_malformed) and named as a problem. A fragment whose text evtx_query withheld (a placeholder in its row) is counted under fragments_text_withheld_upstream and its block is not the evidence's text. SIGTERM, SIGINT and SIGHUP end the run with JSON (status failed with interrupted true, exit 128 plus the signal), no file of the run left. Every answer and refusal carries status and status_basis. WITHHOLDING: every key and value of the answer and of the files this tool writes (except the text file of write_text, which holds the originals and is a secret output) is judged by the shared boundary the windows tools carry (the computer, channel, Path and ScriptBlockId by the grammar of their type; a string it replaces is <withheld N characters: reason> and makes a complete answer partial); a string over the judging time is replaced whole. write_values: true writes the originals of everything the boundary withheld to powershell_blocks-values.jsonl (mode 0600, created first, never replaced), only in a job run with secret_output: true. Not verified on a real PowerShell log in this change: the reader is exercised on events built to the documented layout, and python-evtx itself is not installed where the tests run.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "An .evtx file (Microsoft-Windows-PowerShell/Operational or PowerShellCore/Operational), or a JSON Lines file of evtx_query rows"
+    },
+    "input_format": {
+      "type": "string",
+      "description": "auto (default: an ElfFile header means evtx, anything else jsonl), evtx or jsonl",
+      "required": false
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Blocks shown inline (default 100); every block is in the file named by blocks_file",
+      "required": false
+    },
+    "write_text": {
+      "type": "boolean",
+      "description": "Write the reassembled text of every block to a file under $OUT (mode 0600): only in a job run with secret_output: true, refused anywhere else; default false",
+      "required": false
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the originals of everything the boundary withheld to a file under $OUT (mode 0600, created first, never replaced): only in a job run with secret_output: true, refused anywhere else; default false",
+      "required": false
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 60,
+  "example": "{\"path\": \"work/Microsoft-Windows-PowerShell%4Operational.evtx\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T12:00:00.000Z",
+  "version": 1,
+  "sha256": "a7a3c0f608d62901cef3fe21da013cdd2c1eef371c026d5cf2bb396122aa059c",
+  "requires": [],
+  "use": {
+    "extensions": [
+      ".evtx",
+      ".jsonl"
+    ],
+    "names": [
+      "Microsoft-Windows-PowerShell%4Operational.evtx",
+      "PowerShellCore%4Operational.evtx"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_text",
+      "write_values"
+    ]
+  }
+}

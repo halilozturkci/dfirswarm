@@ -17,6 +17,7 @@ import {
   pcapClassic, refused, ticks, tool, withCwd,
 } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const C = "10.0.0.5";
 const S = "203.0.113.7";
@@ -495,21 +496,11 @@ test("a block the tool does not decode is measured, never read, however long it 
     const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
     const big = ngBlock(0x0a, Buffer.alloc(160 * 1024 * 1024 - 12));
     await drop(cwd, "work/big.pcapng", Buffer.concat([ngSection(), ngInterface(), big, ngPacket({ ticks: ticks(1_700_000_000, 0, 6), frame })]));
-    const wrapper = `import atexit, resource, runpy, sys
+    const wrapper = peakRssPrelude() + `import atexit, runpy
 def report():
-    # On Linux ru_maxrss carries the peak of the process image that was replaced by exec: a parent holding the 160 MB
-    # capture in memory (this test does) would be counted against the tool. VmHWM is the new image's own peak.
-    peak = None
-    try:
-        for line in open("/proc/self/status"):
-            if line.startswith("VmHWM:"):
-                peak = int(line.split()[1]) // 1024
-    except OSError:
-        pass
-    if peak is None:
-        raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        peak = raw // (1024 * 1024) if sys.platform == "darwin" else raw // 1024
-    sys.stderr.write("MAXRSS_MB %d\\n" % peak)
+    # The new image's own peak (tests/peak-rss.ts): a parent holding the 160 MB capture in memory (this test does)
+    # would be counted against the tool by the rusage peak.
+    sys.stderr.write("MAXRSS_MB %d\\n" % (self_peak_bytes() // (1024 * 1024)))
 atexit.register(report)
 runpy.run_path(sys.argv[1], run_name="__main__")
 `;
@@ -719,3 +710,23 @@ test("a tool-output that is a symbolic link is refused before anything is read: 
 });
 
 const readdirNames = (dir: string): Promise<string[]> => readdir(dir).then((n) => n.sort());
+
+test("spilled_to_disk is true when only the tally of unknown pcapng block types moved to the file", async () => {
+  await withCwd(async (cwd) => {
+    const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
+    const capture = (types: number): Buffer => Buffer.concat([
+      ngSection(), ngInterface({ link: 1, snaplen: 65535 }), ngPacket({ ticks: ticks(1_700_000_000, 0, 6), frame }),
+      // block types no reader knows, each of its own (the range from 0x7f000000 up is not assigned), more than the 4,096 held in memory
+      ...Array.from({ length: types }, (_, i) => ngBlock(0x7f000000 + i, Buffer.from("x"))),
+    ]);
+    const few = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/few.pcapng", capture(100)), out_dir: "work/few" }));
+    assert.equal(few.unsupported_block_types_total, 100);
+    assert.equal(few.spilled_to_disk, false, "100 types stay in memory: nothing spilled");
+    const many = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/many.pcapng", capture(5000)), out_dir: "work/many" }));
+    assert.equal(many.unsupported_block_types_total, 5000, "every type is counted");
+    assert.equal(many.unsupported_blocks, 5000);
+    assert.equal(many.tuple_conversation_count, 1, "the tuple table did not spill: the block types did");
+    assert.equal(many.spilled_to_disk, true, "the tally of block types moved to the file, and the answer says so");
+    assert.deepEqual((await filesUnder(join(cwd, "work/many"))).filter((f) => /sqlite|spill/.test(f)), [], "the temporary database is not left behind");
+  });
+});

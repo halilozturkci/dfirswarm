@@ -14,8 +14,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { IS_ROOT, JOURNAL, asJob, body, everythingBut, exists, filesUnder, gone, lines, pidFile, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { IS_ROOT, JOURNAL, asJob as plainJob, body, everythingBut, exists, filesUnder, gone, lines, pidFile, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
+/** The tool as a secret-output job runs it: the harness puts SECRET_OUTPUT=1 in the environment of such a job's process. `plainJob` is a job that is not. */
+const asJob = (script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): ReturnType<typeof plainJob> =>
+  plainJob(script, cwd, args, bin, { SECRET_OUTPUT: "1", ...env }, outName);
 
 const BOOT_A = "9d6a4f4b7a7e4b2d9b2f0a1e3f4c5d6e";
 const BOOT_B = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
@@ -50,7 +54,7 @@ import json, os, sys, time
 open(os.environ["STUB_ARGV"], "a").write(json.dumps(sys.argv[1:]) + "\\n")
 if "--verify" in sys.argv:
     sys.stdout.write(open(os.environ["STUB_VERIFY"]).read())
-    sys.stderr.write("stub verify note\\n")
+    sys.stderr.write(os.environ.get("STUB_STDERR", "stub verify note\\n"))
     sys.exit(int(os.environ.get("STUB_VERIFY_EXIT", "0")))
 data = open(os.environ["STUB_LINES"], "rb").read()
 sys.stdout.buffer.write(data)
@@ -86,7 +90,7 @@ function nativeJournal(): string {
   );
 }
 
-test("journal_export keeps the whole native export, with the cursor and both clocks, and offers the projection as well", async () => {
+test("journal_export keeps the whole native export, with the cursor and both clocks, and offers the projection as well", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const native = nativeJournal();
     const env = await journalFixture(cwd, bin, native);
@@ -288,7 +292,7 @@ test("journal_export rejects arguments that are not an object and a field of the
   });
 });
 
-test("journal_export asks journalctl to be quiet and reads its `-- No entries --` notice as an empty selection, not as a broken export", async () => {
+test("journal_export asks journalctl to be quiet and reads its `-- No entries --` notice as an empty selection, not as a broken export", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     // A real journalctl prints this line on stdout when nothing matches and --quiet is not given.
     const env = await journalFixture(cwd, bin, "-- No entries --\n");
@@ -336,7 +340,7 @@ time.sleep(60)
   });
 });
 
-test("journal_export never writes over an earlier output of the same job", async () => {
+test("journal_export never writes over an earlier output of the same job", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const env = await journalFixture(cwd, bin, nativeJournal());
     await writeFile(join(cwd, "verify.txt"), "PASS: first\n");
@@ -349,6 +353,117 @@ test("journal_export never writes over an earlier output of the same job", async
     assert.equal(await readFile(join(cwd, "out", "journal-verify.2.txt"), "utf8"), "PASS: second\n");
     assert.match(second.verify.stderr_file, /journalctl\.2\.stderr$/);
     assert.equal(first.status, "complete");
+  });
+});
+
+test("journal_export keeps journalctl's stderr in its file: the answer gives its name, size and sha256, and on no exit path its lines", async () => {
+  const { createHash, randomBytes } = await import("node:crypto");
+  await withCwd(async (cwd, bin) => {
+    const env = await journalFixture(cwd, bin, nativeJournal());
+    await writeFile(join(cwd, "empty.jsonl"), "");
+    await writeFile(join(cwd, "verify.txt"), "PASS: x\n");
+    const canary = (): string => `CANARY${randomBytes(12).toString("hex")}`;
+    const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
+    const cases: Array<[string, Record<string, unknown>, Record<string, string>, (a: Json) => Json]> = [
+      ["a clean export", { path: "work/journal" }, {}, (a) => a.stderr],
+      ["a journalctl that fails and wrote nothing", { path: "work/journal" }, { STUB_EXIT: "1", STUB_LINES: join(cwd, "empty.jsonl") }, (a) => ({ file: a.stderr_file, bytes: a.stderr_bytes, sha256: a.stderr_sha256 })],
+      ["a journalctl that outlasts max_seconds", { path: "work/journal", max_seconds: 2 }, { STUB_SLEEP: "60" }, (a) => a.stderr],
+      ["a verify", { path: "work/journal", mode: "verify" }, { STUB_VERIFY: join(cwd, "verify.txt") }, (a) => ({ file: a.verify.stderr_file, bytes: a.verify.stderr_bytes, sha256: a.verify.stderr_sha256 })],
+    ];
+    let n = 0;
+    for (const [what, args, extra, pick] of cases) {
+      n += 1;
+      const secret = canary();
+      const message = `${secret} /home/someone/${secret}/path\n`;
+      const run = await asJob(JOURNAL, cwd, args, bin, { ...env, STUB_STDERR: message, ...extra }, `out-e${n}`);
+      const answer = JSON.parse(run.stdout);
+      assert.equal(run.stdout.includes(secret), false, `${what}: the canary is in the answer`);
+      assert.equal(run.stderr.includes(secret), false, `${what}: the canary is in the tool's stderr`);
+      const named = pick(answer);
+      assert.match(named.file, /journalctl(\.\d+)?\.stderr$/, what);
+      assert.equal(named.bytes, Buffer.byteLength(message), what);
+      assert.equal(named.sha256, sha(message), what);
+      assert.equal(JSON.stringify(answer).includes("first_lines"), false, `${what}: the old field is gone`);
+      assert.equal(await readFile(join(cwd, `out-e${n}`, String(named.file).split("/").at(-1) as string), "utf8"), message, `${what}: the whole is in the file`);
+    }
+  });
+});
+
+/** A journal file header as systemd's journal file format lays it out: the signature, then the machine id at offset 40. */
+function journalHeader(machineId: string): Buffer {
+  const header = Buffer.alloc(256);
+  header.write("LPKSHHRH", 0, "latin1");
+  Buffer.from(machineId, "hex").copy(header, 40);
+  return header;
+}
+
+test("journal_export decides that a journal is this machine's own by the machine id in the files, and not by a path prefix", async () => {
+  const { tmpdir } = await import("node:os");
+  const MINE = "0123456789abcdef0123456789abcdef";
+  const OTHER = "fedcba9876543210fedcba9876543210";
+  const program = String.raw`
+import importlib.util, json, os, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("tool_under_test", sys.argv[1])
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+base, mine = sys.argv[2], sys.argv[3]
+prefix = os.path.join(base, "var", "log", "journal")
+cases = {
+    "evidence under a journal-like prefix, another machine's id": tool.is_own_journal(os.path.join(prefix, "evidence"), [prefix], mine),
+    "the same directory, files carrying this machine's id": tool.is_own_journal(os.path.join(prefix, "own"), [prefix], mine),
+    "a copy of this machine's journal elsewhere": tool.is_own_journal(os.path.join(base, "copy", "system.journal"), [prefix], mine),
+    "a directory named by this machine's id, no files": tool.is_own_journal(os.path.join(prefix, mine), [prefix], mine),
+    "an all-zero id": tool.is_own_journal(os.path.join(base, "zero.journal"), [prefix], mine),
+    "not a journal": tool.is_own_journal(os.path.join(base, "plain.txt"), [prefix], mine),
+    "a link to this machine's journal": tool.is_own_journal(os.path.join(base, "link.journal"), [prefix], mine),
+    "id unknown, a path under the prefix": tool.is_own_journal(os.path.join(prefix, "evidence"), [prefix], None),
+    "id unknown, a path elsewhere": tool.is_own_journal(os.path.join(base, "copy"), [prefix], None),
+}
+print(json.dumps(cases))
+`;
+  await withCwd(async (cwd) => {
+    const base = join(cwd, "machine");
+    await mkdir(join(base, "var", "log", "journal", "evidence"), { recursive: true });
+    await mkdir(join(base, "var", "log", "journal", "own"), { recursive: true });
+    await mkdir(join(base, "var", "log", "journal", MINE), { recursive: true });
+    await mkdir(join(base, "copy"), { recursive: true });
+    await writeFile(join(base, "var", "log", "journal", "evidence", "system.journal"), journalHeader(OTHER));
+    await writeFile(join(base, "var", "log", "journal", "own", "system.journal"), journalHeader(MINE));
+    await writeFile(join(base, "copy", "system.journal"), journalHeader(MINE));
+    await writeFile(join(base, "zero.journal"), journalHeader("00".repeat(16)));
+    await writeFile(join(base, "plain.txt"), "not a journal\n");
+    await symlink(join(base, "copy", "system.journal"), join(base, "link.journal"));
+    const r = spawnSync("python3", ["-c", program, JOURNAL, base, MINE], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), {
+      "evidence under a journal-like prefix, another machine's id": false,
+      "the same directory, files carrying this machine's id": true,
+      "a copy of this machine's journal elsewhere": true,
+      "a directory named by this machine's id, no files": true,
+      "an all-zero id": false,
+      "not a journal": false,
+      "a link to this machine's journal": false,
+      "id unknown, a path under the prefix": true,
+      "id unknown, a path elsewhere": false,
+    });
+    // End to end, against this machine's own id where it can be read: a copy of its journal outside the run directory is refused, another machine's is read.
+    const { readFile: read } = await import("node:fs/promises");
+    const real = (await read("/etc/machine-id", "utf8").catch(() => "")).trim().toLowerCase();
+    if (/^[0-9a-f]{32}$/.test(real)) {
+      const outside = join(tmpdir(), `own-journal-${process.pid}-${Date.now()}`);
+      await mkdir(outside, { recursive: true });
+      try {
+        await writeFile(join(outside, "system.journal"), journalHeader(real));
+        await writeFile(join(outside, "other.journal"), journalHeader(OTHER));
+        const refusedOwn = refused(await tool(JOURNAL, cwd, { path: join(outside, "system.journal") }));
+        assert.match(refusedOwn.error, /where this machine keeps its own journal/);
+        const fine = await tool(JOURNAL, cwd, { path: join(outside, "other.journal") });
+        assert.doesNotMatch(fine.stdout, /where this machine keeps its own journal/);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    }
   });
 });
 
@@ -410,7 +525,8 @@ test("journal_export's own-journal guard follows links: a path that leads to whe
     // Where this machine "keeps its journal" is a directory of the test's own, named to the tool the way /var/log/journal is.
     const own = join(cwd, "machine", "var-log-journal");
     await mkdir(join(own, "abc"), { recursive: true });
-    await writeFile(join(own, "abc", "system.journal"), Buffer.concat([Buffer.from("LPKSHHRH"), Buffer.alloc(248)]));
+    // ... and its files carry this machine's id (the test says which it is), which is what makes a journal this machine's own.
+    await writeFile(join(own, "abc", "system.journal"), journalHeader("0123456789abcdef0123456789abcdef"));
     const elsewhere = join(cwd, "..", `je-links-${process.pid}`);
     await mkdir(elsewhere, { recursive: true });
     await symlink(own, join(elsewhere, "alias"));
@@ -420,6 +536,7 @@ spec = importlib.util.spec_from_file_location("journal_export_under_test", ${JSO
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 mod.OWN_JOURNALS = (${JSON.stringify(own)},)
+mod.this_machines_id = lambda: "0123456789abcdef0123456789abcdef"
 sys.stdin = io.StringIO(json.dumps({"path": sys.argv[1]}))
 try:
     mod.main()
@@ -471,5 +588,37 @@ test("journal_export bounds every field of a row: a byte array is named by its l
     assert.ok(out.field_census && Object.keys(out.field_census).some((k) => k.startsWith("FFFF") && k.endsWith("(100000 characters)")));
     assert.equal(out.entries_with_a_boot_id_over_128_characters, 1);
     assert.ok(rows[2].time_error.length < 300, "an unparseable time is quoted cut");
+  });
+});
+
+test("journal_export declares secret_output for write_text and preview_text, and refuses each, creating nothing, unless SECRET_OUTPUT is 1", async () => {
+  const manifest = JSON.parse(await readFile(join(JOURNAL, "..", "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.secret_output, { when_args: ["write_text", "preview_text"] });
+  for (const flag of manifest.secret_output.when_args) {
+    assert.equal(manifest.params[flag].type, "boolean");
+    assert.equal(manifest.params[flag].default, undefined);
+    assert.match(manifest.params[flag].description, /SENSITIVE/);
+  }
+  await withCwd(async (cwd, bin) => {
+    const env = await journalFixture(cwd, bin, nativeJournal());
+    for (const flag of ["write_text", "preview_text"]) {
+      const before = await filesUnder(cwd);
+      assert.match(refused(await tool(JOURNAL, cwd, { path: "work/journal", [flag]: true }, env, bin)).error, /outside a job/, flag);
+      for (const value of [undefined, "0", "true", ""]) {
+        const jobEnv = value === undefined ? env : { ...env, SECRET_OUTPUT: value };
+        const answer = refused(await plainJob(JOURNAL, cwd, { path: "work/journal", [flag]: true }, bin, jobEnv, "out-plain"));
+        assert.match(answer.error, /SECRET_OUTPUT/, `${flag} with SECRET_OUTPUT=${value}`);
+        assert.match(answer.error, /Nothing was written/);
+        assert.doesNotMatch(JSON.stringify(answer), new RegExp(JOURNAL_SECRET));
+      }
+      assert.deepEqual((await filesUnder(cwd)).filter((f) => !f.startsWith("out-plain/")), before, `${flag}: a refusal creates nothing outside the job's directory`);
+      assert.deepEqual(await filesUnder(join(cwd, "out-plain")), [], `${flag}: and nothing in the job's own`);
+    }
+    const written = body(await asJob(JOURNAL, cwd, { path: "work/journal", write_text: true }, bin, env, "out-ok"));
+    assert.equal(written.text.written, 5);
+    assert.equal((await stat(join(cwd, "out-ok", "journal-native.jsonl"))).mode & 0o777, 0o600);
+    assert.match(await readFile(join(cwd, "out-ok", "journal-native.jsonl"), "utf8"), new RegExp(JOURNAL_SECRET));
+    const preview = body(await asJob(JOURNAL, cwd, { path: "work/journal", preview_text: true }, bin, env, "out-pv"));
+    assert.match(JSON.stringify(preview.records), new RegExp(JOURNAL_SECRET));
   });
 });

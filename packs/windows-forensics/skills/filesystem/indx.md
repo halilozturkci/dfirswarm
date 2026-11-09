@@ -16,3 +16,5 @@ Use when you recover names from a directory's $I30 index. Not for the file's own
 - The cached times are historical metadata of that structure: not the file's current times, and no proof they were unaltered. A parsed name is structurally plausible, not verified. A slack entry does not say the file was deleted or wiped: a rename, a move out of the directory or an index rebalance leaves the same trace. Corroborate with the $MFT record where one survives and with `usn_journal`.
 
 Shows: this directory index once held this name, parent and these times. Does not show: deletion, wiping, who acted, or the file's current state. Record: block offset, entry offset, `source`, the three integrity flags, the excluded counts, and the corroboration tried.
+
+Sensitive output: `indx_carve` returns names as stored and withholds nothing, and a name can itself spell a secret; `extract_stream` never prints the stream. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

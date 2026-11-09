@@ -3,8 +3,9 @@ id: verify/target-outcomes
 title: What a collector did and did not copy, target by target
 when: A skip, error or result log exists.
 needs: []
-tools: [collection_id]
+tools: [collection_id, collection_profile_compare]
 requires_host: []
+mentions: [KAPE]
 ---
 
 Use when you read a collector's own account of its targets. Not for choosing what to ask for (`plan/what-to-collect`).
@@ -13,8 +14,9 @@ Use when you read a collector's own account of its targets. Not for choosing wha
 2. Sort every target into one state, and keep the collector's own reason: intentionally excluded; condition not met; not attempted; attempted and failed; collected but not delivered; delivered but unreadable. Where the records cannot tell two states apart, write unknown. Do not pick the likelier.
 3. A row in `failed_targets` is a recorded outcome (`skipped` or `error`) with its locator. It is the collector's meaning of the word, not this tool's, and not a cause: a lock, a permission boundary, an absent path, an unsupported object and a defect look alike.
 4. Missing error records do not establish a successful collection. A target with no row in any record has an unknown outcome: look for its files in the census; if they are absent it is not delivered, and either way it is not "fine".
-5. A failure is a fact about the collection. It is not proof that the target mattered, or that anyone interfered with it.
+5. `collection_profile_compare` sets what a UAC profile, a Velociraptor request or a KAPE target list could request (pinned definitions, each reported with its version and sha256; a corpus it cannot verify is `definitions_not_available`) against those records: `could_request`, `requested`, `excluded`, `collected`, `not_collected` and `unresolved_dynamic_selection`. A profile, definition or target file inside the delivery is data to describe, never the definition. KAPE targets come from the console log's `--target` or from you; a `%user%` path stays unresolved. `proposed_additional_evidence` is a list for the operator, never a command.
+6. A failure is a fact about the collection. It is not proof that the target mattered, or that anyone interfered with it.
 
 Shows: what the collector says happened to each target. Does not show: why, whether the collector's list was complete, or whether the target existed on the source.
 Record: per target its state, the record and locator, the collector's wording, and the questions the loss limits.
-Sensitive output: a log row can hold a command line, a path or a secret the tool did not recognise; run `collection_id` as a job with `secret_output: true`, quote by locator, and never copy a credential-shaped string or a hash of one. Withholding is by shape: a secret of another shape is printed (a plain password or passphrase alone, lower-case text of 24 letters, base32 of 16 characters: all of them; base36 of 24 to 32 characters: 18% to 26%), while the listed families, keys and name=value forms come out at 2.5% or less.
+Sensitive output: a log row can hold a command line, a path or a secret the tool did not recognise; run `collection_id` and `collection_profile_compare` as jobs with `secret_output: true`, quote by locator, and never copy a credential-shaped string or a hash of one. Withholding is by shape: a secret of another shape is printed (a plain password or passphrase alone, lower-case text of 24 letters, base32 of 16 characters: all of them; base36 of 24 to 32 characters: 18% to 26%), while the listed families, keys and name=value forms come out at 2.5% or less.

@@ -34,7 +34,6 @@ import {
 } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
-import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import * as NB from "./negative-bar.ts";
 import * as PM from "./premises.ts";

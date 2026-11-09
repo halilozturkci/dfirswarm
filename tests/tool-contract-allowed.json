@@ -1,0 +1,12 @@
+{
+  "secret_output": [
+    {
+      "tool": "reverse-engineering/elf_directories",
+      "item": "PKG-XP-10",
+      "why": "write_values is declared by no secret_output; a tool added after PKG-XP-10, of the same kind as pe_directories"
+    }
+  ],
+  "version_label": [],
+  "status_pair": [],
+  "non_utf8_name": []
+}

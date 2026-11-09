@@ -1,0 +1,58 @@
+{
+  "name": "vol_views",
+  "description": "Ask the installed Volatility 3 one named question about an image and keep its whole answer: offline, as the engine printed it, with its scope and a status. `question` names a plugin as the installed `vol --offline --help` lists it (a module name such as windows.pslist is enough when one class is listed under it); a name that is not listed is refused as JSON, naming it, and a module with several classes is refused, naming them: no plugin runs that the listing does not show. It serves the questions the kickoff recipe (memory-windows) does not ask, Linux and macOS images once a symbol table has been validated, and reruns; it interprets nothing the plugin prints. `readiness` is required: the answer of vol_readiness for this image (views plugins and symbols), passed as a file under the run directory (a declared job input); its verdict must be ready and its inputs.path must be this image. The receipt is read, not verified: the tool lists the plugins itself and runs offline whatever the receipt says. `pid` (a list of integers) is passed as the plugin's --pid and `dump` as the plugin's own dump option (--dump, or --dump-regions); each only when the plugin's --help lists it, otherwise the call is refused before the plugin runs. WHAT IS KEPT: every line the engine prints is split at its tabs (the quick renderer's column separator) and each cell is judged by the shared SHOWN rules (a part that looks like a secret is replaced; withholding is by shape, so a plain password or a name under 16 characters is printed); the lines are paged: `limit` lines (default 100, at most 1000) in the answer and the whole judged output, one JSON object per line, in a file under tool-output (in a job $OUT/tool-output) that `output.all_results` names, with its size and sha256 (`output.file_bytes`, `output.file_sha256`) when there are more lines than `limit`; with fewer, the answer holds them all. The raw output, as the engine wrote it, is memory content (command lines, environments, process names): it is written only with `write_values` (default false) in a job run as secret output, to $OUT/vol_views/vol_views-<digest>-output.txt (directory mode 0700, file mode 0600, created exclusively under a hidden name and placed without replacing an earlier file), and so are the files the plugin exports with `dump` (under $OUT/vol_views/artefacts-<digest>, passed to Volatility as -o); the sizes and sha256 of the raw output and of each exported file are in $OUT/vol_views/manifest.jsonl, never in the answer, and secret_values names what was written. `dump` without write_values is refused. This manifest declares secret_output for write_values, so the harness seals such a job as sensitive, and the tool checks SECRET_OUTPUT=1 and refuses as JSON, before it looks at the image, when write_values is set outside a job or in a job that is not secret output. The status is complete when the plugin ran to its end with exit 0 and its whole output was read, judged and kept; it is partial when the plugin was ended (its time, or more than 1 GiB of output, or 64 MiB of log read), when the engine's log says pages were missing (a heuristic over the log's wording, not a proof), when a line longer than 1 MiB was not judged, when the plugin printed no row, or when the clock ended a digest or a listing; failed when the plugin exits non-zero. A complete status is not a claim about the image: the plugin's scope is its own, and an empty or short output is an absence only after the plugin completed with the matching symbol table. OFFLINE: every Volatility call carries `--offline`; the tool fetches nothing; a caller's text reaches Volatility only as an image path (made absolute), a symbol directory and a number for --pid; the plugin runs from the directory /, so nothing it writes by default lands in the run directory. THE CLOCK: `max_seconds` (default 420, at most 540, inside timeout_seconds 600); each program gets what is left less a 10 s reserve and, past its own time (help 90 s, the plugin's --help 60 s) or output cap, is ended with what it started, in this tool's own process group (never a session of its own, PR_SET_PDEATHSIG on Linux); SIGTERM, SIGINT and SIGHUP end it and answer once with status failed, interrupted true, the files being written kept under a name ending in .partial, exit 128 plus the signal; a signal that arrives while the answer is written is held until it is out. Not measured: the real Volatility was not available where this tool was written. The listing (one dotted plugin name per line under the Plugins section), the options -q, -o, -s, -f and --offline and exit status 1 for a failure were read from the Volatility 3 2.28.2 source; the plugin's own --pid and dump options are looked up in its --help; the lines judged are the quick renderer's tab-separated table, which the tests' stand-in imitates, not a recorded run. symbols_dir may not contain a semicolon (-s reads a semicolon-separated list). A name, a path, a URL or a message that quotes a credential is withheld with the identifier-shaped strings, from version 2: a value given to a password, token, secret or cookie name (password=..., Pwd=..., a Cookie header), a Name/Value pair in text whose Name is a credential (a number, an array or a long Value too, and the NewValue after an OldValue), a -Password style switch, the argument of ConvertTo-SecureString, curl -u user:pass, mysql -uUSER -pSECRET, a bcrypt hash and the known token families; the text is replaced by a marker that holds only its length. Before, only identifier-shaped strings (tokens, key ids, user-info) were withheld, so these were printed. Known gaps: a pair whose Value is an array nested in another or longer than 4,096 characters, a crypt hash that is not bcrypt, and a secret that has neither a credential name nor a token shape.  A process that Volatility left running after it exited and that holds its pipes is noticed one second after the program ended (the pipes are let go, however slowly it writes), then stopped, killed and reaped by settle(); the answer is then partial (program_group.left_behind and a line in status_basis), because what it wrote into a pipe cannot be told from the program's output. A host where the absence of a leftover cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) does not make this tool partial, because it reports only what the program printed: program_group.unproven says why. A refusal carries no program_group. A process that is no descendant of the program (started through a service manager) is not found. With dump: true the files the plugin exported are listed and hashed, so a host where the absence of a leftover cannot be proven makes the answer partial as well. The program is looked for before its pipes are closed: a leftover that floods a pipe would otherwise die of SIGPIPE at the close and never be counted. One found makes the answer partial and the rows, counts or table of that run are not to be trusted (the lines it wrote before it was ended cannot be told from the program's).",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The memory image the question is asked about. It is opened without waiting and looked at with fstat first: a FIFO, a directory or an empty file is refused."
+    },
+    "question": {
+      "type": "string",
+      "description": "The plugin to run, as the installed vol lists it (windows.pslist, linux.lsof.Lsof)"
+    },
+    "readiness": {
+      "type": "string",
+      "description": "A file under the run directory holding the answer of vol_readiness for this image (views plugins and symbols), verdict ready"
+    },
+    "pid": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "description": "Process ids to ask about (the plugin's --pid), at most 64; only for a plugin that lists --pid"
+    },
+    "dump": {
+      "type": "boolean",
+      "description": "Run the plugin's own dump option and keep what it exports. Needs write_values. Default false."
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Keep the raw output (and, with dump, the exported files) in the job. Only in a job run as secret output. Default false."
+    },
+    "symbols_dir": {
+      "type": "string",
+      "description": "A directory of symbol tables to search besides vol's own (passed as `-s`)"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The clock of the whole call, 10 to 540 (default 420)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "How many judged output lines the answer lists inline, 1 to 1000 (default 100); the whole judged output is kept in a file the answer names"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 600,
+  "example": "{\"path\": \"inputs/memory.raw\", \"question\": \"windows.pslist\", \"readiness\": \"inputs/vol_readiness.json\"}",
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  },
+  "by": "maintainer",
+  "at": "2026-11-01T12:00:00.000Z",
+  "version": 7,
+  "sha256": "4829ac1a7f6446996f2040fc7e7b7221f6a6f499f18940ecf0d07cea2d9e8b3b"
+}

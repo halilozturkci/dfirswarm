@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, withCwd } from "./tool-library-harness.ts";
 import { WIN, body, stub, tool } from "./windows-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -45,7 +46,7 @@ function prng(seed: number): () => number {
   };
 }
 
-test("esedb_query reads the exporter's text as text: a quote, a carriage return and an unbalanced quote do not merge or split rows", async () => {
+test("esedb_query reads the exporter's text as text: a quote, a carriage return and an unbalanced quote do not merge or split rows", { skip: NO_ADOPTION }, async () => {
   // csv.reader's default quoting took a cell that began with a quote to the next quote across tabs and lines, dropped the quotes
   // inside, and ended a row at a bare carriage return: 5 exported rows came back as 2, status complete.
   await withCwd(async (cwd, bin) => {
@@ -96,7 +97,7 @@ test("esedb_query numbers a column named like a key it adds, instead of letting 
   });
 });
 
-test("esedb_query keeps what it prints inline small however large the cells are, and the file it names holds every row whole", async () => {
+test("esedb_query keeps what it prints inline small however large the cells are, and the file it names holds every row whole", { skip: NO_ADOPTION }, async () => {
   // 100 rows of 1 MiB cells (a 100 MB table) came back as 100 MB on stdout: the page was bounded by a row count only.
   await withCwd(async (cwd, bin) => {
     const rows = Array.from({ length: 80 }, (_, i) => `${i + 1}\t${"x".repeat(5000 - 6)}${String(i).padStart(6, "0")}`);

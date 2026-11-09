@@ -1,0 +1,51 @@
+{
+  "name": "macos_login_items",
+  "description": "Resolve macOS background and login item stores (backgrounditems.btm and BackgroundItems-v*.btm: NSKeyedArchiver graphs) into items, with the path of references behind each field. plist_read shows such a file as the structure it has; this tool follows the UID references of the $objects array from $top, finds the objects that carry the fields of a background item (executablePath, bundleIdentifier, teamIdentifier, developerName, parentIdentifier, disposition, with url, name, type and uuid beside them) and returns, for each, every property it has, resolved, under its own archive name: `value`, `reference_path` (the hops from $top to the property, each hop `<object index>.<key>`) and `via_objects` (the indexes of the objects dereferenced to build the value). `roles` only says which archive key looks like which part of an item (executable, arguments, team_identifier, bundle_identifier, developer_name, parent, state); the state fields (disposition, type and enabled-like keys) are given as the archive holds them, raw, and nothing is decoded that the archive does not say. A registered item is not a running one, and what System Settings shows now is not a historical inventory. container_key is the key of the dictionary entry the item sits under (in a versioned store, the user identifier the items are grouped by), not a decoded scope. Resolved: NSDictionary, NSArray and NSSet, NSURL (relative and base side by side), NSUUID (as the canonical text), NSDate (the raw Apple absolute seconds beside the UTC time), NSString; any other class as its properties under _class. Data (NSData, a bookmark or an alias) is recorded as present with its length and, for a bookmark, the four magic bytes `book`: it is never decoded, printed, hashed or previewed, so a path inside a bookmark is not in the answer. An unresolvable reference is a row (row_type unresolved) with the path and the reason: a reference to an object the archive does not have, a cycle (an object that is its own ancestor), the depth bound or the node bound; the walk is linear (each object is walked once however many references point at it) and bounded in nodes (max_nodes, default 200000), depth (max_depth, default 100) and file size (max_file_bytes, default 33554432); a single property's value is cut after 64 nodes and says so. A file that is not a property list, is not a keyed archive, is over the size bound, or is resolved but holds no object with the fields of an item is named in `files` with the reason and makes the answer partial: an empty answer is never a statement that the host has no login items; status is complete only when every store file was read, every reference resolved and nothing is listed under problems. path is a file or a directory: a directory is searched for the store names (sorted, links not followed and counted, unreadable directories counted, the walk bounded by entries and by max_seconds). Each file is opened without waiting (a FIFO has no writer) and without following a link, and only a regular file is read. Every string passes the shared boundary by its field kind (paths, URLs, identifiers and names; a value that looks like a token is withheld as <withheld N characters: reason>, and so is a property name that is not plain); a secret of another shape is printed. The tool has no values mode. Rows are written as they are found (out_file, or the paging file the answer names), flushed per row, so entry_count equals the lines in it. It has a clock of its own (max_seconds, default 80, at most 90): files not reached are not read and the answer is partial; SIGTERM, SIGINT and SIGHUP end the sweep between two rows with one JSON answer, status partial and interrupted set, exit 128 plus the signal; a signal in the first tens of milliseconds, before the module has run, ends it with no JSON (stated, not closed). Every answer carries status and status_basis.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A backgrounditems.btm or BackgroundItems-v*.btm file, or a directory to search for them (links inside it are not followed)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows shown inline (default 500, and at most max_inline_bytes of them). All are counted; the whole result is in out_file, or, when that is omitted, in a file under work/<your id>/tool-output/ (in a job, $OUT/tool-output/) that the answer names"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "JSONL path for every row (each judged by the boundary), written as each is found, mode 0600. The tool does not overwrite: an existing file or link at that name is refused"
+    },
+    "max_file_bytes": {
+      "type": "integer",
+      "description": "A file larger than this is skipped, named, and not parsed (default 33554432)"
+    },
+    "max_nodes": {
+      "type": "integer",
+      "description": "References followed in one file; past it the rest of that file's graph is not followed, the file is named, and the answer is partial (default 200000)"
+    },
+    "max_depth": {
+      "type": "integer",
+      "description": "Hops from $top; a reference that would go deeper is an unresolved row and is not followed (default 100)"
+    },
+    "max_inline_bytes": {
+      "type": "integer",
+      "description": "The inline rows are cut at this many bytes as well as at `limit` rows (default 1048576); the whole is in out_file or the file the answer names"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The tool's own clock (default 80, at most 90): when it passes, files not yet read are not read, status is partial"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/private/var/db/com.apple.backgroundtaskmanagement\", \"out_file\": \"work/<your id>/login-items.jsonl\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T12:00:00.000Z",
+  "version": 2,
+  "sha256": "a498922ca188c466ce9997687f411abf4f03d3ffe8067265615a3964077cb2ec",
+  "use": {
+    "extensions": [
+      ".btm"
+    ]
+  }
+}

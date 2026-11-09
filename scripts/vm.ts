@@ -50,6 +50,7 @@
  *   node --experimental-strip-types scripts/vm.ts netcheck --image REF [--allow-host H]...
  *   node --experimental-strip-types scripts/vm.ts check-allow ENTRIES...
  *   node --experimental-strip-types scripts/vm.ts toolbox --image REF --out FILE [--preset SETS] [--required] [--packs DIRS]
+ *   node --experimental-strip-types scripts/vm.ts fuse-check --image REF   (exit 0 when a VM of the image has /dev/fuse, 1 when not)
  *   node --experimental-strip-types scripts/vm.ts catalog --image REF --sandbox DIR [--evidence DIR]... [--allow-host H]... [--memory MIB] [--run ID] [--registry FILE]
  *   node --experimental-strip-types scripts/vm.ts msb-path
  *   node --experimental-strip-types scripts/vm.ts worker-once --name NAME   (a WorkerSpec on stdin; the hub's worker maker)
@@ -780,7 +781,28 @@ PY
 `;
 
 /** What one of the run's packs needs of an image: its version, its seal, the programs it requires. */
-export type PackNeed = { id: string; version: string; seal: string; required: string[] };
+/** `mounts`: the tools whose manifest says `needs: ["fuse"]` (a FUSE mount), by name; the harness knows no tool, it reads the field. */
+export type PackNeed = { id: string; version: string; seal: string; required: string[]; mounts?: string[] };
+
+/** The tools of a pack directory whose manifest declares it needs a FUSE mount (`"needs": ["fuse"]`). */
+export function mountingTools(packDir: string): string[] {
+  const out: string[] = [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(join(packDir, "tools")).sort();
+  } catch {
+    return out;
+  }
+  for (const name of names) {
+    try {
+      const m = JSON.parse(readFileSync(join(packDir, "tools", name, "manifest.json"), "utf8")) as { needs?: unknown };
+      if (Array.isArray(m.needs) && m.needs.includes("fuse")) out.push(name);
+    } catch {
+      // a tool without a readable manifest declares nothing
+    }
+  }
+  return out;
+}
 
 /** The seal of a pack: the sha256 of its sorted checksums, as `pack.sh seal` wrote them. */
 export function packSeal(manifest: { checksums?: { sha256?: Record<string, string> } }): string {
@@ -803,7 +825,8 @@ export function packNeeds(packDirs: string[]): PackNeed[] {
       } catch {
         required = [];
       }
-      out.push({ id: manifest.id ?? dir.split("/").pop() ?? dir, version: manifest.version ?? "?", seal: packSeal(manifest), required: [...new Set(required)] });
+      const mounts = mountingTools(dir);
+      out.push({ id: manifest.id ?? dir.split("/").pop() ?? dir, version: manifest.version ?? "?", seal: packSeal(manifest), required: [...new Set(required)], ...(mounts.length ? { mounts } : {}) });
     } catch {
       // an unreadable pack was refused at kickoff already
     }
@@ -854,8 +877,15 @@ export function imageFit(probe: Record<string, unknown>, needs: PackNeed[], allo
   // agents may install them) pointed the agents at the wrong place.
   if (programsInJobs) return { blockers, warnings };
   const missing = new Set(Array.isArray(probe.missing_binaries) ? (probe.missing_binaries as string[]) : []);
-  const image = (probe.image ?? {}) as { pack_versions?: Record<string, { version?: string; seal?: string }> };
+  const image = (probe.image ?? {}) as { pack_versions?: Record<string, { version?: string; seal?: string }>; fuse?: { fusermount?: boolean } };
   warnings.push(...imageDataWarnings(probe.image));
+  // A tool that mounts says so in its manifest (`needs: ["fuse"]`); a VM with no /dev/fuse, or an image with no fusermount, cannot give it that.
+  for (const need of needs) {
+    for (const tool of need.mounts ?? []) {
+      if (probe.fuse === false) warnings.push(fuseWarning(need.id, tool, "this VM has no /dev/fuse"));
+      else if (image.fuse?.fusermount === false) warnings.push(fuseWarning(need.id, tool, "this image has no fusermount3 or fusermount"));
+    }
+  }
   if (needs.length && !image.pack_versions) warnings.push("the image records no pack versions (built before images recorded them): which version of each pack it was built for is unknown");
   for (const need of needs) {
     const lacks = need.required.filter((b) => missing.has(b));
@@ -871,6 +901,11 @@ export function imageFit(probe: Record<string, unknown>, needs: PackNeed[], allo
     }
   }
   return { blockers, warnings };
+}
+
+/** The warning for a tool that mounts, in a VM or image without what a FUSE mount needs. */
+export function fuseWarning(pack: string, tool: string, lack: string): string {
+  return `pack ${pack}' tool ${tool} mounts (its manifest needs fuse) and ${lack}: it will answer failed with no_fuse, which is a limit of this VM, not a finding about the evidence`;
 }
 
 /** What each agent's VM must find, or the kickoff stops. */
@@ -1989,6 +2024,36 @@ export async function imageFiles(image: string, paths: string[]): Promise<{ dige
 }
 
 /**
+ * Whether a VM booted from the image has /dev/fuse (a mount needs the device,
+ * which the image cannot bring: the microVM must expose it). A throwaway VM,
+ * no network, nothing mounted; the image-boot workflow asserts it on amd64.
+ */
+export async function imageFuse(image: string): Promise<{ digest: string | null; fuse: boolean; fusermount: boolean }> {
+  const M = await sdk();
+  const name = `dfs-fuse-${randomBytes(6).toString("hex")}`;
+  const release = putAwayOnSignal(name);
+  try {
+    const sandbox = await M.Sandbox.builder(name)
+      .image(image)
+      .pullPolicy("if-missing")
+      .cpus(1)
+      .memory(512)
+      .maxDuration(300)
+      .labels({ [LABEL_RUN]: "fuse-check", [LABEL_AGENT]: "fuse-check" })
+      .disableNetwork()
+      .detached(true)
+      .create();
+    const dev = await sandbox.exec("sh", ["-c", "test -c /dev/fuse"]);
+    const helper = await sandbox.exec("sh", ["-c", "command -v fusermount3 || command -v fusermount"]);
+    return { digest: await imageDigest(name), fuse: dev.code === 0, fusermount: helper.code === 0 };
+  } finally {
+    release();
+    await run(msbBinary(), ["stop", name], { timeoutMs: 60_000 });
+    await run(msbBinary(), ["rm", name], { timeoutMs: 60_000 });
+  }
+}
+
+/**
  * The evidence catalog (scripts/evidence-catalog.sh) run in a throwaway VM of
  * the run's image, before any agent starts: the tools it calls are the
  * image's, and a host that holds no forensic tools (by design) still gets a
@@ -3067,6 +3132,14 @@ async function main(): Promise<void> {
       console.log(JSON.stringify({ image, digest: await imageRefDigest(image) }));
       process.exit(0);
     }
+    case "fuse-check": {
+      // Whether a VM of the image has /dev/fuse: exit 0 when it does, 1 when it does not.
+      const image = opt("--image");
+      if (!image) throw new Error("fuse-check needs --image REF");
+      const r = await imageFuse(image);
+      console.log(JSON.stringify({ image, ...r }));
+      process.exit(r.fuse ? 0 : 1);
+    }
     case "image-files": {
       // Files an image describes itself with, into DIR, each under its base name.
       const image = opt("--image");
@@ -3151,7 +3224,7 @@ async function main(): Promise<void> {
       return;
     }
     default:
-      console.error("usage: vm.ts probe|pull|create|finish|reap|seal-left|toolbox|catalog|netcheck|check-allow|msb-path (see the header)");
+      console.error("usage: vm.ts probe|pull|create|finish|reap|seal-left|toolbox|fuse-check|catalog|netcheck|check-allow|msb-path (see the header)");
       process.exit(2);
   }
 }

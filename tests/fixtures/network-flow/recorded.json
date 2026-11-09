@@ -1,0 +1,183 @@
+{
+ "@version": {
+  "exit": 0,
+  "stderr": "",
+  "stdout": "nfdump: Version: NSEL-NEL1.7.1\n"
+ },
+ "nfcapd.cut-300": {
+  "E": {
+   "exit": 0,
+   "stderr": "Open file @FILE@: appendix offset error\n",
+   "stdout": "Exporters:\n"
+  },
+  "I": {
+   "exit": 250,
+   "stderr": "Open file @FILE@: appendix offset error\nError open file: No such file or directory\n\n",
+   "stdout": ""
+  },
+  "json": {
+   "exit": 0,
+   "stderr": "Open file @FILE@: appendix offset error\nGetNextFile() error in nfdump.c line 295\n",
+   "stdout": "[\nNo matching flows\n]\n"
+  },
+  "v": {
+   "exit": 1,
+   "stderr": "Invalid appendix offset: 376\n",
+   "stdout": "File       : @FILE@\nVersion    : 2 - not compressed\nCreated    : 2026-11-03 23:13:27\nnfdump     : 1070100\nencryption : no\nAppdx blks : 1\nData blks  : 1\n"
+  }
+ },
+ "nfcapd.cut-500": {
+  "E": {
+   "exit": 0,
+   "stderr": "read() error: Short read: Expected: 162, received: 112\n\nUnable to read appendix block of file: @FILE@\n",
+   "stdout": "Exporters:\n\nSysID: 1, IP:        127.0.0.1, version: 5, ID: 263, Sequence failures: 0, packets: 1, flows: 2\n    Sampler: Generic Sampler: algorithm: 1, packet interval: 1, packet space: 99\n"
+  },
+  "I": {
+   "exit": 0,
+   "stderr": "read() error: Short read: Expected: 162, received: 112\n\nUnable to read appendix block of file: @FILE@\n",
+   "stdout": "Ident: (null)\nFlows: 0\nFlows_tcp: 0\nFlows_udp: 0\nFlows_icmp: 0\nFlows_other: 0\nPackets: 0\nPackets_tcp: 0\nPackets_udp: 0\nPackets_icmp: 0\nPackets_other: 0\nBytes: 0\nBytes_tcp: 0\nBytes_udp: 0\nBytes_icmp: 0\nBytes_other: 0\nFirst: 9223372036854775\nLast: 0\nmsec_first: 807\nmsec_last: 0\nSequence failures: 0\n"
+  },
+  "json": {
+   "exit": 0,
+   "stderr": "read() error: Short read: Expected: 162, received: 112\n\nUnable to read appendix block of file: @FILE@\n",
+   "stdout": "[\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 1,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:12:20.250\",\n\t\"last\" : \"2023-11-14T22:12:50.250\",\n\t\"received\" : \"2026-11-03T23:13:28.545\",\n\t\"in_packets\" : 1000,\n\t\"in_bytes\" : 150000,\n\t\"proto\" : 6,\n\t\"tcp_flags\" : \"...AP.SF\",\n\t\"src_port\" : 50000,\n\t\"dst_port\" : 443,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.5\",\n\t\"dst4_addr\" : \"203.0.113.7\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 0,\n\t\"dst_tos\" : 0,\n\t\"src_as\" : 64512,\n\t\"dst_as\" : 64496,\n\t\"ip4_next_hop\" : \"10.0.0.1\",\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"label\" : \"<none>\"\n},\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 1,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:13:00.250\",\n\t\"last\" : \"2023-11-14T22:13:01.250\",\n\t\"received\" : \"2026-11-03T23:13:28.545\",\n\t\"in_packets\" : 200,\n\t\"in_bytes\" : 12000,\n\t\"proto\" : 17,\n\t\"tcp_flags\" : \"........\",\n\t\"src_port\" : 5353,\n\t\"dst_port\" : 53,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.6\",\n\t\"dst4_addr\" : \"198.51.100.9\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 0,\n\t\"dst_tos\" : 0,\n\t\"ip4_next_hop\" : \"10.0.0.1\",\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"label\" : \"<none>\"\n}]\n"
+  },
+  "v": {
+   "exit": 1,
+   "stderr": "Expected to seek beyond EOF! File corrupted\n",
+   "stdout": "File       : @FILE@\nVersion    : 2 - not compressed\nCreated    : 2026-11-03 23:13:27\nnfdump     : 1070100\nencryption : no\nAppdx blks : 1\nData blks  : 1\nChecking data blocks\n |\rChecking appendix blocks\n"
+  }
+ },
+ "nfcapd.empty": {
+  "E": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Exporters:\nNo Exporter records found\n\n"
+  },
+  "I": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Ident: ident-sflow\nFlows: 0\nFlows_tcp: 0\nFlows_udp: 0\nFlows_icmp: 0\nFlows_other: 0\nPackets: 0\nPackets_tcp: 0\nPackets_udp: 0\nPackets_icmp: 0\nPackets_other: 0\nBytes: 0\nBytes_tcp: 0\nBytes_udp: 0\nBytes_icmp: 0\nBytes_other: 0\nFirst: 1793747580\nLast: 1793747640\nmsec_first: 0\nmsec_last: 0\nSequence failures: 0\n"
+  },
+  "json": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "[\nNo matching flows\n]\n"
+  },
+  "v": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "File       : @FILE@\nVersion    : 2 - not compressed\nCreated    : 2026-11-03 23:13:38\nnfdump     : 1070100\nencryption : no\nAppdx blks : 1\nData blks  : 0\nChecking data blocks\n |\r\nTotal\nType 3 blocks : 1\nRecords       : 2\n"
+  }
+ },
+ "nfcapd.ipfix-nat": {
+  "E": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Exporters:\n\nSysID: 1, IP:        127.0.0.1, version: 10, ID:  7, Sequence failures: 0, packets: 1, flows: 2\n"
+  },
+  "I": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Ident: ident-ipfix\nFlows: 2\nFlows_tcp: 1\nFlows_udp: 1\nFlows_icmp: 0\nFlows_other: 0\nPackets: 12\nPackets_tcp: 10\nPackets_udp: 2\nPackets_icmp: 0\nPackets_other: 0\nBytes: 1620\nBytes_tcp: 1500\nBytes_udp: 120\nBytes_icmp: 0\nBytes_other: 0\nFirst: 1699999940\nLast: 1699999981\nmsec_first: 0\nmsec_last: 0\nSequence failures: 0\n"
+  },
+  "json": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "[\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 0,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:12:20.000\",\n\t\"last\" : \"2023-11-14T22:12:50.000\",\n\t\"received\" : \"2026-11-03T23:13:35.243\",\n\t\"in_packets\" : 10,\n\t\"in_bytes\" : 1500,\n\t\"proto\" : 6,\n\t\"tcp_flags\" : \"...AP.SF\",\n\t\"src_port\" : 50000,\n\t\"dst_port\" : 443,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.5\",\n\t\"dst4_addr\" : \"203.0.113.7\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 0,\n\t\"dst_tos\" : 0,\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"src4_xlt_ip\" : \"192.0.2.10\",\n\t\"dst4_xlt_ip\" : \"203.0.113.7\",\n\t\"src_xlt_port\" : \"40000\",\n\t\"dst_xlt_port\" : \"443\",\n\t\"label\" : \"<none>\"\n},\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 0,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:13:00.000\",\n\t\"last\" : \"2023-11-14T22:13:01.000\",\n\t\"received\" : \"2026-11-03T23:13:35.243\",\n\t\"in_packets\" : 2,\n\t\"in_bytes\" : 120,\n\t\"proto\" : 17,\n\t\"tcp_flags\" : \"........\",\n\t\"src_port\" : 5353,\n\t\"dst_port\" : 53,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.6\",\n\t\"dst4_addr\" : \"198.51.100.9\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 1,\n\t\"dst_tos\" : 0,\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"src4_xlt_ip\" : \"192.0.2.10\",\n\t\"dst4_xlt_ip\" : \"198.51.100.9\",\n\t\"src_xlt_port\" : \"40001\",\n\t\"dst_xlt_port\" : \"53\",\n\t\"label\" : \"<none>\"\n}]\n"
+  },
+  "v": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "File       : @FILE@\nVersion    : 2 - not compressed\nCreated    : 2026-11-03 23:13:34\nnfdump     : 1070100\nencryption : no\nAppdx blks : 1\nData blks  : 1\nChecking data blocks\n |\rChecking appendix blocks\n\nTotal\nType 3 blocks : 2\nRecords       : 6\n"
+  }
+ },
+ "nfcapd.v5": {
+  "E": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Exporters:\n\nSysID: 1, IP:        127.0.0.1, version: 5, ID: 263, Sequence failures: 0, packets: 1, flows: 2\n"
+  },
+  "I": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Ident: ident-v5\nFlows: 2\nFlows_tcp: 1\nFlows_udp: 1\nFlows_icmp: 0\nFlows_other: 0\nPackets: 12\nPackets_tcp: 10\nPackets_udp: 2\nPackets_icmp: 0\nPackets_other: 0\nBytes: 1620\nBytes_tcp: 1500\nBytes_udp: 120\nBytes_icmp: 0\nBytes_other: 0\nFirst: 1699999940\nLast: 1699999981\nmsec_first: 250\nmsec_last: 250\nSequence failures: 0\n"
+  },
+  "json": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "[\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 0,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:12:20.250\",\n\t\"last\" : \"2023-11-14T22:12:50.250\",\n\t\"received\" : \"2026-11-03T23:13:26.311\",\n\t\"in_packets\" : 10,\n\t\"in_bytes\" : 1500,\n\t\"proto\" : 6,\n\t\"tcp_flags\" : \"...AP.SF\",\n\t\"src_port\" : 50000,\n\t\"dst_port\" : 443,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.5\",\n\t\"dst4_addr\" : \"203.0.113.7\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 0,\n\t\"dst_tos\" : 0,\n\t\"src_as\" : 64512,\n\t\"dst_as\" : 64496,\n\t\"ip4_next_hop\" : \"10.0.0.1\",\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"label\" : \"<none>\"\n},\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 0,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:13:00.250\",\n\t\"last\" : \"2023-11-14T22:13:01.250\",\n\t\"received\" : \"2026-11-03T23:13:26.311\",\n\t\"in_packets\" : 2,\n\t\"in_bytes\" : 120,\n\t\"proto\" : 17,\n\t\"tcp_flags\" : \"........\",\n\t\"src_port\" : 5353,\n\t\"dst_port\" : 53,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.6\",\n\t\"dst4_addr\" : \"198.51.100.9\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 0,\n\t\"dst_tos\" : 0,\n\t\"ip4_next_hop\" : \"10.0.0.1\",\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"label\" : \"<none>\"\n}]\n"
+  },
+  "v": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "File       : @FILE@\nVersion    : 2 - not compressed\nCreated    : 2026-11-03 23:13:25\nnfdump     : 1070100\nencryption : no\nAppdx blks : 1\nData blks  : 1\nChecking data blocks\n |\rChecking appendix blocks\n\nTotal\nType 3 blocks : 2\nRecords       : 6\n"
+  }
+ },
+ "nfcapd.v5-sampled": {
+  "E": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Exporters:\n\nSysID: 1, IP:        127.0.0.1, version: 5, ID: 263, Sequence failures: 0, packets: 1, flows: 2\n    Sampler: Generic Sampler: algorithm: 1, packet interval: 1, packet space: 99\n"
+  },
+  "I": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Ident: ident-v5s\nFlows: 2\nFlows_tcp: 1\nFlows_udp: 1\nFlows_icmp: 0\nFlows_other: 0\nPackets: 1200\nPackets_tcp: 1000\nPackets_udp: 200\nPackets_icmp: 0\nPackets_other: 0\nBytes: 162000\nBytes_tcp: 150000\nBytes_udp: 12000\nBytes_icmp: 0\nBytes_other: 0\nFirst: 1699999940\nLast: 1699999981\nmsec_first: 250\nmsec_last: 250\nSequence failures: 0\n"
+  },
+  "json": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "[\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 1,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:12:20.250\",\n\t\"last\" : \"2023-11-14T22:12:50.250\",\n\t\"received\" : \"2026-11-03T23:13:28.545\",\n\t\"in_packets\" : 1000,\n\t\"in_bytes\" : 150000,\n\t\"proto\" : 6,\n\t\"tcp_flags\" : \"...AP.SF\",\n\t\"src_port\" : 50000,\n\t\"dst_port\" : 443,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.5\",\n\t\"dst4_addr\" : \"203.0.113.7\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 0,\n\t\"dst_tos\" : 0,\n\t\"src_as\" : 64512,\n\t\"dst_as\" : 64496,\n\t\"ip4_next_hop\" : \"10.0.0.1\",\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"label\" : \"<none>\"\n},\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 1,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:13:00.250\",\n\t\"last\" : \"2023-11-14T22:13:01.250\",\n\t\"received\" : \"2026-11-03T23:13:28.545\",\n\t\"in_packets\" : 200,\n\t\"in_bytes\" : 12000,\n\t\"proto\" : 17,\n\t\"tcp_flags\" : \"........\",\n\t\"src_port\" : 5353,\n\t\"dst_port\" : 53,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.6\",\n\t\"dst4_addr\" : \"198.51.100.9\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 0,\n\t\"dst_tos\" : 0,\n\t\"ip4_next_hop\" : \"10.0.0.1\",\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"label\" : \"<none>\"\n}]\n"
+  },
+  "v": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "File       : @FILE@\nVersion    : 2 - not compressed\nCreated    : 2026-11-03 23:13:27\nnfdump     : 1070100\nencryption : no\nAppdx blks : 1\nData blks  : 1\nChecking data blocks\n |\rChecking appendix blocks\n\nTotal\nType 3 blocks : 2\nRecords       : 7\n"
+  }
+ },
+ "nfcapd.v9-lz4": {
+  "E": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Exporters:\n\nSysID: 1, IP:        127.0.0.1, version: 9, ID: 42 - no flows sent\n"
+  },
+  "I": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Ident: ident-v9\nFlows: 2\nFlows_tcp: 1\nFlows_udp: 1\nFlows_icmp: 0\nFlows_other: 0\nPackets: 12\nPackets_tcp: 10\nPackets_udp: 2\nPackets_icmp: 0\nPackets_other: 0\nBytes: 1620\nBytes_tcp: 1500\nBytes_udp: 120\nBytes_icmp: 0\nBytes_other: 0\nFirst: 1699999940\nLast: 1699999981\nmsec_first: 0\nmsec_last: 0\nSequence failures: 0\n"
+  },
+  "json": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "[\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 0,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:12:20.000\",\n\t\"last\" : \"2023-11-14T22:12:50.000\",\n\t\"received\" : \"2026-11-03T23:13:30.787\",\n\t\"in_packets\" : 10,\n\t\"in_bytes\" : 1500,\n\t\"proto\" : 6,\n\t\"tcp_flags\" : \"...AP.SF\",\n\t\"src_port\" : 50000,\n\t\"dst_port\" : 443,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.5\",\n\t\"dst4_addr\" : \"203.0.113.7\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 0,\n\t\"dst_tos\" : 0,\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"src4_xlt_ip\" : \"192.0.2.10\",\n\t\"dst4_xlt_ip\" : \"203.0.113.7\",\n\t\"src_xlt_port\" : \"40000\",\n\t\"dst_xlt_port\" : \"443\",\n\t\"label\" : \"<none>\"\n},\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 0,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:13:00.000\",\n\t\"last\" : \"2023-11-14T22:13:01.000\",\n\t\"received\" : \"2026-11-03T23:13:30.787\",\n\t\"in_packets\" : 2,\n\t\"in_bytes\" : 120,\n\t\"proto\" : 17,\n\t\"tcp_flags\" : \"........\",\n\t\"src_port\" : 5353,\n\t\"dst_port\" : 53,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.6\",\n\t\"dst4_addr\" : \"198.51.100.9\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 1,\n\t\"dst_tos\" : 0,\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"src4_xlt_ip\" : \"192.0.2.10\",\n\t\"dst4_xlt_ip\" : \"198.51.100.9\",\n\t\"src_xlt_port\" : \"40001\",\n\t\"dst_xlt_port\" : \"53\",\n\t\"label\" : \"<none>\"\n}]\n"
+  },
+  "v": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "File       : @FILE@\nVersion    : 2 - lz4 compressed\nCreated    : 2026-11-03 23:27:27\nnfdump     : 1070100\nencryption : no\nAppdx blks : 1\nData blks  : 1\nChecking data blocks\n |\rChecking appendix blocks\n\nTotal\nType 3 blocks : 2\nRecords       : 5\n"
+  }
+ },
+ "nfcapd.v9-nat": {
+  "E": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Exporters:\n\nSysID: 1, IP:        127.0.0.1, version: 9, ID: 42, Sequence failures: 0, packets: 1, flows: 2\n"
+  },
+  "I": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "Ident: ident-v9\nFlows: 2\nFlows_tcp: 1\nFlows_udp: 1\nFlows_icmp: 0\nFlows_other: 0\nPackets: 12\nPackets_tcp: 10\nPackets_udp: 2\nPackets_icmp: 0\nPackets_other: 0\nBytes: 1620\nBytes_tcp: 1500\nBytes_udp: 120\nBytes_icmp: 0\nBytes_other: 0\nFirst: 1699999940\nLast: 1699999981\nmsec_first: 0\nmsec_last: 0\nSequence failures: 0\n"
+  },
+  "json": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "[\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 0,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:12:20.000\",\n\t\"last\" : \"2023-11-14T22:12:50.000\",\n\t\"received\" : \"2026-11-03T23:13:30.787\",\n\t\"in_packets\" : 10,\n\t\"in_bytes\" : 1500,\n\t\"proto\" : 6,\n\t\"tcp_flags\" : \"...AP.SF\",\n\t\"src_port\" : 50000,\n\t\"dst_port\" : 443,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.5\",\n\t\"dst4_addr\" : \"203.0.113.7\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 0,\n\t\"dst_tos\" : 0,\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"src4_xlt_ip\" : \"192.0.2.10\",\n\t\"dst4_xlt_ip\" : \"203.0.113.7\",\n\t\"src_xlt_port\" : \"40000\",\n\t\"dst_xlt_port\" : \"443\",\n\t\"label\" : \"<none>\"\n},\n{\n\t\"type\" : \"FLOW\",\n\t\"sampled\" : 0,\n\t\"export_sysid\" : 1,\n\t\"first\" : \"2023-11-14T22:13:00.000\",\n\t\"last\" : \"2023-11-14T22:13:01.000\",\n\t\"received\" : \"2026-11-03T23:13:30.787\",\n\t\"in_packets\" : 2,\n\t\"in_bytes\" : 120,\n\t\"proto\" : 17,\n\t\"tcp_flags\" : \"........\",\n\t\"src_port\" : 5353,\n\t\"dst_port\" : 53,\n\t\"src_tos\" : 0,\n\t\"src4_addr\" : \"10.0.0.6\",\n\t\"dst4_addr\" : \"198.51.100.9\",\n\t\"input_snmp\" : 3,\n\t\"output_snmp\" : 4,\n\t\"src_mask\" : 0,\n\t\"dst_mask\" : 0,\n\t\"src_net\" : \"\",\n\t\"dst_net\" : \"\",\n\t\"fwd_status\" : 0,\n\t\"direction\" : 1,\n\t\"dst_tos\" : 0,\n\t\"ip4_router\" : \"127.0.0.1\",\n\t\"src4_xlt_ip\" : \"192.0.2.10\",\n\t\"dst4_xlt_ip\" : \"198.51.100.9\",\n\t\"src_xlt_port\" : \"40001\",\n\t\"dst_xlt_port\" : \"53\",\n\t\"label\" : \"<none>\"\n}]\n"
+  },
+  "v": {
+   "exit": 0,
+   "stderr": "",
+   "stdout": "File       : @FILE@\nVersion    : 2 - lz4 compressed\nCreated    : 2026-11-03 23:15:41\nnfdump     : 1070100\nencryption : no\nAppdx blks : 1\nData blks  : 1\nChecking data blocks\n |\rChecking appendix blocks\n\nTotal\nType 3 blocks : 2\nRecords       : 6\n"
+  }
+ }
+}

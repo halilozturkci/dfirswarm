@@ -1,0 +1,13 @@
+rar5-subdirs.rar
+
+What it is: a RAR 5 archive from the rarfile project's test files (7zz 26.05 reads it as RAR 5, host OS Unix, method m0: the files are stored, not compressed). Which program made it was not checked here.
+It holds 4 files (sub/dir2/file2.txt, sub/with space/long fn.txt, sub/<five non-ASCII letters>/file.txt, sub/dir1/file1.txt) and 6 directories
+(sub, sub/dir1, sub/dir2, sub/empty, sub/with space, sub/<five non-ASCII letters>).
+Source: https://raw.githubusercontent.com/markokr/rarfile/master/test/files/rar5-subdirs.rar (the rarfile project, https://github.com/markokr/rarfile)
+Licence: ISC (the project's LICENSE, kept beside this file as LICENSE-rarfile.txt)
+Size: 542 bytes
+SHA-256: 4449d0e82e09f52af23a11cd84904625de8b15beafcf73e5c30dc3296beae0b2
+Fetched: 2026-11-04, with the owner's approval of one small RAR test file (at most 100 KB, permissive licence, public repository).
+It is not a hostile sample. It is evidence-shaped test input: read it as data, never execute it.
+The base image's readiness script (tests/image-programs.sh in the repository) embeds a copy of these bytes as base64;
+tests/test_archive_extract_rar.py holds the two equal.

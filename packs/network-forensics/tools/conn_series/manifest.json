@@ -1,0 +1,110 @@
+{
+  "name": "conn_series",
+  "description": "CONNECTION OBSERVATIONS AND A TIMESTAMP SERIES FOR beacon_score, from a Zeek conn.log (TSV with #separator, #set_separator, #empty_field, #unset_field, #fields and #types, or JSON lines) or from a capture listed by tshark. SENSITIVE: the tool declares secret_output: \"required\" (the whole table holds the uid and service values of the log as they are; the answer prints them through the withholding rules). Give exactly one of conn_log and capture. Nothing is run but tshark for a capture; a conn.log needs no program and Zeek is not started. Every row of observations is one unique connection observation with a locator (the log line and byte offset of a conn.log row, with its uid, or the first frame of a capture), the start (raw as the source wrote it, and UTC), the duration, the bytes and packets of each direction (Zeek counts payload bytes; a capture counts frame lengths, headers included, and says so in bytes.basis), the state, the service and the time semantics: Zeek's ts is the first packet of the connection, not one event per exchange, and a connection Zeek logs again (a long connection) has the same uid and is one observation; a capture gives the time of the first packet seen of the connection, and one already open when the capture began starts at its first packet seen (flag midstream), not at its SYN. The whole table is a JSON Lines file (mode 0600, never replaced by a smaller rerun); the answer pages it (limit rows inline) and the rest is in all_results. The series is a second file: the start times of the observations, sorted, one epoch per line, that beacon_score accepts as timestamps_file (a regular file with one time per line, at most 3,000,000 events; the tool keeps at most 3,000,000 observations, counts the rest as over_cap and makes the answer partial). beacon_score_arguments gives the arguments to pass. A series is built before it is scored, and a SYN observation is not a connection start. BEHAVIOUR. Connection identity: for TCP in a capture a SYN without ACK starts a connection unless it repeats the initial sequence number of the connection open on the same endpoints (a retransmitted SYN is counted once; counts.capture.syn_retransmissions); a new SYN with another number on endpoints still open is port reuse and a new connection; a TCP flow with no SYN seen is midstream. For UDP, and for TCP without a SYN, the identity is the endpoints plus an inactivity gap (udp_gap_seconds default 60, tcp_gap_seconds default 3600): a packet after a longer silence starts a new connection. IPv6 is read like IPv4 (a build of tshark without the IPv6 address fields makes the answer partial and says so). In a Zeek log, the identity is the uid: a repeated uid (a log concatenated across rotation, or the same record twice) is one observation (counts.duplicates). Zeek's set[...] and vector[...] types are split on #set_separator, the unset marker (- by default) is no value and the empty marker ((empty) by default) is an empty value, and a #separator, #set_separator, #empty_field, #unset_field, #fields or #types line that appears again (a header block after a rotation, or a change of header) applies to the rows after it; a gzip-compressed log is refused (decompress it first). Lines over 1 MiB, with a NUL, that are not UTF-8, that are not JSON, rows before any #fields, rows whose column count differs from #fields and rows without ts, id.orig_h, id.orig_p, id.resp_h, id.resp_p or proto are counted, skipped and make the answer partial. The window: window_start and window_end are ISO 8601 times with an explicit zone (or an epoch); a time with no zone is refused unless assume_utc is true, which is then said in the notes; the rule is start inclusive, end exclusive, on the connection's start time, and the zone only decides which instant the text names. Sensor coverage: sensor_coverage_confirmed is carried to beacon_score_arguments only as the caller gave it and only together with window_end; this tool never decides that the sensor kept recording, and with a window_end but no confirmation beacon_score is not told that silence is covered. The filters host, port, proto and service apply to the shown text: host, port and proto compare the values as they are; service compares the text this answer prints, never the value behind a withheld one, so a withheld value cannot be probed by guessing (counts.service_withheld_not_matched). Counts say what was read, dropped and kept. An empty answer says nothing about connections the source did not record. WHAT IS NOT VERIFIED: the layout of a conn.log written by a real Zeek (8.0.11 is the pinned version) is taken from Zeek's documentation, not from a log of a real run here, and the field values of a real tshark build are taken from its documentation: the suite builds the logs from the documented fields and runs a stand-in tshark; one test runs the real tshark when installed. A connection is not a session, a start time is not an exchange, and an observation is not proof that data was exchanged. Evidence is hostile input: nothing is executed, no network is used, a listing is read as a stream and cut at 2 GiB (a cut makes the answer partial), and the connections open at once are bounded (the oldest are closed early, said in the answer). The tool's own clock (max_seconds, default 900, at most 1000) is below the manifest's timeout; a program still running at the end is killed with everything it started, and a log still being read at the end gives a partial answer. Programs run in the tool's own process group (never a session of its own) with the kernel asked to end them if the tool dies. SIGTERM, SIGINT and SIGHUP end the tool with partial JSON and exit 128 plus the signal. A process tshark leaves behind after it exits is stopped, killed and reaped by the shared process block's settle() before the connections, the series file and tshark's messages file are kept (capture mode; a conn.log is read as given and no program runs), and the answer is then partial (program_group.left_behind and a line under problems). This tool reports what tshark printed on a pipe, so a host where the absence of a leftover cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) does not make it partial: program_group.unproven says so.",
+  "params": {
+    "conn_log": {
+      "type": "string",
+      "description": "A Zeek conn.log (TSV or JSON lines) as a job input; read as a stream, never written. Give this or capture"
+    },
+    "capture": {
+      "type": "string",
+      "description": "A pcap or pcapng, listed by tshark (never written). Give this or conn_log"
+    },
+    "host": {
+      "type": "string",
+      "description": "Keep only connections with this IP address as originator or responder"
+    },
+    "port": {
+      "type": "integer",
+      "description": "Keep only connections with this port at either end"
+    },
+    "proto": {
+      "type": "string",
+      "description": "Keep only tcp, udp or icmp connections"
+    },
+    "service": {
+      "type": "string",
+      "description": "Keep only connections whose service, as this answer prints it, names this service (a value the answer withholds never matches)"
+    },
+    "window_start": {
+      "type": "string",
+      "description": "Start of the observation window, inclusive, on the connection's start time: ISO 8601 with an explicit zone (2026-11-04T00:00:00+03:00) or an epoch"
+    },
+    "window_end": {
+      "type": "string",
+      "description": "End of the window, exclusive, same forms; needed to carry sensor_coverage_confirmed to beacon_score"
+    },
+    "assume_utc": {
+      "type": "boolean",
+      "description": "Read a window time with no zone as UTC (said in the notes); otherwise such a time is refused"
+    },
+    "sensor_coverage_confirmed": {
+      "type": "boolean",
+      "description": "Your statement that the sensor recorded for the whole window; carried to beacon_score_arguments only with window_end, never assumed"
+    },
+    "udp_gap_seconds": {
+      "type": "integer",
+      "description": "Capture mode: silence in seconds after which a UDP flow on the same endpoints is a new connection (default 60, 1 to 86400)"
+    },
+    "tcp_gap_seconds": {
+      "type": "integer",
+      "description": "Capture mode: the same for a TCP flow (default 3600, 1 to 86400)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Observation rows answered inline (default 200); the whole table is the file all_results names"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own clock, 10 to 1000 seconds, default 900: a program still running at the end is killed with everything it started"
+    }
+  },
+  "requires_optional": [
+    "tshark"
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 1200,
+  "example": "{\"conn_log\": \"inputs/conn.log\", \"window_start\": \"2026-11-03T00:00:00+00:00\", \"window_end\": \"2026-11-04T00:00:00+00:00\"}",
+  "by": "maintainer",
+  "at": "2026-11-04T00:00:00.000Z",
+  "version": 7,
+  "use": {
+    "names": [
+      "conn.log",
+      "conn.*.log",
+      "conn.log.*",
+      "*.pcap",
+      "*.pcapng"
+    ],
+    "extensions": [
+      ".pcap",
+      ".pcapng",
+      ".cap"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "d4c3b2a1"
+      },
+      {
+        "offset": 0,
+        "hex": "a1b2c3d4"
+      },
+      {
+        "offset": 0,
+        "hex": "4d3cb2a1"
+      },
+      {
+        "offset": 0,
+        "hex": "a1b23c4d"
+      },
+      {
+        "offset": 0,
+        "hex": "0a0d0d0a"
+      }
+    ]
+  },
+  "secret_output": "required",
+  "sha256": "9f59058a3cca244fad5c1b448990ae58dd605883dbee71a6cb7a276eef14eaf4"
+}

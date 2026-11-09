@@ -177,6 +177,59 @@ class IcatExtract(Case):
         self.assertEqual((r.code, r.json["status"]), (0, "complete"))
         self.assertEqual(self.read(os.path.join(out, "x.bin")), "data")
 
+    def test_an_explicit_offset_is_a_non_negative_whole_number_or_a_json_refusal(self):
+        bin_dir = self.icat('printf data\n')
+        for bad in (-1, "12", 1.5, True, False, 2 ** 70, [1], {"a": 1}, 1e30):
+            r = self.extract(bin_dir, offset=bad, output="work/o.bin")
+            self.assertEqual((r.code, r.json["status"], r.stderr), (1, "failed", ""), repr(bad))
+            self.assertIn("volume offset in sectors", r.json["error"], repr(bad))
+            self.assertFalse(os.path.exists(self.path("work")), "nothing was made for %r" % (bad,))
+            self.assertFalse(os.path.exists(self.argv_file), "icat was not run for %r" % (bad,))
+        for good in (0, 2048, 2 ** 40):
+            r = self.extract(bin_dir, offset=good, output="work/g%d.bin" % good)
+            self.assertEqual((r.code, r.json["status"], r.json["offset"]), (0, "complete", good))
+
+    def test_the_extract_and_the_stderr_file_are_0600_under_a_permissive_umask(self):
+        bin_dir = self.icat('echo "icat complains" >&2\nprintf data\n')
+        e = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ["PATH"])
+        for k in ("JOB_ID", "OUT", "AGENT_ID"):
+            e.pop(k, None)
+        proc = subprocess.run([sys.executable, tool_path("icat_extract")], input=json.dumps({"inode": 5, "output": "work/m.bin", "image": "inputs/disk.E01", "offset": 0}),
+                              capture_output=True, text=True, cwd=self.dir, env=e, preexec_fn=lambda: os.umask(0o022))
+        j = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual(oct(os.stat(self.path("work/m.bin")).st_mode & 0o777), "0o600")
+        self.assertEqual(oct(os.stat(self.path(j["stderr_file"])).st_mode & 0o777), "0o600")
+
+    def test_a_partial_extract_is_0600_too(self):
+        bin_dir = self.icat('printf data\nexit 3\n')
+        r = self.extract(bin_dir)
+        self.assertEqual(r.code, 1)
+        self.assertEqual(oct(os.stat(self.path(r.json["path"])).st_mode & 0o777), "0o600")
+
+    def test_the_search_for_the_image_keeps_at_most_200_names_and_says_so_as_json(self):
+        bin_dir = self.icat('printf data\n')
+        os.unlink(self.path("inputs/disk.E01"))
+        for i in range(201):
+            self.write("inputs/set/d%03d/image%03d.bin" % (i % 7, i), b"x")
+            self.write("catalog/set_d%03d_image%03d.bin/partitions.txt" % (i % 7, i), "p\n")
+        r = run_tool("icat_extract", {"inode": 5, "output": "work/x.bin"}, self.dir, [bin_dir])
+        self.assertEqual((r.code, r.json["status"], r.stderr), (1, "failed", ""))
+        self.assertIn("more than 200 images", r.json["error"])
+
+    def test_hostile_text_and_a_missing_image_are_json_with_the_pair(self):
+        bin_dir = self.icat('printf data\n')
+        for kw in ({"output": "work/a\0b"}, {"output": "work/a\ud800b"}, {"image": "inputs/a\0b"}, {"image": ["x"]}, {"inode": "1\0"}):
+            r = self.extract(bin_dir, **kw)
+            self.assertEqual((r.code, r.json["status"], r.stderr), (1, "failed", ""), kw)
+        r = run_tool("icat_extract", None, self.dir, [bin_dir], raw_input="[" * 100000)
+        self.assertEqual((r.code, r.json["status"], r.stderr), (1, "failed", ""))
+        empty = self.path("empty-run")
+        os.makedirs(empty)
+        r = run_tool("icat_extract", {"inode": 5, "output": "work/x.bin"}, empty, [bin_dir])
+        self.assertEqual((r.code, r.json["status"]), (1, "failed"))
+        self.assertIn("no disk image", r.json["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

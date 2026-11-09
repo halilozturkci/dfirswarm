@@ -39,7 +39,6 @@ import { join, resolve } from "node:path";
 import { hubAlive, hubProcessFor, Journal, maybeCrash, publishGeneration, publishRevision, readManifest, resealMoved, sealTree, sha256File, sha256Hex, storePaths, traceLineBytes, traceOrigin, type JournalLine, type Manifest, type TraceOrigin } from "./evidence-store.ts";
 import { chooseImage, readImageRecords, type ImageChoice, type ImageRecord } from "./image-choice.ts";
 import { buildView, declaredScope, dropProjected, freeMb, PROJECTED_DIR, resolveScope, ScopeError, scopeKindOf, scopeManifestText, VIEW_DIR, type ScopeKind, type ScopeObject, type ViewEntry } from "./job-scope.ts";
-import { CANARY_NAME, OBSERVE_GUEST, observedRun, observeWanted, readObservation } from "./job-observe.ts";
 import { assessJob, HEARTBEAT_LINES, HEARTBEAT_STOP, keepSample, readSamples, sampleJob, type JobProgress } from "./job-telemetry.ts";
 import type { Mount, WorkerSpec } from "./vm.ts";
 import { jobNetworkHosts } from "./net-grants.ts";
@@ -81,6 +80,11 @@ export type Lane = "short" | "general" | "kickoff" | "derived";
 
 /** An import hashes its source before and after the copy up to this size; above it, size and mtime only. */
 export const IMPORT_HASH_BOUND = 2 * 1024 * 1024 * 1024;
+
+/** What a detect step's exit code says of whether the recipe applies: 0 applies, 1 does not, 2 cannot tell ("unknown"); any other code is a failed detect, recorded as not applying with its rc. */
+export function detectApplies(rc: string): boolean | "unknown" {
+  return rc === "0" ? true : rc === "2" ? "unknown" : false;
+}
 
 /**
  * What an import runs in its worker: each regular file under the source
@@ -314,6 +318,13 @@ export type JobRecord = {
    * a tool's own.
    */
   exec_refused?: ExecRefused;
+  /** What the worker found when it probed itself before the job ran (worker-probe.json in the job's control directory). */
+  worker_probe?: { fuse: boolean };
+  /**
+   * The tool's manifest says it needs something (`needs: ["fuse"]`) the worker's probe says it lacks. The job ran anyway and the tool answers for
+   * itself; this names the cause where the agent reads the job, and says it is a limit of the worker, not a finding about the evidence.
+   */
+  needs_unmet?: { need: string; tool: string | null; image: string; profile: string | null };
   /** Its outputs are sensitive, decided when they were sealed (output-hygiene.ts): run with secret_output, or made from a sensitive output. */
   sensitive?: Sensitivity;
   /** Derived and known when the job started: what it declared, or its text, already reaches a sensitive output (job_started's `sensitive_at_start`; the seal decides again, from what it read). */
@@ -856,9 +867,9 @@ export class JobService {
   }
 
   /** A pack or forged tool, sealed as its manifest says, and its arguments checked against the manifest's params. */
-  private async toolCheck(name: string, args: Record<string, unknown>): Promise<{ ok: true; runtime: string; entry: string; sha256: string; secret: boolean } | { ok: false; reason: string }> {
+  private async toolCheck(name: string, args: Record<string, unknown>): Promise<{ ok: true; runtime: string; entry: string; sha256: string; secret: boolean; needs: string[] } | { ok: false; reason: string }> {
     if (!/^[a-z0-9_]{1,64}$/.test(name)) return { ok: false, reason: `${name} is not a tool name` };
-    let man: { runtime?: string; entry?: string; sha256?: string; secret_output?: unknown; params?: Record<string, { type?: string; required?: boolean; enum?: string[] }> };
+    let man: { runtime?: string; entry?: string; sha256?: string; needs?: unknown; secret_output?: unknown; params?: Record<string, { type?: string; required?: boolean; enum?: string[] }> };
     try {
       man = JSON.parse(await readFile(join(this.S, "tools", name, "manifest.json"), "utf8"));
     } catch {
@@ -892,7 +903,9 @@ export class JobService {
     const declared = parseSecretDeclaration(man.secret_output, man.params, Object.hasOwn(man, "secret_output"));
     if (!declared.ok) return { ok: false, reason: `tool ${name}: ${declared.reason}` };
     const secret = declaredSecretOutput(declared.declaration as SecretDeclaration | null, args);
-    return { ok: true, runtime: man.runtime === "python3" ? "python3" : man.runtime === "node" ? "node" : "bash", entry, sha256: sha, secret };
+    // What the tool needs of its worker, as its manifest names it (`needs: ["fuse"]`): the harness reads the words, it knows no tool.
+    const needs = Array.isArray(man.needs) ? man.needs.filter((n): n is string => typeof n === "string") : [];
+    return { ok: true, runtime: man.runtime === "python3" ? "python3" : man.runtime === "node" ? "node" : "bash", entry, sha256: sha, secret, needs };
   }
 
   /**
@@ -1315,7 +1328,7 @@ export class JobService {
    * recorded as such. Throws a ScopeError when a declared object cannot be
    * given: the job then does not run.
    */
-  private async placement(job: JobRecord, st: { base: string; out: string; ctl: string }, observe = false): Promise<{ mounts: Mount[]; accessible: Array<{ path: string; access: string }>; manifest: Record<string, unknown> | null; view: { objects: number; files: number; bound: number } | null }> {
+  private async placement(job: JobRecord, st: { base: string; out: string; ctl: string }): Promise<{ mounts: Mount[]; accessible: Array<{ path: string; access: string }>; manifest: Record<string, unknown> | null; view: { objects: number; files: number; bound: number } | null }> {
     const kind = scopeKindOf(job.spec);
     const tail: Array<Mount & { note?: string }> = [];
     for (const pack of this.o.packDirs) if (existsSync(pack)) tail.push({ host: pack, guest: pack, readonly: true });
@@ -1341,8 +1354,6 @@ export class JobService {
       if (!bytes) throw new ScopeError(`${job.spec.seal.ref}: the trace no longer holds that line`);
       extra.push({ path: job.spec.source ?? "", bytes, ref: job.spec.seal.ref });
     }
-    // EXPERIMENTAL: a file the job's user reads before and after its command, which the collector must see.
-    if (observe) extra.push({ path: CANARY_NAME, bytes: Buffer.from(`${job.id}.${job.attempt}.${Math.random().toString(36).slice(2)}\n`), ref: "the observation's canary" });
     const view = await buildView(resolved.objects, { S: this.S, root: join(st.base, VIEW_DIR), projected: join(storePaths(this.S).staging, PROJECTED_DIR), guestOut: this.outPath(job), minFreeMb: Math.floor(this.o.minFreeMb / 4), extra });
     // A seal: what the job copies is what the trace recorded, or it does not run.
     if (job.spec.seal) {
@@ -1399,7 +1410,7 @@ export class JobService {
     return join(this.S, ".jobs", job.id);
   }
 
-  private async script(job: JobRecord, ctl: string, observe: { mounts: string[]; canary: string } | null = null): Promise<{ lines: string[]; tool_sha256?: string }> {
+  private async script(job: JobRecord, ctl: string): Promise<{ lines: string[]; tool_sha256?: string; needs?: string[] }> {
     const q = shQuote;
     const out = this.outPath(job);
     const box = job.spec.timeout_seconds;
@@ -1408,14 +1419,10 @@ export class JobService {
     // the job ran with beyond the image.
     const pip = job.spec.network === "allowlist" ? ["python3 -m pip list --format=freeze > /job/pip-before.txt 2>/dev/null || true"] : [];
     const pipAfter = job.spec.network === "allowlist" ? ["python3 -m pip list --format=freeze > /job/pip-after.txt 2>/dev/null || true"] : [];
-    // EXPERIMENTAL (SWARM_JOB_OBSERVE=fanotify-experimental, a declared scope only): the command as an unprivileged user, a collector watching the view's mounts.
     // A heartbeat beside the command (job-telemetry.ts): the VM's CPU and I/O counters every 15 s, for the host to read while it runs.
-    const run = (cmd: string) =>
-      observe
-        ? [...pip, ...HEARTBEAT_LINES, ...observedRun({ mounts: observe.mounts, canary: observe.canary, cmd: `timeout --kill-after=10 ${box} ${cmd} > /job/stdout.log 2> /job/stderr.log` }), HEARTBEAT_STOP, ...pipAfter]
-        : [...pip, ...HEARTBEAT_LINES, `timeout --kill-after=10 ${box} ${cmd} > /job/stdout.log 2> /job/stderr.log`, "echo $? > /job/exit", HEARTBEAT_STOP, ...pipAfter];
+    const run = (cmd: string) => [...pip, ...HEARTBEAT_LINES, `timeout --kill-after=10 ${box} ${cmd} > /job/stdout.log 2> /job/stderr.log`, "echo $? > /job/exit", HEARTBEAT_STOP, ...pipAfter];
     // SECRET_OUTPUT=1 for a job run as secret output (the agent's flag, or its tool's manifest), so a tool can refuse a values mode in a job that is not; unset for any other, whatever the image carries.
-    const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`, job.spec.secret_output === true ? "export SECRET_OUTPUT=1" : "unset SECRET_OUTPUT"];
+    const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`, job.spec.secret_output === true ? "export SECRET_OUTPUT=1" : "unset SECRET_OUTPUT", WORKER_PROBE_LINE];
     if (job.spec.kind === "tool") {
       const checked = await this.toolCheck(job.spec.tool ?? "", job.spec.args ?? {});
       if (!checked.ok) throw new Error(checked.reason);
@@ -1426,7 +1433,7 @@ export class JobService {
       const out = this.outPath(job);
       const sub = (v: unknown): unknown => (typeof v === "string" ? v.split("{OUT}").join(out) : Array.isArray(v) ? v.map(sub) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, sub(x)])) : v);
       await writeFile(join(ctl, "args.json"), JSON.stringify(sub(job.spec.args ?? {})));
-      return { lines: [...head, ...run(`${checked.runtime} ${q(checked.entry)} < /job/args.json`)], tool_sha256: checked.sha256 };
+      return { lines: [...head, ...run(`${checked.runtime} ${q(checked.entry)} < /job/args.json`)], tool_sha256: checked.sha256, needs: checked.needs };
     }
     if (job.spec.kind === "command") {
       await writeFile(join(ctl, "command.sh"), `${job.spec.command ?? ""}\n`);
@@ -1506,18 +1513,8 @@ export class JobService {
     const st = { base, out: join(base, "out"), ctl: join(base, "job") };
     await mkdir(st.out, { recursive: true });
     await mkdir(st.ctl, { recursive: true });
-    const observe = this.observing(job);
-    const placed = await this.placement(job, st, observe);
-    // Observed: the collector's script beside the job's, its own mount, and the view's evidence-bearing mounts to watch.
-    let watch: { mounts: string[]; canary: string } | null = null;
-    if (observe) {
-      await writeFile(join(st.ctl, "observe.py"), await readFile(new URL("./job-observe.py", import.meta.url)));
-      await mkdir(join(st.base, "observe"), { recursive: true, mode: 0o700 });
-      placed.mounts.push({ host: join(st.base, "observe"), guest: OBSERVE_GUEST, noexec: true });
-      placed.accessible.push({ path: OBSERVE_GUEST, access: "read-write, no-exec; the experimental collector's log, root's alone in the worker" });
-      watch = { mounts: placed.mounts.filter((m) => m.readonly && (m.guest ?? m.host).startsWith(this.S) && (m.view || m.expect)).map((m) => m.guest ?? m.host), canary: join(this.S, CANARY_NAME) };
-    }
-    const script = await this.script(job, st.ctl, watch);
+    const placed = await this.placement(job, st);
+    const script = await this.script(job, st.ctl);
     await writeFile(join(st.ctl, "run.sh"), `${script.lines.join("\n")}\n`);
     // A job that ran keeps its image (a retry, a rerun); a new one is placed by its spec.
     const chosen = job.image ? { profile: null, ref: job.image, choice: job.image_choice ?? { how: "default" as const, why: "the image it is recorded to have run in" } } : await this.imageFor(job.spec);
@@ -1550,39 +1547,6 @@ export class JobService {
       command: ["bash", "/job/run.sh"],
     };
     return { spec, accessible: placed.accessible, manifest: placed.manifest, view: placed.view, chosen, script };
-  }
-
-  /**
-   * Whether this job's reads are observed: EXPERIMENTAL and untested in a
-   * worker VM, off unless SWARM_JOB_OBSERVE=fanotify-experimental, and only
-   * over a declared scope (a detect pass runs its probes in its own loop).
-   */
-  private observing(job: JobRecord): boolean {
-    return observeWanted() && scopeKindOf(job.spec) === "declared" && job.spec.kind !== "detect";
-  }
-
-  /**
-   * EXPERIMENTAL: the collector's log read after the worker is gone, kept
-   * whole beside the job's record with what it says (complete, partial or
-   * unknown, and why), on the journal as job_observed. job_started keeps
-   * `observed: "unknown"`: this is a prototype's word, not custody's.
-   */
-  private async readObserved(job: JobRecord, base: string): Promise<void> {
-    const dir = join(base, "observe");
-    const text = await readFile(join(dir, "events.jsonl"), "utf8").catch(() => null);
-    const key = await readFile(join(dir, "key"), "utf8").catch(() => null);
-    // The declared scope as the view gave it (the job's scope manifest): every object, at its path in the worker.
-    const manifest = job.scope?.manifest ? await readFile(join(this.S, job.scope.manifest), "utf8").then((t) => JSON.parse(t) as { accessible?: Array<{ path: string; left_out?: string }> }).catch(() => null) : null;
-    const scope = (manifest?.accessible ?? []).filter((e) => !e.left_out).map((e) => join(this.S, e.path.replace(/\/$/, "")));
-    const seen = readObservation(text, key, { scope, canary: join(this.S, CANARY_NAME) });
-    const jobDir = join(storePaths(this.S).jobs, job.id);
-    const logRel = `store/jobs/${job.id}/observe.${job.attempt}.jsonl`;
-    const readRel = `store/jobs/${job.id}/observed.${job.attempt}.json`;
-    await mkdir(jobDir, { recursive: true });
-    if (text !== null) await writeFile(join(this.S, logRel), text, { mode: 0o444 });
-    const summary = `${JSON.stringify({ experimental: true, ...seen }, null, 2)}\n`;
-    await writeFile(join(this.S, readRel), summary, { mode: 0o444 });
-    await this.journal.append({ type: "job_observed", job: job.id, attempt: job.attempt, experimental: true, status: seen.status, reasons: seen.reasons, opened: seen.opened.length, escapes: seen.escapes.length, overflow: seen.overflow, ...(text !== null ? { log: logRel, log_sha256: sha256Hex(text) } : {}), read: readRel, read_sha256: sha256Hex(summary) });
   }
 
   private async execute(job: JobRecord): Promise<void> {
@@ -1653,6 +1617,12 @@ export class JobService {
     } catch {
       exit = null;
     }
+    // The worker's own probe, and what the tool's manifest needs of it.
+    const probe = await readFile(join(st.ctl, "worker-probe.json"), "utf8").then((x) => JSON.parse(x) as { fuse?: unknown }).catch(() => null);
+    if (probe && typeof probe.fuse === "boolean") job.worker_probe = { fuse: probe.fuse };
+    if (probe?.fuse === false && script.needs?.includes("fuse")) {
+      job.needs_unmet = { need: "fuse", tool: job.spec.tool ?? null, image: chosen.ref, profile: chosen.profile ?? job.spec.profile ?? null };
+    }
     const cancelled = job.cancel_requested ? `cancelled by ${job.cancel_requested}` : undefined;
     const stopped = (job as JobRecord & { stopped?: string }).stopped;
     const failed = !cancelled && !stopped && exit !== null && exit !== 0 && exit !== 124 && exit !== 137;
@@ -1695,6 +1665,8 @@ export class JobService {
                 ? `exit ${exit}: a program it runs is not in its image${job.program_missing?.profile ? ` (profile ${job.program_missing.profile})` : ""}: ${missing === "?" ? "exit 127" : missing}`
                 : refused
                   ? `exit ${exit}: ${writeRefusedWords(refused, { job: job.id, out: this.outPath(job) })}`
+                  : exit !== 0 && job.needs_unmet
+                    ? `exit ${exit}: the tool needs a FUSE mount and this worker VM (image ${job.needs_unmet.image}${job.needs_unmet.profile ? `, profile ${job.needs_unmet.profile}` : ""}) has no /dev/fuse: that is a limit of the worker, not a finding about the evidence; run it where /dev/fuse exists`
                   : exit !== 0
                     ? `exit ${exit}`
                     : undefined);
@@ -1712,7 +1684,6 @@ export class JobService {
     }
     job.state = "fenced";
     maybeCrash("job:fenced");
-    if (this.observing(job)) await this.readObserved(job, st.base).catch((err: Error) => this.log(`${job.id}: its observation could not be read: ${err.message}`));
     await this.commit(job, { status, exit, reason });
   }
 
@@ -2319,7 +2290,7 @@ export class JobService {
       await this.o.notify(job.requester.agent, `A broad extraction applies and is not run unasked (job ${job.id}): ${unasked.join("; ")}. One that can run is started with catalog_request target=<ref> recipe=<id> when the case needs it.`).catch(() => undefined);
     }
     if (!applied && job.requester.agent !== "system") {
-      const whys = answered.map((a) => `${a.recipe}: ${a.why || "does not apply"}`);
+      const whys = answered.map((a) => `${a.recipe}: ${a.rc === "2" ? `could not tell (${a.why || "its detect step gave no reason"})` : a.why || "does not apply"}`);
       this.delivered.add(job.id);
       await this.journal.append({ type: "job_notified", job: job.id, to: job.requester.agent, how: "post" });
       await this.o.notify(job.requester.agent, `No recipe of this run catalogues ${targets.map((t) => t.name ?? t.ref).join(", ")} (job ${job.id}): ${whys.join("; ") || "none was asked"}. Open it with a job_run command; a forged tool that declares "recipe": true can be named as recipe=tool:<name>.`).catch(() => undefined);
@@ -2332,7 +2303,7 @@ export class JobService {
     const got = new Set(answered.map((a) => `${a.t}\u0000${a.recipe}`));
     const missing = new Map<number, string[]>();
     for (const q of job.spec.pairs ?? []) if (!got.has(`${q.t}\u0000${q.recipe}`)) missing.set(q.t, [...(missing.get(q.t) ?? []), q.recipe]);
-    const rows = answered.map((a) => ({ sha256: targets[a.t]?.sha256 ?? "", ref: targets[a.t]?.ref ?? "", recipe: a.recipe, applies: a.rc === "0", rc: a.rc, why: a.why }));
+    const rows = answered.map((a) => ({ sha256: targets[a.t]?.sha256 ?? "", ref: targets[a.t]?.ref ?? "", recipe: a.recipe, applies: detectApplies(a.rc), rc: a.rc, why: a.why }));
     const unanswered = [...missing].map(([t, recipes]) => ({ sha256: targets[t]?.sha256 ?? "", ref: targets[t]?.ref ?? "", recipes }));
     this.derivedProcessed.add(job.id);
     await this.journal.append({ type: "detect_answered", job: job.id, status: job.status ?? job.state, rows, unanswered });
@@ -2849,6 +2820,12 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
   return view;
 }
 
+/**
+ * The worker probes itself before the job runs: whether /dev/fuse is there (a tool whose manifest says `needs: ["fuse"]` mounts). One line of
+ * JSON in the job's control directory; the hub reads it after the run. DFIRSWARM_FUSE_DEVICE names another device for a test.
+ */
+export const WORKER_PROBE_LINE = "{ if [ -c \"${DFIRSWARM_FUSE_DEVICE:-/dev/fuse}\" ]; then echo '{\"fuse\":true}'; else echo '{\"fuse\":false}'; fi; } > /job/worker-probe.json 2>/dev/null || true";
+
 /** What workerSpecFor gives: the worker's spec, what it could reach, a declared scope's manifest, and how the image was chosen. */
 export type WorkerPlan = {
   spec: WorkerSpec;
@@ -2856,7 +2833,7 @@ export type WorkerPlan = {
   manifest: Record<string, unknown> | null;
   view: { objects: number; files: number; bound: number } | null;
   chosen: { profile: string | null; ref: string; choice: ImageChoice };
-  script: { lines: string[]; tool_sha256?: string };
+  script: { lines: string[]; tool_sha256?: string; needs?: string[] };
 };
 
 export { targetPaths };

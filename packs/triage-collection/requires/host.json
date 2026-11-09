@@ -22,16 +22,41 @@
           },
           "run_from_dir": true,
           "note": "uac runs from its own directory: the wrapper changes into it, so give it absolute paths"
-        }
+        },
+        "data": [
+          {
+            "name": "uac-definitions",
+            "version": "3.4.0",
+            "url": "https://github.com/tclahr/uac/releases/download/v3.4.0/uac-3.4.0.tar.gz",
+            "sha256": "d333b72990c25d48b93200648a58084f8b79ff917d1e609dd92ac6ba9fb387db",
+            "bytes": 8792840,
+            "file": "uac-3.4.0.tar.gz",
+            "into": "/opt/dfir/data/triage-definitions/uac-3.4.0",
+            "check": [
+              "test",
+              "-s",
+              "/opt/dfir/data/triage-definitions/uac-3.4.0/uac-3.4.0.tar.gz"
+            ],
+            "redistributable": false,
+            "licence": "Apache-2.0 (the release's own LICENSE file; GitHub's metadata reports Apache-2.0)",
+            "why": "UAC 3.4.0's release tarball, the profile and artefact files the profile comparator (collection_profile_compare) reads to say what a UAC profile could request. The program itself is not in the image; the comparator checks this file's sha256 against its own list before it reads one member.",
+            "notice": {
+              "source": "https://github.com/tclahr/uac/releases/download/v3.4.0/uac-3.4.0.tar.gz, 8792840 bytes, sha256 as above",
+              "terms": "Apache License 2.0",
+              "derivation": "as published, unchanged"
+            }
+          }
+        ]
       },
       "licence": "Apache-2.0",
-      "redistributable": false
+      "redistributable": false,
+      "not_in_image": "A collector, run on the host to be collected; the analysis image receives its output and has no use for the program. The pinned download stays declared so the operator has the exact release to take to the source."
     },
     {
       "name": "velociraptor",
       "package": "Velociraptor",
       "optional": true,
-      "why": "Builds an offline collector with a chosen artefact set baked in. Declared for operator preparation and as a candidate offline reader of its own containers (unverified; no skill uses it for that, the harness never collects live, and a collection's own VQL is never run). AGPL-3.0, the same licence as this harness.",
+      "why": "Builds an offline collector with a chosen artefact set baked in. Declared for operator preparation only: the Velociraptor program is never run here and is not in the analysis image. The pack reads Velociraptor collection containers and collection zips offline with its own adapters, checked against the source of 0.77.2: the record tools (velociraptor_container/2) and collection_id read a container directory, and the collection-intake recipe reads a collection zip. No skill uses the program, the harness never collects live, and a collection's own VQL is never run. AGPL-3.0, the same licence as this harness.",
       "install": {
         "brew": "https://github.com/Velocidex/velociraptor/releases",
         "apt": "pinned download 0.77.2 (install.download)",
@@ -45,10 +70,35 @@
             "url": "https://github.com/Velocidex/velociraptor/releases/download/v0.77.2/velociraptor-v0.77.2-linux-arm64",
             "sha256": "54d36c23f374a572a4a60106d896e0e39bc6fcafd0d6150cf56aec6c49454ea0"
           }
-        }
+        },
+        "data": [
+          {
+            "name": "velociraptor-definitions",
+            "version": "0.77.2",
+            "url": "https://github.com/Velocidex/velociraptor/archive/refs/tags/v0.77.2.tar.gz",
+            "sha256": "6070f075f4e97b81c3bec07808a6db04b2e0f62941519116cfb2be76d0ce8fcc",
+            "bytes": 7389476,
+            "file": "velociraptor-0.77.2-source.tar.gz",
+            "into": "/opt/dfir/data/triage-definitions/velociraptor-0.77.2",
+            "check": [
+              "test",
+              "-s",
+              "/opt/dfir/data/triage-definitions/velociraptor-0.77.2/velociraptor-0.77.2-source.tar.gz"
+            ],
+            "redistributable": false,
+            "licence": "AGPL-3.0 (the source archive's own LICENSE file, GNU Affero General Public License version 3; GitHub's metadata reports no SPDX licence)",
+            "why": "The Velociraptor v0.77.2 source archive, for its artifact definitions (artifacts/definitions), which the profile comparator reads to say what a Velociraptor collection could request. A GitHub archive of a tag is generated on request: its bytes are pinned here and checked at install, and if GitHub ever serves other bytes the build stops.",
+            "notice": {
+              "source": "https://github.com/Velocidex/velociraptor/archive/refs/tags/v0.77.2.tar.gz, 7389476 bytes, sha256 as above",
+              "terms": "GNU Affero General Public License v3.0",
+              "derivation": "as published, unchanged"
+            }
+          }
+        ]
       },
       "licence": "AGPL-3.0 (declared, unverified)",
-      "redistributable": false
+      "redistributable": false,
+      "not_in_image": "A collector builder, run on the host to be collected; the analysis image receives its output and has no use for the program. The pinned download stays declared so the operator has the exact binary to take to the source."
     },
     {
       "name": "CyLR",
@@ -62,6 +112,43 @@
       "licence": "GPL-3.0 (declared, unverified)",
       "redistributable": false,
       "not_in_image": "A collector, run on the live host whose files it pulls; the analysis image receives its zip and has no use for the program."
+    },
+    {
+      "name": "KAPE",
+      "package": "KAPE",
+      "optional": true,
+      "why": "A collector an operator runs on the live host whose files it pulls. Declared so the pack can name it and pin the KapeFiles target definitions the profile comparator reads (the data entry below); the delivered files are read as files and the program is never run here.",
+      "install": {
+        "brew": "https://www.kroll.com/en/services/cyber-risk/incident-response-litigation-support/kroll-artifact-parser-extractor-kape",
+        "apt": "https://www.kroll.com/en/services/cyber-risk/incident-response-litigation-support/kroll-artifact-parser-extractor-kape",
+        "data": [
+          {
+            "name": "kape-definitions",
+            "version": "b235d571d361db87fdf0d6528a5aa44bd800f15a",
+            "url": "https://github.com/EricZimmerman/KapeFiles/archive/b235d571d361db87fdf0d6528a5aa44bd800f15a.zip",
+            "sha256": "bad6689edb8024c6b736ae4c862caab23a137f417adbc4e5384ccdb0df199509",
+            "bytes": 785483,
+            "file": "KapeFiles-b235d571d361db87fdf0d6528a5aa44bd800f15a.zip",
+            "into": "/opt/dfir/data/triage-definitions/kapefiles-b235d571d361db87fdf0d6528a5aa44bd800f15a",
+            "check": [
+              "test",
+              "-s",
+              "/opt/dfir/data/triage-definitions/kapefiles-b235d571d361db87fdf0d6528a5aa44bd800f15a/KapeFiles-b235d571d361db87fdf0d6528a5aa44bd800f15a.zip"
+            ],
+            "redistributable": false,
+            "licence": "MIT (the archive's own LICENSE file, MIT License, Copyright 2023 Eric Zimmerman; GitHub's metadata reports MIT)",
+            "why": "The KapeFiles repository at one commit, for its Targets (.tkape) files, which the profile comparator reads to say what a KAPE target could request. A GitHub archive of a commit is generated on request: its bytes are pinned here and checked at install.",
+            "notice": {
+              "source": "https://github.com/EricZimmerman/KapeFiles/archive/b235d571d361db87fdf0d6528a5aa44bd800f15a.zip, 785483 bytes, sha256 as above",
+              "terms": "MIT License",
+              "derivation": "as published, unchanged"
+            }
+          }
+        ]
+      },
+      "licence": "KAPE's own terms (declared, unverified)",
+      "redistributable": false,
+      "not_in_image": "A collector, run on the live host whose files it pulls; the analysis image receives its output and has no use for the program. The KapeFiles definitions it reads are pinned as data."
     }
   ]
 }

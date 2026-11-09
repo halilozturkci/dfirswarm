@@ -68,7 +68,7 @@ def describe(exc):
 
 def fail(message, **extra):
     """An error answer: JSON, exit 1, never a traceback. A name in it that is shaped like a credential is withheld."""
-    write_answer({"error": scrub(str(message)), "status": "failed", **extra})
+    write_answer({"error": scrub(str(message)), "status": "failed", "status_basis": "the tool stopped with an error: %s" % scrub(str(message)), **extra})
     raise SystemExit(1)
 
 
@@ -86,7 +86,7 @@ def scrub_all(value):
 def _stopped_by_signal(signum, frame):
     """A kill leaves no half-written file (atexit runs on SystemExit) and no empty answer."""
     print(json.dumps({"error": "the tool was stopped by signal %d before it finished; nothing it was writing was published" % signum,
-                      "status": "failed"}))
+                      "status": "failed", "status_basis": "stopped by signal %d before the answer was complete" % signum}))
     raise SystemExit(128 + signum)
 
 
@@ -198,19 +198,33 @@ def shown_output(path):
         return str(path)
 
 
-def same_bytes(a, b):
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
     try:
-        if os.path.getsize(a) != os.path.getsize(b):
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
             return False
-        with open(a, "rb") as fa, open(b, "rb") as fb:
-            while True:
-                x, y = fa.read(CHUNK), fb.read(CHUNK)
-                if x != y:
-                    return False
-                if not x:
-                    return True
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(CHUNK), fb.read(CHUNK)
+            if x != y:
+                return False
+            if not x:
+                return True
     except OSError:
         return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
 
 
 def publish(tmp, path):
@@ -1077,6 +1091,8 @@ def _b_named_secret(flat):
     size = len(flat)
     for m in _B_DELIM.finditer(flat):
         i = m.start()
+        if i > 0 and flat[i - 1] in "=:":                 # a delimiter right after a delimiter has no name before it: a run of 2 MiB of them is skipped, not judged one by one
+            continue
         j = i + 1
         while j < size and j - i <= 5 and flat[j] in " \t\"'\\":
             j += 1
@@ -1446,10 +1462,101 @@ import json
 import os
 import re
 import stat
+import sys
+import unicodedata
 
+MEMORY_ENV = ("COLLECTION_MEMORY_BYTES", "COLLECTION_INTAKE_MEMORY_BYTES")      # the bytes this process may hold, set by hand (the second name is the recipe's own, still read)
+
+
+def memory_ceiling():
+    """The bytes this process may hold, as far as it can be known: COLLECTION_MEMORY_BYTES (or the recipe's COLLECTION_INTAKE_MEMORY_BYTES) when
+    it is a positive whole number, else the smallest of the cgroup limit and the address-space and data limits. None when nothing limits it that
+    this can see."""
+    for name in MEMORY_ENV:
+        try:
+            if os.environ.get(name) and int(os.environ[name]) > 0:
+                return int(os.environ[name])
+        except ValueError:
+            pass
+    found = []
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as fh:
+                text = fh.read().strip()
+            if text.isdigit() and int(text) < (1 << 60):
+                found.append(int(text))
+        except OSError:
+            pass
+    try:
+        import resource
+        for which in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
+            soft = resource.getrlimit(which)[0]
+            if soft != resource.RLIM_INFINITY:
+                found.append(soft)
+    except (ImportError, ValueError, OSError):
+        pass
+    return min(found) if found else None
+
+
+MEMORY_CEILING = [None, False]         # (bytes, looked up)
+
+
+def over_memory():
+    """A sentence when the process holds more than 60% of what it may hold (the census and the per-member state of a delivery of millions of
+    entries are what grow with the input), else None: the census and the pass stop there, partial, and say so, instead of being killed with
+    nothing written."""
+    if not MEMORY_CEILING[1]:
+        MEMORY_CEILING[0], MEMORY_CEILING[1] = memory_ceiling(), True
+    ceiling = MEMORY_CEILING[0]
+    if not ceiling:
+        return None
+    try:
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
+    except (ImportError, OSError):
+        return None
+    if peak * 10 > ceiling * 6:
+        return "the memory bound (%s held of the %s this process may hold)" % (size_text(peak), size_text(ceiling))
+    return None
+
+
+def size_text(n):
+    """A byte count in the largest unit that does not make it 0 (a tiny override is not '0 MB')."""
+    if n >= 1 << 20:
+        return "%d MB" % (n >> 20)
+    if n >= 1 << 10:
+        return "%d KB" % (n >> 10)
+    return "%d bytes" % n
+
+
+CLOCK_EVERY = 256                  # a loop over the census asks the clock and the memory bound this many entries apart
+
+
+def census_clock(census, position, what):
+    """True when the time limit or the memory bound says a loop over the census must end here (asked every CLOCK_EVERY entries): the census is then
+    marked stopped and not complete, so that the answer is partial and no record is called missing."""
+    if position % CLOCK_EVERY:
+        return False
+    reason = "the time limit" if out_of_time() else over_memory()
+    if not reason:
+        return False
+    if census.stopped is None:
+        census.stopped = {"reason": "%s ended %s" % (reason, what), "directories_not_listed": 0}
+    census.complete = False
+    return True
+
+
+def fold_name(text):
+    """The key a name is joined by: NFC-normalised, then case-folded, so a name written in decomposed form (as macOS writes it) is the same name
+    as its precomposed record."""
+    return unicodedata.normalize("NFC", text).casefold()
+
+
+MEMORY_CHECK_EVERY = 1024          # the census asks for the memory this many entries apart (one getrusage call each)
 MAX_CENSUS = 2000000              # entries held for the join; past it the census is partial and no record is called missing
 REC_LINE = 1 << 20                # a log line longer than this is read in part; the whole line stays in the evidence at its locator
 REC_CHUNK = 1 << 20
+MAX_PATH_PARTS = 1024              # components of a claimed path the join looks at: the tail of a longer one (no real path has more); a longer exact claim names no file
 REC_FIRST = 25                    # problems of a source kept in its summary; every one goes to the caller's sink
 MAX_CONSECUTIVE_BAD_ROWS = 1000
 INSIDE_COLLECTED = ("[root]", "uploads")        # a directory below which the files are the source host's own
@@ -1471,6 +1578,10 @@ KAPE_COPY_MAPPED = ("copiedtimestamp", "sourcefile", "destinationfile", "filesiz
 KAPE_SKIP_KNOWN = ("sourcefile", "sourcefilesha1", "reason")
 SKIP_TARGET_COLUMNS = ("sourcefile", "source", "filename", "file", "path")
 SKIP_REASON_COLUMNS = ("reason", "message", "error", "status")
+ENCRYPTED_PAYLOAD = "data.zip"
+ENCRYPTED_METADATA = "metadata.json"
+ENCRYPTION_KEYS = ("Scheme", "EncryptedPass", "PublicKey")
+ENCRYPTION_METADATA_BYTES = 65536
 ADAPTERS = {
     "kape_copy_log": {"id": "kape_copy_log/2", "collector": "KAPE", "reads": "*_CopyLog.csv",
                       "schema": "a header with SourceFile and DestinationFile; the other columns KAPE writes are kept by name"},
@@ -1484,6 +1595,13 @@ ADAPTERS = {
                   "schema": "one 'hex  path' line per file (the md5sum, sha1sum and sha256sum forms) or 'ALGORITHM (path) = hex'"},
     "velociraptor_container": {"id": "velociraptor_container/2", "collector": "Velociraptor", "reads": "uploads.json, results/*.json, log.json, collection_context.json",
                                "schema": "the container 0.77.2 writes: uploads.json rows (vfs_path, file_size, uploaded_size, Type), result rows with an upload record, log.json rows"},
+    "velociraptor_encrypted": {"id": "velociraptor_encrypted/1", "collector": "Velociraptor", "reads": "metadata.json, data.zip", "supported": False,
+                               "schema": ("the encrypted collection 0.77.2 writes when a password is set (reporting/container.go, NewContainerFromWriter, tag v0.77.2; the metadata keys are set by "
+                                          "artifacts/definitions/Server/Utils/CreateCollector.yaml at the same tag): an outer zip of metadata.json (plain; written only when the collector was "
+                                          "given metadata, with the keys Scheme, EncryptedPass and PublicKey) and data.zip, a stored member that is itself encrypted with the zip password "
+                                          "(github.com/alexmullins/zip, WinZip AES) and holds the collected members. It is recognised by those two member names with nothing else beside them, "
+                                          "and by the encrypted flag of data.zip in the outer zip or the Scheme key of metadata.json, never by entropy. Nothing is decrypted and no record is read"),
+                               "unsupported_reason": "an encrypted Velociraptor collection: its records are inside the encrypted payload (data.zip), which is not decrypted and was not read"},
     "cylr": {"id": None, "collector": "CyLR", "reads": None, "supported": False,
              "schema": "none: no record of CyLR is read; a CyLR archive is a tree of copied files, and a top-level C or C$ directory is a layout clue, not a manifest"},
 }
@@ -1511,14 +1629,23 @@ class Census:
 
     @staticmethod
     def key(rel):
-        return rel.replace(os.sep, "/").casefold()
+        return fold_name(rel.replace(os.sep, "/"))
 
     def add(self, rel, size, kind):
         if self.total >= self.cap:
             self.capped = True
             self.complete = False
             return
+        if self.stopped is not None and self.stopped.get("memory"):
+            self.complete = False
+            return
         self.total += 1
+        if self.total % MEMORY_CHECK_EVERY == 0:
+            held = over_memory()
+            if held:
+                self.stopped = {"reason": held, "memory": True, "entries_held": self.total}
+                self.complete = False
+                return
         if kind == "f":
             self.files += 1
         elif kind == "l":
@@ -1552,6 +1679,8 @@ def walk_census(root, census, skip=None):
             census.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack)}
             census.complete = False
             return
+        if census.stopped is not None and census.stopped.get("memory"):
+            return
         directory = stack.pop()
         rel_dir = directory[len(prefix):] if directory.startswith(prefix) else ""
         try:
@@ -1563,6 +1692,8 @@ def walk_census(root, census, skip=None):
         census.dirs += 1
         for entry in entries:
             seen += 1
+            if census.stopped is not None and census.stopped.get("memory"):
+                return
             if (seen & 1023) == 0 and out_of_time():
                 census.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack)}
                 census.complete = False
@@ -1659,8 +1790,11 @@ def discover(census):
     lists, Velociraptor containers (a directory with uploads.json or collection_context.json, its results/*.json and its
     log.json). A record found inside collected data (below [root] or uploads) belongs to the source host and is listed apart,
     never read. Sorted by the name's bytes, so a run reads the same records in the same order every time."""
-    found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "inside_collected": []}
-    for rel, size, kind in sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0])):
+    found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "velo_encrypted": {}, "inside_collected": []}
+    payloads = {}
+    for position, (rel, size, kind) in enumerate(sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0]))):
+        if census_clock(census, position, "the search for the collectors' records"):
+            break
         name = name_of(rel)
         low = name.lower()
         directory = parent_of(rel)
@@ -1678,6 +1812,8 @@ def discover(census):
             marker = ("velo_result", None, None)
         elif name == "log.json":
             marker = ("velo_log", None, None)
+        if name == ENCRYPTED_PAYLOAD and not inside_collected_data(rel):
+            payloads[directory] = {"payload": rel, "metadata": None, "other": False}
         if marker is None:
             continue
         if inside_collected_data(rel):
@@ -1697,6 +1833,23 @@ def discover(census):
         else:
             found["velo_logs"][directory] = rel
     found["uac_dirs"] = sorted(census.marked_dirs, key=os.fsencode)
+    if payloads:
+        # an encrypted Velociraptor collection is an outer container of data.zip and, when the collector was given metadata, metadata.json: the
+        # directory that holds those and nothing else (a file or a link beside them makes it an ordinary directory with a file named data.zip)
+        for position, (rel, size, kind) in enumerate(census.entries()):
+            if census_clock(census, position, "the search for encrypted collections"):
+                break
+            entry = payloads.get(parent_of(rel))
+            if entry is None:
+                continue
+            name = name_of(rel)
+            if name == ENCRYPTED_PAYLOAD and kind == "f":
+                continue
+            if name == ENCRYPTED_METADATA and kind == "f":
+                entry["metadata"] = rel
+            else:
+                entry["other"] = True
+        found["velo_encrypted"] = {d: {"payload": e["payload"], "metadata": e["metadata"]} for d, e in payloads.items() if not e["other"]}
     return found
 
 
@@ -2264,6 +2417,59 @@ def read_velociraptor(src, directory, files, found, sink):
     return source
 
 
+def read_encryption_metadata(src, rel):
+    """What metadata.json beside data.zip says: which of the documented keys it holds and how long each value is. A value is withheld whole
+    (it may be an encrypted password or a key); nothing of it is printed. The file is read to 64 KiB at most."""
+    info = {"present": True, "bytes": None, "keys": [], "other_keys": 0, "values": {}}
+    try:
+        with src.open_binary(rel) as fh:
+            data = fh.read(ENCRYPTION_METADATA_BYTES + 1)
+    except (OSError, ValueError) as exc:
+        info["problem"] = "metadata.json could not be read (%s)" % describe(exc)
+        return info
+    if len(data) > ENCRYPTION_METADATA_BYTES:
+        info["problem"] = "metadata.json is over %d bytes: not parsed" % ENCRYPTION_METADATA_BYTES
+        return info
+    info["bytes"] = len(data)
+    try:
+        doc = json.loads(data.decode("utf-8-sig"))
+    except (ValueError, RecursionError):
+        info["problem"] = "metadata.json is not JSON text: not read"
+        return info
+    if not isinstance(doc, dict):
+        info["problem"] = "metadata.json is not a JSON object: not read"
+        return info
+    for key in ENCRYPTION_KEYS:
+        if key in doc:
+            value = doc[key]
+            try:
+                text = value if isinstance(value, str) else json.dumps(value)
+            except (ValueError, TypeError, RecursionError):
+                text = ""
+            info["keys"].append(key)
+            info["values"][key] = withhold_value(text, "metadata.json, %s" % key)
+    info["other_keys"] = len(doc) - len(info["keys"])
+    return info
+
+
+def read_velociraptor_encrypted(src, directory, files, sink):
+    """One encrypted Velociraptor collection (see the velociraptor_encrypted adapter), or None when the directory only looks like one. It is
+    recognised by data.zip being an encrypted member of the zip the source reads (`src.encrypted`) or by metadata.json holding the Scheme
+    key. The records are inside the encrypted payload: nothing is decrypted, no record is read, the source is `unsupported`, and no failure
+    count is determined for the run."""
+    payload, meta = files["payload"], files.get("metadata")
+    info = read_encryption_metadata(src, meta) if meta else None
+    flagged = payload in getattr(src, "encrypted", ())
+    named = info is not None and "Scheme" in info["keys"]
+    if not (flagged or named):
+        return None
+    basis = (["data.zip is an encrypted member of the zip (general-purpose flag bit 0)"] if flagged else []) + (["metadata.json holds the Scheme key"] if named else [])
+    source = new_source(payload, "Velociraptor", "velociraptor_encrypted", "velociraptor_encrypted", run=directory or ".", directory=directory or ".", container=directory or ".",
+                        payload=payload, recognised_by=basis, decrypted=False, metadata=info if info is not None else {"present": False})
+    source.update(status="unsupported", reason=ADAPTERS["velociraptor_encrypted"]["unsupported_reason"])
+    return source
+
+
 def read_collection(src, found, sink):
     """Every recognised record of a census, in a fixed order: KAPE runs, UAC logs and hash lists, Velociraptor containers. Returns
     the source summaries (one per log, one per container), each with its adapter, its status and why."""
@@ -2282,6 +2488,10 @@ def read_collection(src, found, sink):
         sources.append(read_hash_list(src, rel, sink))
     for directory, files in sorted(found["velociraptor"].items(), key=lambda kv: os.fsencode(kv[0])):
         sources.append(read_velociraptor(src, directory, files, found, sink))
+    for directory, files in sorted(found["velo_encrypted"].items(), key=lambda kv: os.fsencode(kv[0])):
+        source = read_velociraptor_encrypted(src, directory, files, sink)
+        if source is not None:
+            sources.append(source)
     return sources
 
 
@@ -2307,9 +2517,11 @@ def candidate_paths(rec):
     collector, kind = rec.get("collector"), rec.get("kind")
     claim = rec.get("delivered_path_claim")
     if collector == "KAPE" and kind == "copy" and isinstance(claim, str):
-        return "suffix", path_parts(claim)
+        return "suffix", path_parts(claim)[-MAX_PATH_PARTS:]
     if collector == "Velociraptor" and isinstance(claim, str):
         raw = [p for p in claim.split("/") if p]
+        if len(raw) > MAX_PATH_PARTS:
+            return "exact", []
         forms = []
         for lead in ((), ("uploads",), ("uploads", "auto")):
             where = "/".join(lead) or "the container"
@@ -2318,6 +2530,8 @@ def candidate_paths(rec):
         return "exact", forms
     if collector == "UAC" and kind == "hash_claim" and isinstance(rec.get("source_path_claim"), str):
         parts = [p for p in rec["source_path_claim"].split("/") if p]
+        if len(parts) > MAX_PATH_PARTS:
+            return "exact", []
         return "exact", [(("[root]",) + tuple(parts), "UAC's [root] convention: a hypothesis, not a record of the collector")]
     return None, None
 
@@ -2414,7 +2628,7 @@ def hash_file(src, rel, algorithms):
 
 
 def norm_text(text):
-    return text.replace("\\", "/").casefold()
+    return fold_name(text.replace("\\", "/"))
 
 
 def glob_match(pattern, text):
@@ -2629,6 +2843,16 @@ def withhold_digest(value, where):
     return "<digest of a credential store withheld, %d characters, %s>" % (len(value), fid)
 
 
+def withhold_value(value, where):
+    """A value that may hold a secret (an encrypted password, a key) never leaves in an answer or a table: it goes to the values file (a job
+    run with secret_output and write_values) and what is printed names its length and a finding id. Returns the marker."""
+    WITHHELD["count"] += 1
+    fid = "W%06d" % WITHHELD["count"]
+    if VALUES[0] is not None:
+        VALUES[0].add(fid, {"where": where}, value)
+    return "<value withheld, %d characters, %s>" % (len(value), fid)
+
+
 DIGEST_KEY = re.compile(r"md5|sha|hash|digest|checksum", re.I)
 DIGEST_HEX = re.compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{56}|[0-9A-Fa-f]{64}|[0-9A-Fa-f]{96}|[0-9A-Fa-f]{128})")
 
@@ -2705,6 +2929,8 @@ MAX_PATTERNS_PER_QUESTION = 8
 MAX_PATTERNS = 200
 MAX_PATTERN_CHARS = 300
 MAX_VERIFICATION_ROWS = 5000000
+MAX_VERIFICATION_LINE = 1 << 20           # a line of the verification table longer than this (1 MiB) is not parsed; it is counted under rows_not_used
+VERIFICATION_ROWS_ENV = "COLLECTION_COVERAGE_MAX_VERIFICATION_ROWS"
 EXAMPLES = 5
 
 
@@ -2793,39 +3019,89 @@ class CoverageSink(Sink):
             self.matches.add(row)
 
 
+def verification_row_cap():
+    """MAX_VERIFICATION_ROWS, or less when COLLECTION_COVERAGE_MAX_VERIFICATION_ROWS is a positive whole number (a test lowers the cap this way)."""
+    try:
+        value = int(os.environ.get(VERIFICATION_ROWS_ENV, ""))
+    except ValueError:
+        return MAX_VERIFICATION_ROWS
+    return min(MAX_VERIFICATION_ROWS, value) if value > 0 else MAX_VERIFICATION_ROWS
+
+
 def read_verification(path):
-    """delivered path -> the worst status the verify tool gave it, from its checks table (a JSON Lines file inside the run directory)."""
+    """(delivered path -> the worst status the verify tool gave it, rows, rows not used, how the reading ended). The table is a JSON Lines file inside the
+    run directory, read in binary with a bound on a line (a longer line is skipped to its end and counted as not used) and a bound on the rows, the time
+    and the memory; where it ends before the table does, the rest is counted (as far as the clock allows) and the answer says so."""
     root = os.path.realpath(os.getcwd())
     real = os.path.realpath(path)
     if not (real == root or real.startswith(root + os.sep)):
         fail("verification must be a file inside the run directory (the checks table collection_manifest_verify wrote)", verification=path)
     order = {"matched": 0, "unverifiable": 1, "ambiguous": 2, "missing": 3, "read_failed": 4, "mismatch": 5}
-    states, rows, bad = {}, 0, 0
+    states, rows, bad, over = {}, 0, 0, 0
+    cap = verification_row_cap()
     try:
         fd = os.open(real, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             os.close(fd)
             fail("verification is not a regular file", verification=path)
-        fh = os.fdopen(fd, "r", encoding="utf-8", errors="surrogateescape")
+        fh = os.fdopen(fd, "rb")
     except OSError as exc:
         fail("verification could not be opened (%s)" % describe(exc), verification=path)
+    stopped = None
     with fh:
-        for line in fh:
-            if rows >= MAX_VERIFICATION_ROWS or out_of_time():
+        while True:
+            if out_of_time():
+                stopped = "the time limit"
+                break
+            if rows >= cap:
+                stopped = "the cap of %d rows" % cap
+                break
+            if (rows % 1024) == 0 and over_memory():
+                stopped = over_memory()
+                break
+            line = fh.readline(MAX_VERIFICATION_LINE + 1)
+            if not line:
                 break
             rows += 1
+            if len(line) > MAX_VERIFICATION_LINE:
+                # a line longer than the bound: read on to its end in small pieces, not parsed, counted as not used
+                bad += 1
+                over += 1
+                while not line.endswith(b"\n"):
+                    if out_of_time():
+                        break
+                    line = fh.readline(1 << 16)
+                    if not line:
+                        break
+                continue
             try:
-                row = json.loads(line)
+                row = json.loads(line.decode("utf-8", "surrogateescape"))
             except (ValueError, RecursionError):
                 bad += 1
                 continue
-            if not isinstance(row, dict) or not isinstance(row.get("delivered"), str) or row.get("status") not in order:
+            if not isinstance(row, dict) or not isinstance(row.get("delivered"), str) or not isinstance(row.get("status"), str) or row.get("status") not in order:
                 bad += 1
                 continue
             old = states.get(row["delivered"])
             if old is None or order[row["status"]] > order[old]:
                 states[row["delivered"]] = row["status"]
-    return states, rows, bad
+        not_read, lower, last = 0, False, b"\n"
+        if stopped is not None:
+            while True:
+                if out_of_time():
+                    lower = True
+                    break
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                not_read += chunk.count(b"\n")
+                last = chunk
+            if not lower and not last.endswith(b"\n"):
+                not_read += 1
+    cut = stopped is not None and (not_read > 0 or lower)
+    info = {"truncated": cut, "truncated_because": stopped if cut else None, "rows_not_read": not_read if cut else 0,
+            "rows_not_read_is_a_lower_bound": bool(cut and lower), "lines_over_the_bound": over, "line_bound_bytes": MAX_VERIFICATION_LINE}
+    return states, rows, bad, info
 
 
 def census_gaps(census):
@@ -2843,7 +3119,7 @@ def census_gaps(census):
     return gaps
 
 
-def statement_for(q, outcomes_unknown, integrity_given, examined_given, gaps=()):
+def statement_for(q, outcomes_unknown, integrity_given, examined_given, gaps=(), verification_cut=False):
     parts = []
     head = "Question %s%s: " % (q.id, " (%s)" % q.what if q.what else "")
     if q.files:
@@ -2864,6 +3140,8 @@ def statement_for(q, outcomes_unknown, integrity_given, examined_given, gaps=())
         parts.append("%d matching delivered file(s) are named by no record" % q.without_record)
     if integrity_given and q.files:
         parts.append("integrity from the verification table: %s" % (", ".join("%d %s" % (n, s) for s, n in sorted(q.integrity.items())) or "none of the matching files is in it"))
+        if verification_cut:
+            parts.append("the verification table was cut before its end: a file shown as not in the table may be in the rows that were not read")
     elif q.files:
         parts.append("integrity was not assessed here (collection_manifest_verify checks the claims against the delivered bytes)")
     if examined_given and q.files:
@@ -2946,8 +3224,8 @@ def main():
     verification, verification_info = None, None
     if args.get("verification") is not None:
         vpath = want_str(args, "verification")
-        verification, vrows, vbad = read_verification(vpath)
-        verification_info = {"rows_read": vrows, "rows_not_used": vbad, "files": len(verification)}
+        verification, vrows, vbad, vinfo = read_verification(vpath)
+        verification_info = {"rows_read": vrows, "rows_not_used": vbad, "files": len(verification), **vinfo}
     problems = Table(TOOL + "-problems", FIRST_PROBLEMS)
     matches = Table(TOOL + "-matches", limit, always=True)
     census = Census()
@@ -2980,7 +3258,9 @@ def main():
         if directory in found["velo_logs"]:
             record_files.add(found["velo_logs"][directory])
 
-    for rel, size, kind in sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0])):
+    for position, (rel, size, kind) in enumerate(sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0]))):
+        if census_clock(census, position, "the match of the delivered files to the questions"):
+            break
         if rel in record_files:
             continue
         norm_rel = norm_text(rel)
@@ -3034,6 +3314,8 @@ def main():
             state.append("no_file_and_no_record_read" if outcomes_unknown else "no_file_and_no_record")
         if not census.complete:
             state.append("census_incomplete")
+        if verification_info and verification_info["truncated"]:
+            state.append("verification_table_cut")
         if outcomes_unknown:
             state.append("some_records_unreadable")
         out_questions.append({"id": q.id, "what": q.what, "patterns": {"source_paths": q.source_patterns, "delivered_paths": q.delivered_patterns},
@@ -3042,7 +3324,7 @@ def main():
                               "copied_but_not_in_the_delivery": q.copied_but_absent, "delivered_without_a_record": q.without_record if q.files else 0,
                               "first_failed": q.failed_examples, "integrity": dict(sorted(q.integrity.items())) if verification is not None else None,
                               "not_among_examined": q.unexamined if examined else None, "state": state,
-                              "statement": statement_for(q, outcomes_unknown, verification is not None, bool(examined), gaps)})
+                              "statement": statement_for(q, outcomes_unknown, verification is not None, bool(examined), gaps, bool(verification_info and verification_info["truncated"]))})
     out_requested = [{"pattern": q.source_patterns[0], "delivered_files": q.files, "records_copied_or_uploaded": q.copied,
                       "records_failed_or_skipped": q.failed,
                       "state": requested_state(q, census.complete, outcomes_unknown)}
@@ -3055,6 +3337,10 @@ def main():
         problem_lines.append("%d walk or read error(s)" % census.errors_total)
     if census.capped:
         problem_lines.append("the census reached its cap of %d entries" % census.cap)
+    if verification_info and verification_info["truncated"]:
+        problem_lines.append("the verification table was cut (%s): %s%d row(s) were not read, so the integrity counts cover only the rows read"
+                             % (verification_info["truncated_because"], "at least " if verification_info["rows_not_read_is_a_lower_bound"] else "",
+                                verification_info["rows_not_read"]))
     problem_lines += ["%s is %s" % (s["log"], s["status"]) for s in sources if s["status"] != "parsed"]
     status = "complete" if not problem_lines else "partial"
     basis = ("every directory was listed and every recognised record was read whole" if status == "complete" else

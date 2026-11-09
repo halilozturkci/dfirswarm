@@ -3,6 +3,7 @@
  * the test lays out, and random secret-shaped canaries built from pieces (no literal of a real-looking secret is in the repository).
  */
 import { spawn } from "node:child_process";
+import { PYTHON3 } from "./host-gates.ts";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ROOT } from "./tool-library-harness.ts";
@@ -29,7 +30,7 @@ export function runTool(script: string, cwd: string, args: unknown, env: Record<
   if (bin) e.PATH = `${bin}:${e.PATH ?? ""}`;
   const t0 = Date.now();
   return new Promise((resolve, reject) => {
-    const child = spawn("python3", [script], { cwd, env: e });
+    const child = spawn(PYTHON3, [script], { cwd, env: e });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));
@@ -108,6 +109,8 @@ export type StubOptions = {
   hold?: { seconds: number; pidFile: string; ownSession?: boolean };
   /** the stub ignores SIGTERM (it ends only when it is killed) */
   ignoreTerm?: boolean;
+  /** sparse files the stub creates in the mount after the tree: path -> size in bytes (nothing is stored on disk for them) */
+  sparse?: Record<string, number>;
 };
 
 /** A stub `memprocfs` on PATH that makes the directory a mount would have made (see tests/pack-memory-forensics.test.ts), and the env it needs. */
@@ -163,6 +166,11 @@ if os.environ.get("STUB_MODE") != "never":
                 os.symlink(target.replace("{mount}", mount), os.path.join(mount, link))
         src, dst = os.path.join(tree, name), os.path.join(mount, name)
         shutil.copytree(src, dst, symlinks=True) if os.path.isdir(src) else shutil.copy(src, dst)
+for name, size in json.loads(os.environ.get("STUB_SPARSE", "{}")).items():
+    target = os.path.join(mount, name)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "wb") as f:
+        f.truncate(size)
 while True:
     time.sleep(0.05)
 `,
@@ -170,11 +178,25 @@ while True:
   await chmod(join(bin, "memprocfs"), 0o755);
   const shim = join(cwd, "mountshim2");
   await mkdir(shim, { recursive: true });
-  await writeFile(join(shim, "sitecustomize.py"), "import os, os.path\nos.path.ismount = lambda p: os.path.isdir(os.path.join(p, 'sys'))\n");
+  // With FAKE_FSYNC_SECONDS an fsync of a file over 1 MiB takes that long first (a runner's disk flushing a copy of gigabytes); small files (the ranges file,
+  // the manifest) are not slowed.
+  await writeFile(join(shim, "sitecustomize.py"), [
+    "import os, os.path, time",
+    "os.path.ismount = lambda p: os.path.isdir(os.path.join(p, 'sys'))",
+    "_slow = float(os.environ.get('FAKE_FSYNC_SECONDS', '0') or 0)",
+    "if _slow:",
+    "    _fsync = os.fsync",
+    "    def _slow_fsync(fd):",
+    "        if os.fstat(fd).st_size > (1 << 20):",
+    "            time.sleep(_slow)",
+    "        return _fsync(fd)",
+    "    os.fsync = _slow_fsync",
+    "",
+  ].join("\n"));
   return {
     PYTHONPATH: shim, STUB_TREE: tree, STUB_LOG: log, STUB_MODE: o.mode ?? "", STUB_LINKS: JSON.stringify(o.links ?? []),
     STUB_STDERR: o.stderrText ?? "", ...(o.pidFile ? { STUB_PID: o.pidFile } : {}), ...(o.flood ? { STUB_FLOOD: String(o.flood) } : {}),
-    ...(o.hold ? { STUB_HOLD: String(o.hold.seconds), STUB_HOLD_PID: o.hold.pidFile, ...(o.hold.ownSession ? { STUB_HOLD_SESSION: "1" } : {}) } : {}), ...(o.ignoreTerm ? { STUB_IGNORE_TERM: "1" } : {}),
+    ...(o.hold ? { STUB_HOLD: String(o.hold.seconds), STUB_HOLD_PID: o.hold.pidFile, ...(o.hold.ownSession ? { STUB_HOLD_SESSION: "1" } : {}) } : {}), ...(o.ignoreTerm ? { STUB_IGNORE_TERM: "1" } : {}), ...(o.sparse ? { STUB_SPARSE: JSON.stringify(o.sparse) } : {}),
   };
 }
 
@@ -182,7 +204,9 @@ while True:
  * A directory for PYTHONPATH whose sitecustomize.py makes time.monotonic() move by FAKE_CLOCK_STEP seconds on every call (the clock a
  * tool reads is then a count of looks at it, not of seconds), and makes os.path.getsize() report FAKE_GETSIZE_EXTRA more bytes for a
  * path ending in FAKE_GETSIZE_SUFFIX (a file that ends before the size it was measured at), and sets RLIMIT_FSIZE to FAKE_FSIZE bytes
- * for a process that runs a tool (a write past it is a short write and then EFBIG: a disk that fills), and with FAKE_ISMOUNT makes a directory
+ * for a process that runs a tool (a write past it is a short write and then EFBIG: a disk that fills), and makes mem_fs's lstat of a path holding
+ * FAKE_LSTAT_MATCH report FAKE_LSTAT_EXTRA more bytes (a mounted file shorter than the size the mount reports) and its read of a file whose path holds
+ * FAKE_EIO_MATCH fail with EIO from byte FAKE_EIO_AT on (a path holding FAKE_SHORT_MATCH is read FAKE_SHORT_READ bytes at a time), and with FAKE_ISMOUNT makes a directory
  * with a sys/ inside it a mount point (the stub engine's tree). Nothing happens without those variables.
  */
 export async function shimDir(cwd: string): Promise<string> {
@@ -210,6 +234,47 @@ if _fsize and sys.argv:
     _hard = resource.getrlimit(resource.RLIMIT_FSIZE)[1]
     # the tool is limited; the stub engine it starts (which inherits the limit) is not
     resource.setrlimit(resource.RLIMIT_FSIZE, (_fsize if sys.argv[0].endswith("run.py") else _hard, _hard))
+_run = bool(sys.argv) and sys.argv[0].endswith("run.py")
+_lstat_match = os.environ.get("FAKE_LSTAT_MATCH", "")
+if _lstat_match and _run:
+    # a file the mount reports FAKE_LSTAT_EXTRA bytes longer than it is (it ends before the size it was measured at)
+    _lstat = os.lstat
+    def _fake_lstat(p, *a, **k):
+        r = _lstat(p, *a, **k)
+        if _lstat_match in str(p) and not os.path.isdir(p):
+            l = list(r)
+            l[6] = r.st_size + int(os.environ.get("FAKE_LSTAT_EXTRA", "0"))
+            return os.stat_result(l)
+        return r
+    os.lstat = _fake_lstat
+_eio_match = os.environ.get("FAKE_EIO_MATCH", "")
+_short_match = os.environ.get("FAKE_SHORT_MATCH", "")
+if (_eio_match or _short_match) and _run:
+    # a read of the mounted file that fails with EIO from byte FAKE_EIO_AT on (a page the engine cannot give)
+    import errno as _errno
+    _fdopen = os.fdopen
+    class _Eio:
+        def __init__(self, real):
+            self.real, self.pos, self.at = real, 0, int(os.environ.get("FAKE_EIO_AT", "0")) if _eio_match else 1 << 62
+            self.cap = int(os.environ.get("FAKE_SHORT_READ", "0")) or 1 << 62
+        def read(self, n=-1):
+            if self.pos >= self.at:
+                raise OSError(_errno.EIO, "Input/output error")
+            data = self.real.read(min(n, self.at - self.pos, self.cap))
+            self.pos += len(data)
+            return data
+        def fileno(self): return self.real.fileno()
+        def close(self): self.real.close()
+        def __enter__(self): return self
+        def __exit__(self, *a): self.close()
+    def _fake_fdopen(fd, mode="r", *a, **k):
+        f = _fdopen(fd, mode, *a, **k)
+        try:
+            target = os.readlink("/proc/self/fd/%d" % fd)
+        except OSError:
+            return f
+        return _Eio(f) if mode == "rb" and ((_eio_match and _eio_match in target) or (_short_match and _short_match in target)) else f
+    os.fdopen = _fake_fdopen
 if os.environ.get("FAKE_ISMOUNT"):
     os.path.ismount = lambda p: os.path.isdir(os.path.join(p, "sys"))
 `);

@@ -19,4 +19,4 @@ Use when a named `$DATA` attribute may hold something. Not for the record itself
 - To say a program ran from a stream, validate its bytes and find an execution record that names the stream or its path (`execution/prefetch`, `execution/overview`). An odd Prefetch file name or an empty default stream is a lead, not a signature.
 
 Shows: this record carried a named stream with these bytes. Does not show: who created it, that its carrier was the intended one, that the content was used or ran. Record: the mapping above and the count of `$MFT` records read with their `status`: a stream whose record was reused, or sits in an unresolved extension record, would not appear.
-Sensitive output: a stream can hold a secret; extract in a job with `secret_output: true`. The tool never prints the bytes, and its size and sha256 are the custody record.
+Sensitive output: a stream can hold a secret; extract in a job with `secret_output: true`. The tool never prints the bytes, and its size and sha256 are the custody record. Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.

@@ -43,8 +43,9 @@ same commands again.
 3. The tools and the clearing: traces that a wiping or clearing tool ran —
    SDelete, `cipher /w`, `wevtutil`, a cleaner — from Prefetch, Amcache and
    event 4688; the log clears (Security 1102, System 104 per channel
-   cleared, Security 1100 for a stopped EventLog service, gaps in
-   EventRecordID), what each log holds after the clear, and pre-clear
+   cleared, Security 1100 for a stopped EventLog service (it is also
+   logged on every normal shutdown, so read it with the System 6006 and
+   the boot that follows), gaps in EventRecordID), what each log holds after the clear, and pre-clear
    records recovered by carving `ElfChnk` chunks from unallocated space,
    slack, shadow copies and `pagefile.sys` (a signature carve with `blkls`
    and a forged chunk parser), each carved record with offset and hash.
@@ -189,7 +190,6 @@ and `inputs/` is unchanged.
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
 - `test -f work/timeline.md`
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 23`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 18`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies

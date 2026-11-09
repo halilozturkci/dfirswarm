@@ -3,7 +3,7 @@ id: evidence/verify
 title: Establish evidence identity, integrity and provenance
 when: Before substantive examination, after an integrity concern, and before reporting.
 needs: []
-tools: [check_inputs, image_layout]
+tools: [check_inputs, image_layout, image_verify]
 requires_host: [ewfinfo, ewfverify]
 ---
 
@@ -14,7 +14,7 @@ A hash match means these bytes agree with the named baseline. It does not show w
 1. Read `inputs.json`. It carries every file under `inputs/` with its size and sha256, taken when the run copied or bound the evidence. It is the baseline for this run, not for the evidence's history.
 2. Compare the acquisition record if the case shipped one: an imager's log or `.txt`/`.csv`, or the record inside an E01, which `image_layout` returns (through `ewfinfo`). Say which bytes every digest covers and compare only like with like (`evidence/provenance`). The imager hashed what it acquired; `check_inputs` hashes the container files you hold. Quote them separately.
 3. An E01 is a container, not a scope. Whether it holds a disk, a volume or collected files is in its acquisition record (an L01 is a logical collection), not in the format name.
-4. `ewfverify` re-reads an E01's decoded stream and compares it with the digest stored inside it. It reads only, and it is slow on a large image: run it as a job. It shows the container is internally consistent, not that it matches the source device or is the whole of it.
+4. `image_verify` wraps `ewfverify`, which re-reads an E01's decoded stream and compares it with the digest stored inside it; it also names a missing segment. It reads only, and it is slow on a large image: run it as a job. It shows the container is internally consistent, not that it matches the source device or is the whole of it.
 5. Run `check_inputs` before substantive work and again before you write the report, allowing time to read every input. Preserve its result and look into every modified, missing or added item. A timeout, an unreadable file, a malformed manifest, an entry with no digest or a file it did not reach (`not_checked`) is an incomplete verification, not a pass. Its result is the pack tool's receipt; the harness writes its own `inputs_check` event when the run completes.
 
 Check that the manifest accounts for every file and segment supplied, with a size and digest for each regular file and the recorded target for each link.

@@ -14,6 +14,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { peakRssPrelude } from "./peak-rss.ts";
 import {
   AUDIT, CANARY, CHAIN, INVENTORY, filesUnder, prng, qcow2, vhdDifferencing, vhdDynamic, vhdFixed, vhdx, vmdkDescriptor, vmdkSparse, vmsd, vmx,
 } from "./pack-virtualization-harness.ts";
@@ -144,8 +145,8 @@ function mutate(data: Buffer, random: () => number, text: boolean): Buffer {
 
 type Run = { code: number | null; stdout: string; stderr: string; ms: number; rssKb: number; timedOut: boolean };
 
-/** Runs the tool under a wrapper that reports the peak resident size of the tool process itself (wait4's rusage). */
-const WRAPPER = "import os,sys\npid=os.fork()\nif pid==0:\n os.execvp('python3',['python3',sys.argv[1]])\n_,st,ru=os.wait4(pid,0)\nopen(sys.argv[2],'w').write(str(ru.ru_maxrss))\nsys.exit(os.waitstatus_to_exitcode(st))\n";
+/** Runs the tool under a wrapper that reports the peak resident size of the tool process itself, in bytes (VmHWM of its own image: tests/peak-rss.ts). */
+const WRAPPER = peakRssPrelude() + "p, peak = run_peak(['python3', sys.argv[1]])\nopen(sys.argv[2],'w').write(str(peak))\nsys.exit(p.returncode)\n";
 
 function run(script: string, cwd: string, args: unknown): Promise<Run> {
   return new Promise((resolve) => {
@@ -164,7 +165,7 @@ function run(script: string, cwd: string, args: unknown): Promise<Run> {
       let rssKb = 0;
       if (WATCH_RSS) {
         const raw = Number(await readFile(rssFile, "utf8").catch(() => "0")) || 0;
-        rssKb = process.platform === "darwin" ? Math.round(raw / 1024) : raw;
+        rssKb = Math.round(raw / 1024);
         await rm(rssFile, { force: true });
       }
       resolve({ code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), ms: Date.now() - started, rssKb, timedOut });

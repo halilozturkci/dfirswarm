@@ -1,0 +1,2318 @@
+#!/usr/bin/env python3
+"""Check a recovery output that was produced separately, and say what the evidence supports and what it does not.
+
+The tool never runs a decryptor and never runs, imports or unpacks anything from the evidence. It reads the files it is
+given (the recovered output, the original ciphertext when there is one) and the provenance of the decryptor, which it records
+as the caller gave it and does not use: an exit code of 0 is never a reason to say a file was recovered.
+
+For each recovered file it reports:
+
+  * its size and its sha256 (evidence, not a secret; the hash of a file that looks like a credential file is not printed);
+  * a check of its format, by structure and not by name alone: the central directory of a ZIP or OOXML file (read, never
+    unpacked, with the sizes it declares), the PDF startxref and end marker, the SQLite header and a read-only
+    integrity check on a COPY, the PNG and JPEG markers, the decodability of text;
+  * a comparison with the known original when a hash is given (a hash per file, or a list in sha256sum format);
+  * its unrecovered ranges: whole granules that are still equal to the ciphertext at the same offset, or are all zero;
+  * a verdict, one of exactly four words: matches_known_original, structurally_valid, unrecovered, inconclusive.
+
+Nothing is cut: the ranges and the rows are written as JSON Lines (under $OUT/tool-output in a job, else
+work/<agent>/tool-output) and named in the answer. A stop signal (SIGTERM, SIGINT, SIGHUP) ends the tool with one JSON answer,
+status `failed` and `interrupted`, exit code 128 + the signal, after removing the files it was still writing.
+"""
+import builtins
+import collections
+import datetime
+import errno
+import functools
+import hashlib
+import json
+import math
+import os
+import re
+import stat
+import sys
+import tempfile
+import unicodedata
+from pathlib import Path
+
+PARSER = "recovery_validate/1"
+WORK = "check"
+TOOL = "recovery_validate"
+VERDICTS = ("matches_known_original", "structurally_valid", "unrecovered", "inconclusive")
+DEFAULT_BUDGET, MIN_BUDGET = 8 << 30, 4096
+DEFAULT_SECONDS, MAX_SECONDS = 780, 840    # the manifest allows 900
+DEFAULT_GRANULE, MIN_GRANULE, MAX_GRANULE = 4096, 512, 1 << 20
+MAX_ITEMS = 20000
+MAX_HASH_LIST = 200000       # entries of a known-originals list held in memory
+MAX_LINE = 1 << 16
+MAX_WALK_ENTRIES = 1000000   # entries of a recovered tree visited in one call
+CHUNK = 1 << 20
+MAX_CD_BYTES = 64 << 20      # the zip central directory read in one go
+MAX_CD_ENTRIES = 200000
+MAX_SQLITE_COPY = 256 << 20
+INLINE_RANGES = 16
+PROVENANCE_KEYS = ("name", "version", "publisher", "source", "obtained", "verified", "exit_code", "notes")
+CREDENTIAL_NAME = re.compile(r"(id_rsa|id_dsa|id_ecdsa|id_ed25519|\.pem$|\.key$|\.pfx$|\.p12$|\.kdbx?$|\.ppk$|^shadow$|^passwd$|credential|\.htpasswd|secrets?\.)", re.I)
+PRIVATE_KEY_HEAD = re.compile(rb"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")
+
+# The pattern ransom_note_scan uses to take a file for a note by its name, so that the tools agree on which names are note names.
+NAME_HINTS = re.compile(
+    r"(readme|read_me|decrypt|restore|recover|unlock|how[\W_]*to|ransom|help[\W_]*|"
+    r"your[\W_]*files|instruction|_note|!!!)", re.I)
+FORMATS = {"pdf": "pdf", "zip": "zip", "docx": "zip", "xlsx": "zip", "pptx": "zip", "odt": "zip", "ods": "zip", "odp": "zip",
+           "jar": "zip", "epub": "zip", "png": "png", "jpg": "jpeg", "jpeg": "jpeg", "sqlite": "sqlite", "sqlite3": "sqlite",
+           "db": "sqlite", "txt": "text", "csv": "text", "log": "text", "json": "text", "xml": "text", "html": "text", "md": "text"}
+FORMAT_NAMES = ("pdf", "zip", "png", "jpeg", "sqlite", "text")
+
+# Lossless paging (the same in every library tool that pages): the page an
+# agent reads stays small, and when there are more rows the whole result is
+# written as JSON Lines under work/<agent>/tool-output and named.
+import hashlib
+
+# The rows a table shows inline are cut by size as well as by count: the answer is judged, serialised and read back within the run's
+# clock, and a `limit` of 1,000,000 over rows of a few hundred bytes would take longer than max_seconds (and leave the answer without
+# its keys). The cut is lossless: every row is in the paging file, named by all_results. The same text is in encrypted_survey, and a test
+# holds the two classes equal; the model is snapshot_chain_check's LosslessPage.
+INLINE_BYTES = 1 << 19
+
+
+class LosslessPage:
+    def __init__(self, tool: str, key: object, limit: int):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+        self.limit = limit
+        self.page: list[object] = []
+        self.page_bytes = 0
+        self.total = 0
+        self._out = None
+        self._tmp: Path | None = None
+        digest = hashlib.sha256(
+            json.dumps(key, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        name = f"{self.tool}-{digest}.jsonl"
+        job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+        if job and out:
+            # In a job only $OUT is written, and it is sealed as the job's
+            # output: the whole result is cited from there.
+            self.path = Path(out) / "tool-output" / name
+            self.shown = "store/jobs/%s/out/tool-output/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
+        else:
+            agent = re.sub(
+                r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
+            )
+            self.path = Path("work") / agent / "tool-output" / name
+            self.shown = str(self.path)
+
+    def _cannot_write(self, exc: BaseException) -> None:
+        """The whole result cannot be kept: say so as JSON and stop, never a traceback."""
+        import sys as _sys
+        _sys.stdout.write(json.dumps({
+            "error": "the whole result (%d rows so far) cannot be written to %s: %s. Outside a job the place is your own "
+                     "work/<your id>/ directory; in a job it is $OUT." % (self.total, self.shown, describe(exc)),
+            "status": "failed",
+            "status_basis": "the tool stopped with an error (see error); the whole result could not be kept, so there is no answer",
+        }) + "\n")
+        _sys.exit(1)
+
+    def _write(self, row: object) -> None:
+        assert self._out is not None
+        # ASCII only: U+2028, U+0085, a bidi override and a lone surrogate (a file name that is not UTF-8) are escaped, lose nothing, and a
+        # line of the file is always a row.
+        text = json.dumps(row, ensure_ascii=True, default=str)
+        try:
+            self._out.write(text)
+            self._out.write("\n")
+        except OSError as exc:
+            self._cannot_write(exc)
+
+    def add(self, row: object, evidence: str | None = None) -> object:
+        """Keep a row: read back by the backstop first (`evidence` is the name of a file printed as it is on purpose), then paged. Returns
+        the row as kept."""
+        row = seal_row(row, evidence)
+        self.total += 1
+        if len(self.page) < self.limit and self.page_bytes < INLINE_BYTES:
+            self.page.append(row)
+            self.page_bytes += len(repr(row))
+            return row
+        if self._out is None:
+            # A stop must not come between the temporary file and its registration (self._tmp): the stop handler removes only the
+            # registered files. The three stop signals are held for these steps and delivered right after; where the call is missing it is a no-op.
+            hold = getattr(signal, "pthread_sigmask", None)
+            was = hold(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hold else None
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(
+                    dir=self.path.parent, prefix=f".{self.path.name}-"
+                )
+                self._tmp = Path(name)
+                self._out = os.fdopen(fd, "w", encoding="utf-8")
+            except OSError as exc:
+                self._cannot_write(exc)
+            finally:
+                if hold:
+                    hold(signal.SIG_SETMASK, was)
+            for kept in self.page:
+                self._write(kept)
+        self._write(row)
+        return row
+
+    def finish(self) -> dict:
+        result = {
+            "matched": self.total,
+            "returned": len(self.page),
+            "truncated": self.total > len(self.page),
+        }
+        if self.total > len(self.page) and len(self.page) < self.limit:
+            result["inline_cut_by_size"] = (
+                "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
+            )
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                os.replace(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+
+
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. A result written at the same moment cannot be replaced either: taking a name fails when it is there.
+# Only regular files are ever compared: both names are opened with O_NONBLOCK and O_NOFOLLOW and looked at with fstat before a byte is
+# read, so a FIFO, a device, a directory or a link at a name (the caller's own results_to, say) is another result's and cannot hold the
+# tool. The comparing of one call has PLACE_COMPARE_SECONDS in all; past it an earlier result is taken as different and this one takes
+# the next free name (nothing is replaced, but an identical rerun may then be named anew).
+# The name is taken with a hard link of the finished file, so it never holds an empty file, whatever stops the tool and when (SIGKILL
+# included). Where the file system refuses the link, the name is taken with an exclusive create and the file is moved over it: a stop
+# that unwinds (an exception) takes the empty name back while it is still the empty file this call made; a stop that ends the process
+# without unwinding (SIGKILL, the handlers of the STOP block) between the create and the move leaves the empty name, and the next run takes -2.
+PLACE_COMPARE_SECONDS = 5   # all the comparing one call to place_without_replacing does; past it an earlier result is taken as different
+
+
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
+    try:
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
+            return False
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
+    except OSError:
+        return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
+
+
+def _take_name(tmp, candidate):
+    """Give the finished `tmp` the name `candidate` if it is free, and say whether it now has it (False: the name is taken, by a file, a
+    link, a FIFO or a directory). The name is taken with a hard link, so it never holds an empty file; where the file system refuses the
+    link it is taken with an exclusive create and the file is moved over it, and a stop that unwinds in between takes the empty name back."""
+    try:
+        os.link(tmp, candidate)
+    except FileExistsError:
+        return False
+    except OSError:
+        pass                                   # no hard links here: the older way, below
+    else:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass                               # the hidden name stays beside the placed file; the stop path of the page removes it
+        return True
+    fd = made = None
+    try:
+        fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        made = os.fstat(fd)
+        closing, fd = fd, None
+        os.close(closing)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return True
+    except FileExistsError:
+        return False
+    except BaseException:
+        try:
+            if made is None and fd is not None:
+                made = os.fstat(fd)
+        except OSError:
+            pass
+        try:
+            if fd is not None:
+                os.close(fd)
+        except OSError:
+            pass
+        try:
+            now = os.lstat(candidate)
+            if made is not None and (now.st_mode & 0o170000) == 0o100000 and now.st_size == 0 and (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino):
+                os.unlink(candidate)           # the empty name this call took is not left behind
+        except OSError:
+            pass
+        raise
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. A name that is taken (by a file, a link, a FIFO or a directory) is
+    left as it is: a regular file of the same bytes is named again, any other result takes the next free <stem>-<n><suffix>. Returns the
+    path that holds it. The comparing with earlier results has PLACE_COMPARE_SECONDS in all: past it an earlier result is taken as
+    different and this one takes the next free name."""
+    deadline = time.monotonic() + PLACE_COMPARE_SECONDS
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        if _take_name(tmp, candidate):
+            return candidate
+        if not os.path.islink(candidate) and same_bytes(tmp, candidate, deadline):
+            os.unlink(tmp)
+            return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+def finish_page(page) -> dict:
+    """page.finish(), with the size cut named: NoReplacePage (the shared block above) replaces LosslessPage.finish, so the cut that
+    LosslessPage makes by INLINE_BYTES is said here, outside the block, for every table. The same text is in ransom_note_scan."""
+    result = page.finish()
+    if page.total > len(page.page) and len(page.page) < page.limit:
+        result["inline_cut_by_size"] = (
+            "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
+        )
+    return result
+
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+# BEGIN SHARED WITHHOLDING
+# The same text is in every tool that withholds identifier-shaped strings and credentials (the network, base, encrypted-containers,
+# memory, virtualization, ransomware and reverse-engineering packs, and the three tools of the cloud pack), so that they withhold the
+# same strings; the tests that hold the copies equal are tests/shared-blocks-census.test.ts (how many carry it),
+# tests/pack-re-delta10.test.ts (every copy equal, found by the marker), tests/pack-network-withholding.test.ts,
+# tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts, tests/pack-re-process.test.ts and
+# tests/pack-cloud-shared.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a path
+# component, a URL, a message that quotes either; and a credential (a value given to a password, a token, a cookie, a pair, a
+# switch) by the name it is given under. A carrier may set two names above this block: WITHHOLD_LIMIT, the length past which a text is
+# withheld whole (65536 when it sets none), and WITHHOLD_TICK, a hook that long scans call and that may raise to end them at the
+# carrier's deadline (none when it sets none). Nothing else in the block is a carrier's to change.
+COUNTS = {"names": 0, "urls": 0, "text": 0}
+# A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
+# `/` joins pieces of a base64 token and is handled apart, below.
+_RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
+_SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
+_HEX = re.compile(r"[0-9a-fA-F]{32,}")
+# The prefixed secrets that one expression finds. A JWT is not among them: `eyJ` + 8 name characters + `.` + 8 + `.` + the rest, tried at
+# every `eyJ`, runs to the end of the run of name characters and fails again at each next `eyJ` of a text made of them, which costs the
+# square of the length. `_prefixed_spans` reads a JWT in one pass instead, and puts it in order with these.
+_PREFIX_RULES = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+                           r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
+                           r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+_JWT_RUN = re.compile(r"[A-Za-z0-9_-]+")
+# User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
+_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
+
+
+def _withheld(what, length, kind):
+    COUNTS[kind] = COUNTS.get(kind, 0) + 1
+    return ("<%s withheld %d characters>" % (what, length)) if what else ("<withheld %d characters>" % length)
+
+
+def _token_run(run):
+    """Is this run of name characters shaped like a token, and not like words, dates or versions?"""
+    if _HEX.search(run):
+        return True
+    chunks = [(m.group()[0].isdigit(), m.start(), m.end()) for m in re.finditer(r"[A-Za-z]+|[0-9]+", run)]
+    # digits packed between letters ("a9b2c7"), which words, dates and versions do not do
+    packed = 0
+    for i, (is_digit, start, end) in enumerate(chunks):
+        if not is_digit or end - start > 3:
+            continue
+        before = i > 0 and not chunks[i - 1][0] and chunks[i - 1][2] == start
+        after = i + 1 < len(chunks) and not chunks[i + 1][0] and chunks[i + 1][1] == end
+        packed += 1 if before or after else 0
+    if packed >= 3:
+        return True
+    letters = [c for c in run if c.isalpha()]
+    case_flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
+    if len(letters) >= 20 and case_flips >= max(8, 0.4 * len(letters)):
+        return True
+    if run.endswith("==") and len(run) >= 16:
+        return True
+    if run.endswith("=") and len(run) >= 24:
+        return True
+    return len(run) >= 40 and run.isalnum() and any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+
+
+def _randomish(piece):
+    """A piece of a path that is not a plain word: digits among letters, or capitals inside a word."""
+    if len(piece) < 4 or "." in piece or re.fullmatch(r"[A-Z][a-z]+", piece):
+        return False
+    letters = [c for c in piece if c.isalpha()]
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
+
+
+_SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
+# A text longer than this is withheld whole, by its length, and not examined: no name, path or URL is tens of thousands of characters
+# long, and the answer says how long the text was. Every rule below reads a text of this length in well under a second whatever its
+# characters are, so that no call of `scrub` or `token_spans` can run for long on a text a file chose; the limit is the backstop for
+# a shape of text that no rule was tried on, and the rules themselves are linear.
+TEXT_LIMIT = globals().get("WITHHOLD_LIMIT", 65536)
+
+
+def _prefixed_spans(text, tail=None):
+    """The spans of the prefixed secrets in the text (a vendor prefix, a JWT, `Basic`/`Bearer` and its value), left to right and apart,
+    as one expression holding all of them would find them (the first match at each offset, the next search where the last ended), in
+    time linear in the text. With `tail`, an expression matched where each span ends, the span takes what it matches.
+
+    A JWT is read from the runs of name characters (`[A-Za-z0-9_-]+`), cut once: its head is the first `eyJ` of a run that is followed
+    by 8 or more characters of that run, and it ends where the third part of the JWT does; every later `eyJ` of the run reads the same
+    rest, so the first one is the one that matches and a run that does not hold a JWT is not read again for each `eyJ` in it."""
+    from bisect import bisect_right
+    size = len(text)
+    starts, ends, rest = [], [], {}
+    if "eyJ" in text:
+        for m in _JWT_RUN.finditer(text):
+            starts.append(m.start())
+            ends.append(m.end())
+
+    def jwt_end(r):      # where a JWT whose head is in run r ends, or -1: `.`, a run of 8 or more, `.`, then the rest of the next run
+        if r not in rest:
+            end, last = -1, ends[r] + 1
+            if (last < size and text[last - 1] == "." and r + 1 < len(starts) and starts[r + 1] == last
+                    and ends[r + 1] - last >= 8 and ends[r + 1] < size and text[ends[r + 1]] == "."):
+                end = ends[r + 1] + 1
+                if r + 2 < len(starts) and starts[r + 2] == end:
+                    end = ends[r + 2]
+            rest[r] = end
+        return rest[r]
+
+    def next_jwt(at):    # (start, end) of the first JWT that starts at or after `at`, or None
+        while True:
+            p = text.find("eyJ", at)
+            if p < 0:
+                return None
+            r = bisect_right(starts, p) - 1
+            if p + 11 <= ends[r] and jwt_end(r) >= 0:
+                return p, jwt_end(r)
+            at = ends[r]  # no `eyJ` further in this run can be a head either
+
+    spans, at = [], 0
+    other = _PREFIX_RULES.search(text)
+    jwt = next_jwt(0) if starts else None
+    while other is not None or jwt is not None:
+        if other is not None and other.start() < at:      # it began inside the span just taken: look again from its end
+            other = _PREFIX_RULES.search(text, at)
+        elif jwt is not None and jwt[0] < at:
+            jwt = next_jwt(at)
+        else:
+            start, end = other.span() if jwt is None or (other is not None and other.start() < jwt[0]) else jwt
+            if tail is not None:
+                end = tail.match(text, end).end()
+            spans.append((start, end))
+            at = end
+    return spans
+
+
+def _grow_spans(text, spans):
+    """Each flagged span takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+
+    One pass cuts the text into pieces (runs of name characters) and keeps where each starts and ends. A span then walks
+    that array by index; a piece is judged once, and a walk that reaches a piece an earlier walk has settled stops there, so
+    the work is linear in the text and no range is sliced or searched again. (Looking back with a search over everything
+    before a piece costs the cube of the length for a name of many `/`-joined pieces.)"""
+    from bisect import bisect_left
+    starts, ends = [], []
+    for m in _SPAN_PIECE.finditer(text):
+        starts.append(m.start())
+        ends.append(m.end())
+    count, size = len(starts), len(text)
+    judged_left, judged_right, settled_left, settled_right = {}, {}, {}, {}
+
+    def padded(k):       # where piece k ends with the up to two `=` of padding after it
+        e = ends[k]
+        if e < size and text[e] == "=":
+            e += 2 if e + 1 < size and text[e + 1] == "=" else 1
+        return e
+
+    def left_ok(j):
+        if j not in judged_left:
+            judged_left[j] = _randomish(text[starts[j]:ends[j]])
+        return judged_left[j]
+
+    def right_ok(k):
+        if k not in judged_right:
+            judged_right[k] = _randomish(text[starts[k]:padded(k)])
+        return judged_right[k]
+
+    def before(at):      # the piece that growing left from offset `at` takes, or -1. `$` also ends a match before a final line break.
+        if at < 2 or text[at - 1] != "/":
+            return -1
+        for stop in ((at - 1, at - 2) if text[at - 2] == "\n" else (at - 1,)):
+            j = bisect_left(ends, stop)
+            if j < count and ends[j] == stop:
+                return j if left_ok(j) else -1
+        return -1
+
+    def after(k):        # the piece that growing right from the end of piece k takes, or -1
+        e = padded(k)
+        if k + 1 >= count or e >= size - 1 or text[e] != "/" or starts[k + 1] != e + 1:
+            return -1
+        return k + 1 if right_ok(k + 1) else -1
+
+    def settle(i, step, memo):
+        trail = []
+        while i not in memo:
+            trail.append(i)
+            j = step(i)
+            if j < 0:
+                memo[i] = i
+                break
+            i = j
+        final = memo[i]
+        for t in trail:
+            memo[t] = final
+        return final
+
+    grown = []
+    for start, end in spans:
+        j = before(start)
+        if j >= 0:
+            start = starts[settle(j, lambda i: before(starts[i]), settled_left)]
+        if end < size - 1 and text[end] == "/":
+            k = bisect_left(starts, end + 1)
+            if k < count and starts[k] == end + 1 and right_ok(k):
+                end = padded(settle(k, after, settled_right))
+        grown.append((start, end))
+    return grown
+
+
+def token_spans(text):
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text))]
+    spans = _prefixed_spans(text)
+    for m in _RUN.finditer(text):
+        if _token_run(m.group()):
+            spans.append(m.span())
+    # A base64 token holds `/`: pieces too short to be one alone (an AWS-style secret has two) are caught as a whole.
+    for m in _SLASHED.finditer(text):
+        run = m.group()
+        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
+            spans.append(m.span())
+    grown = _grow_spans(text, spans) if spans else []
+    grown.sort()
+    merged = []
+    for start, end in grown:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def token_shaped(text):
+    return bool(token_spans(text))
+
+
+# ---- credentials: a value is withheld by the name it is given under and by the text around it ----------------------------------
+# The rules above find strings that are shaped like an identifier. These find a secret that has no shape, because of what it is
+# assigned to (`password=`, a `Name`/`Value` pair, a `-Password` switch, `curl -u user:pass`, `mysql -pSECRET`), and the common
+# token families, private key blocks and hashes of an account database. A name decides whether a value is a secret, a value
+# decides nothing. Every rule runs in time linear in the text (a bounded stretch after each anchor, no nested repeat), and a
+# carrier whose texts are long (a cloud log: a megabyte) sets WITHHOLD_TICK to a hook that ends the work at its deadline.
+_CRED_CHECKSUM_NAME = re.compile(r"(?i)checksum|digest|sha[0-9]|md5|etag|crc[0-9]")
+_CRED_REDACTED = re.compile(r"^\W*(?:hidden_due_to_security_reasons|redacted|masked|removed|\*+|x{3,}|\[\])\W*$", re.I)
+_CRED_NOT_A_VALUE = frozenset(("true", "false", "null", "none", "nil", "undefined", "required", "optional", "enabled", "disabled"))
+_CRED_EXACT = {
+    "password", "newpassword", "oldpassword", "currentpassword", "passwd", "pwd", "passphrase", "passcode", "pin", "otp",
+    "pass", "dbpass", "userpass", "adminpass", "rootpass", "plaintext",
+    "secret", "clientsecret", "secretkey", "secretaccesskey", "awssecretaccesskey", "awssecretkey", "secretstring",
+    "secretbinary", "secrettext", "secretvalue", "accesskeysecret",
+    "sessiontoken", "securitytoken", "accesstoken", "refreshtoken", "idtoken", "bearertoken", "authtoken", "token",
+    "tokencode", "mfacode", "verificationcode", "authorizationcode",
+    "authorization", "proxyauthorization", "cookie", "setcookie", "apikey", "privatekey", "privatekeypem",
+    "sharedaccesskey", "sharedaccesssignature", "accountkey", "primarykey", "secondarykey", "keyvalue", "masterkey",
+    "storagekey", "subscriptionkey", "ocpapimsubscriptionkey",
+    "connectionstring", "credential", "credentials", "assertion", "samlresponse", "mfasecret",
+    "sastoken", "sassignature", "signature", "sig",
+    "passwordhash", "nthash", "ntlmhash", "lmhash",
+}
+_CRED_SUFFIX = ("password", "passwd", "passphrase", "secret", "apikey", "privatekey", "sessiontoken", "securitytoken",
+                "accesstoken", "refreshtoken", "clientsecret", "token", "secrettext", "secretkey", "secretaccesskey",
+                "primarykey", "secondarykey", "accountkey", "sharedaccesskey", "subscriptionkey", "passwordhash",
+                "ntlmhash", "nthash", "passcode", "signature", "cookie")
+# a position or an idempotency key under a name that ends in `token`
+_CRED_NOT_SECRET = ("nexttoken", "pagetoken", "continuationtoken", "paginationtoken", "nextpagetoken", "pagingtoken",
+                    "startingtoken", "nextmarkertoken", "clienttoken", "clientrequesttoken", "idempotencytoken",
+                    "nextforwardtoken", "nextbackwardtoken", "requesttoken")
+_CRED_CONTAINERS = ("credential", "credentials")
+_CRED_NAME_CACHE = {}
+_CRED_NAME_KEYS = ("Name", "name", "Key", "key")
+_CRED_VALUE_KEYS = ("Value", "NewValue", "OldValue", "value", "newValue", "oldValue")
+
+
+def is_container_name(name):
+    """`credentials` names a group of fields (an access key id, an expiry, a token): each is judged by its own name."""
+    return re.sub(r"[^a-z0-9]", "", str(name).lower()) in _CRED_CONTAINERS
+
+
+def name_is_sensitive(name):
+    """Does a field or a parameter of this name hold a secret? (`Password`, `client_secret`, `x-api-key`; not `nextToken`.)"""
+    hit = _CRED_NAME_CACHE.get(name)
+    if hit is None:
+        flat = re.sub(r"[^a-z0-9]", "", str(name).lower())
+        hit = flat in _CRED_EXACT or (len(flat) > 6 and flat.endswith(_CRED_SUFFIX) and not flat.endswith(_CRED_NOT_SECRET))
+        if len(_CRED_NAME_CACHE) < 20000:
+            _CRED_NAME_CACHE[name] = hit
+    return hit
+
+
+_CRED_B64 = "A-Za-z0-9+/_-"
+_CRED_B64_RUN = re.compile(r"(?<![%s])[%s]{128,}={0,2}(?![%s])" % (_CRED_B64, _CRED_B64, _CRED_B64))
+_CRED_B64_EDGE = "(?<![A-Za-z0-9+/=_-])"
+_CRED_B64_END = "(?![A-Za-z0-9+/=_-])"
+# The names an assignment is recognised by. A long compound name may carry any prefix (dbPassword=, apiToken=, adminSecret:);
+# a short one needs the edge of a word (sig= is not design=).
+_CRED_STRONG = (r"password|passwd|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|"
+                r"security[_-]?token|auth[_-]?token|bearer[_-]?token|account[_-]?key|shared[_-]?access[_-]?key|primary[_-]?key|"
+                r"secondary[_-]?key|private[_-]?key|subscription[_-]?key|sas[_-]?token|password[_-]?hash|nt[_-]?hash|ntlm[_-]?hash|"
+                r"lm[_-]?hash|client[_-]?secret|secret[_-]?access[_-]?key|secret[_-]?key|secret[_-]?text|secret[_-]?value|token|signature|plaintext")
+_CRED_SHORT = r"(?<![A-Za-z0-9])(?:pwd|pass|sig|pin|otp|sas)"
+_CRED_SEP = r"""(?:\\*["']|["'])?\s*(?:[:=]|%3[dD]|%3[aA])\s*"""
+# a short name is a name only as `pwd=value` or `pass:value`: "pass: 3 attempts" is prose
+_CRED_SEPS = r"""(?:\\*["']|["'])?(?:\s*(?:=|%3[dD])\s*|:(?=\S))"""
+_CRED_NAME = r"(?:(?:%s)%s|%s%s)" % (_CRED_STRONG, _CRED_SEP, _CRED_SHORT, _CRED_SEPS)
+_CRED_ARN_TAIL = re.compile(r"arn:[A-Za-z0-9-]+:[A-Za-z0-9-]+:[A-Za-z0-9-]*:[0-9]*:$")
+_CRED_PAIR_WHY = "a value paired with a credential name"
+_CRED_RULES = [
+    # anchored at the start of a run and possessive, so that a megabyte of `eyJ` is read once, not once per `eyJ`
+    ("a JSON Web Token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+\.[A-Za-z0-9_-]{2,}+(?:\.[A-Za-z0-9_-]*+)?"), 0),
+    ("a JSON Web Encryption token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+(?:\.[A-Za-z0-9_-]*+){4}"), 0),
+    ("a password in a URL", re.compile(r"(?i)(?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,20}://[^\s:/@\"'<>\\]{0,256}:([^\s/\"'<>\\]{1,1024})@(?=[^\s/@\"'<>]{1,255})"), 1),
+    ("an Azure Functions key", re.compile(r"""(?i)(?:x-functions-key["']?\s*[:=]\s*(?:\\*["'])?|[?&;]code=)([A-Za-z0-9_/+=-]{16,512})"""), 1),
+    ("a private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|[\s\S]*)"), 0),
+    ("a base64 block of key lines", re.compile(r"(?:[A-Za-z0-9+/]{60,80}={0,2}\r?\n){2,}[A-Za-z0-9+/]{2,80}={0,2}"), 0),
+    ("an authorization header value", re.compile(
+        r"""(?i)authorization["']?\s*[:=]\s*(?:\\*["'])?(?:(?:bearer|basic|digest|negotiate|ntlm|token)\s+)?([^\s"'&,;\\]{1,4096})"""), 1),
+    ("a cookie header value", re.compile(r"""(?i)cookie["']?\s*[:=]\s*(?:\\*["'])?([^\r\n"'\\]{1,4096})"""), 1),
+    ("a scheme and its credential", re.compile(r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{3,4096})|\b(?:negotiate|ntlm|digest)\s+([A-Za-z0-9._~+/=-]{24,4096})"), -2),
+    ("a value assigned to a credential name (quoted)", re.compile(
+        r"""(?i)%s\\*(["'])(.{1,4096}?)(?=\\*\1)""" % _CRED_NAME), 2),
+    ("a value assigned to a credential name", re.compile(
+        r"""(?i)%s((?:(?!%%26)[^\s"'&<>\\]){1,4096})""" % _CRED_NAME), 1),
+    ("a value given to a credential switch", re.compile(
+        r"""(?i)(?<![A-Za-z0-9_])-(?:password|pass|pwd|passphrase|secret|clientsecret|apikey|accesstoken|token)\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    ("a secret given to ConvertTo-SecureString", re.compile(
+        r"""(?i)ConvertTo-SecureString\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    # `mysql -u<user> -p<password>`: with `-p` glued to its value, and only as an option of a MySQL or MariaDB client (`ssh -p 22`,
+    # `nc -p 80` and `mysql -p` alone, which asks for the password, name a port or nothing). The options are read up to the next
+    # command of the kind, so that a text of many of them is read once, not once for each
+    ("a password given to a MySQL client", re.compile(
+        r"""(?i:(?<![\w.-])(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mysqlshow|mariadb|mariadb-dump|mariadb-admin)(?:\.exe)?(?=\s))(?:(?!(?i:mysql|mariadb)\b)[^\n]){0,512}?(?<=\s)-p(?=[^\s`,;)])(?:"([^"\n]{1,256})"|'([^'\n]{1,256})'|([^\s"']{1,256}))"""), -3),
+    # `curl -u user:password`: the part after the colon, and only when there is one (`curl -u user` asks for it)
+    ("a password given to curl", re.compile(
+        r"""(?i:(?<![\w.-])curl(?:\.exe)?(?=\s))(?:(?!(?i:curl)\b)[^\n]){0,512}?(?<=\s)(?:-u|-U|--user|--proxy-user)(?:\s+|=)(?:"[^":\n]*:([^"\n]{1,256})"|'[^':\n]*:([^'\n]{1,256})'|[^\s:"']*:([^\s"']{1,256}))"""), -3),
+    ("a hash pair of an account database", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}:([0-9a-fA-F]{32})(?![0-9a-fA-F])"), 1),
+    ("a bcrypt hash", re.compile(r"(?<![A-Za-z0-9$])\$2[abxy]?\$[0-9]{2}\$[./A-Za-z0-9]{53}(?![./A-Za-z0-9])"), 0),
+    ("a token of a known family", re.compile(
+        r"(?:GOCSPX-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])|"
+        r"ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{30,}|(?:IQoJb3JpZ2lu|FQoGZXIvYXdz|FwoGZXIvYXdz)[A-Za-z0-9+/=]{40,}|"
+        r"[A-Za-z0-9_.~-]{3}[0-9]Q~[A-Za-z0-9_.~-]{30,}|[01]\.A[A-Za-z0-9_-]{50,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})"), 0),
+]
+_CRED_GROUPS = {-1: (1, 2, 3), -2: (1, 2), -3: (1, 2, 3)}
+# A random-looking run of an exact length that keys have: 32, 40 (an AWS secret access key), 43 + "=" and 86 + "==" (a base64 key).
+_CRED_SHAPES = [
+    ("a key-length base64 string", re.compile(_CRED_B64_EDGE + r"(?:[A-Za-z0-9+/]{32}|[A-Za-z0-9+/]{40}|[A-Za-z0-9+/]{43}=|[A-Za-z0-9+/]{86}==)" + _CRED_B64_END), True),
+]
+# A Name/Value pair written as JSON text inside a string (an AuditData in a column of another name, a parameter list in a cell): the
+# structure rule (clean_value) cannot see it, so the text rule reads the head of the pair, and the name decides as it does there. The
+# value is read by hand, not by an expression: a string up to its first quote (the backslashes before the quote are not part of it), a
+# number, a flat array of up to 4,096 characters, or a literal; and the next value of the same pair (`OldValue`, then `NewValue`).
+_CRED_PAIR_HEAD = re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})\\*"\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_NEXT_VALUE = re.compile(r"""(?i)\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_QUOTE = re.compile(r'\\*"')
+# a format directive (`%s`, `%d`), a template field (`{0}`, `{name}`) or a `%VAR%` is where a value goes, not a value
+_CRED_PLACEHOLDER = re.compile(r"%[-+ #0-9.]*[sdiuxXfeEgGcr](?![A-Za-z0-9])|\{\w*\}|%\w+%$|\.{2,}|\u2026")
+_CRED_BARE = re.compile(r"-?[0-9][0-9.eE+-]{0,39}|\[[^\[\]]{0,4096}\]|(?:null|true|false)\b")
+# What a text must hold for a rule to match it: a literal (lower case) of which one must be in the text, checked before the rule runs, so
+# that a text with none of them (most names, addresses and ids) costs a few substring tests and no expression. An assignment rule also
+# needs a separator in the text. Each is a necessary condition of its rule.
+_CRED_ASSIGN = ("pass", "pwd", "secret", "key", "token", "signature", "plaintext", "sig", "pin", "otp", "sas", "hash")
+_CRED_NEEDLES = {
+    "a JSON Web Token": ("eyj",), "a JSON Web Encryption token": ("eyj",), "a password in a URL": ("://",),
+    "an Azure Functions key": ("x-functions-key", "code="), "a private key block": ("-----begin",), "a base64 block of key lines": ("\n",),
+    "an authorization header value": ("authorization",), "a cookie header value": ("cookie",),
+    "a scheme and its credential": ("bearer", "basic", "negotiate", "ntlm", "digest"),
+    "a value assigned to a credential name (quoted)": _CRED_ASSIGN, "a value assigned to a credential name": _CRED_ASSIGN,
+    "a value given to a credential switch": ("password", "pass", "pwd", "secret", "apikey", "accesstoken", "token"),
+    "a secret given to ConvertTo-SecureString": ("securestring",), "a password given to a MySQL client": ("mysql", "mariadb"),
+    "a password given to curl": ("curl",), "a hash pair of an account database": (":",), "a bcrypt hash": ("$2",),
+    "a token of a known family": ("gocspx-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xoxa-", "xoxb-", "xoxp-", "xoxr-", "xoxs-",
+                                  "aiza", "ya29.", "1//0", "iqojb3", "fqogzx", "fwogzx", "q~", "0.a", "1.a", "sk_", "rk_"),
+}
+_CRED_CLEAN = set()               # short texts already judged to hold nothing (names, addresses and ids repeat)
+_CRED_GATE = 4096                 # a text longer than this is scanned with the carrier's hook in view, rule by rule
+# The carrier's hook for long scans: called with the work done so far (1 per stretch found, 4096 between rules over a long text); it may
+# raise to end the scan at the carrier's deadline. Most carriers set none and the calls do nothing.
+_tick = globals().get("WITHHOLD_TICK") or (lambda units=1: None)
+
+
+def _cred_json_value(text, at):
+    """(start, end, after) of the JSON value whose text starts at `at`: `end` is where what is withheld ends, `after` where the next
+    token of the pair begins. None when no value starts there."""
+    q = _CRED_QUOTE.match(text, at)
+    if q:
+        start = q.end()
+        close = text.find('"', start)
+        if close < 0:
+            return start, len(text), len(text)      # a value that is cut off: the rest of the text is the value
+        return start, start + len(text[start:close].rstrip("\\")), close + 1
+    m = _CRED_BARE.match(text, at)
+    if m is None:
+        return None
+    if m.group()[0] in "nft":
+        return at, at, m.end()                     # null, true and false are not secrets
+    return m.start(), m.end(), m.end()
+
+
+def _cred_pair_spans(text, spans):
+    for head in _CRED_PAIR_HEAD.finditer(text):
+        if not name_is_sensitive(head.group(1)):
+            continue
+        at = head.end()
+        for _ in range(3):
+            got = _cred_json_value(text, at)
+            if got is None:
+                break
+            start, end, after = got
+            if end > start:
+                value = text[start:end]
+                if not (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    spans.append((start, end, _CRED_PAIR_WHY))
+            more = _CRED_NEXT_VALUE.match(text, after)
+            if more is None:
+                break
+            at = more.end()
+
+
+def _cred_random_like(run):
+    """A run that looks like random base64 and not like a path, a name or a hash: mixed case and digits in the proportions
+    random text has (a long path is mostly lower case with few capitals; a hex digest has no case to mix)."""
+    n = len(run)
+    upper = sum(1 for ch in run if "A" <= ch <= "Z")
+    lower = sum(1 for ch in run if "a" <= ch <= "z")
+    digit = sum(1 for ch in run if "0" <= ch <= "9")
+    return upper * 100 >= 15 * n and lower * 100 >= 15 * n and digit * 100 >= 5 * n
+
+
+def _cred_name_before(text, at):
+    """The letters and digits of the name an assigned value follows (`nextToken=` gives `nexttoken`)."""
+    return re.sub(r"[^a-z0-9]", "", text[max(0, at - 64):at].lower())
+
+
+def _cred_spans(text, shapes, skip=()):
+    spans = []
+    big = len(text) > _CRED_GATE
+    low = text.lower()
+    sep = "=" in text or ":" in text or "%3" in low
+    if "value" in low:
+        _cred_pair_spans(text, spans)
+    for why, rx, group in _CRED_RULES:
+        if why in skip:
+            continue
+        need = _CRED_NEEDLES[why]
+        if need is _CRED_ASSIGN and not sep:
+            continue
+        for n in need:
+            if n in low:
+                break
+        else:
+            continue
+        if big:
+            _tick(4096)
+        for m in rx.finditer(text):
+            if big:
+                _tick(1)
+            if "assigned to a credential name" in why:
+                if _CRED_ARN_TAIL.search(text[max(0, m.start() - 120):m.start()]):
+                    continue                              # arn:aws:secretsmanager:...:secret:NAME is a name, not a value
+                if _cred_name_before(text, m.start(m.lastindex or 0)).endswith(_CRED_NOT_SECRET):
+                    continue                              # nextToken=, pageToken=, clientToken=: a position or an idempotency key
+            for g in _CRED_GROUPS.get(group, (group,)):
+                if g and m.group(g) is None:
+                    continue
+                start, end = m.span(g)
+                value = text[start:end]
+                if g and (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    continue
+                if why == "a scheme and its credential" and g == 1 and not (re.search(r"[0-9+/=_.~-]", value) or len(value) >= 16):
+                    continue                              # "basic authentication" is prose, "Basic dXNlcjpwYXNz" is not
+                if g == 1 and group == -1 and len(m.groups()) >= 2 and m.group(1) in ("'", '"'):
+                    continue                              # group 1 of the switch rules is the quote
+                spans.append((start, end, why))
+    if big:
+        _tick(4096)
+    for m in (_CRED_B64_RUN.finditer(text) if len(text) >= 128 and "a long unbroken base64-like run" not in skip else ()):
+        if _cred_random_like(m.group(0)):
+            spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
+    if shapes and len(text) >= 32 and "a key-length base64 string" not in skip:
+        for why, rx, check in _CRED_SHAPES:
+            for m in rx.finditer(text):
+                if not check or _cred_random_like(m.group(0)):
+                    spans.append((m.start(), m.end(), why))
+    spans.sort()
+    merged = []
+    for s in spans:
+        if merged and s[0] < merged[-1][1]:
+            if s[1] > merged[-1][1]:
+                merged[-1] = (merged[-1][0], s[1], merged[-1][2])
+            continue
+        merged.append(s)
+    return merged
+
+
+def credential_spans(text, shapes=True, skip=()):
+    """(start, end, why) of each stretch of `text` that is a credential by the name it is given under or by its text, in order and
+    not overlapping. `shapes` False leaves out the rules that recognise a key by its length alone (a value that is named a checksum or
+    a digest is not scanned for them). This is not `token_spans`: an identifier (a GUID, a hex digest, an access key id, an ARN) is
+    not a credential here, and a tool that prints identifiers on purpose asks only for these."""
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text), "text longer than %d characters" % TEXT_LIMIT)]
+    if shapes and not skip and text in _CRED_CLEAN:
+        return []
+    spans = _cred_spans(text, shapes, skip)
+    if shapes and not skip and not spans and len(text) <= 256 and len(_CRED_CLEAN) < 100000:
+        _CRED_CLEAN.add(text)
+    return spans
+
+
+def clean_value(value, leaf, note, key=None, pointer="", depth=0, shapes=True, max_depth=200):
+    """The structure rule: `value` (what a JSON document decoded to) with every credential in it replaced. A string goes to
+    `leaf(text, pointer, shapes)`, which returns what is printed for it. A field whose name says it holds a secret (or a `Value` whose
+    `Name` does), at any depth, is not read at all: `note(pointer, why, original)` returns what is printed for it (a number under such
+    a name is withheld too: 0 and 1 are not nothing). A key goes through `key(text)` when one is given. A value nested deeper than
+    `max_depth` is replaced the same way."""
+    if isinstance(value, str):
+        return leaf(value, pointer, shapes)
+    _tick(1)
+    if depth > max_depth and isinstance(value, (dict, list)):
+        return note(pointer, "nested deeper than %d levels" % max_depth, value)
+    if isinstance(value, dict):
+        named = None
+        for k in _CRED_NAME_KEYS:
+            if isinstance(value.get(k), str):
+                named = value[k]
+                break
+        pair_secret = named is not None and name_is_sensitive(named)
+        out = {}
+        for k, v in value.items():
+            ks = str(k)
+            point = "%s/%s" % (pointer, ks.replace("~", "~0").replace("/", "~1"))
+            safe_key = key(ks) if key is not None else ks
+            if safe_key in out:
+                safe_key = "%s#%d" % (safe_key, len(out))
+            sensitive = name_is_sensitive(ks) or (pair_secret and ks in _CRED_VALUE_KEYS)
+            if sensitive and is_container_name(ks) and isinstance(v, (dict, list)):
+                sensitive = False
+            if sensitive and not (v is None or isinstance(v, bool) or v == "") and not (isinstance(v, str) and (_CRED_REDACTED.match(v) or v.lower() in _CRED_NOT_A_VALUE)):
+                out[safe_key] = note(point, "credential-named field", v)
+            else:
+                out[safe_key] = clean_value(v, leaf, note, key, point, depth + 1, shapes and not _CRED_CHECKSUM_NAME.search(ks), max_depth)
+        return out
+    if isinstance(value, list):
+        return [clean_value(v, leaf, note, key, "%s/%d" % (pointer, i), depth + 1, shapes, max_depth) for i, v in enumerate(value)]
+    return value
+
+
+# what the rules of the block above already withhold whole, with their own markers: the first pass leaves these to them
+_CRED_OLD_COVERS = frozenset(("a JSON Web Token", "a password in a URL", "an authorization header value", "a scheme and its credential",
+                              "a long unbroken base64-like run", "a key-length base64 string"))
+
+
+def _credentials_withheld(text, kind, skip=()):
+    """`text` with each credential in it withheld. It runs after the rules above, on text that may hold their markers: a stretch that
+    begins at a marker is theirs already."""
+    out, last = [], 0
+    for start, end, why in credential_spans(text, True, skip):
+        if text.startswith("<", start):
+            continue
+        out.append(text[last:start])
+        out.append(_withheld(why, end - start, kind))
+        last = end
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
+
+
+def scrub(text, kind="text"):
+    """The text with every token-shaped run, every user-info and every credential withheld."""
+    if len(text) > TEXT_LIMIT:
+        return _withheld("over-long text", len(text), kind)
+    text = _credentials_withheld(text, kind, _CRED_OLD_COVERS)     # first: the rules above cut a secret into pieces that no rule for a whole one can match
+    text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    out, last = [], 0
+    for start, end in token_spans(text):
+        out.append(text[last:start])
+        out.append(_withheld("token-shaped text", end - start, kind))
+        last = end
+    out.append(text[last:])
+    return _credentials_withheld("".join(out), kind)
+
+
+def redact_url(url):
+    """A URL or request target without its user-info, its token-shaped path text, its query values or its fragment."""
+    rest, fragment = (url.split("#", 1) + [None])[:2]
+    rest, query = (rest.split("?", 1) + [None])[:2]
+    scheme = authority = ""
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/]*)(.*)$", rest, re.S)
+    if m:
+        scheme, authority, rest = m.group(1), m.group(2), m.group(3)
+        if "@" in authority:
+            userinfo, authority = authority.rsplit("@", 1)
+            authority = _withheld("userinfo", len(userinfo), "urls") + "@" + authority
+    out = scheme + authority + scrub(rest, "urls")
+    if query is not None:
+        pairs = []
+        for pair in query.split("&"):
+            name, eq, value = pair.partition("=")
+            pairs.append(scrub(name, "urls") + (eq + _withheld("", len(value), "urls") if eq else ""))
+        out += "?" + "&".join(pairs)
+    if fragment is not None:
+        out += "#" + _withheld("", len(fragment), "urls")
+    return out
+
+
+def cell(value):
+    """Text for one tab-separated cell or one printed path: no tab or line break, and a byte that was not UTF-8
+    (a lone surrogate) written as \\xNN, so that no writer raises on it."""
+    text = value if isinstance(value, str) else str(value)
+    out = []
+    for ch in text:
+        o = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\n":
+            out.append("\\n")
+        elif 0xDC80 <= o <= 0xDCFF:
+            out.append("\\x%02x" % (o - 0xDC00))
+        elif 0xD800 <= o <= 0xDFFF:
+            out.append("\\u%04x" % o)
+        elif o < 0x20 or o == 0x7F:
+            out.append("\\x%02x" % o)
+        else:
+            out.append(ch)
+    return "".join(out)
+# END SHARED WITHHOLDING
+
+
+# BEGIN SHARED NAMES
+# The same text is in encrypted_survey and ransom_note_scan, so that the two tools judge a name alike (a ransomware-response test holds
+# the copies equal). A path is printed only through shown(): every component is judged, and no directory above a file is exempt.
+# Everything derived from a name that is withheld (an extension, a stem, a length, the place of the name among its siblings) is withheld
+# with it: a name that is withheld is replaced by one constant marker, and the order of a listing never follows the text that was withheld.
+WITHHELD = "<identifier-shaped name withheld>"
+WITHHELD_PATHS = [0]              # printed paths that had a component withheld (one per call of shown)
+_IDRUN = re.compile(r"[A-Za-z0-9]{8,}")
+_WORDY = re.compile(r"[A-Z]?[a-z]+(?:[A-Z][a-z]+)*|[A-Z]+")
+_PAIR_SEPARATORS = re.compile(r"[^0-9A-Za-z]")
+_DIGIT_GROUPS = re.compile(r"(?<![0-9])[0-9]{3,}(?:[ ,][0-9]{3,})+(?![0-9])")
+HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+SINGLE_CASE_RUN = 16              # a run of letters of one case is a word below this many letters, a random run from here on
+HEX_PAIRS = 8                     # this many pairs of hex digits joined by one separator are a byte string
+# Directory names every Windows, Linux and ESXi host has, whose letters and digits would otherwise be taken for an identifier, and the names
+# of the exceptions Python raises (the tools print the type of an error: IsADirectoryError reads as letters that are not words). A component
+# is printed as it is when it is one of these, whole and in any case.
+WELL_KNOWN = frozenset((
+    "system32", "syswow64", "inetcache", "inetcookies", "inethistory", "msocache", "psreadline", "framework", "framework64",
+    "sqlserver", "gpucache", "dawnwebgpucache", "dawngraphitecache", "grshadercache", "indexeddb", "overlay2", "datastore1")
+) | frozenset(name.lower() for name, value in vars(builtins).items() if isinstance(value, type) and issubclass(value, BaseException))
+
+
+# The characters whose NFKC form holds a slash (a full-width solidus, the "a/c", "a/s", "c/o" and "c/u" signs) each read as one backslash, a
+# separator that is not a slash: a path is split at the real slashes only, and a folded one would cut a run of pairs into pieces of one.
+_SLASH_LIKE = dict.fromkeys((0x2100, 0x2101, 0x2105, 0x2106, 0xFF0F), "\\")
+# Characters that show nothing and are not format characters: a combining grapheme joiner, variation selectors, Mongolian free variation
+# selectors, hangul and khmer fillers, a braille blank, tag and musical controls, the other default-ignorable code points.
+_INVISIBLE = re.compile("[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3164"
+                        "\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
+
+
+def _unseen(ch):
+    """Whether a non-ASCII character shows nothing of its own: a format character, a combining mark, a default-ignorable code point."""
+    return unicodedata.category(ch) in ("Cf", "Mn", "Mc", "Me") or _INVISIBLE.match(ch) is not None
+
+
+def fold(name):
+    """The name as the rule reads it: NFKC (a full-width letter or digit is the ASCII one; a full-width solidus is a separator, not a
+    slash), every decimal digit of any script as its ASCII digit, and nothing that shows nothing: no format character, no combining mark
+    (taken off the letter it sits on before the two are composed), no default-ignorable code point (a zero-width space, a variation
+    selector, a filler cannot split a token)."""
+    if name.isascii():
+        return name
+    out = []
+    for ch in unicodedata.normalize("NFKC", "".join(c for c in name.translate(_SLASH_LIKE) if c.isascii() or not _unseen(c))):
+        if ord(ch) < 128:
+            out.append(ch)
+        elif unicodedata.category(ch) == "Nd":
+            out.append(str(unicodedata.decimal(ch)))
+        elif not _unseen(ch):
+            out.append(ch)
+    return "".join(out)
+
+
+def _hex_pairs(text):
+    """Whether HEX_PAIRS or more pairs of hex digits follow each other, one separator between two. A separator is any character that is not
+    an ASCII letter or a digit (the pairs of `id[aa-bb-...-hh]`, `key=aa:bb:...` and `(aa.bb...)` are found: a neighbour of the run that is
+    not a letter or a digit does not hide a pair at its end), and only a letter or a digit glued to a pair makes it no pair. A run does not
+    cross a slash: a path is read one component at a time (a full-width solidus is not a slash: fold turns it into a separator)."""
+    for part in text.split("/"):
+        run = 0
+        for piece in _PAIR_SEPARATORS.split(part):
+            if len(piece) == 2 and piece[0] in HEX_DIGITS and piece[1] in HEX_DIGITS:
+                run += 1
+                if run >= HEX_PAIRS:
+                    return True
+            else:
+                run = 0
+    return False
+
+
+def _digit_groups(text):
+    """Whether groups of three or more digits, joined by a space or a comma, hold ten or more digits together."""
+    return any(sum(c.isdigit() for c in m.group(0)) >= 10 for m in _DIGIT_GROUPS.finditer(text))
+
+
+def shaped(name):
+    """Whether a name holds a token shaped like an identifier. The name is folded first (fold). A token is a run of 8 or more ASCII
+    letters and digits. It is identifier-shaped when it holds both letters and digits, or is 10 or more digits, or is letters only and is
+    not one word, one capitalised word, several capitalised words or all capitals, or is 16 or more letters of one case. So are 8 or more
+    pairs of hex digits joined by one separator (any character that is not a letter, a digit or a slash: a colon, a dash, a dot, an underscore,
+    a space, a bracket, an equals sign; a letter or a digit glued to a pair at an end of the run makes that pair no pair), and groups of
+    digits joined by a space or a comma that hold 10 digits or more. The rule is a shape: a longer or different separator, a different
+    grouping and other scripts are not covered (see the manifests)."""
+    text = fold(name)
+    for m in _IDRUN.finditer(text):
+        token = m.group(0)
+        if token.isdigit():
+            if len(token) >= 10:
+                return True
+        elif any(c.isdigit() for c in token):
+            return True
+        elif not _WORDY.fullmatch(token):
+            return True
+        elif len(token) >= SINGLE_CASE_RUN and (token.islower() or token.isupper()):
+            return True
+    return len(text) >= 23 and _hex_pairs(text) or len(text) >= 11 and _digit_groups(text)
+
+
+@functools.lru_cache(maxsize=65536)
+def _judge(part):
+    """What to print in place of one path component, or None to print it as it is. A component that is judged is withheld whole, by
+    one marker that says nothing of its length or its shape."""
+    if part.lower() in WELL_KNOWN:
+        return None
+    if shaped(part):
+        return WITHHELD
+    return WITHHELD if scrub(part, "names") != part else None
+
+
+def shown(path, values=(), keep_last=False, count=True):
+    """A path as it may be printed: every component that could carry an identifier is withheld.
+
+    A component is withheld when it holds a token shaped like an identifier (shaped), when the shared withholding rules above find a
+    token, a key or user-info in it, or when it contains a value the note held (case-insensitive, 8 characters or more). The same rule
+    applies to every path a tool prints, so a name is never hidden on one line and printed on the next; a harmless name can be withheld
+    with it, and the directory can be listed. keep_last leaves the final component as it is (a name that is itself the evidence).
+    """
+    if not isinstance(path, str):
+        return path
+    parts = path.split("/")
+    last = len(parts) - 1
+    lows = [v.lower() for v in values if len(v) >= 8]
+    changed = False
+    for i, part in enumerate(parts):
+        if not part or (keep_last and i == last):
+            continue
+        replaced = _judge(part)
+        if replaced is None and lows:
+            low = part.lower()
+            if any(v in low for v in lows):
+                replaced = WITHHELD
+        if replaced is not None:
+            parts[i] = replaced
+            changed = True
+    if changed and count:
+        WITHHELD_PATHS[0] += 1
+    return "/".join(parts)
+
+
+_ORDER_SALT = os.urandom(16)
+
+
+def print_order(entries, judged, hidden=None):
+    """The directory entries in the order an answer prints them: by the text printed for each (the marker for a name that is judged
+    and withheld, the name itself otherwise; `judged(entry)` says whether the answer prints the entry's name through the judge;
+    `hidden(entry)`, when given, says that a name the first rule lets through is withheld all the same, because the note beneath it holds
+    its value: it sorts as the marker does), and the entries that print alike in an order drawn afresh every run (a keyed hash of the whole
+    path, the directory above included, under a salt of this run: the same name in two directories has two unrelated ranks). The rank of a
+    withheld name among its siblings, the order a directory lists them in and the inode never show in what an answer lists, in the
+    order of its rows, in the numbers it hands out or in which entries a limit keeps."""
+    texts = []
+    for entry in entries:
+        name = entry.name
+        try:
+            if hidden is not None and hidden(entry):
+                texts.append(WITHHELD)
+            else:
+                texts.append((_judge(name) or name) if judged(entry) else name)
+        except OSError:
+            texts.append(_judge(name) or name)
+    order = sorted(range(len(entries)), key=texts.__getitem__)
+    out, i = [], 0
+    while i < len(order):
+        j = i + 1
+        while j < len(order) and texts[order[j]] == texts[order[i]]:
+            j += 1
+        group = order[i:j]
+        if len(group) > 1:
+            group.sort(key=lambda n: (hashlib.blake2b(entries[n].path.encode("utf-8", "surrogatepass"), key=_ORDER_SALT, digest_size=8).digest(), n))
+        out.extend(group)
+        i = j
+    return [entries[n] for n in out]
+# END SHARED NAMES
+
+
+# BEGIN SHARED BACKSTOP
+# The same text is in encrypted_survey and ransom_note_scan (a ransomware-response test holds the copies equal). Every row a page or the census
+# keeps and the answer itself pass through here on their way out, whatever the code that made them did: a second check, written apart from
+# shown() (it reads a string whole, not component by component, and calls neither the judge, scrub nor any call site's decision), that
+# replaces a string holding an identifier-shaped text by a marker, counts it, and makes a complete answer partial. The one exception is on
+# purpose: the name of a file that is not named like a note is evidence and is printed as it is (the caller says so with `evidence`, and the
+# check refuses that claim for a name that is note-named). Content that is hex by nature (a digest, a tail) is passed by its key.
+BOUNDARY = {"replaced": 0, "by": {}, "where": [], "not_listed": 0}
+OWN_NAMES = set()                 # the names of the files this run wrote (their digest is the name of the root and of the table)
+FREE_KEYS = frozenset(("sha256", "tail_hex", "suffix_hex"))
+PROSE_KEYS = frozenset(("reason", "status_basis", "partial_reasons"))    # the tool's own sentences: "(4294967296 bytes)" there is a size, not a name
+SERIAL_KEYS = frozenset(("note_id", "finding_id", "first_note_id", "duplicate_of"))      # a sequence number this tool counted: N000001, F1000000
+_SERIAL = re.compile(r"[NF][0-9]{6,12}")
+MAX_REPLACED_LISTED = 20
+MAX_JUDGED = 1 << 16
+_SUSPECT = re.compile(r"[A-Za-z0-9]{8}|(?:[0-9A-Fa-f]{2}[^0-9A-Za-z/]){4}|[0-9]{3}[ ,][0-9]{3}")
+_ALNUM_RUN = re.compile(r"[A-Za-z0-9]+")
+_PAIRS = re.compile(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{2}(?:[^0-9A-Za-z/][0-9A-Fa-f]{2}){7}(?![0-9A-Za-z])")
+_GROUPS = re.compile(r"(?<![0-9])[0-9]{3,}(?:[ ,][0-9]{3,})+(?![0-9])")
+
+
+class Sealed(dict):
+    """A row that has been through the backstop: it is not read again (its evidence name would not pass without the claim made for it)."""
+
+
+_FOLDS_TO_SLASH = dict.fromkeys((0x2100, 0x2101, 0x2105, 0x2106, 0xFF0F), "\\")      # NFKC turns these into a slash: not a path separator here
+_UNSEEN = re.compile("[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3164"
+                     "\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
+
+
+def _read_as(text):
+    """The string as the check reads it: NFKC (a full-width solidus is a separator, not a slash), decimal digits of any script as ASCII
+    digits, nothing that shows nothing (no format character, no combining mark, no default-ignorable code point; a mark is taken off the
+    character it sits on before the two are composed into one)."""
+    if text.isascii():
+        return text
+    seen = lambda ch: unicodedata.category(ch) in ("Cf", "Mn", "Mc", "Me") or _UNSEEN.match(ch) is not None     # noqa: E731
+    kept = []
+    for ch in unicodedata.normalize("NFKC", "".join(c for c in text.translate(_FOLDS_TO_SLASH) if c.isascii() or not seen(c))):
+        if ch.isascii():
+            kept.append(ch)
+        elif unicodedata.category(ch) == "Nd":
+            kept.append(str(unicodedata.decimal(ch)))
+        elif not seen(ch):
+            kept.append(ch)
+    return "".join(kept)
+
+
+@functools.lru_cache(maxsize=65536)
+def _why(text, prose=False):
+    """The reason a string may not be printed (a fixed sentence, never a part of the string), or None. `prose` is a sentence of the tool's
+    own (a reason, a status basis): a number of 10 or more digits followed by " bytes" is a size there and is not read as a name."""
+    flat = _read_as(text)
+    for found in _ALNUM_RUN.finditer(flat):
+        run = found.group()
+        size = len(run)
+        if size < 8 or run.lower() in WELL_KNOWN:
+            continue
+        digits = sum(1 for c in run if c.isdigit())
+        if digits == size:
+            if size >= 10 and not (prose and flat.startswith(" bytes", found.end())):
+                return "a long run of digits"
+        elif digits:
+            return "letters and digits in one run"
+        elif run.isupper() or run.islower():
+            if size >= 16:
+                return "a long run of letters of one case"
+        elif any(c.isupper() and not (i + 1 < size and run[i + 1].islower()) for i, c in enumerate(run)):
+            return "letters that do not read as words"
+    if _PAIRS.search(flat):
+        return "pairs of hex digits"
+    for m in _GROUPS.finditer(flat):
+        if sum(c.isdigit() for c in m.group(0)) >= 10:
+            return "groups of digits"
+    return None
+
+
+_CLEAN = set()                    # short strings already found clean (keys, repeated words): not read again
+
+
+def _refuse(text, evidence, prose=False):
+    """Why this string may not be printed, or None. `prose` is set for the tool's own sentences (see _why)."""
+    size = len(text)
+    if size < 8 or text in _CLEAN or text in OWN_NAMES:
+        return None
+    if size > MAX_JUDGED:
+        return "a string too long to check"
+    if evidence and not NAME_HINTS.search(evidence):
+        if text.lower() in evidence.lower():              # the name itself, or a piece of it (its extension)
+            return None
+        if text.endswith("/" + evidence):                 # a path whose last component is the evidence
+            text = text[:-len(evidence) - 1]
+            size = len(text)
+            if size < 8:
+                return None
+    why = None if text.isascii() and not _SUSPECT.search(text) else _why(text, prose)
+    if why is None and not prose and size <= 64 and len(_CLEAN) < 20000:
+        _CLEAN.add(text)
+    return why
+
+
+def _place(where):
+    """The place of a string as text: the keys that are plain words and the indexes above it, never a key that came from a name (a key is a
+    word only when it is also one to the second check: a key of letters and digits is not printed, whatever it looks like)."""
+    parts = []
+    while where is not None:
+        where, label = where
+        word = not isinstance(label, int) and re.fullmatch(r"[a-z][a-z_0-9]{0,40}", str(label)) and _why(str(label)) is None
+        parts.append(label if isinstance(label, int) or word else "*")
+    return "/" + "/".join(str(p) for p in reversed(parts))
+
+
+def _replaced(why, where):
+    BOUNDARY["replaced"] += 1
+    BOUNDARY["by"][why] = BOUNDARY["by"].get(why, 0) + 1
+    if len(BOUNDARY["where"]) < MAX_REPLACED_LISTED:
+        BOUNDARY["where"].append({"at": _place(where), "check": why})
+    else:
+        BOUNDARY["not_listed"] += 1
+    return "<withheld at the output: %s>" % why
+
+
+def _read_back(value, where, key, evidence):
+    """`value` with every string checked; the same object when nothing was replaced."""
+    if isinstance(value, Sealed):
+        return value
+    if isinstance(value, str):
+        if len(value) < 8 or key in FREE_KEYS or (key in SERIAL_KEYS and _SERIAL.fullmatch(value)):
+            return value
+        why = _refuse(value, evidence, key in PROSE_KEYS)
+        return _replaced(why, where) if why else value
+    if isinstance(value, dict):
+        pairs, changed = [], False
+        for k, v in value.items():
+            nk = _read_back(k, (where, "(key)"), None, None) if isinstance(k, str) and len(k) >= 8 else k
+            if isinstance(v, (str, dict, list, tuple)):
+                nv = _read_back(v, (where, k if nk is k else "(key)"), k if isinstance(k, str) else None, evidence)
+            else:
+                nv = v
+            changed = changed or nk is not k or nv is not v
+            pairs.append((nk, nv))
+        if not changed:
+            return value
+        out = {}
+        for nk, nv in pairs:
+            while nk in out:
+                nk = "%s #" % nk
+            out[nk] = nv
+        return out
+    if isinstance(value, (list, tuple)):
+        items = [_read_back(v, (where, i), key, evidence) for i, v in enumerate(value)]
+        return value if all(a is b for a, b in zip(items, value)) else items
+    return value
+
+
+def seal_row(row, evidence=None):
+    """A row on its way to a page or the census: every string read back. `evidence` is the name of the file the row is about when it is
+    printed as it is on purpose (a file that is not named like a note)."""
+    if isinstance(row, Sealed):
+        return row
+    out = _read_back(row, None, None, evidence)
+    return Sealed(out) if isinstance(out, dict) else out
+
+
+def release(doc):
+    """The answer: every string that was not read back already is read back now. A complete answer that had a string replaced is partial."""
+    out = _read_back(doc, None, None, None)
+    if BOUNDARY["replaced"] and isinstance(out, dict):
+        note = {"strings_replaced_at_the_output": BOUNDARY["replaced"], "by_check": dict(BOUNDARY["by"]), "replaced_at": list(BOUNDARY["where"]),
+                "replaced_not_listed": BOUNDARY["not_listed"],
+                "note": "every string of this answer and of the files it names was read back by a second check, written apart from the rule "
+                        "that withholds names; a string it found identifier-shaped is replaced by a marker and its place is in replaced_at"}
+        merged = {}
+        for k, v in out.items():
+            merged[k] = v
+            if k == "status_basis":
+                merged["boundary"] = note
+        merged.setdefault("boundary", note)
+        if merged.get("status") == "complete":
+            merged["status"] = "partial"
+            if "complete" in merged:
+                merged["complete"] = "partial"
+            merged["status_basis"] = "%s; %d strings held an identifier-shaped text that the first rule missed and were replaced at the output (see boundary)" % (
+                merged.get("status_basis") or "every entry was visited", BOUNDARY["replaced"])
+        out = merged
+    return out
+# END SHARED BACKSTOP
+
+
+def output_place(tool, key):
+    """Where a whole result is written and how the answer names it: (real path, path as cited)."""
+    digest = hashlib.sha256(json.dumps(key, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+    name = f"{tool}-{digest}.jsonl"
+    job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+    if job and out:
+        # In a job only $OUT is written, and it is sealed as the job's output.
+        return Path(out) / "tool-output" / name, "store/jobs/%s/out/tool-output/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
+    agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
+    path = Path("work") / agent / "tool-output" / name
+    return path, str(path)
+
+
+class Profile:
+    """One JSON line per record (the tool says which), then a receipt; written whole or not at all.
+
+    The file is made under a temporary name and placed when the receipt is written, so an interrupted run leaves no file with
+    the profile's name: a profile that exists ends in its receipt. It is placed without replacing a profile already there (a
+    rerun with other limits writes a different profile, and the earlier one, which may be the larger, stays); the answer names
+    the file that holds this one. The name is made from the parameters, never from a name of any file.
+    """
+
+    def __init__(self, key):
+        self.path, self.shown = output_place(TOOL + "-profile", key)
+        self.rows = 0
+        # A stop must not come between the temporary file and its registration in PAGES, which is how the stop handler finds it. The three
+        # stop signals are held for these steps and delivered right after; where the call is missing it is a no-op.
+        hold = getattr(signal, "pthread_sigmask", None)
+        was = hold(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hold else None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=f".{self.path.name}-")
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            PAGES.append(self)
+        finally:
+            if hold:
+                hold(signal.SIG_SETMASK, was)
+
+    def add(self, row, evidence=None):
+        row = seal_row(row, evidence)
+        self._out.write(json.dumps(row, ensure_ascii=True, default=str))
+        self._out.write("\n")
+        self.rows += 1
+        return row
+
+    def finish(self, receipt):
+        receipt = release({"record": "receipt", "rows": self.rows, **receipt})
+        self._out.write(json.dumps(receipt, ensure_ascii=True, default=str))
+        self._out.write("\n")
+        self._out.flush()
+        os.fsync(self._out.fileno())
+        self._out.close()
+        placed = place_without_replacing(self._tmp, self.path)
+        self._tmp = None
+        self.path = placed
+        self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+
+
+class NoProfile:
+    """Stands in for the profile when no file can be made for it: the windows are measured and counted, none is kept."""
+
+    shown = None
+
+    def __init__(self):
+        self.rows = 0
+
+    def add(self, row, evidence=None):
+        self.rows += 1
+        return row
+
+    def finish(self, receipt):
+        pass
+
+
+def fail(message, **extra):
+    print_answer(release({"error": message, "status": "failed",
+                          "status_basis": "the tool stopped with an error (see error); it produced no %s" % WORK, **extra}))
+    raise SystemExit(1)
+
+
+def describe(exc):
+    """An error without the path it names: type, errno name and the system's own words (never the text of an exception that has none:
+    it can name the place of the output)."""
+    code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
+    words = getattr(exc, "strerror", None) or ("no free name for a result file" if str(exc).startswith("no free name") else "no system message")
+    return "%s%s: %s" % (type(exc).__name__, " " + code if code else "", words)
+
+
+def where_it_failed(exc):
+    """The line of this tool an unexpected exception was raised on: enough to find it, and no text of the exception (which can name a path)."""
+    tb = exc.__traceback__
+    line = None
+    while tb is not None:
+        if tb.tb_frame.f_code.co_filename == __file__:
+            line = tb.tb_lineno
+        tb = tb.tb_next
+    return "line %s of the tool" % line if line else "an unknown line"
+
+
+PROGRESS = {}
+
+
+def last_word(signum):
+    """What the tool says when a stop signal ends it: one JSON answer, never a clean-looking partial one."""
+    print(json.dumps({"error": "stopped by signal %d before the %s was complete" % (signum, WORK), "status": "failed",
+                      "status_basis": "the tool was stopped by signal %d; the profile and the tables it was still writing were removed, "
+                                      "so nothing it had read is an answer" % signum,
+                      "interrupted": True, "signal": signum, "coverage_so_far": PROGRESS.get("coverage")}), flush=True)
+
+
+def drop_temporary_files():
+    """Remove the files a page or the profile was still writing (a failure, not a stop signal, ended the tool)."""
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def pread_full(fd, length, offset):
+    chunks, got = [], 0
+    while got < length:
+        data = os.pread(fd, length - got, offset + got)
+        if not data:
+            break
+        chunks.append(data)
+        got += len(data)
+    return b"".join(chunks)
+
+
+def evidence_of(name):
+    """The name of a file when it is printed as it is on purpose (a file that is not named like a note), else None."""
+    return None if NAME_HINTS.search(name) else name
+
+
+def display(path):
+    """The path as it may be printed. Every directory above the file is judged by shown(); the file's own name is withheld when it
+    is named like a note and holds an identifier-shaped token, and is otherwise printed as it is: a file that is not named like a
+    note is an encrypted file or an ordinary one, and its name is evidence."""
+    return shown(path, keep_last=not NAME_HINTS.search(os.path.basename(path)))
+
+
+def kind_of(mode):
+    for test, text in ((stat.S_ISFIFO, "a named pipe"), (stat.S_ISSOCK, "a socket"), (stat.S_ISBLK, "a block device"),
+                       (stat.S_ISCHR, "a character device"), (stat.S_ISDIR, "a directory")):
+        if test(mode):
+            return text
+    return "a special file"
+
+
+def open_regular(path):
+    """A descriptor for a regular file, opened without following a link and without blocking (a named pipe opens at once and is
+    refused by its fstat); its fstat comes with it."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(errno.EINVAL, "not a regular file (%s)" % kind_of(st.st_mode))
+    except OSError:
+        os.close(fd)
+        raise
+    return fd, st
+
+
+def why_not_opened(exc):
+    """(reason code, description) for a file that could not be opened: no text of the exception, which can name a path."""
+    if isinstance(exc, ValueError):
+        return "path_invalid", "ValueError: the path cannot be used as a file name (a NUL byte or a character the system cannot encode)"
+    if getattr(exc, "errno", None) == errno.ELOOP:
+        return "link_not_followed", describe(exc)
+    if getattr(exc, "errno", None) == errno.EINVAL and "not a regular file" in str(getattr(exc, "strerror", "")):
+        return "not_a_regular_file", describe(exc)
+    return "read_failed", describe(exc)
+
+
+class Budget:
+    def __init__(self, total):
+        self.total = total
+        self.read = 0
+
+    def allows(self, n):
+        return self.read + n <= self.total
+
+    def spend(self, n):
+        self.read += n
+
+
+
+def judged_entry(entry):
+    """Whether the answer prints this entry's name through the judge: a directory always, any other entry when it is named like a note."""
+    return entry.is_dir(follow_symlinks=False) or bool(NAME_HINTS.search(entry.name))
+
+
+class TempCopy:
+    """A scratch copy the stop handler can remove (it is registered with the pages, which is how the handler finds temporary files)."""
+
+    def __init__(self, directory):
+        hold = getattr(signal, "pthread_sigmask", None)
+        was = hold(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hold else None
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(dir=directory, prefix=f".{TOOL}-copy-")
+            self._tmp = Path(name)
+            self.fd = fd
+            PAGES.append(self)
+        finally:
+            if hold:
+                hold(signal.SIG_SETMASK, was)
+
+    def drop(self):
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+        if self._tmp is not None:
+            try:
+                os.unlink(self._tmp)
+            except OSError:
+                pass
+            self._tmp = None
+        if self in PAGES:
+            PAGES.remove(self)
+
+
+def scan_recovered(ctx, fd, size, cfd, csize, item_id):
+    """One pass over the recovered file: its sha256, and the whole granules that equal the ciphertext at the same offset or are all zero.
+    Returns a dict; `reason` says why the pass stopped early (the clock, the read budget, a short file)."""
+    gr = ctx["granule"]
+    step = max(CHUNK // gr, 1) * gr
+    h = hashlib.sha256()
+    open_range = {"equal_to_ciphertext": None, "all_zero": None}
+    kind_bytes = {"equal_to_ciphertext": 0, "all_zero": 0}
+    out = {"ranges_total": 0, "ranges": [], "unrecovered_bytes": 0, "reason": None, "read": 0, "head": b""}
+
+    def close(kind):
+        cur = open_range[kind]
+        if cur is None:
+            return
+        open_range[kind] = None
+        length = cur[1] - cur[0]
+        kind_bytes[kind] += length
+        out["ranges_total"] += 1
+        row = {"offset": cur[0], "length": length, "kind": kind}
+        ctx["profile"].add({"record": "unrecovered_range", "file_id": item_id, **row})
+        if len(out["ranges"]) < INLINE_RANGES:
+            out["ranges"].append(row)
+
+    pos = 0
+    while pos < size:
+        if out_of_time():
+            out["reason"] = "time_limit"
+            break
+        n = min(step, size - pos)
+        if not ctx["budget"].allows(n * (2 if cfd is not None else 1)):
+            out["reason"] = "read_budget_spent"
+            break
+        block = pread_full(fd, n, pos)
+        if not block:
+            out["reason"] = "file_shorter_than_when_opened"
+            break
+        ctx["budget"].spend(len(block))
+        if pos == 0:
+            out["head"] = block[:4096]
+        h.update(block)
+        cblock = b""
+        if cfd is not None and pos < csize:
+            cblock = pread_full(cfd, len(block), pos)
+            ctx["budget"].spend(len(cblock))
+        for off in range(0, len(block), gr):
+            g = block[off:off + gr]
+            hit = []
+            if not any(g):
+                hit.append("all_zero")
+            if cblock[off:off + gr] == g and len(cblock) >= off + len(g):
+                hit.append("equal_to_ciphertext")
+            if hit:
+                out["unrecovered_bytes"] += len(g)
+            for kind in ("all_zero", "equal_to_ciphertext"):
+                cur = open_range[kind]
+                if kind in hit:
+                    if cur is not None and cur[1] == pos + off:
+                        cur[1] = pos + off + len(g)
+                    else:
+                        close(kind)
+                        open_range[kind] = [pos + off, pos + off + len(g)]
+                else:
+                    close(kind)
+        pos += len(block)
+        out["read"] = pos
+        if len(block) < n:
+            out["reason"] = "file_shorter_than_when_opened"
+            break
+    for kind in open_range:
+        close(kind)
+    out["sha256"] = h.hexdigest() if out["reason"] is None else None
+    out["equal_to_ciphertext_bytes"] = kind_bytes["equal_to_ciphertext"]
+    out["all_zero_bytes"] = kind_bytes["all_zero"]
+    return out
+
+
+def check_zip(ctx, fd, size):
+    """The central directory is read and walked, never unpacked: every entry's header signature and lengths are checked against the
+    directory's bounds, and the sizes it declares are added up (a ratio is a claim of the file, not a measurement)."""
+    tail_n = min(size, 65557)
+    tail = pread_full(fd, tail_n, size - tail_n)
+    ctx["budget"].spend(len(tail))
+    head = pread_full(fd, 4, 0)
+    r = {"magic_present": head[:4] in (b"PK\x03\x04", b"PK\x05\x06"), "footer_present": False, "structure_ok": False, "unpacked": False}
+    at = tail.rfind(b"PK\x05\x06")
+    if at < 0 or len(tail) - at < 22:
+        return r
+    r["footer_present"] = True
+    total, cd_size, cd_off = (int.from_bytes(tail[at + 10:at + 12], "little"), int.from_bytes(tail[at + 12:at + 16], "little"),
+                              int.from_bytes(tail[at + 16:at + 20], "little"))
+    eocd = size - len(tail) + at
+    if cd_size == 0xFFFFFFFF or cd_off == 0xFFFFFFFF or total == 0xFFFF:
+        r["structure_ok"] = None
+        r["not_checked"] = "zip64"
+        return r
+    if cd_size > MAX_CD_BYTES or cd_size > eocd:
+        r["directory_error"] = "directory_larger_than_the_bound_or_the_file"
+        return r
+    start = eocd - cd_size
+    cd = pread_full(fd, cd_size, start)
+    ctx["budget"].spend(len(cd))
+    pos, count, comp, uncomp = 0, 0, 0, 0
+    while pos < len(cd):
+        if out_of_time():
+            r["structure_ok"] = None
+            r["not_checked"] = "time_limit"
+            return r
+        if count >= MAX_CD_ENTRIES:
+            r["directory_error"] = "more_entries_than_the_bound"
+            return r
+        if cd[pos:pos + 4] != b"PK\x01\x02" or pos + 46 > len(cd):
+            r["directory_error"] = "bad_entry_signature"
+            return r
+        c_size = int.from_bytes(cd[pos + 20:pos + 24], "little")
+        u_size = int.from_bytes(cd[pos + 24:pos + 28], "little")
+        n, m, k = (int.from_bytes(cd[pos + 28:pos + 30], "little"), int.from_bytes(cd[pos + 30:pos + 32], "little"),
+                   int.from_bytes(cd[pos + 32:pos + 34], "little"))
+        pos += 46 + n + m + k
+        comp += c_size
+        uncomp += u_size
+        count += 1
+    r["entries"] = count
+    r["declared_compressed_bytes"] = comp
+    r["declared_uncompressed_bytes"] = uncomp
+    r["declared_ratio"] = round(uncomp / comp, 1) if comp else None
+    r["possible_zip_bomb"] = bool((comp == 0 and uncomp > 0) or (comp and uncomp / comp > 1000) or uncomp > (1 << 40))
+    r["structure_ok"] = pos == len(cd) and count == total
+    if count != total:
+        r["directory_error"] = "entry_count_differs_from_the_end_record"
+    return r
+
+
+def check_pdf(ctx, fd, size):
+    head = pread_full(fd, min(size, 16), 0)
+    tail_n = min(size, 2048)
+    tail = pread_full(fd, tail_n, size - tail_n)
+    ctx["budget"].spend(len(head) + len(tail))
+    r = {"magic_present": head.startswith(b"%PDF-"), "footer_present": b"%%EOF" in tail[-1024:], "structure_ok": False}
+    m = re.search(rb"startxref\s+(\d+)\s", tail)
+    if m and len(m.group(1)) <= 18 and 0 <= int(m.group(1)) < size:
+        probe = pread_full(fd, 32, int(m.group(1)))
+        ctx["budget"].spend(len(probe))
+        r["startxref_target_parses"] = bool(re.match(rb"\s*(xref|\d+\s+\d+\s+obj)", probe))
+        r["structure_ok"] = r["magic_present"] and r["footer_present"] and r["startxref_target_parses"]
+    return r
+
+
+def check_png(ctx, fd, size):
+    head = pread_full(fd, min(size, 8), 0)
+    r = {"magic_present": head == b"\x89PNG\r\n\x1a\n", "footer_present": False, "structure_ok": False}
+    if not r["magic_present"]:
+        return r
+    pos, chunks, first = 8, 0, True
+    while pos + 12 <= size:
+        if out_of_time() or chunks >= 100000:
+            r["structure_ok"] = None
+            r["not_checked"] = "time_limit" if out_of_time() else "more_chunks_than_the_bound"
+            return r
+        hdr = pread_full(fd, 8, pos)
+        ctx["budget"].spend(len(hdr))
+        length, kind = int.from_bytes(hdr[:4], "big"), hdr[4:8]
+        if not re.fullmatch(rb"[A-Za-z]{4}", kind) or pos + 12 + length > size or (first and (kind != b"IHDR" or length != 13)):
+            return r
+        first = False
+        chunks += 1
+        pos += 12 + length
+        if kind == b"IEND":
+            r["footer_present"] = True
+            r["structure_ok"] = pos == size
+            return r
+    return r
+
+
+def check_jpeg(ctx, fd, size):
+    head = pread_full(fd, min(size, 4), 0)
+    tail = pread_full(fd, min(size, 64), max(0, size - 64))
+    ctx["budget"].spend(len(head) + len(tail))
+    r = {"magic_present": head[:3] == b"\xff\xd8\xff", "footer_present": tail.rstrip(b"\x00")[-2:] == b"\xff\xd9", "structure_ok": False}
+    if not (r["magic_present"] and r["footer_present"]):
+        return r
+    pos = 2
+    while pos + 4 <= size:
+        if out_of_time():
+            r["structure_ok"] = None
+            r["not_checked"] = "time_limit"
+            return r
+        seg = pread_full(fd, 4, pos)
+        ctx["budget"].spend(len(seg))
+        if seg[0] != 0xFF or seg[1] in (0x00, 0xFF):
+            return r
+        if seg[1] == 0xDA:      # the scan starts: entropy-coded data follows, the markers before it were valid
+            r["structure_ok"] = True
+            return r
+        pos += 2 + int.from_bytes(seg[2:4], "big")
+    return r
+
+
+def check_sqlite(ctx, fd, size, scratch):
+    import sqlite3
+    head = pread_full(fd, min(size, 100), 0)
+    ctx["budget"].spend(len(head))
+    r = {"magic_present": head.startswith(b"SQLite format 3\x00"), "footer_present": None, "structure_ok": False, "integrity_check": "not_run"}
+    if not r["magic_present"] or len(head) < 100:
+        return r
+    page = int.from_bytes(head[16:18], "big")
+    page = 65536 if page == 1 else page
+    if not (512 <= page <= 65536 and page & (page - 1) == 0) or size % page:
+        r["header_error"] = "page_size_or_file_size_invalid"
+        return r
+    if not ctx["check_sqlite"]:
+        r["integrity_check"] = "disabled"
+        return r
+    if size > MAX_SQLITE_COPY or not ctx["budget"].allows(size):
+        r["integrity_check"] = "not_run_too_large_for_a_copy"
+        r["structure_ok"] = None
+        return r
+    copy = TempCopy(scratch)
+    try:
+        pos = 0
+        while pos < size:
+            if out_of_time():
+                r["integrity_check"] = "not_run_time_limit"
+                r["structure_ok"] = None
+                return r
+            block = pread_full(fd, min(CHUNK, size - pos), pos)
+            if not block:
+                r["structure_ok"] = None
+                r["integrity_check"] = "not_run_file_shorter_than_when_opened"
+                return r
+            ctx["budget"].spend(len(block))
+            os.write(copy.fd, block)
+            pos += len(block)
+        try:
+            from urllib.parse import quote
+            db = sqlite3.connect("file:%s?mode=ro&immutable=1" % quote(str(copy._tmp)), uri=True)
+            try:
+                db.set_progress_handler(lambda: 1 if out_of_time() else 0, 10000)
+                rows = db.execute("PRAGMA integrity_check(1)").fetchall()
+                r["integrity_check"] = "ok" if rows == [("ok",)] else "failed"
+                r["structure_ok"] = rows == [("ok",)]
+            finally:
+                db.close()
+        except sqlite3.Error as exc:
+            r["integrity_check"] = "not_run_time_limit" if out_of_time() else "failed"
+            r["structure_ok"] = None if out_of_time() else False
+            r["sqlite_error"] = type(exc).__name__
+    finally:
+        copy.drop()
+    return r
+
+
+def check_text(ctx, fd, size):
+    import codecs
+    head = pread_full(fd, min(size, 4), 0)
+    encoding = "utf-16" if head[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
+    dec = codecs.getincrementaldecoder(encoding)("strict")
+    r = {"magic_present": None, "footer_present": None, "structure_ok": False, "encoding_tried": encoding}
+    pos = 0
+    while pos < size:
+        if out_of_time() or not ctx["budget"].allows(min(CHUNK, size - pos)):
+            r["structure_ok"] = None
+            r["not_checked"] = "time_limit" if out_of_time() else "read_budget_spent"
+            return r
+        block = pread_full(fd, min(CHUNK, size - pos), pos)
+        if not block:
+            break
+        ctx["budget"].spend(len(block))
+        if encoding == "utf-8" and b"\x00" in block:
+            return r
+        try:
+            dec.decode(block)
+        except UnicodeDecodeError:
+            return r
+        pos += len(block)
+    try:
+        dec.decode(b"", final=True)
+    except UnicodeDecodeError:
+        return r
+    r["structure_ok"] = size > 0
+    return r
+
+
+def sniff(head):
+    if head.startswith(b"%PDF-"):
+        return "pdf"
+    if head[:4] in (b"PK\x03\x04", b"PK\x05\x06"):
+        return "zip"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if head[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if head.startswith(b"SQLite format 3\x00"):
+        return "sqlite"
+    return None
+
+
+def format_of(name, given, head):
+    if given:
+        return given, "caller"
+    for part in name.lower().split(".")[1:]:
+        if part in FORMATS:
+            return FORMATS[part], "name"
+    kind = sniff(head)
+    return (kind, "magic") if kind else (None, None)
+
+
+def decide(size, scanned, known, fmt_result):
+    """(verdict, basis). The only words are VERDICTS."""
+    if size == 0:
+        return "unrecovered", "the recovered file is empty"
+    if scanned["reason"]:
+        return "inconclusive", "the file was not read in full (%s)" % scanned["reason"]
+    if known["supplied"] and known["matches"]:
+        return "matches_known_original", "the sha256 of the recovered file equals the known original's"
+    if scanned["unrecovered_bytes"] >= size:
+        return "unrecovered", "every granule of the file equals the ciphertext at the same offset or is all zero"
+    if scanned["ranges_total"]:
+        return "inconclusive", "%d ranges are still equal to the ciphertext or all zero (%d bytes)" % (scanned["ranges_total"], scanned["unrecovered_bytes"])
+    if known["supplied"]:
+        return "inconclusive", "a known original was given and its hash differs from the recovered file's"
+    if fmt_result is None or fmt_result.get("structure_ok") is None:
+        return "inconclusive", "no structure check applies or it could not be completed: nothing supports the file beyond its bytes"
+    if fmt_result["structure_ok"] is True:
+        return "structurally_valid", "the structure of its format is intact; this shows nothing about its content being the original"
+    return "inconclusive", "the structure check of its format failed: the file is corrupt, truncated or not what its name says"
+
+
+def walk_tree(root, counters, stopped):
+    """(relative path, full path) for each entry under `root`, directories listed in print order; nothing is followed."""
+    stack = [""]
+    seen = 0
+    while stack:
+        if out_of_time():
+            stopped["directories_not_entered"] = len(stack)
+            return
+        rel = stack.pop()
+        directory = os.path.join(root, rel) if rel else root
+        try:
+            with os.scandir(directory) as it:
+                entries = print_order(list(it), judged_entry)
+        except OSError:
+            counters["directories_failed"] += 1
+            continue
+        subdirs = []
+        for e in entries:
+            if out_of_time():
+                stopped["directories_not_entered"] = len(stack) + 1
+                stopped["entries_not_examined"] = len(entries)
+                return
+            seen += 1
+            if seen > MAX_WALK_ENTRIES:
+                stopped["entry_bound"] = MAX_WALK_ENTRIES
+                return
+            relpath = os.path.join(rel, e.name) if rel else e.name
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    subdirs.append(relpath)
+                    continue
+            except OSError:
+                counters["directories_failed"] += 1
+                continue
+            yield relpath, os.path.join(root, relpath)
+        stack.extend(reversed(subdirs))
+
+
+def read_hash_list(path, ctx):
+    """sha256sum format, `<64 hex> name` or `<64 hex> *name`, by file name; streamed, with a line limit and an entry bound."""
+    table = {}
+    fd, _ = open_regular(path)
+    try:
+        with os.fdopen(os.dup(fd), "rb") as handle:
+            while True:
+                if out_of_time():
+                    fail("the time limit was reached while the list of known originals was being read")
+                line = handle.readline(MAX_LINE + 1)
+                if not line:
+                    break
+                if len(line) > MAX_LINE:
+                    fail("a line of the list of known originals is longer than %d bytes" % MAX_LINE)
+                m = re.match(rb"^([0-9a-fA-F]{64})[ \t]+\*?(.+?)\r?\n?$", line)
+                if not m:
+                    continue
+                table.setdefault(os.fsdecode(m.group(2)), set()).add(m.group(1).decode().lower())
+                if len(table) > MAX_HASH_LIST:
+                    fail("the list of known originals holds more than %d names: split it" % MAX_HASH_LIST)
+    finally:
+        os.close(fd)
+    return table
+
+
+KNOWN_PARAMS = {"items", "recovered_root", "ciphertext_root", "known_originals", "provenance", "granule", "check_sqlite", "limit",
+                "read_budget_bytes", "max_seconds"}
+ITEM_KEYS = {"recovered", "ciphertext", "known_sha256", "format"}
+
+
+def int_param(args, key, default, low, high=None, why=""):
+    value = args.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        fail("%s must be an integer" % key)
+    if value < low:
+        fail("%s must be at least %d" % (key, low))
+    if high is not None and value > high:
+        fail("%s must be at most %d%s" % (key, high, why))
+    return value
+
+
+def path_param(value, what):
+    if not isinstance(value, str) or not value:
+        fail("%s must be a non-empty string" % what)
+    return value
+
+
+def check_item(ctx, item_id, shown_path, path, cpath, known_sha, given_format, from_list):
+    c = ctx["counters"]
+    row = {"file": shown_path, "file_id": item_id}
+    fd = cfd = None
+    try:
+        try:
+            fd, st = open_regular(path)
+        except (OSError, ValueError) as exc:
+            code, text = why_not_opened(exc)
+            row.update({"status": "not_checked", "reason": code, "error": text, "verdict": "inconclusive",
+                        "verdict_basis": "the recovered file could not be opened (%s)" % code})
+            return row
+        size = st.st_size
+        row["bytes"] = size
+        cip = None
+        if cpath is not None:
+            cip = {"file": display(cpath)}
+            try:
+                cfd, cst = open_regular(cpath)
+                cip.update({"bytes": cst.st_size, "size_equal": cst.st_size == size})
+            except (OSError, ValueError) as exc:
+                code, text = why_not_opened(exc)
+                cip.update({"opened": False, "reason": code, "error": text})
+                cfd = None
+        scanned = scan_recovered(ctx, fd, size, cfd, cip.get("bytes", 0) if cip else 0, item_id)
+        if cip is not None and (cfd is None or cip.get("size_equal") is False):
+            c["ciphertexts_unread"] += 1
+            c["ciphertext_reasons"][cip.get("reason", "size_differs")] += 1
+        credential = bool(CREDENTIAL_NAME.search(os.path.basename(path))) or bool(PRIVATE_KEY_HEAD.search(scanned["head"]))
+        known = {"supplied": bool(known_sha), "source": ("list" if from_list else "item") if known_sha else None, "matches": None}
+        if known_sha:
+            known["matches"] = scanned["sha256"] is not None and scanned["sha256"] in known_sha
+        row["sha256"] = None if credential else scanned["sha256"]
+        if credential:
+            row["sha256_withheld"] = "the name or the first bytes look like a credential file: the hash of one is not printed"
+        fmt, fmt_from = format_of(os.path.basename(path), given_format, scanned["head"])
+        result = None
+        if fmt and size > 0 and scanned["reason"] is None:
+            try:
+                if out_of_time():
+                    result = {"structure_ok": None, "not_checked": "time_limit"}
+                elif fmt == "zip":
+                    result = check_zip(ctx, fd, size)
+                elif fmt == "pdf":
+                    result = check_pdf(ctx, fd, size)
+                elif fmt == "png":
+                    result = check_png(ctx, fd, size)
+                elif fmt == "jpeg":
+                    result = check_jpeg(ctx, fd, size)
+                elif fmt == "sqlite":
+                    result = check_sqlite(ctx, fd, size, ctx["scratch"])
+                else:
+                    result = check_text(ctx, fd, size)
+            except OSError as exc:
+                result = {"structure_ok": None, "not_checked": "read_failed", "error": describe(exc)}
+            result["format"] = fmt
+            result["format_from"] = fmt_from
+        row["format_check"] = result if result is not None else {"format": fmt, "structure_ok": None, "not_checked": "no format applies" if not fmt else "file not read in full"}
+        verdict, basis = decide(size, scanned, known, result)
+        if verdict not in VERDICTS:      # no word outside the four can be printed
+            verdict, basis = "inconclusive", "the verdict was not one of the four words"
+        row["known_original"] = known
+        if cip is not None:
+            row["ciphertext"] = cip
+        row["unrecovered"] = {"granule": ctx["granule"], "equal_to_ciphertext_bytes": scanned["equal_to_ciphertext_bytes"],
+                              "all_zero_bytes": scanned["all_zero_bytes"], "bytes": scanned["unrecovered_bytes"],
+                              "ranges_total": scanned["ranges_total"], "ranges": scanned["ranges"],
+                              "basis": "whole granules of the recovered file that equal the ciphertext at the same offset, or are all zero; "
+                                       "a shorter run is not listed. The ranges are in the profile file."}
+        row["bytes_read"] = scanned["read"]
+        row["status"] = "checked" if scanned["reason"] is None and (result is None or result.get("structure_ok", True) is not None or size == 0) else "partial"
+        if scanned["reason"]:
+            row["reason"] = scanned["reason"]
+        row["verdict"] = verdict
+        row["verdict_basis"] = basis
+        c["verdicts"][verdict] += 1
+        c["items_" + row["status"]] += 1
+        c["bytes_read"] = ctx["budget"].read
+        if row["status"] == "partial":
+            c["partial_by_reason"][scanned["reason"] or (result or {}).get("not_checked", "structure_check_incomplete")] += 1
+        ctx["profile"].add({"record": "file", "file_id": item_id, "bytes": size, "verdict": verdict, "status": row["status"]})
+        return row
+    finally:
+        for d in (fd, cfd):
+            if d is not None:
+                try:
+                    os.close(d)
+                except OSError:
+                    pass
+
+
+def main():
+    install_signal_handlers(last_word)
+    try:
+        args = json.load(sys.stdin)
+    except (ValueError, RecursionError):
+        fail("arguments are not valid JSON")
+    if not isinstance(args, dict):
+        fail("arguments must be a JSON object")
+    granule = int_param(args, "granule", DEFAULT_GRANULE, MIN_GRANULE, MAX_GRANULE)
+    limit = int_param(args, "limit", 200, 1, 1000000000)
+    budget = Budget(int_param(args, "read_budget_bytes", DEFAULT_BUDGET, MIN_BUDGET, 1 << 50))
+    max_seconds = int_param(args, "max_seconds", DEFAULT_SECONDS, 1, MAX_SECONDS, " (the tool's own clock; the manifest's timeout is 900)")
+    check_sqlite_flag = args.get("check_sqlite", True)
+    if not isinstance(check_sqlite_flag, bool):
+        fail("check_sqlite must be true or false")
+    items_in = args.get("items")
+    recovered_root = args.get("recovered_root")
+    cipher_root = args.get("ciphertext_root")
+    if items_in is None and recovered_root is None:
+        fail("name what to check: items (a list of {recovered, ciphertext, known_sha256, format}) or recovered_root (a tree, paired with ciphertext_root by relative path)")
+    entries = []
+    if items_in is not None:
+        if not isinstance(items_in, list) or not items_in or len(items_in) > MAX_ITEMS:
+            fail("items must be a list of 1 to %d objects" % MAX_ITEMS)
+        for it in items_in:
+            if isinstance(it, str):
+                it = {"recovered": it}
+            if not isinstance(it, dict) or set(it) - ITEM_KEYS:
+                fail("each item is a path or an object with the keys recovered, ciphertext, known_sha256, format")
+            rec = path_param(it.get("recovered"), "recovered")
+            cip = it.get("ciphertext")
+            if cip is not None:
+                path_param(cip, "ciphertext")
+            sha = it.get("known_sha256")
+            if sha is not None and (not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha)):
+                fail("known_sha256 must be 64 hexadecimal digits")
+            fmt = it.get("format")
+            if fmt is not None and fmt not in FORMAT_NAMES:
+                fail("format is one of: " + ", ".join(FORMAT_NAMES))
+            entries.append((rec, cip, {sha.lower()} if sha else None, fmt, False))
+    if recovered_root is not None:
+        path_param(recovered_root, "recovered_root")
+        if cipher_root is not None:
+            path_param(cipher_root, "ciphertext_root")
+        if not os.path.isdir(recovered_root):
+            fail("recovered_root is not a directory")
+    elif cipher_root is not None:
+        fail("ciphertext_root is paired with recovered_root")
+    prov = args.get("provenance")
+    provenance = None
+    if prov is not None:
+        if not isinstance(prov, dict) or set(prov) - set(PROVENANCE_KEYS):
+            fail("provenance is an object with the keys: " + ", ".join(PROVENANCE_KEYS))
+        provenance = {}
+        for k, v in prov.items():
+            if isinstance(v, bool) or isinstance(v, int) and -(1 << 31) <= v < (1 << 31):
+                provenance[k] = v
+            elif isinstance(v, str) and len(v) <= 500:
+                provenance[k] = v
+            else:
+                fail("provenance.%s must be a short string, a boolean or a small integer" % k)
+    hash_list_path = args.get("known_originals")
+    if hash_list_path is not None:
+        path_param(hash_list_path, "known_originals")
+    unknown = sorted(k for k in args if k not in KNOWN_PARAMS)
+    set_deadline(max_seconds)
+    known_table = {}
+    if hash_list_path is not None:
+        try:
+            ctx_probe = None
+            known_table = read_hash_list(hash_list_path, ctx_probe)
+        except (OSError, ValueError) as exc:
+            code, text = why_not_opened(exc)
+            fail("the list of known originals could not be read (%s)" % text)
+
+    key = [granule, "profile"]
+    try:
+        profile = Profile(key)
+        profile_problem = None
+    except OSError as exc:
+        profile, profile_problem = NoProfile(), "the profile file could not be created (%s): the ranges are counted, they are not kept" % describe(exc)
+    items_page = NoReplacePage(TOOL, [granule, "items"], limit)
+    counters = {"items_named": 0, "items_checked": 0, "items_partial": 0, "items_not_checked": 0, "bytes_read": 0,
+                "verdicts": collections.Counter({v: 0 for v in VERDICTS}), "partial_by_reason": collections.Counter(),
+                "directories_failed": 0, "not_checked_by_reason": collections.Counter(),
+                "ciphertexts_unread": 0, "ciphertext_reasons": collections.Counter()}
+    PROGRESS["coverage"] = counters
+    scratch = output_place(TOOL + "-scratch", ["s"])[0].parent
+    ctx = {"counters": counters, "granule": granule, "budget": budget, "profile": profile, "check_sqlite": check_sqlite_flag, "scratch": scratch}
+    stopped = {}
+
+    def work(rec, cip, known_set, fmt, from_list):
+        counters["items_named"] += 1
+        item_id = counters["items_named"]
+        if known_set is None and known_table:
+            known_set = known_table.get(os.path.basename(rec))
+            from_list = known_set is not None
+        row = check_item(ctx, item_id, display(rec), rec, cip, known_set, fmt, from_list)
+        if row["status"] == "not_checked":
+            counters["items_not_checked"] += 1
+            counters["not_checked_by_reason"][row.get("reason", "unknown")] += 1
+            counters["verdicts"]["inconclusive"] += 1
+        items_page.add(row, evidence_of(os.path.basename(rec)))
+
+    for rec, cip, known_set, fmt, from_list in entries:
+        if out_of_time():
+            stopped["items_not_examined"] = len(entries) - counters["items_named"]
+            break
+        work(rec, cip, known_set, fmt, from_list)
+    if recovered_root is not None and not stopped:
+        for rel, full in walk_tree(recovered_root, counters, stopped):
+            if out_of_time():
+                stopped["tree_not_fully_walked"] = True
+                break
+            work(full, os.path.join(cipher_root, rel) if cipher_root and os.path.lexists(os.path.join(cipher_root, rel)) else None, None, None, False)
+
+    pages = {"items": finish_page(items_page)}
+    OWN_NAMES.update(p["all_results"] for p in pages.values() if p.get("all_results"))
+    c = counters
+    reasons = []
+    if not c["items_named"]:
+        reasons.append("no file was checked: none was named or the tree held none")
+    if c["items_not_checked"]:
+        reasons.append("%d files could not be opened (%s)" % (c["items_not_checked"], ", ".join("%s %d" % kv for kv in sorted(c["not_checked_by_reason"].items()))))
+    for code, n in sorted(c["partial_by_reason"].items()):
+        reasons.append("%d files were not checked in full: %s" % (n, code))
+    if stopped.get("items_not_examined"):
+        reasons.append("the time limit (max_seconds %d) was reached: %d named files were not examined" % (max_seconds, stopped["items_not_examined"]))
+    if stopped.get("directories_not_entered") or stopped.get("tree_not_fully_walked"):
+        reasons.append("the time limit (max_seconds %d) was reached while the tree was walked: files after the last one checked are not in the answer" % max_seconds)
+    if stopped.get("entry_bound"):
+        reasons.append("the tree holds more than %d entries: the walk stopped there" % stopped["entry_bound"])
+    if c["directories_failed"]:
+        reasons.append("%d directories could not be listed" % c["directories_failed"])
+    if c["ciphertexts_unread"]:
+        reasons.append("%d ciphertexts could not be compared (%s)" % (c["ciphertexts_unread"], ", ".join("%s %d" % kv for kv in sorted(c["ciphertext_reasons"].items()))))
+    clock_cut = bool(c["partial_by_reason"].get("time_limit"))
+    if profile_problem:
+        reasons.append(profile_problem)
+    if BOUNDARY["replaced"]:
+        reasons.append("%d strings held an identifier-shaped text that the first rule missed and were replaced at the output (see boundary)" % BOUNDARY["replaced"])
+    complete = "partial" if reasons else "complete"
+    basis = "; ".join(reasons) if reasons else "every named file was opened and read in full, its structure check ran to the end, and the read budget and the time limit were not reached"
+    receipt = {"parser": PARSER, "complete": complete, "status": complete, "status_basis": basis, "partial_reasons": reasons,
+               "coverage": {k: (dict(v) if isinstance(v, collections.Counter) else v) for k, v in counters.items()},
+               "parameters": {"granule": granule, "read_budget_bytes": budget.total, "max_seconds": max_seconds}}
+    if getattr(profile, "shown", None):
+        OWN_NAMES.add(profile.shown)
+    answer = release({
+        "parser": PARSER,
+        "complete": complete,
+        "status": complete,
+        "status_basis": basis,
+        "partial_reasons": reasons,
+        "checks": "For each recovered file: its sha256, a check of its format's structure, a comparison with the known original when a hash is "
+                  "given, the granules still equal to the ciphertext or all zero, and a verdict of exactly one of: " + ", ".join(VERDICTS) + ". "
+                  "A verdict of structurally_valid says the structure of the format is intact and nothing more. The tool does not run a decryptor, "
+                  "does not unpack an archive, and does not treat the decryptor's exit code as evidence.",
+        "verdicts": dict(c["verdicts"]),
+        "decryptor_provenance": ({**provenance, "recorded": "as the caller gave it; not verified and not used for any verdict (an exit code of 0 is not a recovery)"}
+                                 if provenance is not None else None),
+        "coverage": {k: (dict(v) if isinstance(v, collections.Counter) else v) for k, v in counters.items()},
+        "read_budget_bytes": budget.total,
+        "time_limit": {"max_seconds": max_seconds, "reached": bool(stopped) or clock_cut, **stopped},
+        "known_originals": ({"entries": len(known_table), "matched_by": "the file name, against the list read from the path given"} if hash_list_path is not None else None),
+        "items": items_page.page,
+        "profile": None if profile_problem else {"file": profile.shown, "rows": profile.rows,
+                                                  "scope": "one row per unrecovered range and per file, then a receipt"},
+        "pages": pages,
+        "truncated": any(p["truncated"] for p in pages.values()),
+        "paths_withheld": WITHHELD_PATHS[0],
+        **({"unrecognised_parameters": unknown} if unknown else {}),
+    })
+    profile.finish(receipt)
+    if getattr(profile, "shown", None):
+        OWN_NAMES.add(profile.shown)
+        if isinstance(answer.get("profile"), dict):
+            answer["profile"]["file"] = profile.shown
+    print_answer(answer, indent=2)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except SystemExit as exc:
+        if exc.code not in (0, None):
+            drop_temporary_files()
+        raise
+    except Exception as exc:  # never an empty or clean answer for a failure
+        drop_temporary_files()
+        detail = describe(exc) if isinstance(exc, OSError) else "%s at %s" % (type(exc).__name__, where_it_failed(exc))
+        fail("unexpected failure: %s" % detail)

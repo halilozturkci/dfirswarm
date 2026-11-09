@@ -3,10 +3,11 @@
 # (measured: the first push of these images could be pulled anonymously),
 # and an image bundles separately licensed programs that are not ours to
 # redistribute until each licence has been reviewed. Prebuilt images are
-# published from the private dfirswarm-pro repository, to private packages,
-# except an image that carries pinned data (install.data: Volatility's symbol
-# tables), which no workflow of ours pushes anywhere; Pro builds those per
-# customer.
+# planned to be published from the private dfirswarm-pro repository, to private
+# packages; that path is not in place yet (no workflow runs there, and no
+# images.lock.json exists). An image that carries pinned data (install.data:
+# Volatility's symbol tables) no workflow of ours pushes anywhere; Pro would
+# build those per customer.
 #
 # What this does instead: builds the base and every profile for amd64 from
 # the recipes, `full` included, as a community user would (images/README.md),
@@ -59,18 +60,19 @@ concurrency:
 permissions:
   contents: read
 
+# ubuntu-24.04, not ubuntu-latest, until a deliberate move (see ci.yml).
 jobs:
   build:
     name: build · ${{ matrix.profile }}${{ matrix.arch == 'arm64' && ' · arm64' || '' }}
     strategy:
       fail-fast: false
       matrix:
-        profile: [base, core, re, memory, disk, network, linux, mobile, macos, cloud, triage, web, full]
+        profile: [base, core, re, ransomware, memory, disk, network, linux, mobile, macos, cloud, triage, web, full]
         arch: [amd64]
         include:
           - { profile: memory, arch: arm64 }
           - { profile: re, arch: arm64 }
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     env:
       TAG: dev-${{ matrix.arch }}

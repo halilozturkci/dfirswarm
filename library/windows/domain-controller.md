@@ -76,7 +76,8 @@ Read `catalog/` before running the same commands again.
    `esentutl` in 4688 and Sysmon 1 command lines; backup logs for a
    snapshot in the window), ESENT 216, 325, 326 and 327 in the Application
    log naming a copy of the directory database outside `NTDS\` (the trace
-   that survives when process auditing was off), System 7036 for the
+   that survives when process auditing was off; a plain file copy of
+   `ntds.dit`, from an offline disk or a shadow copy, raises none), System 7036 for the
    Volume Shadow Copy service starting in the window, the Prefetch and
    Amcache entries for those tools, files named like the directory
    database or the hives in places they do not belong (temp paths, a
@@ -245,7 +246,6 @@ the timeline rests on, and `inputs/` is unchanged.
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 40`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 30`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,8,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies

@@ -4,7 +4,7 @@
       "name": "ileapp",
       "package": "iLEAPP",
       "optional": false,
-      "why": "Several hundred iOS artefact parsers over a file-system extraction or a backup, with a report per artefact.",
+      "why": "Several hundred iOS artefact parsers over a file-system extraction or a backup, with a report per artefact. Its own venv installs from a hash lock (requires/locks/ileapp.txt: the tag's requirements.txt and what it needs, a file hash per architecture where PyPI has one, and the sdist) instead of the tag's unpinned requirements.txt.",
       "install": {
         "brew": "https://github.com/abrignoni/iLEAPP (not on PyPI; run ileapp.py from a checkout)",
         "apt": "pinned source 2026.4.2 (install.source)",
@@ -14,10 +14,7 @@
           "sha256": "932c5dc29a0e800f2a2397979a5e2e17ff49b7cb97fc9f04e8fff7700cd25d9c",
           "entry": "ileapp.py",
           "run": "python",
-          "pip": [
-            "-r",
-            "requirements.txt"
-          ],
+          "pip_lock": "requires/locks/ileapp.txt",
           "skip": [
             "admin/test"
           ]
@@ -33,40 +30,20 @@
       "why": "The same for Android: app data, accounts, usage, and the protobuf-heavy newer artefacts.",
       "install": {
         "brew": "https://github.com/abrignoni/ALEAPP (not on PyPI; run aleapp.py from a checkout)",
-        "apt": "pinned source 2026.4.1 (install.source). Its pip is the lines of the tag's requirements.txt, pinned as it pins them, but mister_skinnylegs, which names ccl_mozilla_reader and ccl_chromium_reader by an unpinned git URL that pip will not let another URL replace (ccl_mozilla_reader's head of 2026-10-27 has a pyproject.toml that does not parse). It and its dependencies are pip_after, with --no-deps, each git one at a commit: the readers at their last commit before that head, and Brotli at 1.2.1 over the readers' old bound of 1.2.0 (GHSA-9v8h-qqgm-4m35, an out-of-bounds write in the decoder, which reads the examined profile's cache; the readers' heads now ask for 1.2.1 themselves).",
+        "apt": "pinned source 2026.4.1 (install.source). Its pip list (bcrypt, beautifulsoup4, bencoding, fitdecode, folium, packaging, pillow, polyline, protobuf, sqlcipher3, PyCryptodome, pytz, simplekml, wheel, xlsxwriter, xmltodict) and the Brotli, lz4 and zstd the readers use are installed first from a hash lock (requires/locks/aleapp.txt: a file hash per architecture where PyPI has one, and the sdist, with every dependency). The four git packages stay outside the lock, pip_after with --no-deps, each at a commit (mister_skinnylegs at the commit its tag v0.0.18 names): pip's hash mode cannot hash a git URL, and an archive URL would need the commit's tarball downloaded to take its sha256, which has not been done, so their bytes are not hashed. mister_skinnylegs names ccl_mozilla_reader and ccl_chromium_reader by an unpinned git URL that pip will not let another URL replace (ccl_mozilla_reader's head of 2026-10-27 has a pyproject.toml that does not parse), hence the readers at their last commit before that head, and Brotli at 1.2.1 over the readers' old bound of 1.2.0 (GHSA-9v8h-qqgm-4m35, an out-of-bounds write in the decoder, which reads the examined profile's cache; the readers' heads now ask for 1.2.1 themselves).",
         "source": {
           "version": "2026.4.1",
           "url": "https://github.com/abrignoni/ALEAPP/archive/refs/tags/v2026.4.1.tar.gz",
           "sha256": "de60e539dfa89648a1d40971a357596103aec10d77b6184123aaf0afca549317",
           "entry": "aleapp.py",
           "run": "python",
-          "pip": [
-            "bcrypt==3.2.0",
-            "beautifulsoup4==4.8.2",
-            "bencoding",
-            "fitdecode==0.10.0",
-            "folium==0.14.0",
-            "packaging>=24.0",
-            "pillow==12.3.0",
-            "polyline==2.0.0",
-            "protobuf==5.29.6",
-            "sqlcipher3==0.6.2",
-            "PyCryptodome",
-            "pytz",
-            "simplekml",
-            "wheel",
-            "xlsxwriter==3.1.1",
-            "xmltodict"
-          ],
+          "pip_lock": "requires/locks/aleapp.txt",
           "pip_after": [
             "--no-deps",
-            "mister_skinnylegs @ git+https://github.com/cclgroupltd/mister-skinnylegs.git@v0.0.18",
+            "mister_skinnylegs @ git+https://github.com/cclgroupltd/mister-skinnylegs.git@35f3890685c45d89af81566d5db1860a279a6520",
             "ccl_mozilla_reader @ git+https://github.com/cclgroupltd/ccl_mozilla_reader.git@b3d0627f747a718e1e30ac02b92e82bdde354eb2",
             "ccl_chromium_reader @ git+https://github.com/cclgroupltd/ccl_chrome_indexeddb.git@cc9edbc1fcc774d3009bc4b4555c27fa79ee3e3a",
-            "ccl_simplesnappy @ git+https://github.com/cclgroupltd/ccl_simplesnappy.git@3d085230baa8c46cf2090ebba29bf6e8eab31087",
-            "Brotli==1.2.1",
-            "lz4==4.3.3",
-            "zstd==1.5.7.2"
+            "ccl_simplesnappy @ git+https://github.com/cclgroupltd/ccl_simplesnappy.git@3d085230baa8c46cf2090ebba29bf6e8eab31087"
           ],
           "skip": [
             "admin/test"
@@ -85,22 +62,10 @@
       "redistributable": false
     },
     {
-      "name": "idevicebackup2",
-      "package": "libimobiledevice",
-      "optional": true,
-      "why": "A libimobiledevice tool that talks to a device and reads or restores its backups. It is declared and unused: no skill, recipe or tool of this pack runs it, and nothing here shows it opens an encrypted backup offline, which is not provided. Whether to keep it is the owner's decision.",
-      "install": {
-        "brew": "brew install libimobiledevice",
-        "apt": "apt-get install -y libimobiledevice-utils"
-      },
-      "licence": "LGPL-2.1-or-later",
-      "redistributable": false
-    },
-    {
       "name": "heif-convert",
       "package": "libheif-examples",
       "optional": true,
-      "why": "Converts an iPhone's HEIC photo to JPEG or PNG, to look at it or read it with other tools; pillow-heif opens one in a script. No skill of this pack names it yet. The program is a libheif sample application (MIT, as libheif's README says); the libheif library it links is LGPL-3.0-or-later.",
+      "why": "Converts an iPhone's HEIC photo to JPEG or PNG, to look at it or read it with other tools; pillow-heif opens one in a script. The skill media/provenance names it. The program is a libheif sample application (MIT, as libheif's README says); the libheif library it links is LGPL-3.0-or-later.",
       "install": {
         "brew": "brew install libheif",
         "apt": "apt-get install -y libheif-examples"

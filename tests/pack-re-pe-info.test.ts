@@ -817,3 +817,32 @@ test("a dynamic string that carries user-info or a query value is withheld, with
     assert.equal(plain.runpath, "$ORIGIN/../lib");
   });
 });
+
+test("an import function name that is token-shaped is withheld like a library name and the export name: not in the answer, and not in the paged file", async () => {
+  await withCwd(async (cwd) => {
+    const secrets = ["AKIAIOSFODNN7EXAMPLE", "ghp_abcdefghijklmnopqrstuvwxyz0123456789", "sk-Abcdefghijklmnopqrstuvwx0123456789"];
+    const names = secrets.concat(["ExitProcess", "CreateFileW"]);
+    const built = buildPe({ imports: [{ dll: "KERNEL32.dll", functions: names }] });
+    const out = await pe(cwd, built.file);
+    const text = JSON.stringify(out);
+    for (const secret of secrets) assert.doesNotMatch(text, new RegExp(secret.slice(0, 12)), "a planted import function name was printed");
+    const listed = out.imports[0].functions as string[];
+    assert.ok(listed.includes("ExitProcess") && listed.includes("CreateFileW"), "ordinary names stay readable");
+    assert.equal(out.withheld_fields.filter((w: Json) => w.field === "import_function").length, secrets.length);
+    assert.equal(out.import_function_count, names.length);
+  });
+});
+
+
+test("an import function name that is token-shaped is withheld in the paged result file too (more functions than the answer holds inline)", async () => {
+  await withCwd(async (cwd) => {
+    const secret = "AKIAIOSFODNN7EXAMPLE";
+    const built = buildPe({ imports: [{ dll: "KERNEL32.dll", functions: ["A1", "A2", secret, "A4"] }] });
+    await put(cwd, "work/sample.bin", built.file);
+    const out = body(await asJob(PE_INFO, cwd, { path: "work/sample.bin", limit: 1 }));
+    const name = out.tables.imports.all_results.split("/").pop();
+    const file = await readFile(join(cwd, "out", "tool-output", name), "utf8");
+    assert.match(file, /A4/, "the file holds the whole list");
+    assert.doesNotMatch(file + JSON.stringify(out), /AKIAIOSFODNN7/);
+  });
+});

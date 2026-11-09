@@ -1,0 +1,27 @@
+### Fixed: mobile-forensics, the shared block of manifest_db, protobuf_peek and sqlite_freespace
+
+- A stop signal that arrives while a tool is still reading its own module is answered. The handlers were installed when `main()` started, so a SIGTERM in the first tens of milliseconds ended the tool with no output (SIGINT with a traceback). They are now installed at the start of the shared block: one JSON document, `status` "failed", `interrupted`, exit 128 plus the signal. What no file can close stays open and is not claimed: the interpreter's own start-up and the imports above the block.
+- The answer's stall clock follows progress. One `os.write` on a blocking pipe returned only when all of the answer had gone in, so the 30 second clock was restarted once, and a reader that took the answer steadily but slowly for more than 30 seconds ended the tool with exit 141 and a cut answer. The answer is written in pieces of at most 4,096 bytes and the clock restarts on each: only a reader that takes nothing for 30 seconds is given up on.
+- The three tools' manifest `version` and `PARSER` are 3 together (they were 2 since before the statuses, caps and guards of the last release), and a test holds `PARSER`'s number equal to the manifest's version for every tool of the pack.
+
+### Fixed: mobile-forensics, sqlite_freespace
+
+- The status is one of complete, partial or failed. A file whose structure disagreed with itself was answered `corrupt`, a word outside the contract; it is `partial` now, with the reason in `status_basis` (which names the kinds of problem) and in `problems`, and the answer carries `corrupt: true` for a reader that wants the distinction. The manifest, the README and the fragments skill say so.
+- One figure for the time a hidden class of characters can add to a `contains` run: about 7 s of CPU, 10.5 s on a loaded machine, in the code, the answer's note, the manifest and the README (the README and the note said "about 7 s" alone).
+- The manifest states the disk use (nothing is cut, so the paging files grow with the number of fragments: about 240 bytes of paging file per fragment, measured 236 on a million fragments of three characters) and that the fragment limit of `contains` is wall-clock time, so a starved CPU gives more `match` 2 and a partial answer, never a wrong complete.
+
+### Fixed: mobile-forensics, manifest_db
+
+- The work after the row loop (sorting the domains, finishing the pages) is under the clock: the loop stops at 93 % of `max_seconds` and the tail runs in the rest, instead of after it. The manifest says so and no longer leans on the cap of 255 seconds alone.
+- `contains` has one budget in all, 10 seconds, for paths on which it ran longer than its 2 seconds. It cost 2 seconds per such path until `max_seconds`. Once the budget is used up the paths that are left are counted as not matched without the expression being run on them, an observation says how many, and the answer is partial.
+- One source, one working copy. Every call that applied a `-wal` or a `-journal` left a whole copy of Manifest.db under `tool-output`; the copy is now named by a digest of the bytes it was copied from, so a second call on the same bytes reuses it, and a source that changed is a new directory. The manifest states that each distinct source leaves one copy, and the cost of the recovery-key scrub on a long digit run and the keys it does not recognise.
+
+### Fixed: mobile-forensics, the five recipes
+
+- The iLEAPP and ALEAPP recipes run the program in the recipe's own process group, never in a session of its own (the shared process block of the other packs is copied in, byte for byte; on Linux the kernel is asked to end the program if the recipe dies). They ended the program's group themselves with SIGTERM and waited for the leader only, so a grandchild that ignored SIGTERM outlived the recipe, and killing the recipe's group did not reach it. A stop signal and the time limit now end the whole tree before the recipe leaves (exit 128 plus the signal, with a last line that says partial). A test holds that no mobile tool or recipe passes `start_new_session`.
+- Every answer and every `coverage.json` of the five recipes carries `status` (complete, partial or failed) and `status_basis`, a sentence that says what it rests on. A refusal and a target the recipe does not read are `failed` with `why` (they were `refused` and `unsupported`, words outside the contract). Detect answers are not changed here.
+- `ios-filesystem` (compressed tars) and `android-backup` read the clock by byte count inside a member as well as every 256 members, so one huge member can no longer outlast `--max-seconds`; the time limit is stated once in `limits_hit` and no longer also as a traversal error.
+
+### Fixed: mobile-forensics, the backup-detail skill
+
+- `extractions/backup-detail` ended "A job that decrypts or reads keychain content runs with `secret_output: true`", and the pack decrypts nothing, so the sentence could be taken as a route. It says "No job here decrypts; one that reads keychain content runs with `secret_output: true`" now, within the leaf's token budget. A skills test fails while a leaf of the pack presents decryption as something a job does and no tool of the pack declares a decrypting parameter; it turns itself off when one does.

@@ -1,0 +1,66 @@
+{
+  "entries": [
+    {
+      "logName": "projects/example-project-1/logs/cloudaudit.googleapis.com%2Factivity",
+      "insertId": "1x2y3z4a5b6c",
+      "timestamp": "2026-02-14T09:00:00.123456789Z",
+      "receiveTimestamp": "2026-02-14T09:00:01.250000Z",
+      "severity": "NOTICE",
+      "resource": { "type": "project", "labels": { "project_id": "example-project-1" } },
+      "protoPayload": {
+        "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+        "authenticationInfo": {
+          "principalEmail": "alice@example.org",
+          "principalSubject": "user:alice@example.org",
+          "serviceAccountDelegationInfo": []
+        },
+        "serviceName": "cloudresourcemanager.googleapis.com",
+        "methodName": "SetIamPolicy",
+        "resourceName": "projects/example-project-1",
+        "requestMetadata": { "callerIp": "198.51.100.7", "callerSuppliedUserAgent": "google-cloud-sdk gcloud/460.0.0,gzip(gfe)" },
+        "request": { "@type": "type.googleapis.com/google.iam.v1.SetIamPolicyRequest", "resource": "projects/example-project-1" },
+        "status": {}
+      },
+      "operation": { "id": "op-1", "producer": "cloudresourcemanager.googleapis.com", "first": true, "last": true }
+    },
+    {
+      "logName": "projects/example-project-1/logs/cloudaudit.googleapis.com%2Fdata_access",
+      "insertId": "9q8w7e6r5t4y",
+      "timestamp": "2026-02-14T09:05:00Z",
+      "receiveTimestamp": "2026-02-14T09:05:02Z",
+      "severity": "ERROR",
+      "resource": { "type": "gcs_bucket", "labels": { "project_id": "example-project-1", "bucket_name": "example-bucket" } },
+      "protoPayload": {
+        "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+        "authenticationInfo": {
+          "principalEmail": "deployer@example-project-1.iam.gserviceaccount.com",
+          "serviceAccountDelegationInfo": [
+            { "firstPartyPrincipal": { "principalEmail": "alice@example.org" } },
+            { "principalSubject": "serviceAccount:ci@example-project-1.iam.gserviceaccount.com" }
+          ]
+        },
+        "authorizationInfo": [ { "resource": "projects/_/buckets/example-bucket", "permission": "storage.objects.get", "granted": false } ],
+        "serviceName": "storage.googleapis.com",
+        "methodName": "storage.objects.get",
+        "resourceName": "projects/_/buckets/example-bucket/objects/report.csv",
+        "requestMetadata": { "callerIp": "203.0.113.9", "callerSuppliedUserAgent": "gcloud-golang/1.0" },
+        "status": { "code": 7, "message": "PERMISSION_DENIED" }
+      }
+    },
+    {
+      "logName": "projects/example-project-1/logs/cloudaudit.googleapis.com%2Fsystem_event",
+      "insertId": "sys-0001",
+      "timestamp": "2026-02-14T10:00:00Z",
+      "resource": { "type": "gce_instance", "labels": { "project_id": "example-project-1", "instance_id": "1234567890" } },
+      "protoPayload": {
+        "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+        "authenticationInfo": { "principalEmail": "system@google.com" },
+        "serviceName": "compute.googleapis.com",
+        "methodName": "compute.instances.migrateOnHostMaintenance",
+        "resourceName": "projects/example-project-1/zones/us-central1-a/instances/vm-1"
+      }
+    },
+    { "logName": "projects/example-project-1/logs/stderr", "insertId": "not-audit-1", "timestamp": "2026-02-14T10:01:00Z", "textPayload": "an application line" }
+  ],
+  "nextPageToken": "CgwI0Z3YrAYQuNiJ6QI"
+}

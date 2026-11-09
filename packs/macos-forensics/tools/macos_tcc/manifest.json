@@ -1,0 +1,47 @@
+{
+  "name": "macos_tcc",
+  "description": "Read one macOS TCC.db (the system database under /Library/Application Support/com.apple.TCC/ or a user's under ~/Library/Application Support/com.apple.TCC/; one file per call) and return the rows of its `access` table, the privacy-permission records, through a private copy. The database and its -wal, -shm and -journal are copied into a private directory (the evidence directory is never written to), SQLite applies the write-ahead log there, and the copy is read through an authorizer that allows only reading; the copy is removed. A sidecar that is a link, a FIFO or any other thing than a regular file is named and not read, never followed, and the answer is partial. Columns are not guessed by macOS version: PRAGMA table_info is read, the columns and the admin table's version row are recorded as the file has them, and every column is shown raw under `columns` (a column the tool does not know is raw too). Only what is written down is decoded, and the raw number stays beside it: auth_value 0, 1, 2, 3 (denied, unknown, allowed, limited) and client_type 0, 1 (bundle identifier, absolute path); auth_reason and every other column are not decoded. last_modified, last_reminder and expired_at are Unix seconds, shown as UTC beside the raw number; last_modified is the time the row was LAST WRITTEN (a grant, a revoke, a reset or a system update all move it) and is never called the time of a grant, and last_reminder is when the user was last reminded. `managed` is true when policy_id is set (a configuration-profile or MDM policy), false when it is empty and null when the table has no policy_id; the system and the user databases are separate records and are not merged. An authorization is not a use. The code-signing requirement (csreq) and the indirect object's code identity are binary and are shown by length only, never a byte, digest or head. Client ids, services and paths pass the shared boundary by their field kind (a value that looks like a token is withheld, as <withheld N characters: reason>); a text or binary cell over 4096 characters shows its head and its whole length. The tool has no values mode and writes nothing but a result file (out_file, or the paging file the answer names, where every row is flushed as written so entry_count equals the lines in it) and its private copy. It has a clock of its own (max_seconds, default 80, at most 90): the read stops there with status partial and `resume.after_rowid`. SIGTERM, SIGINT and SIGHUP end the read the same way (exit 128 plus the signal, the staged copy removed); a signal in the first tens of milliseconds, before the module has run, ends it with no JSON (stated, not closed). A file that is not SQLite, or has no access table, is a failed answer, never an empty result; a private copy that could not be written (disk full, a file-size limit) is a failed answer that says it is a fact about the staging area, not about the database. Every answer carries status and status_basis; status is complete only when every row of access was read and nothing is listed under problems. Services, clients, paths and every other string of the answer pass the shared boundary by their field kind (a value that looks like a token is withheld as <withheld N characters: reason>); a secret of another shape is printed. The tool has no values mode.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A TCC.db; any -wal, -shm or -journal beside it is used (in a private copy), so copy them out together"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Entries shown inline (default 500, and at most max_inline_bytes of them). All are counted; the whole result is in out_file, or, when that is omitted, in a file under work/<your id>/tool-output/ (in a job, $OUT/tool-output/) that the answer names"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "JSONL path for every entry (each row judged by the boundary), written as each is read, mode 0600. The tool does not overwrite: an existing file or link at that name is refused"
+    },
+    "after_rowid": {
+      "type": "integer",
+      "description": "Go on after the row with this rowid (resume.after_rowid of a stopped run); the rows are read in rowid order"
+    },
+    "max_stage_bytes": {
+      "type": "integer",
+      "description": "The database and its sidecars are copied only up to this many bytes in all (default 2147483648); over it nothing is read and the answer says so"
+    },
+    "max_inline_bytes": {
+      "type": "integer",
+      "description": "The inline entries are cut at this many bytes as well as at `limit` entries (default 1048576); the whole is in out_file or the file the answer names"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The tool's own clock (default 80, at most 90): read at every row and while the database is copied; when it passes the read stops, status is partial and resume says where to go on"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/Library/Application Support/com.apple.TCC/TCC.db\", \"out_file\": \"work/<your id>/tcc.jsonl\"}",
+  "by": "maintainer",
+  "at": "2026-11-03T12:00:00.000Z",
+  "version": 3,
+  "sha256": "41511dcb13d716a5e200d2e36608f9a3e41acbec0fd0d28cd42efc4cbc95773f",
+  "use": {
+    "names": [
+      "TCC.db"
+    ]
+  }
+}

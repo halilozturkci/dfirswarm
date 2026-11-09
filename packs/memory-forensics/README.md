@@ -7,21 +7,24 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Twenty skills**, nine decision leaves, ten second-level leaves they point to
-("only if X") and the router `memory/router` (at most 400 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf); every leaf is at most 800 tokens.
+**Twenty-eight skills**, seventeen decision leaves, ten second-level leaves they point to
+("only if X") and the router `memory/router` (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf); every leaf is at most 800 tokens.
 
 | Family | Skills |
 | --- | --- |
-| Triage | `triage/what-you-have` (second level: `triage/container-details`), `triage/no-framework` (`triage/carve-signatures`, `triage/paging-files`) |
+| Triage | `triage/what-you-have` (second level: `triage/container-details`), `triage/no-framework` (`triage/carve-signatures`, `triage/paging-files`), `triage/address-spaces`, `triage/coverage`, `triage/memprocfs` |
 | Frameworks | `triage/volatility` (`triage/volatility-symbols`, `triage/volatility-plugins`, `triage/volatility-catalogue`) |
-| Processes | `processes/injection` (`processes/preserve-regions`) |
+| Symbols | `symbols/macos` (no support claim for any macOS version), `symbols/linux` |
+| Artefacts | `artifacts/reconstruction` |
+| Processes | `processes/injection` (`processes/preserve-regions`), `processes/kernel-integrity` |
+| Time | `timeline/memory` |
 | Network | `network/state` (`network/timestamps-dns`) |
 | Credentials | `credentials/material` (`credentials/key-schedules`) |
 | Strings | `strings/discipline` |
 | Pattern matching | `patterns/yara` |
 | Acquisition | `acquire/images` (`acquire/avml-and-preserve`) |
 
-**Three tools.** `mem_profile` says what a memory file's header shows before
+**Eight tools.** `mem_profile` says what a memory file's header shows before
 anything is run against it (a crash dump's physical-memory runs with their file
 offsets, checked for order, overlap and payload; a LiME file's ranges; an ELF core's
 byte order) and answers "unrecognised" for anything else, because a flat capture and
@@ -30,17 +33,34 @@ structures that other parsers read (a hive, an event log chunk, a Prefetch recor
 says for each where the signature is, where the structure starts and what its header
 supports, and cuts a fixed-size slice for the parser: a survey, not a recovery.
 `mem_fs` starts MemProcFS for one call, lists a directory of its file tree or copies
-chosen files byte for byte into the job's output, and stops it; the mount is gone
-when it returns.
+chosen files byte for byte into the job's output (with a ranges file for each: the ranges read, the ranges
+unavailable or not copied, and the zero-filled pages, which are zeros, not proof of missing data), and stops it; the mount is released
+when it returns, unless the clean-up failed (an engine that cannot be ended, an unmount helper
+that does not answer): the answer then names a `cleanup` problem and the mount may remain.
 Whether MemProcFS contacts a symbol server is governed by the job's network policy; the tool
 passes it no flag about that, and the pinned binary's behaviour was not verified in this review.
+`vol_readiness` asks, before an examination, whether Volatility 3 can be used here and, with an image, on that image: offline
+(every call carries `--offline`, and the tool fetches nothing), in four views that each say `ready`, `blocked` or `unknown`: the plugins `vol`
+lists (as it lists them, and whether the names asked for are among them), the symbol table of the image's kernel (a Windows table by PDB, GUID
+and age; a Linux or macOS banner matched exactly against `isfinfo`), whether a YARA binding imports in the Python that runs `vol`, and whether FUSE is
+usable (`/dev/fuse` opens and a `fusermount3` or `fusermount` is on PATH; absence is `blocked`). It is not a plugin result, writes nothing from the
+capture to a file, and was run against a stand-in `vol` in this review: the real Volatility's listing, `windows.info` and `isfinfo` output were not
+exercised here. On a host or image without `/dev/fuse` or a `fusermount3`/`fusermount` (the image build installs only `libfuse2`), the FUSE view answers `blocked`; that is correct, not a defect.
+
+`mem_registry` is opt-in: it lists the registry hives of a Windows image and reads one key of one hive (`windows.registry.hivelist` and `windows.registry.printkey`, the names taken from what the installed `vol` lists), offline, with the hive offset, the plugin and the Volatility version on every record and a coverage of hives found against hives read (partial when pages were missing). The SAM and SECURITY hives, and keys under SAM, SECURITY, `PolicySecrets` and `SAMDomains`, are refused unless `write_values` is set in a job run as secret output; the value of a credential-named key or value is withheld whole (by name, not by content) and written, unjudged, to a 0600 file under `$OUT/mem_registry` only then. Like `vol_readiness`, it was run against a stand-in `vol` in this review, with hand-written fixtures of the documented columns, not against the real Volatility.
+
+`carve_handoff` takes one hit of `mem_carve` (`kind`, `signature_offset`) and readies it for the parser that reads it, without parsing: the structure's start (a plain Prefetch record four bytes before `SCCA`, only when those bytes are a known version), the cut by `mem_carve`'s own rule, the header checks and, for a registry hive (base-block checksum, sequence numbers, chain of bins) and an event log file or chunk (chunks, header checksum), whether the pages stay adjacent in the image. It hashes the slice only for a family that cannot be a credential store (a hive, a SQLite database and a property list never are hashed) and writes slice bytes only with `write_values` in a job run as secret output. It names the windows-forensics tools that read the family (`regkv`, `evtx_carve`, `mam_scan`, `prefetch_mam`) and calls none of them, so it depends on that pack not at all.
+
+`vol_views` puts one named question to the installed Volatility on an image, offline, and keeps the engine's whole answer: `question` names a plugin as the installed `vol` lists it (a name it does not list is refused, and none is guessed), `readiness` is the `ready` answer of `vol_readiness` for that image, and the output comes back with its scope and a status. Every line is split at its tabs and each cell judged by the same rules as the other tools, paged with the whole judged output in a file whose size and sha256 are given; the raw output and the files a plugin's own dump option exports are kept only with `write_values` in a job run as secret output, with their digests in a `manifest.jsonl` beside them and never in the answer. A Linux or macOS question stays blocked until `vol_readiness` finds a table for it. Run against a stand-in `vol` in this review, like the other two Volatility tools.
+
+`isf_intake` turns the debug material an operator supplies for a Linux kernel (a vmlinux or debug-symbols file, or a System.map) into an ISF with `dwarf2json`, and says `ready` only when the table's own `linux_banner` is, character for character, a banner `vol` finds in the image and the stated build identity agrees (a near release is no match; a System.map has no banner and cannot be ready). It records the converter's version and argv, keeps a table only when it is ready, and promises nothing beyond the match; macOS is not handled. `dwarf2json` 0.9.0 is declared in `requires/host.json` as a pinned download for amd64 (the project publishes no arm64 build, so an arm64 image records it as not installed); where it is not on PATH the tool fails with verdict `blocked`. Run against stand-ins in this review, not against the real converter.
 
 **Sensitive output.** Memory holds whatever the machine held. `mem_fs` writes file
 content only when it runs as a job, only on `write_values: true`, and only under
 `$OUT/mem_fs`; its answer carries the locator of each file, never its content or a
-digest of it (`recovery_key_scan` of the encrypted-containers pack is the reference
-implementation of that pattern). Both `mem_fs` and `mem_carve` declare `secret_output`
-for `write_values`, so the harness seals the job as sensitive, and both check
+digest of it (the one digest it names is that of a file's ranges file, which holds offsets and lengths; `recovery_key_scan` of the encrypted-containers pack is the reference
+implementation of that pattern). `mem_fs`, `mem_carve`, `mem_registry`, `carve_handoff` and `vol_views` declare `secret_output`
+for `write_values`, so the harness seals the job as sensitive, and all five check
 `SECRET_OUTPUT=1` and refuse as JSON otherwise. `mem_carve` cuts slices out of an image
 (credential hives included, deliberately: a cracking tool downstream stays available)
 only with `write_values: true`, into a directory with mode 0700 (at most 1,000 slices a call; the slices count toward `max_results_bytes`, and the clock is looked at before each). What the tools print
@@ -103,13 +123,16 @@ one included (`images/README.md`).
 Debian's patches under GPL-2.0-or-later; Debian packages it for amd64 and i386
 only, so the image builds it from Debian's source and patches on every
 architecture), and `gcc` and `make` are there for a scanner a case needs that no
-library provides. `avml` is declared so the operator has the pinned binary to take
-to the source host: run in an analysis VM it captures that VM, not the subject.
-Volatility's YARA plugins need a YARA Python binding that no requirement here
-installs; `patterns/yara` says how to check.
+library provides. `avml` is declared, with its pinned download, so the operator has the exact binary to take
+to the source host; it is not installed in the image (`not_in_image`), because run in an
+analysis VM it captures that VM, not the subject.
+Volatility's YARA plugins need a YARA Python binding; `requires/python.txt` declares `yara-python` (pinned with `==`; its wheels for arm64 and for the
+image's Python 3.11 were not checked, and the owner's image rebuild applies it), and `vol_readiness` says whether it imports.
 
 MemProcFS is AGPL-3.0, the same licence as this harness, which is why the one
 wrapper here is for that and not for the other.
+
+**What a program leaves behind.** The tools that run a program end, through the shared process block, what it left running after it exited, before they read, size or hash what it wrote. `vol_views`, `vol_readiness`, `isf_intake` and `mem_registry` carry it (`mem_fs` has its own search for what the engine holds, named in `clean_up`). A tool that reports files a program wrote answers at most `partial` where the host cannot show no process was left (not Linux, `PR_SET_CHILD_SUBREAPER` refused), and one that reports only what a program printed on a pipe does not; every one is `partial` for a process that was ended, and says so in `program_group` and its status basis. A process that is not a descendant of the program (started through a service manager) is not found.
 
 ## Install and use
 

@@ -3,7 +3,7 @@ id: artifacts/knowledgec
 title: KnowledgeC activity records and their limits
 when: Interpret retained application and device-state activity.
 needs: []
-tools: [knowledgec_query, sqlite_query]
+tools: [knowledgec_query, segb_read, sqlite_query]
 requires_host: []
 ---
 
@@ -22,7 +22,7 @@ Inventory the user and system stores separately; take each database with its `-w
 
 **What foreground and display records support.** Shows: recorded state (this application was in front, the screen was lit, the device was locked). Does not show: keyboard input, physical presence, attention, intent or who the human was. Correlate authentication and session evidence (`logs/unified`, `accounts/users`) and weigh remote access first.
 
-**Biome.** `~/Library/Biome/` holds another format (SEGB frames) that this pack has no decoder for; the mobile pack's `ios/biome-segb`, if loaded, separates framing from payload, and iOS semantics do not carry over. A gap here is not absence elsewhere.
+**Biome.** `~/Library/Biome/` holds another format, SEGB: `segb_read` frames it only (`artifacts/biome`). A gap here is not absence elsewhere.
 
 **Coverage.** Measure it per stream and source: first and last rows, gaps, decoding failures, sidecars present. Cite the database, table, `z_pk`, query and sealed output; keep apart "not retained", "not acquired", "unsupported" and "searched, no match".
 

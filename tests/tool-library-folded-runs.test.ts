@@ -968,7 +968,7 @@ test("marshal_inspect reads a real stream: every code object, its bytecode, name
     // An older .pyc magic is named and refused; a stream over max_bytes is refused.
     const stream = await readFile(join(cwd, "inputs", "m.bin"));
     await writeFile(join(cwd, "inputs", "old.pyc"), Buffer.concat([Buffer.from([0x6f, 0x0d, 0x0d, 0x0a]), Buffer.alloc(12), stream]));
-    assert.match(String(refused(await runPy(MARSHAL_TOOL, cwd, { path: "inputs/old.pyc" }, undefined, PY_ENV)).error), /older than 3\.11/);
+    assert.match(String(refused(await runPy(MARSHAL_TOOL, cwd, { path: "inputs/old.pyc" }, undefined, PY_ENV)).error), /Python 3\.10 or older/);
     assert.match(String(refused(await runPy(MARSHAL_TOOL, cwd, { path: "inputs/m.bin", max_bytes: 100 }, undefined, PY_ENV)).error), /over max_bytes/);
     // A stream carved out of something bigger: given at its offset, with bytes after it.
     await writeFile(join(cwd, "inputs", "carved.bin"), Buffer.concat([Buffer.from("JUNKJUNKJUNK"), stream, Buffer.from("TRAILING")]));
@@ -1054,14 +1054,13 @@ sys.stdout.buffer.write(marshal.dumps(obj, 4))
     ]);
     await writeFile(join(cwd, "inputs", "shared.bin"), shared);
     assert.match(String(refused(await runPy(MARSHAL_TOOL, cwd, { path: "inputs/shared.bin" }, undefined, PY_ENV)).error), /shares text or numbers/);
-    // A long integer of many digits is built in a step a digit and shown in hex; it does not hang or fail on the digit limit.
+    // A long integer of many digits is built in a step a digit; it does not hang or fail on the digit limit. As a constant it can be a key, so
+    // it is given by its size (an integer of 32 digits or more is withheld), the top digit 0x7fff filling its fifteen bits.
     const digits = 20_000;
     const longInt = Buffer.concat([Buffer.from("l"), u32(digits), Buffer.concat(Array.from({ length: digits }, (_, i) => { const b = Buffer.alloc(2); b.writeUInt16LE(i % 2 ? 0x7fff : 0x0001); return b; }))]);
     await writeFile(join(cwd, "inputs", "longint.bin"), longInt);
     const li = ok<MResult>(await runPy(MARSHAL_TOOL, cwd, { path: "inputs/longint.bin" }, undefined, PY_ENV));
-    const shownInt = li.root as { int_bits: number; hex: string };
-    assert.equal(shownInt.int_bits, 15 * digits, "the top digit is 0x7fff, which fills its fifteen bits");
-    assert.match(shownInt.hex, /^0x[0-9a-f]+$/);
+    assert.equal(li.root, `<a number of ${15 * digits} bits, withheld>`);
     // Refusals before reading: no file, a bad out_dir, bad numbers.
     assert.match(String(refused(await runPy(MARSHAL_TOOL, cwd, {}, undefined, PY_ENV)).error), /path is required/);
     assert.match(String(refused(await runPy(MARSHAL_TOOL, cwd, { path: "inputs/data.bin", out_dir: "inputs/o" }, undefined, PY_ENV)).error), /out_dir/);

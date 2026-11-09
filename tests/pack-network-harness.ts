@@ -9,6 +9,7 @@
  * a real tshark, Zeek or Suricata, and the suites say so where it matters.
  */
 import assert from "node:assert/strict";
+import { PYTHON3 } from "./host-gates.ts";
 import { spawn } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,6 +23,11 @@ export const BEACON = join(TOOLS, "beacon_score", "run.py");
 export const ZEEK = join(TOOLS, "zeek_run", "run.py");
 export const SURICATA = join(TOOLS, "suricata_run", "run.py");
 export const EXTRACT = join(TOOLS, "pcap_extract", "run.py");
+export const TRANSFORM = join(TOOLS, "capture_transform", "run.py");
+export const FLOW = join(TOOLS, "flow_reader", "run.py");
+export const TLSD = join(TOOLS, "tls_decrypt", "run.py");
+export const QUICI = join(TOOLS, "quic_inspect", "run.py");
+export const CONNS = join(TOOLS, "conn_series", "run.py");
 export const LOGS = join(TOOLS, "network_log_summary", "run.py");
 export const RECIPE = join(NET, "recipes", "network-capture", "run.py");
 export const AGENT = { AGENT_ID: "s1" };
@@ -63,7 +69,7 @@ export function refused(out: Run): Json {
  * its own is not in that group and outlives it; one started in the tool's own group is ended with it.
  */
 export function startDetached(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, bin?: string, argv: string[] = []): { pid: number; closed: Promise<number | null>; stdout: () => string; killGroup: () => void; signal: (s: NodeJS.Signals) => void } {
-  const child = spawn("python3", [script, ...argv], { cwd, env: { ...process.env, ...(bin ? { PATH: `${bin}:${process.env.PATH ?? ""}` } : {}), ...AGENT, ...env }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(PYTHON3, [script, ...argv], { cwd, env: { ...process.env, ...(bin ? { PATH: `${bin}:${process.env.PATH ?? ""}` } : {}), ...AGENT, ...env }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   const chunks: Buffer[] = [];
   child.stdout.on("data", (c: Buffer) => chunks.push(c));
   child.stderr.on("data", () => undefined);

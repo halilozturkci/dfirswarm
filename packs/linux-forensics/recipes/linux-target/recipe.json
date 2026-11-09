@@ -1,6 +1,6 @@
 {
   "id": "linux-target",
-  "version": "1.1.5",
+  "version": "1.1.16",
   "description": "Catalogue Linux identity, accounts, sessions, authentication, histories, persistence, packages, SSH, journals/syslog, web and container logs through dissect.target, one function at a time, with a status for each (parsed, empty, unsupported, failed, not attempted, unknown). This reads Linux roots inside LVM and common VM disk containers without mounting them. Its detect step says Linux only where dissect.target's os function printed `linux` (its own identification, unverified against the image), read after the `<Target PATH>` prefix by which it names this image, closes the route only for an operating system it knows is not Linux, and says could-not-tell (exit 2) for anything else, including a name it does not recognise. Its receipt and its answers carry `status` (complete, partial or failed) and `status_basis`. The wrapper and what it starts run in the recipe's own process group, never a session of its own, so the harness ending the recipe by killing its group ends them with it; detect stops itself before the harness's 300 seconds. A run into an output directory that already holds an earlier run's receipt or artefacts is refused before anything is written, so the earlier receipt is never replaced.",
   "object": "Linux disk image or extracted root",
   "order": 15,
@@ -44,6 +44,9 @@
   ],
   "runtime": "python3",
   "entry": "run.py",
+  "requires_optional": [
+    "target-query"
+  ],
   "auto": [
     "kickoff"
   ],
@@ -68,6 +71,6 @@
     "memory: a disk image holds none",
     "an empty plugin result is not proof the artefact never existed"
   ],
-  "covers": "Records exposed by the selected dissect.target Linux functions, each with the status it earned from its exit code, its records and its stderr. `complete` in the receipt means every selected function ran and produced records or nothing: it is not coverage of the host. It does not carve deleted/unallocated data, parse arbitrary application data, acquire memory, unlock encrypted volumes without a key, or prove that an empty parser result means the artefact never existed.",
-  "sha256": "ca71fe953bbba5ad88aeca239e2d4d122726a57d61f9f2444b0167c789807f33"
+  "covers": "Records exposed by the selected dissect.target Linux functions, each with the status it earned from its exit code, its records and its stderr. `complete` in the receipt means every selected function ran and produced records or nothing: it is not coverage of the host. It does not carve deleted/unallocated data, parse arbitrary application data, acquire memory, unlock encrypted volumes without a key, or prove that an empty parser result means the artefact never existed.  A process that dissect.target left running after it exited is ended by linux_triage's own settle() and counted in its summary; the recipe adds its own count and its own look, and coverage.json carries program_group (the recipe's, with the wrapper's under `wrapper`) at its top level: a leftover, or a host where the absence of one cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused), makes the receipt partial. The wrapper now runs under a clock of 14300 seconds (under the 14400 of the recipe's limit) and a process that holds its pipes after it ended is let go after one second. A stop signal in the window after the wrapper exited ends the process it left holding its pipes, writes the receipt and prints one JSON line (exit 128 plus the signal).",
+  "sha256": "6057b47feb59bbe13c1b52c03f2794d9575bf624ecc7faf4ae1cd93e7ea2becf"
 }

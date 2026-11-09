@@ -10,16 +10,33 @@ know it is the encrypted one.
 
 ## What it carries
 
-**Twelve skills**: five decision leaves and six second-level leaves they point to
+**Eighteen skills**: ten decision leaves and seven second-level leaves they point to
 ("only if X"); every leaf is at most 800 tokens. `identify/headers`
 (`identify/by-format`), `volumes/bitlocker` (`volumes/bitlocker-opening`),
-`volumes/luks-filevault` (`volumes/filevault-apfs`), `archives/protected`
+`volumes/luks-filevault` (`volumes/luks`, `volumes/filevault-apfs`), `archives/protected`
 (`archives/formats`), `keys/where-they-hide` (`keys/recovery-key-scan`,
-`keys/other-sources`). The twelfth is the pack's router, `encrypted/router` (at
-most 400 tokens): it names the other eleven by the question each answers, holds no
+`keys/other-sources`), `recovery/authorised`, and four that stand alone: `volumes/layered-reading`,
+`volumes/veracrypt-truecrypt`, `messages/openpgp` and `files/aescrypt`. The eighteenth is the pack's router, `encrypted/router` (at
+most 400 tokens): it names the other seventeen by the question each answers, holds no
 rule, and is the one line a run shows for the pack when its skills index is over budget.
 
-**Three tools.**
+**Nine tools.**
+`materialise_decrypted` is the one tool that writes decrypted evidence: inside a `secret_output` job, from a
+key in a sealed 0600 file (never an argument), through pybde, pyluksde or pyAesCrypt, to a raw image or file under
+`$OUT` with a provenance file; a key that does not work leaves nothing, and what is not whole stays an unverified `.partial`.
+`archive_metadata` says what protects a 7-Zip or RAR archive, from the start header or the block
+headers and then through 7z: whether the headers (the names) and the members are encrypted,
+whether the set of volumes is whole; it lists a ZIP through 7z, and never extracts.
+`crypto_selftest` builds tiny synthetic LUKS, BitLocker, Core Storage, APFS, ZIP-AES
+and VHD samples, runs the installed readers and modules on them and says which pairs
+parsed, which did not and which are unavailable, with exact versions and john's helper
+inventory: the receipt an image's acceptance step reads.
+`crypto_metadata` takes a volume image and a byte offset and runs the reader for the
+scheme the signature shows (`cryptsetup luksDump`, `bdeinfo`, `fvdeinfo`,
+`fsapfsinfo`): the key slots, segments, digests and tokens of LUKS, the key
+protectors of BitLocker, the counts the Core Storage and APFS readers print. It
+prints no key, salt, digest, UUID, label or identifier, only whether each is
+present, and a reader that is not installed is `unavailable`, never an empty list.
 `crypto_id` names the scheme from the first bytes of a volume or file and reads
 what a header holds without a key: the LUKS1 key-slot fields, the LUKS2 binary
 header (version, label, UUID). It prints no raw bytes of the file, and header text
@@ -32,19 +49,43 @@ result from a byte search is marked a heuristic, never "not encrypted".
 private-key headers and the file names key files are saved under. It returns
 where each is (file, offset, length, a structure check), never the value, a
 fragment of it or a hash of it, and lists every file it could not read in full or
-did not reach before its own time limit. Names, paths and header strings the three
-tools print have parts shaped like identifiers or secrets withheld, by shape.
+did not reach before its own time limit. `tcrypt_header` reads a VeraCrypt or
+TrueCrypt header with cryptsetup's tcrypt mode, for a password (and, optionally,
+keyfiles) the case supplies on a sealed file; it reports whether a header
+decrypted and, if so, its non-secret fields (cipher chain and mode, PBKDF, key
+size, sizes and offsets), never the volume key or a salt. `password_recover` is
+this pack's one password-recovery route: inside a `secret_output` job, it
+extracts a hash with the matching `*2john` helper (or takes one from another
+sealed job) and runs john against a case-supplied candidate list; the hash,
+john's pot, session and log sit only under `$OUT`, and the answer carries
+counts and versions, never a value. Names, paths and header strings the tools
+print have parts shaped like identifiers or secrets withheld, by shape.
 
 **One goal template**: `what-is-locked.md`.
 
 ## Secrets
 
 A tool that can reach secret material answers with presence, kind, location,
-length and offsets. A value is written only when the caller asks for it, only in
-a job run with `secret_output: true`, and only to a file under `$OUT`.
-`recovery_key_scan` is the reference implementation of this; `docs/packs.md`
-("Secrets and sensitive output") has the pattern in full. No skill or report
-writes a password, a PIN, a recovery value, a fragment of one, or a hash of one.
+length and offsets, never the value itself; `password_recover` and
+`tcrypt_header`, whose job is a password attempt rather than a locator, answer
+with counts, versions and whether a header decrypted, and the same rule: never
+a value, a hash, a salt or a length of either. A value is written only when
+the caller asks for it, only in a job run with `secret_output: true`, and only
+to a file under `$OUT`. `recovery_key_scan` is the reference implementation of
+the locator pattern; `docs/packs.md` ("Secrets and sensitive output") has it in
+full. No skill or report writes a password, a PIN, a recovery value, a
+fragment of one, or a hash of one.
+
+**A program that leaves a process behind.** The tools that run a program share one process block, and its `settle()` ends, before anything is read or counted,
+every process a program left running after it ended (in the tool's group, in a session of its own, or holding no descriptor at all); the answer carries `program_group`
+(`subreaper`, `left_behind`, `unproven`, `notes`; a refusal or an error carries none). `password_recover`, `crypto_metadata`, `crypto_selftest` and `materialise_decrypted`
+report a file a program wrote (the hash and pot files, the reader's output, the decrypted image), so they answer `partial` when `settle()` ended a leftover and, on a host that
+is not Linux or where the kernel refuses `PR_SET_CHILD_SUBREAPER`, when the absence of one cannot be ruled out (`materialise_decrypted` then keeps the image as an unverified
+`.partial` file, and claims no digest of it after a process was ended). `tcrypt_header`, `archive_metadata` and `archive_probe` report what a program printed on a pipe: they are
+not held to the second rule, but a process `settle()` ended makes them `partial`. A process that holds the pipe after the program ended is let go after at most one second
+(`tcrypt_header` and the version probes: or 1 MiB of further output, whichever comes first, and the cut makes the answer `partial`; the 7z tools: one second, and the listing is then
+`listed_with_warnings`). A flood that starts while the program is still running is not capped by this. A writer that is no descendant of the program (started through a service manager) is not found. `crypto_id` and `recovery_key_scan`
+start no program.
 
 ## Three things the skills insist on
 

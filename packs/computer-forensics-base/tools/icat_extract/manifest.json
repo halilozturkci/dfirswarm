@@ -1,6 +1,6 @@
 {
   "name": "icat_extract",
-  "description": "Extract one Sleuth Kit address (an inode, or inode-type-id for an NTFS stream such as 168-128-4) from a disk image to a NEW file under the run, streaming icat's output through a hash so no size is held in memory; an existing output is never replaced. Refuses an inode the catalogue lists only as a directory (icat would give its index). Returns the path, size, sha256, image, volume offset in sectors, the sector size passed to icat (-b, when given), the address asked for, icat's exit code and where its stderr is kept, and the path(s) the catalogue lists for exactly that address. An output budget (max_bytes) and a time budget (max_seconds) bound it; a run that hits one or whose icat fails part way keeps its bytes as <output>.partial and reports status partial, never a truncated file under the real name. It extracts what the record's data runs hold now: for a deleted entry that may be another file's bytes, and a matching header or size is a check, not proof.",
+  "description": "Extract one Sleuth Kit address (an inode, or inode-type-id for an NTFS stream such as 168-128-4) from a disk image to a NEW file under the run, streaming icat's output through a hash so no size is held in memory; an existing output is never replaced. Refuses an inode the catalogue lists only as a directory (icat would give its index). Returns the path, size, sha256, image, volume offset in sectors, the sector size passed to icat (-b, when given), the address asked for, icat's exit code and where its stderr is kept, and the path(s) the catalogue lists for exactly that address. An output budget (max_bytes) and a time budget (max_seconds) bound it; a run that hits one or whose icat fails part way keeps its bytes as <output>.partial and reports status partial, never a truncated file under the real name. It extracts what the record's data runs hold now: for a deleted entry that may be another file's bytes, and a matching header or size is a check, not proof. SIGTERM, SIGINT and SIGHUP end it with one JSON answer (partial, with interrupted true and the signal, and what was done), exit 128 plus the signal, and the removal of the hidden file it was writing. With descriptor (and optionally descriptor_sha256 and verify_sources) in place of image and sector_size (offset must be one of the descriptor's volumes, and may be left out when it has one), the sources are given to the Sleuth Kit in order, the descriptor's sector size is passed as -b when it is not 512, and the answer is otherwise the one the same image gives by path. The answer adds descriptor and images. PIPES: an icat that has ended while something it started keeps its output pipe open (silent, or writing all the time) is read for one second after it ended; the answer is then partial (the end of the stream was not seen, the file may be short) instead of waiting for max_seconds, and what it left behind is ended, also when a stop signal arrives. An icat that does not end is stopped at max_seconds.",
   "params": {
     "inode": {
       "type": "string",
@@ -14,7 +14,7 @@
     },
     "image": {
       "type": "string",
-      "description": "Image path. Defaults to the single disk image under inputs/: one with a disk image's extension, or one the catalogue read as a disk (catalog/<input>/partitions.txt)."
+      "description": "Image path. Defaults to the single disk image under inputs/: one with a disk image's extension, or one the catalogue read as a disk (catalog/<input>/partitions.txt). Give this or descriptor."
     },
     "offset": {
       "type": "integer",
@@ -31,6 +31,18 @@
     "max_seconds": {
       "type": "integer",
       "description": "Time budget in seconds (default 1500, at most 1700); past it the run stops and keeps a .partial"
+    },
+    "descriptor": {
+      "type": "string",
+      "description": "A layer descriptor layer_describe wrote (layer-<sha256>.json), in place of image and sector_size. Its bytes must hash to the name it carries; it is refused when it lists a missing dependency, when a source it names is no longer a regular file of the size it records, or when a volume's offset is past the end of the media. A descriptor with several volumes needs offset to say which; offset must be one of its volumes."
+    },
+    "descriptor_sha256": {
+      "type": "string",
+      "description": "Pins the descriptor: its sha256 (64 hexadecimal digits) must be this one."
+    },
+    "verify_sources": {
+      "type": "boolean",
+      "description": "With a descriptor, read every source again and compare its sha256 with the descriptor's (up to 120 seconds). Without it only the sizes are checked, and a source swapped for another of the same size is not found."
     }
   },
   "runtime": "python3",
@@ -77,6 +89,6 @@
   },
   "by": "s864a08",
   "at": "2026-09-18T16:09:29.146Z",
-  "version": 9,
-  "sha256": "c16a13833ae742f3dd504bab21396238a099be070b81bfcb7e636f99d9033b9f"
+  "version": 18,
+  "sha256": "a2d385fedfa8964f189f2d94cd52a7de2d50593ebceecd100528e64a9cd64ba1"
 }

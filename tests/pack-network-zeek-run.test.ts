@@ -12,12 +12,13 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ZEEK, asJob, body, everythingUnder, exists, filesUnder, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
+import { NO_ADOPTION, CLEAN } from "./host-gates.ts";
 
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 
@@ -88,7 +89,7 @@ test("files.log without a hash column is said so; with one, the hashes are count
     assert.equal(out.files_log.records, 1);
     assert.equal(out.files_log.records_with_a_hash, 0);
     assert.doesNotMatch(out.note + JSON.stringify(out), /a hash per reassembled object/);
-    assert.equal(out.ok, true);
+    assert.equal(out.ok, CLEAN === "complete");
     // Version, command, checksum switch and policy script are recorded.
     assert.match(out.zeek_version, /8\.0\.10/);
     assert.equal(out.checksum_validation, false);
@@ -579,7 +580,7 @@ test("a stop signal during the run prints partial JSON with the stage and the lo
   }
 });
 
-test("every answer carries status and status_basis, a reporter message over 500 characters says where the whole is, and a run whose logs are whole is complete", async () => {
+test("every answer carries status and status_basis, a reporter message over 500 characters says where the whole is, and a run whose logs are whole is complete", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, {
       "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
@@ -598,7 +599,7 @@ function conn(rows: number): string {
   return tsvLog("conn", CONN_FIELDS, CONN_TYPES, Array.from({ length: rows }, (_, i) => [`1700000000.${String(i % 1000000).padStart(6, "0")}`, `C${i}xAbCdEfGhIjKl`, "10.0.0.5", "50000", "203.0.113.7", "443", "tcp", "0.25", "120", "3400", "T", "(empty)"]));
 }
 
-test("the logs are read under the tool's own clock: a log still being read when it runs out is read in part and said so, a log never reached is named, and both are whole on disk", async () => {
+test("the logs are read under the tool's own clock: a log still being read when it runs out is read in part and said so, a log never reached is named, and both are whole on disk", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const text = conn(150_000);
     await stage(cwd, bin, { "conn.log": text, "dns.log": tsvLog("dns", ["ts", "uid"], ["time", "string"], [["1700000000.1", "CabcdefGHIJKLMNOP"]]) });
@@ -661,4 +662,200 @@ test("a stop signal that arrives while the answer is being written adds no secon
     assert.equal(answer.tool.name, "zeek_run");
     assert.equal(answer.interrupted_by_signal, undefined, "one document: the answer, not a last word after it");
   });
+});
+
+test("a log whose name is shaped like a token is shown as withheld-NNNNNN everywhere, renamed on disk, and its real name is in a 0600 index; an ordinary name is printed as Zeek wrote it", async () => {
+  await withCwd(async (cwd, bin) => {
+    // a stand-in engine that plays a hostile policy: it names logs after random token shapes (random on every run)
+    const rng = createRng(Number(randomBytes(4).readUInt32LE(0)));
+    const stems = [planted(rng, "ghp"), planted(rng, "akia"), planted(rng, "jwt").replaceAll(".", "_")];
+    const bad = [...CONN_ROW.slice(0, 5)]; // a row that does not fit its header: kept raw in a malformed file named after the log
+    await stage(cwd, bin, {
+      "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
+      "my-custom.log": tsvLog("my-custom", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
+      [`${stems[0]}.log`]: tsvLog("x", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
+      [`${stems[1]}.log`]: tsvLog("x", CONN_FIELDS, CONN_TYPES, [CONN_ROW, bad]),
+      [`${stems[2]}.log`]: tsvLog("x", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
+    });
+    const run = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
+    const out = body(run);
+    for (const stem of stems) assert.ok(!run.stdout.includes(stem), "a token-shaped log name is printed in the answer");
+    assert.deepEqual(Object.keys(out.logs).sort(), ["conn", "my-custom", "withheld-000001", "withheld-000002", "withheld-000003"], "the keys of logs");
+    assert.deepEqual(out.logs_written, ["conn", "my-custom", "withheld-000001", "withheld-000002", "withheld-000003"]);
+    assert.equal(out.log_names_withheld, 3);
+    for (const key of ["withheld-000001", "withheld-000002", "withheld-000003"]) {
+      assert.equal(out.logs[key].file, join(out.out_dir, `${key}.log`), "file names the renamed log");
+      assert.ok(await exists(join(cwd, out.logs[key].file)), "the log is whole in out_dir under the shown name");
+    }
+    assert.equal(out.logs["my-custom"].file, join(out.out_dir, "my-custom.log"), "an ordinary name is as Zeek wrote it");
+    // the malformed record's file and its name in the answer
+    assert.equal(out.malformed_records, 1);
+    const [malformedKey] = Object.keys(out.malformed_files);
+    assert.match(malformedKey, /^withheld-00000\d$/);
+    assert.equal(out.malformed_files[malformedKey], `malformed-${malformedKey}.jsonl`);
+    assert.equal(out.malformed[0].log, malformedKey);
+    // nothing on disk is named after the token either, except through the index
+    const names = await filesUnder(join(cwd, "work/z"));
+    for (const stem of stems) assert.ok(!names.some((n) => n.includes(stem)), `a file is named after ${stem.slice(0, 4)}...`);
+    // the index: mode 0600, the real names, named in the answer
+    assert.equal(out.log_names_file, join(out.out_dir, "zeek-log-names.jsonl"));
+    assert.equal((await stat(join(cwd, out.log_names_file))).mode & 0o777, 0o600);
+    const index = (await readFile(join(cwd, out.log_names_file), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.deepEqual(index.map((r: Json) => r.real_log).sort(), [...stems].sort());
+    assert.deepEqual(index.map((r: Json) => r.log).sort(), ["withheld-000001", "withheld-000002", "withheld-000003"]);
+    // a run with only ordinary names makes no index
+    await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) });
+    const plain = body(await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/plain" }, env(cwd), bin));
+    assert.equal(plain.log_names_withheld, 0);
+    assert.equal(plain.log_names_file, null);
+    assert.ok(!(await exists(join(cwd, "work/plain/zeek-log-names.jsonl"))));
+  });
+});
+
+// --- dry_run: the engine receipt without a capture (the stand-in prints what Zeek's documentation says: a version line, a help text, and
+// --- one line per `print` of a zeek_script_loaded handler; it proves the wrapper's logic and nothing about a real Zeek's help or events) ------
+
+const ZEEK_DRY_STUB = `#!/bin/sh
+printf '%s\\n' "$*" >> "$STUB_LOG"
+for a in "$@"; do
+  case "$a" in
+    --version) printf 'zeek version 8.0.10-stand-in\\n'; exit 0;;
+    --help) printf 'zeek version 8.0.10-stand-in\\nusage: zeek [options] [file ...]\\n    -a|--parse-only   exit immediately after parsing scripts\\n    -r|--readfile <readfile>   read from given tcpdump file\\n' >&2; exit 0;;
+    -r|-i|--readfile|--iface) echo "a capture or an interface was named" > "$STUB_DIR/capture-read"; exit 9;;
+  esac
+done
+[ -f "$STUB_DIR/sleep" ] && { echo $$ > "$STUB_DIR/engine.pid"; sleep 60 & echo $! > "$STUB_DIR/child.pid"; echo started > "$STUB_DIR/started"; wait; }
+for a in "$@"; do
+  case "$a" in
+    *network-forensics.local.zeek) policy="$a";;
+  esac
+done
+if [ -f "$STUB_DIR/missing-policy" ]; then
+  echo "error in $policy, line 2: can't find policy/frameworks/files/no-such-policy" >&2
+  exit 1
+fi
+[ -f "$STUB_DIR/lists-nothing" ] && exit 0
+printf 'network-forensics-dry-run\\t0\\t/opt/zeek/share/zeek/base/init-bare.zeek\\n'
+printf 'network-forensics-dry-run\\t1\\t/opt/zeek/share/zeek/base/frameworks/files/main.zeek\\n'
+if [ -n "$policy" ] && [ ! -f "$STUB_DIR/skip-policy" ]; then
+  grep -h '^@load' "$policy" | while read -r _ name; do
+    printf 'network-forensics-dry-run\\t0\\t/opt/zeek/share/zeek/%s.zeek\\n' "$name"
+  done
+fi
+[ -f "$STUB_DIR/writes-log" ] && printf '#separator \\\\x09\\n' > packet_filter.log
+exit 0
+`;
+
+async function stageDry(cwd: string, bin: string, o: { sleep?: boolean; missingPolicy?: boolean; listsNothing?: boolean; writesLog?: boolean; skipPolicy?: boolean } = {}): Promise<string> {
+  const dir = join(cwd, "stub");
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  await stub(bin, "zeek", ZEEK_DRY_STUB);
+  if (o.sleep) await writeFile(join(dir, "sleep"), "1");
+  if (o.missingPolicy) await writeFile(join(dir, "missing-policy"), "1");
+  if (o.listsNothing) await writeFile(join(dir, "lists-nothing"), "1");
+  if (o.writesLog) await writeFile(join(dir, "writes-log"), "1");
+  if (o.skipPolicy) await writeFile(join(dir, "skip-policy"), "1");
+  await writeFile(join(cwd, "zeek-calls.txt"), "");
+  return dir;
+}
+
+test("dry_run refuses a path, reads no capture and names no interface", async () => {
+  await withCwd(async (cwd, bin) => {
+    const dir = await stageDry(cwd, bin);
+    const err = refused(await tool(ZEEK, cwd, { dry_run: true, path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin));
+    assert.equal(err.status, "failed");
+    assert.match(err.error, /path is not taken with dry_run/);
+    assert.equal(await exists(join(cwd, "work/z")), false, "a refusal started nothing and wrote nothing");
+    assert.equal(await readFile(join(cwd, "zeek-calls.txt"), "utf8"), "");
+    const bad = refused(await tool(ZEEK, cwd, { dry_run: "yes", out_dir: "work/z" }, env(cwd), bin));
+    assert.match(bad.error, /dry_run must be true or false/);
+    // The run itself: no capture in the call, no -r and no -i in any command, and a capture the stand-in would have refused is never named.
+    const out = body(await tool(ZEEK, cwd, { dry_run: true, out_dir: "work/z" }, env(cwd), bin));
+    assert.equal(out.dry_run, true);
+    assert.equal(await exists(join(dir, "capture-read")), false);
+    const calls = (await readFile(join(cwd, "zeek-calls.txt"), "utf8")).trimEnd().split("\n");
+    for (const c of calls) assert.doesNotMatch(c, /(^| )(-r|-i|--readfile|--iface)( |$)/, c);
+    assert.equal("path" in out, false);
+  });
+});
+
+test("dry_run writes only under out_dir and gives the receipt: identities, the effective configuration, the script-load status, the log outputs and what is not covered", { skip: NO_ADOPTION }, async () => {
+  await withCwd(async (cwd, bin) => {
+    await stageDry(cwd, bin, { writesLog: true });
+    const before = await filesUnder(cwd);
+    const out = body(await tool(ZEEK, cwd, { dry_run: true, out_dir: "work/z", policies: ["policy/frameworks/files/hash-all-files", "policy/misc/stats"] }, env(cwd), bin));
+    const after = await filesUnder(cwd);
+    const created = after.filter((f) => !before.includes(f) && !f.startsWith("stub/") && f !== "zeek-calls.txt");
+    assert.ok(created.length > 0 && created.every((f) => f.startsWith("work/z/")), `only out_dir: ${created.join(", ")}`);
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.equal(out.ok, true);
+    // identities: the script a run would write, byte for byte, and the version
+    const script = await readFile(join(cwd, "work/z/network-forensics.local.zeek"), "utf8");
+    assert.equal(out.identities.policy_script.sha256, sha(script));
+    assert.equal(out.identities.policy_script.bytes, Buffer.byteLength(script));
+    assert.equal(out.identities.policy_script.policies, 2);
+    assert.match(out.identities.engine.zeek_version, /8\.0\.10/);
+    assert.ok(await exists(join(cwd, "work/z/zeek-help.txt")));
+    assert.equal(out.identities.rule_count, null);
+    // effective configuration: the command, the exit code and the scripts Zeek listed, with the file that holds every line
+    assert.equal(out.effective_configuration.exit_code, 0);
+    assert.equal(out.effective_configuration.loaded_scripts.total, 4);
+    assert.ok(out.effective_configuration.loaded_scripts.scripts.some((s: string) => s.endsWith("policy/misc/stats.zeek")));
+    assert.match(await readFile(join(cwd, "work/z/zeek-dry-run.stdout"), "utf8"), /^network-forensics-dry-run\t0\t/m);
+    // script-load status
+    assert.deepEqual(out.script_load_status.requested, [
+      { policy: "policy/frameworks/files/hash-all-files", loaded: true },
+      { policy: "policy/misc/stats", loaded: true },
+    ]);
+    // log outputs, and what is not covered
+    assert.equal(out.log_outputs.streams_listed, false);
+    assert.deepEqual(out.log_outputs.logs_written_by_the_dry_run, ["packet_filter"]);
+    assert.ok(out.not_covered.some((s: string) => /No ruleset/.test(s)) && out.not_covered.some((s: string) => /automatic download|no package or script update/.test(s)));
+    // the same script a run writes for the same policies
+    await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) });
+    const real = body(await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/r", policies: ["policy/frameworks/files/hash-all-files", "policy/misc/stats"] }, env(cwd), bin));
+    assert.equal(real.policy.script_sha256, out.identities.policy_script.sha256);
+  });
+});
+
+test("dry_run: a policy Zeek cannot find is a partial receipt with the first failure and the policy marked not loaded; a build that lists no script says so", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stageDry(cwd, bin, { missingPolicy: true });
+    const out = body(await tool(ZEEK, cwd, { dry_run: true, out_dir: "work/z", policies: ["policy/frameworks/files/no-such-policy"] }, env(cwd), bin));
+    assert.equal(out.status, "partial");
+    assert.equal(out.ok, false);
+    assert.match(out.status_basis, /zeek exited 1/);
+    assert.match(out.script_load_status.first_failures[0].text, /can't find policy\/frameworks\/files\/no-such-policy/);
+    assert.equal(out.script_load_status.requested[0].loaded, null, "no listing, so nothing is shown either way");
+    await stageDry(cwd, bin, { listsNothing: true });
+    const none = body(await tool(ZEEK, cwd, { dry_run: true, out_dir: "work/y" }, env(cwd), bin));
+    assert.equal(none.status, "partial");
+    assert.match(none.status_basis, /listed no script/);
+    await stageDry(cwd, bin, { skipPolicy: true });
+    const missing = body(await tool(ZEEK, cwd, { dry_run: true, out_dir: "work/x", policies: ["policy/frameworks/files/hash-all-files"] }, env(cwd), bin));
+    assert.equal(missing.status, "partial");
+    assert.equal(missing.script_load_status.requested[0].loaded, false);
+    assert.match(missing.status_basis, /is not among the scripts Zeek listed/);
+  });
+});
+
+test("dry_run: a stop signal gives one JSON answer with the stage, exit 128 + signal, and kills Zeek and what it started", async () => {
+  for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]] as const) {
+    await withCwd(async (cwd, bin) => {
+      const dir = await stageDry(cwd, bin, { sleep: true });
+      const run = startDetached(ZEEK, cwd, { dry_run: true, out_dir: "work/z" }, env(cwd), bin);
+      for (let i = 0; i < 600 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
+      run.signal(sig);
+      assert.equal(await run.closed, code, sig);
+      const text = run.stdout();
+      const last = JSON.parse(text);
+      assert.equal(text.trim().split("\n").length >= 1 && JSON.stringify(last).length > 20, true);
+      assert.equal(last.status, "partial");
+      assert.equal(last.interrupted_by_signal, code - 128);
+      assert.equal(last.stage, "loading the policy");
+      const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
+      assert.equal(await gone(pid), true, `${sig}: what Zeek started is gone`);
+    });
+  }
 });

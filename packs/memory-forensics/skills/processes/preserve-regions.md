@@ -11,7 +11,9 @@ Use only if you will argue from a process's memory or read MemProcFS's file tree
 
 **With MemProcFS** the tree is files: processes, memory maps, handles and modules.
 `mem_fs` starts `memprocfs` for one call, does one thing with the tree and stops it,
-so the mount is gone when the call returns and nothing later can read it. Use its
+so the mount is released when the call returns and nothing later can read it, unless
+the clean-up failed: the answer then names a `cleanup` problem and the mount may remain.
+Use its
 list mode to see the virtual paths the image and the MemProcFS version actually
 expose, and its export mode to copy chosen files byte for byte into the job's
 `$OUT/mem_fs`:
@@ -21,7 +23,9 @@ expose, and its export mode to copy chosen files byte for byte into the job's
       "paths": ["<a virtual path from the listing>"]})
 
 The answer names each file and its status, never its content or digest; the sizes
-and digests are in `export-manifest.jsonl` beside the files. With Volatility
+and digests are in `export-manifest.jsonl` beside the files. Each file also
+has a ranges file (`items[].ranges.file`): ranges read, unavailable, not copied and
+zero-filled. With Volatility
 (`vol`) the same questions are plugins (`triage/volatility`, which also gives the
 dump option of each OS); record the version and the plugin name beside every
 result, since plugin output changes between versions.
@@ -31,7 +35,9 @@ output before you call anything injected: `mem_fs` export, or a plugin's dump, r
 with `secret_output: true`, because a process's memory can hold secrets. Record the
 image, the process (id, creation time, object address), the virtual interval, its
 protection, the method (plugin and options, or virtual path and MemProcFS
-version), any pages that were unavailable or zero-filled, and the output
+version), the unavailable and zero-filled ranges (read them from the ranges file, not by
+hand; zero-filled means the bytes are zeros, which MemProcFS also writes for a page it cannot
+read, so it is not proof that data is missing), and the output
 (`job:<id>/<path>`). The store holds the digest of the saved bytes. That shows what
 was saved, not that the region was complete or that injection happened; cite the job
 reference, and do not copy a digest of a sensitive output into a post. Recovered

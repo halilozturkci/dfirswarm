@@ -5,6 +5,7 @@ import { BudgetBar } from "@/components/swarm-bits";
 import { compact, money, pct, shortDuration } from "@/lib/format";
 import { useAgentNames } from "@/lib/hooks";
 import type { SwarmView } from "@/lib/types";
+import { meteringWords } from "@/lib/metering";
 import { cn } from "@/lib/utils";
 
 /** Spend folded by the model each agent runs on, from team.json. */
@@ -60,6 +61,7 @@ export function BudgetPanel({ view, elapsedMs }: { view: SwarmView; elapsedMs: n
   // A team of local models is not charged. Its numbers are tokens, its brake
   // is cap_tokens, and "$0.0000" would read as "nothing happened".
   const unmetered = b.metered === false;
+  const metering = meteringWords(b);
   const capTokens = typeof b.cap_tokens === "number" && b.cap_tokens > 0 ? b.cap_tokens : 0;
   const remainingTokens = capTokens > 0 ? Math.max(0, capTokens - b.tokens) : 0;
   const maxSpend = Math.max(0.0001, ...Object.values(b.agents).map((s) => s.spent_usd));
@@ -108,8 +110,8 @@ export function BudgetPanel({ view, elapsedMs }: { view: SwarmView; elapsedMs: n
                   <div className="mt-1 text-[12px] text-ink-3">{capTokens > 0 ? `remaining of ${compact(capTokens)} tokens` : "no token cap recorded"}</div>
                 </div>
                 <div>
-                  <div className="text-[20px] font-semibold leading-none tabular text-kelp-ink">free</div>
-                  <div className="mt-1 text-[12px] text-ink-3">no metered cost · local models</div>
+                  <div className="text-[20px] font-semibold leading-none tabular text-kelp-ink">{metering.label}</div>
+                  <div className="mt-1 text-[12px] text-ink-3">{metering.note}{metering.dollars_estimate ? " · Pi's dollars are an estimate" : ""}</div>
                 </div>
               </>
             ) : (
@@ -187,7 +189,7 @@ export function BudgetPanel({ view, elapsedMs }: { view: SwarmView; elapsedMs: n
                     const overCap = capped && m.spent_usd >= cap;
                     return (
                       <>
-                        <div className={cn("mt-1.5 text-[22px] font-semibold leading-none tabular", unmetered ? "text-kelp-ink" : overCap ? "text-brick-ink" : "text-ink")}>{unmetered ? "free" : money(m.spent_usd, 4)}</div>
+                        <div className={cn("mt-1.5 text-[22px] font-semibold leading-none tabular", unmetered ? "text-kelp-ink" : overCap ? "text-brick-ink" : "text-ink")}>{unmetered ? metering.label : money(m.spent_usd, 4)}</div>
                         {unmetered ? (
                           <BudgetBar spent={m.tokens} cap={Math.max(1, b.tokens)} className="mt-2" compactLabel unit="tokens" />
                         ) : capped ? (
@@ -293,7 +295,7 @@ export function BudgetPanel({ view, elapsedMs }: { view: SwarmView; elapsedMs: n
                   ) : null}
                 </td>
                 <td className="px-3 py-2" colSpan={9}>
-                  {unmetered ? "free" : money(b.agents[id].spent_usd)} · {b.agents[id].calls} calls · {compact(b.agents[id].tokens)} tokens
+                  {unmetered ? metering.label : money(b.agents[id].spent_usd)} · {b.agents[id].calls} calls · {compact(b.agents[id].tokens)} tokens
                 </td>
               </tr>
             ))}
@@ -303,7 +305,7 @@ export function BudgetPanel({ view, elapsedMs }: { view: SwarmView; elapsedMs: n
       <InlineNote>
         Numbers come from each Pi session's <code>sessionManager.getEntries()</code> Usage, folded into <code>budget.json</code> on every turn end — the same fields as Pi's footer.{" "}
         {unmetered
-          ? `No metered cost: every model on this team is served from this machine or network, so Pi computes $0 for every call. The brake is ${capTokens > 0 ? `${compact(capTokens)} tokens` : "the wall clock alone"}${capTokens > 0 ? " and the wall clock" : ""}.`
+          ? `${metering.sentence} The brake is ${capTokens > 0 ? `${compact(capTokens)} tokens` : "the wall clock alone"}${capTokens > 0 ? " and the wall clock" : ""}.`
           : "Zero means the agent has not reported a turn yet."}
         {perAgentCap > 0 ? " An agent at its own cap is steered to post and stop; the swarm goes on." : ""}
       </InlineNote>

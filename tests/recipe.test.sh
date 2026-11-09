@@ -114,8 +114,10 @@ NEW_PACKS = {"macos-forensics", "cloud-forensics", "triage-collection"}
 BASE_PACK = "computer-forensics-base"
 # Documented in the changelog and images/README.md: no profile but full holds
 # these pairs, which a smaller one used to serve by chance.
-BY_HOLDING = {"encrypted-containers+ransomware-response", "memory-forensics+ransomware-response",
-              "ransomware-response+windows-forensics"}
+# The `ransomware` profile holds two of the three (it is disk plus ransomware-response,
+# and no bigger than disk in programs); only full holds the third.
+BY_HOLDING = {"encrypted-containers+ransomware-response": "ransomware", "memory-forensics+ransomware-response": "full",
+              "ransomware-response+windows-forensics": "ransomware"}
 # Where the base pack's own jobs run (the third value of each entry). The set
 # of images a run boots does not change for a run without a pack of the new
 # profiles, but the base pack, which every profile holds, runs in another image
@@ -148,7 +150,7 @@ def booted(run, base_job=False):
 
 frozen = json.loads((root / "tests" / "fixtures" / "job-images-main.json").read_text())
 assert len(frozen) >= 90, len(frozen)
-assert BY_HOLDING <= set(frozen) and BASE_PACK in frozen, "the frozen table lacks a documented run"
+assert set(BY_HOLDING) <= set(frozen) and BASE_PACK in frozen, "the frozen table lacks a documented run"
 differing, placed = set(), set()
 for key, (old_default, old_images, old_base) in frozen.items():
     new_default, new_images, new_base = booted(key.split("+"), base_job=True)
@@ -165,7 +167,7 @@ for key, (old_default, old_images, old_base) in frozen.items():
         continue
     differing.add(key)
     if key in BY_HOLDING:
-        assert new_default == "full" and new_images == sorted(set(old_images) | {"full"}), (key, old_default, old_images, new_default, new_images)
+        assert new_default == BY_HOLDING[key] and new_images == sorted(set(old_images) | {BY_HOLDING[key]}), (key, old_default, old_images, new_default, new_images)
     elif key == BASE_PACK:
         assert (new_default, new_images) == ("core", ["core"]), (key, new_default, new_images)
     elif NEW_PACKS & set(key.split("+")):
@@ -173,7 +175,7 @@ for key, (old_default, old_images, old_base) in frozen.items():
             (key, "may differ only by a new profile", old_default, old_images, new_default, new_images)
     else:
         raise AssertionError(f"{key}: booted {old_default} {old_images} before the new profiles, {new_default} {new_images} now")
-assert BY_HOLDING | {BASE_PACK} <= differing, "a documented difference no longer differs: " + str(sorted((BY_HOLDING | {BASE_PACK}) - differing))
+assert set(BY_HOLDING) | {BASE_PACK} <= differing, "a documented difference no longer differs: " + str(sorted((set(BY_HOLDING) | {BASE_PACK}) - differing))
 assert placed == set(PLACED), "a documented move of the base pack's jobs no longer happens, or a new one does: " + str(sorted(placed ^ set(PLACED)))
 # What the table cannot say for the runs that name a new profile's pack.
 assert booted(["mobile-forensics"]) == ("mobile", ["mobile"]), booted(["mobile-forensics"])
@@ -190,14 +192,33 @@ assert booted(["cloud-forensics"]) == ("cloud", ["cloud"]) and booted(["triage-c
 assert table["core"]["packs"] == [BASE_PACK] and members["core"] == {BASE_PACK}, members["core"]
 # The tie rule: of the profiles that hold what the run needs, full last, then
 # the fewest packs, then the fewest programs those packs name, then the name.
-# The base pack alone is held by ten profiles of one to three packs. Pinned:
+# The base pack alone is held by eleven profiles of one to five packs. Pinned:
 # a change of the result is a decision (change this, images/README.md and the
 # changelog together), not an accident of the order of profiles.json.
 named = lambda n: len(recipe.needs_of(recipe.PACKS, sorted(members[n]))[1])
 holders = sorted(n for n, m in members.items() if n not in ("full", "base") and BASE_PACK in m)
-assert len(holders) == 10 and "core" in holders, holders
+assert len(holders) == 11 and "core" in holders, holders
 expected = min(holders, key=lambda n: (len(members[n]), named(n), n))
 assert chosen[BASE_PACK] == expected == "core", (chosen[BASE_PACK], expected)
+
+# A smaller image for ransomware with windows artefacts: ransomware-response and
+# windows-forensics together resolve to `ransomware`, which holds fewer packs and
+# names fewer programs than `full`; the `re` profile keeps ransomware-response,
+# and windows-forensics alone stays on `disk`. Every pair of packs still resolves
+# to a profile that holds it, and fewer of them fall to `full` (61 of 66 before).
+import itertools
+assert "ransomware" in members and {"ransomware-response", "windows-forensics"} <= members["ransomware"], members.get("ransomware")
+assert recipe.profile_for(recipe.PACKS, ["ransomware-response", "windows-forensics"]) == "ransomware"
+assert len(members["ransomware"]) < len(members["full"]), "the ransomware profile is no smaller than full"
+assert len(recipe.needs_of(recipe.PACKS, sorted(members["ransomware"]))[1]) < len(recipe.needs_of(recipe.PACKS, sorted(members["full"]))[1])
+assert "ransomware-response" in members["re"] and chosen["ransomware-response"] == "re" and chosen["windows-forensics"] == "disk"
+by_pair = {}
+non_base = [p for p in packs if p != BASE_PACK]
+for a, b in itertools.combinations(non_base, 2):
+    got = recipe.profile_for(recipe.PACKS, [a, b])
+    assert got in members and {a, b} <= members[got], (a, b, got)
+    by_pair[got] = by_pair.get(got, 0) + 1
+assert sum(by_pair.values()) == 66 and by_pair.get("full", 0) < 61 and by_pair.get("ransomware", 0) >= 3, by_pair
 # Unlisted packs (an installed pro or third-party pack that no profile lists)
 # are matched by what they name, and `core`, the smallest profile, covers
 # what the base pack covers:
@@ -445,6 +466,29 @@ jq -e '.downloads[] | select(.name == "memprocfs") | .amd64.sha256 and .arm64.sh
 grep -q 'dev.dfirswarm.redistributable="false"' "$TMP/ctx/Dockerfile" || fail "the image's label does not say so"
 python3 "$R" build web --out "$TMP/ctx-web" >/dev/null || fail "web holds no pack program and should build without the flag"
 grep -q 'dev.dfirswarm.redistributable' "$TMP/ctx-web/Dockerfile" && fail "a profile with nothing held back must inherit the base's label, not claim its own"
+# OD-10: an operator's acquisition program (avml, uac, velociraptor, PowerShell,
+# the AWS CLI) is declared with its pinned download for the operator to take to
+# the source, and is not installed: it is listed as not applicable, never under
+# the programs, downloads or apt lines the image installs.
+for pair in memory:avml triage:uac,velociraptor cloud:pwsh,aws full:avml,uac,velociraptor,pwsh,aws; do
+  prof="${pair%%:*}"
+  python3 "$R" build "$prof" --out "$TMP/ctx-od10-$prof" --allow-nonredistributable --symbol-set broad >/dev/null 2>"$TMP/od10-$prof.err" \
+    || fail "the $prof build failed: $(cat "$TMP/od10-$prof.err")"
+  for prog in $(tr , " " <<<"${pair#*:}"); do
+    ps="$TMP/ctx-od10-$prof/spec.json"
+    jq -e --arg p "$prog" '[.not_applicable[].name] | index($p)' "$ps" >/dev/null || fail "$prog is not listed as not applicable in the $prof spec"
+    jq -e --arg p "$prog" '[.binaries[].name, .downloads[].name] | index($p) | not' "$ps" >/dev/null || fail "the $prof image would install $prog, which OD-10 keeps out"
+    jq -e --arg p "$prog" '.apt | has($p) | not' "$ps" >/dev/null || fail "the $prof image would apt-install $prog"
+  done
+done
+jq -e '.binaries | length > 0' "$TMP/ctx-od10-cloud/spec.json" >/dev/null || fail "the cloud spec lost its other programs"
+# Dropped programs are declared by no pack.
+for dropped in tcpick idevicebackup2; do
+  for h in "$ROOT"/packs/*/requires/host.json; do
+    jq -e --arg d "$dropped" '[.binaries[].name] | index($d) | not' "$h" >/dev/null || fail "$h still declares $dropped, which OD-10 drops"
+  done
+done
+pass "avml, uac, velociraptor, pwsh and aws are not applicable in memory, triage, cloud and full and installed in none; tcpick and idevicebackup2 are declared nowhere"
 grep -q 'dev.dfirswarm.redistributable="${REDISTRIBUTABLE}"' "$ROOT/images/base.Dockerfile" || fail "the base image does not carry the redistributable label"
 grep -q 'COPY install.py spec.json NOTICE' "$TMP/ctx/Dockerfile" || fail "the NOTICE does not go into the image"
 grep -qF 'vol  (memory-forensics)  Volatility Software License 1.0 (https://github.com/volatilityfoundation/volatility3/blob/develop/LICENSE.txt)' "$TMP/ctx/NOTICE" \
@@ -612,6 +656,27 @@ jq -e '[.downloads[].name] == ["deb-tool"] and [.sources[].name] == ["src-tool"]
 jq -e '.manual == [] and .not_applicable == [{"name": "mac-only", "pack": "reverse-engineering", "why": "Only macOS has it."}]
        and ([.binaries[].name] | index("mac-only") == null)' "$spec" >/dev/null \
   || fail "another system's program is not listed as not applicable, or is still expected in the image: $(jq -c '{manual, not_applicable}' "$spec")"
+# The data a pack pins for a program that is not in the image (definitions a tool reads, not a program it runs) is installed all the same: the rule
+# goes by kind (not_in_image with install.data), never by a program's or a pack's name.
+fake2="$TMP/fakepacks-data/reverse-engineering"
+mkdir -p "$fake2/requires" "$TMP/fakepacks-data/ransomware-response/requires"
+printf '{"id": "reverse-engineering", "name": "f", "version": "1.0.0", "description": "f", "licence": "MIT", "depends": []}
+' > "$fake2/pack.json"
+cat > "$fake2/requires/host.json" <<JSON
+{"binaries": [
+ {"name": "collector-only", "optional": true, "why": "t", "licence": "MIT", "redistributable": false,
+  "install": {"data": [{"version": "1.2", "url": "https://example.org/collector-only-1.2.tar.gz", "sha256": "$sha", "bytes": 1, "package": "pip", "into": "defs"}]},
+  "not_in_image": "A collector, run on the host to be collected."},
+ {"name": "plain-gone", "optional": true, "why": "t", "licence": "MIT", "redistributable": false, "not_in_image": "Only macOS has it."}
+]}
+JSON
+printf '{"id": "ransomware-response", "name": "f", "version": "1.0.0", "description": "f", "licence": "MIT", "depends": []}
+' > "$TMP/fakepacks-data/ransomware-response/pack.json"
+printf '{"binaries": []}
+' > "$TMP/fakepacks-data/ransomware-response/requires/host.json"
+python3 "$R" build re --packs "$TMP/fakepacks-data" --out "$TMP/ctx-notin-data" --allow-nonredistributable >/dev/null || fail "a context for a program that is not in the image, with data, could not be written"
+jq -e '[.data[] | select(.program == "collector-only") | .name] == ["collector-only-data"] and ([.data[] | select(.program == "plain-gone")] == [])
+       and ([.not_applicable[].name] | sort) == ["collector-only", "plain-gone"] and ([.binaries[].name] | index("collector-only") == null)' "$TMP/ctx-notin-data/spec.json" >/dev/null   || fail "the data of a program that is not in the image is dropped, or the program is expected in the image: $(jq -c '{data: [.data[].name], na: [.not_applicable[].name], b: [.binaries[].name]}' "$TMP/ctx-notin-data/spec.json")"
 grep -q '^mac-only  (reverse-engineering)  Only macOS has it.' "$TMP/ctx-kinds/NOTICE" || fail "the NOTICE does not say which programs belong to another system"
 df="$TMP/ctx-kinds/Dockerfile"
 grep -q '^FROM ${BASE} AS build-built-tool$' "$df" || fail "a program built from source has no builder stage: $(cat "$df")"
@@ -785,7 +850,7 @@ tar -czf "$D/tool-1.0.tar.gz" -C "$D/src" tool-1.0
 tool_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$D/tool-1.0.tar.gz")"
 patch_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$D/fix.patch")"
 bad_patch_sha="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$D/bad.patch")"
-res="$(PYTHONPATH="$D/site" DFIRSWARM_VENV="$D/venv" DFIRSWARM_TOOLS_DIR="$D/tools" DFIRSWARM_BUILD_DIR="$D/work" PATH="$D/bin:$PATH" \
+res="$(PYTHONPATH="$D/site" DFIRSWARM_VENV="$D/venv" DFIRSWARM_TOOLS_DIR="$D/tools" DFIRSWARM_DATA_DIR="$D/data" DFIRSWARM_BUILD_DIR="$D/work" PATH="$D/bin:$PATH" \
        python3 - "$ROOT/images" "$D" "$data_sha" "$tool_sha" "$patch_sha" "$bad_patch_sha" <<'EOF'
 import json, os, sys
 sys.path.insert(0, sys.argv[1])
@@ -811,6 +876,14 @@ got, why = install.fetch_data({**d, "into": "../outside"})
 out["escape"] = [bool(got), why, os.path.exists(f"{D}/site/outside")]
 got, why = install.fetch_data({**d, "file": "named.zip"})
 out["named"] = [bool(got), os.path.basename((got or {}).get("path", ""))]
+# Definitions a tool reads by a path: an absolute directory under the data root, no package.
+ad = {k: v for k, v in d.items() if k != "package"}
+got, why = install.fetch_data({**ad, "into": f"{D}/data/triage-definitions/x-1"})
+out["abs_good"] = [bool(got), why, os.path.isfile(f"{D}/data/triage-definitions/x-1/pack.zip"), (got or {}).get("kind")]
+for bad_into in (f"{D}/data/../outside", f"{D}/elsewhere", f"{D}/data"):
+    got, why = install.fetch_data({**ad, "into": bad_into})
+    out.setdefault("abs_bad", []).append([bool(got), why])
+out["abs_outside_exists"] = os.path.exists(f"{D}/outside") or os.path.exists(f"{D}/elsewhere")
 for bad_name in ("../../escape.bin", "sub/escape.bin", "..", "a\\b"):
     got, why = install.fetch_data({**d, "file": bad_name, "into": "named"})
     out.setdefault("bad_names", []).append([bool(got), why])
@@ -861,6 +934,9 @@ jq -e '.warm_fails == [true, "failed"]' <<<"$res" >/dev/null || fail "a warm com
 jq -e '.bad_sha[0] == false and (.bad_sha[1] | test("is not the pinned")) and .bad_sha[2] == false' <<<"$res" >/dev/null || fail "data with other bytes was kept: $res"
 jq -e '.no_package[0] == false and (.no_package[1] | test("is not in the image"))' <<<"$res" >/dev/null || fail "data for a package the image lacks was put somewhere: $res"
 jq -e '.escape[0] == false and (.escape[1] | test("leaves the package")) and .escape[2] == false' <<<"$res" >/dev/null || fail "data was put outside its package's directory: $res"
+jq -e '.abs_good == [true, null, true, "data"]' <<<"$res" >/dev/null || fail "a data file with an absolute directory under the data root and no package was not installed: $res"
+jq -e '.abs_bad | length == 3 and all(.[]; .[0] == false and (.[1] | test("is not a directory under")))' <<<"$res" >/dev/null || fail "an absolute data directory outside the data root was accepted: $res"
+jq -e '.abs_outside_exists == false' <<<"$res" >/dev/null || fail "a data file was written outside the data root"
 jq -e '.named == [true, "named.zip"]' <<<"$res" >/dev/null || fail "a data file does not take the name its pack gives it: $res"
 jq -e '.bad_names | length == 4 and all(.[]; .[0] == false and (.[1] | test("not a plain name")))' <<<"$res" >/dev/null || fail "a data file name that climbs out of the directory, or names a path, was accepted: $res"
 jq -e '.escaped_file_exists == false' <<<"$res" >/dev/null || fail "a data file was written outside its directory by its name"
@@ -976,6 +1052,57 @@ grep -q '^- `other-tables` (p3) — data not installed: download failed: 404$' "
 grep -q '`other-tables` — More tables' "$tm" && fail "a data file that is not in the image is listed as held"
 pass "every image writes tools.md: its programs and libraries one a line, with use, pack and recorded version, and what it does not hold"
 
+# A binary entry may say which instruction sets it decodes (isa) and which file formats it reads (formats): the lists reach the built
+# spec and tools.md prints them on the program's line. An entry without them prints exactly as before; a program two packs declare
+# shows the union; a value that is not a list of short strings is refused by name.
+IS="$TMP/isa"
+mkdir -p "$IS/fx1/requires" "$IS/fx2/requires" "$IS/fx3/requires" "$IS/fx4/requires"
+for p in fx1 fx2 fx3 fx4; do printf '{"name":"%s","version":"1.0.0"}\n' "$p" > "$IS/$p/pack.json"; done
+cat > "$IS/fx1/requires/host.json" <<'EOF'
+{"binaries": [
+  {"name": "disasm", "why": "Disassembles code.", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "isa": ["x86-64", "aarch64"], "formats": ["ELF", "PE"]},
+  {"name": "plain", "why": "Has no lists.", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}},
+  {"name": "shared", "why": "Declared twice.", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "isa": ["x86-64"], "formats": ["ELF"]},
+  {"name": "empty", "why": "Empty lists.", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "isa": [], "formats": []}]}
+EOF
+cat > "$IS/fx2/requires/host.json" <<'EOF'
+{"binaries": [
+  {"name": "shared", "why": "Declared twice.", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "isa": ["x86-64", "arm"], "formats": ["Mach-O"]}]}
+EOF
+echo '{"binaries": [{"name": "bad", "why": "x", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "isa": "x86-64"}]}' > "$IS/fx3/requires/host.json"
+echo '{"binaries": [{"name": "bad", "why": "x", "licence": "MIT", "install": {"apt": "apt-get install -y binutils"}, "formats": ["ELF", 7, "a\nb"]}]}' > "$IS/fx4/requires/host.json"
+isa_out="$(python3 - "$ROOT/images" "$IS" <<'EOF'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import recipe, install
+packs = Path(sys.argv[2])
+spec = recipe.merge([recipe.read_pack(packs, "fx1"), recipe.read_pack(packs, "fx2")])
+by = {}
+for b in spec["binaries"]:
+    by.setdefault(b["name"], []).append({k: b.get(k) for k in ("isa", "formats")})
+print("SPEC " + json.dumps(by, sort_keys=True))
+record = {"profile": "disk", "packs": ["fx1", "fx2"], "binaries": {n: "/usr/bin/" + n for n in ("disasm", "plain", "shared", "empty")}, "apt": {}}
+print(install.tools_md(record, spec))
+for bad in ("fx3", "fx4"):
+    try:
+        recipe.read_pack(packs, bad)
+        print("ACCEPTED " + bad)
+    except SystemExit as e:
+        print("REFUSED " + str(e))
+EOF
+)" || fail "the isa/formats case could not run: $isa_out"
+grep -q '^SPEC .*"disasm": \[{"formats": \["ELF", "PE"\], "isa": \["x86-64", "aarch64"\]}\]' <<<"$isa_out" || fail "isa and formats did not reach the built spec: $isa_out"
+grep -q '^SPEC .*"plain": \[{"formats": null, "isa": null}\]' <<<"$isa_out" || fail "an entry without the fields gained them: $isa_out"
+grep -q '^SPEC .*"empty": \[{"formats": null, "isa": null}\]' <<<"$isa_out" || fail "empty lists were carried: $isa_out"
+grep -q '^- `disasm` — Disassembles code\. (fx1) — decodes: x86-64, aarch64; reads: ELF, PE$' <<<"$isa_out" || fail "tools.md does not print isa and formats on the program's line: $isa_out"
+grep -q '^- `plain` — Has no lists\. (fx1)$' <<<"$isa_out" || fail "an entry without them is not printed exactly as before: $isa_out"
+grep -q '^- `empty` — Empty lists\. (fx1)$' <<<"$isa_out" || fail "an entry with empty lists is not printed as before: $isa_out"
+grep -q '^- `shared` — Declared twice\. (fx1, fx2) — decodes: x86-64, arm; reads: ELF, Mach-O$' <<<"$isa_out" || fail "a program two packs declare does not show the union of their lists: $isa_out"
+grep -q '^REFUSED recipe: fx3: requires/host.json: bad.s isa must be a list of short strings' <<<"$isa_out" || fail "isa that is not a list was not refused by name: $isa_out"
+grep -q '^REFUSED recipe: fx4: requires/host.json: bad.s formats must be a list of short strings' <<<"$isa_out" || fail "formats with a non-string or a newline was not refused by name: $isa_out"
+pass "isa and formats on a binary entry reach the spec and tools.md prints them, the union for a program two packs declare; without them the line is as before; other values are refused by name"
+
 # --- what a pack may declare ---------------------------------------------------
 mk() { # <dir> <download json>
   mkdir -p "$1/requires" "$1/skills/a"
@@ -1049,6 +1176,40 @@ for bad in '{'"$e"', "install": {"source": {"version": "1", '"$u"'}}}' \
   bash "$ROOT/scripts/pack.sh" seal "$TMP/p/bad-kind" >/dev/null 2>&1 && fail "an entry that cannot be checked, or another system's program required of an image, was sealed: $bad"
 done
 pass "a pinned source needs its entry, a build its program inside its prefix and pinned patches and argument lists, data its package, licence and a path inside it, a .deb the path it installs, and another system's program is never required"
+
+# --- facts: what the build records about a program -----------------------------
+# An entry's `facts` is a list of argument lists, each starting with the
+# program itself and having at least one argument after it; the seal refuses
+# any other shape, and recipe.py hands the lists to the install.
+for good in '{'"$e"', "facts": [["tool", "--version"]]}' \
+            '{'"$e"', "facts": [["tool", "--version"], ["tool", "-G", "fields"]]}'; do
+  mk_entry "$TMP/p/good-facts" "$good"
+  bash "$ROOT/scripts/pack.sh" seal "$TMP/p/good-facts" >/dev/null 2>&1 || fail "a well-formed facts entry was refused: $good"
+done
+for bad in '{'"$e"', "facts": []}' '{'"$e"', "facts": [["tool"]]}' '{'"$e"', "facts": [[]]}' \
+           '{'"$e"', "facts": [["other", "--version"]]}' '{'"$e"', "facts": ["tool --version"]}' \
+           '{'"$e"', "facts": [["tool", 3]]}' '{'"$e"', "facts": [["tool", ""]]}' '{'"$e"', "facts": "tool --version"}'; do
+  mk_entry "$TMP/p/bad-facts" "$bad"
+  bash "$ROOT/scripts/pack.sh" seal "$TMP/p/bad-facts" >/dev/null 2>&1 && fail "a facts entry of the wrong shape was sealed: $bad"
+done
+mk_entry "$TMP/p/good-facts" '{'"$e"', "facts": [["tool", "--version"], ["tool", "-G", "fields"]]}'
+python3 - "$ROOT/images" "$TMP/p" <<'EOF' || fail "recipe.py does not hand an entry's facts to the install"
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import recipe
+spec = recipe.read_pack(Path(sys.argv[2]), "good-facts")
+assert spec["binaries"][0]["facts"] == [["tool", "--version"], ["tool", "-G", "fields"]], spec["binaries"]
+EOF
+jq -e '[.binaries[] | select(.name == "tshark") | .facts] == [[["tshark", "--version"], ["tshark", "-G", "fields"]]]' \
+  <(python3 - "$ROOT/images" <<'EOF'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import recipe
+print(json.dumps(recipe.read_pack(recipe.PACKS, "network-forensics")))
+EOF
+) >/dev/null || fail "the network pack's tshark entry does not name tshark --version and tshark -G fields"
+pass "an entry's facts are argument lists that start with its program; the seal refuses any other shape, recipe.py passes them on, and tshark names its version and field list"
 
 # --- the tool library's imports are in every image ----------------------------
 # Read from each script's syntax tree, not its lines: an import inside a
@@ -1163,5 +1324,143 @@ grep -q '^broad (line 2): pyewf is declared optional and imported outside a try'
 grep -q '^stale: optional_python names numpy, which it never imports' <<<"$got" || fail "a declaration nothing imports was not named: $got"
 grep -q '^guarded' <<<"$got" && fail "the guarded tool was refused beside the others: $got"
 pass "the library check sees imports by name, refuses a computed one, and holds a declared optional module to a guard that catches ImportError"
+
+# --- an apt-installed program is pinned the way the image pin policy says -------
+# The apt lines of the packs are not edited: every image installs from the
+# Debian snapshot dated in images/debian-snapshot. So an entry with an apt line
+# must not say that its version is unpinned, and the yara entry of the
+# ransomware pack must say how it is pinned.
+python3 - "$ROOT" <<'PYEOF' || fail "a host.json entry with an apt line says it is unpinned, or the yara entry does not say how the snapshot pins it"
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+bad = []
+for f in sorted(root.glob("packs/*/requires/host.json")):
+    for b in json.loads(f.read_text(encoding="utf-8")).get("binaries", []):
+        if (b.get("install") or {}).get("apt") and "not pinned here" in b.get("why", ""):
+            bad.append(f"{f.parent.parent.name}/{b['name']}: says its version is not pinned")
+yara = next(b for b in json.loads((root / "packs/ransomware-response/requires/host.json").read_text(encoding="utf-8"))["binaries"] if b["name"] == "yara")
+if "images/debian-snapshot" not in yara["why"]:
+    bad.append("ransomware-response/yara: does not name the snapshot that pins it")
+if "Homebrew" not in yara["why"]:
+    bad.append("ransomware-response/yara: does not say Homebrew stays unpinned")
+if yara.get("optional") is not True or yara.get("redistributable") is not False:
+    bad.append("ransomware-response/yara: optional or redistributable changed")
+if bad:
+    print("\n".join(bad), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+python3 "$R" build re --out "$TMP/re-ctx" --allow-nonredistributable >/dev/null 2>&1 || fail "the re profile did not build a context"
+jq -e '.apt | has("yara")' "$TMP/re-ctx/spec.json" >/dev/null || fail "yara is not in the re profile's spec"
+pass "yara is pinned by the image's apt snapshot, said in its entry, and no apt entry claims to be unpinned"
+
+# --- every pip line of the pinned packs is == with a hash lock ------------------
+# OD-10: a pip requirement is pinned with == and installed with hashes. For the
+# packs below (the others are still to be done by their own packages) every
+# `python3 -m pip install` line is ==, names a pip_lock that exists, is a hash
+# lock (images/install.py lock_problem) and holds each word's version; every
+# python.txt line is == and held by the pack's python.lock at that version; a
+# pinned source's pip_lock is a hash lock too. Across the sets that share the
+# image's venv (python.lock, a program's pip_lock, library-python.lock) one package
+# is at one version, since the later install would otherwise replace the earlier.
+python3 - "$ROOT" <<'PYEOF' || fail "a pip line of a pinned pack is not == with a hash lock, or two locks of one venv disagree"
+import importlib.util, json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("install", root / "images" / "install.py")
+inst = importlib.util.module_from_spec(spec); spec.loader.exec_module(inst)
+# pack -> the programs checked (None: all). reverse-engineering: only the two pip programs its pins cover; capa's brew line is that pack's own.
+PINNED = {"computer-forensics-base": None, "linux-forensics": None, "mobile-forensics": None, "encrypted-containers": None, "reverse-engineering": {"floss", "olevba"}}
+PIP = re.compile(r"^python3 -m pip install (.+)$")
+def norm(n): return re.sub(r"[-_.]+", "-", n).lower()
+def held(lock_text):
+    out = {}
+    for m in re.finditer(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==([^\s\;]+)", lock_text, flags=re.M):
+        out[norm(m.group(1))] = m.group(2)
+    return out
+bad, shared = [], []   # shared: (where, {name: version}) of every lock that installs into the image's venv
+def check_lock(where, rel, base):
+    path = base / rel
+    if not path.is_file():
+        bad.append(f"{where}: lock {rel} does not exist"); return None
+    text = path.read_text(encoding="utf-8")
+    why = inst.lock_problem(text)
+    if why:
+        bad.append(f"{where}: {rel} is not a hash lock: {why}"); return None
+    return held(text)
+for pack, only in PINNED.items():
+    pdir = root / "packs" / pack / "requires"
+    for b in json.loads((pdir / "host.json").read_text(encoding="utf-8")).get("binaries", []):
+        inst_ = b.get("install") or {}
+        if only is not None and b["name"] not in only:
+            continue
+        for route in ("brew", "apt"):
+            m = PIP.match(inst_.get(route, ""))
+            if not m:
+                continue
+            where = f"{pack}/{b['name']} ({route})"
+            words = m.group(1).split()
+            lock = check_lock(where, inst_.get("pip_lock", ""), pdir.parent) if inst_.get("pip_lock") else None
+            if lock is None and not inst_.get("pip_lock"):
+                bad.append(f"{where}: pip install without a pip_lock"); continue
+            for w in words:
+                n, eq, v = w.partition("==")
+                if not eq:
+                    bad.append(f"{where}: {w} is not pinned with ==")
+                elif lock is not None and lock.get(norm(n)) != v:
+                    bad.append(f"{where}: the lock does not hold {w}")
+            if lock is not None and route == "apt":
+                shared.append((where, lock))
+        src = inst_.get("source")
+        if isinstance(src, dict):
+            if src.get("pip_lock"):
+                check_lock(f"{pack}/{b['name']} (source)", src["pip_lock"], pdir.parent)
+            elif only is None and (src.get("pip") or src.get("pip_after")):
+                bad.append(f"{pack}/{b['name']} (source): pip arguments without a pip_lock")
+            # what pip installs outside the lock is == or a commit: an option, `.`, name==x, or a URL of a 40-hex commit (an archive URL may carry #sha256=<64 hex>, which pip checks)
+            for key in ("pip", "pip_after"):
+                for e in src.get(key) or []:
+                    if not (e.startswith("-") or e == "." or "==" in e or re.search(r"@[0-9a-f]{40}$|/archive/[0-9a-f]{40}\.tar\.gz(#sha256=[0-9a-f]{64})?$", e)):
+                        bad.append(f"{pack}/{b['name']} (source): {key} {e} is not == or a commit")
+    txt, lockf = pdir / "python.txt", pdir / "python.lock"
+    wants = [l.split("#")[0].strip() for l in txt.read_text(encoding="utf-8").splitlines() if l.split("#")[0].strip()] if txt.exists() else []
+    if wants:
+        lock = check_lock(f"{pack} python.txt", "python.lock", pdir)
+        for w in wants:
+            n, eq, v = w.partition("==")
+            if not eq:
+                bad.append(f"{pack} python.txt: {w} is not pinned with ==")
+            elif lock is not None and lock.get(norm(n)) != v:
+                bad.append(f"{pack} python.lock does not hold {w}")
+        if lock is not None:
+            shared.append((f"{pack} python.lock", lock))
+# the tool library's list: == and held by the lock the base Dockerfile installs with hashes
+lib = [l.split("#")[0].strip() for l in (root / "images" / "library-python.txt").read_text(encoding="utf-8").splitlines() if l.split("#")[0].strip()]
+libl = check_lock("images/library-python.lock", "library-python.lock", root / "images")
+for w in lib:
+    n, eq, v = w.partition("==")
+    if not eq:
+        bad.append(f"images/library-python.txt: {w} is not pinned with ==")
+    elif libl is not None and libl.get(norm(n)) != v:
+        bad.append(f"images/library-python.lock does not hold {w}")
+if libl is not None:
+    shared.append(("images/library-python.lock", libl))
+dock = (root / "images" / "base.Dockerfile").read_text(encoding="utf-8")
+if not re.search(r"pip install [^\n]*--require-hashes -r /tmp/dfirswarm-build/library-python\.lock", dock) or "COPY library-python.txt library-python.lock " not in dock:
+    bad.append("images/base.Dockerfile does not install library-python.lock with --require-hashes")
+seen = {}
+for where, lock in shared:
+    for n, v in lock.items():
+        if n in seen and seen[n][1] != v:
+            bad.append(f"{n} is {seen[n][1]} in {seen[n][0]} and {v} in {where}: one venv, one version")
+        seen.setdefault(n, (where, v))
+if bad:
+    print("\n".join(bad), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+python3 "$R" build core --out "$TMP/core-pins" --allow-nonredistributable >/dev/null 2>&1 || fail "the core profile did not build a context"
+jq -e '[.pip_locks[].program] | (index("log2timeline") and index("psort") and index("pinfo") and index("target-query"))' "$TMP/core-pins/spec.json" >/dev/null \
+  || fail "plaso and dissect are not installed from hash locks in core: $(jq -c '[.pip_locks[].program]' "$TMP/core-pins/spec.json")"
+jq -e '.python_locks | map(select(.pack == "computer-forensics-base")) | length == 1' "$TMP/core-pins/spec.json" >/dev/null || fail "the base pack's python.lock (Pillow) is not in core's spec"
+jq -e '.sources[] | select(.name == "ccl_indexeddb_dump") | .pip_lock.sha256 | test("^[0-9a-f]{64}$")' "$TMP/core-pins/spec.json" >/dev/null || fail "the ccl venv's lock is not in core's spec with its sha256"
+pass "every pip line of the base, linux, mobile, encrypted-containers and reverse-engineering packs and the tool library is == with a hash lock that holds it; the locks of one venv agree; core's spec installs plaso, dissect, Pillow and the ccl venv from locks"
 
 echo "recipe: all checks passed"

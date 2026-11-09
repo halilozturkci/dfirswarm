@@ -18,6 +18,7 @@ import { chmod, mkdir, readFile, readdir, stat, symlink, writeFile } from "node:
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
 
 const ENC = join(ROOT, "packs", "encrypted-containers", "tools");
 const SCAN = join(ENC, "recovery_key_scan", "run.py");
@@ -1238,15 +1239,12 @@ test("archive_probe streams a 7-Zip header's printable strings in offset order, 
   });
 });
 
-const MEMORY_DRIVER = String.raw`
-import json, os, resource, subprocess, sys
+const MEMORY_DRIVER = peakRssPrelude() + String.raw`
+import json, os, subprocess
 tool, cwd, path = sys.argv[1], sys.argv[2], sys.argv[3]
 env = dict(os.environ, AGENT_ID="s1", PYTHONPATH=os.path.join(cwd, "nosite"))
-p = subprocess.run([sys.executable, tool], input=json.dumps({"path": path, "limit": 3, "max_metadata_bytes": 33554432}),
-                   capture_output=True, text=True, cwd=cwd, env=env)
-rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-if sys.platform != "darwin":
-    rss *= 1024
+p, rss = run_peak([sys.executable, tool], input=json.dumps({"path": path, "limit": 3, "max_metadata_bytes": 33554432}),
+                  capture_output=True, text=True, cwd=cwd, env=env)
 out = json.loads(p.stdout)
 print(json.dumps({"code": p.returncode, "rss_mib": rss / 2**20, "count": out.get("header_strings_hint_count")}))
 `;

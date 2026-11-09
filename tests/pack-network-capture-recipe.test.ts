@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { RECIPE, drop, exists, frameTcp4, gone, pcapClassic, pidFile, startDetached, stub, TCP, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const TSHARK = `#!/bin/sh
 printf '%s\\n' "$*" >> "$STUB_LOG"
@@ -97,7 +98,7 @@ async function coverage(cwd: string, out: string): Promise<Json> {
   return JSON.parse(await readFile(join(cwd, out, "coverage.json"), "utf8"));
 }
 
-test("a run lists the selected fields of every packet and of DNS, HTTP and TLS, records the versions, counts truncated packets, and says which table can hold secrets", async () => {
+test("a run lists the selected fields of every packet and of DNS, HTTP and TLS, records the versions, counts truncated packets, and says which table can hold secrets", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, { tables: { packets: PACKETS, dns: TABLE(["frame.number"], 2), http: TABLE(["frame.number"], 3), tls: TABLE(["frame.number"], 1) } });
     const result = await recipe(cwd, bin, ["run", "--target", target(await capture(cwd)), "--out", "work/cat"]);
@@ -135,7 +136,7 @@ test("a run lists the selected fields of every packet and of DNS, HTTP and TLS, 
   });
 });
 
-test("HTTP/2 and QUIC are listed only when the installed tshark lists their fields, and only with the fields it lists", async () => {
+test("HTTP/2 and QUIC are listed only when the installed tshark lists their fields, and only with the fields it lists", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, { tables: { packets: PACKETS, dns: TABLE(["frame.number"], 0), http: TABLE(["frame.number"], 0), tls: TABLE(["frame.number"], 0) } });
     const none = await recipe(cwd, bin, ["run", "--target", target(await capture(cwd)), "--out", "work/a"]);
@@ -357,7 +358,7 @@ test("every field a listing asks for is checked against the build: one the build
   });
 });
 
-test("the output directory is private (0700), every file the recipe writes is 0600, and all four secret-bearing tables are marked", async () => {
+test("the output directory is private (0700), every file the recipe writes is 0600, and all four secret-bearing tables are marked", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, { fields: ["http2.streamid", "http2.type", "http2.headers.method", "http2.headers.authority", "http2.headers.path", "http2.headers.status"], tables: { packets: PACKETS, dns: TABLE(["frame.number"], 1), http: TABLE(["frame.number"], 1), tls: TABLE(["frame.number"], 1), http2: TABLE(["frame.number"], 2) } });
     const result = await recipe(cwd, bin, ["run", "--target", target(await capture(cwd)), "--out", "work/cat"]);
@@ -391,7 +392,7 @@ test("the field-list step is running while tshark -G fields runs: a kill during 
   });
 });
 
-test("the counting of a finished listing is under the recipe's own clock: a count it could not finish is null, never a number that looks whole, and the status says so", async () => {
+test("the counting of a finished listing is under the recipe's own clock: a count it could not finish is null, never a number that looks whole, and the status says so", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     const packets = [PACKETS.split("\n")[0], ...Array.from({ length: 5000 }, (_, i) => `"${i + 1}"\t"1700000000.1"\t"${i % 2 ? 54 : 96}"\t"${i % 2 ? 54 : 1500}"\t"TCP"`)].join("\n") + "\n";
     await stage(cwd, bin, { tables: { packets, dns: TABLE(["frame.number"], 2), http: TABLE(["frame.number"], 3), tls: TABLE(["frame.number"], 1) } });

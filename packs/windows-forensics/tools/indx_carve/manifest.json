@@ -1,6 +1,6 @@
 {
   "name": "indx_carve",
-  "description": "Recover file names a directory no longer lists. Parses INDX blocks ($INDEX_ALLOCATION, the $I30 stream) and carves the slack past the end of the live entries, where stale $FILE_NAME structures survive; also sweeps a raw blob for INDX blocks. A slack entry is stale index material: its times are the historical metadata of that structure, not the file's current times and not evidence that they were left unaltered, a name that parses is structurally plausible and not verified, and it does not say the file was deleted. Integrity travels with every entry: block_offset, fixup_ok (every 512-byte unit carries its update sequence number and the array covers the block), node_ok (the node header and each live entry's length, alignment and key length fit the live region) and salvaged. A salvaged block's entries are left out unless include_unreliable is true, and the answer counts the blocks and entries it left out (status partial when any block was salvaged). A live entry that is walked but cannot be read as a name (no key, a name longer than its own key, a bad name length or namespace) is never dropped silently: it is a problem of the run with its MFT reference and the reason, counted in live_entries_unreadable (status partial). A live entry whose values are odd (a parent that is not a believable directory, created and modified times both 0 or all ones) is returned, flagged unreliable with unreliable_reasons and counted in live_entries_flagged_unreliable; the plausibility rules that filter a search of slack are not applied to the entries the directory lists. FILETIMEs are given as ISO 8601 UTC with seven fractional digits and as raw decimal strings.",
+  "description": "Recover file names a directory no longer lists. Parses INDX blocks ($INDEX_ALLOCATION, the $I30 stream) and carves the slack past the end of the live entries, where stale $FILE_NAME structures survive; also sweeps a raw blob for INDX blocks. A slack entry is stale index material: its times are the historical metadata of that structure, not the file's current times and not evidence that they were left unaltered, a name that parses is structurally plausible and not verified, and it does not say the file was deleted. Integrity travels with every entry: block_offset, fixup_ok (every 512-byte unit carries its update sequence number and the array covers the block), node_ok (the node header and each live entry's length, alignment and key length fit the live region) and salvaged. A salvaged block's entries are left out unless include_unreliable is true, and the answer counts the blocks and entries it left out (status partial when any block was salvaged). A live entry that is walked but cannot be read as a name (no key, a name longer than its own key, a bad name length or namespace) is never dropped silently: it is a problem of the run with its MFT reference and the reason, counted in live_entries_unreadable (status partial). A live entry whose values are odd (a parent that is not a believable directory, created and modified times both 0 or all ones) is returned, flagged unreliable with unreliable_reasons and counted in live_entries_flagged_unreliable; the plausibility rules that filter a search of slack are not applied to the entries the directory lists. FILETIMEs are given as ISO 8601 UTC with seven fractional digits and as raw decimal strings. The tool has its own clock (285 s of the manifest's 300): when it runs out the sweep stops, the pages written so far are placed and named, and the answer is partial with a status_basis that says where it stopped and how many blocks were read; every answer carries status and status_basis (complete only for an input read to its end), a wrong-type argument is refused as JSON (status failed), and SIGTERM, SIGINT and SIGHUP end it with one JSON document (status failed with interrupted true, exit 128 plus the signal) and no temporary file. A result file is never replaced: the same result keeps its name, another takes the next free -n name. A file in which no INDX block was found is partial (nothing was read as a directory index), and so is any run that names a problem.",
   "params": {
     "path": {
       "type": "string",
@@ -12,15 +12,15 @@
     },
     "name": {
       "type": "string",
-      "description": "Case-insensitive regex over the recovered names"
+      "description": "Case-insensitive regular expression over the names (at most 500 characters). One name is tested for at most 0.5 s; an expression that takes longer stops the sweep there (partial), so use a plain pattern"
     },
     "block_size": {
       "type": "integer",
-      "description": "INDX block size in bytes (default 4096)"
+      "description": "Index block size in bytes: a multiple of 512 from 512 to 65536 (default 4096)"
     },
     "limit": {
       "type": "integer",
-      "description": "Entries shown inline (default 500, an inline page size); every block is read, and when more entries match the whole list is written as JSON Lines and named in all_results"
+      "description": "Entries shown inline (default 500, 1 to 10000, an inline page size); every block is read, and when more entries match the whole list is written as JSON Lines and named in all_results"
     },
     "include_unreliable": {
       "type": "boolean",
@@ -33,8 +33,8 @@
   "example": "{\"path\": \"work/extracted/I30-64\", \"slack_only\": true}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 3,
-  "sha256": "beb9b6a389cdf7f11d4bd54dfed4573e122133615972ec741e21b3c7cb109a7d",
+  "version": 6,
+  "sha256": "7dd007006eba133692dfe84d10ce667540cbec101a3fb022f4f878023453b5ee",
   "use": {
     "names": [
       "$I30",

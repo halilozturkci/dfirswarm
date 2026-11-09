@@ -112,6 +112,7 @@ Commands:
   list               Every run, with spend and state
   status <id>        One run: its agents, markers and spend
   summary <id>       A Markdown report of a run, from its own files
+  access <id>        Who reached a sensitive output, from the access record; --job jN, --seat NAME, --json; a lower bound, it only reads
   context <id>       Each agent's context history from the trace: peaks, lines crossed, hand-offs, summary cost; metrics <id> the process, from its registers
   report <id>        One self-contained report.html; --pdf prints it, --lint checks its citations
   package <id>       Hand a run over: report, board, trace, hashes (--sign signs it)
@@ -155,6 +156,7 @@ Tools the agents write:
   --allow-install        Let them pip-install from pypi.org; --no-pypi keeps it off the allowlist
   --tools-from DIR       Start with a library of tools from earlier runs
   --pack ID[,ID]         Installed packs: their skills, tools and host checks
+  --pack-tools-as-jobs ID[,ID]   Their tools run as job_run(tool, args), not as Pi tools
 
 Network, closed by default (--network dynamic: bounded lookups the hub decides by --policy PRESET):
   --allow-host HOST  Add one host to the allowlist; repeatable (--no-netguard opens it entirely)
@@ -194,6 +196,7 @@ swarm.sh start — prepare a sandbox, write the contract, launch the agents.
       [--key-from-env] [--env KEY=VALUE]... [--customer-case] [--key-owner [PROVIDER=]OWNER]...
       [--isolation host|microvm] [--image REF] [--vm-cpus N] [--vm-memory MIB] [--vm-disk MIB] [--no-vm-snapshot] [--vm-snapshot-dir DIR] [--allow-oauth-in-vm]
       [--workers N] [--worker-cpus N] [--worker-memory MIB] [--no-jobs] [--no-derived-catalog] [--derived-limit N]
+      [--pack-tools-as-jobs ID[,ID]]
 
 The team
   --model P/ID        One model for every agent.
@@ -514,6 +517,15 @@ Tools the agents write
                       added to the toolbox check. Dependencies resolve first and
                       every pack is verified against its checksums before the run
                       starts. Without --pack a run carries no pack at all.
+  --pack-tools-as-jobs ID[,ID]
+                      The tools of these packs (named in --pack or needed by
+                      one) are not registered as Pi tools. SWARM.md lists each
+                      with its description and parameters, and a seat runs one
+                      as job_run(tool: NAME, args: {...}), in a worker VM of
+                      its pack's image. Needs the job service: refused in a
+                      host run and with --no-jobs, and for a pack that declares
+                      secrets. A resume keeps the run's mode. The run record
+                      carries pack_tools_as_jobs.
   --tools-from DIR    Seed tools/ from a library of tools forged in earlier runs,
                       each a directory with manifest.json and its script. They are
                       in every agent's list from the first turn, author and version
@@ -2633,6 +2645,65 @@ pack_secrets_plan() { # <pack dirs, one per line> <isolation> <allow 0|1> [local
   done <<< "$pack_dirs"
 }
 
+# --pack-tools-as-jobs: the packs whose tools are not registered as Pi tools. A
+# seat calls one as job_run(tool, args), in the job image of its pack, and the
+# contract (SWARM.md, "Pack tools run as jobs") lists each with its parameters.
+# Everything that would leave a tool unreachable is refused here, before
+# anything is written: the option names packs the run carries, needs the job
+# service, and refuses a pack that declares secrets (a pack tool is handed its
+# secrets in its own environment, which a job does not carry). A resume keeps
+# the mode the run was started in: a tool left unregistered by a resume of a
+# run that listed it as a Pi tool would be lost to the seats. Sets
+# PACK_TOOLS_AS_JOBS_IDS: the ids, sorted, comma-separated, or empty.
+pack_tools_as_jobs_plan() { # <ids as given> <pack dirs, one per line> <isolation> <jobs 0|1> <recorded ids> <resumed run or empty>
+  local given="$1" pack_dirs="$2" isolation="$3" jobs="$4" recorded="${5:-}" resumed="${6:-}" ids="" id pd found
+  PACK_TOOLS_AS_JOBS_IDS=""
+  if [[ -n "$given" && ! "$given" =~ ^[a-z0-9][a-z0-9-]*(,[a-z0-9][a-z0-9-]*)*$ ]]; then
+    echo "BLOCKER: --pack-tools-as-jobs takes pack ids, comma-separated (lower-case letters, digits and -), got: $given" >&2
+    exit 2
+  fi
+  [[ -n "$given" ]] && ids="$(printf '%s\n' "${given//,/$'\n'}" | sort -u | paste -sd, -)"
+  if [[ -n "$resumed" ]]; then
+    if [[ -n "$recorded" && -n "$ids" && "$ids" != "$recorded" ]]; then
+      echo "BLOCKER: run $resumed was started with --pack-tools-as-jobs $recorded and these options give $ids: a resume keeps the way the run's tools are called." >&2
+      exit 2
+    fi
+    if [[ -z "$recorded" && -n "$ids" ]]; then
+      echo "BLOCKER: run $resumed was started with its pack tools as Pi tools, and its seats are told so: --pack-tools-as-jobs $ids would leave them without those tools. Drop it, or start a new run." >&2
+      exit 2
+    fi
+    [[ -n "$recorded" ]] && ids="$recorded"
+  fi
+  [[ -n "$ids" ]] || return 0
+  if [[ "$isolation" != "microvm" ]]; then
+    echo "BLOCKER: --pack-tools-as-jobs runs the tools through the job service, which only a microVM run has; this is a host run. Drop the option, or run in microVMs." >&2
+    exit 2
+  fi
+  if [[ "$jobs" -ne 1 ]]; then
+    echo "BLOCKER: --pack-tools-as-jobs runs the tools through the job service, and --no-jobs turns it off. Drop one of them." >&2
+    exit 2
+  fi
+  for id in ${ids//,/ }; do
+    found=""
+    while read -r pd; do
+      [[ -n "$pd" && "$(basename "$pd")" == "$id" ]] && found="$pd"
+    done <<< "$pack_dirs"
+    if [[ -z "$found" ]]; then
+      echo "BLOCKER: --pack-tools-as-jobs names $id, which is not one of the packs of this run (--pack, and what they need)." >&2
+      exit 2
+    fi
+    if [[ "$(jq -r '(.secrets // []) | length' "$found/pack.json" 2>/dev/null || echo 1)" != "0" ]]; then
+      echo "BLOCKER: --pack-tools-as-jobs names $id, which declares secrets: its tools are handed them in their own environment, and a job does not carry them. Its tools stay Pi tools." >&2
+      exit 2
+    fi
+    if ! compgen -G "$found/tools/*/manifest.json" >/dev/null; then
+      echo "BLOCKER: --pack-tools-as-jobs names $id, which carries no tool." >&2
+      exit 2
+    fi
+  done
+  PACK_TOOLS_AS_JOBS_IDS="$ids"
+}
+
 install_tools_from() { # sandbox library-dir [pack-id]
   # The pack id, when given, is written into the copy's manifest so the console
   # can say which method a tool call came from rather than attributing it to an
@@ -2832,6 +2903,54 @@ render_contract() {
   SWARM_CONTRACT_CAP_TOKENS="${cap_tokens:-}" \
   node --experimental-strip-types --no-warnings "$ROOT/scripts/render-contract.ts" "$TEMPLATE" "$tmp" "$goal_file" "$id_list" "$cap" "$wall" "$n" "$swarm_id" "$sandbox"
   mv "$tmp" "$sandbox/SWARM.md"
+  if [[ -n "${pack_tools_as_jobs:-}" ]]; then
+    pack_tools_contract_section "$sandbox" "$pack_tools_as_jobs"
+  fi
+}
+
+# The contract's section on the tools --pack-tools-as-jobs left out of Pi's
+# tool list: each with its one-line description and its parameters (the
+# summary the extension's paramSummary gives), after the "Tool jobs" section.
+# A contract that cannot name them would leave the seats without those tools,
+# so the kickoff stops instead.
+pack_tools_contract_section() { # <sandbox> <pack ids, comma-separated>
+  local sandbox="$1" packs="$2"
+  SWARM_SECTION_PACKS="$packs" node --no-warnings -e '
+const fs = require("fs");
+const path = require("path");
+const [file, tools] = process.argv.slice(1);
+const packs = new Set(process.env.SWARM_SECTION_PACKS.split(",").filter(Boolean));
+const rows = [];
+for (const dir of fs.readdirSync(tools).sort()) {
+  let m;
+  try { m = JSON.parse(fs.readFileSync(path.join(tools, dir, "manifest.json"), "utf8")); } catch { continue; }
+  if (!m || m.name !== dir || !m.pack || !packs.has(m.pack)) continue;
+  const params = Object.entries(m.params || {}).map(([k, p]) => `${k}${p && p.required ? "" : "?"}: ${(p && p.type) || "string"}`);
+  rows.push(`- \`${m.name}\` (${m.pack}): ${String(m.description || "").replace(/\s+/g, " ").trim()} Parameters: ${params.length ? params.join(", ") : "no params"}.`);
+}
+if (!rows.length) { console.error("no tool of " + [...packs].join(", ") + " is in the run"); process.exit(1); }
+const text = fs.readFileSync(file, "utf8");
+const section =
+  "## Pack tools run as jobs\n\n" +
+  `The tools of the packs ${[...packs].sort().join(", ")} are not in your tool list; a skill of those packs that names one means this call. ` +
+  "Run one with `job_run(tool: <name>, args: {...})`: it runs sealed in a worker VM of its pack'"'"'s image, what it writes under `{OUT}/<name>` is sealed " +
+  "in the store and cited as `job:<id>/<path>`, and `args` are the parameters below (a name ending in `?` is optional). " +
+  "A wrong or missing one is refused, naming the tool'"'"'s parameters.\n\n" +
+  rows.join("\n") + "\n\n";
+let at = text.indexOf("\n## Job images\n");
+if (at < 0) {
+  const start = text.indexOf("## Tool jobs\n");
+  if (start < 0) { console.error("the contract has no Tool jobs section"); process.exit(1); }
+  const next = text.indexOf("\n## ", start + 1);
+  at = next < 0 ? text.length : next;
+}
+at += 1;
+fs.writeFileSync(file + ".tmp", text.slice(0, at) + section + text.slice(at));
+fs.renameSync(file + ".tmp", file);
+' "$sandbox/SWARM.md" "$sandbox/tools" || {
+    echo "BLOCKER: --pack-tools-as-jobs: SWARM.md could not list the tools of $packs as jobs (see above); the seats would be left without them." >&2
+    exit 1
+  }
 }
 
 # A swarm with no definition of done is the failure mode the incident write-up
@@ -2886,6 +3005,7 @@ write_team_budget() {
   SWARM_CAP_PER_AGENT_TOKENS="${cap_per_agent_tokens:-}" \
   SWARM_CAP_PER_MODEL="$(printf '%s\n' ${MODEL_CAPS[@]+"${MODEL_CAPS[@]}"})" \
   SWARM_METERED="${metered:-1}" \
+  SWARM_UNMETERED_WHY="$(unmetered_why_word "${metered:-1}" "${subscription_models_csv:-}")" \
   SWARM_CAP_TOKENS="${cap_tokens:-}" \
   SWARM_TOKEN_ALERTS="${token_alerts:-}" \
   SWARM_UNTIL_SOLVED="${until_solved:-0}" \
@@ -2911,6 +3031,8 @@ for line in os.environ.get("SWARM_CAP_PER_MODEL", "").splitlines():
         # 6 and matches what jq's tonumber puts in the run record.
         cap_per_model[name] = json.loads(value)
 metered = os.environ.get("SWARM_METERED", "1") != "0"
+# Why a team is unmetered: local models, or an OAuth subscription whose dollars Pi only estimates.
+unmetered_why = os.environ.get("SWARM_UNMETERED_WHY", "").strip()
 cap_tokens = os.environ.get("SWARM_CAP_TOKENS", "").strip()
 agents = []
 for i, aid in enumerate(ids):
@@ -2937,6 +3059,7 @@ budget = {
     # False when no model on the team bills: spend stays an exact zero, the
     # USD cap cannot fire, and cap_tokens is the brake.
     "metered": metered,
+    **({"unmetered_why": unmetered_why} if not metered and unmetered_why in ("local", "subscription") else {}),
     **({"cap_tokens": int(cap_tokens)} if cap_tokens else {}),
     # The operator's token marks (--token-alert): each told once as the run
     # crosses it, on the board, the trace and the notify hook; advisory.
@@ -3463,6 +3586,7 @@ cmd_start() {
   # are checked, each one's name under inputs/. inputs_dir is the first (the
   # only one, for one set), and says whether there is evidence at all.
   local inputs_dirs=() inputs_names=()
+  local pack_tools_as_jobs=""
   local allow_hosts="" tools_from="" catalog=0 toolbox="off" toolbox_required=0 quarantine=0 cap_per_agent="" cap_per_agent_tokens="" case_id="" examiner=""
   # The run's operator (--operator ID): a person enrolled on this install,
   # recorded with the run; `--as operator` on the run's acts names them.
@@ -3611,6 +3735,7 @@ cmd_start() {
       # Repeated, the packs add up (as in image-for): a second --pack used to
       # replace the first without a word.
       --pack) packs="${packs:+$packs,}$2"; shift 2 ;;
+      --pack-tools-as-jobs) pack_tools_as_jobs="${pack_tools_as_jobs:+$pack_tools_as_jobs,}${2:-}"; shift 2 ;;
       --toolbox-required) toolbox_required=1; shift ;;
       --quarantine) quarantine=1; shift ;;
       --no-write-guard) write_guard=0; shift ;;
@@ -4809,6 +4934,11 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
   else
     swarm_id="$(alloc_prefix)"
   fi
+  pack_tools_as_jobs_plan "$pack_tools_as_jobs" "$pack_dirs" "$isolation" "$jobs" "$([[ -n "$resume_rec" ]] && jq -r '(.pack_tools_as_jobs // []) | join(",")' <<<"$resume_rec")" "$resume_of"
+  pack_tools_as_jobs="$PACK_TOOLS_AS_JOBS_IDS"
+  if [[ -n "$pack_tools_as_jobs" ]]; then
+    echo "Pack tools:   $pack_tools_as_jobs: run as jobs (job_run tool=), not registered as Pi tools"
+  fi
   if [[ -z "$label" ]]; then
     label="swarm-${swarm_id}"
   fi
@@ -5845,12 +5975,14 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --arg inbox_page_chars "${inbox_page_chars:-40000}" \
     --arg skill_release "${skill_release:-compaction}" \
     --argjson metered "$metered" \
+    --arg unmetered_why "$(unmetered_why_word "$metered" "$subscription_models_csv")" \
     --arg cap_tokens "$cap_tokens" \
     --arg token_alerts "$token_alerts" \
     --arg local_models "$local_models_csv" \
     --argjson local_only "$local_only" \
     --argjson packs "$packs_json" \
     --argjson pack_secrets "$PACK_SECRETS_RECORD" \
+    --arg pack_tools_as_jobs "$pack_tools_as_jobs" \
     --argjson providers "$(providers_json)" \
     --argjson agents "$(printf '%s\n' "${agent_ids[@]}" | jq -R . | jq -s .)" \
     --argjson agent_models "$(printf '%s\n' ${AGENT_MODELS[@]+"${AGENT_MODELS[@]}"} | jq -R . | jq -s .)" \
@@ -5938,6 +6070,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
       inbox_page_chars: ($inbox_page_chars | tonumber),
       skill_release: $skill_release,
       metered: ($metered == 1),
+      unmetered_why: (if $unmetered_why == "" then null else $unmetered_why end),
       cap_tokens: (if $cap_tokens == "" then null else ($cap_tokens | tonumber) end),
       token_alerts: (if $token_alerts == "" then null else ($token_alerts | split(",") | map(tonumber)) end),
       local_models: (if $local_models == "" then [] else ($local_models | split(",")) end),
@@ -5962,7 +6095,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
       hold: null,
       started_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
       state: "prepared"
-    }')"
+    } + (if $pack_tools_as_jobs == "" then {} else {pack_tools_as_jobs: ($pack_tools_as_jobs | split(","))} end)')"
   # A resumed run is the same record: its start, its hold and what it was
   # given stay; what this start set comes on top, with the resume beside it.
   if [[ -n "$resume_of" ]]; then
@@ -6226,10 +6359,15 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   # Seeded tools by name, when forging is off: with forging on the extension
   # enforces the list itself and --tools is dropped.
   if [[ "$forging" -eq 0 && -d "$sandbox/tools" ]]; then
-    local _tm _tn
+    local _tm _tn _tp
     for _tm in "$sandbox"/tools/*/manifest.json; do
       [[ -f "$_tm" ]] || continue
       _tn="$(jq -r '.name // empty' "$_tm" 2>/dev/null || true)"
+      # A pack named by --pack-tools-as-jobs: its tools are called through job_run, not named to Pi.
+      if [[ -n "$pack_tools_as_jobs" ]]; then
+        _tp="$(jq -r '.pack // empty' "$_tm" 2>/dev/null || true)"
+        [[ -n "$_tp" && ",$pack_tools_as_jobs," == *",$_tp,"* ]] && continue
+      fi
       [[ "$_tn" =~ ^[a-z][a-z0-9_]{2,31}$ ]] && PI_TOOLS+=",$_tn"
     done
   fi
@@ -8804,6 +8942,7 @@ vm_build_spec() { # <hub dir> <out file>
     [[ -n "$job_image" ]] && add_env SWARM_PACK_PROGRAMS_IN_JOBS "$(jq -r 'keys | join(",")' <<<"$job_images_json")"
   fi
   [[ "$forging" -eq 1 ]] && { add_env SWARM_TOOL_FORGING 1; add_env SWARM_TOOLS "$PI_TOOLS"; }
+  [[ -n "$pack_tools_as_jobs" ]] && add_env SWARM_PACK_TOOLS_AS_JOBS "$pack_tools_as_jobs"
   if [[ "$self_compact" -eq 1 ]]; then
     add_env SWARM_SELF_COMPACT 1
     [[ -n "$compact_notice_at" ]] && add_env SWARM_COMPACT_NOTICE_AT "$compact_notice_at"
@@ -9256,7 +9395,7 @@ last_trace_ts() { # <sandbox>
 
 cmd_stop() {
   local stop_args=("$@")
-  local id="${1:-}" no_custody=0 custody_timeout="" after_hub=0 vms_left=0
+  local id="${1:-}" no_custody=0 custody_timeout="" after_hub=0 vms_left=0 found_dead=0 dead_last_trace=""
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -9307,9 +9446,19 @@ cmd_stop() {
   fi
   # A run recorded as running whose every process is gone did not end by
   # itself: the host restarted, or the run crashed. Said, with the last line
-  # the trace has, before this stop records it as stopped.
-  if [[ -n "$sandbox" && "$(jq -r '.state // empty' <<<"$rec")" == "running" ]] && ! run_has_live_process "$sandbox" "$rec"; then
-    echo "NOTE:         nothing of run $id was alive (no hub, collector, watchdog or VM): the host restarted or the run crashed$(last_trace_ts "$sandbox" | sed 's/^/; its last trace line is from /')."
+  # the trace has, and recorded as what it is: ended, by nobody known (the
+  # registry's `ended` with `ended_by: "unknown"` and the last trace time),
+  # not as a stop that someone made. A run already recorded as ended keeps
+  # what was recorded then.
+  if [[ -n "$sandbox" ]] && [[ "$(jq -r '.state // empty' <<<"$rec")" =~ ^(running|ended)$ ]] && ! run_has_live_process "$sandbox" "$rec"; then
+    found_dead=1
+    if [[ "$(jq -r '.state // empty' <<<"$rec")" == ended ]]; then
+      dead_last_trace="$(jq -r '.last_trace_at // empty' <<<"$rec")"
+      echo "NOTE:         run $id is recorded as ended without a stop (cause unknown)$(printf '%s' "$dead_last_trace" | sed 's/^/; its last trace line is from /') and still has nothing alive."
+    else
+      dead_last_trace="$(last_trace_ts "$sandbox")"
+      echo "NOTE:         nothing of run $id was alive (no hub, collector, watchdog or VM): the host restarted or the run crashed$(printf '%s' "$dead_last_trace" | sed 's/^/; its last trace line is from /'). It is recorded as ended, cause unknown."
+    fi
   fi
   # The VMs before the daemons: an agent's last lines reach the trace through
   # the hub and the collector, so those stay up until the VMs are down.
@@ -9343,8 +9492,12 @@ cmd_stop() {
     node --experimental-strip-types --no-warnings "$ROOT/scripts/stop-policy.ts" stopped "$sandbox" --by operator --why "swarm.sh stop" >/dev/null 2>&1 || true
   fi
   local final_state="stopped"
+  [[ "$found_dead" -eq 1 ]] && final_state="ended"
   [[ -n "$sandbox" && -f "$sandbox/done/SWARM_DONE" ]] && final_state="done"
   registry_update_state "$id" "$final_state"
+  if [[ "$final_state" == ended ]]; then
+    registry_merge "$id" "$(jq -cn --arg lt "$dead_last_trace" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson prior "$(jq -c '{at: (.ended_at // null)}' <<<"$rec")"       '{ended_by: "unknown", last_trace_at: (if $lt == "" then null else $lt end), ended_at: ($prior.at // $at)}')" || true
+  fi
   # What the host can say about the run once nothing is running any more:
   # the evidence re-hashed, the sessions sealed, every kept output checked.
   # Before the evidence image is detached (custody of an empty mount point
@@ -9400,8 +9553,17 @@ cmd_stop() {
     registry_update_state "$id" "done"
     echo "Stopped $id (the sentinel was present; recorded as done)"
     notify_run "$sandbox" finished '{"state":"done","by":"stop"}'
+  elif [[ "$final_state" == ended ]]; then
+    registry_update_state "$id" "ended"
+    echo "Ended $id: it was found with nothing alive, so it ended without a stop and the cause is unknown (recorded as ended$([[ -n "$dead_last_trace" ]] && printf ', last trace %s' "$dead_last_trace"))"
+    # The same words in the trace, once: a second stop finds the line there.
+    if ! grep -qs '"tool":"run_ended"' "$sandbox/traces/events.jsonl" "$sandbox/traces/system-spill.jsonl"; then
+      system_trace "$sandbox" run_ended "$(jq -cn --arg lt "$dead_last_trace" '{via: "swarm.sh stop", by: "unknown", reason: "found with nothing alive; the cause is not known", last_trace_at: (if $lt == "" then null else $lt end)}')"
+    fi
+    [[ "$after_hub" -eq 1 ]] || notify_run "$sandbox" finished '{"state":"ended","by":"unknown"}'
   else
     registry_update_state "$id" "stopped"
+    [[ "$(jq -r '.state // empty' <<<"$rec")" != ended ]] || registry_merge "$id" '{"ended_by":null,"last_trace_at":null,"ended_at":null}' || true
     echo "Stopped $id"
     [[ "$after_hub" -eq 1 ]] || notify_run "$sandbox" finished '{"state":"stopped","by":"stop"}'
   fi
@@ -9415,6 +9577,50 @@ cmd_summary() {
   sandbox="$(json_get "$id" | jq -r '.sandbox // empty')"
   [[ -n "$sandbox" && -d "$sandbox" ]] || { echo "Unknown swarm id or missing sandbox: $id" >&2; exit 1; }
   node --experimental-strip-types "$ROOT/scripts/summary.ts" "$sandbox"
+}
+
+# The console is about to serve a sensitive job's output or log (docs/adr/0018,
+# decision 3): one `console_view` line on the operator's audit, written by the
+# one writer above, under its lock and its `prev` chain, with the run id in
+# argv and `detail: {job, path}`, which is the shape the access record's
+# reader takes. Not a command of the operator's: the console calls it, and it
+# says by its exit status whether the line landed, so a view is never served
+# unrecorded.
+cmd_console_view() {
+  local id="${1:-}" job="${2:-}" rel="${3:-}" since file
+  [[ "$#" -eq 3 && "$id" =~ ^[A-Za-z0-9._-]{1,128}$ && "$job" =~ ^[a-z0-9-]{1,64}$ && -n "$rel" && "$rel" != *$'\n'* && ${#rel} -le 1024 ]] || { echo "console-view needs <id> <job> <path>" >&2; exit 2; }
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  OPERATOR_AUDIT_DETAIL="$(jq -cn --arg job "$job" --arg path "$rel" '{job: $job, path: $path}')" operator_audit console_view "$id"
+  file="$RUNS_DIR/operator-audit.jsonl"
+  [[ -f "$file" && ! -L "$file" ]] && tail -n 200 "$file" | jq -e --arg id "$id" --arg job "$job" --arg path "$rel" --arg since "$since" \
+    'select(.command == "console_view" and .argv[0] == $id and .detail.job == $job and .detail.path == $path and .at >= $since)' >/dev/null 2>&1 \
+    || { echo "the view of $job could not be written to runs/operator-audit.jsonl" >&2; exit 1; }
+}
+
+# Who reached a sensitive output (docs/adr/0018): the access record's reader
+# (scripts/sensitive-access.ts) called with this run's sandbox, runs directory
+# and id, and nothing else. It reads the run's chains and writes nothing.
+cmd_access() {
+  local id="" args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) args+=(--json); shift ;;
+      --job)
+        [[ "${2:-}" =~ ^[a-z0-9-]{1,64}$ ]] || { echo "--job needs a job id (j000001)" >&2; exit 2; }
+        args+=(--job "$2"); shift 2 ;;
+      --seat)
+        [[ -n "${2:-}" && "${2:0:2}" != "--" ]] || { echo "--seat needs a seat name" >&2; exit 2; }
+        args+=(--seat "$2"); shift 2 ;;
+      -*) die_usage "unknown access option: $1" ;;
+      *) [[ -z "$id" ]] || die_usage "access takes one <id>"; id="$1"; shift ;;
+    esac
+  done
+  [[ -n "$id" ]] || { echo "access requires <id>" >&2; exit 2; }
+  ensure_registry
+  local sandbox
+  sandbox="$(json_get "$id" | jq -r '.sandbox // empty')"
+  [[ -n "$sandbox" && -d "$sandbox" ]] || { echo "Unknown swarm id or missing sandbox: $id" >&2; exit 1; }
+  node --experimental-strip-types --no-warnings "$ROOT/scripts/sensitive-access.ts" "$sandbox" --runs-dir "$RUNS_DIR" --run-id "$id" ${args[@]+"${args[@]}"}
 }
 
 # The context history of a run from its trace: what each agent's context
@@ -10493,9 +10699,19 @@ pkg_copy() { # <src> <dst> [non-empty]
   cp -P "$1" "$2"
 }
 
+# Why a team that is not metered is not: "subscription" when any of its models runs on an OAuth subscription (Pi's dollars are then an
+# estimate), "local" when every model is served from this machine or network; empty for a metered team. The kickoff's CLI line says the
+# same by the same facts, and the console reads this word.
+unmetered_why_word() { # <metered 0|1> <subscription models csv>
+  if [[ "${1:-1}" == "0" ]]; then
+    if [[ -n "${2:-}" ]]; then echo subscription; else echo local; fi
+  fi
+  return 0
+}
+
 cmd_package() {
-  local id="${1:-}" sign=0 key="" redact=0 with_outputs=0 leaks=fail
-  [[ -n "$id" && "$id" != -* ]] || { echo "package requires <id> [--sign [--key FILE]] [--redact [--redact-leaks list]] [--with-outputs]" >&2; exit 2; }
+  local id="${1:-}" sign=0 key="" redact=0 with_outputs=0 with_sessions=0 leaks=fail
+  [[ -n "$id" && "$id" != -* ]] || { echo "package requires <id> [--sign [--key FILE]] [--redact [--redact-leaks list]] [--with-outputs] [--with-sessions]" >&2; exit 2; }
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -10504,9 +10720,15 @@ cmd_package() {
       --redact) redact=1; shift ;;
       --redact-leaks) leaks="$2"; shift 2 ;;
       --with-outputs) with_outputs=1; shift ;;
+      --with-sessions) with_sessions=1; shift ;;
       *) echo "package: unknown option $1" >&2; exit 2 ;;
     esac
   done
+  # Sessions hold everything the models saw: they travel in an internal handover, never in the copy that leaves the organisation.
+  if [[ "$with_sessions" -eq 1 && "$redact" -eq 1 ]]; then
+    echo "package: --with-sessions cannot be combined with --redact: a redacted package is the copy that leaves the organisation, and sessions hold everything the models saw." >&2
+    exit 2
+  fi
   ensure_registry
   local sandbox
   sandbox="$(json_get "$id" | jq -r '.sandbox // empty')"
@@ -10814,8 +11036,31 @@ PY
       echo "Sensitive:    $(jq -r '.entries' <<<"$hygiene") sensitive ledger entr$([[ "$(jq -r '.entries' <<<"$hygiene")" == 1 ]] && echo y || echo ies), $(jq -r '.outputs' <<<"$hygiene") job(s) whose outputs are sensitive ($(jq -r '.carried' <<<"$hygiene") of their files in this package); the scan over $(jq -r '.scanned' <<<"$hygiene") file(s) found $(jq -r '.hits' <<<"$hygiene") place(s) holding their words (HYGIENE.json). This package is not redacted: hand it over with --redact."
     fi
   fi
+  # The agents' sessions, masked, for an internal handover (--with-sessions): one
+  # archive and a manifest (scripts/package-tools.ts sessions). Never made by
+  # halves: a failure leaves no package.
+  local sessions_note=""
+  if [[ "$with_sessions" -eq 1 ]]; then
+    local sess sess_rc=0 sess_n
+    sess="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/package-tools.ts" sessions "$sandbox" "$out" 2>"$out.sessions.err")" || sess_rc=$?
+    if [[ "$sess_rc" -ne 0 ]]; then
+      echo "BLOCKER: the sessions could not be packaged; nothing was handed over: $(head -c 400 "$out.sessions.err")" >&2
+      rm -rf "$out" "$out.sessions.err"; exit 1
+    fi
+    rm -f "$out.sessions.err"
+    if [[ "$(jq -r '.files' <<<"$sess")" == 0 ]]; then
+      echo "WARN: --with-sessions: $sandbox/.pi-sessions holds no regular file; the package carries no sessions." >&2
+      sessions_note="; sessions requested, none to carry"
+    else
+      echo "Sessions:     $(jq -r '.files' <<<"$sess") file(s) in $(jq -r '.archive' <<<"$sess") (sha256 $(jq -r '.sha256' <<<"$sess")), $(jq -r '.masked' <<<"$sess") sensitive value(s) masked; the key and id map are in $out.sessions.private.json, which stays with the run's owner"
+      sess_n="$(jq -r '.skipped' <<<"$sess")"
+      [[ "$sess_n" -gt 0 ]] && echo "              $sess_n entr$([[ "$sess_n" == 1 ]] && echo y || echo ies) under .pi-sessions/ not copied (links and other non-regular files; sessions/sessions.manifest.json names them)"
+      [[ "$(jq -r '.changed' <<<"$sess")" -gt 0 ]] && echo "WARN: $(jq -r '.changed' <<<"$sess") session file(s) changed while they were copied: $(jq -r '.changed_files | map("\(.path) (\(.listed_bytes) bytes at the cutoff, \(.copied_bytes) copied)") | join("; ")' <<<"$sess")" >&2
+      sessions_note="; with sessions (sessions/, masked, for an internal handover)"
+    fi
+  fi
   # What kind of package this is, said in it.
-  printf '%s\n' "$([[ "$with_outputs" -eq 1 ]] && echo "with outputs: the jobs' sealed outputs are included" || echo "record only: the jobs' outputs stay in the run, each named by its sha256")$([[ "$redact" -eq 1 ]] && echo "; redacted (REDACTIONS.txt)")" > "$out/PACKAGE-KIND.txt"
+  printf '%s\n' "$([[ "$with_outputs" -eq 1 ]] && echo "with outputs: the jobs' sealed outputs are included" || echo "record only: the jobs' outputs stay in the run, each named by its sha256")$([[ "$redact" -eq 1 ]] && echo "; redacted (REDACTIONS.txt)")$sessions_note" > "$out/PACKAGE-KIND.txt"
   # Each part a recipient holds the record to, present or absent with why:
   # under the manifest, so a part taken out, and out of the list, breaks it.
   node --experimental-strip-types --no-warnings "$ROOT/scripts/package-tools.ts" components "$sandbox" "$out" >/dev/null || { echo "BLOCKER: the package's components could not be listed; nothing was handed over." >&2; rm -rf "$out"; exit 1; }
@@ -11888,6 +12133,7 @@ Exit 0: all of it holds and the signer is one FILE allows (and so is every adopt
 EOF
       ;;
     image-for) echo "  image-for [--pack ID]... [--tools-from DIR] [--playwright] [--no-jobs] [--brains-with-packs]   the image a kickoff's agents would boot, as JSON: ref, digest (null when neither the lock nor msb has it), profile, pinned_by, reason, and jobs (each job image: profile, ref, the packs it serves); read only" ;;
+    access) echo "  access <id> [--job jN] [--seat NAME] [--json]   who reached a sensitive output, joined from the store's journal, the hub's lines on the trace, the ledger and the operator's audit, with a link the harness verified, a read it observed and an agent's claim kept apart; it ends with the sentence that the list is a lower bound; it only reads, and writes nothing" ;;
     export) echo "  export <id> --format csv|timesketch [--out FILE] [--redact]   the ledger as CSV or a Timesketch CSV import (default: <sandbox>/exports/); --redact replaces what a sensitive entry says" ;;
     hold|release) echo "  hold <id> [--reason TEXT] / release <id>   a held run's material is kept from purge and from a new run in its sandbox" ;;
     cap) cat <<'EOF'
@@ -12133,6 +12379,8 @@ main() {
     ui) cmd_ui "$@" ;;
     reap) cmd_reap "$@" ;;
     summary) cmd_summary "$@" ;;
+    access) cmd_access "$@" ;;
+    console-view) cmd_console_view "$@" ;;
     context) cmd_context "$@" ;;
     metrics) cmd_metrics "$@" ;;
     replay) cmd_replay "$@" ;;

@@ -52,6 +52,9 @@ each fetched by install.py and refused unless its sha256 is the pinned one:
                      by apt, so its dependencies come from Debian; its `bin`,
                      when it has one, is where the package puts the program.
                      An architecture with no entry is recorded as not installed.
+                     A `.nupkg` (a NuGet package, which is a zip file) is
+                     unpacked whole by install.py's own rules (images/README.md),
+                     its `bin` the program's path inside it.
   install.source     one archive for every architecture (a tag's tarball),
                      unpacked under /opt/dfir/src/<name>, its `pip` arguments
                      run in a venv of its own there, its `entry` put on PATH.
@@ -67,7 +70,8 @@ each fetched by install.py and refused unless its sha256 is the pinned one:
   install.data       one file a program reads and that is not a program (a
                      symbol table pack, a rule set), the same bytes for every
                      architecture: a url and its sha256, put as named inside
-                     a Python package of the image's venv (`package`, `into`).
+                     a Python package of the image's venv (`package`, `into`),
+                     or, with an absolute `into` under /opt/dfir/data/, no package.
                      `warm` is a command run once it is there, for a program
                      that indexes what it finds the first time it runs;
                      `check` one that must then succeed (the images workflow
@@ -104,7 +108,10 @@ to avoid taking an earlier build's gaps from the cache.
 
 `run` names the interpreter a download's or a source's program needs:
 `python` (the program's own venv, else the image's), or any program the image
-holds (`perl`, `dotnet`, which a pack may pin as a download of its own). An apt
+holds (`perl`, `dotnet`, which a pack may pin as a download of its own). A
+download's architecture entry may carry a `run` of its own, which wins over the
+download's (a program that is a native build on one architecture and a .NET
+assembly on the other); an empty one means the program runs by itself. An apt
 line with `-t <codename>-backports` comes from the image's Debian backports.
 
 A program marked `not_in_image` (with why) belongs to another system than the
@@ -295,11 +302,53 @@ def place_copy(src: Path, dest: Path) -> None:
 
 
 KINDS = ("apt", "pip", "apt_release", "requirements", "binaries", "manual", "downloads", "sources", "builds",
-         "data", "not_applicable", "python_notes")
+         "data", "not_applicable", "python_notes", "python_locks", "pip_locks", "lock_files")
+
+
+def lock_entry(spec: dict, pack: str, path: Path, label: str) -> dict:
+    """A hash lock of a pack (a file under its requires/): the reference the spec
+    carries ({name, sha256}) and the file the build copies into the context
+    (spec["lock_files"], whose `from` build() removes before writing spec.json).
+    Its content is checked by `install.lock_problem` at the seal and at the build."""
+    if not path.is_file():
+        raise SystemExit(f"recipe: {pack}: the lock {label} is not in the pack (seal the pack: pack.sh checks it)")
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    name = f"{pack}-{path.name}"
+    if not any(f["name"] == name for f in spec["lock_files"]):
+        spec["lock_files"].append({"name": name, "sha256": sha, "from": str(path)})
+    return {"name": name, "sha256": sha}
 
 
 def empty() -> dict:
     return {k: ({} if k in ("apt", "pip", "apt_release") else []) for k in KINDS}
+
+
+def add_data(spec: dict, packs, name: str, b: dict, install: dict) -> None:
+    """Data the program reads (symbol tables, rules, definitions): its own entry
+    in the spec, whatever installs the program, named for the program unless the
+    pack names it. One entry, a list of them, or a pack's pinned list file
+    expanded entry by entry (data_entries). Required whatever its program is:
+    the pack pinned it on purpose (build --allow-missing-data goes on without
+    it). Not for redistribution when either it or its program says so."""
+    for item in data_entries(pack_dir(packs, name), install.get("data")):
+        spec["data"].append({"program": b["name"], "pack": name,
+                             "redistributable": b.get("redistributable", True) is not False
+                             and item.get("redistributable", True) is not False,
+                             **{"name": f"{b['name']}-data", **item}, "required": True})
+
+
+SHORT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._+/-]{0,39}")
+
+
+def short_words(pack: str, program: str, key: str, value) -> list:
+    """A binary entry's `isa` or `formats`: a list of short strings (letters,
+    digits, space and . _ + / -, up to 40) that tools.md prints on the
+    program's line. Anything else is refused by name: tools.md is what an
+    agent reads to choose a program, so a value that does not print as written
+    is not carried."""
+    if not isinstance(value, list) or not all(isinstance(x, str) and SHORT.fullmatch(x) for x in value):
+        raise SystemExit(f"recipe: {pack}: requires/host.json: {program}'s {key} must be a list of short strings (letters, digits, space and . _ + / -, up to 40 characters each)")
+    return list(dict.fromkeys(value))
 
 
 def read_pack(packs, name: str) -> dict:
@@ -314,15 +363,34 @@ def read_pack(packs, name: str) -> dict:
             # source host): no Linux image holds it, and none lacks it.
             if b.get("not_in_image"):
                 spec["not_applicable"].append({"name": b["name"], "pack": name, "why": b["not_in_image"]})
+                # The program is in no image, but what a pack pins for a tool to
+                # read (definitions, rules) is still installed: the data belongs to
+                # the pack, not to the program's being run here.
+                add_data(spec, packs, name, b, install)
                 continue
             spec["binaries"].append({"name": b["name"], "pack": name, "required": required,
                                      "licence": b.get("licence"),
                                      "redistributable": b.get("redistributable", True) is not False,
                                      "source": line, "why": b.get("why", "")})
+            # Commands whose output the build keeps as facts about the program
+            # (install.py records each under /etc/dfirswarm/facts/); the
+            # seal has checked their shape.
+            if b.get("facts"):
+                spec["binaries"][-1]["facts"] = b["facts"]
+            # What the program decodes (`isa`) and reads (`formats`), for tools.md.
+            for key in ("isa", "formats"):
+                if key in b:
+                    words_ = short_words(name, b["name"], key, b[key])
+                    if words_:
+                        spec["binaries"][-1][key] = words_
             pinned = [k for k in ("build", "source", "download") if isinstance(install.get(k), dict)]
             if pinned:
                 kind = pinned[0]
                 spec[kind + "s"].append({"name": b["name"], "pack": name, "required": required, **install[kind]})
+                if kind == "source":
+                    for key in ("pip_lock", "pip_after_lock"):
+                        if install[kind].get(key):
+                            spec["sources"][-1][key] = lock_entry(spec, name, pack_dir(packs, name) / str(install[kind][key]), str(install[kind][key]))
                 spec["binaries"][-1]["source"] = {"download": "download", "source": "source",
                                                   "build": "built from source"}[kind] + f" {install[kind].get('version', '?')}"
             elif m := APT.match(line):
@@ -334,29 +402,32 @@ def read_pack(packs, name: str) -> dict:
                         spec["apt_release"][p] = release
             elif m := PIP.match(line):
                 spec["binaries"][-1]["pip"] = words(m.group(1))
-                for p in words(m.group(1)):
-                    spec["pip"][p] = spec["pip"].get(p, False) or required
+                if install.get("pip_lock"):
+                    # Installed from the pack's hash lock (pip --require-hashes), not from the
+                    # names on the line: the lock holds the set and its dependencies.
+                    ref = lock_entry(spec, name, pack_dir(packs, name) / str(install["pip_lock"]), str(install["pip_lock"]))
+                    spec["pip_locks"].append({"program": b["name"], "pack": name, "required": required,
+                                              "packages": words(m.group(1)), **ref})
+                    spec["binaries"][-1]["locked"] = True
+                else:
+                    for p in words(m.group(1)):
+                        spec["pip"][p] = spec["pip"].get(p, False) or required
             else:
                 spec["manual"].append({"name": b["name"], "pack": name, "how": line or "no install line"})
-            # Data the program reads (symbol tables, rules): its own entry in the
-            # spec, whatever installs the program, named for the program unless
-            # the pack names it. One entry, a list of them, or a pack's pinned
-            # list file expanded entry by entry (data_entries).
-            for item in data_entries(pack_dir(packs, name), install.get("data")):
-                # Required whatever its program is: the pack pinned it on
-                # purpose (build --allow-missing-data goes on without it). Not
-                # for redistribution when either it or its program says so.
-                spec["data"].append({"program": b["name"], "pack": name,
-                                     "redistributable": b.get("redistributable", True) is not False
-                                     and item.get("redistributable", True) is not False,
-                                     **{"name": f"{b['name']}-data", **item}, "required": True})
+            add_data(spec, packs, name, b, install)
     reqs = pack_dir(packs, name) / "requires" / "python.txt"
+    # requires/python.lock beside python.txt: the pack's Python set installed with
+    # hash checking, in place of the lines of python.txt (which stay the notes).
+    py_lock = pack_dir(packs, name) / "requires" / "python.lock"
+    if py_lock.is_file():
+        spec["python_locks"].append({"pack": name, **lock_entry(spec, name, py_lock, "requires/python.lock")})
     if reqs.exists():
         for raw in reqs.read_text().splitlines():
             line, _, note = raw.partition("#")
             line = line.strip()
             if line:
-                spec["requirements"].append(line)
+                if not py_lock.is_file():
+                    spec["requirements"].append(line)
                 # What the pack says the library is for, for the image's
                 # tools.md: the comment on its line.
                 spec["python_notes"].append({"requirement": line, "pack": name, "note": " ".join(note.split())})
@@ -374,6 +445,8 @@ def merge(specs: list) -> dict:
         out["binaries"] += s["binaries"]
         out["python_notes"] += [n for n in s["python_notes"] if not any(x["requirement"] == n["requirement"] for x in out["python_notes"])]
         out["manual"] += s["manual"]
+        for kind in ("python_locks", "pip_locks", "lock_files"):
+            out[kind] += [x for x in s[kind] if x not in out[kind]]
         # A program two packs pin is installed once, as the first pins it.
         for kind in ("downloads", "sources", "builds", "data", "not_applicable"):
             for d in s[kind]:
@@ -789,6 +862,12 @@ def build(a) -> int:
         (a.out / "data").mkdir()
         for sha, src in copies.items():
             place_copy(src, a.out / "data" / sha)
+    # The pip hash locks the packs name, copied beside the spec (the name carries
+    # the pack, the spec carries each file's sha256 and install.py checks it).
+    shutil.rmtree(a.out / "locks", ignore_errors=True)
+    for lf in spec["lock_files"]:
+        (a.out / "locks").mkdir(exist_ok=True)
+        shutil.copyfile(lf.pop("from"), a.out / "locks" / lf["name"])
     (a.out / "spec.json").write_text(json.dumps(spec, indent=1) + "\n")
     (a.out / "NOTICE").write_text(notice(spec))
     shutil.copy(HERE / "install.py", a.out / "install.py")
@@ -817,7 +896,7 @@ RUN python3 /tmp/dfirswarm-build/install.py --build /tmp/dfirswarm-build/{stage}
 ARG BASE={a.base}
 {"".join(s + chr(10) for s in stages)}FROM ${{BASE}}
 {"".join(copy_lines)}COPY install.py spec.json NOTICE /tmp/dfirswarm-build/
-{install} && rm -rf /tmp/dfirswarm-build
+{"COPY locks /tmp/dfirswarm-build/locks" + chr(10) if spec["lock_files"] else ""}{install} && rm -rf /tmp/dfirswarm-build
 ENV PATH=/opt/dfir/venv/bin:$PATH
 LABEL org.opencontainers.image.title="dfirswarm-{a.profile}" \\
       dev.dfirswarm.profile="{a.profile}" \\

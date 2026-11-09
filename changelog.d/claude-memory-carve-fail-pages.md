@@ -1,0 +1,3 @@
+### Fixed: memory-forensics mem_carve drops its unplaced page when the last stage of the spill fails
+
+Without `results_to`, mem_carve spills the hits past the preview to a hidden temporary file and closes, flushes and places it after the sweep. When that last stage failed (a full disk on the last buffered write, an fsync error, no free name), the answer was a failure but the hidden `.mem_carve-<hash>.jsonl-<hex>` file stayed under `tool-output`, named by nothing. The tool's failure path now drops every page that was not placed before it writes the answer, as mem_fs and mem_profile already did. A new case in `tests/pack-memory-page-failure.test.ts` makes the final flush fail with a file-size limit and asserts that no hidden file is left; it fails on the earlier code.

@@ -3,7 +3,7 @@ id: encryptor/backup-infrastructure
 title: Backup servers, immutable storage and hypervisors
 when: A backup server, immutable store, hypervisor or recovery setting was affected.
 needs: []
-tools: []
+tools: [backup_destruction_correlate]
 requires_host: []
 ---
 
@@ -21,12 +21,12 @@ expiry, legal holds, lifecycle changes and the administrative rights that can
 bypass them. Do not infer protection from a product label. Establish that the
 keys and the whole backup chain are still available.
 
-**Hypervisors and network storage.** Preserve the management-plane audit records,
-the storage and snapshot inventories, the replication history and task outcomes.
-Separate a guest's compromise from the host's or the storage's. A virtual-machine
-snapshot is not an independent backup, and the loss of a base or dependent disk can
-invalidate a chain. A share that became unavailable does not show that its data or
-snapshots were destroyed.
+**Hypervisors and network storage.** For a hypervisor read `platforms/esxi-hypervisors`;
+for network storage read `platforms/nas-storage`. They hold what to preserve, how
+to separate a guest's compromise from the host's or the storage's, and which tools
+of the virtualization pack read the evidence, if it is loaded. Their answers (the audit,
+the chain check) go by reference to `backup_destruction_correlate`, which keeps what a
+job reported apart from a chain that is missing its base.
 
 **Boot recovery and stopped services.** Record changes to the recovery
 configuration (the boot manager's recovery and boot-status settings, the recovery

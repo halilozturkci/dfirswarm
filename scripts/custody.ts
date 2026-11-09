@@ -56,7 +56,7 @@ import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { lstat, mkdtemp, readdir, readlink, realpath, rename, rm, unlink } from "node:fs/promises";
-import { createInterface } from "node:readline";
+import { jsonlLines } from "../extensions/jsonl-lines.ts";
 import { StringDecoder } from "node:string_decoder";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -69,8 +69,10 @@ import { FINISH_LOG } from "../extensions/finish.ts";
 import { checkNetwork, FETCH_LOG, GRANTS_LOG, type NetworkCheck } from "./net-grants.ts";
 import { hashArtifacts, type ArtifactIndex } from "./artifacts.ts";
 import { checkStore, verifyJournalText, type StoreCheck } from "./evidence-store.ts";
+import { LOWER_BOUND_SENTENCE, SEAT_ROWS_SENTENCE, verifyAccess } from "./sensitive-access.ts";
 import {
   afterSeal,
+  accessCheckOf,
   checksLine,
   checksOf,
   compareAcquisition,
@@ -79,6 +81,7 @@ import {
   timestampFile,
   verifyOperatorAudit,
   verifyTimestampToken,
+  type AccessCheck,
   type Acquisition,
   type Check,
   type OperatorAudit,
@@ -158,7 +161,7 @@ async function eachLine(path: string, onLine: (line: string) => void): Promise<{
   if ("why" in opened) return opened;
   let lines = 0;
   try {
-    const rl = createInterface({ input: opened.handle.createReadStream({ autoClose: false, encoding: "utf8" }), crlfDelay: Infinity });
+    const rl = jsonlLines(opened.handle.createReadStream({ autoClose: false }));
     for await (const line of rl) {
       if (line === "") continue;
       lines += 1;
@@ -698,6 +701,12 @@ export type Custody = {
   case_policy?: { path: string; sha256: string; anchored: boolean | null; policy: string; network: string; more_evidence: string; material_use: Record<string, string> } | { path: string; unreadable: string; anchored: boolean | null } | null;
   /** The operator's audit beside the registry, and each operator line on the trace matched to it. */
   operator: OperatorAudit;
+  /**
+   * The access record (docs/adr/0018) held to the trace and to the scope
+   * manifests of the journal (`verifyAccess`): the counts of each finding and
+   * a few examples. Null for a run with no store, or a verdict from before it.
+   */
+  access_record?: AccessCheck | null;
   /** The acquisition hashes given at kickoff (--inputs-hashes), against the evidence as re-hashed now. */
   acquisition: Acquisition;
   /** Each check's status: passed, failed, incomplete, not applicable, unavailable. */
@@ -751,6 +760,7 @@ export type CustodyState = {
   gatewayDone?: boolean;
   store?: Custody["store"];
   storeDone?: boolean;
+  accessDone?: boolean;
   incomplete?: string | null;
   seal?: Custody["seal"];
   attestations?: Custody["attestations"];
@@ -763,6 +773,7 @@ export type CustodyState = {
   finish?: Custody["finish"];
   case_policy?: Custody["case_policy"];
   operator?: Custody["operator"];
+  access_record?: Custody["access_record"];
   acquisition?: Custody["acquisition"];
   models?: Custody["models"];
   time_reference?: Custody["time_reference"];
@@ -1906,6 +1917,23 @@ export async function takeCustody(sandboxInput: string, options: CustodyOptions 
   }
   state.storeDone = true;
   if (state.seal && state.store) state.seal.journal = { lines: state.store.journal.lines, head: state.store.journal.head };
+
+  // --- the access record --------------------------------------------------------------
+  // The hub's lines held to the trace, the trace to the lines, and the journal's
+  // recorded ways to each job's scope manifest. Its reads are charged to the deadline.
+  enter("the access record");
+  state.access_record = null;
+  if (!tooLate("the access record") && existsSync(join(sandbox, "store", "journal.jsonl"))) {
+    try {
+      const verified = await verifyAccess(sandbox, { stop: () => deadline.over });
+      state.access_record = accessCheckOf(verified);
+      if (verified.incomplete) tooLate("the access record");
+    } catch (err) {
+      state.access_record = null;
+      state.errors.access_record = (err as Error).message;
+    }
+  }
+  state.accessDone = true;
   // A reference clock, when the operator named one.
   const refUrl = options.timeReference ?? process.env.SWARM_TIME_REFERENCE;
   state.time_reference = refUrl ? await referenceOffset(refUrl) : null;
@@ -1987,6 +2015,7 @@ export function verdictOf(state: CustodyState, incomplete: string | null): Custo
   if (!state.artifactsDone) notReached.push("the artifact index");
   if (!state.gatewayDone && state.sandbox && existsSync(join(state.sandbox, GATEWAY_LOG))) notReached.push("the model gateway log");
   if (!state.storeDone && state.sandbox && existsSync(join(state.sandbox, "store", "journal.jsonl"))) notReached.push("the store");
+  if (!state.accessDone && state.sandbox && existsSync(join(state.sandbox, "store", "journal.jsonl"))) notReached.push("the access record");
   const inputs = state.inputs ?? null;
   const sessions = state.sessions ?? { files: [], digest: "", not_files: [] };
   const toolOutputs = state.tool_outputs ?? { referenced: 0, verified: 0, missing: [], mismatched: [], refused: [], rereferenced: [], foreign: [] };
@@ -2017,6 +2046,7 @@ export function verdictOf(state: CustodyState, incomplete: string | null): Custo
     finish: state.finish ?? null,
     case_policy: state.case_policy ?? null,
     operator: state.operator ?? null,
+    access_record: state.access_record ?? null,
     acquisition: state.acquisition ?? null,
     checks: [],
     timing: state.timing ?? { phases: {}, evidence_bytes: 0, evidence_mb_per_s: null, total_ms: 0 },
@@ -2264,7 +2294,22 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
   parts.push(checksLine(c.checks));
   // What the anchors are: files of the operator's own account beside the run. They hold the agents to account, not the operator.
   parts.push("anchors are the operator's own files beside the run: they hold the agents to account; a signature and an external timestamp hold the verdict itself");
+  // The access record, when the run has a sensitive output: what it found, and what it cannot (the fixed sentence last).
+  if (c.access_record && c.access_record.sensitive_jobs > 0) parts.push(accessWords(c.access_record));
   return parts.join(" · ");
+}
+
+/** The access record in the summary: the findings in words, then what counting cannot catch, then the fixed lower-bound sentence. */
+function accessWords(a: AccessCheck): string {
+  const found = [
+    ...(a.orphan ? [`${plural(a.orphan, "RECORDED ACCESS LINE")} WITH NO TRACE ROW BEHIND IT (FAIL)`] : []),
+    ...(a.scope_disagreement ? [`${a.scope_disagreement} RECORDED WAY(S) NOT AGREEING WITH THE SCOPE MANIFEST OF THEIR JOB (FAIL)`] : []),
+    ...(a.unrecorded ? [`WARN: ${plural(a.unrecorded, "seat row")} the rules read as an access with no line`] : []),
+    ...(a.duplicate ? [`WARN: ${plural(a.duplicate, "line")} repeating a row`] : []),
+    ...(a.rules_changed.length ? [`lines written under rules ${a.rules_changed.join(", ")}, not compared`] : []),
+    ...(a.incomplete ? [`NOT ALL READ (${a.incomplete})`] : []),
+  ];
+  return `access to sensitive outputs: ${plural(a.sensitive_jobs, "sensitive job")}, ${found.length ? found.join("; ") : "every recorded line agrees with the trace and the scope manifests"}. ${SEAT_ROWS_SENTENCE} ${LOWER_BOUND_SENTENCE}`;
 }
 
 /**

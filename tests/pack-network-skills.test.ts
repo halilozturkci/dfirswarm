@@ -45,7 +45,7 @@ const ROUTER = "network/router";
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, 13);
+  assert.equal(skills.size, 19);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? 400 : 800), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
@@ -88,7 +88,7 @@ test("every second-level leaf is pointed to by a leaf that says when to open it"
   const skills = await load(SKILLS);
   const pointers: Record<string, string> = {
     "capture/derivatives": "capture/what-you-have", "sessions/objects": "sessions/reconstruct",
-    "metadata/fingerprints": "metadata/dns-tls", "exfil/counters": "exfil/volume",
+    "metadata/fingerprints": "metadata/dns-tls", "exfil/counters": "exfil/volume", "sessions/quic-http3": "metadata/dns-tls",
   };
   for (const [child, parent] of Object.entries(pointers)) {
     const p = skills.get(parent);
@@ -112,6 +112,10 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["suricata_run", "metadata/fingerprints", ["home_net", "rule_load", "inputs/"]],
   ["network_log_summary", "logs/web-proxy-firewall", ["referer"]],
   ["network_log_summary", "logs/web-proxy-firewall", ["decoding_substituted", "timestamp_raw", "timestamp_utc", "timezone_source", "unparsed", "blank", "parsed"]],
+  ["suricata_run", "analysis/engines-and-coverage", ["dry_run", "rule_load", "known", "effective_configuration", "dump_config", "not_covered", "checksum_mode"]],
+  ["tls_decrypt", "sessions/tls-keylogs", ["keylog_file", "use_embedded_secrets", "decryption_secrets_blocks", "key_log_preference", "status_counts", "write_payload", "payloads", "contains_secret_values", "no_secret_for_session", "out_dir", "flows"]],
+  ["quic_inspect", "sessions/quic-http3", ["fields_missing", "limits", "dissector_missing", "encrypted_payload", "udp_443_not_dissected_as_quic", "server_names", "alpn", "frame_types", "http3_stream_ids", "ended_by", "retry_scid", "follows_attempt", "endpoints_changed", "unlinked", "all_results", "keylog_file", "use_embedded_secrets", "datagrams", "attempts"]],
+  ["zeek_run", "analysis/engines-and-coverage", ["dry_run", "script_load_status", "logs_requested_not_written", "logs_empty", "engine_diagnostics", "checksum_validation"]],
 ];
 
 test("the tool fields a skill names are fields its tool writes", async () => {
@@ -129,11 +133,15 @@ test("the tool fields a skill names are fields its tool writes", async () => {
 test("no skill states a version fact about a tool, the old claims are gone, and secret handling is stated where a tool can reach one", async () => {
   const skills = await load(SKILLS);
   for (const s of skills.values()) {
-    assert.doesNotMatch(s.body, /Suricata 7|since (version )?\d|as of (20|19)\d\d/i, `${s.id} states no version fact`);
+    // One dated observation is allowed to name the builds it was made with: sessions/quic-http3 item 7 says what Zeek 8.0.11 and
+    // Suricata 7.0.10 wrote for synthetic QUIC, once, and says it is not a real capture. It is not a claim about other versions.
+    const body = s.id === "sessions/quic-http3" ? s.body.replace("Zeek 8.0.11, Suricata 7.0.10", "the two builds") : s.body;
+    assert.doesNotMatch(body, /Suricata 7|since (version )?\d|as of (20|19)\d\d/i, `${s.id} states no version fact`);
     assert.doesNotMatch(s.body, /Every question about content is unanswerable|You will not read a TLS payload|a hash per object|which is when either becomes conclusive|will produce|almost nothing legitimate/i, `${s.id} still carries an overclaim`);
     assert.doesNotMatch(s.body, /`(connection_starts|starts|jitter_fraction|completeness|stopped|with_starts)`|\bconnection starts?\b/, `${s.id} uses a renamed field`);
   }
-  for (const id of ["capture/what-you-have", "capture/carve-from-images", "sessions/reconstruct", "sessions/objects", "metadata/dns-tls", "metadata/fingerprints", "logs/web-proxy-firewall"]) {
+  for (const id of ["capture/what-you-have", "capture/carve-from-images", "sessions/reconstruct", "sessions/objects", "metadata/dns-tls", "metadata/fingerprints", "logs/web-proxy-firewall",
+    "evidence/captured-secrets", "metadata/encrypted-dns", "analysis/engines-and-coverage"]) {
     assert.match(skills.get(id)!.body, /secret_output: true/, `${id} says the job runs with secret_output: true`);
   }
 });
@@ -173,6 +181,88 @@ test("a Zeek column a skill names is a column Zeek has, and a column Zeek droppe
   }
 });
 
+// ---- The four leaves of the first skills package: captured secrets, flow records, encrypted DNS, engines and coverage. ----
+
+const NEW_LEAVES = ["evidence/captured-secrets", "flows/interpret", "metadata/encrypted-dns", "analysis/engines-and-coverage", "sessions/tls-keylogs", "sessions/quic-http3"];
+const PACKS = join(NET, "..");
+
+/** Every tool a skill of this pack can name: the pack's own and those of the packs it depends on. */
+async function toolNames(): Promise<Set<string>> {
+  const names = new Set<string>();
+  for (const pack of ["network-forensics", "computer-forensics-base"]) {
+    for (const e of await readdir(join(PACKS, pack, "tools"), { withFileTypes: true })) if (e.isDirectory()) names.add(e.name);
+  }
+  return names;
+}
+
+test("each new leaf opens Use when ... Not for, names only tools that exist, and is named once by the router", async () => {
+  const skills = await load(SKILLS);
+  const tools = await toolNames();
+  const router = skills.get(ROUTER)!.body;
+  for (const id of NEW_LEAVES) {
+    const s = skills.get(id);
+    assert.ok(s, `${id} exists`);
+    const first = s.body.trim().split("\n")[0];
+    assert.match(first, /^Use when .*\bNot for\b/, `${id} opens with Use when ... Not for`);
+    for (const t of (s.meta.tools as string[]) ?? []) assert.ok(tools.has(t), `${id} lists the tool ${t}, which no pack of the closure carries`);
+    assert.equal(router.split(`\`${id}\``).length - 1, 1, `${id} is named once by the router`);
+    for (const part of ["Shows", "Does not show", "Record"]) assert.match(s.body, new RegExp(`${part}:`), `${id} has ${part}`);
+  }
+});
+
+test("flows/interpret names the flow tool once it exists, and the leaf, the capture leaf and the README no longer say a flow reader is missing", async () => {
+  const skills = await load(SKILLS);
+  const s = skills.get("flows/interpret")!;
+  const exists = (await toolNames()).has("flow_reader");
+  assert.equal(((s.meta.tools as string[]) ?? []).includes("flow_reader"), exists);
+  assert.equal(s.body.includes("flow_reader"), exists, "the leaf and the tool agree");
+  if (!exists) assert.match(s.body, /no flow reader/i, "it says a flow reader is not provided");
+  // It agrees with the capture leaf and the README on that point, whichever side of it the pack is on.
+  assert.equal(/no flow reader/i.test(skills.get("capture/what-you-have")!.body), !exists);
+  const readme = await readFile(join(NET, "README.md"), "utf8");
+  assert.equal(/no flow reader is provided/.test(readme), !exists);
+  assert.equal(/No tool here reads flow records/.test(readme), !exists);
+  assert.equal(JSON.parse(await readFile(join(NET, "pack.json"), "utf8")).description.includes("No flow-record reader"), !exists);
+  if (exists) {
+    assert.deepEqual((s.meta.requires_host as string[]) ?? [], ["nfdump"], "the leaf names the program the tool runs");
+    assert.match(s.body, /counters_exact/);
+    assert.match(s.body, /refuses a capture and sFlow by name/);
+  }
+});
+
+test("evidence/captured-secrets is a prerequisite of the three leaves that reach secrets, and no chain enters the warning band", async () => {
+  const all = new Map([...(await load(BASE_SKILLS)), ...(await load(SKILLS))]);
+  for (const id of ["sessions/reconstruct", "capture/carve-from-images", "logs/web-proxy-firewall"]) {
+    const needs = (all.get(id)!.meta.needs as string[]) ?? [];
+    assert.ok(needs.includes("evidence/captured-secrets"), `${id} needs evidence/captured-secrets`);
+    const ids = new Set<string>([id, ...needs, ...needs.flatMap((n) => (all.get(n)!.meta.needs as string[]) ?? [])]);
+    const tokens = [...ids].reduce((n, i) => n + TOKENS(all.get(i)!.text), 0);
+    assert.ok(tokens <= 1750, `${id} chain is ${Math.round(tokens)} tokens, in the warning band from 1,750`);
+    assert.ok(TOKENS(all.get(id)!.text) <= 800, `${id} stays a leaf of at most 800 tokens`);
+  }
+  assert.ok(TOKENS(all.get("evidence/captured-secrets")!.text) <= 330, "the leaf every secret-reaching chain carries stays small");
+});
+
+test("no leaf tells the reader to record a secret's value, a fragment or a hash, and an attempt is not a success", async () => {
+  const skills = await load(SKILLS);
+  const secrets = skills.get("evidence/captured-secrets")!.body;
+  assert.match(secrets, /secret_output: true/);
+  assert.match(secrets, /[Aa]n attempt is not a success/);
+  assert.match(secrets, /[Nn]ever the value, a fragment or a hash/);
+  for (const s of skills.values()) assert.doesNotMatch(s.body, /\b(record|report|note|keep) (the |its |a )?(secret|credential|password|token) value/i, `${s.id} asks for a value`);
+});
+
+test("the encrypted-DNS clause of dns-tls is gone and the leaf agrees with it", async () => {
+  const skills = await load(SKILLS);
+  assert.doesNotMatch(skills.get("metadata/dns-tls")!.body, /QUIC or encrypted-DNS method/);
+  assert.ok(skills.get("metadata/dns-tls")!.body.includes("`metadata/encrypted-dns`"), "dns-tls points to the leaf");
+  const dns = skills.get("metadata/encrypted-dns")!.body;
+  assert.match(dns, /DoH/);
+  assert.match(dns, /DoT/);
+  assert.match(dns, /DoQ/);
+  assert.match(dns, /"No DNS queries" is wrong when only port 53 was examined/);
+});
+
 // ---- The router: the one entry a run shows for this pack when its index is over the run's budget. ----
 
 routerChecks({
@@ -181,6 +271,28 @@ routerChecks({
   before: [
     "beacons/periodicity", "capture/carve-from-images", "capture/derivatives", "capture/what-you-have", "correlate/host", "exfil/counters",
     "exfil/volume", "logs/web-proxy-firewall", "metadata/dns-tls", "metadata/fingerprints", "sessions/objects", "sessions/reconstruct",
+    "analysis/engines-and-coverage", "evidence/captured-secrets", "flows/interpret", "metadata/encrypted-dns", "sessions/tls-keylogs", "sessions/quic-http3",
   ],
   profiles: ["network", "full"],
+});
+
+// ---- The two session leaves of the TLS key log and QUIC tools ----
+
+test("the key log is a FILE reference in both session leaves, no leaf holds the line of one, and the QUIC paragraph of dns-tls names the tool and points to the leaf", async () => {
+  const skills = await load(SKILLS);
+  const tls = skills.get("sessions/tls-keylogs")!.body;
+  const quic = skills.get("sessions/quic-http3")!.body;
+  assert.match(tls, /`keylog_file` as a job input/);
+  assert.match(tls, /text that looks like a key log is refused/);
+  assert.match(quic, /`keylog_file` as a FILE, never its text/);
+  for (const s of skills.values()) assert.doesNotMatch(s.text, /(?:CLIENT_RANDOM|CLIENT_TRAFFIC_SECRET_0|SERVER_TRAFFIC_SECRET_0) [0-9a-f]{16,}/i, `${s.id} holds no line of a key log`);
+  assert.match(tls, /secret_output: true/);
+  assert.match(quic, /secret_output: true/);
+  assert.match(tls, /Decrypted is not identified/);
+  assert.match(quic, /A UDP tuple is not a session/);
+  const dns = skills.get("metadata/dns-tls")!;
+  assert.ok((dns.meta.tools as string[]).includes("quic_inspect"));
+  assert.match(dns.body, /`quic_inspect`/);
+  assert.match(dns.body, /Only if QUIC or HTTP\/3 decides the question: `sessions\/quic-http3`/);
+  assert.doesNotMatch(dns.body, /no QUIC (?:or encrypted-DNS )?method/);
 });

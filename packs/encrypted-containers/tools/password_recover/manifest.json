@@ -1,0 +1,45 @@
+{
+  "name": "password_recover",
+  "description": "Make an authorised password attempt against a protected file or an already-extracted hash, with john, inside a secret_output job only. Runs the matching *2john helper (zip2john, 7z2john, rar2john, pdf2john, office2john, bitlocker2john, luks2john) on `source` to extract a hash, or takes `hash_file` from another sealed job by reference, then john with `candidates` (a file of one candidate per line, never a value inline or on a command line), an optional `rules` name from a closed list, bounded by `max_seconds`. Every file that could carry the hash or the password (the extracted hash, john's pot, session, log and john's own run output) is written only under $OUT, mode 0600, created before anything is read; a file or link already at one of those names is refused by name. The answer carries the format, john's own version, the helper's version where it reports one, how many hash lines were extracted, how many candidate lines were offered, and how many john recovered: never a value, a hash, a salt or a length of either. A recovered password lives only in the sealed pot file this answer names; this tool reads that file itself once, through `john --show` (its own output redirected to another sealed file, never echoed), only to count what was recovered. `format` is inferred from `source`'s extension when not given (zip, 7z, rar, pdf, the Office extensions, .bek for bitlocker); a format with no entry in the closed list, or whose helper is not on this host, answers `unsupported` and runs nothing. `status` is `complete` when john tried every candidate (or stopped once every hash was recovered), `partial` when the time budget or an external stop cut the run short, `failed` when the helper ran but wrote no hash, when the hash file holds no hash line, when the candidate list holds no line, or when john loaded no hash (nothing was tried, so nothing is claimed), `unsupported` when the format's helper is not on this host. The tool refuses as JSON, before reading anything else (its own stdin included), when the call is not a job the harness ran as secret output (`SECRET_OUTPUT=1`); its manifest's `secret_output: \"required\"` makes every job of this tool one. It stops on SIGTERM, SIGINT and SIGHUP with one JSON answer and exit 128 + the signal, ending john and the helper (their whole process tree) first; a read that has not returned after the tool's own clock and a grace period ends it with one partial answer (exit 0). A path shaped like a recovery password, an identifier or any other secret is withheld from every path this tool prints, by the shape rule its siblings carry (`paths_withheld`, measured the same way: see archive_probe's and recovery_key_scan's manifests for the rates). A name, a path, a URL or a message that quotes a credential is withheld with the identifier-shaped strings, from version 7: a value given to a password, token, secret or cookie name (password=..., Pwd=..., a Cookie header), a Name/Value pair in text whose Name is a credential (a number, an array or a long Value too, and the NewValue after an OldValue), a -Password style switch, the argument of ConvertTo-SecureString, curl -u user:pass, mysql -uUSER -pSECRET, a bcrypt hash and the known token families; the text is replaced by a marker that holds only its length. Before, only identifier-shaped strings (tokens, key ids, user-info) were withheld, so these were printed. Known gaps: a pair whose Value is an array nested in another or longer than 4,096 characters, a crypt hash that is not bcrypt, and a secret that has neither a credential name nor a token shape. A process the helper or john leaves behind after it ended (in the tool's group, in a session of its own, or holding no descriptor at all) is ended before the hash file, the pot, the log and the show output are read or counted; every answer after a program ran carries `program_group` (subreaper, left_behind, unproven, notes), and a `complete` answer is `partial` when a process was ended and when the host cannot rule one out (not Linux, or the kernel refuses PR_SET_CHILD_SUBREAPER). The files stay sealed under $OUT as they were when the process was ended, and the recovered value is withheld as before. A refusal, an error and `unsupported` carry no program_group.",
+  "params": {
+    "source": {
+      "type": "string",
+      "description": "The protected file (ZIP, 7-Zip, RAR, PDF, an Office document, a BitLocker volume or a LUKS header) to run the matching *2john helper against. Give exactly one of source or hash_file"
+    },
+    "hash_file": {
+      "type": "string",
+      "description": "An existing hash file from another sealed job, used instead of running a helper. Give exactly one of source or hash_file"
+    },
+    "format": {
+      "type": "string",
+      "description": "One of zip, 7z, rar, pdf, office, bitlocker, luks. Inferred from source's extension when not given; required when it cannot be inferred, and when hash_file is given with no helper to infer it from"
+    },
+    "candidates": {
+      "type": "string",
+      "description": "A file of one candidate password per line, handed to john as --wordlist; never read by this tool for its content, only counted"
+    },
+    "rules": {
+      "type": "string",
+      "description": "One of none (default: no mangling, each candidate tried as written), wordlist, best64, single"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds (default 420, 1 to 540; the manifest's timeout is 600). At it, or on a stop signal, the attempt is cut and the answer is partial; whatever john had tried stays in the sealed pot file"
+    }
+  },
+  "requires": [
+    "john"
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 600,
+  "secret_output": "required",
+  "example": "{\"source\": \"work/extracted/secret.zip\", \"format\": \"zip\", \"candidates\": \"work/candidates.txt\"}",
+  "by": "maintainer",
+  "at": "2026-10-31T12:00:00.000Z",
+  "version": 11,
+  "sha256": "27bcd7c3ca1d483a4674d17c9b04b5a24f891d0e7fb451397ae680bea3b2a960",
+  "use": {
+    "extensions": []
+  }
+}

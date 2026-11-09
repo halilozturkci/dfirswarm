@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { EXTRACT, LOGS, RECIPE, SUMMARY, SURICATA, ZEEK } from "./pack-network-harness.ts";
+import { CONNS, EXTRACT, FLOW, LOGS, QUICI, RECIPE, SUMMARY, SURICATA, TLSD, TRANSFORM, ZEEK } from "./pack-network-harness.ts";
 import { runPySnippet } from "./tool-library-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 
@@ -23,8 +23,8 @@ async function block(path: string): Promise<string> {
   return text.slice(start, end + END.length);
 }
 
-test("the five tools carry the same withholding block, byte for byte", async () => {
-  const blocks = await Promise.all([EXTRACT, ZEEK, SURICATA, LOGS, SUMMARY].map(block));
+test("the eight tools carry the same withholding block, byte for byte", async () => {
+  const blocks = await Promise.all([EXTRACT, ZEEK, SURICATA, LOGS, SUMMARY, TLSD, QUICI, CONNS].map(block));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   assert.ok(blocks[0].length > 2000);
 });
@@ -37,10 +37,10 @@ async function processBlock(path: string): Promise<string> {
   return text.slice(start, end + "# END SHARED PROCESS".length);
 }
 
-test("the three engine tools and the recipe carry the same process block, byte for byte, and none starts a program in a session of its own", async () => {
-  const blocks = await Promise.all([EXTRACT, ZEEK, SURICATA, RECIPE].map(processBlock));
+test("the three engine tools, capture_transform, flow_reader, tls_decrypt, quic_inspect, conn_series and the recipe carry the same process block, byte for byte, and none starts a program in a session of its own", async () => {
+  const blocks = await Promise.all([EXTRACT, ZEEK, SURICATA, RECIPE, TRANSFORM, FLOW, TLSD, QUICI, CONNS].map(processBlock));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
-  for (const path of [EXTRACT, ZEEK, SURICATA, RECIPE]) {
+  for (const path of [EXTRACT, ZEEK, SURICATA, RECIPE, TRANSFORM, FLOW, TLSD, QUICI, CONNS]) {
     const text = await readFile(path, "utf8");
     assert.doesNotMatch(text.replace(/^\s*#.*$/gm, "").replace(/"""[\s\S]*?"""/g, ""), /start_new_session|setsid|preexec_fn=os\.setsid|process_group/, `${path} starts a program outside the tool's process group`);
     assert.doesNotMatch(text, /threading/, `${path} uses a thread (preexec_fn and threads do not mix)`);
@@ -119,7 +119,7 @@ test("the block withholds tokens, keys and user-info and leaves names, dates and
   assert.equal(got.scrub[text[2]], "<token-shaped text withheld 20 characters> was used");
   // A base64 token holds `/`: none of its head is printed (the standard allows four characters at most), and an AWS-style secret with two `/` is caught whole.
   assert.equal(got.scrub[text[3]], "key <token-shaped text withheld 44 characters>");
-  assert.equal(got.scrub[text[4]], "secret=<token-shaped text withheld 40 characters> end");
+  assert.equal(got.scrub[text[4]], "secret=<a value assigned to a credential name withheld 40 characters> end");
   assert.equal(got.scrub[text[11]], "<token-shaped text withheld 50 characters>");
   // User-info without a scheme, and credentials in a header.
   assert.equal(got.scrub[text[5]], "//<userinfo withheld 16 characters>@host/x");

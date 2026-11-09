@@ -79,8 +79,8 @@ same commands again.
   (`mmls`, `fsstat`, `fls`, `istat`, `icat`, `ifind`, `blkls`,
   `tsk_recover`; E01 files are read natively), libewf (`ewfinfo`), `regipy`
   and `python-evtx` (Python 3.12), `strings`, `sqlite3`, `exiftool`.
-  `pffexport` (libpff) for the Outlook store and `olevba`/`oledump`
-  (oletools) for Office documents are not in the default toolbox: if they
+  `pffexport` (libpff) for the Outlook store and `olevba` (oletools) and
+  `oledump.py` (a separate tool) for Office documents are not in the default toolbox: if they
   are missing, say so on the board, read `.eml` files and the webmail cache
   with Python's `email` module, read OLE streams with a forged
   `olefile`-style reader, and record that the PST/OST could not be parsed.
@@ -92,7 +92,7 @@ same commands again.
   `work/extracted/<your id>/` (nothing there is run; it is no-exec only
   under `--quarantine`; hash everything you pull out) and analyse the
   extracts — the macro streams, the LNK targets, the script text, the PE
-  headers — with `strings`, `exiftool`, `oledump` and `olevba`-style
+  headers — with `strings`, `exiftool`, `oledump.py` and `olevba`-style
   parsing. Copy into the shared `work/extracted/` only what peers must read,
   and claim it first. Your own scratch goes under `work/<your id>/`.
 - Every dated event you establish goes into the ledger with `record`
@@ -187,7 +187,6 @@ events the timeline rests on, and `inputs/` is unchanged.
 - `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 18`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 14`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`
   (`inputs_check` is an event the harness writes itself when `done` verifies

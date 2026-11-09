@@ -100,3 +100,37 @@ test("a located object that traces to no input is not held, a coverage record fo
   const part = await attest(c.a2, { seq: three.a.seq, how: "read the notes", strength: "established", answer_review: three.review });
   assert.equal(part.line.capped, undefined);
 });
+
+test("the rival-area check runs for every review: a locator, a derivation, both or neither gives the same answer the same verdict", async () => {
+  const c = await run();
+  const body = Buffer.from("notes: send the list to Joe Doe\n");
+  await sealed(c.S, "j000040", "notes.txt", body);
+  const ref = "job:j000040/notes.txt";
+  const value = "Joe Doe";
+  const variants: Array<[string, (b: typeof BARE) => Record<string, unknown>]> = [
+    ["locator only", (b) => ({ ...b, discriminator: SOURCE_FIRST.discriminator, reproduced_at: [{ ref, offset: body.indexOf(value), value }] })],
+    ["derivation only", (b) => ({ ...b, discriminator: SOURCE_FIRST.discriminator, derivation: SOURCE_FIRST.derivation })],
+    ["locator and derivation", (b) => ({ ...b, discriminator: SOURCE_FIRST.discriminator, derivation: SOURCE_FIRST.derivation, reproduced_at: [{ ref, offset: body.indexOf(value), value }] })],
+    ["neither", (b) => ({ ...b, discriminator: SOURCE_FIRST.discriminator })],
+  ];
+  const answers: number[] = [];
+  for (const [i, [name, review]] of variants.entries()) {
+    const q = String(i + 1);
+    await planned(c.a0, q);
+    const f = ok(await rec(c.a0, { kind: "finding", ...F, value: `${value} is in the notes`, source: "the notes", evidence: "its live text", refs: [ref], answers: [q] })).entry;
+    const a = ok(await rec(c.a1, { kind: "answer", section: `question:${q}`, value, reasoning: `E-${f.seq}`, ...HIGH, result: "established" })).entry;
+    answers.push(a.seq);
+    const capped = await attest(c.a2, { seq: a.seq, how: `read the live notes (${name})`, strength: "established", answer_review: review(BARE) });
+    assert.equal(capped.line.strength, "best_candidate", name);
+    assert.match(capped.line.capped!.join("\n"), new RegExp(`no standing coverage record for question:${q} names it`), name);
+  }
+  // A coverage record that names the input, searches every area and cites a job over it: none is capped, whatever the review gives.
+  await sealed(c.S, "j000041", "slack.txt", Buffer.from("no other name\n"));
+  for (const [i, [name, review]] of variants.entries()) {
+    const q = String(i + 1);
+    ok(await rec(c.a0, coverage(q, ["input:disk.E01"], ["job:j000041/slack.txt"], { areas: ALL })));
+    const held = await attest(c.a3, { seq: answers[i], how: `read the live notes and the carve of the slack (${name})`, strength: "established", answer_review: review(BARE) });
+    assert.equal(held.line.strength, "established", `${name}: ${held.note}`);
+    assert.equal(held.line.capped, undefined, name);
+  }
+});

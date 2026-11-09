@@ -11,13 +11,13 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { ROOT, runPySnippet } from "./tool-library-harness.ts";
-import { INDEX, KAPE_COPY_HEADER, TOOLS, TRIAGE, body, kapeCopyRow, put, uac3, veloResultRow, veloUploadsRow, withCwd } from "./pack-triage-harness.ts";
+import { INDEX, KAPE_COPY_HEADER, TOOLS, TRIAGE, body, kapeCopyRow, put, tool, uac3, veloResultRow, veloUploadsRow, withCwd } from "./pack-triage-harness.ts";
 import type { Json } from "./pack-triage-harness.ts";
 
 const BEGIN = "# ---- BEGIN RECORDS BLOCK";
 const END = "# ---- END RECORDS BLOCK";
 const RECIPE = join(TRIAGE, "recipes", "collection-intake", "run.py");
-const TOOL_NAMES = ["collection_manifest_parse", "collection_manifest_verify", "collection_path_map", "collection_coverage"];
+const TOOL_NAMES = ["collection_manifest_parse", "collection_manifest_verify", "collection_path_map", "collection_coverage", "collection_timestamps", "collection_profile_compare"];
 const digest = (algorithm: string, data: string | Buffer) => createHash(algorithm).update(data).digest("hex");
 
 async function recordsBlock(path: string): Promise<string> {
@@ -29,7 +29,7 @@ async function recordsBlock(path: string): Promise<string> {
   return text.slice(start, text.indexOf("\n", end) + 1);
 }
 
-test("the four tools and the recipe carry one records block, byte for byte", async () => {
+test("the six tools and the recipe carry one records block, byte for byte", async () => {
   const blocks = await Promise.all([...TOOL_NAMES.map((n) => join(TOOLS, n, "run.py")), RECIPE].map(recordsBlock));
   for (const b of blocks.slice(1)) assert.equal(b, blocks[0]);
   assert.ok(blocks[0].length > 30000);
@@ -180,4 +180,20 @@ test("recipe: the manifest and the pack declare it, and the seal carries its ent
   assert.ok(!("secret_output" in recipeJson));
   assert.match(recipeJson.covers, /extracts nothing to disk/);
   assert.ok(ROOT);
+});
+
+test("one copy-log row whose path holds 80,000 components is read in seconds by every tool that carries the records block", async () => {
+  await withCwd(async (cwd) => {
+    const path = "C:\\" + Array.from({ length: 80000 }, () => "d").join("\\") + "\f.txt";
+    await put(cwd, "k/2026-02-14T09_12_00_CopyLog.csv", [KAPE_COPY_HEADER, kapeCopyRow(path, path)].join("\n") + "\n");
+    await put(cwd, "k/C/f.txt", "x");
+    for (const n of ["collection_manifest_parse", "collection_manifest_verify", "collection_path_map", "collection_coverage", "collection_timestamps"]) {
+      const args: Json = { root: "k", time_limit_seconds: 30 };
+      if (n === "collection_coverage") args.questions = [{ id: "q1", source_paths: ["*"] }];
+      const started = Date.now();
+      const out = body(await tool(join(TOOLS, n, "run.py"), cwd, args));
+      assert.ok(Date.now() - started < 10_000, `${n}: ${Date.now() - started} ms`);
+      assert.ok(["complete", "partial"].includes(out.status), `${n}: ${out.status}`);
+    }
+  });
 });

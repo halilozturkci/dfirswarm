@@ -55,9 +55,34 @@ and Pi end to end), checks it against its packs with the kickoff's
 `imageFit`, and does the same for base on arm64 where that runner has KVM;
 it pushes nothing. Actions are pinned by commit, with the tag beside each.
 One check of `ci.yml`, `CI green`, passes when every other job there passed
-or was skipped; it is the check `main` requires, so a pull request with
-auto-merge on merges by itself once it is green (`images.yml` and
-`image-boot.yml` are not part of it).
+or was skipped, except the macOS parts, which it reads from the run's own job
+list (`scripts/ci-green.ts`): a macOS part that failed or was cancelled fails
+it, one still running is waited for up to its own limit, and one that has not
+started after a grace period of 15 minutes (the Mac is busy or off) does not
+block, and a notice names it. It is the check `main` requires, so a pull
+request with auto-merge on merges by itself once it is green (`images.yml` and
+`image-boot.yml` are not part of it). A scheduled run (or a push to main) of `ci.yml`, the weekly `image-boot.yml` and the weekly `pins.yml`, that fails opens one issue labelled `ci-failure`, or comments on the open one, naming the run, the event and the failed jobs, and the next green one closes it (`scripts/ci-report-failure.sh`; a pull request is never reported, and the reporting job is not a required check). The Linux jobs run on `ubuntu-24.04`, not
+`ubuntu-latest`, until a deliberate move.
+The pack tools are tested on three Pythons: 3.12 (the Linux jobs, Ubuntu 24.04),
+3.14 (the macOS jobs) and 3.11, the interpreter of the VM images (Debian 12),
+by the `python-311` job, which runs the `tests/pack-*.test.ts` suites inside the
+images' own `node:24-bookworm-slim` with Debian's `python3`; it runs for a
+change to a pack, the tool library, an image file or such a suite, and in every
+nightly run. Other Pythons are not tested here.
+Python 3.15 is not supported, which here means untested: the one reason is that the deep-nesting case of `beacon_score` (a series nested
+100,000 deep, `tests/pack-network-beacon-score.test.ts`) took 300 s on a hosted macOS
+runner's 3.15, and that run could not be reproduced; 3.14 has not been tried. Run in the `python:3.15` image
+(3.15.2, Linux amd64, digest `sha256:f17ec845ebdd4f3347431579e1c22eaeec82913f039f2a54b937c7ff870bacdb`)
+under `timeout -s KILL`, the case did not reproduce: with the default 8 MB stack the
+tool answered with a failed document (the interpreter refuses to decode the array,
+"Stack overflow") in 1.4 s wall (container start included; 0.13 s of Python by
+`cProfile`, almost all of it the interpreter's own imports) for the series and 0.8 s
+for `window_end`, four runs together took 1.5 s, and with an unlimited stack it
+decoded the array and answered in 2.8 s. The macOS 300 s run is unexplained, and 3.15
+stays outside the tested Pythons until a run on it is understood.
+A 1 MiB stack is not a 3.15 trait: on the host's Python 3.12 with `ulimit -s 1024`, `json.loads` of a
+100,000-deep array exits 139 (SIGSEGV), and `beacon_score` exits -11 with no JSON. That crash
+without JSON at a tiny stack was there before and is a known limit of the tool.
 The `spikes/` directory is neither typechecked (`tsconfig.json` covers
 `extensions/`, `scripts/` and `tests/`) nor re-run: its scripts record
 measurements made once, and they can go stale. The host suites run on

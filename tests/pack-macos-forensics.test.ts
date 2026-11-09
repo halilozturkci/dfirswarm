@@ -30,6 +30,8 @@ import { gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
+import { peakRssPrelude } from "./peak-rss.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const MAC = join(ROOT, "packs", "macos-forensics", "tools");
 const PLIST = join(MAC, "plist_read", "run.py");
@@ -483,7 +485,7 @@ type FsAnswer = {
   };
   problems: { file: string; kind: string; why: string; offset?: number; compressed_offset?: number; member?: number; magic?: string; bytes?: number }[];
   problems_total: number;
-  filters: { flags_unknown?: string[] };
+  filters: Record<string, unknown>;
   note: string;
 };
 
@@ -659,12 +661,14 @@ test("fsevents_parse records the log's identity from fseventsd-uuid, and a flag 
   });
 });
 
-test("fsevents_parse names a flag filter it has no name for, and does not overwrite an out_file", async () => {
+test("fsevents_parse refuses a flag filter it has no name for, and does not overwrite an out_file", async () => {
   await withCwd(async (cwd) => {
     const dir = await fsDir(cwd, "evflt", { "0000000000000666": gzipSync(fsPage("2SLD", [fsRecord("p", 3n, REMOVED, 1n)])) });
-    const answer = fsAnswer(await tool(FS, cwd, { path: dir, flags: ["Removed", "Deleted"] }));
+    const refusal = JSON.parse((await tool(FS, cwd, { path: dir, flags: ["Removed", "Deleted"] })).stdout) as { status: string; flags_unknown: string[] };
+    assert.equal(refusal.status, "failed");
+    assert.deepEqual(refusal.flags_unknown, ["Deleted"]);
+    const answer = fsAnswer(await tool(FS, cwd, { path: dir, flags: ["Removed"] }));
     assert.equal(answer.record_count, 1);
-    assert.deepEqual(answer.filters.flags_unknown, ["Deleted"]);
     await writeFile(join(cwd, "work", "keep.jsonl"), "precious\n");
     const clash = refused(await tool(FS, cwd, { path: dir, out_file: "work/keep.jsonl" }));
     assert.match(clash.error, /already exists/);
@@ -998,14 +1002,13 @@ c.commit()
 
 /** Peak resident memory of a tool run in a process of its own, in MB (Linux reports KB, macOS bytes). */
 async function peakRssMb(script: string, cwd: string, args: unknown): Promise<{ mb: number; stdout: string; code: number | null }> {
-  const code = `
-import resource, runpy, sys
+  const code = peakRssPrelude() + `
+import runpy
 sys.argv = [sys.argv[1]]
 try:
     runpy.run_path(sys.argv[0], run_name="__main__")
 finally:
-    r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    sys.stderr.write("RSS_MB=%f\\n" % ((r / 1e6) if sys.platform == "darwin" else (r / 1e3)))
+    sys.stderr.write("RSS_MB=%f\\n" % (self_peak_bytes() / 1e6))
 `;
   const out = await new Promise<Run>((resolve, reject) => {
     const child = spawn("python3", ["-c", code, script], { cwd, env: { ...process.env, ...AGENT } });
@@ -1342,7 +1345,7 @@ test("unified_log counts the whole stream, not the preview: malformed lines afte
   });
 });
 
-test("unified_log keeps a record with none of an entry's fields apart from the entries, and says so", async () => {
+test("unified_log keeps a record with none of an entry's fields apart from the entries, and says so", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const bin = await ulBin(cwd);
     const answer = JSON.parse((await ul(cwd, bin, { path: await logarchive(cwd), out_dir: "work/u3" }, "trailer")).stdout) as UlAnswer;
@@ -1391,7 +1394,7 @@ test("unified_log refuses a link in the tree it would stage, and names it", asyn
   });
 });
 
-test("unified_log refuses a member present in both trees with different bytes, and stages one that is identical", async () => {
+test("unified_log refuses a member present in both trees with different bytes, and stages one that is identical", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const bin = await ulBin(cwd);
     const path = await dbCopy(cwd);
@@ -1471,7 +1474,7 @@ test("unified_log records the reader's version, and declares the reader it needs
 
 const NOT_ROOT = process.getuid?.() !== 0;
 
-test("unified_log as a job writes only under $OUT: an out_dir outside it is refused with a reason, a read-only parent is a JSON error", async () => {
+test("unified_log as a job writes only under $OUT: an out_dir outside it is refused with a reason, a read-only parent is a JSON error", { skip: NO_ADOPTION }, async () => {
   // The manifest's own example, out_dir work/ulog, ended in a traceback in a job: work/ is read-only there, and the harness maps only work/<id>/ to $OUT.
   await withCwd(async (cwd) => {
     const bin = await ulBin(cwd);

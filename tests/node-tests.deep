@@ -34,3 +34,6 @@ tests/pack-re-doc-structure-round3.test.ts            # 73 / 33
 tests/pack-cloud-shared.test.ts                       # 67 / 39
 tests/pack-re-delta9.test.ts                          # 62 / 37
 tests/pack-re-one-way-out.test.ts                     # 61 / 29
+tests/pack-ransomware-scope-report-deep.test.ts       # a census of 10 million rows (about 700 MB written, about a minute on the Linux dev machine)
+tests/pack-network-conn-series.test.ts               # 596 s on the hosted Linux runner in the CI run of 2026-11-06 for #237 (cut off at 300 s as a single file on Node 22; 459 s here), most of it the 5,000,000-row case (273 s here)
+tests/pack-re-stop.test.ts                          # 17 carriers x 6 signalled runs of a real tool: about 17 s a carrier on the hosted macOS runner, cut off at 300 s as a single file there (CI run of 2026-11-08 for #237)

@@ -50,7 +50,7 @@ const ROUTER = "mobile/router";
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, 11);
+  assert.equal(skills.size, 18);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? 400 : 800), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
@@ -96,7 +96,7 @@ test("needs is at most two deep and its chain is at most 2,000 tokens, counting 
 test("every second-level leaf is pointed to by a leaf that says when to open it", async () => {
   const skills = await load(SKILLS);
   const pointers: Record<string, string> = {
-    "extractions/backup-detail": "extractions/what-you-have",
+    "extractions/backup-detail": "extractions/backups",
     "apps/fragments": "apps/databases",
     "ios/containers-and-time": "ios/artifacts",
   };
@@ -120,6 +120,11 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["recipes/android-aleapp/run.py", "android/artifacts", ["modules.tsv", "errors_logged", "no_record", "errored", "unknown"]],
   ["recipes/android-backup/run.py", "extractions/backup-detail", ["payload_stream", "tar_end"]],
   ["recipes/ios-filesystem/run.py", "extractions/what-you-have", ["sqlite.tsv"]],
+  ["tools/backup_materialise/run.py", "extractions/backups", ["copy_content"]],
+  ["tools/ab_layout/run.py", "extractions/backups", ["copy_content"]],
+  ["tools/backup_decrypt/run.py", "extractions/backups", ["password_ref", "wrong_secret", "verified"]],
+  ["tools/heic_inspect/run.py", "media/provenance", ["write_values"]],
+  ["recipes/android-backup-apps/run.py", "validation/parser-coverage", ["modules.tsv", "errors_logged", "no_record", "errored", "unknown"]],
 ];
 
 test("the tool and recipe fields a skill names are fields they write", async () => {
@@ -236,8 +241,100 @@ routerChecks({
   pack: "mobile-forensics",
   router: ROUTER,
   before: [
-    "android/artifacts", "apps/databases", "apps/fragments", "extractions/backup-detail", "extractions/what-you-have", "ios/artifacts",
-    "ios/biome-segb", "ios/containers-and-time", "ios/unified-logs", "location/sources",
+    "android/artifacts", "apps/databases", "apps/fragments", "apps/identity-containers", "apps/messaging", "extractions/backup-detail",
+    "extractions/backups", "extractions/protection-state", "extractions/what-you-have", "ios/artifacts", "ios/biome-segb", "ios/containers-and-time",
+    "ios/knowledgec-activity", "ios/unified-logs", "location/sources", "media/provenance", "validation/parser-coverage",
   ],
   profiles: ["mobile", "full"],
+});
+
+// A leaf must not present decryption as something a job does while the pack has no tool that decrypts.
+
+/** The clauses of a text that say a job, a tool or a recipe decrypts, and do not say that it does not. */
+function decryptionClaims(text: string): string[] {
+  const found: string[] = [];
+  for (const clause of text.split(/[.;:\n]/)) {
+    const actor = /\b(job|jobs|tool|tools|recipe|recipes|run|runs)\b[^.;]*\bdecrypt(s|ed|ing)?\b|\bdecrypt(s|ed|ing)?\b[^.;]*\b(job|jobs|tool|tools|recipe|recipes)\b/i.test(clause);
+    const denied = /\b(no|not|never|cannot|can't|nor|without|neither|nothing|none)\b/i.test(clause);
+    if (actor && !denied) found.push(clause.trim());
+  }
+  return found;
+}
+
+test("no leaf of the pack presents decryption as something a job does, unless a tool of the pack declares a decrypting mode", async () => {
+  // backup-detail ended "A job that decrypts or reads keychain content runs with `secret_output: true`": the pack decrypts nothing (README: no decryption),
+  // so read with the rest of the leaf the sentence could be taken as a route. The rule turns itself off when a tool declares a decrypting parameter.
+  const decrypting: string[] = [];
+  for (const entry of await readdir(join(PACK, "tools"), { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const manifest = JSON.parse(await readFile(join(PACK, "tools", entry.name, "manifest.json"), "utf8")) as { params?: Record<string, unknown> };
+    for (const param of Object.keys(manifest.params ?? {})) if (/decrypt|password|passcode|keybag|unlock/i.test(param)) decrypting.push(`${entry.name}.${param}`);
+  }
+  // The rule itself: it finds the old sentence, and it lets a denial and an unrelated mention through.
+  assert.equal(decryptionClaims("A job that decrypts or reads keychain content runs with `secret_output: true`.").length, 1);
+  assert.equal(decryptionClaims("The recipe decrypts the payload. A tool decrypted it.").length, 2);
+  assert.equal(decryptionClaims("No job here decrypts; one that reads keychain content runs with `secret_output: true`.").length, 0);
+  assert.equal(decryptionClaims("This tool does not decrypt anything. Decryption is for the operator.").length, 0);
+  if (decrypting.length) return;      // a tool of the pack decrypts: what a leaf says about it is for that tool's own tests
+  const skills = await load(SKILLS);
+  for (const s of skills.values()) {
+    assert.deepEqual(decryptionClaims(s.body), [], `${s.id} presents decryption as a job's action, and no tool of the pack decrypts`);
+  }
+});
+
+// ---- The seven leaves of the card (C-mobile-S1): rules, not phrases. ----
+
+test("the seven new leaves exist, the old ids stay alive, and two leaves never say the same thing", async () => {
+  const skills = await load(SKILLS);
+  for (const id of ["extractions/backups", "extractions/protection-state", "apps/messaging", "validation/parser-coverage", "apps/identity-containers", "ios/knowledgec-activity", "media/provenance"]) {
+    assert.ok(skills.has(id), id);
+  }
+  // The ids that other packs and older text name are still skills.
+  for (const id of ["extractions/backup-detail", "ios/containers-and-time", "extractions/what-you-have"]) assert.ok(skills.has(id), `${id} stays`);
+  // backups is the first-level note and backup-detail its second-level leaf: the reading of a manifest_db answer is in one of them only.
+  const backups = skills.get("extractions/backups")!.body;
+  const detail = skills.get("extractions/backup-detail")!.body;
+  assert.doesNotMatch(detail, /copy_content|backup_materialise|ab_layout/, "the derivative tools are in extractions/backups only");
+  assert.doesNotMatch(backups, /31-year shift|`epoch`|`completion` is/, "the reading of an answer is in extractions/backup-detail only");
+  // identity-containers holds restore and migration; containers-and-time points to it instead of repeating it.
+  assert.match(skills.get("apps/identity-containers")!.body, /Reinstall, restore and migration/);
+  assert.doesNotMatch(skills.get("ios/containers-and-time")!.body, /A restore or a migration can move data between containers/);
+});
+
+test("the new leaves name only tools and programs that exist, name the decrypt tool, and prescribe no bypass", async () => {
+  const skills = await load(SKILLS);
+  const tools = new Set((await readdir(join(PACK, "tools"), { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name));
+  for (const name of ["backup_materialise", "ab_layout", "heic_inspect"]) assert.ok(tools.has(name), `${name} is a tool of the pack`);
+  const backups = skills.get("extractions/backups")!.body;
+  for (const name of ["backup_materialise", "ab_layout"]) assert.match(backups, new RegExp("`" + name + "`"));
+  assert.match(backups, /`backup_decrypt`/);
+  const protection = skills.get("extractions/protection-state")!.body;
+  assert.match(protection, /never prescribes a bypass/);
+  assert.match(protection, /Feasibility is not authority/);
+  for (const id of ["extractions/protection-state", "extractions/backups"]) {
+    assert.doesNotMatch(skills.get(id)!.body, /\b(crack|brute[- ]?force|jailbreak|exploit)\b/i, `${id} prescribes no way round a protection`);
+  }
+  // Every tool a new leaf lists exists in the pack, a dependency, or the base pack.
+  const known = new Set([...tools, "sqlite_query", "plist_read", "knowledgec_query"]);
+  for (const id of ["extractions/backups", "extractions/protection-state", "apps/messaging", "validation/parser-coverage", "apps/identity-containers", "ios/knowledgec-activity", "media/provenance"]) {
+    for (const tool of skills.get(id)!.meta.tools as string[]) assert.ok(known.has(tool), `${id} lists ${tool}`);
+  }
+});
+
+test("media/provenance names the HEIC route, so heif-convert and pillow-heif are named and no longer unreferenced_ok", async () => {
+  const skills = await load(SKILLS);
+  const media = skills.get("media/provenance")!;
+  assert.deepEqual([...(media.meta.requires_host as string[])].sort(), ["exiftool", "heif-convert"]);
+  assert.match(media.body, /pillow-heif/);
+  assert.ok((media.meta.tools as string[]).includes("heic_inspect"));
+  const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { unreferenced_ok?: { name: string }[] };
+  const left = (pack.unreferenced_ok ?? []).map((u) => u.name);
+  assert.ok(!left.includes("heif-convert") && !left.includes("pillow-heif"), `still unreferenced_ok: ${left.join(", ")}`);
+});
+
+test("the parser-coverage leaf stays small enough to be read with the base notes it points to in prose, and names each receipt outcome", async () => {
+  const leaf = (await load(SKILLS)).get("validation/parser-coverage")!;
+  assert.ok(TOKENS(leaf.text) <= 341 + 100, `${Math.round(TOKENS(leaf.text))} tokens`);
+  assert.deepEqual(leaf.meta.needs, []);
+  for (const outcome of ["completed", "no_record", "unsupported", "errored", "errors_logged", "unknown"]) assert.ok(leaf.body.includes("`" + outcome + "`"), outcome);
 });

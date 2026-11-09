@@ -17,13 +17,16 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_STRUCTURE, PE_DIRECTORIES, RE, body, buildZip, filesUnder, put, tool, withCwd } from "./pack-re-harness.ts";
+import { DOC_STRUCTURE, ELF_DIRECTORIES, MACHO_DIRECTORIES, PE_DIRECTORIES, RE, body, buildElf, buildMacho, buildZip, filesUnder, put, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 import { buildPdf, buildPeDirs } from "./pack-re-doc-fixtures.ts";
 import { SHAPES, canaries, needles, prng } from "./pack-re-canary-shapes.ts";
 
 const CAPA_FLOSS = join(RE, "recipes", "capa-floss", "run.py");
-const COPIES = [DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS];
+const COPIES = [DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES, MACHO_DIRECTORIES, CAPA_FLOSS];
+const GO_BUILDINFO = join(RE, "tools", "go_buildinfo", "run.py");
+/** The copies whose sanitiser (shown_path) and backstop (final_check) the cases below test: go_buildinfo too, which has no tables of the document tools. */
+const SANITISER = [...COPIES, GO_BUILDINFO];
 
 const LOAD = [
   "import importlib.util, io, json, os, sys",
@@ -65,7 +68,7 @@ test("the sanitiser in each copy of the shared block withholds every shape, 300 
       }
     }
   }
-  for (const path of COPIES) {
+  for (const path of SANITISER) {
     const r = py(path, "texts = json.load(sys.stdin)\nprint(json.dumps([m.shown_path(t) for t in texts]))", texts.map((t) => t.text));
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout) as string[];
@@ -91,7 +94,7 @@ test("the sanitiser's output is a fixed point, so the backstop catches only what
     }
     texts.push(s);
   }
-  for (const path of COPIES) {
+  for (const path of SANITISER) {
     const r = py(path, "texts = json.load(sys.stdin)\nbad = [t for t in texts if m.shown_path(m.shown_path(t)) != m.shown_path(t)]\nprint(json.dumps(bad[:5]))", texts);
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout), [], `${path}: not a fixed point`);
@@ -107,7 +110,7 @@ test("final_check withholds an unsanitised key and value, a long number and a va
     "out = m.final_check(value, safe)",
     "print(json.dumps({'out': out, 'fields': m.FINAL['fields']}))",
   ].join("\n");
-  for (const path of COPIES) {
+  for (const path of SANITISER) {
     const r = py(path, code);
     assert.equal(r.status, 0, r.stderr);
     const o = JSON.parse(r.stdout) as Json;
@@ -146,6 +149,8 @@ for (const [label, script, name, make] of [
   ["doc_structure (a ZIP package)", DOC_STRUCTURE, "p.docx", () => buildZip([{ name: "[Content_Types].xml", data: Buffer.from("<Types/>") }, { name: "word/document.xml", data: Buffer.from("<a/>") }, { name: "word/b.xml", data: Buffer.from("<a/>") }])],
   ["doc_structure (a PDF)", DOC_STRUCTURE, "p.pdf", () => buildPdf([{ num: 1, body: "<< /Type /Catalog /Pages 2 0 R /OpenAction << /S /URI /URI (http://h.example/) >> >>" }, { num: 2, body: "<< /Type /Pages /Kids [] /Count 0 >>" }], "/Root 1 0 R").file],
   ["pe_directories", PE_DIRECTORIES, "p.dll", () => buildPeDirs({ exports: { imageName: "a.dll", functions: [{ name: "f" }, { name: "g" }] } }).file],
+  ["elf_directories", ELF_DIRECTORIES, "e.so", () => buildElf({ cls: 64, needed: ["liba.so", "libb.so"], soname: "libe.so" })],
+  ["macho_directories", MACHO_DIRECTORIES, "m.dylib", () => buildMacho({ commands: [{ dylib: "liba.dylib", cmd: 0xc }, { dylib: "libb.dylib", cmd: 0xc }] })],
 ] as const) {
   test(`the backstop holds with the sanitiser removed: ${label}, unsanitised strings injected into the answer and every table row`, async () => {
     await withCwd(async (cwd) => {
@@ -181,7 +186,7 @@ test("a number of 32 digits or more (a /Count, a /Prev) is given by its size; a 
     assert.equal(a.withheld_by_final_check, undefined);
     assert.match(JSON.stringify(a), /<a number of 107 bits, withheld>/);
   });
-  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES]) {
+  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES]) {
     const r = py(path, "print(json.dumps([m.shown_answer(10 ** 31), m.shown_answer(10 ** 31 - 1), m.shown_answer(-(10 ** 40)), m.shown_answer(True)]))");
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout.trim(), `["<a number of 103 bits, withheld>", ${"9".repeat(31)}, "<a number of 133 bits, withheld>", true]`);
@@ -201,7 +206,7 @@ test("a key out of the file spelled like a marker the tool writes keeps its '<' 
     assert.ok(keys.includes("\\x3ctoken-shaped text withheld 20 characters> #2"), JSON.stringify(keys));
     assert.equal(keys.filter((k) => k.startsWith("<token-shaped text withheld 20 characters>")).length, 2);
   });
-  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES]) {
+  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES, ELF_DIRECTORIES]) {
     const code = [
       "class C: key = 'k'",
       "spill = m.Spill(C(), 2)",
@@ -219,7 +224,7 @@ test("a key out of the file spelled like a marker the tool writes keeps its '<' 
 
 test("an sk- head of four to eleven characters that ends a name or a path component is withheld (a name cut by its declared length); a hyphenated word is not", () => {
   const texts = ["sk-LmariHjr", "Macros/sk-N21d6CS69cd", "sk-Ab3d/dir", "desk-top", "risk-assessment-module", "task-list/a", "sk-ab"];
-  for (const path of COPIES) {
+  for (const path of SANITISER) {
     const r = py(path, "print(json.dumps([m.shown_path(t) for t in json.load(sys.stdin)]))", texts);
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout), ["<token-shaped text withheld 11 characters>", "Macros/<token-shaped text withheld 14 characters>", "<token-shaped text withheld 7 characters>/dir",
@@ -260,7 +265,7 @@ const RESIDUE: Record<string, { whole: number; nine: number }> = {
 
 test("P1-1 random real-shaped secrets holding `/` (AWS secret keys, base64 of 16 to 32 bytes), 400 of each in six places, in every copy: printed at no more than the measured residue", () => {
   const items = realistic(4242, 400).flatMap((x) => WRAPS.map((w) => ({ ...x, text: w(x.secret) })));
-  for (const path of COPIES) {
+  for (const path of SANITISER) {
     // a URL goes through shown_target and then, as every string the tool writes, through shown_path (shown_answer)
     const r = py(path, "texts = json.load(sys.stdin)\nprint(json.dumps([m.shown_path(m.shown_target(t)) if hasattr(m, 'shown_target') and t.startswith('https:') else m.shown_path(t) for t in texts]))", items.map((i) => i.text));
     assert.equal(r.status, 0, r.stderr);
@@ -339,7 +344,7 @@ test("P2-1 a token split by NUL, its \\x00 escape, UTF-16 read as 8-bit text, ze
     }
   }
   const strip = (s: string): string => s.normalize("NFKC").replace(/\\x[0-9a-fA-F]{2}|[\0\u200b\u00ad\u2066\u0300-\u036f\u00a0 ]/g, "");
-  for (const path of COPIES) {
+  for (const path of SANITISER) {
     const r = py(path, "texts = json.load(sys.stdin)\nprint(json.dumps([m.shown_path(t) for t in texts]))", texts.map((t) => t.text));
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout) as string[];
@@ -369,7 +374,7 @@ test("P2-2 the value of a secret-named key is withheld after `=` or `:`, quoted 
     ["auth=Hunter2Secret", "auth=<withheld 13 characters>"],
     ["token=%s", "token=%s"], ["user:%s@%s", "user:%s@%s"], ["bypass: true", "bypass: true"], ["OAuth=1", "OAuth=1"],
   ];
-  for (const path of COPIES) {
+  for (const path of SANITISER) {
     const r = py(path, "print(json.dumps([m.shown_path(t) for t in json.load(sys.stdin)]))", cases.map((c) => c[0]));
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout), cases.map((c) => c[1]), path);
@@ -379,7 +384,7 @@ test("P2-2 the value of a secret-named key is withheld after `=` or `:`, quoted 
 test("P3 GitHub and sk- heads in words are not withheld (Risk-Assessment, highs_lows); a head after a non-letter, a long one anywhere and an AWS key id after a letter are", () => {
   const kept = ["Risk-Assessment", "Task-Scheduler-Helper.exe", "Desk-2022", "Kiosk-Mode-V2", "weighs_count.exe", "highs_lows_v2", "C:\\b\\Risk-Assessment\\RiskTool.pdb"];
   const gone = ["ghp_Ab3d", "x/ghp_Ab3dEf", "XAKIAIOSFODNN7", "Xghp_Ab3dEf5hIj7lMn9pQr1tUv", "a_sk-Ab3dEf5hIj7lMn9pQr1t"];
-  for (const path of COPIES) {
+  for (const path of SANITISER) {
     const r = py(path, "print(json.dumps([m.shown_path(t) for t in json.load(sys.stdin)]))", [...kept, ...gone]);
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout) as string[];
@@ -403,7 +408,7 @@ test("the sanitiser's output is a fixed point also for text with hidden characte
     }
     texts.push(s);
   }
-  for (const path of COPIES) {
+  for (const path of SANITISER) {
     const r = py(path, "texts = json.load(sys.stdin)\nbad = [t for t in texts if m.shown_path(m.shown_path(t)) != m.shown_path(t)]\nprint(json.dumps(bad[:5]))", texts);
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout), [], `${path}: not a fixed point`);
@@ -455,7 +460,7 @@ test("a password that holds `@` is withheld to the last `@` before the host, cut
     ["mailto:usr:pa@ss@host.example", "mailto:usr:<userinfo withheld 5 characters>@host.example"],
     ["contact a@b.com and c@d.com", "contact a@b.com and c@d.com"],
   ];
-  for (const path of COPIES) {
+  for (const path of SANITISER) {
     const r = py(path, "print(json.dumps([m.shown_path(t) for t in json.load(sys.stdin)]))", cases.map((c) => c[0]));
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout), cases.map((c) => c[1]), path);

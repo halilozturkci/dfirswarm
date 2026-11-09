@@ -37,8 +37,78 @@ import sys
 import tempfile
 from pathlib import Path
 
-PARSER = "prefetch_mam/3"
+# prefetch_mam keeps no result file, so it carries the STOP block alone: the PLACE and PAGE blocks are for tools that page.
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+
+PARSER = "prefetch_mam/5"
 MAX_FILE = 16 * 1024 * 1024
+DEADLINE_SECONDS = 54             # the manifest allows 60: the inflate (pure Python, about 2 s a megabyte) stops here, so that the answer is printed before the harness ends it
+PROGRESS = {"phase": "starting", "inflated": 0}
 
 
 # ---- Shared by prefetch_mam and mam_scan: the same text in both (the tools are standalone; a test holds
@@ -100,6 +170,14 @@ class OutputCapExceeded(Exception):
     """The decompressor produced more than its cap."""
 
 
+class DecoderOutOfTime(Exception):
+    """The tool's own clock ran out inside the decompressor; `produced` is how many bytes of output it had made."""
+
+    def __init__(self, produced):
+        super().__init__("the clock ran out inside the decompressor")
+        self.produced = produced
+
+
 class EnoughOutput(Exception):
     """The decompressor reached the declared size (soft mode); `data` is what it had."""
 
@@ -115,8 +193,13 @@ class _CappedBytes(bytearray):
 
     cap = 0
     soft = False
+    ticks = 0
 
     def _after(self):
+        # The decoder is pure Python (about 2 seconds a megabyte of output): the clock is looked at every 256 symbols, so it stops within a match.
+        _CappedBytes.ticks += 1
+        if not (_CappedBytes.ticks & 255) and out_of_time():
+            raise DecoderOutOfTime(len(self))
         if self.soft:
             if len(self) >= self.cap:
                 raise EnoughOutput(bytes(self)[:self.cap])
@@ -280,16 +363,24 @@ def parse_scca(data):
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": "failed", **extra}))
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error and read no Prefetch field (see error)", **extra})
     raise SystemExit(1)
 
 
+def last_word(signum):
+    interrupted_answer(signum, phase=PROGRESS["phase"], bytes_inflated=PROGRESS["inflated"])
+
+
 def main():
+    set_deadline(DEADLINE_SECONDS)
+    install_signal_handlers(last_word)
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
         fail("arguments are not valid JSON", reason=str(exc))
-    path = args.get("path") if isinstance(args, dict) else None
+    if not isinstance(args, dict):
+        fail("arguments must be a JSON object")
+    path = args.get("path")
     if not isinstance(path, str) or not path:
         fail("path is required: a Prefetch file, compressed (MAM) or plain SCCA")
     if not os.path.isfile(path):
@@ -311,14 +402,23 @@ def main():
     container.update(info)
     out["container"] = container
     if kind == "unsupported":
-        out.update({"status": "unsupported", "problems": [info["why"]],
-                    "note": "The file is not inflated and no field is read from it."})
-        print(json.dumps(out, indent=2))
+        out.update({"status": "unsupported", "status_basis": "the MAM header is one this tool does not read, so the file was not inflated and no field was read: " + info["why"],
+                    "problems": [info["why"]], "note": "The file is not inflated and no field is read from it."})
+        print_answer(out, indent=2)
         return
     if kind == "ok":
         declared = info["declared_uncompressed_size"]
+        PROGRESS["phase"] = "inflating"
         try:
             inflated = bounded_decompress(data[MAM_HEADER:], declared + OUTPUT_SLACK)
+        except DecoderOutOfTime as stop:
+            # A short inflate is never parsed: the fields of half a Prefetch file would be wrong ones.
+            out.update({"status": "partial", "stopped_by_time_limit": True, "bytes_inflated": stop.produced,
+                        "status_basis": "the tool's own clock (%d s) ran out while the MAM stream was inflated: %d of the declared %d bytes were inflated, and no field is read from a short inflate"
+                                        % (DEADLINE_SECONDS, stop.produced, declared),
+                        "problems": ["the inflate was stopped by the tool's own clock; no Prefetch field was read"]})
+            print_answer(out, indent=2)
+            return
         except OutputCapExceeded:
             fail("the MAM stream inflates past its declared size of %d bytes plus %d: it is damaged or hostile, and was stopped" % (declared, OUTPUT_SLACK),
                  path=path, declared_uncompressed_size=declared, cap=declared + OUTPUT_SLACK)
@@ -337,11 +437,24 @@ def main():
     out["problems"] = problems
     out["status"] = "complete" if out.get("supported") and not [p for p in problems if "assumption" not in p] else \
         ("unsupported" if not out.get("supported") else "partial")
+    if out["status"] == "complete":
+        out["status_basis"] = "the file was inflated to its declared size (when compressed) and read by the layout of its SCCA version, and no problem is named"
+    elif out["status"] == "unsupported":
+        out["status_basis"] = "the SCCA version is not one this tool reads, so only the version-independent header was read"
+    else:
+        out["status_basis"] = "%d problem(s) are named under problems" % len([p for p in problems if "assumption" not in p])
     out["compressed"] = container["mam"]
     out["declared_uncompressed_size"] = container.get("declared_uncompressed_size")
     out["decompressed_size"] = len(data)
-    print(json.dumps(out, indent=2))
+    print_answer(out, indent=2)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        print_answer({"error": "the read failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)

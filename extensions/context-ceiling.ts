@@ -172,8 +172,9 @@ export function pctOf(tokens: number, ceiling: number): number {
  *
  * Explicitness is per line: `explicit` names the lines the operator set,
  * and a line it leaves out is a default that is fitted between them. A
- * default above an operator line below it rises to that line (the compact
- * line no higher than the window holds); a default above the line over it
+ * default above an operator line below it rises to that line, the compact
+ * line to one token above it so the lower stage still fires first (no
+ * higher than the window holds); a default above the line over it
  * drops below it in the defaults' own proportion (40 : 50 : 60), so the
  * three levels stay apart. Without `explicit`, every line is explicit
  * unless `fromDefaults` is set. Errors name only lines the operator set.
@@ -230,10 +231,13 @@ export function resolveThresholds(
     const below = set.warn && (!set.notice || warnTokens >= noticeTokens)
       ? { name: "warning", spec: parsed.warn, tokens: warnTokens }
       : set.notice ? { name: "notice", spec: parsed.notice, tokens: noticeTokens } : undefined;
-    if (below && below.tokens > compactTokens) {
+    // At the line itself is not enough: the level is `forced` from the compact
+    // line up, so a compact line equal to the warning line skips the warning.
+    if (below && below.tokens >= compactTokens) {
       if (below.tokens > capTokens) return { ok: false, error: `${line(below.name, below.spec, below.tokens)} is above ${holds}.` };
-      notes.push(`the default compact threshold (${parsed.compact.raw} = ${fmt(compactTokens)}) is below the ${below.name} threshold ${below.spec.raw}; raised to ${fmt(below.tokens)}`);
-      compactTokens = below.tokens;
+      if (below.tokens + 1 > capTokens) return { ok: false, error: `${line(below.name, below.spec, below.tokens)} leaves no room for a compact threshold above it: this ${fmt(declared)}-token window holds at most ${fmt(capTokens)} once ${fmt(reserve)} reserve and ${fmt(HEADROOM_TOKENS)} headroom are kept.` };
+      notes.push(`the default compact threshold (${parsed.compact.raw} = ${fmt(compactTokens)}) is not above the ${below.name} threshold ${below.spec.raw}; raised to ${fmt(below.tokens + 1)}, one token above it`);
+      compactTokens = below.tokens + 1;
       clamped = true;
     }
   }

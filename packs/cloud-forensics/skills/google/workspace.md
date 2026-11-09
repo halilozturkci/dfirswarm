@@ -3,7 +3,7 @@ id: google/workspace
 title: Google Workspace exported audit evidence
 when: Supplied Google Workspace logs concern account access, administration, OAuth grants, Drive or Gmail.
 needs: [logs/what-exists]
-tools: [signin_analyse]
+tools: [signin_analyse, cloud_normalise]
 mentions: [cloudtrail_parse]
 requires_host: []
 ---
@@ -14,11 +14,13 @@ Use when you hold Google Workspace exports (login, admin, OAuth and token, Drive
 
 **The login parser.** `signin_analyse` reads Reports API login activities (nested events become one event each, with the activity id and the event's position kept) and flat login CSV. It rejects, counted and named, an activity whose `id.applicationName` is not login (admin, Drive, Token, Gmail), and a login row is not every session, token use or resource access. Check its field mapping against the original export. `cloudtrail_parse` is an AWS parser and is never used on Workspace evidence.
 
+**Admin, Drive and token activities.** `cloud_normalise` (provider `workspace`) reads Reports API activities of any application, one row per event, with the whole `parameters` bag and `before_after` pairs. Its names come from the record; the Google documentation was not checked, so confirm a name against the export.
+
 **One API page is not an acquisition.** A response that names a next page (`pagination_markers`) is partial. Overlapping exports and late-arriving events: compare what was supplied, and keep the original activity id and the record and line of every cited event.
 
 **What each source shows, and not.** Login events show the authentication activity that source represents. Admin events show supported administrative actions. Drive events show access and changes subject to event coverage. OAuth and token events show grant and application activity, read by event name and parameters. Gmail log events, message-level exports and a BigQuery export have different schemas and different limits: say which one you hold. Verify availability and retention from the supplied collection records, not from a rule about editions.
 
-**Time and zone.** Quote the time with its zone; a time with no zone fails the call unless `assume_utc` is set on the export's own documentation, and the answer records it.
+**Time and zone.** Quote the time with its zone; a time with no zone fails the call unless `assume_utc` is set on the export's own documentation.
 
 **Does not show:** a person behind a login; that a grant was used; that a sharing or forwarding setting caused a transfer or a delivery.
 

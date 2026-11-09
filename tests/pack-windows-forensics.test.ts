@@ -36,6 +36,7 @@ import {
   type Run,
 } from "./windows-pack-harness.ts";
 import { hive } from "./windows-hive.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 // --- lnk_parse ------------------------------------------------------------------
 
@@ -746,7 +747,7 @@ echo "other $last"
 echo '0x40:3:$k: abc'
 `;
 
-test("yara_scan reports the rule, file, string identifier, offset and length of a match and never the matched bytes", async () => {
+test("yara_scan reports the rule, file, string identifier, offset and length of a match and never the matched bytes", { skip: NO_ADOPTION }, async () => {
   // `-s` prints the matched bytes, and they went into the answer: a rule that found `password=` put
   // the password in stdout and in the job log.
   await withCwd(async (cwd, bin) => {
@@ -773,19 +774,19 @@ test("yara_scan reports the rule, file, string identifier, offset and length of 
   });
 });
 
-test("yara_scan writes the matched bytes only on write_matches, only in a job, only to a 0600 file under $OUT, with the finding ids of the answer", async () => {
+test("yara_scan writes the matched bytes only on write_matches, only in a job, only to a 0600 file under $OUT, with the finding ids of the answer", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await stub(bin, "yara", YARA_STUB());
     await writeFile(join(cwd, "work", "rules.yar"), "rule pw { condition: true }");
     await writeFile(join(cwd, "work", "sample.bin"), "x");
     // Outside a job the request is refused and nothing is written.
     const refused = failed(await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin", write_matches: true }, {}, bin));
-    assert.match(refused.error, /refused outside a job/);
+    assert.match(refused.error, /write_matches is refused/);
     assert.deepEqual((await everyFileUnder(join(cwd, "work"))).filter((f) => f.includes("yara-matched")), []);
     // In a job.
     const outDir = join(cwd, "out");
     await mkdir(outDir, { recursive: true });
-    const run = await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin", write_matches: true }, { JOB_ID: "j000007", OUT: outDir }, bin);
+    const run = await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin", write_matches: true }, { JOB_ID: "j000007", OUT: outDir, SECRET_OUTPUT: "1" }, bin);
     const out = body<YaraOut>(run);
     assert.equal(out.secret_values.requested, true);
     assert.equal(out.secret_values.written, 3);
@@ -807,7 +808,7 @@ test("yara_scan writes the matched bytes only on write_matches, only in a job, o
     // A second run in the same job, the values file already there: it scans all the same, writes the next
     // numbered file, names it, and the first file is as it was (it was refused without scanning).
     const before = await readFile(file);
-    const again = body<YaraOut>(await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin", write_matches: true }, { JOB_ID: "j000007", OUT: outDir }, bin));
+    const again = body<YaraOut>(await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin", write_matches: true }, { JOB_ID: "j000007", OUT: outDir, SECRET_OUTPUT: "1" }, bin));
     assert.equal(again.status, "complete");
     assert.equal(again.string_match_count, 3);
     assert.equal(again.secret_values.values_file, "store/jobs/j000007/out/yara-matched-strings-2.jsonl");
@@ -1077,7 +1078,7 @@ test("vss_stores reports a count mismatch between the stores vshadowinfo claims 
   });
 });
 
-test("vss_stores reads a complete report, and quotes every operand of the mount command it suggests", async () => {
+test("vss_stores reads a complete report, and quotes every operand of the mount command it suggests", { skip: NO_ADOPTION }, async () => {
   // The suggested command interpolated the image path into a shell string without quoting.
   await withCwd(async (cwd, bin) => {
     await stub(bin, "vshadowinfo", vshadowinfoStub(SHADOW_REPORT(2, 2)));
@@ -1093,7 +1094,7 @@ test("vss_stores reads a complete report, and quotes every operand of the mount 
   });
 });
 
-test("vss_stores says zero stores only when vshadowinfo ran, exited 0 and reported zero itself, and words it as a bounded negative", async () => {
+test("vss_stores says zero stores only when vshadowinfo ran, exited 0 and reported zero itself, and words it as a bounded negative", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd, bin) => {
     await writeFile(join(cwd, "work", "disk.raw"), Buffer.alloc(4096));
     await stub(bin, "vshadowinfo", vshadowinfoStub(SHADOW_REPORT(0, 0)));
@@ -1892,7 +1893,7 @@ printf '%s\\n' "$@" > "$ICAT_ARGS"
 ${body}
 `;
 
-test("extract_stream writes the stream to a named file under the run with its size and sha256, and prints none of it", async () => {
+test("extract_stream writes the stream to a named file under the run with its size and sha256, and prints none of it", { skip: NO_ADOPTION }, async () => {
   // It printed the whole stream as base64 on stdout (a 30 second limit, no digest, no size), and a large stream
   // could not be returned at all.
   await withCwd(async (cwd, bin) => {
@@ -1961,9 +1962,9 @@ test("every windows-forensics tool manifest declares the programs its script run
   // None of the twenty manifests had `requires`, so an image chosen from the manifests could lack the program a tool calls
   // (tests/recipe.test.sh scans only tool-library/). sigma_hunt needs ONE of two engines and declares neither: its description says so.
   // registry_recover and lnk_jumplist call regfexport and lnkinfo as second readers and declare them.
-  const programs = ["fls", "icat", "istat", "img_stat", "mmls", "esedbexport", "yara", "vshadowinfo", "ewfexport", "sqlite3", "vol", "regfexport", "lnkinfo"];
+  const programs = ["fls", "icat", "istat", "img_stat", "mmls", "esedbexport", "yara", "vshadowinfo", "vshadowmount", "ewfexport", "sqlite3", "vol", "regfexport", "lnkinfo", "JLECmd", "SrumECmd", "dotnet", "target-query"];
   const dirs = await readdir(WIN);
-  assert.equal(dirs.length, 22);
+  assert.equal(dirs.length, 27);
   for (const name of dirs.sort()) {
     const manifest = JSON.parse(await readFile(join(WIN, name, "manifest.json"), "utf8")) as { entry: string; requires?: string[]; description: string; use?: unknown };
     const script = await readFile(join(WIN, name, manifest.entry), "utf8");

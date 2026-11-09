@@ -23,6 +23,7 @@ import { runPySnippet, withCwd } from "./tool-library-harness.ts";
 import { CREATED, FS, KC, MAC, PLIST, UL, body, fsDir, fsPage, fsRecord, gz, kcDb, ok, runAndSignal, tool, ul, ulStandin, logarchive } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
 import { prng } from "./windows-canary.ts";
+import { CLEAN } from "./host-gates.ts";
 
 const ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const rnd = (r: () => number, n: number, alpha = ALNUM): string => Array.from({ length: n }, () => alpha[Math.floor(r() * alpha.length)]).join("");
@@ -44,7 +45,7 @@ const FILES = ["0", "3", "6", "9", "b", "e", "h", "k", "n", "q", "t", "w", "z"];
 
 test("the three tools that print evidence carry the same guard block, byte for byte, next to the boundary block", async () => {
   const blocks: string[] = [];
-  for (const t of ["fsevents_parse", "knowledgec_query", "unified_log"]) {
+  for (const t of ["fsevents_parse", "knowledgec_query", "unified_log", "macos_tcc", "macos_login_items", "safari_history", "segb_read", "apfs_inventory", "macos_triage"]) {
     const text = await readFile(join(MAC, t, "run.py"), "utf8");
     const start = text.indexOf("# BEGIN SHARED GUARD");
     const stop = text.indexOf("# END SHARED GUARD");
@@ -52,8 +53,7 @@ test("the three tools that print evidence carry the same guard block, byte for b
     blocks.push(text.slice(start, stop));
   }
   assert.ok(blocks[0].length > 3000);
-  assert.equal(blocks[1], blocks[0]);
-  assert.equal(blocks[2], blocks[0]);
+  for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
 });
 
 // ---- P1-A: no filter and no order over the raw text of a name the answer withholds --------------------------------------------------------------
@@ -364,7 +364,7 @@ test("unified_log with Apple's log: a predicate on message text is warned about,
     assert.equal(answer.status, "failed");
     assert.equal(answer.predicate_names_message_text, true);
     const accepted = await ul(cwd, bin, { path, out_dir: "out/p4", predicate: 'process == "sudo" AND messageType == "Error"' }, {}, true);
-    assert.equal(body(accepted).status, "complete", accepted.stdout);
+    assert.equal(JSON.parse(accepted.stdout).status, CLEAN, accepted.stdout);
   });
 });
 
@@ -474,7 +474,7 @@ os.kill(os.getpid(), signal.SIGTERM)                  # it arrives while signals
 got = m.emit_answer({"status": "complete", "status_basis": "every row was read", "n": 1}, None, indent=2)
 sys.stderr.write("RETURNED=%r\\n" % got)
 `;
-  for (const t of ["fsevents_parse", "knowledgec_query", "unified_log"]) {
+  for (const t of ["fsevents_parse", "knowledgec_query", "unified_log", "macos_tcc", "macos_login_items", "safari_history", "segb_read", "apfs_inventory", "macos_triage"]) {
     const run = await runPySnippet(snippet, [join(MAC, t, "run.py")], {});
     assert.equal(run.code, 0, run.stderr);
     const answer = JSON.parse(run.stdout) as Json;

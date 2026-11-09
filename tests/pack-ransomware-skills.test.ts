@@ -52,6 +52,7 @@ const OLD_IDS = [
 ];
 const SECOND: Record<string, string> = {
   "scope/triage-tools": "scope/first-hour",
+  "scope/triage-tools-names": "scope/triage-tools",
   "scope/phase-timeline": "scope/first-hour",
   "encryptor/windows-evidence": "encryptor/traces",
   "encryptor/samples-and-notes": "encryptor/traces",
@@ -63,9 +64,14 @@ const SECOND: Record<string, string> = {
   "reporting/conclusions-and-controls": "reporting/for-regulators",
 };
 
+// A second-level leaf made by a later split (it is in SECOND below, and pointed to by its parent in the text).
+const SECOND_ADDED = ["scope/triage-tools-names"];
+// Leaves added after the split pass: each one is a leaf of its own, named once by the router and listed in the index.
+const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage", "intrusion/entry-and-spread", "recovery/preserve-and-restore", "impact/services-and-data", "recovery/public-decryptors"];
+
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, OLD_IDS.length + Object.keys(SECOND).length + 1, "the pack's leaves and its router");
+  assert.equal(skills.size, OLD_IDS.length + Object.keys(SECOND).length + ADDED.length + 1, "the pack's leaves and its router");
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= 800, `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
@@ -166,7 +172,7 @@ test("the secret rules: a Sensitive output line wherever a tool that reaches not
   assert.match(rep, /Never write a credential's value or its hash/);
   assert.match(rep, /Write where it was, its type and length, what it\s+grants and the rotation it needs/);
   assert.match(rep, /no contact\s+with the adversary, no payment, no negotiation and no external submission/);
-  assert.match(skills.get("recovery/routes-and-decryptors")!.body, /Never run a decryptor that came from the\s+evidence/);
+  assert.match(skills.get("recovery/public-decryptors")!.body, /Never run a decryptor that came from the evidence/);
   assert.match(skills.get("recovery/what-is-possible")!.body, /name the routes tried/);
 });
 
@@ -198,6 +204,8 @@ const TAUGHT: Array<[string, string, string[]]> = [
   ["tools/encrypted_survey/run.py", "scope/triage-tools", ["noncandidate", "unmeasured", "read_failed", "candidate_file_fraction", "status", "status_basis", "max_seconds", "sample", "coverage", "tail_bytes"]],
   ["tools/encrypted_survey/run.py", "identify/family", ["shared_tail_suffix", "tail_bytes"]],
   ["tools/ransom_note_scan/run.py", "scope/triage-tools", ["content_resembles_note", "filename_only", "write_values", "ransom-note-values.jsonl"]],
+  ["tools/decryptor_catalog/run.py", "recovery/public-decryptors", ["have", "lack", "no_entry_in_snapshot", "variant_status", "prerequisites_status", "all_met", "not_met", "unknown", "limitations", "acquisition", "obtained_and_verified", "fresh_until", "partial"]],
+  ["tools/recovery_validate/run.py", "recovery/public-decryptors", ["provenance"]],
 ];
 
 test("the tool fields a skill names are fields the tools write", async () => {
@@ -245,7 +253,8 @@ test("ransomware/router is the pack's only router, within 400 tokens, holds no r
   assert.deepEqual([...named].sort(), [...skills.keys()].filter((id) => id !== ROUTER).sort());
   assert.equal(BEFORE.length, 17);
   for (const id of BEFORE) assert.ok(skills.has(id), `${id} is still a skill`);
-  assert.equal(skills.size, BEFORE.length + 1, "the router is the only skill added");
+  assert.equal(skills.size, BEFORE.length + ADDED.length + SECOND_ADDED.length + 1, "the router and the leaves added since are the only skills added");
+  for (const id of [...ADDED, ...SECOND_ADDED]) assert.ok(skills.has(id), `${id} is a skill`);
   // The generated index names it as the pack's router, which is the line the harness reads.
   assert.match(await readFile(join(SKILLS, "INDEX.md"), "utf8"), /^Router: `ransomware\/router`$/m);
 });
@@ -258,7 +267,7 @@ test("the pack index is at most 1,000 tokens counted as the harness counts it: t
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => /^- `[^`]+`/.test(l));
   const parsed = await readPackIndex(PACK);
   assert.deepEqual(parsed.entries.map((e) => e.line), lines, "the harness reads every entry line of the file, and no other");
-  assert.equal(parsed.entries.length, BEFORE.length + 1);
+  assert.equal(parsed.entries.length, BEFORE.length + ADDED.length + SECOND_ADDED.length + 1);
   assert.equal(parsed.router, ROUTER);
   assert.equal(lines.reduce((n, l) => n + estimateTokens(l), 0), parsed.tokens);
   assert.ok(parsed.tokens <= SKILL_BUDGET.pack, `the pack index is ${parsed.tokens} tokens of entries, over ${SKILL_BUDGET.pack}`);
@@ -303,4 +312,242 @@ test("a run that carries this pack with others is over the run's index budget, a
   assert.ok(fits.shown_tokens <= SKILL_BUDGET.run, `with the routers the section is ${fits.shown_tokens} tokens`);
   const bare = await section(family, FAMILY);
   assert.ok(bare.shown_tokens > SKILL_BUDGET.run, `without the family's routers the section is ${bare.shown_tokens} tokens, over the run's ${SKILL_BUDGET.run}`);
+});
+
+test("the README no longer says there is no method for hypervisors or network storage, and backup-infrastructure points to the virtualization pack conditionally, by mentions only", async () => {
+  const readme = flat(await readFile(join(PACK, "README.md"), "utf8"));
+  assert.doesNotMatch(readme, /no examination method for hypervisors or network storage/);
+  assert.match(readme, /`encryptor\/backup-infrastructure`/);
+  assert.match(readme, /read by the virtualization-backup-forensics\s+pack when it is loaded/);
+  const skills = await load(SKILLS);
+  const infra = skills.get("encryptor/backup-infrastructure");
+  assert.ok(infra, "the leaf exists");
+  // backup-infrastructure points to the two platform leaves and does not repeat them: it names none of the virtualization tools.
+  const infraText = flat(infra.body);
+  assert.match(infraText, /`platforms\/esxi-hypervisors`/);
+  assert.match(infraText, /`platforms\/nas-storage`/);
+  for (const tool of ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"]) assert.ok(!infraText.includes(tool), `${tool} is not repeated in backup-infrastructure`);
+  assert.deepEqual(infra.meta.tools, ["backup_destruction_correlate"]);
+  assert.deepEqual(infra.meta.needs, []);
+  assert.ok(TOKENS(infra.text) <= 800, `the leaf is ${TOKENS(infra.text).toFixed(0)} tokens`);
+  const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { depends: string[]; method_only: Array<{ path: string; why: string }> };
+  // no dependency edge: the pack depends on the base pack only
+  assert.deepEqual(pack.depends.map((d) => d.split(/[<>=]/)[0]), ["computer-forensics-base"]);
+  for (const id of ["platforms/esxi-hypervisors", "platforms/nas-storage"]) {
+    const leaf = skills.get(id);
+    assert.ok(leaf, `${id} exists`);
+    assert.deepEqual(leaf.meta.mentions, ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"], `${id} mentions the three tools`);
+    const names = id === "platforms/esxi-hypervisors" ? ["backup_destruction_correlate"] : [];
+    assert.deepEqual(leaf.meta.tools, names, `${id} lists the tools it names`);
+    assert.deepEqual(leaf.meta.needs, [], `${id} needs nothing`);
+    const text = flat(leaf.body).trim();
+    assert.match(text, /^Use when .* Not for /);
+    assert.match(text, /If the virtualization-backup-forensics pack is loaded \(check the run's tool inventory\)/, `${id} routes conditionally`);
+    assert.match(text, /Where (it|the pack) is not loaded, say that no tool read this evidence/, `${id} says what to write when the pack is absent`);
+    for (const tool of ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"]) assert.ok(text.includes(`\`${tool}\``), `${id} names ${tool}`);
+    for (const head of ["Shows.", "Does not show.", "Record:", "Sensitive output:"]) assert.ok(text.includes(head), `${id} has ${head}`);
+    assert.ok(TOKENS(leaf.text) <= 800, `${id} is ${TOKENS(leaf.text).toFixed(0)} tokens`);
+    // "Operator" is the authorised human; these leaves are about the adversary and never use the word for it.
+    assert.doesNotMatch(leaf.text, /operator/i, `${id} does not use the word operator`);
+    // a method leaf: the tools it mentions are another pack's, so it is method_only with a reason that says so
+    const entry = pack.method_only.find((m) => m.path === `skills/${id}.md`);
+    if (names.length) {
+      assert.equal(entry, undefined, `${id} names a tool of this pack, so it is not method_only`);
+    } else {
+      assert.ok(entry, `${id} is method_only`);
+      assert.match(entry.why, /belong to the virtualization-backup-forensics pack and are only mentioned/);
+    }
+    // the router and the index name it once
+    const router = skills.get(ROUTER)!;
+    assert.equal(router.body.split(`\`${id}\``).length - 1, 1, `the router names ${id} once`);
+    const index = await readFile(join(SKILLS, "INDEX.md"), "utf8");
+    assert.equal(index.split(`\`${id}\``).length - 1, 1, `the index names ${id} once`);
+  }
+  // the ESXi leaf keeps the layers apart and says not to consolidate before the chain metadata is preserved
+  const esxi = flat(skills.get("platforms/esxi-hypervisors")!.body);
+  assert.match(esxi, /Do not consolidate or\s+delete a snapshot/);
+  assert.match(esxi, /before the chain metadata is preserved/);
+  for (const layer of ["host", "management plane", "guest", "datastore"]) assert.ok(esxi.includes(layer), `the ESXi leaf names the ${layer}`);
+  // the NAS leaf: the three routes, and one RAID member is not a logical acquisition
+  const nas = flat(skills.get("platforms/nas-storage")!.body);
+  assert.match(nas, /One member of a RAID set, imaged alone, is not a logical acquisition/);
+  for (const route of ["client", "management plane", "replication"]) assert.ok(nas.includes(route), `the NAS leaf names ${route}`);
+});
+
+test("impact/services-and-data names ransomware_scope_report, every field it names is one the tool writes, and no sentence lets a tool decide materiality", async () => {
+  const skills = await load(SKILLS);
+  const leaf = skills.get("impact/services-and-data");
+  assert.ok(leaf, "the leaf exists");
+  const text = flat(leaf.body).trim();
+  assert.match(text, /^Use when .* Not for /);
+  assert.deepEqual(leaf.meta.tools, ["ransomware_scope_report"]);
+  assert.deepEqual(leaf.meta.needs, []);
+  assert.ok(TOKENS(leaf.text) <= 800, `${TOKENS(leaf.text).toFixed(0)} tokens`);
+  for (const head of ["Shows.", "Does not show.", "Record:", "Sensitive output:"]) assert.ok(text.includes(head), head);
+  assert.doesNotMatch(leaf.text, /operator/i);
+  // a skill may not name a field that does not exist: each one is written by the tool
+  const source = await readFile(join(PACK, "tools", "ransomware_scope_report", "run.py"), "utf8");
+  for (const field of ["coverage_statement", "assessed_against_unassessed", "candidate_against_validated", "estate_wide_percentage"]) {
+    assert.ok(text.includes(`\`${field}\``), `the leaf names ${field}`);
+    assert.ok(source.includes(`"${field}"`), `ransomware_scope_report writes ${field}`);
+  }
+  for (const word of ["unknown", "conflict"]) {
+    assert.ok(text.includes(`\`${word}\``));
+    assert.ok(source.includes(`"${word}"`), word);
+  }
+  // materiality is the accountable people's, never a tool's
+  assert.match(text, /\*\*Materiality\.\*\* No tool decides it\./);
+  assert.doesNotMatch(text, /(tool|report|scan|survey) (decides|determines|establishes|finds) (that )?(an effect is )?material/i);
+  // the effects are kept apart from file counts, and the three grades of a figure are named
+  for (const part of ["confidentiality", "integrity", "availability", "Estimated, tested, confirmed", "outage", "dependenc", "population"]) assert.ok(text.includes(part), part);
+  const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { method_only: Array<{ path: string }>; depends: string[] };
+  assert.ok(!pack.method_only.some((m) => m.path === "skills/impact/services-and-data.md"), "it names a tool of the pack, so it is not method only");
+  assert.deepEqual(pack.depends.map((d) => d.split(/[<>=]/)[0]), ["computer-forensics-base"]);
+  const router = skills.get(ROUTER)!;
+  assert.equal(router.body.split("`impact/services-and-data`").length - 1, 1);
+});
+
+test("scope/triage-tools gave its Names paragraph to a second-level leaf, kept the key-material sentence, and gained the survey-versus-extent rule", async () => {
+  const skills = await load(SKILLS);
+  const tt = flat(skills.get("scope/triage-tools")!.body);
+  const names = flat(skills.get("scope/triage-tools-names")!.body);
+  // the rule: both tools named, which one shows what, and that neither alone shows encryption
+  assert.ok(tt.includes("`encrypted_survey`") && tt.includes("`encryption_extent`"));
+  assert.match(tt, /`encrypted_survey` shows which files look encrypted, and their tails/);
+  assert.match(tt, /`encryption_extent` shows where in a file windows read high, and which ranges it left unread/);
+  assert.match(tt, /Neither one alone shows that a file was encrypted/);
+  assert.deepEqual(skills.get("scope/triage-tools")!.meta.tools, ["encrypted_survey", "ransom_note_scan", "file_type", "encryption_extent"]);
+  // the move: the sentences of the old Names paragraph are in the new leaf and no longer in the old one
+  for (const sentence of [
+    "Both tools withhold from every path each component that holds an identifier-shaped token",
+    "The shape is a deny-list: other shapes print.",
+    "a random 8-character token 3%, 12 characters 0.6%",
+    "About 6% of ordinary names are withheld: list the directory.",
+    "A second check replaces what slips through and marks the answer `partial`.",
+  ]) {
+    assert.ok(names.includes(sentence), `moved: ${sentence}`);
+    assert.ok(!tt.includes(sentence), `not repeated: ${sentence}`);
+  }
+  assert.match(tt, /Only if you say what a withheld path hides, or quote `paths_withheld`:\s*`scope\/triage-tools-names`/);
+  // what must survive the move (RAN-04): key material is expected in the survey's tails, so the job runs with secret_output: true
+  assert.match(tt, /`encrypted_survey` prints the last `tail_bytes` bytes of sampled files; where key material is expected there, run it with `secret_output: true` too\./);
+  for (const id of ["scope/triage-tools", "scope/triage-tools-names"]) assert.ok(TOKENS(skills.get(id)!.text) <= 800, id);
+  assert.deepEqual(skills.get("scope/triage-tools-names")!.meta.needs, []);
+  assert.doesNotMatch(skills.get("scope/triage-tools-names")!.text, /operator/i);
+});
+
+test("the two method leaves for entry and for preservation are named once, conditional about other packs' tools, and repeat no sentence of the leaves they sit beside", async () => {
+  const skills = await load(SKILLS);
+  const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { depends: string[]; method_only: Array<{ path: string; why: string }> };
+  const router = skills.get(ROUTER)!;
+  const index = await readFile(join(SKILLS, "INDEX.md"), "utf8");
+  const sentences = (s: string): string[] =>
+    norm(s.replace(/^---[\s\S]*?---/, "").replace(/\*\*[^*]+\*\*/g, " ")).split(/(?<=[.:;])\s+/).map((x) => x.trim()).filter((x) => x.split(" ").length >= 5);
+  const neighbours = ["scope/phase-timeline", "scope/first-hour", "recovery/what-is-possible"].flatMap((id) => sentences(skills.get(id)!.text));
+  for (const id of ["intrusion/entry-and-spread", "recovery/preserve-and-restore"]) {
+    const leaf = skills.get(id);
+    assert.ok(leaf, `${id} exists`);
+    assert.equal(router.body.split(`\`${id}\``).length - 1, 1, `the router names ${id} once`);
+    assert.equal(index.split(`\`${id}\``).length - 1, 1, `the index names ${id} once`);
+    assert.ok(TOKENS(leaf.text) <= 800, `${id} is ${TOKENS(leaf.text).toFixed(0)} tokens`);
+    const text = flat(leaf.body).trim();
+    assert.match(text, /^Use when .* Not for /);
+    for (const head of ["Shows.", "Does not show.", "Record:", "Sensitive output:"]) assert.ok(text.includes(head), `${id} has ${head}`);
+    assert.doesNotMatch(leaf.text, /operator/i, `${id} does not use the word operator`);
+    assert.deepEqual(leaf.meta.needs, []);
+    assert.ok(pack.method_only.find((m) => m.path === `skills/${id}.md`), `${id} is method_only`);
+    const mine = sentences(leaf.text);
+    assert.ok(mine.length >= 10, "the leaf has sentences to compare");
+    for (const sentence of mine) assert.ok(!neighbours.includes(sentence), `${id} repeats a sentence of a neighbouring leaf: ${sentence}`);
+  }
+  // entry-and-spread: the other packs' readers are named only conditionally, by mentions and by the rule "check the run's tool inventory"
+  const entry = skills.get("intrusion/entry-and-spread")!;
+  assert.deepEqual(entry.meta.mentions, ["evtx_query", "auth_log", "cloudtrail_parse", "network_log_summary"]);
+  assert.deepEqual(entry.meta.tools, []);
+  const e = flat(entry.body);
+  assert.match(e, /If the windows-forensics, linux-forensics, cloud-forensics or network-forensics pack is loaded \(check the run's tool inventory\)/);
+  assert.match(e, /No exploit is reproduced/);
+  for (const part of ["graph", "initial access", "persistence", "deployment", "window", "alternatives"]) assert.ok(e.toLowerCase().includes(part), `entry-and-spread covers ${part}`);
+  for (const family of ["VPN", "identity", "mail", "endpoint-detection", "remote-management", "cloud audit"]) assert.ok(e.includes(family), `entry-and-spread correlates ${family}`);
+  // preserve-and-restore: the minimum package, the emergency exceptions and what each loses, isolation, identity, clean build, acceptance
+  const p = flat(skills.get("recovery/preserve-and-restore")!.body);
+  for (const part of ["minimum package", "Emergency exceptions", "evidence the exception loses", "in isolation", "Identity before reconnection", "Clean-build decisions", "Acceptance"]) assert.ok(p.includes(part), `preserve-and-restore covers ${part}`);
+  assert.deepEqual(pack.depends.map((d) => d.split(/[<>=]/)[0]), ["computer-forensics-base"]);
+});
+
+test("recovery/public-decryptors names both tools, every field it names is one they have, and the two leaves that discussed decryptors route to it and keep what they did not move", async () => {
+  const skills = await load(SKILLS);
+  const leaf = skills.get("recovery/public-decryptors");
+  assert.ok(leaf, "the leaf exists");
+  const text = flat(leaf.body).trim();
+  assert.match(text, /^Use when .* Not for /);
+  assert.deepEqual(leaf.meta.tools, ["decryptor_catalog", "recovery_validate"]);
+  assert.deepEqual(leaf.meta.needs, []);
+  assert.ok(TOKENS(leaf.text) <= 800, `${TOKENS(leaf.text).toFixed(0)} tokens`);
+  for (const head of ["Shows.", "Does not show.", "Record:", "Sensitive output:"]) assert.ok(text.includes(head), head);
+  // Every `snake_case` word the leaf puts in code is a tool name or a parameter or field one of the two tools has.
+  const catalog = await readFile(join(PACK, "tools", "decryptor_catalog", "run.py"), "utf8");
+  const validate = await readFile(join(PACK, "tools", "recovery_validate", "run.py"), "utf8");
+  const manifest = JSON.parse(await readFile(join(PACK, "tools", "decryptor_catalog", "manifest.json"), "utf8")) as { params: Record<string, unknown> };
+  for (const p of ["hypotheses", "have", "lack", "obtained_and_verified"]) assert.ok(p in manifest.params, `decryptor_catalog takes ${p}`);
+  for (const m of leaf.body.matchAll(/`([a-z][a-z_]*)`/g)) {
+    const word = m[1];
+    if (["decryptor_catalog", "recovery_validate"].includes(word)) continue;
+    assert.ok(catalog.includes(`"${word}"`) || validate.includes(`"${word}"`), `${word} is named by the leaf and is a field of neither tool`);
+  }
+  // the claims: a dated snapshot and never a current list; no entry is not "no decryptor exists"; the flag is the caller's; terms are the publisher's
+  assert.match(text, /dated; it fetches, uploads and runs nothing and is not a current list/);
+  assert.match(text, /`no_entry_in_snapshot` is not "no decryptor exists"/);
+  assert.match(text, /`obtained_and_verified` is yours: the tool copies what you give it and never sets it true/);
+  assert.match(text, /The tool's terms are its publisher's/);
+  assert.match(text, /Reach catalogues through the case's authorised process/);
+  assert.match(text, /Browsing a catalogue is not uploading a note or an encrypted sample to an identification service/);
+  assert.match(text, /Never run a decryptor that came from the evidence\./);
+  assert.match(text, /Keep the output of a failed run beside the others/);
+  assert.match(text, /public decryptor availability not verified as of this date/);
+  // "operator" is the authorised human, and appears once
+  assert.equal((leaf.text.match(/operator/gi) ?? []).length, 1);
+  assert.match(leaf.text, /a tool the operator supplied/);
+  // the routing: each of the two leaves points to it, and the router and the index name it once
+  const routes = skills.get("recovery/routes-and-decryptors")!;
+  const samples = skills.get("identify/samples-and-decryptors")!;
+  assert.match(flat(routes.body), /`recovery\/public-decryptors`/);
+  assert.match(flat(samples.body), /`recovery\/public-decryptors`/);
+  assert.deepEqual(routes.meta.tools, ["file_carver", "recovery_validate"]);
+  assert.deepEqual(samples.meta.tools, ["ransom_note_scan", "ransomware_family_match"]);
+  assert.equal(skills.get(ROUTER)!.body.split("`recovery/public-decryptors`").length - 1, 1, "the router names it once");
+  assert.equal((await readFile(join(SKILLS, "INDEX.md"), "utf8")).split("`recovery/public-decryptors`").length - 1, 1, "the index names it once");
+  const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { method_only: Array<{ path: string }> };
+  assert.ok(!pack.method_only.some((m) => m.path === "skills/recovery/public-decryptors.md"), "it names tools of the pack, so it is not method only");
+  // the register: each sentence moved out of the two leaves is in the new one and no longer in the old ones
+  const MOVED: Array<[string, string]> = [
+    ["recovery/routes-and-decryptors", "Use only a tool the operator supplied whose provenance was checked and whose documented support matches the variant."],
+    ["recovery/routes-and-decryptors", "Test on disposable copies of representative files, large files and the relevant formats included, never over an original."],
+    ["recovery/routes-and-decryptors", "Compare what comes back with trusted originals where they exist, and check structure and application behaviour: a success message is not enough."],
+    ["recovery/routes-and-decryptors", "Never run a decryptor that came from the evidence."],
+    ["recovery/routes-and-decryptors", "a success message does not show that a decryptor restored the files"],
+    ["recovery/routes-and-decryptors", "which files were tested and what came back against trusted originals"],
+    ["identify/samples-and-decryptors", "Ask for dated material from the original law-enforcement or vendor publisher and from public catalogues such as No More Ransom."],
+    ["identify/samples-and-decryptors", "Browsing a catalogue is not uploading a note or an encrypted sample to an identification service: do not upload evidence or victim identifiers without explicit case authority."],
+    ["identify/samples-and-decryptors", "Identification needs no payment and no contact with the adversary."],
+    ["identify/samples-and-decryptors", "for a candidate decryptor record the publisher, exact version,"],
+    ["identify/samples-and-decryptors", "the integrity and authenticity checks, the instructions, the variants it supports, the key it needs and its known limits"],
+    ["identify/samples-and-decryptors", "a matching family name does not show a decryptor's compatibility"],
+    ["identify/samples-and-decryptors", "failing to reach current references does not show that no decryptor exists"],
+    ["identify/samples-and-decryptors", "If current references cannot be reached, write \"public decryptor availability not verified as of this date\", not \"no decryptor exists\"."],
+  ];
+  for (const [from, sentence] of MOVED) {
+    assert.ok(text.toLowerCase().includes(sentence.toLowerCase()), `moved from ${from}, missing from the new leaf: ${sentence}`);
+    assert.ok(!flat(skills.get(from)!.body).toLowerCase().includes(sentence.toLowerCase()), `${from} still says it: ${sentence}`);
+  }
+  // kept where it was: the checks of an output are recovery_validate's, and a sample's static examination is the identify leaf's
+  const r = flat(routes.body);
+  assert.match(r, /`recovery_validate` checks what came back, run separately/);
+  for (const w of ["matches_known_original", "structurally_valid", "unrecovered", "inconclusive"]) assert.ok(r.includes(`\`${w}\``), w);
+  assert.match(flat(samples.body), /Do not execute recovered code/);
+  // no sentence of five words or more is in the new leaf and in a leaf beside it
+  const sentences = (t: string): string[] =>
+    norm(t.replace(/^---[\s\S]*?---/, "").replace(/\*\*[^*]+\*\*/g, " ")).split(/(?<=[.:;])\s+/).map((x) => x.trim()).filter((x) => x.split(" ").length >= 5);
+  const neighbours = ["recovery/routes-and-decryptors", "identify/samples-and-decryptors", "identify/family", "recovery/what-is-possible"].flatMap((id) => sentences(skills.get(id)!.text));
+  for (const sentence of sentences(leaf.text)) assert.ok(!neighbours.includes(sentence), `repeated in a neighbouring leaf: ${sentence}`);
 });

@@ -100,6 +100,18 @@ class LosslessPage:
     def _cannot_write(self, exc: BaseException) -> None:
         """The whole result cannot be kept: say so as JSON and stop, never a traceback."""
         import sys as _sys
+        # The hidden temp file goes first: a page that cannot be written leaves nothing behind (a full disk, a quota).
+        out, self._out = self._out, None
+        try:
+            if out is not None:
+                out.close()
+        except BaseException:
+            pass
+        try:
+            if self._tmp is not None:
+                os.unlink(self._tmp)
+        except OSError:
+            pass
         _sys.stdout.write(json.dumps({
             "error": "the whole result (%d rows so far) cannot be written to %s: %s. Outside a job the place is your own "
                      "work/<your id>/ directory; in a job it is $OUT." % (self.total, self.shown, exc),
@@ -159,6 +171,214 @@ class LosslessPage:
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. A result written at the same moment cannot be replaced either: taking a name fails when it is there.
+# Only regular files are ever compared: both names are opened with O_NONBLOCK and O_NOFOLLOW and looked at with fstat before a byte is
+# read, so a FIFO, a device, a directory or a link at a name (the caller's own results_to, say) is another result's and cannot hold the
+# tool. The comparing of one call has PLACE_COMPARE_SECONDS in all; past it an earlier result is taken as different and this one takes
+# the next free name (nothing is replaced, but an identical rerun may then be named anew).
+# The name is taken with a hard link of the finished file, so it never holds an empty file, whatever stops the tool and when (SIGKILL
+# included). Where the file system refuses the link, the name is taken with an exclusive create and the file is moved over it: a stop
+# that unwinds (an exception) takes the empty name back while it is still the empty file this call made; a stop that ends the process
+# without unwinding (SIGKILL, the handlers of the STOP block) between the create and the move leaves the empty name, and the next run takes -2.
+PLACE_COMPARE_SECONDS = 5   # all the comparing one call to place_without_replacing does; past it an earlier result is taken as different
+
+
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
+    try:
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
+            return False
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(1 << 20), fb.read(1 << 20)
+            if x != y:
+                return False
+            if not x:
+                return True
+    except OSError:
+        return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
+
+
+def _take_name(tmp, candidate):
+    """Give the finished `tmp` the name `candidate` if it is free, and say whether it now has it (False: the name is taken, by a file, a
+    link, a FIFO or a directory). The name is taken with a hard link, so it never holds an empty file; where the file system refuses the
+    link it is taken with an exclusive create and the file is moved over it, and a stop that unwinds in between takes the empty name back."""
+    try:
+        os.link(tmp, candidate)
+    except FileExistsError:
+        return False
+    except OSError:
+        pass                                   # no hard links here: the older way, below
+    else:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass                               # the hidden name stays beside the placed file; the stop path of the page removes it
+        return True
+    fd = made = None
+    try:
+        fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        made = os.fstat(fd)
+        closing, fd = fd, None
+        os.close(closing)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return True
+    except FileExistsError:
+        return False
+    except BaseException:
+        try:
+            if made is None and fd is not None:
+                made = os.fstat(fd)
+        except OSError:
+            pass
+        try:
+            if fd is not None:
+                os.close(fd)
+        except OSError:
+            pass
+        try:
+            now = os.lstat(candidate)
+            if made is not None and (now.st_mode & 0o170000) == 0o100000 and now.st_size == 0 and (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino):
+                os.unlink(candidate)           # the empty name this call took is not left behind
+        except OSError:
+            pass
+        raise
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. A name that is taken (by a file, a link, a FIFO or a directory) is
+    left as it is: a regular file of the same bytes is named again, any other result takes the next free <stem>-<n><suffix>. Returns the
+    path that holds it. The comparing with earlier results has PLACE_COMPARE_SECONDS in all: past it an earlier result is taken as
+    different and this one takes the next free name."""
+    deadline = time.monotonic() + PLACE_COMPARE_SECONDS
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        if _take_name(tmp, candidate):
+            return candidate
+        if not os.path.islink(candidate) and same_bytes(tmp, candidate, deadline):
+            os.unlink(tmp)
+            return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+# BEGIN SHARED STOP
+# The same text is in every tool that carries this block (tests/pack-shared-stop.test.ts holds the copies equal). SIGTERM, SIGINT and SIGHUP end the tool with JSON
+# (status failed with interrupted true: a stop is not a status, the statuses are complete, partial and failed; exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 STANDARD_INFORMATION = 0x10
 ATTRIBUTE_LIST = 0x20
@@ -183,9 +403,59 @@ SI_FLAGS = [
 ]
 
 
+PARSER = "mft_records/5"
+DEADLINE_SECONDS = 285            # the manifest allows 300: the sweep stops here, so that the pages are placed and the answer printed before the harness ends it
+RECORD_SIZES = (256, 512, 1024, 2048, 4096)
+MAX_RECORD_SIZE = 65536           # the largest record size the record_size argument may force (NTFS uses 1024 or 4096)
+MAX_LIMIT = 10000                 # the largest inline page; the whole result is in the file the answer names
+MAX_NAME = 500                    # the longest name filter
+PATTERN_SECONDS = 0.5             # one record's names are tested against the caller's expression for at most this long
+PROGRESS = {"scanned": 0, "offset": 0}
+
+
+class PatternTooSlow(Exception):
+    pass
+
+
+def _pattern_alarm(_signum, _frame):
+    raise PatternTooSlow()
+
+
+def matches(pattern, texts):
+    """Whether the caller's expression matches any of `texts`, for at most PATTERN_SECONDS (the re module looks at signals while it matches, so an
+    expression that takes exponential time on a name is stopped instead of outrunning the tool's clock)."""
+    signal.signal(signal.SIGALRM, _pattern_alarm)
+    signal.setitimer(signal.ITIMER_REAL, PATTERN_SECONDS)
+    try:
+        return any(pattern.search(text) for text in texts)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+class ClockStop(Exception):
+    """The tool's own clock ran out while it was still looking for the first record."""
+
+
+def drop_pages():
+    """Remove the temporary files of the pages that were being written (the STOP block does the same on a signal)."""
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            page._tmp = None
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    drop_pages()
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error and read no result (see error)", **extra})
     raise SystemExit(1)
+
+
+def last_word(signum):
+    interrupted_answer(signum, records_scanned=PROGRESS["scanned"], offset_reached=PROGRESS["offset"])
 
 
 def filetime(value):
@@ -409,6 +679,8 @@ def detect_record_size(fh, size):
     fh.seek(0)
     hits, carry, base = [], b"", 0
     while len(hits) < 2:
+        if out_of_time():
+            raise ClockStop(base)
         block = fh.read(1 << 20)
         if not block:
             break
@@ -421,16 +693,16 @@ def detect_record_size(fh, size):
         carry = buf[-3:]
         base += len(buf) - len(carry)
     if not hits:
-        return None, None, None
+        return None, None, None, None
     fh.seek(hits[0] + 0x1C)
     raw = fh.read(4)
     declared = struct.unpack("<I", raw)[0] if len(raw) == 4 else None
     gap = (hits[1] - hits[0]) if len(hits) > 1 else None
-    if declared in (256, 512, 1024, 2048, 4096):
-        return declared, "the allocated size in the first record's header", gap
-    if gap in (256, 512, 1024, 2048, 4096):
-        return gap, "the gap between the first two FILE signatures", gap
-    return 1024, "the default (neither the header nor the gap gave a record size)", gap
+    if declared in RECORD_SIZES:
+        return declared, "the allocated size in the first record's header", gap, declared
+    if gap in RECORD_SIZES:
+        return gap, "the gap between the first two FILE signatures", gap, declared
+    return 1024, "the default (neither the header nor the gap gave a record size)", gap, declared
 
 
 def first_record_offset(fh, record_size):
@@ -442,6 +714,8 @@ def first_record_offset(fh, record_size):
     carry, base, tried = b"", 0, 0
     wanted = record_size // 512 + 1 if record_size >= 512 else None
     while True:
+        if out_of_time():
+            raise ClockStop(base)
         block = fh.read(1 << 20)
         if not block:
             return None
@@ -460,29 +734,59 @@ def first_record_offset(fh, record_size):
         base += len(buf) - len(carry)
 
 
+def whole(args, name, low, high, default):
+    value = args.get(name, default)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < low or value > high:
+        fail("%s must be a whole number from %d to %d" % (name, low, high))
+    return value
+
+
+def flag(args, name):
+    value = args.get(name, False)
+    if not isinstance(value, bool):
+        fail("%s must be true or false" % name)
+    return value
+
+
+def early_stop(path, size, where):
+    """The clock ran out before the first record was found: nothing was read, and the answer says so."""
+    print_answer({
+        "parser": PARSER, "status": "partial",
+        "status_basis": "the tool's own clock (%d s) ran out while it looked for the first record, %d of %d bytes into the file: no record was read" % (DEADLINE_SECONDS, where, size),
+        "path": path, "bytes": size, "records_scanned": 0, "records_parsed": 0, "entries": [], "entry_count": 0, "stopped_by_time_limit": True,
+        "offset_reached": where,
+    }, indent=2)
+
+
 def run(args):
     path = args.get("path")
     if not isinstance(path, str) or not path:
         fail("path is required: an extracted $MFT")
+    limit = whole(args, "limit", 1, MAX_LIMIT, 200)
+    name = args.get("name")
+    if name is not None and (not isinstance(name, str) or len(name) > MAX_NAME):
+        fail("name must be a string of at most %d characters: a case-insensitive regular expression over the file names" % MAX_NAME)
+    want_entry = args.get("entry")
+    if want_entry is not None and (isinstance(want_entry, bool) or not isinstance(want_entry, int) or want_entry < 0):
+        fail("entry must be a record number (a whole number, 0 or more)")
+    given = whole(args, "record_size", 256, MAX_RECORD_SIZE, None)
+    deleted_only, streams_only, timestomp_only = flag(args, "deleted_only"), flag(args, "streams_only"), flag(args, "timestomp_only")
+    with_resident = flag(args, "with_resident")
+    if with_resident and os.environ.get("SECRET_OUTPUT") != "1":
+        fail("with_resident is refused: the bytes of resident files can hold a secret, and are returned only in a job the harness runs as secret output "
+             "(job_run with secret_output: true). Nothing was opened or read.")
+    pattern = None
+    if name:
+        try:
+            pattern = re.compile(name, re.I)
+        except re.error as exc:
+            fail("name is not a valid regex", reason=str(exc))
     if not os.path.isfile(path):
         if os.path.exists(path):
             fail("not a regular file: it is not opened", path=path, not_attempted=1)
         fail("no such file", path=path)
-
-    limit = args.get("limit", 200)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer", limit=args.get("limit"))
-
-    pattern = None
-    if args.get("name"):
-        try:
-            pattern = re.compile(args["name"], re.I)
-        except re.error as exc:
-            fail("name is not a valid regex", reason=str(exc))
-
-    want_entry = args.get("entry")
-    if want_entry is not None and (not isinstance(want_entry, int) or isinstance(want_entry, bool)):
-        fail("entry must be a record number")
 
     try:
         size = os.path.getsize(path)
@@ -490,28 +794,40 @@ def run(args):
     except OSError as exc:
         fail("could not read the $MFT", path=path, reason=str(exc))
     with fh:
-        given = args.get("record_size")
-        if given is not None and (not isinstance(given, int) or isinstance(given, bool) or given < 256):
-            fail("record_size must be an integer of at least 256", record_size=given)
+        disagreement = None
         try:
-            record_size, record_size_from, gap = (given, "the record_size argument", None) if given else detect_record_size(fh, size)
+            detected, detected_from, gap, declared = detect_record_size(fh, size)
+            if given:
+                record_size, record_size_from = given, "the record_size argument"
+                # The evidence is the first record's own header; the gap between the first two signatures is the second. They are compared with
+                # the forced size and a disagreement is a problem of the run, not a correction.
+                evidence = declared if declared in RECORD_SIZES else (gap if gap in RECORD_SIZES else None)
+                if evidence and evidence != given:
+                    disagreement = ("the record_size argument (%d) disagrees with the %s (%d); the records were read at %d bytes as asked, and the "
+                                    "slots that result are probably not records" % (given, "allocated size in the first record's header" if declared in RECORD_SIZES else "gap between the first two FILE signatures", evidence, given))
+            else:
+                record_size, record_size_from = detected, detected_from
             if not record_size:
                 fail("no FILE record found; this does not look like an $MFT", path=path, bytes=size)
             first_at = first_record_offset(fh, record_size)
+        except ClockStop as stop:
+            early_stop(path, size, stop.args[0])
+            return
         except OSError as exc:
             fail("could not read the $MFT", path=path, reason=str(exc))
         alignment = (first_at % record_size) if first_at is not None else 0
 
-        key = [path, record_size, args.get("name"), want_entry, bool(args.get("deleted_only")),
-               bool(args.get("streams_only")), bool(args.get("timestomp_only")),
-               bool(args.get("with_resident"))]
-        entries = LosslessPage("mft_records", key, limit)
-        problems = LosslessPage("mft_records-problems", key, 40)
+        key = [path, record_size, name, want_entry, deleted_only, streams_only, timestomp_only, with_resident]
+        entries = NoReplacePage("mft_records", key, limit)
+        problems = NoReplacePage("mft_records-problems", key, 40)
         structural = 0
         fixup_failed = 0
         zeroed = unrecognised = 0
         scanned, parsed = 0, 0
         trailing = 0
+        stopped = None
+        if disagreement:
+            problems.add({"offset": first_at or 0, "why": disagreement})
         if alignment:
             problems.add({"offset": 0, "why": "the first record begins at byte %d, which is not a multiple of the %d-byte record size: the %d bytes before byte %d are not read as records, and the slots are counted from there" % (first_at, record_size, alignment, alignment)})
         try:
@@ -519,6 +835,10 @@ def run(args):
         except OSError as exc:
             fail("could not read the $MFT", path=path, reason=str(exc))
         while True:
+            if out_of_time():
+                stopped = ("the tool's own clock (%d s) ran out at byte %d of %d, after %d record slots: the rest of the file was not read"
+                           % (DEADLINE_SECONDS, alignment + scanned * record_size, size, scanned))
+                break
             try:
                 chunk = fh.read(record_size)
             except OSError as exc:
@@ -532,11 +852,12 @@ def run(args):
             index = scanned
             offset = alignment + index * record_size
             scanned += 1
+            PROGRESS["scanned"], PROGRESS["offset"] = scanned, offset
             if len(chunk) < record_size:
                 problems.add({"record": index, "offset": offset,
                               "why": "the file ends inside this record: %d of its %d bytes are there" % (len(chunk), record_size)})
             try:
-                entry = parse_record(chunk, index, bool(args.get("with_resident")))
+                entry = parse_record(chunk, index, with_resident)
             except Exception as exc:        # a hostile record must not end the sweep
                 problems.add({"record": index, "offset": offset,
                               "why": "the record did not parse: %s" % exc})
@@ -560,23 +881,35 @@ def run(args):
                 if entry["entry"] != want_entry:
                     continue
             else:
-                if args.get("deleted_only") and entry["in_use"]:
+                if deleted_only and entry["in_use"]:
                     continue
-                if args.get("streams_only") and not entry["ads"]:
+                if streams_only and not entry["ads"]:
                     continue
-                if args.get("timestomp_only") and not (set(entry["flags"]) & STOMP_FLAGS):
+                if timestomp_only and not (set(entry["flags"]) & STOMP_FLAGS):
                     continue
-                if pattern and not any(pattern.search(n["name"]) for n in entry["names"]):
-                    continue
+                if pattern:
+                    try:
+                        if not matches(pattern, [n["name"] for n in entry["names"]]):
+                            continue
+                    except PatternTooSlow:
+                        stopped = ("the name expression took more than %s s on the names of record %d (byte %d), so the sweep stopped there: %d record slots were read, "
+                                   "the rest were not; use a simpler expression" % (PATTERN_SECONDS, index, offset, scanned))
+                        break
             entries.add(entry)
 
-    if scanned and not parsed:
+    if scanned and not parsed and not stopped:
         problems.add({"offset": alignment, "why": "no record was read: %d slot(s) of %d bytes were looked at and none holds a FILE or BAAD signature at its start (is the record size right, or is this an $MFT?)" % (scanned, record_size)})
     page = entries.finish()
     problem_page = problems.finish()
+    reasons = []
+    if stopped:
+        reasons.append(stopped)
+    if problem_page["matched"]:
+        reasons.append("%d problem(s) are named under problems" % problem_page["matched"])
     out = {
-        "parser": "mft_records/3",
-        "status": "partial" if problem_page["matched"] else "complete",
+        "parser": PARSER,
+        "status": "partial" if reasons else "complete",
+        "status_basis": "; ".join(reasons) if reasons else "every %d-byte slot of the file was read to its end (%d slots, %d records) and no problem is named" % (record_size, scanned, parsed),
         "path": path,
         "record_size": record_size,
         "record_size_from": record_size_from,
@@ -588,6 +921,7 @@ def run(args):
         "slots_unrecognised": unrecognised,
         "slots_without_signature": zeroed + unrecognised,
         "alignment_offset": alignment,
+        "stopped_by_time_limit": bool(stopped),
         "entries": entries.page,
         "entry_count": page["matched"],
         **page,
@@ -609,10 +943,12 @@ def run(args):
         out["trailing_bytes"] = trailing
         out["trailing_note"] = ("the file ends %d bytes into a record, too few to hold a record "
                                 "header" % trailing)
-    print(json.dumps(out, indent=2))
+    print_answer(out, indent=2)
 
 
 def main():
+    set_deadline(DEADLINE_SECONDS)
+    install_signal_handlers(last_word)
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -626,4 +962,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        drop_pages()
+        print_answer({"error": "the read failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)

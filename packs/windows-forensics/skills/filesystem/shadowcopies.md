@@ -3,7 +3,7 @@ id: filesystem/shadowcopies
 title: Shadow copies
 when: Which snapshots an image holds.
 needs: []
-tools: [vss_stores]
+tools: [vss_stores, vss_materialise]
 requires_host: [vshadowinfo, vshadowmount, mmls]
 ---
 
@@ -11,6 +11,7 @@ Use when you ask which volume shadow copies exist. Not for reading files out of 
 
 - A snapshot is a second observed state of the volume from the volume's own `System Volume Information`: a place to look for an earlier hive, log or file before you call one gone. It is in the acquisition only if the acquisition holds the volume's own data; a logical or targeted collection does not.
 - `vss_stores` takes a raw volume or disk image and the volume offset in bytes, runs `vshadowinfo`, and lists each store with the identifier, creation time and volume size as printed, plus the `mount_argv` that would expose it. It mounts nothing, and a listed store is not an examined one. An E01 must be exposed raw first (`evidence/imaging`); the tool adds a problem when it sees the EWF signature.
+- To copy files out of the stores you chose, use `vss_materialise` (`filesystem/shadowcopies-open`); listing a store with `vss_stores` is not reading it.
 - The offset unit changes here: `mmls` and the Sleuth Kit use sectors, `vshadowinfo` and `vshadowmount` bytes. Multiply the start sector by the logical sector size `mmls` prints, not an assumed 512, and record both numbers. A wrong unit gives "unable to open volume" on a sound image; the tool answers `failed`, never "no stores".
 - Read `status`, `exit_code`, `store_count`, `stores_claimed` and `problems` before the list; the whole `vshadowinfo` output is in `stdout_file` and `stderr_file`, and a rerun keeps its own pair (`earlier_output_files`).
 - `failed` (exit 1): no usable answer (bad offset or unit, non-raw image, timeout, unrecognised output). No statement about shadow copies follows; fix the cause and ask again.
@@ -19,5 +20,7 @@ Use when you ask which volume shadow copies exist. Not for reading files out of 
 - `interrupted` (a stop by signal) is no answer either. `complete` with stores: list each identifier and creation time.
 
 Shows: what `vshadowinfo` found in this volume's metadata at this offset. Does not show: that none ever existed, that any was deleted, or what a store contains. Record: image, offset in bytes and the sector arithmetic, `status`, both store counts, `problems`, the output files.
+
+Sensitive output: `vss_stores` lists identifiers, times and sizes and writes its output files at 0600; what a store holds is as sensitive as the volume (`filesystem/shadowcopies-open`). Describe a found secret by where it sits, its kind, length and what it grants, never its value, a fragment or a digest.
 
 Open `filesystem/shadowcopies-open` only if you must read files, hives or logs out of a store.

@@ -2,22 +2,23 @@
 
 Packet captures and web, proxy and firewall logs: what a capture can contain,
 what survives encryption, how to test for something that calls home, and how to
-tie any of it to a machine. No tool here reads flow records (NetFlow, IPFIX).
+tie any of it to a machine. `flow_reader` reads flow records (NetFlow v5, v9, IPFIX) from an nfcapd file.
 
 Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Thirteen skills**: the pack's router, `network/router` (at most 400 tokens: it names the other twelve by the
+**Nineteen skills**: the pack's router, `network/router` (at most 400 tokens: it names the other eighteen by the
 question each answers, holds no rule, and is the one line a run shows for the pack when its skills index is over
-budget), and, as eight leaves of decision rules and four second-level
+budget), and, as fourteen leaves of decision rules and four second-level
 leaves they point to when needed: `capture/what-you-have` (and
 `capture/derivatives`), `capture/carve-from-images`, `sessions/reconstruct` (and
-`sessions/objects`), `metadata/dns-tls` (and `metadata/fingerprints`),
-`beacons/periodicity`, `exfil/volume` (and `exfil/counters`),
-`logs/web-proxy-firewall`, `correlate/host`.
+`sessions/objects`), `sessions/tls-keylogs`, `sessions/quic-http3`, `metadata/dns-tls` (and `metadata/fingerprints`),
+`metadata/encrypted-dns`, `beacons/periodicity`, `exfil/volume` (and `exfil/counters`),
+`logs/web-proxy-firewall`, `correlate/host`, `evidence/captured-secrets`, `flows/interpret`,
+`analysis/engines-and-coverage`.
 
-**Six tools.** `pcap_summary` reads classic pcap and pcapng with **no external
+**Eleven tools.** `pcap_summary` reads classic pcap and pcapng with **no external
 dependency**: it returns a census of the capture (an interface table with link
 type and snap length per interface, pcapng drop counters, the time range, packets
 truncated and how much payload survived, and tuple or endpoint aggregates with
@@ -32,17 +33,38 @@ complete EVE log. `pcap_extract` performs Wireshark object export with a receipt
 from the first moment and ties an HTTP object to a frame when its bytes equal one
 response body. `network_log_summary` reads Apache/nginx access logs, Squid native
 logs and upper-case KEY=VALUE firewall records into a table with line numbers
-and byte offsets and an explicit timestamp column. The tools that print text from the evidence (`pcap_extract`, `zeek_run`,
-`suricata_run`, `network_log_summary`, and the capture's own option text in
+and byte offsets and an explicit timestamp column. `capture_transform` makes derivative
+captures with `editcap`, `mergecap`, `tcpdump -r` and `text2pcap` (split, merge, filter, dedup,
+convert, and a hex dump to a synthetic capture): it never writes the original, labels every
+output "derivative, not evidence", and says how many packets went in, came out and were dropped.
+`flow_reader` reads an nfcapd file (the NetFlow v5, v9 and IPFIX records nfdump's collector stored) with the declared
+`nfdump`, as a reader: it never runs `nfcapd` or `nfpcapd`, and nothing listens on a port. It gives the exporters the file lists,
+the times in UTC beside the collector's receive time, sampled counters apart from the others (a sampled record's counters are
+never exact), the direction and translated fields nfdump names, and what an nfcapd file does not keep (templates, timeouts).
+It refuses a capture and sFlow by name; nfdump exits 0 on a file it cannot read, so the file's messages and its own flow count
+decide the status. `tls_decrypt` is a `secret_output` tool over `tshark`: it takes a capture, a key log as a FILE
+reference (never its text) and/or a pcapng's own Decryption Secrets Blocks, and says for every TCP flow whether the secrets
+decrypted it (`decrypted`, `partially`, `unsupported`, `no_secret_for_session`, `not_tls`) and why, in counts and locators only;
+the decrypted bytes go to owner-only files under its output directory. It relies on tshark's TLS fields and `-z follow`, which
+this build of the pack checks by name (`tshark -G fields`) but did not verify against a real capture. `quic_inspect` is a `secret_output` tool over `tshark` too: one row for every UDP datagram tshark dissects as QUIC (each coalesced packet with its header form, type, version, connection ids, token flag, and where tshark decoded them the SNI, ALPN, frame types and HTTP/3 stream ids), the limits of each row (`encrypted_payload`, `version_unsupported`, `dissector_missing`), and a connection model that keeps UDP tuples and connection ids apart (Retry and Version Negotiation end an attempt, migration is one attempt, a short header no long header named is an unlinked attempt). It counts the UDP port 443 datagrams tshark did not dissect as QUIC and infers nothing from `ssl.log`; its field names were not verified against a real capture. What Zeek 8.0.11 and Suricata 7.0.10 (from bookworm-backports; the version is not pinned) wrote for QUIC was observed once on synthetic traffic, not a real capture, and is in `sessions/quic-http3`; this tool reads neither. A changed endpoint inside an attempt (`endpoints_changed`) is migration or NAT. A `quic_inspect` `packets` entry has `header`, `type`, `version`, `dcid`, `scid` and `token`; map an HTTP/3 object to its stream id, not to the connection; QPACK headers depend on state built across streams, so a lost packet can leave later headers unreadable. An unlinked attempt may be the same connection under an id issued after the handshake; an attempt is not a completed handshake. The port 443 datagrams counted in `udp_443_not_dissected_as_quic` are not shown to be QUIC or not. Record: capture hash, tshark version, `limits` seen, attempts relied on with `ended_by`, secrets' source by counts only. `conn_series` is a `secret_output` tool that reads a Zeek `conn.log` (TSV with its `#fields`/`#types` headers, repeated after a rotation, or JSON lines) with no program, or a capture through `tshark -T fields`: it answers the unique connection observations (a locator with the log line and byte offset or the first frame, start, duration, bytes and packets, state, service and the time semantics: Zeek's `ts` is the first packet of the connection, not one event per exchange) and writes the sorted start times as a one-epoch-per-line series file that `beacon_score` accepts as `timestamps_file`, with `beacon_score_arguments` to pass. A retransmitted SYN is not a second connection, a UDP flow is its endpoints plus an inactivity gap, and the window needs an explicit zone; `sensor_coverage_confirmed` is carried only as given, with `window_end`. It keeps at most 3,000,000 observations; a log of 5,000,000 rows read in 288 seconds with 514 MB resident, kept the first 3,000,000 and said the answer was partial. Zeek is not started, and a real Zeek log and a real tshark were not checked here. The tools that print text from the evidence (`pcap_extract`, `zeek_run`,
+`suricata_run`, `network_log_summary`, `tls_decrypt`, `quic_inspect`, `conn_series`, and the capture's own option text in
 `pcap_summary`) keep their output in a private directory and withhold what
 looks like a credential from their answers, column by column (by shape: a short
 secret that does not look like a token is not recognised; a hash, GUID or UUID
 is withheld too and recoverable in a job): run them as jobs with
-`secret_output: true`. Every answer of the six carries `status` (`complete`,
+`secret_output: true`. Every answer of the eleven carries `status` (`complete`,
 `partial` or `failed`) and `status_basis`, exit 0 means the engine ran, and
-SIGTERM, SIGINT and SIGHUP end a tool with partial JSON. No flow
-export (NetFlow, IPFIX) is read by anything here: `skills/capture/what-you-have.md` says
-how to identify the producer and what its byte counters mean, and that is all.
+SIGTERM, SIGINT and SIGHUP end a tool with partial JSON, from the first lines of
+its script on (six of the tools and the recipe install a minimal handler before
+their other imports, which answers "stopped before any work" and exits 128 plus
+the signal; `capture_transform`, `flow_reader`, `tls_decrypt`, `quic_inspect` and `conn_series` install the handler of their stop block after four
+imports, which answers status `failed` with `interrupted` true and exits 128 plus the signal). The one window left is the interpreter's own start and its compile
+of the script, before the script's first line has run: a stop there gives no
+answer. Measured on 2026-11-01 (SIGTERM at a random offset of 0-250 ms after the
+start, 80 runs of each of those scripts, one CPU, no network; `capture_transform`, `flow_reader`, `tls_decrypt`, `quic_inspect` and `conn_series` were not measured), 6 to 19 of 80 runs gave no
+JSON, all but one of them within 55 ms of the start, on a quiet host; a busy host sees more (misses up to about 80 ms were seen). `zeek_run`, `suricata_run`, `pcap_extract` and the `network-capture` recipe end a program and what it started through one shared process block, the same text in all four and in the other packs that carry it; what that block leaves open is named here once, and no copy in this pack changes it: a process id that ends and is reused between the check of the process's start time and the signal (two calls) is signalled; a tree that cannot be listed (no `/proc`, no libproc, and a `ps` that fails or needs more than 10 seconds) is never taken as an empty one, so the program itself is ended, what it started is left running, and the answer says so where the tool reads the block's notes; on macOS the tree is read through libproc, which was written from `<sys/proc_info.h>` and has not been run on macOS here, and a daemon that holds the pipes of a finished program is not found (there is no `/proc/<pid>/fd`); on Linux a stop signal also ends a process in the tool's own group that holds one of the tool's pipes, even one the tool never saw in its tree; a tool that is killed with SIGKILL between the stop of the tree and the kill leaves the program and the stopped processes stopped (the harness ends the tool's group, and with it the stopped ones that are in it). The same block ends what a program leaves behind after it exits (`settle()`, with the tool as a subreaper on Linux) before a tool reads, counts or hashes what the program wrote: `zeek_run`, `suricata_run`, `capture_transform`, `pcap_extract`, `flow_reader` and the `network-capture` recipe then answer `partial` (`program_group.left_behind`), and also where the absence of a leftover cannot be proven (not Linux, or `PR_SET_CHILD_SUBREAPER` refused: `program_group.unproven`); `conn_series`, `quic_inspect` and `tls_decrypt` report what tshark printed on a pipe, answer `partial` for a leftover that was ended and for a pipe cut at the block's byte cap (a process that held tshark's pipe after it ended went on writing: the cut is counted once for the whole run, and the only pipe these three read through the block is the version probe's) and are not made `partial` by an unproven host; `pcap_summary`, `network_log_summary` and `beacon_score` start no program. A process that is no descendant of the program (started through a service manager) is not found by any of this, and the files hold what a leftover wrote before it was ended. Flow
+export is read by `flow_reader` from an nfcapd file only (NetFlow v5, v9, IPFIX; not sFlow, and not export packets inside a capture):
+`flows/interpret` says what to settle first (the exporter, the sampling, the timeouts, what its counters mean).
 
 **One catalogue recipe.** `network-capture` detects pcap and pcapng by magic,
 then writes capture metadata and complete listings of the selected fields of

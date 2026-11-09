@@ -5,12 +5,14 @@
  * copy of the evidence (up to 2 GiB for knowledgec_query, 16 GiB for unified_log) stayed in a sealed output, and unified_log's reader kept running.
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet, withCwd } from "./tool-library-harness.ts";
-import { CREATED, FS, KC, PLIST, UL, dbCopy, fsPage, fsRecord, gz, kcDb, runAndSignal, ulStandin } from "./macos-pack-harness.ts";
+import { CREATED, FS, KC, PLIST, UL, dbCopy, fsPage, fsRecord, gz, kcDb, logarchive, runAndSignal, ulStandin } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const SIGNALS = [["SIGTERM", 15], ["SIGINT", 2], ["SIGHUP", 1]] as const;
 
@@ -120,3 +122,160 @@ time.sleep(120)
     });
   });
 }
+
+// ---- a stop signal that lands while the tool's own sweep is still working ends the orphans it had not yet reached ------------------------------------
+
+test("unified_log, SIGTERM during the sweep of a storm of setsid orphans: every orphan is gone when the answer is printed", { skip: NO_ADOPTION }, async () => {
+  // The iterator exits 0 at once and leaves a setsid parent that forks 400 setsid sleepers. The tool's sweep ends them one by one (seconds); a stop that
+  // lands in it used to leave the ones it had not yet reached running, writing into the output after the answer. end_leftovers_on_stop() was never called.
+  await withCwd(async (cwd) => {
+    const pidFile = join(cwd, "out", "u", "storm.pids");
+    const bin = await ulStandin(cwd, `
+with open(out, "w") as f:
+    f.write(json.dumps({"timestamp": "2026-02-14T09:30:00.000000+0000", "eventMessage": "m", "process": "sudo", "subsystem": "s"}) + "\\n")
+pids = os.path.join(os.path.dirname(out), "storm.pids")
+open(pids, "a").close()                    # the file exists before the first sleeper has written to it: the wait below must not race the forks
+if os.fork() == 0:
+    os.setsid()
+    for _ in range(400):
+        if os.fork() == 0:
+            os.setsid()
+            with open(pids, "a") as p:
+                p.write("%d\\n" % os.getpid())
+            time.sleep(40)
+            with open(out + ".late", "a") as late:
+                late.write("late\\n")
+            os._exit(0)
+    os._exit(0)
+def storm_size():
+    # the file is not there until the first sleeper has written to it: a missing file is a storm of none yet, not a crash of the reader
+    # (which ended the reader at once on a fast host, so the tool's sweep killed the setsid parent before it had forked all 400)
+    try:
+        with open(pids) as f:
+            return len(f.read().split())
+    except OSError:
+        return 0
+deadline = time.time() + 60
+while time.time() < deadline and storm_size() < 400:
+    time.sleep(0.01)
+os._exit(0)
+`);
+    const path = await dbCopy(cwd, 20, 1000);
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const pidsNow = async (): Promise<number[]> => (await readFile(pidFile, "utf8").catch(() => "")).split("\n").filter(Boolean).map(Number);
+    let storm: number[] = [];
+    let seen: number | undefined;
+    try {
+      const run = await runAndSignal(UL, cwd, { path, out_dir: "out/u" }, "SIGTERM", async () => {
+          if ((await pidsNow()).length < 400) return false;
+          seen ??= Date.now();                     // the storm is all there: the iterator ends and the sweep begins; the signal lands half a second into it
+          return Date.now() - seen > 500;
+        },
+        { JOB_ID: "j-1", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" }, bin);
+      assert.equal(run.signalled, true, `${run.stderr}${run.stdout.slice(0, 600)} pids=${(await pidsNow()).length}`);
+      assert.equal(run.code, 128 + 15, `${run.stderr}${run.stdout.slice(0, 300)}`);
+      assert.equal(oneAnswer(run.stdout, "SIGTERM", 15).interrupted, "SIGTERM");
+      storm = await pidsNow();
+      const alive = storm.filter((pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      assert.equal(alive.length, 0, `${alive.length} of ${storm.length} orphans are still running after the answer`);
+    } finally {
+      for (const pid of storm.length ? storm : await pidsNow()) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch { /* gone */ }
+      }
+    }
+  });
+});
+
+// ---- a stop signal in the few bytecodes after the sweep is a stop of the run, not of start-up ---------------------------------------------------
+
+/**
+ * Runs a tool as `python3 run.py` does, but fires one real SIGTERM at the first hold_signals() call: the signal then lands in the bytecodes that
+ * follow the sweep, before the hold takes effect. Before this the first hold came after the sweep's own `except Interrupted`, so the signal went to
+ * main's wrapper, and the answer said the tool was stopped "before it had read anything" although the sweep had finished.
+ */
+async function stopAfterTheSweep(script: string, cwd: string, args: unknown, env: Record<string, string> = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const code = `
+import os, signal, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+head, tail = src.split(chr(10) + 'if __name__ == "__main__":', 1)
+g = {"__name__": "__main__", "__file__": sys.argv[1]}
+exec(compile(head, sys.argv[1], "exec"), g)
+real = g["hold_signals"]
+fired = []
+def hold():
+    if not fired:
+        fired.append(1)
+        os.kill(os.getpid(), signal.SIGTERM)
+    return real()
+g["hold_signals"] = hold
+exec(compile('if __name__ == "__main__":' + tail, sys.argv[1], "exec"), g)
+`;
+  return new Promise((resolve, reject) => {
+    const child = spawn("python3", ["-c", code, script], { cwd, env: { ...process.env, AGENT_ID: "s1", ...env } });
+    const so: Buffer[] = [];
+    const se: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => so.push(c));
+    child.stderr.on("data", (c: Buffer) => se.push(c));
+    child.on("error", reject);
+    child.on("close", (c) => resolve({ code: c, stdout: Buffer.concat(so).toString("utf8"), stderr: Buffer.concat(se).toString("utf8") }));
+    child.stdin.end(JSON.stringify(args));
+  });
+}
+
+function finishedThenStopped(run: { code: number | null; stdout: string; stderr: string }): Json {
+  assert.equal(run.code, 143, run.stderr + run.stdout.slice(0, 300));
+  const answer = JSON.parse(run.stdout) as Json;
+  assert.doesNotMatch(run.stdout, /before it had read anything|before its sweep|before staging|before the read began|before the reader had run/);
+  assert.equal(answer.interrupted, "SIGTERM");
+  assert.equal(answer.status, "partial");
+  return answer;
+}
+
+test("plist_read: a SIGTERM in the bytecodes after the sweep gives the normal answer with interrupted set, not 'before it had read anything'", async () => {
+  await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "work", "pl"), { recursive: true });
+    await writeFile(join(cwd, "work", "pl", "a.plist"), '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>a</key><string>b</string></dict></plist>');
+    const answer = finishedThenStopped(await stopAfterTheSweep(PLIST, cwd, { path: "work/pl" }));
+    assert.equal(answer.counts.parsed, 1, "the file read before the signal is in the answer");
+    assert.match(answer.status_basis, /after the last file was read/);
+  });
+});
+
+test("fsevents_parse: a SIGTERM in the bytecodes after the sweep gives the normal answer with interrupted set, not 'before it had read anything'", async () => {
+  await withCwd(async (cwd) => {
+    const page = fsPage("2SLD", [fsRecord("Users/alice/a.txt", 1n, CREATED, 1n), fsRecord("Users/alice/b.txt", 2n, CREATED, 2n)]);
+    await mkdir(join(cwd, "work", "fse"), { recursive: true });
+    await writeFile(join(cwd, "work", "fse", "0000000000000001"), gz(page));
+    const answer = finishedThenStopped(await stopAfterTheSweep(FS, cwd, { path: "work/fse" }));
+    assert.equal(answer.record_count, 2, "the records read before the signal are in the answer");
+  });
+});
+
+test("knowledgec_query: a SIGTERM in the bytecodes after the read gives the normal answer with interrupted set, and no claim that the table was cut", async () => {
+  await withCwd(async (cwd) => {
+    const db = await kcDb(cwd, "k.db", 30);
+    const answer = finishedThenStopped(await stopAfterTheSweep(KC, cwd, { db }));
+    assert.equal(answer.entry_count, 30, "every row was read before the signal");
+    assert.doesNotMatch(JSON.stringify(answer.problems), /the rest of the table was not read/, "the read had finished: no prefix is claimed");
+  });
+});
+
+test("unified_log: a SIGTERM in the bytecodes after the reader gives the normal answer with interrupted set, and the reader's output is counted", async () => {
+  await withCwd(async (cwd) => {
+    const bin = await ulStandin(cwd, `
+open(out, "w").write(chr(10).join(json.dumps({"timestamp": "2026-01-01T00:00:0%d" % i, "eventMessage": "m%d" % i, "processImagePath": "/usr/bin/p"}) for i in range(5)) + chr(10))
+`);
+    const answer = finishedThenStopped(await stopAfterTheSweep(UL, cwd, { path: await logarchive(cwd), out_dir: "work/out" }, { PATH: bin }));
+    assert.equal(answer.entry_count, 5);
+    assert.match(answer.status_basis + JSON.stringify(answer.problems), /after the reader had already finished/);
+  });
+});

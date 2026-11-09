@@ -4,8 +4,9 @@
  * stub `icat` on PATH.
  */
 import { spawn } from "node:child_process";
+import { PYTHON3 } from "./host-gates.ts";
 import type { Writable } from "node:stream";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +45,7 @@ export async function runPy(
   const env = { ...process.env, ...extraEnv };
   if (extraPath) env.PATH = `${extraPath}:${env.PATH ?? ""}`;
   return new Promise((resolve, reject) => {
-    const child = spawn("python3", [script], { cwd, env });
+    const child = spawn(PYTHON3, [script], { cwd, env });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => stdout.push(c));
@@ -93,7 +94,7 @@ export async function runPySnippet(
   stdin: unknown,
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn("python3", ["-c", code, ...args]);
+    const child = spawn(PYTHON3, ["-c", code, ...args]);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => stdout.push(c));
@@ -111,7 +112,10 @@ export async function runPySnippet(
 }
 
 export async function withCwd(fn: (cwd: string, bin: string) => Promise<void>): Promise<void> {
-  const cwd = await mkdtemp(join(tmpdir(), "lib-eval-"));
+  // The real path: on macOS tmpdir() is /var/folders/..., and /var is a link to /private/var. A tool that refuses a link in its output path
+  // (ab_layout, backup_materialise) or prints a path it resolved (heic_inspect, marshal_inspect) then disagrees with the name the test holds.
+  // (macOS: its per-user temporary directory, /var/folders/xx/<28 characters>/T, holds a part that looks like a token, and the tools withhold such a part of a path from their answers: a test that compares a path would then differ; /tmp does not)
+  const cwd = await realpath(await mkdtemp(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "lib-eval-")));
   const bin = join(cwd, "bin");
   try {
     await mkdir(bin, { recursive: true });

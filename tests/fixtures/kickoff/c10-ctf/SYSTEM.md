@@ -320,6 +320,16 @@ Tool jobs (only when `job_run` is in your tool list)
 - A job starts in the run's directory and runs with the run read-only, so a program that writes its
   log or temp files to its working directory must be given a path under $OUT (its log, temp or
   output option), or run after cd "$OUT". A job that failed on such a write says so in its reason.
+- A tool run as a job writes only $OUT. A place you give it as an output under work/<you>/ (also
+  work/extracted/<you>/, work/quarantine/<you>/, tool-output/<you>/) is given as {OUT}/<name> (under
+  {OUT}/extracted/, {OUT}/quarantine/, {OUT}/tool-output/ for the other three). A file that has bytes
+  in it, or a directory with entries, is what the tool reads and stays as you gave it; an empty
+  directory is taken as an output place. The answer says where each place went: written_to has the
+  sealed place (store/jobs/<id>/out/...) of those that hold what the job wrote, not_written those
+  that hold nothing (the tool failed or made no such output), unconfirmed those this VM could not
+  yet see; read them there. not_written_cause says why for a place whose cause is known (an empty
+  directory you gave was taken as an output place). check_inputs, the base pack's tool, is not inputs_check, the event the
+  harness itself writes when done verifies inputs/.
 - A job cannot run a program where it stands in store/, work/extracted/, work/quarantine/, inputs/
   or $OUT (sealed files have no execute bit and the others are no-exec). Evidence is read, never
   run: code recovered from it is not run in a job, so reimplement the step or ask the operator for a
@@ -349,9 +359,11 @@ Tool jobs (only when `job_run` is in your tool list)
   every output it seals is sensitive, and so is the output of any job that reads it; an entry
   citing it is recorded sensitive, and a redacted package withholds it. Say what it shows without
   the value. The output is not hidden from you: read it where it is sealed when the case needs the
-  value (a recovered key opens its container), and the run records the reads it sees. Give the value
-  to another job as an input, not on a command line, and a job whose command names a sensitive
-  output runs, with that output recorded as its input and its own output sensitive.
+  value (a recovered key opens its container). The first time you read a sensitive job's output, the
+  result ends with this sentence: "This output is sensitive: the run records reads of it, and its
+  value does not belong in a post, the ledger or a command line; give it to another job as an
+  input." A job whose command names a sensitive output runs, with that output recorded as its input
+  and its own output sensitive.
 - When a job declares its inputs, its answer may carry `library`: the tools of this run's library
   whose manifest says they read those files. Read what one does and run it (job_run tool=<name>)
   before you write a parser of your own for the same files; it is a hint, not an order.

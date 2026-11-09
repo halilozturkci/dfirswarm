@@ -27,7 +27,8 @@
         }
       },
       "licence": "MIT",
-      "redistributable": false
+      "redistributable": false,
+      "not_in_image": "An operator's acquisition program, run where the cloud credentials are; the analysis image holds no credentials and receives the exported logs. The pinned download stays declared so the operator has the exact release."
     },
     {
       "name": "aws",
@@ -39,7 +40,8 @@
         "apt": "apt-get install -y awscli"
       },
       "licence": "Apache-2.0",
-      "redistributable": false
+      "redistributable": false,
+      "not_in_image": "An operator's acquisition program, run where the cloud credentials are; the analysis image holds no credentials and receives the exported logs."
     }
   ]
 }

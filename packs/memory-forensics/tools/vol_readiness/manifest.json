@@ -1,0 +1,50 @@
+{
+  "name": "vol_readiness",
+  "description": "Say, before an examination starts, whether Volatility 3 can be used on this host and, with an image, on that image: offline, and never a plugin's result. Four views, each answered ready, blocked or unknown. plugins: the plugins the installed `vol` enumerates (`vol --offline --help`), as it lists them and never a name made up here, the version it prints, and for the names given in `plugins` whether each is listed (a module name such as windows.vadyarascan matches the class listed under it). symbols (needs `path`): whether the image's kernel has a symbol table this vol can use. For Windows it runs `windows.info` with `-vv`: a Symbols row names the table that was read (PDB name, GUID, age), and a missing table is named from the address the engine would have fetched it from (the same reading as the memory-windows recipe), with `isfinfo` searched for the GUID (a listing without it covers only the symbol directories this vol searched). When windows.info names no Windows kernel it runs `banners.Banners`; each Linux or macOS banner found is matched EXACTLY, equal once the line end and NULs that follow a banner are taken off and nothing else is, against the identifier column of `isfinfo` (\"Identifying information\" in Volatility 3 2.28.2, read from its source; the older names \"Linux banner\" and \"Mac banner\" are read too, and a header with none of the three makes the view unknown, never blocked): all matched is ready, none is blocked, some is unknown (the tool cannot tell which banner is the running kernel's), and only the release word of a banner is ever printed. yara: whether `yara` or `yara_x` imports in the Python named on the first line of the `vol` script, run from the directory / and not from the run directory. fuse: whether /dev/fuse is a character device that opens and a `fusermount3` or `fusermount` is on PATH; absence is blocked, never unknown. The verdict is blocked if any requested view is blocked, otherwise unknown if any is unknown, otherwise ready; unknown is never read as ready, and `status` is `partial` whenever a requested view is unknown (a time limit, a limit of output, an output not in the form read, an image no operating system was found in), complete when every requested view reached a definite end, ready or blocked. A verdict is a statement about the host and the kernel's table, not about what a plugin would find. OFFLINE: every Volatility call is built with `--offline` and the tool has no parameter that changes it; the caller's text reaches Volatility only as an image path or a symbol directory (a leading `-` is made a path), and the tool starts no download and opens no connection. Nothing from the capture is written to a file: the outputs of windows.info, banners.Banners and the engine's log are read from pipes, judged by the shared SHOWN rules (a release word, a PDB name and the first lines of a failure are shown only when they pass; withholding is by shape, so a plain password or a name under 16 characters is printed) and dropped. The only file is the whole plugin list when it is longer than `limit` (default 100, at most 1000), under tool-output (in a job $OUT/tool-output) and named in `plugins.all_results`. The image is not hashed here (check_inputs does). THE CLOCK: `max_seconds` (default 200, at most 270, inside timeout_seconds 300) bounds the call; each program gets what is left less a 6 s reserve and, past its own time (help 90 s, windows.info or banners 150 s each, isfinfo 120 s, the import probe 20 s) or past its output cap (16 MiB of help or plugin output, 256 MiB of isfinfo, 64 MiB of an engine log searched), it is ended with what it started; a step with no time left is not attempted and its view is unknown. Programs run in this tool's own process group (never a session of its own, with PR_SET_PDEATHSIG on Linux); SIGTERM, SIGINT and SIGHUP end them and the process tree below them (an identity check before a pid other than the program itself is signalled) and answer once with status failed, interrupted true, the views that had finished in partial_results, exit 128 plus the signal; a signal that arrives while the answer is written is held until it is out. A stop before the interpreter has run the file's first lines ends the process with no answer and nothing had been started. Not measured: the real Volatility was not available where this tool was written. Read from the Volatility 3 2.28.2 source and so expected: the `Plugins` listing (one dotted name per line under a PLUGIN metavar), windows.info's `Symbols` row (the table's isf_url), banners.Banners (a decoded text per row), isfinfo's seven columns and the `-s` option (a semicolon-separated list of paths, so symbols_dir may not contain a semicolon), `--offline`, `-q`, `-vv` and exit status 1 for a failure. UNVERIFIED: that isfinfo's cached mode lists a table placed in a directory Volatility has not indexed yet (the answer's tables_listed says how many it listed), and the exact form of the identifier of a cached table (read as b'...' or as decoded text). A first run against the real program is the check. A name, a path, a URL or a message that quotes a credential is withheld with the identifier-shaped strings, from version 2: a value given to a password, token, secret or cookie name (password=..., Pwd=..., a Cookie header), a Name/Value pair in text whose Name is a credential (a number, an array or a long Value too, and the NewValue after an OldValue), a -Password style switch, the argument of ConvertTo-SecureString, curl -u user:pass, mysql -uUSER -pSECRET, a bcrypt hash and the known token families; the text is replaced by a marker that holds only its length. Before, only identifier-shaped strings (tokens, key ids, user-info) were withheld, so these were printed. Known gaps: a pair whose Value is an array nested in another or longer than 4,096 characters, a crypt hash that is not bcrypt, and a secret that has neither a credential name nor a token shape.  A process that Volatility left running after it exited and that holds its pipes is noticed one second after the program ended (the pipes are let go, however slowly it writes), then stopped, killed and reaped by settle(); the answer is then partial (program_group.left_behind and a line in status_basis), because what it wrote into a pipe cannot be told from the program's output. A host where the absence of a leftover cannot be proven (not Linux, PR_SET_CHILD_SUBREAPER refused) does not make this tool partial, because it reports only what the program printed: program_group.unproven says why. A refusal carries no program_group. A process that is no descendant of the program (started through a service manager) is not found. The program is looked for before its pipes are closed: a leftover that floods a pipe would otherwise die of SIGPIPE at the close and never be counted. One found makes the answer partial and the rows, counts or table of that run are not to be trusted (the lines it wrote before it was ended cannot be told from the program's).",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The memory image whose kernel is asked about (the symbols view; required with it, refused without it). It is opened without waiting and looked at with fstat first: a FIFO, a directory or an empty file is refused."
+    },
+    "symbols_dir": {
+      "type": "string",
+      "description": "A directory of symbol tables to search besides vol's own (passed as `-s`); only with the symbols view"
+    },
+    "views": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "plugins",
+          "symbols",
+          "yara",
+          "fuse"
+        ]
+      },
+      "description": "The views to check. Default: plugins, and symbols when path is given. The verdict covers these only; yara and fuse are asked for by name."
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Plugin names to look for in the listing (at most 50; letters, digits, underscores and dots); only with the plugins view"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The clock of the whole call, 10 to 270 (default 200)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "How many plugin names the answer lists inline, 1 to 1000 (default 100); the whole list is kept in a file the answer names"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"path\": \"inputs/memory.raw\", \"plugins\": [\"windows.vadyarascan\"], \"views\": [\"plugins\", \"symbols\", \"yara\", \"fuse\"]}",
+  "by": "maintainer",
+  "at": "2026-11-01T12:00:00.000Z",
+  "version": 7,
+  "sha256": "0b5604552f9bcdb8b6406a28a21ebd004e3e3dd792d15000c837359d75d58062"
+}

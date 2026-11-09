@@ -165,3 +165,12 @@ test("the inputs check reads the last inputs_check record of a long trace under 
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("no goal calls the adversary 'the operator': in a goal the operator is the person who runs the case", () => {
+  // A word that means the intruder in one goal and the examiner in another is read the wrong way by an agent that takes it from the first.
+  const intrusion = /\bthe operator\b[^.\n]{0,60}\b(?:reached|ran|gained|moved|exfiltrated|logged|connected|dropped|installed|deleted|cleared)\b/i;
+  for (const g of GOALS) assert.doesNotMatch(g.text, intrusion, `${g.id}: "the operator" is used for the adversary; say "the intruder"`);
+  const planted = "2. Initial access: how the operator first reached this machine.";
+  assert.match(planted, intrusion, "the guard finds a planted line");
+  assert.doesNotMatch("how the intruder first reached this machine; the operator named the case folder", intrusion);
+});

@@ -1,0 +1,3 @@
+### Fixed: tests that held only on the host they were written on now hold on a Mac and on a fast CI runner
+
+No tool changed. The base pack's tests that end a program run `complete` now expect `complete` on Linux and `partial` elsewhere, as the tools say (a leftover cannot be proven absent where the kernel does not let the tool adopt it). The shell suites no longer assume GNU `timeout` and `sed -i`, the stand-in server of `install-backoff` no longer waits on a reverse DNS lookup, `lifecycle` loads the functions it now needs, `resume` gives its stop something alive to stop, and `pack-recipes` and `symbols` take exit 2 with `applies: unknown` as the protocol's "cannot tell".

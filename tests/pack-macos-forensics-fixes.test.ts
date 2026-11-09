@@ -4,13 +4,14 @@
  * the status every answer carries, a reader that exits 0 and complains.
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet, withCwd } from "./tool-library-harness.ts";
-import { CREATED, FS, KC, PLIST, body, fsDir, fsPage, fsRecord, gz, kcDb, logarchive, measured, ok, reachable, secretJob, tool, ul, ulStandin } from "./macos-pack-harness.ts";
+import { CREATED, REMOVED, FS, KC, PLIST, body, fsDir, fsPage, fsRecord, gz, kcDb, logarchive, measured, ok, reachable, secretJob, tool, ul, ulStandin } from "./macos-pack-harness.ts";
 import type { Json } from "./macos-pack-harness.ts";
 import { prng } from "./windows-canary.ts";
+import { NO_ADOPTION } from "./host-gates.ts";
 
 const ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const rs = (r: () => number, n: number): string => Array.from({ length: n }, () => ALNUM[Math.floor(r() * ALNUM.length)]).join("");
@@ -176,7 +177,7 @@ sys.stderr.write("warning: skipped a chunk\\n")
 
 // ---- the status every answer carries -----------------------------------------------------------------------------------------------------------
 
-test("every answer of the four tools carries status in complete, partial or failed and a status_basis sentence, whatever happened", async () => {
+test("every answer of the four tools carries status in complete, partial or failed and a status_basis sentence, whatever happened", { skip: NO_ADOPTION }, async () => {
   await withCwd(async (cwd) => {
     const seen: Array<[string, Json]> = [];
     const note = (name: string, run: { stdout: string; stderr: string }): void => {
@@ -231,5 +232,88 @@ test("every answer of the four tools carries status in complete, partial or fail
     // the basis says what the status rests on, in words of this run
     assert.match(byName["plist good"].status_basis, /1 matched file/);
     assert.match(byName["fsevents unsupported"].status_basis, /no file could be read/);
+  });
+});
+
+// ---- fsevents_parse: an unknown flag is refused; compressed input is read on the clock -----------------------------------------------------------
+
+test("fsevents_parse refuses a flags name it does not know, as JSON and before it reads anything; a known name is run", async () => {
+  // `flags: ["NotAFlag"]` matched no record and the answer was complete with zero records.
+  await withCwd(async (cwd) => {
+    const dir = await fsDir(cwd, "fse", { "0000000000000001": gz(fsPage("2SLD", [fsRecord("Users/a/x.txt", 1n, REMOVED, 1n)])) });
+    const unknown = await tool(FS, cwd, { path: dir, flags: ["NotAFlag"], out_file: "work/unknown.jsonl" });
+    assert.equal(unknown.code, 1, unknown.stdout);
+    const refused = body(unknown);
+    assert.equal(refused.status, "failed");
+    assert.match(refused.status_basis, /refus|not run|nothing/i);
+    assert.deepEqual(refused.flags_unknown, ["NotAFlag"]);
+    assert.ok(refused.flags_known.includes("Removed"));
+    await assert.rejects(stat(join(cwd, "work", "unknown.jsonl")), "nothing was made");
+    const mixed = await tool(FS, cwd, { path: dir, flags: ["Removed", "NotAFlag"] });
+    assert.equal(mixed.code, 1);
+    // A hostile list is refused at once and answered in a bounded text: 3,000 names, one of a million characters.
+    const many = await tool(FS, cwd, { path: dir, flags: [...Array.from({ length: 3000 }, (_, i) => `Nope${i}`), "x".repeat(1_000_000)] });
+    assert.equal(many.code, 1);
+    const cut = body(many);
+    assert.equal(cut.flags_unknown_count, 3001);
+    assert.equal(cut.flags_unknown.length, 20);
+    assert.ok(many.stdout.length < 100_000, `${many.stdout.length} bytes`);
+    const notAList = body(await tool(FS, cwd, { path: dir, flags: "Removed" }));
+    assert.equal(notAList.status, "failed");
+    assert.match(notAList.error, /list of flag names/);
+    const known = ok(await tool(FS, cwd, { path: dir, flags: ["Removed"] }));
+    assert.equal(known.status, "complete");
+    assert.equal(known.record_count, 1);
+  });
+});
+
+/** A gzip member whose deflate stream is `bytes` of empty stored blocks (five bytes each), then a final empty block: it inflates to nothing. */
+function emptyMember(bytes: number): Buffer[] {
+  const block = Buffer.from([0, 0, 0, 0xff, 0xff]);
+  const piece = Buffer.concat(Array.from({ length: 1 << 16 }, () => block));
+  const pieces: Buffer[] = [Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3])];
+  for (let done = 0; done < bytes; done += piece.length) pieces.push(piece);
+  pieces.push(Buffer.from([1, 0, 0, 0xff, 0xff]), Buffer.alloc(8));
+  return pieces;
+}
+
+test("fsevents_parse looks at its clock inside one gzip member that inflates to nothing: max_seconds 0.1 ends a 256 MiB member as partial", async () => {
+  // The clock was read between members (once in 4,096), never inside one.
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "work", "empty-member"), Buffer.concat(emptyMember(256 << 20)));
+    const answer = body(await tool(FS, cwd, { path: "work/empty-member", max_seconds: 0.1 }));
+    assert.ok(["partial", "failed"].includes(answer.status), answer.status);
+    assert.match(answer.status_basis, /max_seconds|time/i);
+    assert.ok((answer.problems.rows ?? answer.problems).some((p: Json) => p.kind === "time limit"), JSON.stringify(answer.problems).slice(0, 400));
+    assert.ok(answer.limits.seconds_used < 5, `${answer.limits.seconds_used} s`);
+  });
+});
+
+/** A file of `size` bytes: `head` and then a hole (the tail is sparse, so it costs no disk and is read as zeros). */
+async function sparseAfter(file: string, head: Buffer, size: number): Promise<void> {
+  await writeFile(file, head);
+  await truncate(file, size);
+}
+
+test("fsevents_parse counts the bytes after the last gzip member from the file's size and does not read them (a 32 GiB hole after one member)", async () => {
+  await withCwd(async (cwd) => {
+    const member = gz(fsPage("2SLD", [fsRecord("Users/a/x.txt", 1n, CREATED, 1n)]));
+    const size = 32 * 1024 ** 3;
+    await sparseAfter(join(cwd, "work", "tail"), member, size);
+    const run = await measured(FS, cwd, { path: "work/tail", max_seconds: 1 });
+    assert.ok(run.cpu < 3, `${run.cpu.toFixed(2)} s of CPU: the hole was read`);
+    const answer = JSON.parse(run.stdout) as Json;
+    assert.equal(answer.status, "partial");
+    assert.equal(answer.coverage.bytes_not_decoded, size - member.length);
+    assert.equal(answer.record_count, 1);
+    // A member that does not decode, then a hole: the rest is counted, not read.
+    const broken = Buffer.concat([Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3]), Buffer.from([0xff, 0xff, 0xff, 0xff])]);
+    await sparseAfter(join(cwd, "work", "broken-tail"), broken, size);
+    const second = await measured(FS, cwd, { path: "work/broken-tail", max_seconds: 1 });
+    assert.ok(second.cpu < 3, `${second.cpu.toFixed(2)} s of CPU: the hole after a failed member was read`);
+    const failed = JSON.parse(second.stdout) as Json;
+    assert.equal(failed.coverage.members.failed, 1);
+    assert.ok(failed.coverage.bytes_not_decoded >= size - broken.length, String(failed.coverage.bytes_not_decoded));
+    assert.ok(failed.coverage.bytes_not_decoded <= size);
   });
 });

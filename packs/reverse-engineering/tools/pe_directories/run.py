@@ -14,8 +14,10 @@ bytes there, and a field is read only from bytes the structure that contains it 
                    information (the fixed file version and the string table, a few well-known keys by value, the rest
                    by name) and the manifest's requested execution level
     CLR header     the runtime header's version, flags, entry point token and directories, and the metadata root: its
-                   version string and the names and sizes of its streams. The metadata tables are not read, so there
-                   is no assembly name here
+                   version string and the names and sizes of its streams. The metadata tables are read only when the
+                   caller asks for clr_tables (then the #~ stream's heap sizes, valid mask and row counts, the rows of Module,
+                   TypeRef, TypeDef, Field, MethodDef, Param, MemberRef, ImplMap, Assembly, AssemblyRef and ManifestResource
+                   with their file offsets, and the #GUID and #US heaps); without it there is no assembly name here
     debug          the debug directory: each entry's type and time, and for a CodeView entry the PDB identity and path
     Rich header    the decoded entries of the Rich header, if there is one: raw product ids, build numbers and counts
 
@@ -41,7 +43,7 @@ import xml.parsers.expat
 from datetime import datetime, timezone
 from pathlib import Path
 
-TOOL = {"name": "pe_directories", "version": 1}
+TOOL = {"name": "pe_directories", "version": 9}
 PARSER = "pe_directories/1"
 NOTE = ("Static structure only. A directory shows what the file declares to its loader and tools, not what the code does: an export, a delay-load "
         "import, a TLS callback or a resource is a declaration, and a strong-name flag or a PDB path is a claim. Read `status`, `problems` and `coverage` "
@@ -80,11 +82,16 @@ HEAD_BYTES = 1024
 PAGE = 1 << 16
 
 # BEGIN SHARED WITHHOLDING
-# The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
-# reverse-engineering packs), so that they withhold the same strings; the tests that hold the copies equal are
-# tests/pack-network-withholding.test.ts, tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts and
-# tests/pack-re-process.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a
-# path component, a URL, a message that quotes either.
+# The same text is in every tool that withholds identifier-shaped strings and credentials (the network, base, encrypted-containers,
+# memory, virtualization, ransomware and reverse-engineering packs, and the three tools of the cloud pack), so that they withhold the
+# same strings; the tests that hold the copies equal are tests/shared-blocks-census.test.ts (how many carry it),
+# tests/pack-re-delta10.test.ts (every copy equal, found by the marker), tests/pack-network-withholding.test.ts,
+# tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts, tests/pack-re-process.test.ts and
+# tests/pack-cloud-shared.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a path
+# component, a URL, a message that quotes either; and a credential (a value given to a password, a token, a cookie, a pair, a
+# switch) by the name it is given under. A carrier may set two names above this block: WITHHOLD_LIMIT, the length past which a text is
+# withheld whole (65536 when it sets none), and WITHHOLD_TICK, a hook that long scans call and that may raise to end them at the
+# carrier's deadline (none when it sets none). Nothing else in the block is a carrier's to change.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
 # A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
 # `/` joins pieces of a base64 token and is handled apart, below.
@@ -148,7 +155,7 @@ _SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
 # long, and the answer says how long the text was. Every rule below reads a text of this length in well under a second whatever its
 # characters are, so that no call of `scrub` or `token_spans` can run for long on a text a file chose; the limit is the backstop for
 # a shape of text that no rule was tried on, and the rules themselves are linear.
-TEXT_LIMIT = 65536
+TEXT_LIMIT = globals().get("WITHHOLD_LIMIT", 65536)
 
 
 def _prefixed_spans(text, tail=None):
@@ -305,10 +312,342 @@ def token_shaped(text):
     return bool(token_spans(text))
 
 
+# ---- credentials: a value is withheld by the name it is given under and by the text around it ----------------------------------
+# The rules above find strings that are shaped like an identifier. These find a secret that has no shape, because of what it is
+# assigned to (`password=`, a `Name`/`Value` pair, a `-Password` switch, `curl -u user:pass`, `mysql -pSECRET`), and the common
+# token families, private key blocks and hashes of an account database. A name decides whether a value is a secret, a value
+# decides nothing. Every rule runs in time linear in the text (a bounded stretch after each anchor, no nested repeat), and a
+# carrier whose texts are long (a cloud log: a megabyte) sets WITHHOLD_TICK to a hook that ends the work at its deadline.
+_CRED_CHECKSUM_NAME = re.compile(r"(?i)checksum|digest|sha[0-9]|md5|etag|crc[0-9]")
+_CRED_REDACTED = re.compile(r"^\W*(?:hidden_due_to_security_reasons|redacted|masked|removed|\*+|x{3,}|\[\])\W*$", re.I)
+_CRED_NOT_A_VALUE = frozenset(("true", "false", "null", "none", "nil", "undefined", "required", "optional", "enabled", "disabled"))
+_CRED_EXACT = {
+    "password", "newpassword", "oldpassword", "currentpassword", "passwd", "pwd", "passphrase", "passcode", "pin", "otp",
+    "pass", "dbpass", "userpass", "adminpass", "rootpass", "plaintext",
+    "secret", "clientsecret", "secretkey", "secretaccesskey", "awssecretaccesskey", "awssecretkey", "secretstring",
+    "secretbinary", "secrettext", "secretvalue", "accesskeysecret",
+    "sessiontoken", "securitytoken", "accesstoken", "refreshtoken", "idtoken", "bearertoken", "authtoken", "token",
+    "tokencode", "mfacode", "verificationcode", "authorizationcode",
+    "authorization", "proxyauthorization", "cookie", "setcookie", "apikey", "privatekey", "privatekeypem",
+    "sharedaccesskey", "sharedaccesssignature", "accountkey", "primarykey", "secondarykey", "keyvalue", "masterkey",
+    "storagekey", "subscriptionkey", "ocpapimsubscriptionkey",
+    "connectionstring", "credential", "credentials", "assertion", "samlresponse", "mfasecret",
+    "sastoken", "sassignature", "signature", "sig",
+    "passwordhash", "nthash", "ntlmhash", "lmhash",
+}
+_CRED_SUFFIX = ("password", "passwd", "passphrase", "secret", "apikey", "privatekey", "sessiontoken", "securitytoken",
+                "accesstoken", "refreshtoken", "clientsecret", "token", "secrettext", "secretkey", "secretaccesskey",
+                "primarykey", "secondarykey", "accountkey", "sharedaccesskey", "subscriptionkey", "passwordhash",
+                "ntlmhash", "nthash", "passcode", "signature", "cookie")
+# a position or an idempotency key under a name that ends in `token`
+_CRED_NOT_SECRET = ("nexttoken", "pagetoken", "continuationtoken", "paginationtoken", "nextpagetoken", "pagingtoken",
+                    "startingtoken", "nextmarkertoken", "clienttoken", "clientrequesttoken", "idempotencytoken",
+                    "nextforwardtoken", "nextbackwardtoken", "requesttoken")
+_CRED_CONTAINERS = ("credential", "credentials")
+_CRED_NAME_CACHE = {}
+_CRED_NAME_KEYS = ("Name", "name", "Key", "key")
+_CRED_VALUE_KEYS = ("Value", "NewValue", "OldValue", "value", "newValue", "oldValue")
+
+
+def is_container_name(name):
+    """`credentials` names a group of fields (an access key id, an expiry, a token): each is judged by its own name."""
+    return re.sub(r"[^a-z0-9]", "", str(name).lower()) in _CRED_CONTAINERS
+
+
+def name_is_sensitive(name):
+    """Does a field or a parameter of this name hold a secret? (`Password`, `client_secret`, `x-api-key`; not `nextToken`.)"""
+    hit = _CRED_NAME_CACHE.get(name)
+    if hit is None:
+        flat = re.sub(r"[^a-z0-9]", "", str(name).lower())
+        hit = flat in _CRED_EXACT or (len(flat) > 6 and flat.endswith(_CRED_SUFFIX) and not flat.endswith(_CRED_NOT_SECRET))
+        if len(_CRED_NAME_CACHE) < 20000:
+            _CRED_NAME_CACHE[name] = hit
+    return hit
+
+
+_CRED_B64 = "A-Za-z0-9+/_-"
+_CRED_B64_RUN = re.compile(r"(?<![%s])[%s]{128,}={0,2}(?![%s])" % (_CRED_B64, _CRED_B64, _CRED_B64))
+_CRED_B64_EDGE = "(?<![A-Za-z0-9+/=_-])"
+_CRED_B64_END = "(?![A-Za-z0-9+/=_-])"
+# The names an assignment is recognised by. A long compound name may carry any prefix (dbPassword=, apiToken=, adminSecret:);
+# a short one needs the edge of a word (sig= is not design=).
+_CRED_STRONG = (r"password|passwd|passphrase|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|"
+                r"security[_-]?token|auth[_-]?token|bearer[_-]?token|account[_-]?key|shared[_-]?access[_-]?key|primary[_-]?key|"
+                r"secondary[_-]?key|private[_-]?key|subscription[_-]?key|sas[_-]?token|password[_-]?hash|nt[_-]?hash|ntlm[_-]?hash|"
+                r"lm[_-]?hash|client[_-]?secret|secret[_-]?access[_-]?key|secret[_-]?key|secret[_-]?text|secret[_-]?value|token|signature|plaintext")
+_CRED_SHORT = r"(?<![A-Za-z0-9])(?:pwd|pass|sig|pin|otp|sas)"
+_CRED_SEP = r"""(?:\\*["']|["'])?\s*(?:[:=]|%3[dD]|%3[aA])\s*"""
+# a short name is a name only as `pwd=value` or `pass:value`: "pass: 3 attempts" is prose
+_CRED_SEPS = r"""(?:\\*["']|["'])?(?:\s*(?:=|%3[dD])\s*|:(?=\S))"""
+_CRED_NAME = r"(?:(?:%s)%s|%s%s)" % (_CRED_STRONG, _CRED_SEP, _CRED_SHORT, _CRED_SEPS)
+_CRED_ARN_TAIL = re.compile(r"arn:[A-Za-z0-9-]+:[A-Za-z0-9-]+:[A-Za-z0-9-]*:[0-9]*:$")
+_CRED_PAIR_WHY = "a value paired with a credential name"
+_CRED_RULES = [
+    # anchored at the start of a run and possessive, so that a megabyte of `eyJ` is read once, not once per `eyJ`
+    ("a JSON Web Token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+\.[A-Za-z0-9_-]{2,}+(?:\.[A-Za-z0-9_-]*+)?"), 0),
+    ("a JSON Web Encryption token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+(?:\.[A-Za-z0-9_-]*+){4}"), 0),
+    ("a password in a URL", re.compile(r"(?i)(?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,20}://[^\s:/@\"'<>\\]{0,256}:([^\s/\"'<>\\]{1,1024})@(?=[^\s/@\"'<>]{1,255})"), 1),
+    ("an Azure Functions key", re.compile(r"""(?i)(?:x-functions-key["']?\s*[:=]\s*(?:\\*["'])?|[?&;]code=)([A-Za-z0-9_/+=-]{16,512})"""), 1),
+    ("a private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|[\s\S]*)"), 0),
+    ("a base64 block of key lines", re.compile(r"(?:[A-Za-z0-9+/]{60,80}={0,2}\r?\n){2,}[A-Za-z0-9+/]{2,80}={0,2}"), 0),
+    ("an authorization header value", re.compile(
+        r"""(?i)authorization["']?\s*[:=]\s*(?:\\*["'])?(?:(?:bearer|basic|digest|negotiate|ntlm|token)\s+)?([^\s"'&,;\\]{1,4096})"""), 1),
+    ("a cookie header value", re.compile(r"""(?i)cookie["']?\s*[:=]\s*(?:\\*["'])?([^\r\n"'\\]{1,4096})"""), 1),
+    ("a scheme and its credential", re.compile(r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{3,4096})|\b(?:negotiate|ntlm|digest)\s+([A-Za-z0-9._~+/=-]{24,4096})"), -2),
+    ("a value assigned to a credential name (quoted)", re.compile(
+        r"""(?i)%s\\*(["'])(.{1,4096}?)(?=\\*\1)""" % _CRED_NAME), 2),
+    ("a value assigned to a credential name", re.compile(
+        r"""(?i)%s((?:(?!%%26)[^\s"'&<>\\]){1,4096})""" % _CRED_NAME), 1),
+    ("a value given to a credential switch", re.compile(
+        r"""(?i)(?<![A-Za-z0-9_])-(?:password|pass|pwd|passphrase|secret|clientsecret|apikey|accesstoken|token)\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    ("a secret given to ConvertTo-SecureString", re.compile(
+        r"""(?i)ConvertTo-SecureString\s+(?:\\*(["'])(.{1,4096}?)(?=\\*\1)|([^\s"'-][^\s"']{0,4095}))"""), -1),
+    # `mysql -u<user> -p<password>`: with `-p` glued to its value, and only as an option of a MySQL or MariaDB client (`ssh -p 22`,
+    # `nc -p 80` and `mysql -p` alone, which asks for the password, name a port or nothing). The options are read up to the next
+    # command of the kind, so that a text of many of them is read once, not once for each
+    ("a password given to a MySQL client", re.compile(
+        r"""(?i:(?<![\w.-])(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mysqlshow|mariadb|mariadb-dump|mariadb-admin)(?:\.exe)?(?=\s))(?:(?!(?i:mysql|mariadb)\b)[^\n]){0,512}?(?<=\s)-p(?=[^\s`,;)])(?:"([^"\n]{1,256})"|'([^'\n]{1,256})'|([^\s"']{1,256}))"""), -3),
+    # `curl -u user:password`: the part after the colon, and only when there is one (`curl -u user` asks for it)
+    ("a password given to curl", re.compile(
+        r"""(?i:(?<![\w.-])curl(?:\.exe)?(?=\s))(?:(?!(?i:curl)\b)[^\n]){0,512}?(?<=\s)(?:-u|-U|--user|--proxy-user)(?:\s+|=)(?:"[^":\n]*:([^"\n]{1,256})"|'[^':\n]*:([^'\n]{1,256})'|[^\s:"']*:([^\s"']{1,256}))"""), -3),
+    ("a hash pair of an account database", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}:([0-9a-fA-F]{32})(?![0-9a-fA-F])"), 1),
+    ("a bcrypt hash", re.compile(r"(?<![A-Za-z0-9$])\$2[abxy]?\$[0-9]{2}\$[./A-Za-z0-9]{53}(?![./A-Za-z0-9])"), 0),
+    ("a token of a known family", re.compile(
+        r"(?:GOCSPX-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])|"
+        r"ya29\.[0-9A-Za-z_-]{20,}|1//0[0-9A-Za-z_-]{30,}|(?:IQoJb3JpZ2lu|FQoGZXIvYXdz|FwoGZXIvYXdz)[A-Za-z0-9+/=]{40,}|"
+        r"[A-Za-z0-9_.~-]{3}[0-9]Q~[A-Za-z0-9_.~-]{30,}|[01]\.A[A-Za-z0-9_-]{50,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})"), 0),
+]
+_CRED_GROUPS = {-1: (1, 2, 3), -2: (1, 2), -3: (1, 2, 3)}
+# A random-looking run of an exact length that keys have: 32, 40 (an AWS secret access key), 43 + "=" and 86 + "==" (a base64 key).
+_CRED_SHAPES = [
+    ("a key-length base64 string", re.compile(_CRED_B64_EDGE + r"(?:[A-Za-z0-9+/]{32}|[A-Za-z0-9+/]{40}|[A-Za-z0-9+/]{43}=|[A-Za-z0-9+/]{86}==)" + _CRED_B64_END), True),
+]
+# A Name/Value pair written as JSON text inside a string (an AuditData in a column of another name, a parameter list in a cell): the
+# structure rule (clean_value) cannot see it, so the text rule reads the head of the pair, and the name decides as it does there. The
+# value is read by hand, not by an expression: a string up to its first quote (the backslashes before the quote are not part of it), a
+# number, a flat array of up to 4,096 characters, or a literal; and the next value of the same pair (`OldValue`, then `NewValue`).
+_CRED_PAIR_HEAD = re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})\\*"\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_NEXT_VALUE = re.compile(r"""(?i)\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*""")
+_CRED_QUOTE = re.compile(r'\\*"')
+# a format directive (`%s`, `%d`), a template field (`{0}`, `{name}`) or a `%VAR%` is where a value goes, not a value
+_CRED_PLACEHOLDER = re.compile(r"%[-+ #0-9.]*[sdiuxXfeEgGcr](?![A-Za-z0-9])|\{\w*\}|%\w+%$|\.{2,}|\u2026")
+_CRED_BARE = re.compile(r"-?[0-9][0-9.eE+-]{0,39}|\[[^\[\]]{0,4096}\]|(?:null|true|false)\b")
+# What a text must hold for a rule to match it: a literal (lower case) of which one must be in the text, checked before the rule runs, so
+# that a text with none of them (most names, addresses and ids) costs a few substring tests and no expression. An assignment rule also
+# needs a separator in the text. Each is a necessary condition of its rule.
+_CRED_ASSIGN = ("pass", "pwd", "secret", "key", "token", "signature", "plaintext", "sig", "pin", "otp", "sas", "hash")
+_CRED_NEEDLES = {
+    "a JSON Web Token": ("eyj",), "a JSON Web Encryption token": ("eyj",), "a password in a URL": ("://",),
+    "an Azure Functions key": ("x-functions-key", "code="), "a private key block": ("-----begin",), "a base64 block of key lines": ("\n",),
+    "an authorization header value": ("authorization",), "a cookie header value": ("cookie",),
+    "a scheme and its credential": ("bearer", "basic", "negotiate", "ntlm", "digest"),
+    "a value assigned to a credential name (quoted)": _CRED_ASSIGN, "a value assigned to a credential name": _CRED_ASSIGN,
+    "a value given to a credential switch": ("password", "pass", "pwd", "secret", "apikey", "accesstoken", "token"),
+    "a secret given to ConvertTo-SecureString": ("securestring",), "a password given to a MySQL client": ("mysql", "mariadb"),
+    "a password given to curl": ("curl",), "a hash pair of an account database": (":",), "a bcrypt hash": ("$2",),
+    "a token of a known family": ("gocspx-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xoxa-", "xoxb-", "xoxp-", "xoxr-", "xoxs-",
+                                  "aiza", "ya29.", "1//0", "iqojb3", "fqogzx", "fwogzx", "q~", "0.a", "1.a", "sk_", "rk_"),
+}
+_CRED_CLEAN = set()               # short texts already judged to hold nothing (names, addresses and ids repeat)
+_CRED_GATE = 4096                 # a text longer than this is scanned with the carrier's hook in view, rule by rule
+# The carrier's hook for long scans: called with the work done so far (1 per stretch found, 4096 between rules over a long text); it may
+# raise to end the scan at the carrier's deadline. Most carriers set none and the calls do nothing.
+_tick = globals().get("WITHHOLD_TICK") or (lambda units=1: None)
+
+
+def _cred_json_value(text, at):
+    """(start, end, after) of the JSON value whose text starts at `at`: `end` is where what is withheld ends, `after` where the next
+    token of the pair begins. None when no value starts there."""
+    q = _CRED_QUOTE.match(text, at)
+    if q:
+        start = q.end()
+        close = text.find('"', start)
+        if close < 0:
+            return start, len(text), len(text)      # a value that is cut off: the rest of the text is the value
+        return start, start + len(text[start:close].rstrip("\\")), close + 1
+    m = _CRED_BARE.match(text, at)
+    if m is None:
+        return None
+    if m.group()[0] in "nft":
+        return at, at, m.end()                     # null, true and false are not secrets
+    return m.start(), m.end(), m.end()
+
+
+def _cred_pair_spans(text, spans):
+    for head in _CRED_PAIR_HEAD.finditer(text):
+        if not name_is_sensitive(head.group(1)):
+            continue
+        at = head.end()
+        for _ in range(3):
+            got = _cred_json_value(text, at)
+            if got is None:
+                break
+            start, end, after = got
+            if end > start:
+                value = text[start:end]
+                if not (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    spans.append((start, end, _CRED_PAIR_WHY))
+            more = _CRED_NEXT_VALUE.match(text, after)
+            if more is None:
+                break
+            at = more.end()
+
+
+def _cred_random_like(run):
+    """A run that looks like random base64 and not like a path, a name or a hash: mixed case and digits in the proportions
+    random text has (a long path is mostly lower case with few capitals; a hex digest has no case to mix)."""
+    n = len(run)
+    upper = sum(1 for ch in run if "A" <= ch <= "Z")
+    lower = sum(1 for ch in run if "a" <= ch <= "z")
+    digit = sum(1 for ch in run if "0" <= ch <= "9")
+    return upper * 100 >= 15 * n and lower * 100 >= 15 * n and digit * 100 >= 5 * n
+
+
+def _cred_name_before(text, at):
+    """The letters and digits of the name an assigned value follows (`nextToken=` gives `nexttoken`)."""
+    return re.sub(r"[^a-z0-9]", "", text[max(0, at - 64):at].lower())
+
+
+def _cred_spans(text, shapes, skip=()):
+    spans = []
+    big = len(text) > _CRED_GATE
+    low = text.lower()
+    sep = "=" in text or ":" in text or "%3" in low
+    if "value" in low:
+        _cred_pair_spans(text, spans)
+    for why, rx, group in _CRED_RULES:
+        if why in skip:
+            continue
+        need = _CRED_NEEDLES[why]
+        if need is _CRED_ASSIGN and not sep:
+            continue
+        for n in need:
+            if n in low:
+                break
+        else:
+            continue
+        if big:
+            _tick(4096)
+        for m in rx.finditer(text):
+            if big:
+                _tick(1)
+            if "assigned to a credential name" in why:
+                if _CRED_ARN_TAIL.search(text[max(0, m.start() - 120):m.start()]):
+                    continue                              # arn:aws:secretsmanager:...:secret:NAME is a name, not a value
+                if _cred_name_before(text, m.start(m.lastindex or 0)).endswith(_CRED_NOT_SECRET):
+                    continue                              # nextToken=, pageToken=, clientToken=: a position or an idempotency key
+            for g in _CRED_GROUPS.get(group, (group,)):
+                if g and m.group(g) is None:
+                    continue
+                start, end = m.span(g)
+                value = text[start:end]
+                if g and (_CRED_REDACTED.match(value) or value.lower() in _CRED_NOT_A_VALUE or value.startswith(("${", "{{")) or _CRED_PLACEHOLDER.match(value)):
+                    continue
+                if why == "a scheme and its credential" and g == 1 and not (re.search(r"[0-9+/=_.~-]", value) or len(value) >= 16):
+                    continue                              # "basic authentication" is prose, "Basic dXNlcjpwYXNz" is not
+                if g == 1 and group == -1 and len(m.groups()) >= 2 and m.group(1) in ("'", '"'):
+                    continue                              # group 1 of the switch rules is the quote
+                spans.append((start, end, why))
+    if big:
+        _tick(4096)
+    for m in (_CRED_B64_RUN.finditer(text) if len(text) >= 128 and "a long unbroken base64-like run" not in skip else ()):
+        if _cred_random_like(m.group(0)):
+            spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
+    if shapes and len(text) >= 32 and "a key-length base64 string" not in skip:
+        for why, rx, check in _CRED_SHAPES:
+            for m in rx.finditer(text):
+                if not check or _cred_random_like(m.group(0)):
+                    spans.append((m.start(), m.end(), why))
+    spans.sort()
+    merged = []
+    for s in spans:
+        if merged and s[0] < merged[-1][1]:
+            if s[1] > merged[-1][1]:
+                merged[-1] = (merged[-1][0], s[1], merged[-1][2])
+            continue
+        merged.append(s)
+    return merged
+
+
+def credential_spans(text, shapes=True, skip=()):
+    """(start, end, why) of each stretch of `text` that is a credential by the name it is given under or by its text, in order and
+    not overlapping. `shapes` False leaves out the rules that recognise a key by its length alone (a value that is named a checksum or
+    a digest is not scanned for them). This is not `token_spans`: an identifier (a GUID, a hex digest, an access key id, an ARN) is
+    not a credential here, and a tool that prints identifiers on purpose asks only for these."""
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text), "text longer than %d characters" % TEXT_LIMIT)]
+    if shapes and not skip and text in _CRED_CLEAN:
+        return []
+    spans = _cred_spans(text, shapes, skip)
+    if shapes and not skip and not spans and len(text) <= 256 and len(_CRED_CLEAN) < 100000:
+        _CRED_CLEAN.add(text)
+    return spans
+
+
+def clean_value(value, leaf, note, key=None, pointer="", depth=0, shapes=True, max_depth=200):
+    """The structure rule: `value` (what a JSON document decoded to) with every credential in it replaced. A string goes to
+    `leaf(text, pointer, shapes)`, which returns what is printed for it. A field whose name says it holds a secret (or a `Value` whose
+    `Name` does), at any depth, is not read at all: `note(pointer, why, original)` returns what is printed for it (a number under such
+    a name is withheld too: 0 and 1 are not nothing). A key goes through `key(text)` when one is given. A value nested deeper than
+    `max_depth` is replaced the same way."""
+    if isinstance(value, str):
+        return leaf(value, pointer, shapes)
+    _tick(1)
+    if depth > max_depth and isinstance(value, (dict, list)):
+        return note(pointer, "nested deeper than %d levels" % max_depth, value)
+    if isinstance(value, dict):
+        named = None
+        for k in _CRED_NAME_KEYS:
+            if isinstance(value.get(k), str):
+                named = value[k]
+                break
+        pair_secret = named is not None and name_is_sensitive(named)
+        out = {}
+        for k, v in value.items():
+            ks = str(k)
+            point = "%s/%s" % (pointer, ks.replace("~", "~0").replace("/", "~1"))
+            safe_key = key(ks) if key is not None else ks
+            if safe_key in out:
+                safe_key = "%s#%d" % (safe_key, len(out))
+            sensitive = name_is_sensitive(ks) or (pair_secret and ks in _CRED_VALUE_KEYS)
+            if sensitive and is_container_name(ks) and isinstance(v, (dict, list)):
+                sensitive = False
+            if sensitive and not (v is None or isinstance(v, bool) or v == "") and not (isinstance(v, str) and (_CRED_REDACTED.match(v) or v.lower() in _CRED_NOT_A_VALUE)):
+                out[safe_key] = note(point, "credential-named field", v)
+            else:
+                out[safe_key] = clean_value(v, leaf, note, key, point, depth + 1, shapes and not _CRED_CHECKSUM_NAME.search(ks), max_depth)
+        return out
+    if isinstance(value, list):
+        return [clean_value(v, leaf, note, key, "%s/%d" % (pointer, i), depth + 1, shapes, max_depth) for i, v in enumerate(value)]
+    return value
+
+
+# what the rules of the block above already withhold whole, with their own markers: the first pass leaves these to them
+_CRED_OLD_COVERS = frozenset(("a JSON Web Token", "a password in a URL", "an authorization header value", "a scheme and its credential",
+                              "a long unbroken base64-like run", "a key-length base64 string"))
+
+
+def _credentials_withheld(text, kind, skip=()):
+    """`text` with each credential in it withheld. It runs after the rules above, on text that may hold their markers: a stretch that
+    begins at a marker is theirs already."""
+    out, last = [], 0
+    for start, end, why in credential_spans(text, True, skip):
+        if text.startswith("<", start):
+            continue
+        out.append(text[last:start])
+        out.append(_withheld(why, end - start, kind))
+        last = end
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
+
+
 def scrub(text, kind="text"):
-    """The text with every token-shaped run and every user-info withheld."""
+    """The text with every token-shaped run, every user-info and every credential withheld."""
     if len(text) > TEXT_LIMIT:
         return _withheld("over-long text", len(text), kind)
+    text = _credentials_withheld(text, kind, _CRED_OLD_COVERS)     # first: the rules above cut a secret into pieces that no rule for a whole one can match
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
@@ -317,7 +656,7 @@ def scrub(text, kind="text"):
         out.append(_withheld("token-shaped text", end - start, kind))
         last = end
     out.append(text[last:])
-    return "".join(out)
+    return _credentials_withheld("".join(out), kind)
 
 
 def redact_url(url):
@@ -936,7 +1275,7 @@ def shown_name(text):
 # Strings the tool made itself and registered (a page file's path, the names file's path, a CodeView GUID that is not text): only these, and
 # only under one of these keys, leave unchanged. Anything else, under any key, is withheld like any string out of the file: a key here
 # is never a way round the withholding for a string built from the file's bytes.
-SAFE_KEYS = {"guid", "all_results", "withheld_names_file"}
+SAFE_KEYS = {"guid", "mvid", "enc_id", "enc_base_id", "all_results", "withheld_names_file"}
 MADE = set()
 
 
@@ -1072,13 +1411,15 @@ def build_answer(result, spill=None, seconds=None):
 def emit(result, spill=None, indent=2):
     """The last step of every call: the answer (build_answer), written."""
     answer = build_answer(result, spill)
+    text = json.dumps(answer, indent=indent)    # made before PRINTING is set: a stop signal while a large answer is still being serialized finds no document yet and writes its own (it used to find PRINTING set and end with none)
     PRINTING[0] = True
-    print(json.dumps(answer, indent=indent))
+    print(text)
 
 
 def fail(message, **extra):
     status = extra.pop("status", "failed")
-    answer = {"error": message, "status": status, "tool": TOOL, **extra}
+    basis = extra.pop("status_basis", None)
+    answer = {"error": message, "status": status, "status_basis": basis if isinstance(basis, str) and basis else message, "tool": TOOL, **extra}
     if VALUES[0] is not None:
         answer["secret_values"] = VALUES[0].summary()
     emit(answer, None, None)
@@ -1164,6 +1505,7 @@ class LosslessPage:
                 except FileExistsError:
                     continue
                 self.shown = made(self.prefix + name)
+                self._path = str(self.dir / name)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", buffering=1)
                 for kept in self.page:
                     self._write(kept)
@@ -1199,7 +1541,21 @@ class LosslessPage:
                 self._write(row)
             except OSError as exc:
                 self.not_written = "writing the file failed (%s)" % describe(exc)
-                self._out = None
+                self._drop()
+
+    def _drop(self):
+        """A file that could not be written whole is removed and not named: a partial table must not look like the whole one."""
+        out, self._out = self._out, None
+        self.shown = None
+        try:
+            if out is not None:
+                out.close()
+        except OSError:
+            pass
+        try:
+            os.unlink(self._path)
+        except (OSError, AttributeError):
+            pass
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
@@ -1210,6 +1566,7 @@ class LosslessPage:
                 self._out.close()
             except OSError as exc:
                 self.not_written = "writing the file failed (%s)" % describe(exc)
+                self._drop()
             else:
                 result["all_results"] = self.shown
                 result["all_results_format"] = "JSON Lines, one complete row per line"
@@ -1244,9 +1601,9 @@ class SecretValues:
         self.shown = None
         if not enabled:
             return
-        if not (self.job and self.out):
+        if not (self.job and self.out and os.environ.get("SECRET_OUTPUT") == "1"):
             raise SecretValuesRefused(
-                "write_values is refused outside a job: a value written here would be an ordinary "
+                "write_values is refused outside a job run as secret output: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=pe_directories with "
                 "secret_output: true, and ask again there. Nothing was written."
             )
@@ -1487,14 +1844,20 @@ def shown_at(ctx, text, at, utf16=False, kind="names"):
 
 
 NAME_SHOWN = 512                    # characters of an export, forwarder or delay-load name the answer shows; a longer one is given by its length
-NAME_KINDS = {"export_image_name", "export_forwarder", "export_name", "delay_import_library", "delay_import_function"}
+NAME_KINDS = {"export_image_name", "export_forwarder", "export_name", "delay_import_library", "delay_import_function", "clr_name"}
 
 
-def show(ctx, what, text, at, finding=None):
+def show(ctx, what, text, at, finding=None, complete=True):
     """A string out of the file as it may be printed (shown_at); the whole goes to the values file when it was asked for. A name of the
     export and delay-load tables longer than NAME_SHOWN is given by its length only (no linker writes one that long, and a file that
     holds thousands of them must not cost the sanitiser a pass over each)."""
-    if what in NAME_KINDS and len(text) > NAME_SHOWN:
+    limit = NAME_SHOWN if what in NAME_KINDS else SHOWN_TARGET
+    if not complete and text:
+        # the string was cut where it was read (no terminator within its table or NAME_CAP bytes): what was seen is a lower bound, and the answer is partial
+        ctx.problem("a %s at file offset %s has no terminator within its table or %d bytes: it was cut there, and the length shown is a lower bound" % (what.replace("_", " "), at if at is not None else "unknown", NAME_CAP))
+    if not complete and len(text) > limit:
+        shown = "<a string of at least %d characters, cut where it was read: longer than the %d shown, so not shown>" % (len(text), limit)
+    elif what in NAME_KINDS and len(text) > NAME_SHOWN:
         shown = "<a name of %d characters: longer than the %d shown, so not shown>" % (len(text), NAME_SHOWN)
     else:
         shown = shown_at(ctx, text, at)
@@ -1652,6 +2015,11 @@ NOT_READ = ["resource contents beyond the version information and the manifest (
             "anything about the code: what an export, a callback or an entry point does"]
 
 
+CLR_TABLES_READ = ("with clr_tables: the #~ stream's heap sizes, valid mask and row counts, and the rows of the Module, TypeRef, TypeDef, Field, MethodDef, Param, MemberRef, ImplMap, "
+                   "Assembly, AssemblyRef and ManifestResource tables with their file offsets (strings from #Strings, blobs by offset and size, GUIDs from #GUID), and the #US user strings")
+CLR_TABLES_NOT_READ = "the other CLR metadata tables' rows (counts only), blob contents, method bodies, custom attributes, and so what any method does"
+
+
 def when(stamp):
     if not stamp:
         return None
@@ -1788,7 +2156,7 @@ def read_exports(img, pe, ctx, out):
     info = {"ordinal_base": base, "functions_declared": nfunc, "names_declared": nnames, "time_date_stamp_raw": stamp, "time_date_stamp_utc": when(stamp)}
     raw, complete, at = read_rva_cstr(img, pe, name_rva)
     if raw is not None:
-        info["image_name"] = show(ctx, "export_image_name", raw.decode("utf-8", "replace"), at)
+        info["image_name"] = show(ctx, "export_image_name", raw.decode("utf-8", "replace"), at, complete=complete)
     table = ctx.page("exports")
     if nfunc > MAX_EXPORTS or nnames > MAX_EXPORTS:
         ctx.limit_hit("the export directory declares %d functions and %d names: over the limit of %d, so none were listed" % (nfunc, nnames, MAX_EXPORTS))
@@ -1830,7 +2198,7 @@ def read_exports(img, pe, ctx, out):
             raw, complete, at = read_rva_cstr(img, pe, frva)
             if raw is not None:
                 finding = ctx.next_finding("X")
-                row["forwarder"] = show(ctx, "export_forwarder", raw.decode("utf-8", "replace"), at, finding)
+                row["forwarder"] = show(ctx, "export_forwarder", raw.decode("utf-8", "replace"), at, finding, complete=complete)
                 row["finding_id"] = finding
                 forwarders += 1
         else:
@@ -1881,7 +2249,7 @@ def read_delay_imports(img, pe, ctx, out):
         va_form = not (attrs & 1)
         fix = (lambda v: v - base) if va_form else (lambda v: v)
         raw, complete, nat = read_rva_cstr(img, pe, fix(name_rva))
-        lib = {"index": d, "library": show(ctx, "delay_import_library", raw.decode("utf-8", "replace"), nat) if raw is not None else None, "functions": 0, "address_form": "VA" if va_form else "RVA"}
+        lib = {"index": d, "library": show(ctx, "delay_import_library", raw.decode("utf-8", "replace"), nat, complete=complete) if raw is not None else None, "functions": 0, "address_form": "VA" if va_form else "RVA"}
         if raw is None:
             ctx.problem("delay-load descriptor %d: its library name (0x%x) is not backed by file bytes" % (d, name_rva))
         thunks = pe["to_range"](fix(int_rva)) if int_rva else None
@@ -1926,7 +2294,7 @@ def read_delay_imports(img, pe, ctx, out):
                         continue
                     raw, complete, nat = read_rva_cstr(img, pe, fix(entry & 0x7FFFFFFF) + 2)
                     table.add({"library_index": d, "hint": struct.unpack_from("<H", img.mm, hint_at[0])[0] if hint_at[0] + 2 <= img.size else None,
-                               "function": show(ctx, "delay_import_function", raw.decode("utf-8", "replace"), nat) if raw is not None else None})
+                               "function": show(ctx, "delay_import_function", raw.decode("utf-8", "replace"), nat, complete=complete) if raw is not None else None})
                 functions += 1
                 lib["functions"] += 1
                 if ctx.expired("the delay-load names"):
@@ -2264,7 +2632,8 @@ def read_clr(img, pe, ctx, out):
             info["managed_native_header"]["first_four_bytes"] = bytes(img.mm[r[0]:r[0] + 4]).hex()
     info["notes"] = ["a strong-name signature field is a declaration of a signature, not a verified one, and not the publisher's trust",
                      "a managed-native header is native-code metadata that is present alongside the IL; what it holds is named by the runtime's own documentation, not here",
-                     "the metadata tables are not read: this answer has no assembly name, version, type or method"]
+                     ("the metadata tables are read only as far as `clr_tables` lists them: nothing else of the assembly (method bodies, custom attributes, blob contents) is here"
+                      if ctx.cfg.get("clr_tables") else "the metadata tables are not read: this answer has no assembly name, version, type or method (clr_tables reads them)")]
     md = pe["to_range"](md_rva) if md_rva else None
     if md is None:
         ctx.problem("the CLR metadata root (RVA 0x%x) is not backed by file bytes" % md_rva)
@@ -2295,6 +2664,8 @@ def read_clr(img, pe, ctx, out):
     _flags, nstreams = struct.unpack_from("<HH", img.mm, p)
     p += 4
     streams = []
+    raw_streams = []
+    pe["clr_streams"] = {"end": end, "streams": raw_streams}
     if nstreams > MAX_STREAM_HEADERS:
         ctx.limit_hit("the CLR metadata declares %d stream headers: the first %d are read" % (nstreams, MAX_STREAM_HEADERS))
     for i in range(min(nstreams, MAX_STREAM_HEADERS)):
@@ -2309,11 +2680,327 @@ def read_clr(img, pe, ctx, out):
             break
         name = bytes(img.mm[q:nul]).decode("ascii", "replace")
         streams.append({"name": shown_at(ctx, name, q), "offset": off, "size": ssize, "within_root": off + ssize <= (md_size or end - md[0])})
+        raw_streams.append((name, md[0] + off, ssize))
         p = q + ((nul - q + 1 + 3) & ~3)
     meta["streams"] = streams
     meta["streams_declared"] = nstreams
     info["metadata"] = meta
     out["clr"] = info
+
+
+# --- CLR metadata tables (ECMA-335 II.22 and II.24.2.6) ---------------------------------------------------------------------------
+
+MAX_CLR_ROWS = 4_000_000            # rows of one metadata table read; a longer table is a limit
+MAX_USER_STRINGS = 1_000_000        # entries of the #US heap listed
+MAX_GUIDS = 1_000_000               # entries of the #GUID heap listed
+CLR_TABLE_NAMES = {0x00: "Module", 0x01: "TypeRef", 0x02: "TypeDef", 0x03: "FieldPtr", 0x04: "Field", 0x05: "MethodPtr", 0x06: "MethodDef", 0x07: "ParamPtr", 0x08: "Param",
+                   0x09: "InterfaceImpl", 0x0A: "MemberRef", 0x0B: "Constant", 0x0C: "CustomAttribute", 0x0D: "FieldMarshal", 0x0E: "DeclSecurity", 0x0F: "ClassLayout",
+                   0x10: "FieldLayout", 0x11: "StandAloneSig", 0x12: "EventMap", 0x13: "EventPtr", 0x14: "Event", 0x15: "PropertyMap", 0x16: "PropertyPtr", 0x17: "Property",
+                   0x18: "MethodSemantics", 0x19: "MethodImpl", 0x1A: "ModuleRef", 0x1B: "TypeSpec", 0x1C: "ImplMap", 0x1D: "FieldRVA", 0x1E: "EncLog", 0x1F: "EncMap",
+                   0x20: "Assembly", 0x21: "AssemblyProcessor", 0x22: "AssemblyOS", 0x23: "AssemblyRef", 0x24: "AssemblyRefProcessor", 0x25: "AssemblyRefOS", 0x26: "File",
+                   0x27: "ExportedType", 0x28: "ManifestResource", 0x29: "NestedClass", 0x2A: "GenericParam", 0x2B: "MethodSpec", 0x2C: "GenericParamConstraint"}
+# EnC pointer tables and the EnC log and map: they exist only in an uncompressed (#-) or edit-and-continue stream, which this reader does not read
+CLR_ENC_TABLES = (0x03, 0x05, 0x07, 0x13, 0x16, 0x1E, 0x1F)
+# coded indexes: (tag bits, the tables a tag selects, in tag order; None for a tag the standard leaves unused)
+CLR_CODED = {
+    "TypeDefOrRef": (2, (0x02, 0x01, 0x1B)),
+    "HasConstant": (2, (0x04, 0x08, 0x17)),
+    "HasCustomAttribute": (5, (0x06, 0x04, 0x01, 0x02, 0x08, 0x09, 0x0A, 0x00, 0x0E, 0x17, 0x14, 0x11, 0x1A, 0x1B, 0x20, 0x23, 0x26, 0x27, 0x28, 0x2A, 0x2C, 0x2B)),
+    "HasFieldMarshal": (1, (0x04, 0x08)),
+    "HasDeclSecurity": (2, (0x02, 0x06, 0x20)),
+    "MemberRefParent": (3, (0x02, 0x01, 0x1A, 0x06, 0x1B)),
+    "HasSemantics": (1, (0x14, 0x17)),
+    "MethodDefOrRef": (1, (0x06, 0x0A)),
+    "MemberForwarded": (1, (0x04, 0x06)),
+    "Implementation": (2, (0x26, 0x23, 0x27)),
+    "CustomAttributeType": (3, (None, None, 0x06, 0x0A, None)),
+    "ResolutionScope": (2, (0x00, 0x1A, 0x23, 0x01)),
+    "TypeOrMethodDef": (1, (0x02, 0x06)),
+}
+# column kinds: "1", "2", "4" (a fixed width), "S" (#Strings index), "G" (#GUID index), "B" (#Blob index), "T<id>" (a row index into one table), "C<name>" (a coded index)
+CLR_SCHEMA = {
+    0x00: ["2", "S", "G", "G", "G"], 0x01: ["CResolutionScope", "S", "S"], 0x02: ["4", "S", "S", "CTypeDefOrRef", "T04", "T06"], 0x04: ["2", "S", "B"],
+    0x06: ["4", "2", "2", "S", "B", "T08"], 0x08: ["2", "2", "S"], 0x09: ["T02", "CTypeDefOrRef"], 0x0A: ["CMemberRefParent", "S", "B"],
+    0x0B: ["1", "1", "CHasConstant", "B"], 0x0C: ["CHasCustomAttribute", "CCustomAttributeType", "B"], 0x0D: ["CHasFieldMarshal", "B"],
+    0x0E: ["2", "CHasDeclSecurity", "B"], 0x0F: ["2", "4", "T02"], 0x10: ["4", "T04"], 0x11: ["B"], 0x12: ["T02", "T14"], 0x14: ["2", "S", "CTypeDefOrRef"],
+    0x15: ["T02", "T17"], 0x17: ["2", "S", "B"], 0x18: ["2", "T06", "CHasSemantics"], 0x19: ["T02", "CMethodDefOrRef", "CMethodDefOrRef"], 0x1A: ["S"], 0x1B: ["B"],
+    0x1C: ["2", "CMemberForwarded", "S", "T1A"], 0x1D: ["4", "T04"], 0x20: ["4", "2", "2", "2", "2", "4", "B", "S", "S"], 0x21: ["4"], 0x22: ["4", "4", "4"],
+    0x23: ["2", "2", "2", "2", "4", "B", "S", "S", "B"], 0x24: ["4", "T23"], 0x25: ["4", "4", "4", "T23"], 0x26: ["4", "S", "B"],
+    0x27: ["4", "4", "S", "S", "CImplementation"], 0x28: ["4", "4", "S", "CImplementation"], 0x29: ["T02", "T02"], 0x2A: ["2", "2", "CTypeOrMethodDef", "S"],
+    0x2B: ["CMethodDefOrRef", "B"], 0x2C: ["T2A", "CTypeDefOrRef"],
+}
+# the tables whose rows are listed, with the column names and how each is shown
+CLR_LISTED = {
+    0x00: ("module", ["generation", "name", "mvid", "enc_id", "enc_base_id"]),
+    0x01: ("typeref", ["resolution_scope", "name", "namespace"]),
+    0x02: ("typedef", ["flags", "name", "namespace", "extends", "field_list", "method_list"]),
+    0x04: ("field", ["flags", "name", "signature"]),
+    0x06: ("methoddef", ["rva", "impl_flags", "flags", "name", "signature", "param_list"]),
+    0x08: ("param", ["flags", "sequence", "name"]),
+    0x0A: ("memberref", ["class", "name", "signature"]),
+    0x1C: ("implmap", ["mapping_flags", "member_forwarded", "import_name", "import_scope"]),
+    0x20: ("assembly", ["hash_algorithm", "major", "minor", "build", "revision", "flags", "public_key", "name", "culture"]),
+    0x23: ("assemblyref", ["major", "minor", "build", "revision", "flags", "public_key_or_token", "name", "culture", "hash_value"]),
+    0x28: ("manifestresource", ["offset", "flags", "name", "implementation"]),
+}
+CLR_HEX = {"flags", "impl_flags", "mapping_flags", "hash_algorithm", "rva", "offset"}
+CLR_STRING_COLUMNS = {"name", "namespace", "import_name", "culture"}
+
+
+def clr_popcount(value):
+    return bin(value).count("1")
+
+
+def clr_unsupported(ctx, info, reason):
+    info["status"] = "unsupported"
+    info["reason"] = reason
+    ctx.problem("CLR tables: " + reason)
+
+
+def clr_heap_text(img, ctx, heap, index, kind="clr_name"):
+    """The string at `index` of the #Strings heap (start, size as absolute bounds), as it may be printed; None when the index is outside it."""
+    start, size = heap
+    if index == 0:
+        return ""
+    if index >= size:
+        return None
+    raw, complete = img.cstr(start + index, start + size)
+    if raw is None:
+        return None
+    return show(ctx, kind, raw.decode("utf-8", "replace"), start + index, complete=complete)
+
+
+def clr_blob_ref(img, heap, index):
+    """{"offset", "size"} of the blob at `index` of the #Blob heap, or None when the index or its length prefix is outside the heap. The bytes are not read."""
+    start, size = heap
+    if index == 0:
+        return {"offset": None, "size": 0}
+    if index >= size:
+        return None
+    first = img.mm[start + index]
+    if first & 0x80 == 0:
+        n, head = first, 1
+    elif first & 0xC0 == 0x80:
+        if index + 2 > size:
+            return None
+        n, head = ((first & 0x3F) << 8) | img.mm[start + index + 1], 2
+    elif first & 0xE0 == 0xC0:
+        if index + 4 > size:
+            return None
+        n, head = ((first & 0x1F) << 24) | (img.mm[start + index + 1] << 16) | (img.mm[start + index + 2] << 8) | img.mm[start + index + 3], 4
+    else:
+        return None
+    return {"offset": start + index + head, "size": n, "in_heap": index + head + n <= size}
+
+
+def clr_guid(img, heap, index):
+    start, size = heap
+    if index == 0:
+        return None
+    at = (index - 1) * 16
+    if at + 16 > size:
+        return None
+    g = bytes(img.mm[start + at:start + at + 16])
+    d1, d2, d3 = struct.unpack("<IHH", g[:8])
+    return made("%08X-%04X-%04X-%s-%s" % (d1, d2, d3, g[8:10].hex().upper(), g[10:16].hex().upper()))
+
+
+def read_clr_tables(img, pe, ctx, out):
+    """The #~ metadata table stream, read from the stream directory read_clr found: heap sizes, the valid mask, row counts, the coded-index widths, and the
+    rows of Module, TypeRef, TypeDef, Field, MethodDef, Param, MemberRef, ImplMap, Assembly, AssemblyRef and ManifestResource with their file offsets, names
+    from #Strings, blobs by offset and size only, GUIDs from #GUID; and the #US user strings. A #- (uncompressed or edit-and-continue) stream is refused."""
+    info = {"requested": True}
+    out["clr_tables"] = info
+    cs = pe.get("clr_streams")
+    if cs is None:
+        info["status"] = "unavailable"
+        info["reason"] = "the CLR metadata root was not read (see problems), so no stream was located"
+        ctx.problem("CLR tables: the metadata root was not read, so the table stream was not located")
+        return
+    streams, root_end = {}, cs["end"]
+    for name, start, size in cs["streams"]:
+        if name in streams:
+            ctx.problem("CLR tables: the stream %s is declared more than once: the first is read" % text_of(name, "names"))
+            continue
+        streams[name] = (start, size)
+    heaps = {}
+    for name in ("#Strings", "#Blob", "#GUID", "#US"):
+        if name in streams:
+            start, size = streams[name]
+            ok = start + size <= root_end
+            heaps[name] = (start, size if ok else max(0, root_end - start))
+            if not ok:
+                ctx.problem("CLR tables: the %s heap [%d, %d) runs past the end of the metadata root: the part inside it is read" % (name, start, start + size))
+    info["heaps"] = {name: {"file_offset": s, "size": n} for name, (s, n) in heaps.items()}
+    table_name = "#~" if "#~" in streams else None
+    if "#-" in streams:
+        clr_unsupported(ctx, info, "the metadata uses the #- stream (the uncompressed, edit-and-continue form), whose pointer tables and indirections this tool does not read")
+        return
+    if table_name is None:
+        clr_unsupported(ctx, info, "the metadata has no #~ table stream")
+        return
+    tstart, tsize = streams["#~"]
+    if tstart + tsize > root_end:
+        ctx.problem("CLR tables: the #~ stream [%d, %d) runs past the end of the metadata root: the part inside it is read" % (tstart, tstart + tsize))
+        tsize = max(0, root_end - tstart)
+    if tsize < 24:
+        ctx.problem("CLR tables: the #~ stream is %d bytes, shorter than its 24-byte header" % tsize)
+        info["status"] = "unreadable"
+        return
+    _res, major, minor, heap_sizes, _res2, valid, sorted_mask = struct.unpack_from("<IBBBBQQ", img.mm, tstart)
+    info.update({"stream": "#~", "file_offset": tstart, "size": tsize, "version": "%d.%d" % (major, minor), "heap_sizes": hex(heap_sizes),
+                 "string_index_bytes": 4 if heap_sizes & 1 else 2, "guid_index_bytes": 4 if heap_sizes & 2 else 2, "blob_index_bytes": 4 if heap_sizes & 4 else 2,
+                 "valid_mask": hex(valid), "sorted_mask": hex(sorted_mask)})
+    if heap_sizes & 0x20:
+        clr_unsupported(ctx, info, "the heap-sizes byte has the edit-and-continue delta bit (0x20) set: a delta stream is not read")
+        return
+    ids = [i for i in range(64) if valid >> i & 1]
+    too_high = [i for i in ids if i not in CLR_TABLE_NAMES]
+    if too_high:
+        clr_unsupported(ctx, info, "the valid mask names table 0x%02x, which is not a table of an assembly's #~ stream (a portable-PDB table or an unknown one): row sizes after it cannot be known" % too_high[0])
+        return
+    enc = [i for i in ids if i in CLR_ENC_TABLES]
+    if enc:
+        clr_unsupported(ctx, info, "the valid mask names the %s table, which exists only in an edit-and-continue stream" % CLR_TABLE_NAMES[enc[0]])
+        return
+    rows_at = tstart + 24
+    if rows_at + 4 * len(ids) > tstart + tsize:
+        ctx.problem("CLR tables: the valid mask names %d tables and the #~ stream is too short for their row counts" % len(ids))
+        info["status"] = "unreadable"
+        return
+    rows = {t: struct.unpack_from("<I", img.mm, rows_at + 4 * i)[0] for i, t in enumerate(ids)}
+    data_at = rows_at + 4 * len(ids) + (4 if heap_sizes & 0x40 else 0)
+    info["row_counts"] = {CLR_TABLE_NAMES[t]: n for t, n in rows.items()}
+
+    def width(kind):
+        if kind in ("1", "2", "4"):
+            return int(kind)
+        if kind == "S":
+            return 4 if heap_sizes & 1 else 2
+        if kind == "G":
+            return 4 if heap_sizes & 2 else 2
+        if kind == "B":
+            return 4 if heap_sizes & 4 else 2
+        if kind[0] == "T":
+            return 4 if rows.get(int(kind[1:], 16), 0) >= 1 << 16 else 2
+        bits, tables = CLR_CODED[kind[1:]]
+        return 4 if max([rows.get(t, 0) for t in tables if t is not None] + [0]) >= 1 << (16 - bits) else 2
+
+    sizes = {t: [width(k) for k in CLR_SCHEMA[t]] for t in CLR_SCHEMA}
+    info["coded_index_bytes"] = {name: width("C" + name) for name in CLR_CODED}
+    info["table_index_bytes"] = {CLR_TABLE_NAMES[t]: width("T%02x" % t) for t in (0x02, 0x04, 0x06, 0x08, 0x14, 0x17, 0x1A, 0x23, 0x2A)}
+    # locate every table: they follow one another in table-id order
+    at = data_at
+    where = {}
+    for t in ids:
+        rsize = sum(sizes[t])
+        where[t] = (at, rsize)
+        at += rows[t] * rsize
+    if at > tstart + tsize:
+        ctx.problem("CLR tables: the row counts and row sizes need %d bytes of table data and the #~ stream holds %d: the tables that run past it are read as far as they fit" % (at - data_at, tstart + tsize - data_at))
+    summary = {}
+    for t, (label, columns) in CLR_LISTED.items():
+        if t not in rows or ctx.expired("the CLR tables"):
+            continue
+        start, rsize = where[t]
+        fit = max(0, (tstart + tsize - start) // rsize)
+        n = min(rows[t], fit)
+        if rows[t] > fit:
+            ctx.problem("CLR tables: the %s table declares %d rows of %d bytes at offset %d and the stream holds room for %d" % (CLR_TABLE_NAMES[t], rows[t], rsize, start, fit))
+        if n > MAX_CLR_ROWS:
+            ctx.limit_hit("CLR tables: the %s table has %d rows: the first %d are listed" % (CLR_TABLE_NAMES[t], n, MAX_CLR_ROWS))
+            n = MAX_CLR_ROWS
+        page = ctx.page("clr_" + label)
+        kinds = CLR_SCHEMA[t]
+        widths = sizes[t]
+        listed = bad = 0
+        for r in range(n):
+            if r % 256 == 0 and ctx.expired("the " + CLR_TABLE_NAMES[t] + " table"):
+                break
+            pos = start + r * rsize
+            row = {"row": r + 1, "file_offset": pos}
+            p = pos
+            for col, kind, w in zip(columns, kinds, widths):
+                value = int.from_bytes(img.mm[p:p + w], "little")
+                p += w
+                if kind == "S":
+                    text = "" if value == 0 else (clr_heap_text(img, ctx, heaps["#Strings"], value) if "#Strings" in heaps else None)
+                    if text is None:
+                        bad += 1
+                    row[col] = text
+                elif kind == "B":
+                    ref = {"offset": None, "size": 0} if value == 0 else (clr_blob_ref(img, heaps["#Blob"], value) if "#Blob" in heaps else None)
+                    row[col] = ref
+                    if ref is None:
+                        bad += 1
+                    elif ref.get("in_heap") is False:
+                        bad += 1
+                elif kind == "G":
+                    row[col] = clr_guid(img, heaps["#GUID"], value) if "#GUID" in heaps else None
+                    if value and row[col] is None:
+                        bad += 1
+                elif kind[0] == "C":
+                    bits, tables = CLR_CODED[kind[1:]]
+                    tag, index = value & ((1 << bits) - 1), value >> bits
+                    target = tables[tag] if tag < len(tables) else None
+                    row[col] = None if index == 0 and target is not None else ("%s:%d" % (CLR_TABLE_NAMES[target], index) if target is not None else "tag %d:%d" % (tag, index))
+                elif col in CLR_HEX:
+                    row[col] = hex(value)
+                else:
+                    row[col] = value
+            page.add(row)
+            listed += 1
+        if bad:
+            ctx.problem("CLR tables: %d string, blob or GUID index(es) of the %s table point outside their heap" % (bad, CLR_TABLE_NAMES[t]))
+        summary[CLR_TABLE_NAMES[t]] = {"table": "clr_" + label, "declared": rows[t], "listed": listed}
+    info["tables"] = summary
+    if "#GUID" in heaps:
+        gstart, gsize = heaps["#GUID"]
+        page = ctx.page("clr_guids")
+        count = gsize // 16
+        if gsize % 16:
+            ctx.problem("CLR tables: the #GUID heap is %d bytes, not a multiple of 16" % gsize)
+        for i in range(min(count, MAX_GUIDS)):
+            if i % 256 == 0 and ctx.expired("the #GUID heap"):
+                break
+            page.add({"index": i + 1, "file_offset": gstart + 16 * i, "guid": clr_guid(img, heaps["#GUID"], i + 1)})
+        info["guids"] = {"table": "clr_guids", "entries": count}
+    if "#US" in heaps:
+        ustart, usize = heaps["#US"]
+        page = ctx.page("clr_user_strings")
+        pos, listed = 1, 0
+        while pos < usize:
+            if ctx.expired("the #US heap"):
+                break
+            if listed >= MAX_USER_STRINGS:
+                ctx.limit_hit("CLR tables: the #US heap holds more than %d strings: the first %d are listed" % (MAX_USER_STRINGS, MAX_USER_STRINGS))
+                break
+            first = img.mm[ustart + pos]
+            if first == 0:
+                pos += 1
+                continue
+            if first & 0x80 == 0:
+                n, head = first, 1
+            elif first & 0xC0 == 0x80 and pos + 2 <= usize:
+                n, head = ((first & 0x3F) << 8) | img.mm[ustart + pos + 1], 2
+            elif first & 0xE0 == 0xC0 and pos + 4 <= usize:
+                n, head = ((first & 0x1F) << 24) | (img.mm[ustart + pos + 1] << 16) | (img.mm[ustart + pos + 2] << 8) | img.mm[ustart + pos + 3], 4
+            else:
+                ctx.problem("CLR tables: the #US heap holds a length prefix at offset %d that is not valid: the rest of the heap is not listed" % pos)
+                break
+            if pos + head + n > usize:
+                ctx.problem("CLR tables: the #US entry at offset %d declares %d bytes and the heap ends: the rest of the heap is not listed" % (pos, n))
+                break
+            chars = (n - 1) // 2 if n else 0
+            text = bytes(img.mm[ustart + pos + head:ustart + pos + head + chars * 2]).decode("utf-16-le", "replace") if chars <= SHOWN_TARGET else ""
+            finding = ctx.next_finding("U")
+            shown = ("<a string of %d characters: longer than the %d shown, so not shown>" % (chars, SHOWN_TARGET)) if chars > SHOWN_TARGET else show(ctx, "clr_user_string", text, None, finding)
+            page.add({"heap_offset": pos, "file_offset": ustart + pos, "characters": chars, "string": shown, "finding_id": finding})
+            listed += 1
+            pos += head + n
+        info["user_strings"] = {"table": "clr_user_strings", "listed": listed}
+    info["status"] = "read"
+    info["not_read"] = "blob contents (signatures, public keys, hash values), the other metadata tables' rows, method bodies and custom attributes: row counts only"
 
 
 # --- debug --------------------------------------------------------------------------------------------------------------------
@@ -2356,8 +3043,8 @@ def read_debug(img, pe, ctx, out):
                 if raw is not None:
                     finding = ctx.next_finding("D")
                     path_text = raw.decode("utf-8", "replace")
-                    row["codeview"]["pdb_path"] = show(ctx, "pdb_path", path_text, ptr + 24, finding)
-                    row["codeview"]["pdb_path_length"] = len(raw)
+                    row["codeview"]["pdb_path"] = show(ctx, "pdb_path", path_text, ptr + 24, finding, complete=complete)
+                    row["codeview"]["pdb_path_length"] = len(raw) if complete else None
                     row["codeview"]["finding_id"] = finding
                     row["codeview"]["note"] = "a path the build wrote: a claim about the build machine, not evidence of where the file was made or by whom"
             else:
@@ -2448,12 +3135,23 @@ def guarded(ctx, label, fn, *args):
 
 HARD_SECONDS = 105                  # the manifest's 120 s less 15: the answer is built and printed after the reading clock, and past this the tool answers that it did not finish
 PRINTING = [False]                  # the answer has begun to be written: a signal after that must not write a second one
+STOPPING = [False]                  # a stop is being answered: a second stop signal while it is must not cut that answer short
+
+
+PARTIAL_BUILDING = [False]          # the partial answer of the hard limit is being built
+PARTIAL_WRITING = [False]           # and has begun to be written: no other document may follow it
 
 
 def _stopped_by_signal(signum, frame):
     """SIGINT, SIGTERM and SIGHUP end the call with one JSON answer and the exit code 128 + the signal, not a traceback and not silence. A signal
     while the partial answer of the hard limit is being built (not yet being written) is answered by a minimal failed document; one while a
-    document is being written leaves that document, which is cut (the reader of a half-written answer has to expect that)."""
+    document is being written leaves that document, which is cut (the reader of a half-written answer has to expect that). A second stop signal that
+    arrives while the first is being answered (a signal handler can be entered again between two bytecodes of itself, and a second signal is usually
+    already pending when the first is handled) changes nothing: it used to find PRINTING set, skip the document and raise SystemExit from inside the
+    first handler, which ended the call with the exit code and no document."""
+    if STOPPING[0]:
+        return
+    STOPPING[0] = True
     if not PRINTING[0] or (PARTIAL_BUILDING[0] and not PARTIAL_WRITING[0]):
         PRINTING[0] = True
         PARTIAL_BUILDING[0] = False
@@ -2462,9 +3160,19 @@ def _stopped_by_signal(signum, frame):
     raise SystemExit(128 + signum)
 
 
+# The stop signals are answered from here on: _stopped_by_signal needs only TOOL, json, sys and the flags above, all defined before this line. The
+# SIGALRM hard limit is not armed here: only main() arms it, with its deadline.
+def install_stop_handlers():
+    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), _stopped_by_signal)
+
+
+install_stop_handlers()
+# the stop handlers are installed here, at module level
+
+
 HARD_GRACE = 5                      # seconds the partial answer of the hard limit has, before the failed one
-PARTIAL_BUILDING = [False]          # the partial answer of the hard limit is being built
-PARTIAL_WRITING = [False]           # and has begun to be written: no other document may follow it
 
 
 def _hard_limit_last(signum, frame):
@@ -2523,9 +3231,7 @@ def _hard_limit(signum, frame):
 
 
 def install_signal_handlers():
-    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
-        if hasattr(signal, name):
-            signal.signal(getattr(signal, name), _stopped_by_signal)
+    install_stop_handlers()
     if hasattr(signal, "setitimer") and hasattr(signal, "SIGALRM"):
         signal.signal(signal.SIGALRM, _hard_limit)
         signal.setitimer(signal.ITIMER_REAL, HARD_SECONDS)
@@ -2535,7 +3241,7 @@ def main():
     install_signal_handlers()
     try:
         args = json.load(sys.stdin)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")
@@ -2562,8 +3268,11 @@ def main():
     write_values = args.get("write_values", False)
     if not isinstance(write_values, bool):
         fail("write_values must be true or false")
+    clr_tables = args.get("clr_tables", False)
+    if not isinstance(clr_tables, bool):
+        fail("clr_tables must be true or false")
     cfg = {"max_stream_bytes": positive_int(args, "max_stream_bytes", DEFAULT_STREAM), "max_total_bytes": positive_int(args, "max_total_bytes", DEFAULT_TOTAL),
-           "limit": positive_int(args, "limit", DEFAULT_LIMIT, MAX_LIMIT)}
+           "limit": positive_int(args, "limit", DEFAULT_LIMIT, MAX_LIMIT), "clr_tables": clr_tables}
     seconds = positive_int(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS)
     try:
         values = SecretValues(write_values)
@@ -2614,10 +3323,16 @@ def main():
                         ctx.problem("extract: no resource directory is declared")
                     if "clr_runtime_header" in d:
                         guarded(ctx, "CLR header", read_clr, img, pe, ctx, body)
+                        if clr_tables:
+                            guarded(ctx, "CLR tables", read_clr_tables, img, pe, ctx, body)
+                    elif clr_tables:
+                        ctx.problem("clr_tables: no CLR runtime header is declared, so there are no metadata tables")
+                        body["clr_tables"] = {"requested": True, "status": "no_clr_header"}
                     if "debug" in d:
                         guarded(ctx, "debug directory", read_debug, img, pe, ctx, body)
                     guarded(ctx, "Rich header", read_rich, img, pe, ctx, body)
-                    body["coverage"] = {"structures_read": READ, "structures_not_read": NOT_READ}
+                    body["coverage"] = {"structures_read": READ + ([CLR_TABLES_READ] if clr_tables else []),
+                                        "structures_not_read": [CLR_TABLES_NOT_READ if x.startswith("the CLR metadata tables") else x for x in NOT_READ] if clr_tables else NOT_READ}
             finally:
                 ctx.img = None
                 mm.close()
@@ -2665,10 +3380,33 @@ def main():
     emit(result, spill)
 
 
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees what the
+    call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole answer already
+    printed: a harness that stops a call at the moment it finishes (tests/pack-re-stop.test.ts, 1 run in 8) saw that. A signal before this point is
+    answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    os._exit(code)
+
+
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
 if __name__ == "__main__":
+    exit_code = 0
     try:
         main()
-    except SystemExit:
-        raise
+    except SystemExit as stop:
+        exit_code = _code(stop)
     except Exception as exc:  # never a traceback and never a clean answer for a failure
-        fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, shown_path(str(exc)))))
+        try:
+            fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, shown_path(str(exc)))))
+        except SystemExit as stop:
+            exit_code = _code(stop)
+    _leave(exit_code)

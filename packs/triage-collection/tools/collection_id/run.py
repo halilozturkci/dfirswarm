@@ -87,7 +87,7 @@ def describe(exc):
 
 def fail(message, **extra):
     """An error answer: JSON, exit 1, never a traceback. A name in it that is shaped like a credential is withheld."""
-    write_answer({"error": scrub(str(message)), "status": "failed", **extra})
+    write_answer({"error": scrub(str(message)), "status": "failed", "status_basis": "the tool stopped with an error: %s" % scrub(str(message)), **extra})
     raise SystemExit(1)
 
 
@@ -105,7 +105,7 @@ def scrub_all(value):
 def _stopped_by_signal(signum, frame):
     """A kill leaves no half-written file (atexit runs on SystemExit) and no empty answer."""
     print(json.dumps({"error": "the tool was stopped by signal %d before it finished; nothing it was writing was published" % signum,
-                      "status": "failed"}))
+                      "status": "failed", "status_basis": "stopped by signal %d before the answer was complete" % signum}))
     raise SystemExit(128 + signum)
 
 
@@ -217,19 +217,33 @@ def shown_output(path):
         return str(path)
 
 
-def same_bytes(a, b):
+def same_bytes(a, b, deadline=None):
+    """Whether two files hold the same bytes (read in blocks, never whole). Each is opened without waiting and without following a link
+    (O_NONBLOCK, O_NOFOLLOW) and looked at with fstat first: only two regular files of one size are read, so a FIFO, a device, a
+    directory or a link at either name is never read (a FIFO would hold the tool for ever). Past `deadline` (a monotonic time) the
+    answer is False."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fa = fb = None
     try:
-        if os.path.getsize(a) != os.path.getsize(b):
+        fa = os.fdopen(os.open(str(a), flags), "rb")
+        fb = os.fdopen(os.open(str(b), flags), "rb")
+        sa, sb = os.fstat(fa.fileno()), os.fstat(fb.fileno())
+        if (sa.st_mode & 0o170000) != 0o100000 or (sb.st_mode & 0o170000) != 0o100000 or sa.st_size != sb.st_size:
             return False
-        with open(a, "rb") as fa, open(b, "rb") as fb:
-            while True:
-                x, y = fa.read(CHUNK), fb.read(CHUNK)
-                if x != y:
-                    return False
-                if not x:
-                    return True
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            x, y = fa.read(CHUNK), fb.read(CHUNK)
+            if x != y:
+                return False
+            if not x:
+                return True
     except OSError:
         return False
+    finally:
+        for fh in (fa, fb):
+            if fh is not None:
+                fh.close()
 
 
 def publish(tmp, path):
@@ -1096,6 +1110,8 @@ def _b_named_secret(flat):
     size = len(flat)
     for m in _B_DELIM.finditer(flat):
         i = m.start()
+        if i > 0 and flat[i - 1] in "=:":                 # a delimiter right after a delimiter has no name before it: a run of 2 MiB of them is skipped, not judged one by one
+            continue
         j = i + 1
         while j < size and j - i <= 5 and flat[j] in " \t\"'\\":
             j += 1
@@ -1488,6 +1504,76 @@ UPLOAD_MARKERS = ("StoredName", "UploadId", "StoredSize", "Components")
 LOG_LEVEL_WORDS = ("TRACE", "DEBUG", "DEFAULT", "INFO", "WARN", "WARNING", "ERROR", "FATAL", "CRITICAL")
 
 
+ENCRYPTION_KEYS = ("Scheme", "EncryptedPass", "PublicKey")      # the keys of metadata.json beside data.zip in an encrypted Velociraptor collection (0.77.2)
+ENCRYPTION_METADATA_BYTES = 65536
+MAX_ENCRYPTED_LISTED = 1000
+ENCRYPTED_REASON = "an encrypted Velociraptor collection: its records are inside the encrypted payload (data.zip), which is not decrypted and was not read"
+
+
+def withhold_value(value, where):
+    """A value that may hold a secret (an encrypted password, a key) never leaves in an answer or a table: it goes to the values file (a job
+    run with secret_output and write_values) and what is printed names its length and a finding id. Returns the marker."""
+    WITHHELD["count"] += 1
+    fid = "W%06d" % WITHHELD["count"]
+    if VALUES[0] is not None:
+        VALUES[0].add(fid, {"where": where}, value)
+    return "<value withheld, %d characters, %s>" % (len(value), fid)
+
+
+def read_encryption_metadata(path, shown_path):
+    """What metadata.json beside data.zip says: which of the documented keys it holds and how long each value is. A value is withheld whole
+    (it may be an encrypted password or a key). The file is opened without following a link, as a regular file only, and read to 64 KiB."""
+    info = {"present": True, "bytes": None, "keys": [], "other_keys": 0, "values": {}}
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(22, "not a regular file")
+        with os.fdopen(fd, "rb") as fh:
+            fd = None
+            data = fh.read(ENCRYPTION_METADATA_BYTES + 1)
+    except (OSError, ValueError) as exc:
+        if fd is not None:
+            os.close(fd)
+        info["problem"] = "metadata.json could not be read (%s)" % describe(exc)
+        return info
+    if len(data) > ENCRYPTION_METADATA_BYTES:
+        info["problem"] = "metadata.json is over %d bytes: not parsed" % ENCRYPTION_METADATA_BYTES
+        return info
+    info["bytes"] = len(data)
+    try:
+        doc = json.loads(data.decode("utf-8-sig"))
+    except (ValueError, RecursionError):
+        info["problem"] = "metadata.json is not JSON text: not read"
+        return info
+    if not isinstance(doc, dict):
+        info["problem"] = "metadata.json is not a JSON object: not read"
+        return info
+    for key in ENCRYPTION_KEYS:
+        if key in doc:
+            value = doc[key]
+            try:
+                text = value if isinstance(value, str) else json.dumps(value)
+            except (ValueError, TypeError, RecursionError):
+                text = ""
+            info["keys"].append(key)
+            info["values"][key] = withhold_value(text, "%s, %s" % (shown_path, key))
+    info["other_keys"] = len(doc) - len(info["keys"])
+    return info
+
+
+def note_encrypted(survey, enc):
+    """A directory that holds data.zip, and metadata.json with the Scheme key, and nothing else: an encrypted Velociraptor collection."""
+    if enc["metadata"] is None:
+        return
+    info = read_encryption_metadata(os.path.join(survey.root, enc["metadata"]), enc["metadata"])
+    if "Scheme" not in info["keys"]:
+        return
+    survey.encrypted_total += 1
+    if len(survey.encrypted) < MAX_ENCRYPTED_LISTED:
+        survey.encrypted.append({"payload": enc["payload"], "directory": os.path.dirname(enc["payload"]), "metadata": info})
+
+
 class Survey:
     def __init__(self, root, limit, problems):
         self.root = root
@@ -1501,6 +1587,7 @@ class Survey:
         self.kape = {}                        # (directory, run id) -> {"copy": rel, "skip": rel, "console": rel}
         self.uac_logs, self.uac_dirs = [], []
         self.velociraptor = {}                # directory -> {"uploads": rel, "context": rel}
+        self.encrypted, self.encrypted_total = [], 0       # encrypted Velociraptor collections: the first MAX_ENCRYPTED_LISTED, and how many
         self.collected_data_logs = []
         self.layout_clues = []
         self.counts = {"disk_container": 0, "memory_capture": 0, "archive": 0, "unknown": 0, "unknown_nested": 0}
@@ -1540,6 +1627,7 @@ def walk(survey):
             continue
         survey.directories += 1
         subdirs = []
+        enc = {"payload": None, "metadata": None, "other": False}      # what the directory holds, for the encrypted form of a Velociraptor collection
         for position, entry in enumerate(entries):
             if out_of_time():
                 survey.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack) + len(subdirs),
@@ -1552,8 +1640,15 @@ def walk(survey):
             except OSError as exc:
                 survey.errors_total += 1
                 survey.problem("walk_error", survey.rel(entry.path), "the entry could not be examined", exc, survey.errors)
+                enc["other"] = True
                 continue
             mode = st.st_mode
+            if stat.S_ISREG(mode) and entry.name == "data.zip":
+                enc["payload"] = survey.rel(entry.path)
+            elif stat.S_ISREG(mode) and entry.name == "metadata.json":
+                enc["metadata"] = survey.rel(entry.path)
+            elif not stat.S_ISDIR(mode):
+                enc["other"] = True
             if stat.S_ISLNK(mode):
                 survey.links_total += 1
                 survey.problem("symbolic_link", survey.rel(entry.path), "a symbolic link: not followed", None, survey.links)
@@ -1572,6 +1667,8 @@ def walk(survey):
             else:
                 survey.special_total += 1
                 survey.problem("special_file", survey.rel(entry.path), "not a regular file: not read", None, survey.special)
+        if enc["payload"] is not None and not enc["other"] and not inside_collected_data(enc["payload"]):
+            note_encrypted(survey, enc)
         stack.extend(reversed(subdirs))
 
 
@@ -2136,6 +2233,16 @@ def main():
         velo_markers += [shown(v, "log path") for v in files.values() if v]
         runs.add({"collector": "Velociraptor", "container": rec["container"], "collector_version": "unknown", "record": rec})
 
+    for item in sorted(survey.encrypted, key=lambda i: sort_key(i["payload"])):
+        rec = new_record(survey, item["payload"], "velociraptor_encrypted", "velociraptor_encrypted/1")
+        rec.update(status="unsupported", reason=ENCRYPTED_REASON, decrypted=False, metadata=item["metadata"],
+                   recognised_by=["metadata.json holds the Scheme key beside data.zip, and nothing else is in the directory"])
+        records.append(rec)
+        failure_sources.append(rec)
+        runs.add({"collector": "Velociraptor", "container": shown(item["directory"] or ".", "log path"), "collector_version": "unknown", "record": rec})
+    if survey.encrypted_total:
+        candidates.append({"collector": "Velociraptor", "basis": "data.zip beside a metadata.json that holds the Scheme key: an encrypted collection",
+                           "observed_markers": [shown(i["payload"], "log path") for i in survey.encrypted[:FIRST_PROBLEMS]], "markers_total": survey.encrypted_total})
     if kape_markers:
         candidates.append({"collector": "KAPE", "basis": "log files named like KAPE's copy, skip and console logs",
                            "observed_markers": kape_markers[:FIRST_PROBLEMS], "markers_total": len(kape_markers)})
@@ -2199,8 +2306,12 @@ def main():
         caveats.append("files named like memory-bearing files are present (%s): they are not captures" % ", ".join(sorted(set(survey.memory_bearing))))
     if survey.stopped or survey.errors_total:
         caveats.append("the walk was incomplete")
+    if survey.encrypted_total:
+        caveats.append("%d encrypted Velociraptor collection(s): the collector's records are inside the encrypted payload and were not read" % survey.encrypted_total)
     not_observed = [] if undetermined else [label for key, label in (("disk_container", "disk containers"), ("memory_capture", "memory captures"))
                                             if survey.counts[key] == 0]
+    if survey.encrypted_total:
+        not_observed.append("the collector's records of %d encrypted Velociraptor collection(s) (inside the encrypted payload; not read, not decrypted)" % survey.encrypted_total)
 
     problem_lines = []
     if survey.stopped:
@@ -2210,6 +2321,8 @@ def main():
     for r in records:
         if r["status"] != "parsed":
             problem_lines.append("%s is %s" % (r["log"], r["status"]))
+    if survey.encrypted_total > len(survey.encrypted):
+        problem_lines.append("%d encrypted Velociraptor collection(s) are not listed (the first %d are)" % (survey.encrypted_total - len(survey.encrypted), len(survey.encrypted)))
     status = "complete" if not problem_lines else "partial"
     problem_basis = "; ".join(problem_lines[:10]) + ("; and %d more (see the records)" % (len(problem_lines) - 10) if len(problem_lines) > 10 else "")
 
@@ -2225,7 +2338,8 @@ def main():
                               "is present",
                      "not_observed": not_observed, "not_observed_complete": not caveats, "not_observed_caveats": caveats,
                      "not_observed_basis": "no object of this kind was seen among the files walked, by signature or name; a limit of this "
-                                           "delivery, not a finding about the source"},
+                                           "delivery, not a finding about the source. An entry that says it was not read is a collector's record that is inside "
+                                           "an encrypted payload"},
         "failed_target_count": failure_count,
         "failed_targets_seen": seen,
         "failed_target_count_basis": basis,

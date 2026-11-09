@@ -776,6 +776,8 @@ export class ModelGateway {
   private readonly statePath: string;
   private readonly quiet: boolean;
   private readonly traceEmit: ((record: Record<string, unknown>) => void) | null;
+  /** The refusal log's clock. A test drives it, so the log's minute boundary is not the host's. */
+  private readonly now: () => number;
   state: GatewayState;
   private lastLogHash: string | null = null;
   private inFlight = new Map<string, number>();
@@ -786,7 +788,7 @@ export class ModelGateway {
   /** For tests and the ready file: the port bound. */
   port = 0;
 
-  constructor(config: GatewayConfig, keys: Map<string, string>, options: { quiet?: boolean; traceEmit?: ((record: Record<string, unknown>) => void) | null } = {}) {
+  constructor(config: GatewayConfig, keys: Map<string, string>, options: { quiet?: boolean; traceEmit?: ((record: Record<string, unknown>) => void) | null; now?: () => number } = {}) {
     this.config = config;
     this.keys = keys;
     this.limits = { ...DEFAULT_LIMITS, ...(config.limits ?? {}) };
@@ -794,6 +796,7 @@ export class ModelGateway {
     this.statePath = join(config.sandbox, GATEWAY_STATE_REL);
     this.quiet = options.quiet ?? false;
     this.traceEmit = options.traceEmit ?? null;
+    this.now = options.now ?? Date.now;
     mkdirSync(dirname(this.logPath), { recursive: true });
     this.state = this.loadState();
     this.lastLogHash = this.loadLastHash();
@@ -846,10 +849,10 @@ export class ModelGateway {
     // seat and reason each minute are written, the rest counted, and the
     // count is written when the minute turns.
     const key = `${seat ?? "?"}:${code}`;
-    const minute = Math.floor(Date.now() / 60_000);
+    const minute = Math.floor(this.now() / 60_000);
     let seen = this.refusalsThisMinute.get(key);
     if (seen && seen.minute !== minute) {
-      if (seen.count > this.limits.refusal_log_per_minute) this.log({ at: new Date().toISOString(), seat, refused: code, suppressed: seen.count - this.limits.refusal_log_per_minute, minute: new Date(seen.minute * 60_000).toISOString() });
+      if (seen.count > this.limits.refusal_log_per_minute) this.log({ at: new Date(this.now()).toISOString(), seat, refused: code, suppressed: seen.count - this.limits.refusal_log_per_minute, minute: new Date(seen.minute * 60_000).toISOString() });
       seen = undefined;
     }
     if (!seen) {
@@ -858,7 +861,7 @@ export class ModelGateway {
       this.traceEmit?.({ tool: "model_gateway_refused", args: { via: "model-gateway", agent: seat, code }, result: { ok: false, status, message } });
     }
     seen.count += 1;
-    if (seen.count <= this.limits.refusal_log_per_minute) this.log({ at: new Date().toISOString(), seat, refused: code, status, message, ...extra });
+    if (seen.count <= this.limits.refusal_log_per_minute) this.log({ at: new Date(this.now()).toISOString(), seat, refused: code, status, message, ...extra });
   }
 
   private take(seat: string): boolean {

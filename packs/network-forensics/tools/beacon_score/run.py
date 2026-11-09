@@ -33,24 +33,52 @@ What a result can and cannot say:
   - The whole interval list is kept: inline a bounded page, the rest in a file
     the answer names (and intervals.tsv in out_dir when one is given).
 """
-import array
-import datetime
 import json
-import math
 import os
-import re
-import secrets
 import signal
 import sys
+
+TOOL = {"name": "beacon_score", "version": 9}
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of this file is still loading (the other imports, the compile of what follows): the first signal
+    counts, nothing was read, started or written, and the one answer says so. main() installs the tool's own handlers and replaces this one.
+    What no script can answer is a stop that arrives before the interpreter has run these first lines (its own start-up)."""
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    try:
+        sys.stdout.write(json.dumps({"tool": TOOL, "status": "partial", "ok": False, "stage": "starting",
+                                     "status_basis": "stopped by signal %d before any work: nothing was read, started or written" % signum,
+                                     "interrupted_by_signal": signum}) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by main() once the module is loaded
+
+
+import array
+import datetime
+import errno
+import math
+import re
+import secrets
+import select
+import stat
 import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "beacon_score", "version": 4}
 MAX_EPOCH = 4_102_444_800        # 2100-01-01: a number above it is not epoch seconds (milliseconds, microseconds, nanoseconds)
 MAX_EVENTS = 3_000_000          # measured: 336 MB resident at this many events (it was 1.19 GB for the same 3 million before the series was packed)
 MAX_INLINE_EVENTS = 500_000     # a series passed in `timestamps`: the arguments are parsed whole (about 50 MB resident at this many), so a longer one belongs in timestamps_file
 MAX_ARGUMENT_BYTES = 32 << 20   # the arguments are read up to this many bytes; more is refused before it is parsed
+ARGUMENT_COMMA_SLACK = 4096     # the commas the arguments may hold beyond one for each of MAX_INLINE_EVENTS events (the other parameters, a label, a path)
+ARGUMENT_READ_SECONDS = 45      # stdin must be closed by then (the manifest's limit is 60); BEACON_SCORE_ARGUMENT_SECONDS shortens it for the tests
 DEFAULT_LIMIT = 40
 MAX_VALUE_CHARS = 4096          # a longer line of a timestamps_file is not a time
 DEFAULT_SECONDS = 40            # the tool's own clock for reading; the manifest's limit is 60 seconds
@@ -63,7 +91,46 @@ def describe(exc):
     return "%s: %s" % (type(exc).__name__, getattr(exc, "strerror", None) or str(exc))
 
 
+def holds_files(directory):
+    """Whether `directory` holds anything: one entry is looked at, never the whole listing (a caller's directory can hold millions of names)."""
+    with os.scandir(directory) as entries:
+        return next(entries, None) is not None
+
+
+class signals_held:
+    """The stop signals wait, pending, while a hidden temporary file is made and registered for removal: a signal that arrives between
+    the two would run the clean-up before it knew of the file, and the process would leave with the file behind. Where the platform cannot
+    hold signals the registration still follows at once, so only the file's own creation is unprotected."""
+
+    def __enter__(self):
+        self.before = None
+        if hasattr(signal, "pthread_sigmask"):
+            self.before = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+        return self
+
+    def __exit__(self, *_exc):
+        if self.before is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, self.before)
+        return False
+
+
+_TEMPS = set()      # the hidden .<name>-* files of the paging objects that are not yet under their final names
+
+
+def drop_temps():
+    """A refused, failed, signalled or write-failed run leaves no hidden partial file in tool-output: only a finished file is moved to its name."""
+    for path in list(_TEMPS):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        _TEMPS.discard(path)
+
+
 def fail(message, **extra):
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})     # one document: a stop that arrives while this is written waits, and the tool leaves with it
+    drop_temps()
     print(json.dumps({"error": message, "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -123,9 +190,27 @@ class LosslessPage:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
 
+    def _abandon(self):
+        """The file cannot be finished (a full disk, a size limit, a failed move): close it and remove it, so no hidden partial file stays."""
+        try:
+            if self._out is not None:
+                self._out.close()
+        except OSError:
+            pass
+        if self._tmp is not None:
+            _TEMPS.discard(str(self._tmp))
+            try:
+                os.unlink(self._tmp)
+            except OSError:
+                pass
+
     def _write(self, row):
-        self._out.write(json.dumps(row, ensure_ascii=True, default=str))
-        self._out.write("\n")
+        try:
+            self._out.write(json.dumps(row, ensure_ascii=True, default=str))
+            self._out.write("\n")
+        except OSError:
+            self._abandon()
+            raise
 
     def add(self, row):
         self.total += 1
@@ -134,8 +219,10 @@ class LosslessPage:
             return
         if self._out is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-            self._tmp = Path(name)
+            with signals_held():
+                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
+                self._tmp = Path(name)
+                _TEMPS.add(name)          # known to the clean-up from the moment it exists
             self._out = os.fdopen(fd, "w", encoding="utf-8")
             for kept in self.page:
                 self._write(kept)
@@ -144,10 +231,15 @@ class LosslessPage:
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
         if self._out is not None:
-            self._out.flush()
-            os.fsync(self._out.fileno())
-            self._out.close()
-            os.replace(self._tmp, self.path)
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                os.replace(self._tmp, self.path)
+            except OSError:
+                self._abandon()
+                raise
+            _TEMPS.discard(str(self._tmp))
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
@@ -260,6 +352,8 @@ class Stopped(BaseException):
 
 
 def _stop(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)     # the first signal counts: a second one starts no second answer
     raise Stopped(signum)
 
 
@@ -304,7 +398,16 @@ def values_of(file_arg, raw, counters, deadline=None):
     be a time is counted and yields None; a blank line and a comment are not positions. A line the rest of which is skipped is
     skipped under the clock (`deadline`): a file with no line break in it is as long as the disk."""
     if file_arg is not None:
-        with open(file_arg, "r", encoding="utf-8", errors="replace") as fh:
+        # opened without blocking and looked at once: a name that became a pipe since main() checked it is refused, never waited on for a writer
+        fd = os.open(file_arg, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(errno.EINVAL, "not a regular file")
+            source = os.fdopen(fd, "r", encoding="utf-8", errors="replace")
+        except BaseException:
+            os.close(fd)
+            raise
+        with source as fh:
             index = 0
             while True:
                 line = fh.readline(MAX_VALUE_CHARS + 1)
@@ -336,17 +439,53 @@ def median_of(values):
     return (ordered[n // 2 - 1] + ordered[n // 2]) / 2
 
 
+def read_arguments(began):
+    """stdin up to MAX_ARGUMENT_BYTES + 1 bytes, until it is closed, under the tool's clock: a writer that never closes it ends the call as JSON at
+    ARGUMENT_READ_SECONDS, not at the harness's kill. A stop signal ends the wait at once (the handler raises)."""
+    try:
+        limit = float(os.environ["BEACON_SCORE_ARGUMENT_SECONDS"])
+    except (KeyError, ValueError):
+        limit = ARGUMENT_READ_SECONDS
+    try:
+        fd = sys.stdin.fileno()
+    except (AttributeError, ValueError, OSError) as exc:
+        fail("the arguments cannot be read: there is no standard input (%s)" % describe(exc))
+    chunks, total = [], 0
+    while total <= MAX_ARGUMENT_BYTES:
+        wait = began + limit - time.monotonic()
+        if wait <= 0:
+            fail("the arguments did not arrive within %g seconds: standard input was not closed by the writer" % limit)
+        try:
+            ready, _, _ = select.select([fd], [], [], min(wait, 1.0))
+            chunk = os.read(fd, min(1 << 20, MAX_ARGUMENT_BYTES + 1 - total)) if ready else None
+        except OSError as exc:
+            fail("the arguments could not be read (%s)" % describe(exc))
+        if chunk is None:
+            continue
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
+
+
 def main():
     began = time.monotonic()         # the clock starts here: reading the arguments is part of what max_seconds covers
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, _stop)
-    given = sys.stdin.buffer.read(MAX_ARGUMENT_BYTES + 1)
+    given = read_arguments(began)
     if len(given) > MAX_ARGUMENT_BYTES:
         # the rest is read and dropped (for a few seconds at most), so that the caller writing it is not left with a broken pipe instead of the answer
         drain_until = time.monotonic() + 5
         while time.monotonic() < drain_until and sys.stdin.buffer.read(1 << 20):
             pass
         fail("the arguments are larger than %d MiB: give the series as timestamps_file (one time per line, up to %d events), not inline" % (MAX_ARGUMENT_BYTES >> 20, MAX_EVENTS))
+    commas = given.count(b",")
+    if commas > MAX_INLINE_EVENTS + ARGUMENT_COMMA_SLACK:
+        # a list of MAX_INLINE_EVENTS events has that many commas less one, in any nesting: more than that cannot be an inline series within the cap, and is
+        # refused before the parse builds a Python object for each of up to 32 MiB of one-byte elements (428 MB resident for 32 MiB of 0.5,)
+        fail("the arguments hold %d commas, more than a series of at most %d events passed inline can: give the series as timestamps_file (one time per line, up to %d events)"
+             % (commas, MAX_INLINE_EVENTS, MAX_EVENTS))
     try:
         args = json.loads(given)
     except (ValueError, RecursionError) as exc:
@@ -384,7 +523,7 @@ def main():
             fail("out_dir must be a non-empty string")
         out_dir = resolve_output(out_dir, "out_dir")
         try:
-            if os.path.exists(out_dir) and os.listdir(out_dir):
+            if os.path.exists(out_dir) and holds_files(out_dir):
                 fail("out_dir already holds files", out_dir=out_dir)
         except OSError as exc:
             fail("out_dir cannot be listed (%s)" % describe(exc), out_dir=out_dir)
@@ -618,6 +757,7 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Stopped as stop:
+        drop_temps()
         print(json.dumps({"tool": TOOL, "status": "partial", "ok": False,
                           "status_basis": "the tool was stopped by signal %d while it was %s; no measurement had been answered yet" % (stop.signum, PROGRESS["stage"]),
                           "interrupted_by_signal": stop.signum, "values_read": PROGRESS["values_read"]}), flush=True)

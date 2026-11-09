@@ -217,12 +217,31 @@ async function block(path: string, name: string): Promise<string> {
 
 const PACKS = join(ROOT, "packs");
 
-test("the two tools carry the same name block, and the network pack's withholding block and the windows pack's place, page and stop blocks as shipped there", async () => {
+const EXTENT = join(PACKS, "ransomware-response", "tools", "encryption_extent", "run.py");
+const VALIDATE = join(PACKS, "ransomware-response", "tools", "recovery_validate", "run.py");
+const REPORT = join(PACKS, "ransomware-response", "tools", "ransomware_scope_report", "run.py");
+const CORRELATE = join(PACKS, "ransomware-response", "tools", "backup_destruction_correlate", "run.py");
+const FAMILY = join(PACKS, "ransomware-response", "tools", "ransomware_family_match", "run.py");
+const CATALOG = join(PACKS, "ransomware-response", "tools", "decryptor_catalog", "run.py");
+
+test("the three tools carry the same name block, and the network pack's withholding block and the windows pack's place, page and stop blocks as shipped there", async () => {
   assert.equal(await block(SURVEY, "NAMES"), await block(NOTES, "NAMES"));
   assert.equal(await block(SURVEY, "BACKSTOP"), await block(NOTES, "BACKSTOP"));
+  assert.equal(await block(EXTENT, "NAMES"), await block(NOTES, "NAMES"));
+  assert.equal(await block(EXTENT, "BACKSTOP"), await block(NOTES, "BACKSTOP"));
+  assert.equal(await block(VALIDATE, "NAMES"), await block(NOTES, "NAMES"));
+  assert.equal(await block(VALIDATE, "BACKSTOP"), await block(NOTES, "BACKSTOP"));
+  assert.equal(await block(REPORT, "NAMES"), await block(NOTES, "NAMES"));
+  assert.equal(await block(REPORT, "BACKSTOP"), await block(NOTES, "BACKSTOP"));
+  assert.equal(await block(CORRELATE, "NAMES"), await block(NOTES, "NAMES"));
+  assert.equal(await block(CORRELATE, "BACKSTOP"), await block(NOTES, "BACKSTOP"));
+  assert.equal(await block(FAMILY, "NAMES"), await block(NOTES, "NAMES"));
+  assert.equal(await block(FAMILY, "BACKSTOP"), await block(NOTES, "BACKSTOP"));
+  assert.equal(await block(CATALOG, "NAMES"), await block(NOTES, "NAMES"));
+  assert.equal(await block(CATALOG, "BACKSTOP"), await block(NOTES, "BACKSTOP"));
   const network = await block(join(PACKS, "network-forensics", "tools", "pcap_extract", "run.py"), "WITHHOLDING");
   const regkv = join(PACKS, "windows-forensics", "tools", "regkv", "run.py");
-  for (const path of [SURVEY, NOTES]) {
+  for (const path of [SURVEY, NOTES, EXTENT, VALIDATE, REPORT, CORRELATE, FAMILY, CATALOG]) {
     assert.equal(await block(path, "WITHHOLDING"), network, `${path}: withholding`);
     for (const name of ["PLACE", "PAGE", "STOP"]) assert.equal(await block(path, name), await block(regkv, name), `${path}: ${name}`);
     const text = await readFile(path, "utf8");

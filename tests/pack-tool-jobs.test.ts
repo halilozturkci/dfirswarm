@@ -10,7 +10,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { heldOwnPaths, lacksProgram, ownPathsToOut, placedOutputs, stagedPaths, stagedPathsIn, toolArgsForJob, writtenToOf } from "../extensions/protocol.ts";
+import { emptyDirPlaces, heldOwnPaths, lacksProgram, ownPathsToOut, placedOutputs, stagedPaths, stagedPathsIn, toolArgsForJob, writtenToOf } from "../extensions/protocol.ts";
 import { LIB, ROOT, runPy, withCwd } from "./tool-library-harness.ts";
 
 const run = (stderr: string, exit_code: number | null = 1, stdout = "") => ({ exit_code, stdout, stderr });
@@ -199,6 +199,20 @@ test("job_run reads a file already there, empty or not, writes into an empty dir
     // A job the job service failed or cancelled sealed nothing.
     assert.deepEqual(placedOutputs(cwd, { "work/s01/q": "store/jobs/j000031/out/q" }, { state: "failed" }), { not_written: { "work/s01/q": "store/jobs/j000031/out/q" } });
     assert.deepEqual(placedOutputs(cwd, {}, { state: "committed" }), {});
+    // An empty directory given for reading was taken as an output place: the reply names that as the cause when nothing was written there,
+    // and only for that place (not for a new path, a place that was written, or a directory with entries).
+    const emptyDirs = await emptyDirPlaces(cwd, given, "s01");
+    assert.deepEqual([...emptyDirs], ["work/s01/empty-dir"]);
+    const both = { "work/s01/empty-dir": "store/jobs/j000031/out/empty-dir", "work/s01/new": "store/jobs/j000031/out/new" };
+    const none = { state: "committed", outputs: { files: 0, list: [] } };
+    const said = placedOutputs(cwd, both, none, { emptyDirs });
+    assert.deepEqual(said.not_written, both);
+    assert.deepEqual(Object.keys(said.not_written_cause ?? {}), ["work/s01/empty-dir"]);
+    assert.match(said.not_written_cause!["work/s01/empty-dir"]!, /empty directory was given for reading.*output place.*nothing was read from it/);
+    assert.deepEqual(placedOutputs(cwd, both, none), { not_written: both }, "without the empty-directory facts the reply adds no cause");
+    assert.deepEqual(placedOutputs(cwd, both, { state: "committed", outputs: { files: 1, list: [{ path: "empty-dir/a" }] } }, { emptyDirs }), { written_to: { "work/s01/empty-dir": both["work/s01/empty-dir"] }, not_written: { "work/s01/new": both["work/s01/new"] } }, "a place that was written has no cause");
+    const jobRun = await readFile(join(ROOT, "extensions", "agent-swarm.ts"), "utf8");
+    assert.match(jobRun, /placedOutputs\(toolCtx\.cwd, writtenToOf\(params\.args \?\? \{\}, toolArgs, res\.job\), res\.result, \{ emptyDirs \}\)/, "job_run's reply passes the empty-directory facts");
   });
 });
 
