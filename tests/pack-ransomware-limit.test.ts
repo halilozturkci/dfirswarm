@@ -71,7 +71,15 @@ async function check(script: string, cwd: string, root: string, table: string): 
   assert.ok(answer.status, "one JSON answer with a status");
   assert.ok(run.elapsed < SECONDS + 2, `ended in ${run.elapsed.toFixed(1)} s, over max_seconds + 2`);
   const page = answer.pages[table] as Json;
-  assert.ok(page.matched >= FILES / 2, `${table}: ${page.matched} rows matched`);
+  // The tool's own clock may run out first where the file system is slow (a hosted macOS runner made 37,125 of the 100,000 in the 30 s): it then says so
+  // (time_limit.reached, status partial) and the rows it has are the prefix it read. Linux is held to the whole tree.
+  const reached = (answer.time_limit as Json | undefined)?.reached === true;
+  if (reached && process.platform !== "linux") {
+    assert.equal(answer.status, "partial", `${table}: the clock ran out and the status is ${answer.status}`);
+    assert.ok(page.matched > 0, `${table}: ${page.matched} rows matched`);
+  } else {
+    assert.ok(page.matched >= FILES / 2, `${table}: ${page.matched} rows matched`);
+  }
   assert.equal(typeof page.inline_cut_by_size, "string", `${table}: the cut by size is named`);
   assert.match(page.inline_cut_by_size, /512|524288/);
   assert.ok(page.returned < page.matched && page.returned < 1_000_000, `${table}: the rows shown inline are cut (${page.returned} of ${page.matched})`);

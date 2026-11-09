@@ -19,6 +19,7 @@ import type { ChildProcess } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { PYTHON3 } from "./host-gates.ts";
 import { WIN, stub } from "./windows-pack-harness.ts";
 
 /** The status word of the STOP block's answer. One constant, so that a sweep that renames the word changes one line. */
@@ -123,7 +124,7 @@ export type Started = {
 
 /** Start a tool the way the harness does (a JSON document on stdin, AGENT_ID set), recorded by pid, killed at MAX_RUN_MS. */
 export function startTool(tool: ToolRef, cwd: string, args: unknown, env: Env = {}, rawStdin?: string): Started {
-  const child = spawn("python3", [scriptOf(tool)], { cwd, env: { ...process.env, AGENT_ID: "s1", ...env }, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(PYTHON3 || "python3", [scriptOf(tool)], { cwd, env: { ...process.env, AGENT_ID: "s1", ...env }, stdio: ["pipe", "pipe", "pipe"] });
   const pid = child.pid as number;
   livePids.add(pid);
   const out: Buffer[] = [];
@@ -450,17 +451,25 @@ export function assertJsonAnswer(run: { code: number | null; stdout: string; std
 export async function fuzzTool(tool: ToolRef, sets: unknown[], seed: number, opts: { cwd: string; env?: Env }): Promise<Record<string, number>> {
   const statuses: Record<string, number> = {};
   let next = 0;
+  let failure: { error: unknown } | undefined;
   const worker = async (): Promise<void> => {
     for (;;) {
+      if (failure) return;     // one set failed: no worker starts another run (the caller may remove cwd as soon as this returns)
       const i = next++;
       if (i >= sets.length) return;
-      const run = await runTool(tool, opts.cwd, sets[i], opts.env ?? {});
-      const label = `seed ${seed}, set ${i}: ${JSON.stringify(sets[i])}`.slice(0, 300);
-      const answer = assertJsonAnswer(run, label);
-      statuses[String(answer.status)] = (statuses[String(answer.status)] ?? 0) + 1;
+      try {
+        const run = await runTool(tool, opts.cwd, sets[i], opts.env ?? {});
+        const label = `seed ${seed}, set ${i}: ${JSON.stringify(sets[i])}`.slice(0, 300);
+        const answer = assertJsonAnswer(run, label);
+        statuses[String(answer.status)] = (statuses[String(answer.status)] ?? 0) + 1;
+      } catch (error) {
+        failure ??= { error };
+        return;
+      }
     }
   };
-  await Promise.all(Array.from({ length: 6 }, worker));
+  await Promise.all(Array.from({ length: 6 }, worker));     // every worker, and every run it started, has ended before this returns or throws
+  if (failure) throw failure.error;
   return statuses;
 }
 

@@ -3358,15 +3358,17 @@ test("a stop signal at the end of the shared block, before main() installs the h
 
 test("the three tools deliver a whole answer to a reader that takes it steadily but slowly for longer than the stall clock", async () => {
   // The clock was set once per os.write call, and one call on a blocking pipe returns only when all of it has gone in: a reader that took the
-  // data steadily for longer than WRITE_STALL_SECONDS ended the tool with exit 141 and a cut answer. The clock here is 4 seconds; the reader
+  // data steadily for longer than WRITE_STALL_SECONDS ended the tool with exit 141 and a cut answer. The clock here is 8 seconds; the reader
   // takes one chunk (64 KiB on Linux) every 250 ms, so the answer (about 2.9 MB) takes about 11 seconds and no single wait of the reader's comes
-  // near the clock unless the host starves the test process for seconds (at 1 second a loaded host did: the tool ended with 141).
+  // near the clock unless the host starves the test process for seconds (at 1 second a loaded host did, at 4 a hosted 2-vCPU runner did, running
+  // test files side by side: the tool ended with 141 because the reader took nothing, which is what the clock is for; the tool was right).
+  // A run under three busy loops on two CPUs did not stall at 4 either, so the starvation is the runner's; 8 seconds leaves twice the room.
   await withCwd(async (cwd) => {
     const code = String.raw`
 import importlib.util, sys
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("t", sys.argv[1]); t = importlib.util.module_from_spec(spec); spec.loader.exec_module(t)
-t.WRITE_STALL_SECONDS = 4
+t.WRITE_STALL_SECONDS = 8
 def main():
     t.send({"rows": ["row %d" % i for i in range(240000)], "tail": "the end"})
 t.run_main(main)
@@ -3388,7 +3390,7 @@ t.run_main(main)
         child.on("close", (code2) => { clearTimeout(guard); resolve({ code: code2, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), paused }); });
       });
       // What is proved is a reader slower than the stall clock, so the proof is counted from the pauses it took (the host's pace and the pipe's chunking do not enter it).
-      assert.ok(r.paused > 4.5, `${script}: the reader was not slow enough to prove anything (it paused ${r.paused.toFixed(2)} s in all)`);
+      assert.ok(r.paused > 8.5, `${script}: the reader was not slow enough to prove anything (it paused ${r.paused.toFixed(2)} s in all)`);
       assert.equal(r.code, 0, `${script}: ${r.stderr}`);
       const parsed = JSON.parse(r.stdout) as { rows: string[]; tail: string };
       assert.equal(parsed.rows.length, 240000, script);
