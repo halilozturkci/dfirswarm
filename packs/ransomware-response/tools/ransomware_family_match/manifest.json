@@ -53,6 +53,6 @@
   "example": "{\"values_file\": \"work/ransom-note-values.jsonl\", \"extensions\": [\".akira\"], \"observed_on\": \"2026-10-15\"}",
   "by": "maintainer",
   "at": "2026-11-04T12:00:00.000Z",
-  "version": 5,
-  "sha256": "331d5337d140414818d7cf71915b929c1bda8b0842b59292a867320d8b3d868f"
+  "version": 6,
+  "sha256": "94dfe7f9f199985390eeffdb72170c190a88e83546151a9a61a149e99334c2dd"
 }

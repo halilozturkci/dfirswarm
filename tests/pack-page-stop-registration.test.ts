@@ -33,7 +33,7 @@ for (const pack of readdirSync(join(ROOT, "packs"))) {
       const text = readFileSync(script, "utf8");
       if (text.includes('STOP["in_library"]')) continue;      // evtx_carve and powershell_blocks: their handler only sets a flag that the tool checks (nothing runs in the handler)
       if (!text.includes("def install_signal_handlers(")) continue;      // recovery_key_scan: its own stop machinery (a hard stop after a grace time), another entry point
-      if (text.includes("# BEGIN SHARED PAGE") && /PAGES\.append\(self\)\n\n    def add\(self, row: object\) -> None:\n        """The hidden temporary file/.test(text)) carriers.push(script);
+      if (text.includes("# BEGIN SHARED PAGE") && /PAGES\.append\(self\)\n\n    def add\(self, row: object, \*rest\) -> object:\n        """The hidden temporary file/.test(text)) carriers.push(script);
     } catch {
       /* not a tool */
     }

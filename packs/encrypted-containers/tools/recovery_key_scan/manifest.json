@@ -35,7 +35,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 12,
-  "sha256": "a542df48f5fd55077981ab03376cdbb844e1d4378adef29c04b3182e6df54b5e",
+  "sha256": "b5c1c9bd3546a85aa7b2ab88f241c7eae2b546ee586e90c360c9377791780981",
   "use": {
     "extensions": [
       ".bek"

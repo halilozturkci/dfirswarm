@@ -25,7 +25,7 @@
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
   "version": 7,
-  "sha256": "46605adb1660ac4f10cfb21a77dc191d5dfd52aea125829bef661e33dc56be2f",
+  "sha256": "564d961b3b4aeb9a28a97645c39e6bd8ac1febc45d18c8e3b1a490de893f5e90",
   "use": {
     "extensions": [
       ".7z",

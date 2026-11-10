@@ -49,6 +49,6 @@
   "example": "{\"items\": [{\"recovered\": \"work/recovered/report.docx\", \"ciphertext\": \"work/extracted/report.docx.locked\"}], \"provenance\": {\"name\": \"a public decryptor\", \"version\": \"1.0\", \"obtained\": true, \"verified\": true}}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 3,
-  "sha256": "0cb27c85c985f7a30824873f26b6bda6c33c1601481d8a679891476d21a95e08"
+  "version": 4,
+  "sha256": "6e24c292c414260e6b5241cae155e6bfaa350a53cb567ff03b04bec068e2f1c9"
 }

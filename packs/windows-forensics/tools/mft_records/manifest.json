@@ -46,7 +46,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 7,
-  "sha256": "12c03949898663fa9f7ac8367a6215f88c98d33fb281cd0ef8d35b5d06d6b365",
+  "sha256": "bfaf12940d445441dbed226ee5fc3999c17761317bdd07e36fd4b10feb13bc7b",
   "use": {
     "names": [
       "$MFT",

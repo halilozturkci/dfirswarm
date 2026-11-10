@@ -37,7 +37,7 @@ import time
 from pathlib import Path
 
 TOOL = "package_verify"
-PARSER = "package_verify/6"
+PARSER = "package_verify/7"
 
 
 DEFAULT_LIMIT = 100
@@ -1755,6 +1755,11 @@ def run_program(argv, seconds, cap, on_line):
     try:
         timed_out, over = read_bounded(proc, seconds, cap, on_line, sink)
     finally:
+        if proc.poll() is None:
+            try:
+                proc.wait(timeout=PIPE_GRACE)    # a program that closed its pipe is still exiting: its leftover is still its child, and the kill of the tree below would end it uncounted
+            except subprocess.TimeoutExpired:
+                pass
         if proc.poll() is None:
             kill_tree(proc)
         for pipe in (proc.stdout, proc.stderr):

@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "journal_export"
-PARSER = "journal_export/20"
+PARSER = "journal_export/21"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 240.0
 MAX_SECONDS = 270.0           # the most a caller may ask for (the manifest allows 300)
@@ -1911,6 +1911,11 @@ def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, secon
                 else:
                     line_sink(b"".join(pending))
         finally:
+            if proc.poll() is None:
+                try:
+                    proc.wait(timeout=PIPE_GRACE)    # a program that closed its pipe is still exiting: its leftover is still its child, and the kill of the tree below would end it uncounted
+                except subprocess.TimeoutExpired:
+                    pass
             if proc.poll() is None:
                 kill_tree(proc)
             proc.stdout.close()

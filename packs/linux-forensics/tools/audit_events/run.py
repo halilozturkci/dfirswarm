@@ -65,7 +65,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 TOOL = "audit_events"
-PARSER = "audit_events/7"
+PARSER = "audit_events/8"
 
 
 DEFAULT_LIMIT = 100
@@ -2509,6 +2509,11 @@ def ausearch_run(exe, args, seconds):
     try:
         out, timed_out, over = read_bounded(proc, seconds, SECOND_CAP)
     finally:
+        if proc.poll() is None:
+            try:
+                proc.wait(timeout=PIPE_GRACE)    # a program that closed its pipe is still exiting: its leftover is still its child, and the kill of the tree below would end it uncounted
+            except subprocess.TimeoutExpired:
+                pass
         if proc.poll() is None:
             kill_tree(proc)
         try:

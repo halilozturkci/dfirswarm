@@ -315,20 +315,20 @@ class NoReplacePage(LosslessPage):
         super().__init__(tool, key, limit)
         PAGES.append(self)
 
-    def add(self, row: object) -> None:
+    def add(self, row: object, *rest) -> object:
         """The hidden temporary file is made, and registered in `_tmp`, with the stop signals held: a stop that landed between mkstemp and the
         registration found no file to remove and left a hidden one behind (the SIGTERM case of tests/pack-windows-forensics-fs-contract.test.ts, 1 run
         in many on a loaded Mac). A signal that comes in meanwhile waits and is answered, by the handler that removes the file, as soon as the
         registration is in."""
         if self._out is not None or len(self.page) < self.limit:
-            return super().add(row)
+            return super().add(row, *rest)
         before = None
         try:
             before = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
         except (AttributeError, ValueError, OSError):
             pass
         try:
-            return super().add(row)
+            return super().add(row, *rest)
         finally:
             if before is not None:
                 signal.pthread_sigmask(signal.SIG_SETMASK, before)
