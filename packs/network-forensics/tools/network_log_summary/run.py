@@ -40,7 +40,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "network_log_summary", "version": 11}
+TOOL = {"name": "network_log_summary", "version": 12}
 PARSER = "network_log_summary/5"
 
 
@@ -1109,6 +1109,8 @@ LINE = Line()
 
 
 def _stop(signum, _frame):
+    if ANSWERING[0]:
+        return     # the answer is out or being written: it is the one document, and the call ends with it
     if LINE.held:
         if LINE.pending is None:
             LINE.pending = signum
@@ -1423,15 +1425,43 @@ def main():
         answer["note"] = "THE READ STOPPED EARLY (read_error): what is in the tables is what was read before it. " + answer["note"]
     if stopped:
         answer["interrupted_by_signal"] = stopped
-    print(json.dumps(answer, indent=2))
+    answer_out(json.dumps(answer, indent=2))
     return 128 + stopped if stopped else 0
 
 
+ANSWERING = [False]             # the final answer is being written: a stop signal after that must not write a second document
+
+
+def answer_out(text):
+    """Write the final answer. `text` is already serialized (a stop signal while a large answer is still being serialized finds no document yet
+    and writes its own), and the flag the handler reads is set only now: from here the handler lets the answer finish and the call ends with it."""
+    ANSWERING[0] = True
+    print(text, flush=True)
+
+
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees what
+    the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole answer
+    already printed. A signal before this point is answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    os._exit(code)
+
+
 if __name__ == "__main__":
+    exit_code = 0
     try:
         raise SystemExit(main())
-    except SystemExit:
-        raise
+    except SystemExit as stop:
+        exit_code = _code(stop)
     except Stopped as stop:
         # a stop outside the read loop (the arguments, the opening of the outputs): the loop answers its own, with the tables it wrote
         for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -1442,6 +1472,10 @@ if __name__ == "__main__":
                           "status_basis": "the tool was stopped by signal %d while it was %s; no line of the log had been normalised%s" %
                                           (stop.signum, STAGE["now"], ", and the output directory may hold the empty tables it had begun to write" if STAGE["values"] is not None else ""),
                           "interrupted_by_signal": stop.signum, "stage": STAGE["now"]}), flush=True)
-        os._exit(128 + stop.signum)
+        exit_code = 128 + stop.signum
     except BaseException as exc:  # noqa: BLE001 - never a traceback, never a clean answer for a failure
-        fail("unexpected failure: %s" % describe(exc))
+        try:
+            fail("unexpected failure: %s" % describe(exc))
+        except SystemExit as stop:
+            exit_code = _code(stop)
+    _leave(exit_code)

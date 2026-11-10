@@ -29,8 +29,8 @@
   "example": "{\"path\": \"work/extracted/archive.zip\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 18,
-  "sha256": "8c9ca27585fabcdd3369e8326e0328187407996bb36e404929d3a550e81d9edb",
+  "version": 19,
+  "sha256": "106c5a388f97ac969261cf2686b38ed6b20090b8725c16886dfb8b4ed49a3f81",
   "requires": [
     "7z"
   ]

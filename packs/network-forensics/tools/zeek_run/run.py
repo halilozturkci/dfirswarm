@@ -50,7 +50,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "zeek_run", "version": 18}
+TOOL = {"name": "zeek_run", "version": 19}
 PARSER = "zeek_run/5"
 
 
@@ -2898,10 +2898,32 @@ def main():
     return 0
 
 
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees what
+    the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole answer
+    already printed. A signal before this point is answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    os._exit(code)
+
+
 if __name__ == "__main__":
+    exit_code = 0
     try:
         raise SystemExit(main())
-    except SystemExit:
-        raise
+    except SystemExit as stop:
+        exit_code = _code(stop)
     except BaseException as exc:  # noqa: BLE001 - never a traceback, never a clean answer for a failure
-        fail("unexpected failure: %s" % describe(exc))
+        try:
+            fail("unexpected failure: %s" % describe(exc))
+        except SystemExit as stop:
+            exit_code = _code(stop)
+    _leave(exit_code)

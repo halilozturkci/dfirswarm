@@ -34,8 +34,8 @@
   "example": "{\"path\": \"work/s5d1006/WebCacheV01.dat\", \"contains\": \"192.168\"}",
   "by": "s5d1003",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 6,
-  "sha256": "ea024e04d1988dfa70be7a8a551b2e331de35c30dbbf1c009d2ca247dcaa9579",
+  "version": 7,
+  "sha256": "b5c9a3df5e6ae69d964764688a8e24ed7a1cb4041b9407a4d9d9b92721ac3edf",
   "requires": [],
   "use": {
     "extensions": [

@@ -42,8 +42,8 @@
   "example": "{\"hive\": \"work/extracted/SYSTEM\", \"source\": \"bam\", \"limit\": 200}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 2,
-  "sha256": "ddbe8297e92b0e78a9c74ecc375d0b971b38263d2bfa5eac2b6a5d7db83bf92c",
+  "version": 3,
+  "sha256": "a963501a5860b3b205fecd74ba2b36d7b63cac67da545aa1e630d16431f1a2cc",
   "use": {
     "names": [
       "NTUSER.DAT",

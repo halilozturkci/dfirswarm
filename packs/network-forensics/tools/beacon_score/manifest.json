@@ -49,8 +49,8 @@
   "example": "{\"timestamps\": [1771070000, 1771070060, 1771070121, 1771070179, 1771070240, 1771070301], \"label\": \"10.0.0.5 -> 203.0.113.7:443 (SYN observations)\"}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 9,
-  "sha256": "e1f43f8e890e860e5fe369205aa4bcfc0be65446f8fbb6aa6719fdfc98d6ddb2",
+  "version": 10,
+  "sha256": "3469acb68e5d6dc1e24a3a93913023d3031d072fb8dc2bbaa9ff92c1d6ac16c8",
   "use": {
     "names": [
       "*timestamps*.txt"

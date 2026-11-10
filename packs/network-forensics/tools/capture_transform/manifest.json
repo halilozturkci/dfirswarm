@@ -84,8 +84,8 @@
   "example": "{\"operation\": \"split\", \"inputs\": [\"inputs/capture.pcap\"], \"packets\": 100000, \"out_dir\": \"work/<your id>/derivatives\"}",
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
-  "version": 7,
-  "sha256": "8b11b7a0bbb02cdb27efe6ae048fa5582bc6f9144ed04a67f99e53d71a6541a5",
+  "version": 8,
+  "sha256": "bb0271c84dddede026e4cb6554fe6e73744f870b3b88da6e2f8c120fc64d0acb",
   "use": {
     "extensions": [
       ".pcap",

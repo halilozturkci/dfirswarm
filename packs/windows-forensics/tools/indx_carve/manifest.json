@@ -33,8 +33,8 @@
   "example": "{\"path\": \"work/extracted/I30-64\", \"slack_only\": true}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 6,
-  "sha256": "7dd007006eba133692dfe84d10ce667540cbec101a3fb022f4f878023453b5ee",
+  "version": 7,
+  "sha256": "64662413b045a0ac5185cd41f5b34ed79b642e00574429bed294cac12bf38b06",
   "use": {
     "names": [
       "$I30",

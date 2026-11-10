@@ -22,7 +22,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "flow_reader", "version": 5}
+TOOL = {"name": "flow_reader", "version": 6}
 PARSER = "flow_reader/1"
 
 # BEGIN SHARED STOP
@@ -414,6 +414,24 @@ class NoReplacePage(LosslessPage):
     def __init__(self, tool, key, limit):
         super().__init__(tool, key, limit)
         PAGES.append(self)
+
+    def add(self, row: object) -> None:
+        """The hidden temporary file is made, and registered in `_tmp`, with the stop signals held: a stop that landed between mkstemp and the
+        registration found no file to remove and left a hidden one behind (the SIGTERM case of tests/pack-windows-forensics-fs-contract.test.ts, 1 run
+        in many on a loaded Mac). A signal that comes in meanwhile waits and is answered, by the handler that removes the file, as soon as the
+        registration is in."""
+        if self._out is not None or len(self.page) < self.limit:
+            return super().add(row)
+        before = None
+        try:
+            before = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+        except (AttributeError, ValueError, OSError):
+            pass
+        try:
+            return super().add(row)
+        finally:
+            if before is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, before)
 
     def finish(self) -> dict:
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
@@ -2279,10 +2297,32 @@ def answer(p, started, deadline, nfdump, digests, page, work, info_dir):
     return 1 if status == "failed" else 0
 
 
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees what
+    the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole answer
+    already printed. A signal before this point is answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    os._exit(code)
+
+
 if __name__ == "__main__":
+    exit_code = 0
     try:
         raise SystemExit(main())
-    except SystemExit:
-        raise
+    except SystemExit as stop:
+        exit_code = _code(stop)
     except BaseException as exc:  # noqa: BLE001 - never a traceback, never a clean answer for a failure
-        fail("unexpected failure: %s" % describe(exc))
+        try:
+            fail("unexpected failure: %s" % describe(exc))
+        except SystemExit as stop:
+            exit_code = _code(stop)
+    _leave(exit_code)

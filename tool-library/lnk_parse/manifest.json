@@ -45,8 +45,8 @@
   "example": "{\"dump\": \"work/extracted/unallocated.bin\", \"offset\": 313125516, \"size\": 2048}",
   "by": "s183902",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 8,
-  "sha256": "c39a6ab2e35a55a278a57d28b874b09448a2096535d3c9c19f98ffdf9c153bdb",
+  "version": 9,
+  "sha256": "9b6a99aae59abbfd5fc565192478bf9f112a34c2e44dab313645290b1c698706",
   "use": {
     "extensions": [
       ".lnk"

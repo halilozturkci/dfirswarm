@@ -52,7 +52,7 @@ import os
 import signal
 import sys
 
-TOOL = {"name": "pcap_summary", "version": 12}
+TOOL = {"name": "pcap_summary", "version": 13}
 PARSER = "pcap_summary/6"
 
 
@@ -824,6 +824,8 @@ PROGRESS = {"packets": 0, "stage": "arguments"}
 
 
 def _on_signal(signum, _frame):
+    if ANSWERING[0]:
+        return     # the answer is out or being written: it is the one document, and the call ends with it
     for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(other, signal.SIG_IGN)     # the first signal counts: a second one starts no second answer
     cleanup()
@@ -2124,7 +2126,7 @@ def main():
     agreeing = {(i["link_type_id"], i["snap_length"]) for i in info.interfaces}
     single = shown_interfaces[0] if len(agreeing) == 1 and shown_interfaces else None
 
-    print(json.dumps({
+    answer_out(json.dumps({
         "tool": TOOL, "parser": PARSER,
         "status": status, "status_basis": basis,
         "capture_read_to_the_end": file_problem is None,
@@ -2206,10 +2208,42 @@ def main():
     }, indent=2))
 
 
+ANSWERING = [False]             # the final answer is being written: a stop signal after that must not write a second document
+
+
+def answer_out(text):
+    """Write the final answer. `text` is already serialized (a stop signal while a large answer is still being serialized finds no document yet
+    and writes its own), and the flag the handler reads is set only now: from here the handler lets the answer finish and the call ends with it."""
+    ANSWERING[0] = True
+    print(text, flush=True)
+
+
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees what
+    the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole answer
+    already printed. A signal before this point is answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    os._exit(code)
+
+
 if __name__ == "__main__":
+    exit_code = 0
     try:
         main()
-    except SystemExit:
-        raise
+    except SystemExit as stop:
+        exit_code = _code(stop)
     except Exception as exc:  # never an empty or clean answer for a failure
-        fail("unexpected failure: %s" % describe(exc))
+        try:
+            fail("unexpected failure: %s" % describe(exc))
+        except SystemExit as stop:
+            exit_code = _code(stop)
+    _leave(exit_code)

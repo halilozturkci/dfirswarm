@@ -496,12 +496,18 @@ test("a block the tool does not decode is measured, never read, however long it 
     const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
     const big = ngBlock(0x0a, Buffer.alloc(160 * 1024 * 1024 - 12));
     await drop(cwd, "work/big.pcapng", Buffer.concat([ngSection(), ngInterface(), big, ngPacket({ ticks: ticks(1_700_000_000, 0, 6), frame })]));
-    const wrapper = peakRssPrelude() + `import atexit, runpy
+    const wrapper = peakRssPrelude() + `import atexit, os, runpy
 def report():
     # The new image's own peak (tests/peak-rss.ts): a parent holding the 160 MB capture in memory (this test does)
     # would be counted against the tool by the rusage peak.
     sys.stderr.write("MAXRSS_MB %d\\n" % (self_peak_bytes() // (1024 * 1024)))
 atexit.register(report)
+_real_exit = os._exit
+def _exit(code):
+    # the tool ends with os._exit after its answer is flushed (no interpreter teardown, so no atexit): the report is made first
+    report()
+    _real_exit(code)
+os._exit = _exit
 runpy.run_path(sys.argv[1], run_name="__main__")
 `;
     const run = spawnSync("python3", ["-c", wrapper, SUMMARY], { cwd, input: JSON.stringify({ path: "work/big.pcapng" }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" }, maxBuffer: 1 << 26 });
