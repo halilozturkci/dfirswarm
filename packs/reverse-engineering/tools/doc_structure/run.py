@@ -50,7 +50,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-TOOL = {"name": "doc_structure", "version": 13}
+TOOL = {"name": "doc_structure", "version": 14}
 PARSER = "doc_structure/1"
 if sys.version_info[:2] < (3, 11):
     # The blocks below compile possessive quantifiers, which Python has from 3.11: older, the import would end in a traceback before main() could say
@@ -2515,8 +2515,9 @@ def build_answer(result, spill=None, seconds=None):
 def emit(result, spill=None, indent=2):
     """The last step of every call: the answer (build_answer), written."""
     answer = build_answer(result, spill)
+    text = json.dumps(answer, indent=indent)    # made before PRINTING is set: a stop signal while a large answer is still being serialized finds no document yet and writes its own (it used to find PRINTING set and end with none)
     PRINTING[0] = True
-    print(json.dumps(answer, indent=indent))
+    print(text)
 
 
 def fail(message, **extra):
@@ -8168,10 +8169,42 @@ def main():
     emit(result, spill)
 
 
-if __name__ == "__main__":
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees
+    what the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole
+    answer already printed. What the interpreter would have run at its end (the atexit hooks that remove a temporary file) is run here, with the
+    handlers still in; a signal before this point is answered by the handlers as before."""
     try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # never a traceback and never a clean answer for a failure
-        fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, shown_path(str(exc)))))
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    try:
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import atexit as _atexit
+        _atexit._run_exitfuncs()
+    except Exception:  # noqa: BLE001 - a hook that fails is not a failure of the answer
+        pass
+    os._exit(code)
+
+
+if __name__ == "__main__":
+    exit_code = 0
+    try:
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # never a traceback and never a clean answer for a failure
+            fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, shown_path(str(exc)))))
+    except SystemExit as stop:
+        exit_code = _code(stop)
+    _leave(exit_code)

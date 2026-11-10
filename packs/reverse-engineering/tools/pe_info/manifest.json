@@ -84,6 +84,6 @@
   "example": "{\"path\": \"work/extracted/sample.exe\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 8,
-  "sha256": "0057b818e6a61bf83028df3c3c1f90dbd32299ba4af3651e27fd016efec9b467"
+  "version": 9,
+  "sha256": "fb7ebd8bd28169cd592876de3ce999af65d69134d35f87cee68bfd122163dfb4"
 }

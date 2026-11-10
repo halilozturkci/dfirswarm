@@ -52,11 +52,11 @@
   "example": "{\"path\": \"work/s01/payload.pyc\", \"out_dir\": \"work/s01/marshal\"}",
   "by": "sd29252",
   "at": "2026-10-06T03:07:14.935Z",
-  "version": 5,
+  "version": 6,
   "secret_output": {
     "when_args": [
       "write_values"
     ]
   },
-  "sha256": "82ee3d16bdab1c705a952ca0124a6719df26d02b9fd600c085d660c33e3b6f40"
+  "sha256": "004b92720fd7178427f4f1c219713ae2680dd43b39d16ec2922b25a30b2b7035"
 }

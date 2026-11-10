@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "fuzzy_hash", "version": 13}
+TOOL = {"name": "fuzzy_hash", "version": 14}
 PARSER = "fuzzy_hash/3"
 DEFAULT_ENGINE_TIMEOUT = 120
 TOTAL_BUDGET = 270                       # seconds for the whole call: the manifest's own limit is 300
@@ -1623,13 +1623,51 @@ def main():
         result["status_basis"] = ("%d problem(s), the first of them: %s (each names the engine, its status or the call's %d-second budget; see `problems`)"
                                   % (len(runner.problems), runner.problems[0][:300], TOTAL_BUDGET))
     result["program_group"] = verdict
-    print(json.dumps(result, indent=2))
+    text = json.dumps(result, indent=2)       # serialized first: a stop signal during it still finds the last word and the engines to end
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})     # then the answer is one document: a signal now waits, and the call ends with it
+    except (AttributeError, ValueError, OSError):
+        pass
+    STATE["last_word"] = None
+    print(text, flush=True)
+
+
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees
+    what the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole
+    answer already printed. What the interpreter would have run at its end (the atexit hooks that remove a temporary file) is run here, with the
+    handlers still in; a signal before this point is answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    try:
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import atexit as _atexit
+        _atexit._run_exitfuncs()
+    except Exception:  # noqa: BLE001 - a hook that fails is not a failure of the answer
+        pass
+    os._exit(code)
 
 
 if __name__ == "__main__":
+    exit_code = 0
     try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # never a traceback and never a clean answer for a failure
-        fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, exc)))
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # never a traceback and never a clean answer for a failure
+            fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, exc)))
+    except SystemExit as stop:
+        exit_code = _code(stop)
+    _leave(exit_code)

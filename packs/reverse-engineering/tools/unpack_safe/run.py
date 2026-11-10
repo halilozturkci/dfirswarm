@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "unpack_safe", "version": 5}
+TOOL = {"name": "unpack_safe", "version": 6}
 PARSER = "unpack_safe/1"
 TOTAL_BUDGET = 150                 # seconds for the whole call; the manifest's own limit is 180
 DEFAULT_SECONDS = 120
@@ -1719,11 +1719,43 @@ def main():
            derivative={"path": where, "bytes": derived_read, "sha256": derived_sha, "mode": "0600"}, expected_unpacked_bytes=expected)
 
 
-if __name__ == "__main__":
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees
+    what the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole
+    answer already printed. What the interpreter would have run at its end (the atexit hooks that remove a temporary file) is run here, with the
+    handlers still in; a signal before this point is answered by the handlers as before."""
     try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # never a traceback and never a clean answer for a failure
-        _clean_stages()
-        fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, exc)))
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    try:
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import atexit as _atexit
+        _atexit._run_exitfuncs()
+    except Exception:  # noqa: BLE001 - a hook that fails is not a failure of the answer
+        pass
+    os._exit(code)
+
+
+if __name__ == "__main__":
+    exit_code = 0
+    try:
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # never a traceback and never a clean answer for a failure
+            _clean_stages()
+            fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, exc)))
+    except SystemExit as stop:
+        exit_code = _code(stop)
+    _leave(exit_code)
