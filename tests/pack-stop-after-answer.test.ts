@@ -26,7 +26,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -39,7 +39,7 @@ const INJECT = join(ROOT, "tests", "stop-after-answer-inject.py");
 const TARGET = JSON.stringify({ paths: ["/nonexistent/stop-after-answer/target.bin"], name: "target.bin" });
 const LIMITED = "import os, resource, signal, sys; resource.setrlimit(resource.RLIMIT_FSIZE, (40, 40)); signal.signal(signal.SIGXFSZ, signal.SIG_IGN); os.execv(sys.executable, [sys.executable] + sys.argv[1:])";
 
-type Script = { name: string; script: string; argv: string[]; recipe: boolean };
+type Script = { name: string; script: string; argv: string[]; recipe: boolean; stdin?: string };
 const scripts: Script[] = [];
 for (const pack of readdirSync(join(ROOT, "packs")).sort()) {
   for (const kind of ["tools", "recipes"] as const) {
@@ -99,7 +99,7 @@ function run(s: Script, cwd: string, how: How): Promise<Ran> {
   });
   child.stderr.on("data", (b: Buffer) => { stderr += b.toString("utf8"); });
   child.stdin.on("error", () => undefined);
-  child.stdin.end(s.recipe ? "" : "{}");
+  child.stdin.end(s.stdin ?? (s.recipe ? "" : "{}"));
   return new Promise((resolve) => {
     const timer = setTimeout(() => { try { process.kill(-(child.pid as number), "SIGKILL"); } catch { /* gone */ } }, 60_000);
     child.on("close", (code, by) => { clearTimeout(timer); resolve({ code, by, stdout, stderr, answered: answered || whole(stdout) }); });
@@ -221,6 +221,70 @@ test("a stop signal while a tool waits for its arguments (its stdin open, nothin
         const r: Ran = { code: end.code, by: end.by, stdout, stderr, answered: whole(stdout) };
         const why = judge(r, 15);
         if (why) bad.push(`${s.name}: ${why}`);
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+  assert.deepEqual(bad.sort(), []);
+});
+
+// ---- a success, one tool of each pack: the answer that is printed when the work is done, not a refusal ----------------------------------
+
+/** One tool of each pack, given a small input it reads to its end (made under `succ/` in the run directory): its answer is `complete` or
+ * `partial`, never `failed`, so the writer of a final answer is what the signal meets. */
+const SUCCESS: Array<{ tool: string; args: Record<string, unknown> }> = [
+  { tool: "computer-forensics-base/timestamp_decode", args: { value: "132000000000000000" } },
+  { tool: "computer-forensics-base/file_type", args: { path: "succ/tree" } },
+  { tool: "network-forensics/beacon_score", args: { timestamps: Array.from({ length: 12 }, (_, i) => 1_771_070_000 + 60 * i) } },
+  { tool: "macos-forensics/plist_read", args: { path: "succ/a.plist" } },
+  { tool: "linux-forensics/auth_log", args: { path: "succ/auth.log", year: 2024 } },
+  { tool: "cloud-forensics/cloudtrail_parse", args: { path: "succ/trail.json" } },
+  { tool: "memory-forensics/mem_carve", args: { path: "succ/blob.bin" } },
+  { tool: "mobile-forensics/protobuf_peek", args: { hex: "089601120474657374" } },
+  { tool: "reverse-engineering/entropy_map", args: { path: "succ/blob.bin" } },
+  { tool: "encrypted-containers/crypto_id", args: { path: "succ/blob.bin" } },
+  { tool: "ransomware-response/ransom_note_scan", args: { root: "succ/tree" } },
+  { tool: "triage-collection/collection_id", args: { root: "succ/tree" } },
+  { tool: "virtualization-backup-forensics/virtualization_inventory", args: { root: "succ/tree" } },
+  { tool: "windows-forensics/utf16_urls", args: { path: "succ/blob.bin" } },
+];
+
+function successInputs(cwd: string): void {
+  const succ = join(cwd, "succ");
+  mkdirSync(join(succ, "tree", "sub"), { recursive: true });
+  writeFileSync(join(succ, "tree", "readme.txt"), "a plain text file\n");
+  writeFileSync(join(succ, "tree", "sub", "data.bin"), Buffer.from([0x4d, 0x5a, 0x90, 0x00, 1, 2, 3, 4]));
+  writeFileSync(join(succ, "a.plist"), '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>com.example.agent</string><key>RunAtLoad</key><true/></dict></plist>\n');
+  writeFileSync(join(succ, "auth.log"), "Jan  5 10:00:01 host sshd[100]: Accepted password for alice from 192.0.2.10 port 50000 ssh2\nJan  5 10:05:00 host sudo:    alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/bin/ls\n");
+  writeFileSync(join(succ, "trail.json"), JSON.stringify({ Records: [{ eventVersion: "1.08", eventTime: "2024-01-05T10:00:00Z", eventSource: "s3.amazonaws.com", eventName: "ListBuckets", awsRegion: "us-east-1", sourceIPAddress: "192.0.2.10", userIdentity: { type: "IAMUser", arn: "arn:aws:iam::111122223333:user/alice", accountId: "111122223333" }, eventID: "e1", readOnly: true }] }));
+  const blob = Buffer.alloc(65536, 0x41);
+  Buffer.from("h\0t\0t\0p\0:\0/\0/\0e\0x\0a\0m\0p\0l\0e\0.\0o\0r\0g\0/\0p\0a\0t\0h\0", "latin1").copy(blob, 1000);
+  writeFileSync(join(succ, "blob.bin"), blob);
+}
+
+test("a success of one tool of each pack: a stop signal the moment its answer was read, or the moment its first write went out, gives one document, no traceback, nothing killed", { timeout: 1_700_000 }, async () => {
+  const bad: string[] = [];
+  const cwd = mkdtempSync(join(tmpdir(), "stop-after-success-"));
+  try {
+    successInputs(cwd);
+    const queue = SUCCESS.slice();
+    const worker = async (): Promise<void> => {
+      for (let item = queue.shift(); item; item = queue.shift()) {
+        const found = scripts.find((s) => s.name === item.tool);
+        if (!found) { bad.push(`${item.tool}: no such tool`); continue; }
+        const s: Script = { ...found, stdin: JSON.stringify(item.args) };
+        const plain = await run(s, cwd, {});
+        let status: unknown;
+        try { status = (JSON.parse(plain.stdout) as { status?: unknown }).status; } catch { status = undefined; }
+        if (status !== "complete" && status !== "partial") { bad.push(`${item.tool}: the input is not a success here (status ${String(status)}: ${plain.stdout.slice(0, 200)})`); continue; }
+        for (const [signal, number] of SIGNALS) {
+          for (const how of [{ signal }, { signal, inject: true }] as How[]) {
+            const why = judge(await run(s, cwd, how), number);
+            if (why) bad.push(`${item.tool} ${signal}${how.inject ? " injected" : ""}: ${why}`);
+          }
+        }
       }
     };
     await Promise.all([worker(), worker(), worker(), worker()]);
