@@ -165,7 +165,8 @@ def _code(stop):
         return code
     if code is not None:
         try:
-            sys.stderr.write("%s\n" % (code,))
+            sys.stderr.flush()
+            os.write(2, ("%s\n" % (code,)).encode("utf-8", "backslashreplace"))
         except BaseException:  # noqa: BLE001
             pass
     return 0 if code is None else 1
@@ -2034,7 +2035,8 @@ def _on_signal(signum, _frame):
             last_word(signum)
         except Exception:  # noqa: BLE001 - a last word is best effort
             pass
-    answer_a_stop(signum)
+    if "answer_a_stop" in globals():     # (a block run on its own, by a test, has no ENDS block)
+        answer_a_stop(signum)
     os._exit(128 + signum)
 
 
@@ -2474,7 +2476,8 @@ def last_word(signum):
 
 def answer_out(text):
     """Print the final answer as one unit a stop signal cannot cut or follow: signals are held while it is written and there is no last
-    word to add to it, so a signal that arrives during or after it ends the tool (exit 128 plus the signal) with this one document."""
+    word to add to it, so a signal that arrives during or after it is not answered (the shared ENDS block): the call ends with this one
+    document and its own exit code."""
     held = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
     signal.pthread_sigmask(signal.SIG_BLOCK, held)
     try:

@@ -149,7 +149,8 @@ def _code(stop):
         return code
     if code is not None:
         try:
-            sys.stderr.write("%s\n" % (code,))
+            sys.stderr.flush()
+            os.write(2, ("%s\n" % (code,)).encode("utf-8", "backslashreplace"))
         except BaseException:  # noqa: BLE001
             pass
     return 0 if code is None else 1
@@ -1577,7 +1578,8 @@ def main():
         rc = state["receipt"]
         if rc is None:
             early_word(signum)
-            answer_a_stop(signum)
+            if "answer_a_stop" in globals():     # (a block run on its own, by a test, has no ENDS block)
+                answer_a_stop(signum)
             os._exit(128 + signum)
         try:
             for s in rc.data["steps"]:
@@ -1592,7 +1594,8 @@ def main():
             print(json.dumps({"ok": False, "status": "partial", "status_basis": rc.data["status_basis"], "interrupted_by_signal": signum}), flush=True)
         except Exception:  # noqa: BLE001 - a last word is best effort
             pass
-        answer_a_stop(signum)
+        if "answer_a_stop" in globals():     # (a block run on its own, by a test, has no ENDS block)
+            answer_a_stop(signum)
         os._exit(128 + signum)
 
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

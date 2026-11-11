@@ -80,7 +80,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 16,
-  "sha256": "dadb67c87669057f6eef6fd5c8ca6133a929a62e62349cd10ab853ab75879885",
+  "sha256": "7117c25a57ae3c00c71336446b7040ba4074e58629fbb39d0a449402527f5e13",
   "use": {
     "names": [
       "utmp",

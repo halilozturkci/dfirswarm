@@ -163,7 +163,8 @@ def _code(stop):
         return code
     if code is not None:
         try:
-            sys.stderr.write("%s\n" % (code,))
+            sys.stderr.flush()
+            os.write(2, ("%s\n" % (code,)).encode("utf-8", "backslashreplace"))
         except BaseException:  # noqa: BLE001
             pass
     return 0 if code is None else 1
@@ -1290,7 +1291,8 @@ def _on_signal(signum, _frame):
             last_word(signum)
         except Exception:  # noqa: BLE001 - a last word is best effort
             pass
-    answer_a_stop(signum)
+    if "answer_a_stop" in globals():     # (a block run on its own, by a test, has no ENDS block)
+        answer_a_stop(signum)
     os._exit(128 + signum)
 
 
@@ -1777,7 +1779,8 @@ def main_run(paths, shown, out):
                                    "marked interrupted (its counts are the calls that had ended); every family that was not started is marked not_attempted" % signum)
         receipt["errors"].append("the recipe was terminated by signal %d; the receipt is complete as to which families ended, were interrupted or were not started, and says nothing more" % signum)
         write_receipt("after this process was terminated")
-        answer_a_stop(signum)
+        if "answer_a_stop" in globals():     # (a block run on its own, by a test, has no ENDS block)
+            answer_a_stop(signum)
         os._exit(128 + signum)
 
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

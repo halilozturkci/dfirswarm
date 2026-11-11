@@ -637,7 +637,7 @@ test("an inline url field over 64 KiB has its query withheld whole by length", a
   });
 });
 
-test("a stop signal that arrives while the answer is being written adds no second document: the answer is whole and the exit is 128 plus the signal", async () => {
+test("a stop signal that arrives while the answer is being written adds no second document: the answer is whole and the exit is the call's own", async () => {
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) });
     // the signal is sent from inside the write of the answer, which is the last moment a tool can be stopped before the answer is whole
@@ -657,7 +657,9 @@ test("a stop signal that arrives while the answer is being written adds no secon
     ].join("\n");
     const run = spawnSync("python3", ["-c", code, ZEEK], { cwd, input: JSON.stringify({ path: await capture(cwd), out_dir: "work/z4" }), encoding: "utf8", maxBuffer: 1 << 26,
       env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}`, ...env(cwd) } });
-    assert.equal(run.status, 143, run.stderr);
+    // the shared ENDS block holds the stop signals from the answer's first byte: the stop is not answered, the answer stands, and the exit status is
+    // the call's own (it was 128 + the signal before round 10, when the held signal ran the handler once the answer was out)
+    assert.equal(run.status, 0, run.stderr);
     const answer = JSON.parse(run.stdout);
     assert.equal(answer.tool.name, "zeek_run");
     assert.equal(answer.interrupted_by_signal, undefined, "one document: the answer, not a last word after it");

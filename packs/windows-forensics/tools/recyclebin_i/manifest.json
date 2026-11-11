@@ -18,7 +18,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 8,
-  "sha256": "3bdaaa1a5951cc548e3e98739ebf3c81fd50ef414bc1611331cba50efa01dd13",
+  "sha256": "c2a8bd84a12ce4bfa205da6c7fd28d3e8346d974bc88e278b9beda1127fe59bf",
   "use": {
     "names": [
       "$I*"

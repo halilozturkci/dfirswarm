@@ -144,7 +144,8 @@ def _code(stop):
         return code
     if code is not None:
         try:
-            sys.stderr.write("%s\n" % (code,))
+            sys.stderr.flush()
+            os.write(2, ("%s\n" % (code,)).encode("utf-8", "backslashreplace"))
         except BaseException:  # noqa: BLE001
             pass
     return 0 if code is None else 1

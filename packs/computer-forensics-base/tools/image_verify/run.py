@@ -156,7 +156,8 @@ def _code(stop):
         return code
     if code is not None:
         try:
-            sys.stderr.write("%s\n" % (code,))
+            sys.stderr.flush()
+            os.write(2, ("%s\n" % (code,)).encode("utf-8", "backslashreplace"))
         except BaseException:  # noqa: BLE001
             pass
     return 0 if code is None else 1
@@ -1881,7 +1882,8 @@ def _on_signal(signum, _frame):
             last_word(signum)
         except Exception:  # noqa: BLE001 - a last word is best effort
             pass
-    answer_a_stop(signum)
+    if "answer_a_stop" in globals():     # (a block run on its own, by a test, has no ENDS block)
+        answer_a_stop(signum)
     os._exit(128 + signum)
 
 
@@ -2072,8 +2074,9 @@ def _guarded_write(write):
         _os._exit(1)
     watch.cancel()
     if before is not None:
-        # The document is whole. A stop that came while it was written is delivered now; the last word was cleared, so it ends the tool
-        # (128 plus the signal) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
+        # The document is whole. A stop that came while it was written is let go now: run as a program, the shared ENDS block has given it a
+        # handler that does nothing (the answer stands, and the call ends with its own code); loaded as a module, the tool's own handler ends it
+        # (128 plus the signal; the last word was cleared) with nothing more on stdout. The mask is also what an in-process caller (a test) had before.
         signal.pthread_sigmask(signal.SIG_SETMASK, before)
 
 

@@ -153,7 +153,8 @@ def _code(stop):
         return code
     if code is not None:
         try:
-            sys.stderr.write("%s\n" % (code,))
+            sys.stderr.flush()
+            os.write(2, ("%s\n" % (code,)).encode("utf-8", "backslashreplace"))
         except BaseException:  # noqa: BLE001
             pass
     return 0 if code is None else 1
@@ -658,7 +659,8 @@ def _on_signal(signum, _frame):
     if hasattr(signal, "setitimer"):
         signal.setitimer(signal.ITIMER_REAL, 0)       # a pattern timer must not fire inside the cleanup
     _drop_unpublished()
-    answer_a_stop(signum)
+    if "answer_a_stop" in globals():     # (a block run on its own, by a test, has no ENDS block)
+        answer_a_stop(signum)
     os._exit(128 + signum)
 
 

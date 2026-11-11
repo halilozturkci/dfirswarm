@@ -52,7 +52,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 15,
-  "sha256": "382bf77bb7cb55380af6bdf67d27a4eac83b230b9b46b1e1e95a3b7e84013261",
+  "sha256": "c1209ee6d2ecd02d9ae515bb2e9747acb8832d4209ac84197c0aec7e18e1df2d",
   "use": {
     "names": [
       ".bash_history",

@@ -50,7 +50,7 @@
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
   "version": 14,
-  "sha256": "735c8babb1d6b783687d1534abebac686c606f9ace0da395e629b76467148187",
+  "sha256": "29df30f644dac4dd79876843c0d8acee81d0e69a2d5678611425c711d607a42a",
   "requires": [
     "unifiedlog_iterator"
   ],

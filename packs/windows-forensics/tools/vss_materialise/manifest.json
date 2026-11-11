@@ -42,7 +42,7 @@
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
   "version": 8,
-  "sha256": "e03575d4124df0cb1e5af21324c6544dbf2541c795aeaa5d3d50055e4f8c0303",
+  "sha256": "9e4f8a195737874d14895ecf7a3d11960578a06f3039d44796a5b17d7f79e476",
   "needs": [
     "fuse"
   ],

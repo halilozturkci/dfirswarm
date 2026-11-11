@@ -69,7 +69,10 @@ elif point == "second_in_answer":
 
     def watching(sig, handler):
         previous = real_signal(sig, handler)
-        if (not state["done"] and sig == signal.SIGHUP and callable(handler) and getattr(handler, "__name__", "") != "_before_start"
+        # not the early handlers: the tool's own _before_start, and the shared ENDS block's (its handler before the tool's own, and the one
+        # that does nothing once an answer is held)
+        if (not state["done"] and sig == signal.SIGHUP and callable(handler)
+                and getattr(handler, "__name__", "") not in ("_before_start", "_stopped_without_handler", "_ending_nothing")
                 and getattr(handler, "__module__", None) != "builtins"):
             kill()
         return previous

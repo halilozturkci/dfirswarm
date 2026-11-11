@@ -147,7 +147,8 @@ def _code(stop):
         return code
     if code is not None:
         try:
-            sys.stderr.write("%s\n" % (code,))
+            sys.stderr.flush()
+            os.write(2, ("%s\n" % (code,)).encode("utf-8", "backslashreplace"))
         except BaseException:  # noqa: BLE001
             pass
     return 0 if code is None else 1
@@ -227,7 +228,8 @@ def _on_signal(signum, _frame):
             last_word(signum)
         except Exception:  # noqa: BLE001 - a last word is best effort
             pass
-    answer_a_stop(signum)
+    if "answer_a_stop" in globals():     # (a block run on its own, by a test, has no ENDS block)
+        answer_a_stop(signum)
     os._exit(128 + signum)
 
 
@@ -245,7 +247,8 @@ def interrupted_answer(signum, **extra):
 
 def print_answer(answer, **dumps_kwargs):
     """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
-    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    answer cut. A signal that is held is not answered once the answer is out (the shared ENDS block): the answer stands, and the call ends
+    with its own exit code."""
     try:
         signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
     except (AttributeError, ValueError, OSError):

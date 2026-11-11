@@ -38,7 +38,7 @@
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
   "version": 4,
-  "sha256": "4fad061d302b4bec9d6340e9e42fef73f1a4db00a5dec91baa31ea766b0174c1",
+  "sha256": "900b2de86c659cc41f3c496c05540a0597f9bea7933d1d45466887b93d3becad",
   "use": {
     "names": [
       "TCC.db"
