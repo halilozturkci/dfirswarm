@@ -877,8 +877,13 @@ test("against the real tshark: a three-session HTTP capture is tied to its frame
     await drop(cwd, "work/real.pcap", pcapClassic(packets));
     const result = await tool(EXTRACT, cwd, { path: "work/real.pcap", out_dir: "work/x", protocols: ["http"] });
     const out = body(result);
-    assert.equal(out.ok, true, JSON.stringify(out.errors));
-    assert.equal(out.status, "complete");
+    // A clean run is complete where the tool can adopt orphans (Linux); elsewhere it is partial, and the one error says why (host-gates.ts).
+    assert.equal(out.ok, CLEAN === "complete", JSON.stringify(out.errors));
+    assert.equal(out.status, CLEAN);
+    if (CLEAN === "partial") {
+      assert.deepEqual((out.errors as Json[]).map((e) => e.step), ["programs"], JSON.stringify(out.errors));
+      assert.match(String((out.errors as Json[])[0].reason), /cannot adopt orphaned processes/);
+    }
     assert.equal(out.association.matched_by_content, 3, JSON.stringify(out.association_pass));
     assert.equal(out.association_pass.status, "ok");
     const rows = await index(cwd, "work/x");

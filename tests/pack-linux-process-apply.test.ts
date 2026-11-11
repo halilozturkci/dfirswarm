@@ -44,11 +44,16 @@ const triageStub = (dir: string, left: string | undefined): string => sh(`${pre(
 exit 0
 `);
 
+// linux_triage and the recipe run one dissect.target function after another, each in files, and a holder's flood (errflood: `yes` into the
+// stderr file) fills a file the tool then scans and hashes, so a run with a holder takes the disk's time. Measured here, at d813a7dd and
+// at round 10's head alike: 4.6 to 4.9 s or 8.8 to 10.8 s (two settle rounds); the hosted runners took 14.0 and 20.8 s (CI run of 35554cca),
+// past the default 10 s. 30 s still says the holder did not hold the tool (the manifest's timeout is 14,400 s).
 const triage: Case = {
   name: "linux_triage",
   variants: VARIANTS,
   holdsFiles: true,
   holders: HOLDERS,
+  maxSeconds: 30,
   invoke: async (cwd, bin, left, host) => {
     const dir = await stubDir(cwd);
     await stub(bin, "target-query", triageStub(dir, left));
@@ -65,6 +70,7 @@ const recipe: Case = {
   variants: VARIANTS,
   holdsFiles: true,
   holders: HOLDERS,
+  maxSeconds: 30,                 // as linux_triage's, above (7.6 to 10.4 s here)
   skipOk: true,
   invoke: async (cwd, bin, left, host) => {
     const dir = await stubDir(cwd);
@@ -439,3 +445,42 @@ test("linux-target run: the same wrapper without a flooder is complete", { skip:
     assert.equal(line.status, "complete", JSON.stringify(line.status_basis));
   });
 });
+
+// ---- package_verify: a program whose pipes have ended while it is still exiting (round 11) ---------------------------------------------------------------
+// read_bounded returned on the end of both pipes and killed the tree below a program that was still running: the program closes its descriptors before
+// it is a zombie, and what it left is its child until then. The Python 3.11 job met it with a holder of the standard input only: the holder was ended
+// uncounted, and the answer said complete ("the program ran to its end", left_behind 0). The window is made wide here: the stand-in closes its pipes and
+// exits 0.3 s later (within PIPE_GRACE: the leftover is counted, partial), or 2 s later (past it: the program is ended, and the answer says so, partial).
+for (const window of ["0.3", "2"]) {
+  test(`package_verify: a debsums that closes its pipes and exits ${window} s later, leaving a holder of the standard input, is never complete`, { skip: NO_ADOPTION, timeout: 120000 }, async () => {
+    await withCwd(async (cwd, bin) => {
+      const root = join(cwd, "work", "r");
+      await mkdir(join(root, "var/lib/dpkg/info"), { recursive: true });
+      await writeFile(join(root, "var/lib/dpkg/status"), "Package: a\nStatus: install ok installed\n");
+      await writeFile(join(root, "var/lib/dpkg/info/a.md5sums"), "d41d8cd98f00b204e9800998ecf8427e  usr/bin/a\n");
+      const holder = join(cwd, "holder.pid");
+      await writeFile(join(bin, "debsums"), `#!/bin/sh
+case "$1" in --version) echo "debsums version 9.9.9"; exit 0;; esac
+printf '%s\n' '/usr/bin/a                                        OK'
+sleep 600 >/dev/null 2>&1 &
+echo $! > "${holder}"
+exec >&- 2>&-
+sleep ${window}
+exit 0
+`);
+      await chmod(join(bin, "debsums"), 0o755);
+      try {
+        const run = await exec(VERIFY, [], { root: "work/r", family: "debian" }, cwd, bin, {}, "linux");
+        assert.equal(run.code, 0, run.stderr + run.stdout);
+        const out = JSON.parse(run.stdout);
+        assert.equal(out.status, "partial", out.status_basis);
+        if (window === "0.3") assert.ok(out.program_group.left_behind >= 1, JSON.stringify(out.program_group));
+        else assert.match(out.status_basis, /the program was ended by signal 9 before it exited by itself/);
+        const pid = Number((await readFile(holder, "utf8")).trim());
+        assert.equal(alive(pid), false, "the holder is gone");
+      } finally {
+        try { process.kill(Number((await readFile(holder, "utf8")).trim()), "SIGKILL"); } catch { /* gone */ }
+      }
+    });
+  });
+}

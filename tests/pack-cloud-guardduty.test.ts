@@ -389,6 +389,6 @@ test("the tool is a carrier of the shared blocks and its version, PARSER label a
   assert.match(text, /^TOOL = "guardduty_findings"$/m);
   const manifest = JSON.parse(await readFile(join(TOOLS, "guardduty_findings", "manifest.json"), "utf8"));
   assert.equal(manifest.name, "guardduty_findings");
-  assert.equal(manifest.version, 1);
+  assert.equal(manifest.version, 2);
   assert.equal((await stat(GD)).mode & 0o111, 0o111, "run.py is executable");
 });

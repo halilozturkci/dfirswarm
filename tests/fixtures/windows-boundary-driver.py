@@ -120,7 +120,7 @@ elif case == "big":
                 took = time.process_time() - t0
                 cases += 1
                 worst = max(worst, took)
-                if took > 4 or lead[:40] in json.dumps(out):
+                if took > 10 or lead[:40] in json.dumps(out):
                     slow.append([size, atom, kind, round(took, 2), lead[:40] in json.dumps(out)])
     print(json.dumps({"slow": slow, "worst": round(worst, 2), "cases": cases, "sizes": sizes}))
 

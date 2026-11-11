@@ -42,7 +42,7 @@
   "example": "{\"path\": \"inputs/backup.ab\"}",
   "by": "maintainer",
   "at": "2026-11-03T09:00:00.000Z",
-  "version": 2,
+  "version": 3,
   "use": {
     "extensions": [
       ".ab"
@@ -60,5 +60,5 @@
       "copy_content"
     ]
   },
-  "sha256": "5f4283447ecfd44a9f4b2f89593b4da5563386ba01724bc86a8a3b98dc078d74"
+  "sha256": "be03bb6c6512b95ef8563a1049fdcfd679aaa656abab265ecbd3b0385878b61d"
 }

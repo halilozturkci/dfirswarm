@@ -548,6 +548,34 @@ test("P3 a stop signal in the middle of writing the result leaves no half-writte
   });
 });
 
+test("P3 a stop signal the moment the result's temporary file is made, before it is registered, still leaves no temporary file (the hosted Mac's case, every time)", async () => {
+  // the case above sends the signal when it sees the file; on the hosted Mac that landed between os.open and the registration the stop block
+  // reads, and the file was left. Here the signal is sent from inside os.open, right after the file is made: the registration is under held signals now.
+  await withCwd(async (cwd) => {
+    const items = Array.from({ length: 2000 }, (_unused, i) => str(`${i} alpha beta gamma`));
+    await put(cwd, "inputs/big.bin", tuple(items));
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const driver = [
+      "import io, json, os, runpy, signal, sys",
+      "real_open = os.open",
+      "def hooked(path, flags, *a, **k):",
+      "    fd = real_open(path, flags, *a, **k)",
+      "    if str(path).endswith('.tmp') and os.path.basename(str(path)).startswith('.'):",
+      "        os.kill(os.getpid(), signal.SIGTERM)",
+      "    return fd",
+      "os.open = hooked",
+      "sys.argv = [sys.argv[1]]",
+      "runpy.run_path(sys.argv[0], run_name='__main__')",
+    ].join("\n");
+    const run = spawnSync("python3", ["-c", driver, MARSHAL], { cwd, input: JSON.stringify({ path: "inputs/big.bin", out_dir: "out", max_seconds: 45 }), encoding: "utf8",
+      env: { ...process.env, AGENT_ID: "s1" } });
+    assert.equal(run.status, 143, run.stderr);
+    const answer = JSON.parse(run.stdout) as Json;
+    assert.deepEqual([answer.status, answer.interrupted], ["failed", true]);
+    assert.deepEqual(await readdir(join(cwd, "out")), [], "the temporary file is removed");
+  });
+});
+
 test("P3 the result file is complete JSON under its name once the call returns, and no temporary file is left beside it", async () => {
   await withCwd(async (cwd) => {
     await mkdir(join(cwd, "out"), { recursive: true });

@@ -206,7 +206,7 @@ async function stopAfterTheSweep(script: string, cwd: string, args: unknown, env
   const code = `
 import os, signal, sys
 src = open(sys.argv[1], encoding="utf-8").read()
-head, tail = src.split(chr(10) + 'if __name__ == "__main__":', 1)
+head, tail = src.rsplit(chr(10) + 'if __name__ == "__main__":', 1)   # the tool's own, the last (the shared ENDS block has one at the top)
 g = {"__name__": "__main__", "__file__": sys.argv[1]}
 exec(compile(head, sys.argv[1], "exec"), g)
 real = g["hold_signals"]

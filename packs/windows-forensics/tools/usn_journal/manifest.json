@@ -25,8 +25,8 @@
   "example": "{\"path\": \"work/extracted/UsnJrnl_J\", \"name\": \"\\\\.aspx$\", \"limit\": 200}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 7,
-  "sha256": "b837c2166856323964db06a7766b91983ba0aa16e5cc2599fe116ab0a9fea44e",
+  "version": 8,
+  "sha256": "fa27cdae5786522bfed636e0e990b6f54e8f6f7ddbb5029850fb89dae04f1109",
   "use": {
     "names": [
       "$J",

@@ -307,14 +307,21 @@ test("the tool's own clock ends the read of a decompression bomb partial, with J
     const run = await runPySnippet(`
 import sys, tarfile, zlib, io
 out = open(sys.argv[1], "wb")
-info = tarfile.TarInfo("big.bin"); info.size = 3 << 30
-head = info.tobuf(tarfile.USTAR_FORMAT, "utf-8", "surrogateescape")[:512]   # (addfile() wants the 3 GiB body since Python 3.14: the header block is all that is needed)
-c = zlib.compressobj(1, zlib.DEFLATED, 31)
-out.write(c.compress(head))
-chunk = b"\\0" * (1 << 24)
-for _ in range(192):
-    out.write(c.compress(chunk))
-out.write(c.flush())
+# 16 GiB of zeros. An M3 Max read the 3 GiB this case used to make in about the 1 s of clock asked below: five runs of the
+# tool on it reached the archive's end, not the clock (1.04 to 1.06 s with the interpreter's start), and the file alone failed
+# 3 runs of 5. The whole of this one takes 5.6 s there.
+info = tarfile.TarInfo("big.bin"); info.size = 16 << 30
+# A GNU header: ustar's size field stops below 8 GiB, GNU's takes the size in base 256. One block for a short name.
+head = info.tobuf(tarfile.GNU_FORMAT, "utf-8", "surrogateescape")
+assert len(head) == 512, len(head)                     # (addfile() wants the whole body since Python 3.14: the header block is all that is needed)
+c = zlib.compressobj(9, zlib.DEFLATED, 31)
+out.write(c.compress(head) + c.flush(zlib.Z_FULL_FLUSH))
+# After a full flush the deflate stream refers to nothing before it, so the compressed form of 16 MiB of zeros is the same bytes
+# every time: written 1024 times it is 16 GiB of tar body from about 16 MB, without compressing 16 GiB here.
+block = c.compress(b"\\0" * (1 << 24)) + c.flush(zlib.Z_FULL_FLUSH)
+for _ in range(1024):
+    out.write(block)
+# (no gzip trailer: a read the clock did not end would say the stream is cut, not the time limit)
 `, [join(cwd, "bomb.tar.gz")], null);
     assert.equal(run.code, 0, run.stderr);
     const started = Date.now();

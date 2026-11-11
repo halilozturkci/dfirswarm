@@ -378,7 +378,8 @@ test("a preview from heif-convert: the identity of the original and the derivati
 test("there is no silent fallback: with the chosen backend missing the walk and the metadata are still given, and the answer is partial", async () => {
   await withCwd(async (cwd, bin) => {
     await stubExiftool(bin, CANARIES);
-    const answer = body(await run(cwd, { path: await file(cwd, "photo.heic", simpleHeic()) }, {}, bin));
+    // PATH is the stubs and the system's own directories only: a host with libheif installed (Homebrew's heif-convert) still has the backend missing.
+    const answer = body(await run(cwd, { path: await file(cwd, "photo.heic", simpleHeic()) }, { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, bin));
     assert.equal(answer.status, "partial");
     assert.equal(answer.preview!.status, "refused");
     assert.match(answer.preview!.reason!, /heif-convert is not on PATH.*no other backend is tried/);
@@ -614,6 +615,27 @@ mkdir "$d/sub"; dd if=/dev/zero of="$d/sub/flood.bin" bs=1M count=400 2>/dev/nul
     assert.deepEqual((await walkDir(join(cwd, "out"))).filter((p) => p.includes("flood.bin") || p.includes("/e1")), []);
   });
 });
+
+// round 11: the hosted Mac's backend made the 1200 files and the flood and exited before the first look (FLOOD_STEP, 0.1 s), and the bounds were never
+// applied (`ended` was empty). A backend that does the same in a few milliseconds, here on every host: the bounds are applied once it has exited.
+for (const [what, flood] of [["entries", 0], ["bytes", 6 << 20]] as const) {
+  test(`a backend that passes the ${what} bound and exits before the first look is held to it all the same`, async () => {
+    await withCwd(async (cwd, bin) => {
+      await stubExiftool(bin, CANARIES);
+      const original = await file(cwd, "photo.heic", simpleHeic());
+      await writeFile(join(bin, "heif-convert"), `#!/usr/bin/env python3
+import os, sys
+d = os.path.dirname(sys.argv[-1])
+${flood ? `open(os.path.join(d, "flood.bin"), "wb").write(bytes(${flood}))` : `[open(os.path.join(d, "e%d" % i), "wb").close() for i in range(1200)]`}
+`);
+      await chmod(join(bin, "heif-convert"), 0o755);
+      const out = body(await asJob(cwd, { path: original, max_output_bytes: 5 << 20, max_seconds: 60 }, "out", "j-1", false, bin));
+      assert.match(out.conversion!.ended ?? "", flood ? /what it wrote passed 5242880 bytes/ : /more than 1000 entries/, JSON.stringify(out.conversion));
+      assert.notEqual(out.preview!.status, "written");
+      assert.deepEqual((await walkDir(join(cwd, "out"))).filter((p) => p.includes("flood.bin") || p.includes("/e1")), []);
+    });
+  });
+}
 
 test("a tool-output or heic_inspect directory that is a link planted in the output directory is refused as JSON, and nothing is written through it", async () => {
   await withCwd(async (cwd, bin) => {

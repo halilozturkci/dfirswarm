@@ -46,6 +46,7 @@ function runNode(script: string, cwd: string, stdin: unknown, env: Record<string
     child.stderr.on("data", (c: Buffer) => err.push(c));
     child.on("error", reject);
     child.on("close", (code) => resolve({ code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") }));
+    child.stdin.on("error", () => undefined);    // a tool that ends before it reads its arguments (a refusal) closes the pipe: EPIPE is not the test's failure
     child.stdin.end(JSON.stringify(stdin));
   });
 }
@@ -299,6 +300,7 @@ test("both AES scanners say what to do about a key file in a handover, and keep 
         child.stdout.on("data", (c: Buffer) => out.push(c));
         child.on("error", reject);
         child.on("close", (code) => resolve({ code, stdout: Buffer.concat(out).toString("utf8"), stderr: "" }));
+        child.stdin.on("error", () => undefined);    // a tool that ends before it reads its arguments (a refusal) closes the pipe: EPIPE is not the test's failure
         child.stdin.end(JSON.stringify({ path: "inputs/n.raw" }));
       });
       assert.match(ok<Scan>(job).result_file, /^store\/jobs\/j1\/out\/quarantine\//);
@@ -874,6 +876,7 @@ function pyOut(code: string, args: string[] = [], stdin = ""): Promise<Buffer> {
     child.stderr.on("data", (c: Buffer) => err.push(c));
     child.on("error", reject);
     child.on("close", (rc) => (rc === 0 ? resolve(Buffer.concat(out)) : reject(new Error(`python3 exited ${rc}: ${Buffer.concat(err)}`))));
+    child.stdin.on("error", () => undefined);    // a tool that ends before it reads its arguments (a refusal) closes the pipe: EPIPE is not the test's failure
     child.stdin.end(stdin);
   });
 }

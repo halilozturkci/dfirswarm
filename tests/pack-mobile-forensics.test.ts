@@ -97,6 +97,7 @@ import runpy, tracemalloc
 tracemalloc.start()
 sys.argv = [sys.argv[1]]
 try:
+    import os as _os_for_exit; _os_for_exit._exit = lambda code: (_ for _ in ()).throw(SystemExit(code))   # the tool ends with os._exit after its answer; this wrapper has more to do after it (report the peak), so the exit is turned into the SystemExit the tool used to end with
     runpy.run_path(sys.argv[0], run_name="__main__")
 except SystemExit:
     pass
@@ -2174,7 +2175,8 @@ os.chdir(sys.argv[2])
 os.environ.update(JOB_ID="j-1", OUT=sys.argv[3], SECRET_OUTPUT="1", AGENT_ID="s1")
 os.makedirs(sys.argv[3], exist_ok=True)
 def hang():
-    sys.stderr.write("READY\n"); sys.stderr.flush(); time.sleep(60)
+    sys.stderr.write("READY\n"); sys.stderr.flush()
+    for _ in range(1200): time.sleep(0.05)        # (short sleeps: a signal that the kernel gave to another thread of the process, as a Mac may, is run by the main thread within 50 ms; one sleep(60) waits the whole minute and the harness's guard kills the tool: exit 128 + 99)
 `;
     const stop = async (name: string, patch: string, args: Record<string, unknown>, tool: string, sig: NodeJS.Signals) => {
       const out = join(cwd, "stop-" + name + "-" + sig);

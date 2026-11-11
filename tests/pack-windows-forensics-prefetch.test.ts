@@ -340,6 +340,8 @@ test("mam_scan refuses arguments that are not a JSON object, as JSON", async () 
 const PEAK_ALLOCATED = [
   "import runpy, sys, tracemalloc",
   "tracemalloc.start()",
+  "import os",
+  "os._exit = lambda code: (_ for _ in ()).throw(SystemExit(code))   # the tool ends with os._exit after its answer; the peak is reported after it",
   "try:",
   "    runpy.run_path(sys.argv[1], run_name='__main__')",
   "finally:",

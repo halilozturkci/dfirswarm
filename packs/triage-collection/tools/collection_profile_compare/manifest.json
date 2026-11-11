@@ -62,8 +62,8 @@
   "example": "{\"root\": \"inputs/uac-collection\", \"definitions\": \"inputs/definitions\"}",
   "by": "maintainer",
   "at": "2026-11-02T12:00:00.000Z",
-  "version": 1,
-  "sha256": "d65d798e5741b411cd26f2c85d16bb67509be90b72f3c74456bd9216fcd080d5",
+  "version": 2,
+  "sha256": "2ffc6141674395b9d94d462f33fd704797a2032eb02041b0413a6cb8e937a15e",
   "use": {
     "names": [
       "uac.log",

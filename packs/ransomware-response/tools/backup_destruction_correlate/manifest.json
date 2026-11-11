@@ -57,6 +57,6 @@
   "example": "{\"events\": [{\"host\": \"fileserver1\", \"file\": \"work/s1/evtx-answer.json\", \"result_file\": \"work/s1/tool-output/evtx_query-security.jsonl\"}], \"vss_inventories\": [{\"host\": \"fileserver1\", \"file\": \"work/s1/vss-before.json\", \"collected_utc\": \"2026-10-01T09:00:00Z\"}, {\"host\": \"fileserver1\", \"file\": \"work/s1/vss-after.json\", \"collected_utc\": \"2026-10-01T11:00:00Z\"}]}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 4,
-  "sha256": "388b444b9225a9e67d164e131e953d240ef8dd31e5f7dd448267b3a555ed664f"
+  "version": 5,
+  "sha256": "19649228f6edfae4f7b7d9b5ab244dec68229d5ed1b7e4fad3517a15eb773a3c"
 }

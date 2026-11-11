@@ -30,7 +30,7 @@
   "example": "{\"path\": \"work/extracted/Windows/System32/sru/SRUDB.dat\", \"software\": \"work/extracted/Windows/System32/config/SOFTWARE\", \"limit\": 50}",
   "by": "maintainer",
   "at": "2026-11-04T09:00:00.000Z",
-  "version": 5,
+  "version": 6,
   "use": {
     "names": [
       "SRUDB.dat"
@@ -41,5 +41,5 @@
     "dotnet",
     "target-query"
   ],
-  "sha256": "c2ffbd6e890525bb71059890f1bbf3d44d06649a9ee94b27356a9b3789d113fa"
+  "sha256": "23b9b1998154a78bb01658f6a84a18928ebd17745aa0e8bda7f7aa348b97fe3f"
 }

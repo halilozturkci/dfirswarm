@@ -13,8 +13,8 @@
   "example": "{\"path\":\"work/extracted/prefetch/sample.pf\"}",
   "by": "sbe1803",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 5,
-  "sha256": "086f0ed60862e6e69b4390bb856cf88a1643feabaf98ae3afc9f23eabd50977f",
+  "version": 6,
+  "sha256": "43052e9b53e40b9aa6345111230d4bac4ddbd69829f00824bd5445dd9ae96f95",
   "use": {
     "extensions": [
       ".pf"

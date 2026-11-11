@@ -502,7 +502,7 @@ test("eve.json is read under the tool's own clock: it is read in part when the c
   });
 });
 
-test("a stop signal that arrives while the answer is being written adds no second document: the answer is whole and the exit is 128 plus the signal", async () => {
+test("a stop signal that arrives while the answer is being written adds no second document: the answer is whole and the exit is the call's own", async () => {
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, { eve: ALERT(1) + "\n", loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n", loadRun: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
     const { path, rules } = await inputs(cwd);
@@ -522,7 +522,9 @@ test("a stop signal that arrives while the answer is being written adds no secon
     ].join("\n");
     const run = spawnSync("python3", ["-c", code, SURICATA], { cwd, input: JSON.stringify({ path, rules, out_dir: "work/s" }), encoding: "utf8", maxBuffer: 1 << 26,
       env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}`, ...env(cwd) } });
-    assert.equal(run.status, 143, run.stderr);
+    // the shared ENDS block holds the stop signals from the answer's first byte: the stop is not answered, the answer stands, and the exit status is
+    // the call's own (it was 128 + the signal before round 10, when the held signal ran the handler once the answer was out)
+    assert.equal(run.status, 0, run.stderr);
     const answer = JSON.parse(run.stdout);
     assert.equal(answer.tool.name, "suricata_run");
     assert.equal(answer.interrupted_by_signal, undefined, "one document: the answer, not a last word after it");

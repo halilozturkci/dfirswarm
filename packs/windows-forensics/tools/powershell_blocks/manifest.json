@@ -33,8 +33,8 @@
   "example": "{\"path\": \"work/Microsoft-Windows-PowerShell%4Operational.evtx\"}",
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
-  "version": 1,
-  "sha256": "a7a3c0f608d62901cef3fe21da013cdd2c1eef371c026d5cf2bb396122aa059c",
+  "version": 2,
+  "sha256": "983a88992eea2aa78b48515f92c30ea36c28c30790d2777582e34483e5237f0c",
   "requires": [],
   "use": {
     "extensions": [

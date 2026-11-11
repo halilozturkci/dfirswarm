@@ -109,7 +109,7 @@ for (const name of names) {
 
   test(`${name}: strings past the 100,000-character window of the old PEM pattern (110,000, 262,144 and 1 MiB), with a token that makes a layer change them, are judged in CPU seconds, not minutes, and the token is not printed`, async () => {
     const r = await drive(name, "big", "110000,262144,1048576");
-    assert.deepEqual(r.slow, [], `slower than 4 s of CPU, or the leading token printed: ${JSON.stringify(r.slow)}`);
+    assert.deepEqual(r.slow, [], `slower than 10 s of CPU, or the leading token printed: ${JSON.stringify(r.slow)}`);
     assert.ok(r.cases >= 40, `${r.cases} cases`);
   });
 

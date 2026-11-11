@@ -41,6 +41,6 @@
   "example": "{\"censuses\": [{\"host\": \"fileserver1\", \"file\": \"work/s1/tool-output/encrypted_survey-census.jsonl\"}], \"expected_hosts\": [\"fileserver1\", \"workstation7\"]}",
   "by": "maintainer",
   "at": "2026-11-01T12:00:00.000Z",
-  "version": 3,
-  "sha256": "5d950fe826a69421baf2d84b0f508a377dfbaca36dd47d8c4f46c1373d086381"
+  "version": 4,
+  "sha256": "5312d17bbb8f7ca9c9e6d7ebbc8a63f07cf97b0ab33af267c3770634383af494"
 }

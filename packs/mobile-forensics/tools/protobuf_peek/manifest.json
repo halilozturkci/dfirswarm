@@ -45,8 +45,8 @@
   "example": "{\"path\": \"work/extracted/usagestats/0/daily/1771070000\", \"limit\": 100}",
   "by": "maintainer",
   "at": "2026-09-22T20:00:00.000Z",
-  "version": 4,
-  "sha256": "d91c06ff627916842bea64b2295161e71ea39e9cfe463bc9985f79bdb4c557a8",
+  "version": 5,
+  "sha256": "69a60bc659fb45e491fb5d4a0214bbc4ed29c74e2007cb310d82a21fcb7ef857",
   "secret_output": {
     "when_args": [
       "write_values"

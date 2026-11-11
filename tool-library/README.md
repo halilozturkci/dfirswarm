@@ -120,49 +120,49 @@ or `tools/`.
 | `aes_inverse_scan` | node | `s3472f0` | 2 | Find AES-128 and AES-256 key schedules stored as a decryption routine keeps them (InvMixColumns on the middle… |
 | `aes_schedule_scan` | node | `s3472f0` | 2 | Find AES-128 and AES-256 key schedules in a file or memory image, at every byte alignment, as the standard la… |
 | `aescrypt_v2_decrypt` | python3 | `s864a02` | 3 | Decrypt AES Crypt 3.10 Windows GUI v2 files (KDF: SHA256(IV||zeros16||UTF16LE pw)×8192). Returns plaintext pa… |
-| `amcache_apps` | python3 | `maintainer` | 12 | Application and file inventory from Amcache.hve (presence, not execution): path, hash, publisher, version and… |
-| `browser_history` | python3 | `maintainer` | 7 | Query a browser history database from a copy of it and its -wal, -shm and -journal sidecars, made in a privat… |
+| `amcache_apps` | python3 | `maintainer` | 13 | Application and file inventory from Amcache.hve (presence, not execution): path, hash, publisher, version and… |
+| `browser_history` | python3 | `maintainer` | 8 | Query a browser history database from a copy of it and its -wal, -shm and -journal sidecars, made in a privat… |
 | `catalog_grep` | python3 | `s864a02` | 1 | Grep catalog/AF-Case2.E01/p0/filelist.txt for a pattern; return matching lines. |
-| `catalog_search` | python3 | `sd1d100` | 19 | Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or a… |
-| `check_inputs` | python3 | `sfcc304` | 14 | Diff inputs/ against inputs.json (size and sha256). The manifest is validated whole first: a malformed entry,… |
-| `chunk_needles` | python3 | `sd1d102` | 20 | Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return p… |
+| `catalog_search` | python3 | `sd1d100` | 20 | Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or a… |
+| `check_inputs` | python3 | `sfcc304` | 15 | Diff inputs/ against inputs.json (size and sha256). The manifest is validated whole first: a malformed entry,… |
+| `chunk_needles` | python3 | `sd1d102` | 21 | Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return p… |
 | `contact_sheet` | python3 | `s10d40e` | 1 | Tile many images into labelled contact sheets to look at: a directory, a list of paths or a tar read in place… |
 | `csearch` | python3 | `sf6df06` | 2 | Search the kickoff catalog files (filelist/timeline/bodyfile/pslist/cmdline/netscan/malfind/dlllist/psscan) f… |
 | `destlist_v4` | python3 | `sd29252` | 1 | Read the DestList stream of a Windows jump list, version 4 (the 130-byte entry layout): for each entry its pl… |
 | `encoded_literal_scan` | python3 | `s3472f0` | 1 | Find a literal you know the start and end of (marker ... closer) hidden in base64, base32, hex, rot13 or as U… |
-| `esedb_query` | python3 | `maintainer` | 21 | Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as TABLES through esedbexport: list the tables… |
+| `esedb_query` | python3 | `maintainer` | 22 | Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as TABLES through esedbexport: list the tables… |
 | `evtx_filter` | python3 | `sd1d101` | 1 | Parse a local EVTX; return EventID/TimeCreated/EventData for matching IDs or a time prefix |
-| `evtx_query` | python3 | `sbe1801` | 11 | Query an EVTX event log and return filtered events with timestamp, event id, channel, computer, provider, Eve… |
-| `extract_stream` | python3 | `sfcc303` | 13 | Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream i… |
-| `file_carver` | python3 | `s183904` | 12 | Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own struc… |
+| `evtx_query` | python3 | `sbe1801` | 12 | Query an EVTX event log and return filtered events with timestamp, event id, channel, computer, provider, Eve… |
+| `extract_stream` | python3 | `sfcc303` | 14 | Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream i… |
+| `file_carver` | python3 | `s183904` | 13 | Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own struc… |
 | `fls_root` | python3 | `s9d8306` | 2 | Run fls on an EXT4 volume (default offset 503808, image inputs/Webserver.E01). Reads inode/recursive/image/of… |
 | `ftk_csv` | python3 | `s9d8303` | 1 | Query the UTF-16 FTK Imager CSV for path/date/deleted filters; return matching rows as JSON. |
 | `fve_metadata` | python3 | `s864a05` | 2 | Parse a BitLocker -FVE-FS- volume (raw image or VHD partition) and return metadata: GUID, encryption method, … |
 | `grep_filelist` | python3 | `s864a08` | 4 | Search the catalog filelist for a pattern (case-insensitive). Returns the first 100 matching lines as a JSON … |
 | `guest_syslog` | python3 | `s5d1001` | 1 | Extract unique syslog-like lines from a binary (Kali/rsyslog) matching a month-day prefix; drop kernel lines. |
 | `hdfs_node_icat` | python3 | `s9a5f03` | 2 | Extract an inode from a cluster node's image with icat and hash what it wrote. node picks one of the HDFS cas… |
-| `icat_extract` | python3 | `s864a08` | 18 | Extract one Sleuth Kit address (an inode, or inode-type-id for an NTFS stream such as 168-128-4) from a disk … |
+| `icat_extract` | python3 | `s864a08` | 19 | Extract one Sleuth Kit address (an inode, or inode-type-id for an NTFS stream such as 168-128-4) from a disk … |
 | `icat_root` | python3 | `s9d8306` | 5 | Extract an inode from an EXT4 volume with icat. The Webserver case's image and its 503808-sector offset are t… |
-| `ioc_scan` | python3 | `s183900` | 17 | Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its sta… |
+| `ioc_scan` | python3 | `s183900` | 18 | Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its sta… |
 | `ledger_timeline` | python3 | `se5fdcd` | 3 | Write a run's dated ledger entries as one timeline in time order (Markdown table, CSV or JSON Lines). Leaves … |
-| `lnk_parse` | python3 | `s183902` | 8 | Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layo… |
+| `lnk_parse` | python3 | `s183902` | 9 | Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layo… |
 | `mam_pf_parse` | python3 | `s2f6600` | 1 | Decompress a MAM-wrapped Windows prefetch file and return executable name, version, run count, and non-zero l… |
-| `mam_scan` | python3 | `s183901` | 5 | Scan a raw dump or image region for MAM-compressed Prefetch records (the signature MAM\x04 and a declared siz… |
-| `marshal_inspect` | python3 | `sd29252` | 5 | Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and neve… |
+| `mam_scan` | python3 | `s183901` | 6 | Scan a raw dump or image region for MAM-compressed Prefetch records (the signature MAM\x04 and a declared siz… |
+| `marshal_inspect` | python3 | `sd29252` | 6 | Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and neve… |
 | `master_icat` | bash | `s9a5f06` | 3 | Extract a file by inode from an E01 with icat. The HDFS master image and sector offset 2048 are the defaults;… |
 | `nested_vdi` | python3 | `sae6e7d` | 1 | Read a VirtualBox VDI that lies inside an E01 or raw image, in place: found by its NTFS data runs (a deleted … |
-| `prefetch_mam` | python3 | `sbe1803` | 5 | Read a Windows Prefetch file, MAM-compressed (MAM\x04) or plain (SCCA), field by field by the layout of its S… |
-| `recyclebin_i` | python3 | `maintainer` | 7 | Parse $Recycle.Bin $I metadata (version 1 and 2 records, unsigned fields): the original path, original size a… |
+| `prefetch_mam` | python3 | `sbe1803` | 6 | Read a Windows Prefetch file, MAM-compressed (MAM\x04) or plain (SCCA), field by field by the layout of its S… |
+| `recyclebin_i` | python3 | `maintainer` | 8 | Parse $Recycle.Bin $I metadata (version 1 and 2 records, unsigned fields): the original path, original size a… |
 | `reg_hive_query` | python3 | `sbe1805` | 1 | Query a Windows registry hive file (regipy) and return a key's values and subkey names as JSON. |
 | `regkeys` | python3 | `sf4b205` | 4 | Dump a registry key's values and subkeys from a hive with regipy. Text values are decoded, REG_BINARY comes b… |
-| `regkv` | python3 | `s9f2005` | 13 | Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole:… |
-| `sig_carve` | python3 | `s183906` | 16 | A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, an… |
+| `regkv` | python3 | `s9f2005` | 14 | Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole:… |
+| `sig_carve` | python3 | `s183906` | 17 | A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, an… |
 | `sigscan_e01` | python3 | `s5d1001` | 3 | Scan an E01/raw image for a byte signature via TSK img_cat (logical media, not the EWF wrapper). Returns offs… |
-| `sqlite_query` | python3 | `s881002` | 18 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
-| `usn_journal` | python3 | `maintainer` | 7 | Parse an NTFS change journal ($UsnJrnl:$J) into records from v2, v3 and v4 entries: name, USN, timestamp (ISO… |
-| `utf16_urls` | python3 | `s5d1003` | 6 | String candidates for URLs, file: and Visited: entries and 192.168.x.x addresses in a file; not a browser par… |
+| `sqlite_query` | python3 | `s881002` | 19 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
+| `usn_journal` | python3 | `maintainer` | 8 | Parse an NTFS change journal ($UsnJrnl:$J) into records from v2, v3 and v4 entries: name, USN, timestamp (ISO… |
+| `utf16_urls` | python3 | `s5d1003` | 7 | String candidates for URLs, file: and Visited: entries and 192.168.x.x addresses in a file; not a browser par… |
 | `volrun` | python3 | `s69d306` | 2 | Run a Volatility 3 plugin against a memory image with typed arguments. Returns stdout/stderr. |
-| `yara_scan` | python3 | `maintainer` | 13 | Sweep a file or directory with a YARA rule file the caller names, and report where each rule matched: rule, f… |
+| `yara_scan` | python3 | `maintainer` | 14 | Sweep a file or directory with a YARA rule file the caller names, and report where each rule matched: rule, f… |
 
 ## Folded from later runs
 

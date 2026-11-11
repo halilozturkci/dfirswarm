@@ -28,6 +28,159 @@ Three things, each from a different source, never mixed:
 The preview file is picture content and may carry the original's EXIF if the backend writes it: it is output
 of the job like any other, and a job over pictures the case treats as sensitive runs with secret_output: true.
 """
+
+# BEGIN SHARED ENDS
+# The same text is in every pack tool and recipe and in their tool-library twins, before the file's own imports (tests/shared-blocks-census.test.ts
+# holds the copies equal): the two ends of a call, where a stop signal (SIGTERM, SIGINT, SIGHUP) found no handler, or one that did harm.
+# * The start. From here a stop is answered by ONE JSON document and exit 128 + the signal, until the tool installs its own handlers (which then
+#   answer it), and for good for a signal the tool never takes. Only the start of the interpreter and the compiling of the file come before
+#   it: a stop there ends the process with no answer, before anything was read. answer_a_stop() is that document: a handler whose own last word
+#   wrote nothing on standard output calls it before it ends the process, so that a stop is never answered by silence.
+# * The end. The interpreter's own teardown resets the handlers to their defaults before it frees what the call held, and a stop that landed
+#   there killed a process that had printed its whole answer; a handler that raises, writes a last word or ends the process, run once the
+#   answer was decided, wrote a second document, a traceback, or nothing at all. Python runs a handler on the main thread whichever thread the
+#   signal reached, so a mask of the main thread alone holds nothing while another thread runs. hold_stop_signals() holds the stop signals for
+#   good: blocked in this thread and given a handler that does nothing, which is the hold whatever thread the signal reaches; an error Python
+#   can only report from then on (a file left open whose last write the file system refuses, closed when the frame that held it is freed) is
+#   not printed (3.11 and 3.12 say nothing of it, 3.14 a traceback). A handler that was due runs on the way in: what it raises reaches the
+#   writer that asked (the tool's own handling then answers the stop, before any byte of the answer), or, quietly, is dropped (the end of a
+#   call, an error branch). Every writer of a final answer calls it before it commits to writing, every error branch at the end calls it
+#   quietly, and, when the file runs as a program, standard output is wrapped so that its first write calls it too. _code(stop) is a
+#   SystemExit's exit code (its text, if it has one, goes to standard error as the interpreter puts it), and _leave(code) ends the call: both
+#   hold the signals first, quietly; _leave flushes
+#   standard output (a write that fails there makes a 0 an exit 120, as the interpreter does) and standard error, runs the atexit hooks (a hook
+#   that removes a temporary file), each step on its own and none able to raise, and ends the process with os._exit, never through the teardown.
+# The modules are imported here, as the file is loaded, never inside the ending (an import there ran a due handler inside the import system).
+import atexit
+import json
+import os
+import signal
+import sys
+
+_ENDING = {"held": False, "program": __name__ == "__main__"}      # imported (a test that loads the file as a module), the block holds nothing
+_ENDING_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def answer_a_stop(signum, when="before it had answered"):
+    """The one document of a stop that ends the call before any answer was begun (nothing once one has): status failed, interrupted, and
+    no claim about what was read or written. A handler whose own last word printed nothing calls it before it ends the process. It writes
+    only when the file runs as a program: its wrapped standard output is what knows whether an answer was begun."""
+    if _ENDING["held"] or not isinstance(sys.stdout, _AnswerStream):
+        return
+    _ENDING["held"] = True
+    name = {signal.SIGTERM: "SIGTERM", signal.SIGINT: "SIGINT", signal.SIGHUP: "SIGHUP"}.get(signum, "signal %d" % signum)
+    text = json.dumps({"error": "the tool was stopped by %s %s" % (name, when), "status": "failed", "interrupted": name,
+                       "status_basis": "stopped by %s %s: no answer was made, and what it had read or written by then is not described" % (name, when)})
+    try:
+        os.write(1, (text + "\n").encode("ascii"))
+    except OSError:
+        pass
+
+
+def _stopped_without_handler(signum, _frame):
+    for other in _ENDING_SIGNALS:
+        try:
+            signal.signal(other, signal.SIG_IGN)
+        except (ValueError, OSError):
+            pass
+    answer_a_stop(signum, "while it was being loaded, or at a point where it has no stop handling of its own")
+    os._exit(128 + signum)
+
+
+def _ending_nothing(*_ignored):
+    """The stop signals' handler, and sys.unraisablehook, once the answer has begun: nothing."""
+
+
+def hold_stop_signals(quietly=False):
+    """Hold the stop signals for good. A handler that was due runs on the way in, before the hold and before any byte of the answer, and what
+    it raises is raised here, so that the tool's own handling of a stop answers it; quietly (the end of a call, an error branch, where nothing
+    may escape) it is dropped and the hold is made all the same. Called by a thread that is not the main one, it blocks the signals there and
+    leaves the rest to the main thread's next call."""
+    for _attempt in range(len(_ENDING_SIGNALS) + 2):
+        if _ENDING["held"] or not _ENDING["program"]:
+            return
+        try:
+            try:
+                signal.pthread_sigmask(signal.SIG_BLOCK, _ENDING_SIGNALS)
+            except (AttributeError, ValueError, OSError):
+                pass                  # no pthread_sigmask here: the handler below is the hold
+            main_thread = True
+            for signum in _ENDING_SIGNALS:
+                try:
+                    signal.signal(signum, _ending_nothing)
+                except (ValueError, OSError):
+                    main_thread = False
+            sys.unraisablehook = _ending_nothing
+            _ENDING["held"] = main_thread
+            return
+        except BaseException:  # noqa: BLE001 - a handler that was due ran on the way in, and raised
+            if not quietly:
+                raise
+
+
+
+class _AnswerStream:
+    """Standard output of a call: the first write holds the stop signals (above); everything else is the stream's own."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text):
+        if not _ENDING["held"]:
+            hold_stop_signals()
+        return self._stream.write(text)
+
+    def writelines(self, lines):
+        if not _ENDING["held"]:
+            hold_stop_signals()
+        return self._stream.writelines(lines)
+
+    def __getattr__(self, name):
+        if name == "_stream":
+            raise AttributeError(name)
+        return getattr(self._stream, name)
+
+
+def _code(stop):
+    hold_stop_signals(quietly=True)
+    code = getattr(stop, "code", 1)
+    if isinstance(code, int):
+        return code
+    if code is not None:
+        try:
+            sys.stderr.flush()
+            os.write(2, ("%s\n" % (code,)).encode("utf-8", "backslashreplace"))
+        except BaseException:  # noqa: BLE001
+            pass
+    return 0 if code is None else 1
+
+
+def _leave(code):
+    hold_stop_signals(quietly=True)
+    code = code if isinstance(code, int) else 1
+    try:
+        sys.stdout.flush()
+    except BaseException:  # noqa: BLE001 - a reader that is gone: the answer did not reach it
+        code = code or 120
+    try:
+        sys.stderr.flush()
+    except BaseException:  # noqa: BLE001
+        pass
+    try:
+        atexit._run_exitfuncs()
+    except BaseException:  # noqa: BLE001 - a hook that fails is not a failure of the answer
+        pass
+    os._exit(code)
+
+
+if __name__ == "__main__":
+    if sys.stdout is not None and not isinstance(sys.stdout, _AnswerStream):
+        sys.stdout = _AnswerStream(sys.stdout)
+    for _signum in _ENDING_SIGNALS:
+        signal.signal(_signum, _stopped_without_handler)
+# END SHARED ENDS
+
+
 import base64
 import errno
 import hashlib
@@ -47,12 +200,10 @@ import time
 import unicodedata
 from pathlib import Path
 
-PARSER = "heic_inspect/6"
+PARSER = "heic_inspect/7"
 TOOL = "heic_inspect"
 VALUES_NAME = "heic-inspect-values.jsonl"       # the first free name of this and -2, -3 ... is used (see choose_values_name)
 VALUES_FORMAT = "JSON Lines: one metadata tag of the original per line (group, tag, value)"
-
-
 
 
 # --- shared with the pack's other tools: begin ---------------------------------------------
@@ -1716,6 +1867,8 @@ def _on_signal(signum, _frame):
             last_word(signum)
         except Exception:  # noqa: BLE001 - a last word is best effort
             pass
+    if "answer_a_stop" in globals():     # (a block run on its own, by a test, has no ENDS block)
+        answer_a_stop(signum)
     os._exit(128 + signum)
 
 
@@ -2420,6 +2573,14 @@ def run_bounded(argv, work, stdout_path, stderr_path, seconds, cap_bytes, env):
             raise
         finally:
             ACTIVE.remove(proc)
+    if ended is None:
+        # A program that exits within the first FLOOD_STEP is never looked at in the loop: its work directory is held to the same bounds now
+        # (the hosted Mac: a backend made 1200 files and 400 MiB and exited before the first look, and its output was taken as unbounded).
+        written, entries = tree_bytes(work)
+        if written > cap_bytes:
+            ended = "what it wrote passed %d bytes (it had exited before the tool looked)" % cap_bytes
+        elif entries > MAX_WORK_FILES:
+            ended = "it made more than %d entries in its work directory, past which its bytes are not counted (it had exited before the tool looked)" % MAX_WORK_FILES
     reap_orphans()
     return code, ended, time.monotonic() - began
 
@@ -2590,7 +2751,7 @@ def main():
         code, ended, took = run_bounded([exif, "-json", "-G1", "-a", "-struct", real], str(work), str(so), str(se), max(5.0, min(60.0, max_seconds * EXIFTOOL_STAGE)), MAX_LOG_BYTES, env)
         raw, over = read_capped(so, MAX_LOG_BYTES)
         if ended or code not in (0, 1) and not raw:
-            metadata = {"status": "failed", "reason": "exiftool %s" % (("was ended: " + ended) if ended else "exited %s: %s" % (code, scrub_text(read_capped(se, 4000)[0]))), "exit_code": code}
+            metadata = {"status": "failed", "reason": "exiftool %s" % ((("was ended: " if code is None else "output is not used: ") + ended) if ended else "exited %s: %s" % (code, scrub_text(read_capped(se, 4000)[0]))), "exit_code": code}
             problems_why.append("exiftool did not finish: no metadata of the original was read")
         elif over:
             metadata = {"status": "too_large", "reason": "exiftool wrote more than %d bytes: not read" % MAX_LOG_BYTES}
@@ -2669,7 +2830,7 @@ def main():
                           "errors": scrub_text(read_capped(se, 4000)[0]), "output": scrub_text(read_capped(so, 4000)[0], 500)}
             chosen, why = None, None
             if ended:
-                why = "the backend was ended: %s" % ended
+                why = ("the backend was ended: %s" if code is None else "the backend's output is not used: %s") % ended
             elif code != 0:
                 why = "the backend exited %s" % code
             elif not produced:
@@ -2762,4 +2923,9 @@ def main():
 
 
 if __name__ == "__main__":
-    run_main(main)
+    exit_code = 0
+    try:
+        run_main(main)
+    except SystemExit as stop:
+        exit_code = _code(stop)
+    _leave(exit_code)

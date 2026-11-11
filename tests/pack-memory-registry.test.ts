@@ -70,6 +70,16 @@ sys.exit(b.get("code", 0))
 const argvLog = async (cwd: string): Promise<string[][]> =>
   (await readFile(join(cwd, "vol-argv.log"), "utf8").catch(() => "")).split("\n").filter(Boolean).map((l) => JSON.parse(l) as string[]);
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Whether `pid` is gone within a few seconds. A program the tool SIGKILLs and does not wait for (Popen owns it) is still dying, or a zombie that
+ * init has not yet reaped, for a moment after the tool's own exit: kill(pid, 0) answers for it then (125 of 300 runs of a bare tool that kills its
+ * program and exits, round 11; the Node 22.19 job met it once in this test). Gone means gone within that moment, not at the instant of the exit. */
+const goneSoon = async (pid: number): Promise<boolean> => {
+  for (let i = 0; i < 100; i++) {
+    if (!alive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return !alive(pid);
+};
 const pidOf = async (file: string): Promise<number | null> => { try { return Number((await readFile(file, "utf8")).trim()) || null; } catch { return null; } };
 type Answer = Record<string, any>;
 const parse = (r: { stdout: string; stderr: string }): Answer => {
@@ -273,7 +283,7 @@ test("max_records ends the read and the program, the answer is partial and says 
     const kept = (await readFile(join(cwd, out.records.all_results), "utf8")).trim().split("\n");
     assert.equal(kept.length, 700);
     const stub = await pidOf(pid);
-    assert.ok(stub && !alive(stub), "the program was ended when the read was");
+    assert.ok(stub && await goneSoon(stub), "the program was ended when the read was");
   });
 });
 
@@ -287,7 +297,7 @@ test("a hang is ended at the clock (hivelist: a failure; printkey: the records r
     assert.match(out.error, /hives could not be listed/);
     assert.ok(run.ms < 60 * SECOND, `${run.ms} ms`);
     let stub = await pidOf(pid);
-    assert.ok(stub && !alive(stub));
+    assert.ok(stub && await goneSoon(stub));
     env = await stubVol(cwd, bin, { help: { stdout: HELP }, hivelist: { stdout: HIVELIST(false) }, printkey: { stdout: PK_HEAD, rows: 5, sleep: 120, pid } });
     run = await runTool(REG, cwd, { path: "inputs/mem.raw", mode: "printkey", offset: hex(SYSTEM), max_seconds: 45 }, env, bin);
     out = parse(run);
@@ -295,7 +305,7 @@ test("a hang is ended at the clock (hivelist: a failure; printkey: the records r
     assert.equal(out.records.matched, 5, "what was read before the time ran out is kept");
     assert.match(out.status_basis, /not finished in the time/);
     stub = await pidOf(pid);
-    assert.ok(stub && !alive(stub));
+    assert.ok(stub && await goneSoon(stub));
     for (const ignore of [false, true]) {
       const p2 = join(cwd, `sig-${ignore}.pid`);
       const { env: jobEnv, out: outDir } = await secretJob(cwd, 5 + Number(ignore));
@@ -310,7 +320,7 @@ test("a hang is ended at the clock (hivelist: a failure; printkey: the records r
       const left = await files(outDir);
       assert.ok(left.every((f) => !/\/\.[^/]*$/.test(f)), `no hidden temporary file: ${left.join(", ")}`);
       const stub2 = await pidOf(p2);
-      assert.ok(stub2 && !alive(stub2), `the stand-in is gone (ignore_term ${ignore})`);
+      assert.ok(stub2 && await goneSoon(stub2), `the stand-in is gone (ignore_term ${ignore})`);
     }
   });
 });

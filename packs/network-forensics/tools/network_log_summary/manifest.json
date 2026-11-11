@@ -45,8 +45,8 @@
   "example": "{\"path\": \"inputs/access.log\", \"out_dir\": \"work/<your id>/access-summary\", \"format\": \"auto\"}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 11,
-  "sha256": "14ee4b1e51aaab5ad088c75f4d9c8e298fda2da540a45c5d32168b5ae969a420",
+  "version": 12,
+  "sha256": "9606521db2fa3d7b5b725a79385fe48ca8d10b369f2d461f1399076918021b1d",
   "use": {
     "extensions": [
       ".log",

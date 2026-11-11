@@ -102,7 +102,10 @@ class RealReader(RarBase):
         self.copy_fixture()
         r = self.extract("inputs/a.rar", "work/out")
         self.assertEqual(r.code, 0, r.stdout + r.stderr)
-        self.assertEqual(r.json["status"], "complete", r.json.get("status_basis"))
+        self.assertEqual(r.json["status"], CLEAN, r.json.get("status_basis"))
+        if CLEAN == "partial":  # the one reason a clean run is not complete off Linux: no leftover's absence can be proven (support.CLEAN)
+            self.assertEqual(r.json["program_group"]["left_behind"], 0)
+            self.assertTrue(r.json["program_group"]["unproven"], r.stdout)
         self.assertEqual(r.json["archive"]["format"], "rar")
         self.assertEqual(os.path.basename(r.json["archive"]["program"]["path"]), "7zz")
         self.assertIn("7-Zip", r.json["archive"]["program"]["banner"])
@@ -135,7 +138,7 @@ class RealReader(RarBase):
     def test_the_members_are_named_to_the_reader_in_a_list_file_with_wildcards_off(self):
         self.copy_fixture()
         r = self.extract("inputs/a.rar", "work/out")
-        self.assertEqual(r.json["status"], "complete")
+        self.assertEqual(r.json["status"], CLEAN, r.stdout)
         sel = self.read("work/out/" + r.json["selection_file"], "rb")
         self.assertEqual(sorted(sel.decode("utf-8").splitlines()), sorted(MEMBERS))
 
@@ -183,7 +186,7 @@ class RealReader(RarBase):
         self.assertEqual(first.json["stopped_by"], "max_members")
         self.assertEqual(first.json["next_index"], 2)
         again = run_tool("archive_extract", {"path": "inputs/a.rar", "out_dir": "work/out", "resume": True, "from_index": 2}, self.dir)
-        self.assertEqual(again.json["status"], "complete", again.stdout)
+        self.assertEqual(again.json["status"], CLEAN, again.stdout)
         self.assertEqual([x["status"] for x in self.rows("work/out")], ["extracted", "extracted"], "the first run's two files are in the first manifest")
         self.assertEqual(again.json["counts"], {"directory": len(DIRS), "extracted": 2})
 

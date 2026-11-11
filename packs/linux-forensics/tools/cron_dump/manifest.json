@@ -39,8 +39,8 @@
   "example": "{\"root\": \"work/extracted\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 16,
-  "sha256": "5aa1716b3583b12d0efd401c3fcf2e2253b98533e5c119b380ca000b58c0120d",
+  "version": 17,
+  "sha256": "a71287e3ad4edb8d2cb8447210c438129403d2f451f3d9e45b74bb960d2e7d5a",
   "use": {
     "names": [
       "crontab",

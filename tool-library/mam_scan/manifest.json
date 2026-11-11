@@ -45,8 +45,8 @@
   "example": "{\"path\": \"work/extracted/unallocated.bin\", \"start\": 0, \"length\": 2000000, \"max_hits\": 20}",
   "by": "s183901",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 5,
-  "sha256": "7e02194a99d397c3bd9e8419d917ffb1255fb5f3149554c23653a505fe76746f",
+  "version": 6,
+  "sha256": "5cfc9c17a07ac9754e688feddaa97c2ad4444d25b5d75ba5fe225357ab67c6d9",
   "requires": [],
   "use": {
     "extensions": [

@@ -48,8 +48,8 @@
   "example": "{\"system\": \"work/extracted/SYSTEM\", \"software\": \"work/extracted/SOFTWARE\", \"tasks_dir\": \"work/extracted/Windows/System32/Tasks\", \"limit\": 200}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 3,
-  "sha256": "a6bf5199482112fb79505a3003625e934d3dc8858b89d83ec6edf99a8b798bed",
+  "version": 4,
+  "sha256": "d2665a3103b5a6e969f5417b9bb2a9558d2db86b8146c2dcfbd2272499dff8e3",
   "use": {
     "names": [
       "SOFTWARE",

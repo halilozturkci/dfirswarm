@@ -41,8 +41,8 @@
   "example": "{\"source\": \"work/extracted/volume.img\", \"password_file\": \"work/candidate.txt\"}",
   "by": "maintainer",
   "at": "2026-10-31T12:00:00.000Z",
-  "version": 11,
-  "sha256": "d82898cadda8273de92f5d247cceb088574084dd57e5333cee29e85d94ae6e94",
+  "version": 12,
+  "sha256": "2ceeff3d2fe5458ccfc2cb2aab46f075792163a6c1c4d31fe7a64e95b49d06b1",
   "use": {
     "extensions": []
   }

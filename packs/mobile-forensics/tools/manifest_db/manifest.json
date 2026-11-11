@@ -34,8 +34,8 @@
   "example": "{\"path\": \"inputs/backup\", \"contains\": \"sms\\\\.db$\"}",
   "by": "maintainer",
   "at": "2026-09-22T20:00:00.000Z",
-  "version": 5,
-  "sha256": "12086c730cc0f6462c40379d67a0850d155479a8993f758ed504e6c331e6e413",
+  "version": 6,
+  "sha256": "0e795f9ce273a7e4075359101ca261da5b6bd4c3ca6409ebc425fcec0211162b",
   "use": {
     "names": [
       "Manifest.db",

@@ -29,13 +29,17 @@ def hidden_files(root):
 
 
 class WriteFailures(Case):
-    def run_limited(self, name, args, path_dirs=()):
+    def run_limited(self, name, args, path_dirs=(), limit=None):
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join(list(path_dirs) + [env.get("PATH", "")])
         for k in ("JOB_ID", "OUT", "AGENT_ID", "SECRET_OUTPUT"):
             env.pop(k, None)
+        # development mode: Python 3.11 and 3.12 then report an error a file's finalizer meets (a file left open whose last write the file
+        # system refuses, closed by the garbage collector), as 3.14 always does; the hosted Mac met it in archive_extract, Linux did not
+        env["PYTHONDEVMODE"] = "1"
+        env["PYTHONWARNINGS"] = "ignore"
         p = subprocess.run([sys.executable, tool_path(name)], input=json.dumps(args), capture_output=True, text=True, cwd=self.dir, env=env,
-                           timeout=120, preexec_fn=limited)
+                           timeout=120, preexec_fn=limited if limit is None else (lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))))
         self.assertNotIn("Traceback", p.stderr[-600:], name)
         try:
             doc = json.loads(p.stdout)
@@ -104,6 +108,21 @@ class WriteFailures(Case):
         with zipfile.ZipFile(z, "w") as zf:
             zf.writestr("big.bin", os.urandom(5000))
         self.run_limited("archive_extract", {"path": z, "out_dir": "work/ex"})
+
+    def test_archive_extract_whose_member_is_refused_only_when_flushed(self):
+        # a member smaller than the file's buffer is handed to it whole and refused only when the file is flushed: main said it was extracted,
+        # under its final name, at its full size, while the file held 4000 of its 5000 bytes, and the answer said complete
+        z = self.path("work", "b.zip")
+        os.makedirs(os.path.dirname(z), exist_ok=True)
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("big.bin", os.urandom(5000))
+            zf.writestr("small.txt", b"x" * 50)
+        doc = self.run_limited("archive_extract", {"path": z, "out_dir": "work/exb"}, limit=4000)
+        self.assertNotEqual(doc["status"], "complete", doc)
+        rows = {m["name"]: m for m in doc.get("members", [])}
+        self.assertEqual(rows["big.bin"]["status"], "partial", rows)
+        self.assertIn("write_failed", rows["big.bin"]["reason"])
+        self.assertFalse(os.path.exists(self.path("work", "exb", "extracted", "big.bin")), "a cut member is never under its final name")
 
     def test_icat_extract_whose_output_cannot_be_written(self):
         d = self.path("bin")
