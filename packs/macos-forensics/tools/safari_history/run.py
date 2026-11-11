@@ -36,10 +36,12 @@ partial and `resume.after_visit_id`. SIGTERM, SIGINT and SIGHUP end the read the
 #   signal reached, so a mask of the main thread alone holds nothing while another thread runs. hold_stop_signals() holds the stop signals for
 #   good: blocked in this thread and given a handler that does nothing, which is the hold whatever thread the signal reaches; an error Python
 #   can only report from then on (a file left open whose last write the file system refuses, closed when the frame that held it is freed) is
-#   not printed (3.11 and 3.12 say nothing of it, 3.14 a traceback). A handler that was due runs on the way in, and never raises out of it.
-#   Every writer of a final answer calls it before it commits to writing, every error branch at the end calls it, and, when the file runs as
-#   a program, standard output is wrapped so that its first write calls it too. _code(stop) is a SystemExit's exit code (its text, if it has
-#   one, goes to standard error as the interpreter puts it), and _leave(code) ends the call: both hold the signals first; _leave flushes
+#   not printed (3.11 and 3.12 say nothing of it, 3.14 a traceback). A handler that was due runs on the way in: what it raises reaches the
+#   writer that asked (the tool's own handling then answers the stop, before any byte of the answer), or, quietly, is dropped (the end of a
+#   call, an error branch). Every writer of a final answer calls it before it commits to writing, every error branch at the end calls it
+#   quietly, and, when the file runs as a program, standard output is wrapped so that its first write calls it too. _code(stop) is a
+#   SystemExit's exit code (its text, if it has one, goes to standard error as the interpreter puts it), and _leave(code) ends the call: both
+#   hold the signals first, quietly; _leave flushes
 #   standard output (a write that fails there makes a 0 an exit 120, as the interpreter does) and standard error, runs the atexit hooks (a hook
 #   that removes a temporary file), each step on its own and none able to raise, and ends the process with os._exit, never through the teardown.
 # The modules are imported here, as the file is loaded, never inside the ending (an import there ran a due handler inside the import system).
@@ -49,14 +51,15 @@ import os
 import signal
 import sys
 
-_ENDING = {"held": False}
+_ENDING = {"held": False, "program": __name__ == "__main__"}      # imported (a test that loads the file as a module), the block holds nothing
 _ENDING_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 
 
 def answer_a_stop(signum, when="before it had answered"):
     """The one document of a stop that ends the call before any answer was begun (nothing once one has): status failed, interrupted, and
-    no claim about what was read or written. A handler whose own last word printed nothing calls it before it ends the process."""
-    if _ENDING["held"]:
+    no claim about what was read or written. A handler whose own last word printed nothing calls it before it ends the process. It writes
+    only when the file runs as a program: its wrapped standard output is what knows whether an answer was begun."""
+    if _ENDING["held"] or not isinstance(sys.stdout, _AnswerStream):
         return
     _ENDING["held"] = True
     name = {signal.SIGTERM: "SIGTERM", signal.SIGINT: "SIGINT", signal.SIGHUP: "SIGHUP"}.get(signum, "signal %d" % signum)
@@ -82,11 +85,13 @@ def _ending_nothing(*_ignored):
     """The stop signals' handler, and sys.unraisablehook, once the answer has begun: nothing."""
 
 
-def hold_stop_signals():
-    """Hold the stop signals for good. Never raises. Called by a thread that is not the main one, it blocks them there and leaves the rest to
-    the main thread's next call."""
+def hold_stop_signals(quietly=False):
+    """Hold the stop signals for good. A handler that was due runs on the way in, before the hold and before any byte of the answer, and what
+    it raises is raised here, so that the tool's own handling of a stop answers it; quietly (the end of a call, an error branch, where nothing
+    may escape) it is dropped and the hold is made all the same. Called by a thread that is not the main one, it blocks the signals there and
+    leaves the rest to the main thread's next call."""
     for _attempt in range(len(_ENDING_SIGNALS) + 2):
-        if _ENDING["held"]:
+        if _ENDING["held"] or not _ENDING["program"]:
             return
         try:
             try:
@@ -102,8 +107,10 @@ def hold_stop_signals():
             sys.unraisablehook = _ending_nothing
             _ENDING["held"] = main_thread
             return
-        except BaseException:  # noqa: BLE001 - a handler that was due ran on the way in (and raised): the hold is made again
-            continue
+        except BaseException:  # noqa: BLE001 - a handler that was due ran on the way in, and raised
+            if not quietly:
+                raise
+
 
 
 class _AnswerStream:
@@ -129,7 +136,7 @@ class _AnswerStream:
 
 
 def _code(stop):
-    hold_stop_signals()
+    hold_stop_signals(quietly=True)
     code = getattr(stop, "code", 1)
     if isinstance(code, int):
         return code
@@ -142,7 +149,7 @@ def _code(stop):
 
 
 def _leave(code):
-    hold_stop_signals()
+    hold_stop_signals(quietly=True)
     code = code if isinstance(code, int) else 1
     try:
         sys.stdout.flush()
@@ -160,10 +167,10 @@ def _leave(code):
 
 
 if __name__ == "__main__":
-    for _signum in _ENDING_SIGNALS:
-        signal.signal(_signum, _stopped_without_handler)
     if sys.stdout is not None and not isinstance(sys.stdout, _AnswerStream):
         sys.stdout = _AnswerStream(sys.stdout)
+    for _signum in _ENDING_SIGNALS:
+        signal.signal(_signum, _stopped_without_handler)
 # END SHARED ENDS
 
 
@@ -3472,7 +3479,7 @@ if __name__ == "__main__":
                   "interrupted": signal_name(stop.signum)})
             sys.exit(128 + stop.signum)
         except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the evidence)
-            hold_stop_signals()
+            hold_stop_signals(quietly=True)
             close_values()
             remove_temporaries()
             emit({"error": "the tool stopped on an unexpected error", "type": type(exc).__name__, "status": "failed",

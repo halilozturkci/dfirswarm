@@ -424,7 +424,7 @@ const FAIL_RACE = String.raw`
 import json, os, re, signal, sys, threading, time
 text = open(sys.argv[1], encoding="utf-8").read()
 ns = {"re": re, "json": json, "os": os, "sys": sys}
-for name in ("WITHHOLDING", "NAMES", "STOP"):
+for name in ("ENDS", "WITHHOLDING", "NAMES", "STOP"):
     b, e = "# BEGIN SHARED " + name, "# END SHARED " + name
     exec(text[text.index(b):text.index(e)], ns)
 start = text.index("def fail(")
@@ -481,6 +481,7 @@ const DISARM = String.raw`
 import json, os, signal, sys, time
 text = open(sys.argv[1], encoding="utf-8").read()
 ns = {"os": os, "sys": sys, "json": json, "seal": lambda v, key=None: v}
+exec(text[text.index("# BEGIN SHARED ENDS"):text.index("# END SHARED ENDS")], ns)       # hold_stop_signals, which the answer writers call first
 exec(text[text.index("# BEGIN SHARED STOP"):text.index("# END SHARED STOP")], ns)
 ns["GRACE_SECONDS"] = 1
 ns["set_deadline"](1)

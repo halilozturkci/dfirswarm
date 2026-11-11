@@ -76,5 +76,5 @@
   ],
   "purpose": "inventory",
   "covers": "Static headers, sections or segments, imports or linked libraries, and whole-file entropy, as far as the parsers' own status says (coverage.json: status, warnings, omissions, limits_hit, errors; a zero exit code is not completeness). It does not execute, unpack, decompile, verify a signature or claim observed behaviour.",
-  "sha256": "8ae3ba19aae1201de4ffe10746d162287def6f97ef67ea9f97acd65f62f88b52"
+  "sha256": "ee6ad235da832a5decbb7c9cd492bc7410f64d69615dce74c87a0b1a094e9a7c"
 }

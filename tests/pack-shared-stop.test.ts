@@ -22,9 +22,10 @@ import { ROOT } from "./tool-library-harness.ts";
 
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 const PINS: Record<string, string> = {
-  windows: "74c974d75fdd178bc86ebd2f724b41c9292864c5d4b310dcde05ae7fa58e2fd6",
-  macos: "f3e800e7d94bf70b19f7c6a192bfb604282684a3c5a9e5c392a96240c96ffed1",
-  encrypted: "cb1cd7b46f1e0068532f6039cebc91fc124bb9bc6190e99626c5f8a76b818e62",
+  // round 10 (the shared ENDS block): every answer writer holds the stop signals first, and a handler whose last word printed nothing answers
+  windows: "0259a3a4edfcb82a1c73094e9b74d8e5f1748856af6c809a0ef142b8a24b2be0",
+  macos: "ea30ad89bcd4dc20f7aa23ed91ab7767f37eef7b1c23fc17b4b4d8279a617dd7",
+  encrypted: "5f46dfe0c70c729612a7e9ee4f20e0b39c6725076377cd833c560595b47e031c",
   page: "b339c021341a2ad88f8cfca6a799888108a7bf64f93bd49f989a4d98a1012145",
 };
 

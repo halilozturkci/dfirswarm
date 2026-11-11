@@ -37,9 +37,18 @@ async function bounded(script: string, cwd: string, args: unknown, env: Record<s
 }
 
 async function writeRepeated(path: string, unit: Buffer, times: number): Promise<void> {
+  // in blocks of up to 8192 units: one awaited write per unit took about a minute for 600,000 lines here, and three such fixtures held the file
+  // past the 300 s that npm test gives a file
   const fh = await open(path, "w");
   try {
-    for (let i = 0; i < times; i++) await fh.write(unit);
+    const per = Math.max(1, Math.min(times, 8192));
+    const block = Buffer.concat(Array.from({ length: per }, () => unit));
+    let left = times;
+    while (left > 0) {
+      const n = Math.min(left, per);
+      await fh.write(n === per ? block : block.subarray(0, n * unit.length));
+      left -= n;
+    }
   } finally {
     await fh.close();
   }
