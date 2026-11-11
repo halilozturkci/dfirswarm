@@ -81,7 +81,10 @@ test(`every tool of every pack ends with its own exit, not through the interpret
   for (const [name, script] of scripts) {
     const text = readFileSync(script, "utf8");
     const main = text.slice(text.indexOf('if __name__ == "__main__":'));
-    if (!(/\n    _leave\(exit_code\)\n$/.test(main) && /def _leave\(code\):[\s\S]*os\._exit\(code\)/.test(text)) && !/os\._exit\(/.test(main)) missing.push(name);
+    const guarded = /\n    _leave\(exit_code\)\n$/.test(main) && /def _leave\(code\):[\s\S]*os\._exit\(code\)/.test(text);
+    // (four computer-forensics-base scripts have no __main__ guard: they run top to bottom, and every one of their ways out is _leave(...))
+    const flat = !text.includes('if __name__ == "__main__":') && /def _leave\(code\):[\s\S]*os\._exit\(code\)/.test(text) && !/\n\s*sys\.exit\(/.test(text);
+    if (!guarded && !flat && !/os\._exit\(/.test(main)) missing.push(name);
   }
   assert.deepEqual(missing, []);
   assert.ok(scripts.length >= 140, `${scripts.length} tools`);
@@ -101,7 +104,7 @@ test(`a stop signal sent the moment the answer was read kills no tool by the sig
             const where = `${name} ${signal}`;
             if (!run.answered) { bad.push(`${where}: no document (exit ${run.code}, ${run.stdout.length} bytes${run.stderr ? `, ${run.stderr.trim().split("\n").pop()?.slice(0, 120)}` : ""})`); continue; }
             if (run.by !== null || run.code === null) { bad.push(`${where}: killed by ${run.by}`); continue; }
-            if (/Traceback/.test(run.stderr)) { bad.push(`${where}: traceback`); continue; }
+            if (/Traceback/.test(run.stderr)) { bad.push(`${where}: traceback ${run.stderr.slice(-400)}`); continue; }
             if (!whole(run.stdout)) { bad.push(`${where}: more than one document`); continue; }
             if (![0, 1, 2, 128 + number].includes(run.code)) bad.push(`${where}: exit ${run.code}`);
           }

@@ -97,6 +97,7 @@ import runpy, tracemalloc
 tracemalloc.start()
 sys.argv = [sys.argv[1]]
 try:
+    import os as _os_for_exit; _os_for_exit._exit = lambda code: (_ for _ in ()).throw(SystemExit(code))   # the tool ends with os._exit after its answer; this wrapper has more to do after it (report the peak), so the exit is turned into the SystemExit the tool used to end with
     runpy.run_path(sys.argv[0], run_name="__main__")
 except SystemExit:
     pass
