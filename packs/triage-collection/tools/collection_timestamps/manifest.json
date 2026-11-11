@@ -38,7 +38,7 @@
   "by": "maintainer",
   "at": "2026-11-02T12:00:00.000Z",
   "version": 3,
-  "sha256": "6b2d002b6d6672151ffd6fdda5297a39f9418d78453a484d07d3c0a7c63bb9e1",
+  "sha256": "485f7fcf19302f3683a7ecd751d3351bd9d4e254fcd14d13d2c71f707877ce0a",
   "use": {
     "names": [
       "*.zip",

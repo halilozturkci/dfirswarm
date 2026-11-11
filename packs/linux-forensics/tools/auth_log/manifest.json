@@ -56,7 +56,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 16,
-  "sha256": "cd2c17cb9d8c936aa27dea2ea83408c37b281e0ab0cc1ce7ddb7c89b41705936",
+  "sha256": "b2b423c7198002fb7bfe95e43c90172ab25a69f461842ab0b0c50cc29e03a465",
   "use": {
     "names": [
       "auth.log*",

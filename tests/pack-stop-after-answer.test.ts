@@ -6,15 +6,19 @@
  * lands there ended a process with no exit code (killed by the signal) with its whole answer already printed (macOS CI: pcap_summary, doc_structure).
  * A handler that raises (keychain_open's Interrupted), run after the answer had been printed, wrote a second document, or a traceback from inside
  * the ending (every CI job of #245; here only with the tool and the test on one CPU, where the reader of the pipe runs before the writer goes on).
- * Every script now carries the SHARED LEAVE block: the first write to standard output holds the stop signals for good, and the call ends with
- * `_leave()` (flush, the atexit hooks, os._exit with the call's own code), never through the teardown. This file runs each script for real
- * (a tool with arguments `{}`, a recipe with `detect` on a target that does not exist: each answers with a complete document) and
+ * Every script now carries the SHARED ENDS block, first in the file: a stop is answered by one document from there until the tool's own handlers
+ * are in; every writer of a final answer, and the first write to standard output, holds the stop signals for good (blocked, and given a handler
+ * that does nothing, which holds whatever thread the signal reaches); and the call ends with `_leave()` (flush, the atexit hooks, os._exit with
+ * the call's own code), never through the teardown. This file runs each script for real (a tool with arguments `{}`, a recipe with `detect` on a
+ * target that does not exist: each answers with a complete document) and
  *
  * - sends each of the three signals as soon as a complete JSON document has been read from standard output (twice each);
  * - runs it under tests/stop-after-answer-inject.py, which sends the signal from inside the process the moment its first write has gone out,
  *   the moment a loaded runner reaches only by luck (the test sends one from outside as well, for the tools that write with os.write);
  * - runs it with a file-size limit of 40 bytes, SIGXFSZ ignored, and PYTHONDEVMODE=1 (Python 3.11 and 3.12 report an error of a file closed by
  *   the garbage collector only in development mode; 3.14 always does, and the hosted Mac's shell suite met it: archive_extract);
+ * - sends SIGTERM while each tool waits for its arguments (its standard input open and empty): before the work, where two tools had no handler
+ *   yet and several answered a stop with silence;
  *
  * and in each case the answer is ONE document, no traceback is on standard error, nothing is killed by a signal, and the exit status is the
  * call's own (0, 1 or 2) or 128 + the signal. A static case pins the block and the ending in every script. (The network tools have a deeper case
@@ -133,15 +137,19 @@ async function sweep(cases: Array<{ label: string; how: How; number: number | nu
   return bad.sort();
 }
 
-test(`every tool and recipe of every pack carries the SHARED LEAVE block and ends with its own exit, not through the interpreter's teardown (static)`, () => {
+test(`every tool and recipe of every pack carries the SHARED ENDS block before its own imports and ends with its own exit, not through the interpreter's teardown (static)`, () => {
   const missing: string[] = [];
   for (const { name, script } of scripts) {
     const text = readFileSync(script, "utf8");
-    const block = text.includes("# BEGIN SHARED LEAVE\n") && text.includes("\n# END SHARED LEAVE\n") && /def _leave\(code\):[\s\S]*os\._exit\(code\)/.test(text);
-    const main = text.slice(text.indexOf('if __name__ == "__main__":'));
-    const guarded = /\n    _leave\(exit_code\)\n$/.test(main);
+    const at = text.indexOf("# BEGIN SHARED ENDS\n");
+    const end = text.indexOf("\n# END SHARED ENDS\n");
+    const firstImport = text.search(/^(import [\w.]+|from [\w.]+ import )/m);        // an import statement, not a docstring line that begins "from"
+    const block = at >= 0 && at < firstImport && end > at && /def _leave\(code\):[\s\S]*os\._exit\(code\)/.test(text);
+    // the script's own `if __name__ == "__main__":` is the last one after the block (the block has one of its own)
+    const own = end < 0 ? -1 : text.lastIndexOf('\nif __name__ == "__main__":\n');
+    const guarded = own > end && /\n    _leave\(exit_code\)\n$/.test(text.slice(own));
     // (four computer-forensics-base scripts have no __main__ guard: they run top to bottom, and every one of their ways out is _leave(...))
-    const flat = !text.includes('if __name__ == "__main__":') && !/\n\s*sys\.exit\(/.test(text);
+    const flat = own <= end && !/\n\s*sys\.exit\(/.test(text);
     if (!block || !(guarded || flat)) missing.push(name);
   }
   assert.deepEqual(missing, []);
@@ -161,4 +169,63 @@ test("a stop signal sent from inside the process the moment its first write to s
 
 test("under a file-size limit of 40 bytes, SIGXFSZ ignored and Python's development mode (which reports what 3.14 reports): one document, no traceback", { timeout: 1_700_000 }, async () => {
   assert.deepEqual(await sweep([{ label: "limit 40", how: { limited: true }, number: null }]), []);
+});
+
+// ---- a stop before the work: while the tool waits for its arguments -----------------------------------------------------------------------
+
+/** Whether `pid` is blocked reading its standard input (Linux: /proc/<pid>/syscall names read on descriptor 0); null where that cannot be seen. */
+function readingStdin(pid: number): boolean | null {
+  if (process.platform !== "linux") return null;
+  try {
+    const [nr, fd] = readFileSync(`/proc/${pid}/syscall`, "utf8").trim().split(" ");
+    return (nr === "0" || nr === "63") && fd === "0x0";        // read on x86_64, read on arm64
+  } catch {
+    return false;
+  }
+}
+
+test("a stop signal while a tool waits for its arguments (its stdin open, nothing written) ends it with one document, not by the signal", { timeout: 1_700_000 }, async () => {
+  const bad: string[] = [];
+  const cwd = mkdtempSync(join(tmpdir(), "stop-before-"));
+  try {
+    const queue = scripts.filter((s) => !s.recipe);
+    const worker = async (): Promise<void> => {
+      for (let s = queue.shift(); s; s = queue.shift()) {
+        const env: NodeJS.ProcessEnv = { ...process.env, AGENT_ID: "s1" };
+        for (const k of ["JOB_ID", "OUT", "SECRET_OUTPUT"]) delete env[k];
+        const child = spawn(PYTHON3, [s.script], { cwd, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (b: Buffer) => { stdout += b.toString("utf8"); });
+        child.stderr.on("data", (b: Buffer) => { stderr += b.toString("utf8"); });
+        child.stdin.on("error", () => undefined);
+        const closed = new Promise<{ code: number | null; by: string | null }>((resolve) => child.on("close", (code, by) => resolve({ code, by })));
+        const timer = setTimeout(() => { try { process.kill(-(child.pid as number), "SIGKILL"); } catch { /* gone */ } }, 60_000);
+        // the moment it waits for its arguments: seen in /proc on Linux, after the program has surely been loaded elsewhere
+        let reading = false;
+        for (let waited = 0; waited < 15_000 && child.exitCode === null && !child.killed; waited += 25) {
+          const seen = readingStdin(child.pid as number);
+          if (seen === null ? waited >= 3_000 : seen) { reading = true; break; }
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        if (reading) {
+          try { child.kill("SIGTERM"); } catch { /* gone */ }
+          await new Promise((r) => setTimeout(r, 500));
+          child.stdin.end();            // a tool whose stop is cooperative (a flag its work reads) answers once its read of the arguments ends
+        } else {
+          child.stdin.end();            // it answered before it read anything (a refusal that needs no arguments): nothing to stop
+        }
+        const end = await closed;
+        clearTimeout(timer);
+        if (!reading) continue;
+        const r: Ran = { code: end.code, by: end.by, stdout, stderr, answered: whole(stdout) };
+        const why = judge(r, 15);
+        if (why) bad.push(`${s.name}: ${why}`);
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+  assert.deepEqual(bad.sort(), []);
 });

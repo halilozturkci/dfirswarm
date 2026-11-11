@@ -54,7 +54,7 @@
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
   "version": 3,
-  "sha256": "3dbfdf2e66f0ebf9c081a02e5e93593db59a4005c61930c9404e4d4479a3d33e",
+  "sha256": "b3f26c8db28162a56b91e1e286bc7e2cda196b2d297e7a46941736e3cc451b83",
   "use": {
     "names": [
       "History.db"

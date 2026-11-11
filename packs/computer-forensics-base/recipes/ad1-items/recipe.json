@@ -32,5 +32,5 @@
   ],
   "purpose": "inventory",
   "covers": "Every item of an unencrypted version 4 AD1 image's tree, its metadata as the image records it, and whether each file's content matches the digests the image records. A logical image holds only what the imager took: no unallocated space, and slack only where it was taken as an item. It opens no file inside the image (ad1_extract writes them out, and the derived catalogue takes them from there), does not decrypt an ADCRYPT image, and reads a segment that is not beside the first, or not in a job's view, as missing.",
-  "sha256": "0774e6733fb87bce1e64ff6a10bb53208a3c59875edafa0ec1197ced8a4cd30e"
+  "sha256": "212e13427f82cbc22d41be020319063435744051a3e1360a63d26fbc8f269ce7"
 }

@@ -10,7 +10,7 @@
     "FILES": { "variants": [ { "carriers": 2, "example": "packs/virtualization-backup-forensics/tools/snapshot_chain_check/run.py" } ] },
     "GUARD": { "variants": [ { "carriers": 9, "example": "packs/macos-forensics/tools/fsevents_parse/run.py" } ] },
     "HIVE BOUNDS": { "variants": [ { "carriers": 8, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
-    "LEAVE": { "variants": [ { "carriers": 180, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
+    "ENDS": { "variants": [ { "carriers": 180, "example": "packs/windows-forensics/tools/regkv/run.py" } ] },
     "NAMES": { "variants": [
       { "carriers": 9, "example": "packs/encrypted-containers/tools/archive_probe/run.py" },
       { "carriers": 8, "example": "packs/ransomware-response/tools/encrypted_survey/run.py", "why": "ransomware-response's own names text, not the encrypted-containers one" }

@@ -27,7 +27,7 @@ tool, point = os.environ["INJECT_TOOL"], os.environ["INJECT_POINT"]
 signum = getattr(signal, os.environ.get("INJECT_SIGNAL", "SIGTERM"))
 state = {"done": False}
 real_open, real_replace, real_import, real_makedirs = os.open, os.replace, builtins.__import__, os.makedirs
-EARLY = ("json", "os", "signal", "sys")
+EARLY = ("atexit", "json", "os", "signal", "sys")   # (atexit: the shared ENDS block, before the tool's own early handler)
 
 
 def kill():

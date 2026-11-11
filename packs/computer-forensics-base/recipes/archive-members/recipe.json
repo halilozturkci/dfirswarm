@@ -53,5 +53,5 @@
   ],
   "purpose": "inventory",
   "covers": "The archive's own list of members. It opens no member, searches no contents and lists no archive inside the archive: a member is extracted with the archive_extract tool, which takes the member number n of members.tsv (from_index) and writes each member under its own bounded, link-free rules, then catalogued on its own. A tar compressed with zstd is not listed here (archive_extract reads it where a zstd reader exists).",
-  "sha256": "3585cc71eab9349600c85504ab345d58ef20941000bde3d014abc133092e1bb7"
+  "sha256": "56d9196217cd53fa60ec25bbe2c4458c30feb651bb8cfa7015ad296238480857"
 }

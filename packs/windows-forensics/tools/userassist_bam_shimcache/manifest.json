@@ -43,7 +43,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 3,
-  "sha256": "cbbd97dabb845ce32fcdc55bdb8a7f8bf19de1362ae39016cfe972560a72623c",
+  "sha256": "c7c60f187c9c89f37609226e130bdfb806fba26fa04abc16fe276f6db356df99",
   "use": {
     "names": [
       "NTUSER.DAT",

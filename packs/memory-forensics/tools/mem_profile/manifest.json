@@ -18,7 +18,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 12,
-  "sha256": "82289057dd1cbbc8d6af10c2600fbf51790a151dfba7482a62b030a94b15f542",
+  "sha256": "970b10cf6d2b4feaebe6774b47b300c2a664a0c45946f7f3fc8e9fc21cb0958e",
   "use": {
     "extensions": [
       ".vmem",

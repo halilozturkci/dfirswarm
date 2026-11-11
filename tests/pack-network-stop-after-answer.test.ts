@@ -99,7 +99,7 @@ test("every tool of the pack ends with _leave(): the call does not go through th
   const scripts = [SUMMARY, BEACON, LOGS, ZEEK, SURICATA, EXTRACT, TRANSFORM, FLOW, TLSD, QUICI, CONNS];
   for (const script of scripts) {
     const text = await readFile(script, "utf8");
-    const main = text.slice(text.indexOf('if __name__ == "__main__":'));
+    const main = text.slice(text.lastIndexOf('\nif __name__ == "__main__":\n'));     // the script's own, after the shared ENDS block's
     assert.match(main, /\n    _leave\(exit_code\)\n$/, script);
     assert.match(text, /def _leave\(code\):[\s\S]*os\._exit\(code\)/, script);
   }

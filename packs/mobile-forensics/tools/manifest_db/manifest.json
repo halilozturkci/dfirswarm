@@ -35,7 +35,7 @@
   "by": "maintainer",
   "at": "2026-09-22T20:00:00.000Z",
   "version": 6,
-  "sha256": "50197245ae3101315cad98e410aa791b1543ee27bb83b6a425672e656f72a747",
+  "sha256": "8cdd5877de89eaa93e7536ecf5ef5e1c8b39c786271b6168faa9340516470608",
   "use": {
     "names": [
       "Manifest.db",
