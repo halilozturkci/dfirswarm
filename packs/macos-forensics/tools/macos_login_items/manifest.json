@@ -42,7 +42,7 @@
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
   "version": 3,
-  "sha256": "c926412ac7bf590601c68c8b18ab9cfb43b8a9e92b4ea922797f7bbe54308397",
+  "sha256": "0abbde894b3a91e60b16de8275bb4f9ffd19020017ef5dbb889825f8daf8e9cc",
   "use": {
     "extensions": [
       ".btm"

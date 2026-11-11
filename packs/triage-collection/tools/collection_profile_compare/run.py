@@ -4910,31 +4910,108 @@ def main():
     write_answer(out)
 
 
+# BEGIN SHARED LEAVE
+# The same text is in every pack tool and recipe and in their tool-library twins (tests/shared-blocks-census.test.ts holds the copies equal):
+# how a call ends once its answer has begun. The interpreter's own teardown resets the signal handlers to their defaults before it frees what
+# the call held, and a stop signal that landed there killed a process that had printed its whole answer; a handler that raises or writes a
+# last word, run after the answer was out, wrote a second document or a traceback after a whole one. So, when the file runs as a program:
+# * Standard output is wrapped, and its first write is the first byte of the answer: from there the stop signals are held for good (blocked
+#   in this thread, and given a handler that does nothing for any other), so no handler runs into the answer or after it, and an error Python
+#   can only report (a file the call left open whose last write the file system refuses, closed when the frame that held it is freed) is
+#   not printed (Python 3.11 and 3.12 say nothing of it; 3.14 prints a traceback). A handler that was already due runs on the way in, before
+#   any byte is written, and its own answer is then the one.
+# * _code(stop) is a SystemExit's exit code, and _leave(code) ends the call: both hold the signals first; _leave then flushes standard output
+#   and standard error, runs the atexit hooks (a hook that removes a temporary file), each step on its own and none able to raise, and ends
+#   the process with os._exit, never through the teardown. A stop signal after the hold is not answered: the exit code is the call's own.
+# The modules are imported here, as the file is loaded, never inside the ending (an import there ran a due handler inside the import system).
+import atexit
+import os
+import signal
+import sys
+
+_ENDING = {"held": False}
+_ENDING_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _ending_nothing(*_ignored):
+    """The stop signals' handler, and sys.unraisablehook, once the answer has begun: nothing."""
+
+
+def hold_stop_signals():
+    """Hold the stop signals for good. A handler that was due runs first, in the first call that can run it, and may raise: that is before
+    any byte of the answer is written. Called by a thread that is not the main one, it blocks the signals there and leaves the rest to the
+    main thread's next write."""
+    if _ENDING["held"]:
+        return
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, _ENDING_SIGNALS)
+    except (AttributeError, ValueError, OSError):
+        pass                          # no pthread_sigmask here: the handler below holds them
+    main_thread = True
+    for signum in _ENDING_SIGNALS:
+        try:
+            signal.signal(signum, _ending_nothing)
+        except (ValueError, OSError):
+            main_thread = False
+    sys.unraisablehook = _ending_nothing
+    _ENDING["held"] = main_thread
+
+
+def _hold_at_the_end():
+    for _attempt in range(len(_ENDING_SIGNALS) + 2):
+        try:
+            hold_stop_signals()
+            return
+        except BaseException:  # noqa: BLE001 - a handler that was due ran on the way in; the hold is made again
+            continue
+
+
+class _AnswerStream:
+    """Standard output of a call: the first write holds the stop signals (above); everything else is the stream's own."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text):
+        if not _ENDING["held"]:
+            hold_stop_signals()
+        return self._stream.write(text)
+
+    def writelines(self, lines):
+        if not _ENDING["held"]:
+            hold_stop_signals()
+        return self._stream.writelines(lines)
+
+    def __getattr__(self, name):
+        if name == "_stream":
+            raise AttributeError(name)
+        return getattr(self._stream, name)
+
+
 def _code(stop):
-    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+    _hold_at_the_end()
+    code = getattr(stop, "code", 1)
+    return code if isinstance(code, int) else (0 if code is None else 1)
 
 
 def _leave(code):
-    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees
-    what the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole
-    answer already printed. What the interpreter would have run at its end (the atexit hooks that remove a temporary file) is run here, with the
-    handlers still in; a signal before this point is answered by the handlers as before."""
+    _hold_at_the_end()
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except BaseException:  # noqa: BLE001 - a reader that is gone, a stream that is closed: the exit code is the call's own
+            pass
     try:
-        sys.stdout.flush()
-    except SystemExit as stop:
-        code = _code(stop)
-    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        atexit._run_exitfuncs()
+    except BaseException:  # noqa: BLE001 - a hook that fails is not a failure of the answer
         pass
-    try:
-        sys.stderr.flush()
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        import atexit as _atexit
-        _atexit._run_exitfuncs()
-    except Exception:  # noqa: BLE001 - a hook that fails is not a failure of the answer
-        pass
+    code = code if isinstance(code, int) else 1
     os._exit(code)
+
+
+if __name__ == "__main__" and sys.stdout is not None and not isinstance(sys.stdout, _AnswerStream):
+    sys.stdout = _AnswerStream(sys.stdout)
+# END SHARED LEAVE
 
 
 if __name__ == "__main__":

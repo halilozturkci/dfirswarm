@@ -38,7 +38,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 16,
-  "sha256": "448f0c49974b37ce0450ed736918766f2813c9764ac8676dd8d77dd01e35e7d7",
+  "sha256": "a17e283f0f2e1d31d2403ef133ad8422f79444a4c8a2d52f1ba78b48c89ccf17",
   "use": {
     "extensions": [
       ".evtx"

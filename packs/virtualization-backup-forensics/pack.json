@@ -36,13 +36,13 @@
       "skills/snapshots/header-markers.md": "c01e00e7fb425ce9db276791f1a2ea7558cf5549b80de4a871e8b0f74bda52f7",
       "skills/snapshots/markers.md": "bf91f21590cc5f2afb6379b740fc491cd7a7c199398dbf9ba20cfd83240b017e",
       "tests/pack.test.sh": "35f4ae3f6e7e8ad51e0bc57a3904852dc550a7b23756951a21285a3497c213f4",
-      "tools/backup_audit_normalise/manifest.json": "4f99ffe6c29d736d4d05cfd3ac66c7b0fbbce8affc549979cffc9a59b98a2bd1",
+      "tools/backup_audit_normalise/manifest.json": "8f007658cf3acf1d6c60aa437ad569b2548aeccb65ce0c9098260904b06f1db7",
       "tools/backup_audit_normalise/presets/proxmox-backup-client-snapshot-list.json": "09357c591462951708819c1f5c70ba255764d54583f9f1eaa0067029ad9e88de",
-      "tools/backup_audit_normalise/run.py": "eaa1ca62a885eec8b42bdf572a0077475024af1e44304b496624f111cc2d602c",
-      "tools/snapshot_chain_check/manifest.json": "d4e3609dbb45a89f1d6f00729b51723be8848e3e2085eb65ff9a416c9a4562a1",
-      "tools/snapshot_chain_check/run.py": "7085b87c4c155a8bd25744e557231d98d5b57e154e94ae5e5445bbfd5ba6d009",
-      "tools/virtualization_inventory/manifest.json": "93e9692909c05a3cdf88d7fe7a116416c7b48ebc9692d76bc613b894001d6088",
-      "tools/virtualization_inventory/run.py": "8185b267e8a8795b1eb2f8bd93fe0ed926e5ee286a1b7ecc7b89f485d4215197"
+      "tools/backup_audit_normalise/run.py": "672393e8a27db6d012cd9cc94970980b88892a0531040ffa055987d249e05d62",
+      "tools/snapshot_chain_check/manifest.json": "3c27e7cd5d7d6272dff83c8c614afcc3c85a43ae9fa6e9176185c3dc8eb35a3c",
+      "tools/snapshot_chain_check/run.py": "8959ec70276c4323a7f0b01adc0b7fbe02dbc87a842e463e82dc53da97dec0af",
+      "tools/virtualization_inventory/manifest.json": "fa7c5563c5dfaa11b7d4f79827e75c660040f6dcb15571d9ac6f0b8fda718c2e",
+      "tools/virtualization_inventory/run.py": "17a70253f1e918fe422a8680ec923bea635e4e372250e2502b2e91f683cc7d48"
     }
   },
   "tools": [

@@ -51,7 +51,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 13,
-  "sha256": "6476f7126e310fa07fcee0fa7878f1a1ed3b6490dab4f24c35257041c75aaba3",
+  "sha256": "bee6c4913e808d8bdf6da151dfe0d2cb9828963a402cb7f443b06c55ee0b326e",
   "requires": [],
   "use": {
     "extensions": [

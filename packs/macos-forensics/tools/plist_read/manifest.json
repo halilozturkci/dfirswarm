@@ -54,7 +54,7 @@
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
   "version": 13,
-  "sha256": "ed8b1a2428452091d9d7a1d3d95ce5fb4633767250bd248c9bd9f4d68a2089c4",
+  "sha256": "3b283aa2b80bf1b04c75c57f8f85e5f443f3050007e6cc7234faea84936eb517",
   "use": {
     "extensions": [
       ".plist",

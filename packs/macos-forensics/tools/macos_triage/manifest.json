@@ -43,7 +43,7 @@
   "by": "maintainer",
   "at": "2026-11-04T12:00:00.000Z",
   "version": 6,
-  "sha256": "b2904aaada4318a30005cdfb408579d6f5c0f8c88264affac6bbf3fa4f13ee8a",
+  "sha256": "bc979c92b383d2a6f104522b0e5de61c881e988cfe7859e5d04702a00608cb15",
   "use": {
     "extensions": [
       ".e01",

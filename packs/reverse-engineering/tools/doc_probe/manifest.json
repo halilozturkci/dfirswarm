@@ -45,7 +45,9 @@
     ]
   },
   "secret_output": {
-    "when_args": ["write_values"]
+    "when_args": [
+      "write_values"
+    ]
   },
   "params": {
     "path": {
@@ -92,5 +94,5 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 13,
-  "sha256": "11b44a35d79a40f9d225f3ab295d6693fd514b1605b88483556e8207efc1dfd3"
+  "sha256": "c66a1589cedd8afa20874fcb178adccd2d595d90a0fc9d393c7ff0f84cc7bab0"
 }
