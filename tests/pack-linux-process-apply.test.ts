@@ -44,11 +44,16 @@ const triageStub = (dir: string, left: string | undefined): string => sh(`${pre(
 exit 0
 `);
 
+// linux_triage and the recipe run one dissect.target function after another, each in files, and a holder's flood (errflood: `yes` into the
+// stderr file) fills a file the tool then scans and hashes, so a run with a holder takes the disk's time. Measured here, at d813a7dd and
+// at round 10's head alike: 4.6 to 4.9 s or 8.8 to 10.8 s (two settle rounds); the hosted runners took 14.0 and 20.8 s (CI run of 35554cca),
+// past the default 10 s. 30 s still says the holder did not hold the tool (the manifest's timeout is 14,400 s).
 const triage: Case = {
   name: "linux_triage",
   variants: VARIANTS,
   holdsFiles: true,
   holders: HOLDERS,
+  maxSeconds: 30,
   invoke: async (cwd, bin, left, host) => {
     const dir = await stubDir(cwd);
     await stub(bin, "target-query", triageStub(dir, left));
@@ -65,6 +70,7 @@ const recipe: Case = {
   variants: VARIANTS,
   holdsFiles: true,
   holders: HOLDERS,
+  maxSeconds: 30,                 // as linux_triage's, above (7.6 to 10.4 s here)
   skipOk: true,
   invoke: async (cwd, bin, left, host) => {
     const dir = await stubDir(cwd);

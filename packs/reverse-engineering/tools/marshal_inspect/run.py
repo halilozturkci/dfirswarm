@@ -2171,14 +2171,25 @@ class ResultFile:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         for n in range(1, 100):
             name = ".%s.%d.%d.tmp" % (self.stem, os.getpid(), n)
+            # the stop signals wait while the file is made and registered: a stop between the two found no file to remove and left it (the
+            # hosted Mac's run met it, a SIGTERM sent the moment the file appeared); held, the signal is answered once the file is in PAGES
+            before = None
             try:
-                fd = os.open(str(self.directory / name), flags, 0o600)
-            except FileExistsError:
-                continue
-            self._tmp = str(self.directory / name)
-            self.fh = os.fdopen(fd, "w", encoding="ascii")
-            PAGES.append(self)
-            return
+                before = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+            except (AttributeError, ValueError, OSError):
+                pass
+            try:
+                try:
+                    fd = os.open(str(self.directory / name), flags, 0o600)
+                except FileExistsError:
+                    continue
+                self._tmp = str(self.directory / name)
+                PAGES.append(self)
+                self.fh = os.fdopen(fd, "w", encoding="ascii")
+                return
+            finally:
+                if before is not None:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, before)
         raise OSError(errno.EEXIST, "ninety-nine temporary files of this name already exist")
 
     def publish(self):
