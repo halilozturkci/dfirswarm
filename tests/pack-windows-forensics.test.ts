@@ -36,7 +36,7 @@ import {
   type Run,
 } from "./windows-pack-harness.ts";
 import { hive } from "./windows-hive.ts";
-import { NO_ADOPTION } from "./host-gates.ts";
+import { CLEAN, NO_ADOPTION } from "./host-gates.ts";
 
 // --- lnk_parse ------------------------------------------------------------------
 
@@ -881,7 +881,8 @@ test("yara_scan against the installed yara: the matched bytes stay out of the an
     await writeFile(join(cwd, "work", "sample.bin"), `hello ${PLANTED} world`);
     const run = await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin" });
     const out = body<YaraOut>(run);
-    assert.equal(out.status, "complete");
+    // complete where the tool can adopt orphans (Linux); partial elsewhere, saying why (host-gates.ts)
+    assert.equal(out.status, CLEAN);
     assert.equal(out.string_match_count, 2);
     assert.deepEqual(out.string_matches.map((m) => [m.identifier, m.offset, m.length]), [["$a", 6, 20], ["$w", 27, 5]]);
     assert.equal(run.stdout.includes("Summer2024"), false);

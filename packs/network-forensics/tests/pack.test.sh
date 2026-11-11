@@ -160,7 +160,15 @@ python3 "$PACK/recipes/network-capture/run.py" detect --target "$target" | jq -e
 if command -v tshark >/dev/null && command -v capinfos >/dev/null; then
   python3 "$PACK/recipes/network-capture/run.py" run --target "$target" --out "$TMP/catalog" >/dev/null \
     || fail "capture recipe failed: $(cat "$TMP/catalog/coverage.json")"
-  jq -e '.status == "complete"' "$TMP/catalog/coverage.json" >/dev/null || fail "capture recipe was incomplete"
+  # A clean run is complete where the recipe can adopt the orphans of its programs (Linux). Elsewhere it is partial with no
+  # error, and its program_group says why: no process a program left behind can be proven absent.
+  if [[ "$(uname -s)" == Linux ]]; then
+    jq -e '.status == "complete"' "$TMP/catalog/coverage.json" >/dev/null || fail "capture recipe was incomplete: $(cat "$TMP/catalog/coverage.json")"
+  else
+    jq -e '.status == "partial" and (.errors | length) == 0 and .program_group.left_behind == 0
+      and any(.program_group.unproven[]; test("cannot adopt orphaned processes"))' "$TMP/catalog/coverage.json" >/dev/null \
+      || fail "capture recipe off Linux should be partial for the one reason it cannot adopt orphans: $(cat "$TMP/catalog/coverage.json")"
+  fi
   [[ -s "$TMP/catalog/packets.tsv" && -s "$TMP/catalog/index.tsv" ]] || fail "capture recipe listings are missing"
   pass "capture recipe detects and inventories a pcap"
 else

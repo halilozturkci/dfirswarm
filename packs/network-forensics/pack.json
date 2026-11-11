@@ -44,7 +44,7 @@
       "skills/sessions/quic-http3.md": "182c4da9186de5bf6c10fdabef57800c0c51a4de10eaf68d596d804b172a8810",
       "skills/sessions/reconstruct.md": "d52275cea747ec09e9dc2155fffa2f814f330abaef6273cea22bfb635e2f9da6",
       "skills/sessions/tls-keylogs.md": "55e7e4c3a75b933db4551bc076e3f3197977b898594fb29b1eca80381063ed90",
-      "tests/pack.test.sh": "f83730891c6dc137fa0aa1ddd26b6d1d3ba9bc9609ff6a277ffb7ed9a3d7d372",
+      "tests/pack.test.sh": "e5204fc8f66b2c5455215227b73f4cd6423da478dbff2e7af2fbf4801d88fc01",
       "tools/beacon_score/manifest.json": "11fedcd0f454b820350b7152198510cf6c67cc4fb09b0e323b86870d77168605",
       "tools/beacon_score/run.py": "def298b68916c077751064f207508dc209dbd79dda1933588c32647b5d8f9e59",
       "tools/capture_transform/manifest.json": "fd24dcdf098388d687c73d9ec1327970d5d37eaa8735ededdb08301aabd94128",

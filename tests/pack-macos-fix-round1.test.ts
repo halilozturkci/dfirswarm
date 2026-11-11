@@ -251,7 +251,11 @@ with open(out, "w") as f:
   });
 });
 
-test("unified_log's staging is under the clock: 3 GiB in one file with timeout_seconds 2 ends in the refusal for time, not after the copy", async () => {
+// The file is sparse (made by truncate), so it costs no disk to make; the copy writes it out, until the clock ends it. An M3 Max
+// (APFS) copies 3 GiB of it in 0.5 to 1.0 s, under the 2 s the case gave, and the reader ran (5 of 5 runs alone): the file is
+// 16 GiB and the clock 1 s, so the copy is several times the clock on that host, and what is written before the refusal is at
+// most one second of copying.
+test("unified_log's staging is under the clock: 16 GiB in one file with timeout_seconds 1 ends in the refusal for time, not after the copy", async () => {
   await withCwd(async (cwd) => {
     const root = join(cwd, "work", "vardb");
     await mkdir(join(root, "diagnostics", "timesync"), { recursive: true });
@@ -259,10 +263,10 @@ test("unified_log's staging is under the clock: 3 GiB in one file with timeout_s
     await writeFile(join(root, "diagnostics", "timesync", "0000.timesync"), "");
     const big = join(root, "diagnostics", "big.tracev3");
     await writeFile(big, "x");
-    await truncate(big, 3 * 1024 ** 3);
+    await truncate(big, 16 * 1024 ** 3);
     const bin = await ulStandin(cwd, `open(out, "w").write("")`);
     const begun = Date.now();
-    const out = await ul(cwd, bin, { path: "work/vardb", out_dir: "work/o", timeout_seconds: 2, max_stage_bytes: 8 * 1024 ** 3 });
+    const out = await ul(cwd, bin, { path: "work/vardb", out_dir: "work/o", timeout_seconds: 1, max_stage_bytes: 32 * 1024 ** 3 });
     assert.ok(Date.now() - begun < 20_000, `${Date.now() - begun} ms`);
     assert.equal(out.code, 1);
     assert.match(JSON.parse(out.stdout).error, /staging used the whole time budget/);

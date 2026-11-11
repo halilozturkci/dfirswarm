@@ -378,7 +378,8 @@ test("a preview from heif-convert: the identity of the original and the derivati
 test("there is no silent fallback: with the chosen backend missing the walk and the metadata are still given, and the answer is partial", async () => {
   await withCwd(async (cwd, bin) => {
     await stubExiftool(bin, CANARIES);
-    const answer = body(await run(cwd, { path: await file(cwd, "photo.heic", simpleHeic()) }, {}, bin));
+    // PATH is the stubs and the system's own directories only: a host with libheif installed (Homebrew's heif-convert) still has the backend missing.
+    const answer = body(await run(cwd, { path: await file(cwd, "photo.heic", simpleHeic()) }, { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, bin));
     assert.equal(answer.status, "partial");
     assert.equal(answer.preview!.status, "refused");
     assert.match(answer.preview!.reason!, /heif-convert is not on PATH.*no other backend is tried/);

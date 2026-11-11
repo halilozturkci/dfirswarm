@@ -72,7 +72,7 @@
       "tests/run_tests.py": "91e0d82b456267b0f27e0bc7e4efbb7abf22f8be76879275166d66a8eb662d02",
       "tests/support.py": "83a8708201d979e146a25349f3396a9d289a9e35bf779dccf90d26306baa16c4",
       "tests/test_archive_extract.py": "3436fac8b2c051ccdaaac67bcf1bbd20399669714f72f97da31f2d7641cd2e45",
-      "tests/test_archive_extract_rar.py": "3bbc8326c11f99548818764ec9bc0353466b972ef798d6408c33b85ec341b733",
+      "tests/test_archive_extract_rar.py": "9271522adac0b512549f807fb4d68486513296ad09932e97eb025f0e0c85228c",
       "tests/test_archive_members.py": "3c7ed42a32080f1f2951d1ff78266bc71c8e755b00b582624dd657f19225c1a3",
       "tests/test_browser_storage.py": "4df8dc8824761049b9d261ab72064812d38cd5ba39bcaf978d72ecf7d12e17cd",
       "tests/test_byte_range_extract.py": "154dd129cf18c098e1710f996f4d28e24b8c68cbed6e56cff859066aee20daac",
