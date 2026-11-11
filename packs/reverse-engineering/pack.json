@@ -81,8 +81,8 @@
       "tools/elf_directories/run.py": "06ed7d87f25af87bf63503801b8fb30f45e233dfd637088316bffc39579e8d52",
       "tools/entropy_map/manifest.json": "75e486fd3a7054e62a5128ea08d92fae25966d7e3d07b60a6430b9ba4e5e65ac",
       "tools/entropy_map/run.py": "d61d85fceb62f38183727b805ac4ff7c68d23d18701ed3e1f03640ef4868f7aa",
-      "tools/fuzzy_hash/manifest.json": "38837dce7c17b95627bebb777b411df8b79d1d7217432bd0741bc18cbeb25e39",
-      "tools/fuzzy_hash/run.py": "02fa016404213cebee378f82a24488d7960712482f9c40e68b8462cb4021008e",
+      "tools/fuzzy_hash/manifest.json": "31bc55003b3b83d24d723a9166e01a1ac5921ee96812a246e568f0f316c19080",
+      "tools/fuzzy_hash/run.py": "b35630e9bbafe1afb4362c678d089df0f5d18c37727fd055d1c93ac223022d57",
       "tools/go_buildinfo/manifest.json": "5972d93cf413d57b8bc57517d4d2b76e6b92c3cdc89c3661849e35f7dbf7c4de",
       "tools/go_buildinfo/run.py": "e1d900f5346920466072a7a128f3313a56c5fe5fb0aece5965381b47db4f573b",
       "tools/macho_directories/manifest.json": "95db28278274b2364fd617e36f6733ef14c4b487b8c5aaae0bc0e947b0d1425b",
@@ -93,8 +93,8 @@
       "tools/pe_directories/run.py": "85d29bfd5584be61392b378346aba89157f6aaddbe3daaf382cdd9ac5cd05bba",
       "tools/pe_info/manifest.json": "66c7f98fe6615ce1d641cb1dfa6cee09d6e3fd2d9755a080f6a0c84f7dbe8204",
       "tools/pe_info/run.py": "fb7ebd8bd28169cd592876de3ce999af65d69134d35f87cee68bfd122163dfb4",
-      "tools/unpack_safe/manifest.json": "70ab305726d1b7ba38739e07f810567e4d5321a1ab41052226362854402674be",
-      "tools/unpack_safe/run.py": "b90ce1eee2d6b53cfafa227299b342b7473718811073f4246a5bc9863b58ea97"
+      "tools/unpack_safe/manifest.json": "4dcfff9c39a466c8d0eb1ec198cc7e2787daff60fc0b08003efa650904f909b3",
+      "tools/unpack_safe/run.py": "9074e6af1e54d64c4c0afc2e9c1acdd92a0b232491ed8236ff7caddecd277525"
     }
   },
   "tools": [

@@ -37,8 +37,8 @@
   "example": "{\"root\": \"inputs/collection\", \"archive\": \"inputs/collection.tar.gz\", \"member_prefix\": \"collection\"}",
   "by": "maintainer",
   "at": "2026-11-02T12:00:00.000Z",
-  "version": 2,
-  "sha256": "01c28bed9ea4a5fc6e7c7ed82a477f39e4fe17fabe8f4a2f523b6fb7fd4804d2",
+  "version": 3,
+  "sha256": "9b3843e98dcad8264652d39f58812e1d30bcdf744813c2aa22f8b71a0fb02823",
   "use": {
     "names": [
       "*.zip",

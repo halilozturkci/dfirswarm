@@ -53,8 +53,8 @@
   "example": "{\"path\": \"work/extracted/Library/LaunchDaemons\", \"out_file\": \"work/<your id>/plists.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
-  "version": 12,
-  "sha256": "15fbae291e8c5cd71ac1403c9af8f8e2b7b8d52bde843c9b7a8020d3ee79ed29",
+  "version": 13,
+  "sha256": "ed8b1a2428452091d9d7a1d3d95ce5fb4633767250bd248c9bd9f4d68a2089c4",
   "use": {
     "extensions": [
       ".plist",

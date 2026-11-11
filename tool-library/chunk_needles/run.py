@@ -255,7 +255,34 @@ PAGES = []                 # objects with a hidden temporary file (_tmp) that a 
 CHILD = {"proc": None}      # the icat being read, ended by pid on a stop
 PROGRESS = {"scanned": 0}
 
-TOOL = {"name": "chunk_needles", "version": 20}
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees
+    what the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole
+    answer already printed. What the interpreter would have run at its end (the atexit hooks that remove a temporary file) is run here, with the
+    handlers still in; a signal before this point is answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    try:
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import atexit as _atexit
+        _atexit._run_exitfuncs()
+    except Exception:  # noqa: BLE001 - a hook that fails is not a failure of the answer
+        pass
+    os._exit(code)
+
+
+TOOL = {"name": "chunk_needles", "version": 21}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -805,7 +832,7 @@ FAILED_BASIS = "the tool stopped with an error and scanned nothing (see error)"
 
 def fail(message, **extra):
     print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error: %s" % message, "tool": TOOL, **extra})
-    sys.exit(1)
+    _leave(1)
 
 
 # ---- the descriptor (layer_describe's file), read the same way in image_layout, icat_extract, chunk_needles and byte_range_extract -----
@@ -971,7 +998,7 @@ def on_stdout(resolve, *given):
             if isinstance(doc, dict):
                 doc = {"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % doc.get("error"), **doc}
             print_answer(doc)
-            sys.exit(1)
+            _leave(1)
         raise
 
 
@@ -1314,7 +1341,7 @@ else:
                           "image": image, "inode": inode, "offset": offset, "scanned_bytes": scanned,
                           "note": "what was found before icat failed is not a result; any locator or values file written meanwhile is partial",
                           "secret_values": secret.summary()})
-        sys.exit(1)
+        _leave(1)
 secret.close()
 # A needle whose list past the inline page is not whole in a file (the file could not be written, or reached its cap) is a loss the
 # counts do not show: it makes the answer partial, and the basis names the needles and where the rest is.
@@ -1350,3 +1377,4 @@ if secret.stopped_at is not None:
     answer["status"] = "partial"
     answer["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"
 print_answer(answer)
+_leave(0)

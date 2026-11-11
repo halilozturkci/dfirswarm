@@ -76,7 +76,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 20}
+TOOL = {"name": "archive_extract", "version": 21}
 STARTED = time.monotonic()               # the run's clock starts with the tool: the archive hash and the 7z banner are on it too
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
@@ -3931,5 +3931,37 @@ def main():
     say(out, 0)
 
 
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees
+    what the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole
+    answer already printed. What the interpreter would have run at its end (the atexit hooks that remove a temporary file) is run here, with the
+    handlers still in; a signal before this point is answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    try:
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import atexit as _atexit
+        _atexit._run_exitfuncs()
+    except Exception:  # noqa: BLE001 - a hook that fails is not a failure of the answer
+        pass
+    os._exit(code)
+
+
 if __name__ == "__main__":
-    main()
+    exit_code = 0
+    try:
+        main()
+    except SystemExit as stop:
+        exit_code = _code(stop)
+    _leave(exit_code)

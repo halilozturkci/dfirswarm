@@ -1,7 +1,7 @@
 {
   "id": "cloud-forensics",
   "name": "Cloud and SaaS Forensics Pack",
-  "version": "1.13.0",
+  "version": "1.13.1",
   "description": "Method and tooling for logs that belong to somebody else's computer, examined as supplied exports: what a cloud or SaaS export covers and what its silence can show, the Microsoft 365 unified audit log, Entra sign-ins, AWS CloudTrail, Google Workspace, and the tokens, grants and mailbox rules behind a cloud account.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -65,18 +65,18 @@
       "skills/logs/what-exists.md": "61691258f0e2a1baeb8e02c1768a84483bc17e8ab184c03985e0232b1edfa952",
       "skills/m365/mailbox-persistence.md": "fa6ed464b86921654c90b6d594c1c614332624d4fbae04cc0fccd43b279673a2",
       "skills/m365/unified-audit-log.md": "04ba5c0035ac630d1274dc377ae9f8b93ac56845ba01713737353ec618bafe53",
-      "tools/cloud_normalise/manifest.json": "eb27aa4c85ea31925ec5a5bc3fbaab12187ac8e159014e13ce6e0f3707fa7b54",
-      "tools/cloud_normalise/run.py": "046ae65cd27815661b35ceda2c5547262272b352fb9e194ebc567a9538606161",
-      "tools/cloud_timeline_export/manifest.json": "d48c722e3407967e83c32e94a21f76b8f6505b3fda04463cff352613d8a1dc12",
-      "tools/cloud_timeline_export/run.py": "049f0585ca8e819e3144780700db9e3db4957b772fc99d18c0865623d342093d",
-      "tools/cloudtrail_parse/manifest.json": "8dc1f981a8f7007c2f4e08cc5f502fb313b52866a40c500ac3152c6367074913",
-      "tools/cloudtrail_parse/run.py": "34e5a8ddc724bd0234e2f212f59e8f89015e872043fd5ee9bf844a2e58bb7cb0",
-      "tools/guardduty_findings/manifest.json": "fd1b2719dec1c66055314e2413713e08cb556a0af82f85d1a62fd11975289bbc",
-      "tools/guardduty_findings/run.py": "bff9aa21f14cd9b0ad71f3004348eeddff64d52a62f6d06b764c127055b9630d",
-      "tools/signin_analyse/manifest.json": "686c421cf18fc3f6afe8244fd5436db5ef4d89a39867bb911b14f4c4e9d8e29d",
-      "tools/signin_analyse/run.py": "3ac64f22daa4fbb248bf7f2d9d654470a0bf52117f924d4d2f1f6a897578ef61",
-      "tools/ual_parse/manifest.json": "aacce7e9915a442fa1d81d0b283b3bbb03d40f1c5e971311ce359195f5d8d094",
-      "tools/ual_parse/run.py": "f63c2db06b241189d46f2b4becbfe810fa8ea70cf273ed45408f62133a97b1eb"
+      "tools/cloud_normalise/manifest.json": "a13df6322258795f3f7d1d01024990ab6c4e3d7578cc88ee0e00fd749f2a756f",
+      "tools/cloud_normalise/run.py": "1f5b0f9fb686cc0b7a42743c05d32a485817940955f8e33f97605406c2b4e2ba",
+      "tools/cloud_timeline_export/manifest.json": "2977e42d4ed420d5d052e6c8a065aaf39a44b1958e04f816bec11a4479987a6a",
+      "tools/cloud_timeline_export/run.py": "ab1c52005c87bab30bfa88d38418001fa7fef85827eaba7817b840577ead5617",
+      "tools/cloudtrail_parse/manifest.json": "ed50382542f3a3d25507d39a85179d9e63e2bb502f8af36991db5894dccbe35e",
+      "tools/cloudtrail_parse/run.py": "1af6ca7df3e2272b697da8da31d60e1f60091898b2a83217065bd9d04a4157dc",
+      "tools/guardduty_findings/manifest.json": "9d03b3336e16361ee4c971668500db09c84d33139da21904403f2135a1987be5",
+      "tools/guardduty_findings/run.py": "30d83110461bb8183d509d636b0300026641a8235c625fa49db31a00f58c3982",
+      "tools/signin_analyse/manifest.json": "f011793f6d599ec3e92dd7223c2669eb18b7c496e0d2b08bb0285d6c719e2618",
+      "tools/signin_analyse/run.py": "43442e88a7c3513178d23cf2451cc65fedcff68f6c5e4a10789a7d4bbdc80366",
+      "tools/ual_parse/manifest.json": "0b204c150ce287116dad8ec4ea00bfc9ed799dbdbeb05eb1acc1eb8a60087b74",
+      "tools/ual_parse/run.py": "e5eb76e3fbb75e2a0b51410836155d8ad10368d05eae77c2845b9c874af419c9"
     }
   },
   "tools": [

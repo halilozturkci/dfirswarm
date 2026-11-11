@@ -41,8 +41,8 @@
   "example": "{\"path\": \"work/extracted/private/var/db/com.apple.backgroundtaskmanagement\", \"out_file\": \"work/<your id>/login-items.jsonl\"}",
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
-  "version": 2,
-  "sha256": "a498922ca188c466ce9997687f411abf4f03d3ffe8067265615a3964077cb2ec",
+  "version": 3,
+  "sha256": "c926412ac7bf590601c68c8b18ab9cfb43b8a9e92b4ea922797f7bbe54308397",
   "use": {
     "extensions": [
       ".btm"

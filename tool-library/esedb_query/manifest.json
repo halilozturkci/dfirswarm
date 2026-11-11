@@ -34,8 +34,8 @@
   "example": "{\"path\": \"work/extracted/WebCacheV01.dat\", \"table\": \"Containers\", \"limit\": 50}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 21,
-  "sha256": "463ef073a749de3b8b3b5b5c7534f58602940717a615329a60cdfe615702a72f",
+  "version": 22,
+  "sha256": "5bba33b90e878f2355ccb738d368c2e06a90a9df27c773598930d4f6f43ec81c",
   "use": {
     "extensions": [
       ".edb"

@@ -69,7 +69,7 @@
   "example": "{\"path\": \"inputs/audit-export\", \"provider\": \"auto\"}",
   "by": "maintainer",
   "at": "2026-11-04T12:00:00.000Z",
-  "version": 3,
+  "version": 4,
   "use": {
     "names": [
       "*cloudaudit*",
@@ -87,5 +87,5 @@
       "*reports*activit*"
     ]
   },
-  "sha256": "046ae65cd27815661b35ceda2c5547262272b352fb9e194ebc567a9538606161"
+  "sha256": "1f5b0f9fb686cc0b7a42743c05d32a485817940955f8e33f97605406c2b4e2ba"
 }

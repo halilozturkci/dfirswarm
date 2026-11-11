@@ -329,7 +329,34 @@ def end_leftovers():
 
 RUN = {"proc": None, "size": 0}      # the icat running and the bytes written, for a stop
 
-TOOL = {"name": "icat_extract", "version": 18}
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees
+    what the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole
+    answer already printed. What the interpreter would have run at its end (the atexit hooks that remove a temporary file) is run here, with the
+    handlers still in; a signal before this point is answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    try:
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import atexit as _atexit
+        _atexit._run_exitfuncs()
+    except Exception:  # noqa: BLE001 - a hook that fails is not a failure of the answer
+        pass
+    os._exit(code)
+
+
+TOOL = {"name": "icat_extract", "version": 19}
 OFFSET_MAX = 1 << 40              # sectors: an explicit offset above this is not a volume offset (512 TiB at 512 bytes a sector)
 BLOCK = 1 << 20
 MAX_BYTES_DEFAULT = 32 * 1024 ** 3
@@ -489,7 +516,7 @@ FAILED_BASIS = "the tool stopped with an error and extracted nothing (see error)
 
 def fail(msg, **extra):
     print_answer({"error": msg, "status": "failed", "status_basis": "the tool stopped with an error: %s" % msg, "tool": TOOL, **extra})
-    sys.exit(1)
+    _leave(1)
 
 
 def unexpected(kind, value, _tb):
@@ -655,7 +682,7 @@ def on_stdout(resolve, *given):
             if isinstance(doc, dict):
                 doc = {"ok": False, "status": "failed", "status_basis": "the tool stopped with an error: %s" % doc.get("error"), "tool": TOOL, **doc}
             print_answer(doc)
-            sys.exit(1)
+            _leave(1)
         raise
 
 
@@ -929,4 +956,4 @@ if descriptor is not None:
     result["descriptor"] = {"file": descriptor["file"], "sha256": descriptor["sha256"], "layer": descriptor["layer"], "sources_checked": descriptor["checked"]}
     result["images"] = len(images)
 print_answer(result)
-sys.exit(0 if status == "complete" else 1)
+_leave(0 if status == "complete" else 1)

@@ -50,11 +50,11 @@
   "example": "{\"overlay2_root\": \"work/extracted/var/lib/docker/overlay2\", \"start\": \"0123abcd\", \"path_prefix\": \"etc\"}",
   "by": "maintainer",
   "at": "2026-11-02T12:00:00.000Z",
-  "version": 1,
+  "version": 2,
   "use": {
     "names": [
       "lower"
     ]
   },
-  "sha256": "2e52f476fad6fcbcab61484659b8c1a5c1f69714268cfd114a81daf94aadab04"
+  "sha256": "7f55f8fa3c43f99183db86f64d432998e65cfd6c09de8ecbd24434d60a907d53"
 }

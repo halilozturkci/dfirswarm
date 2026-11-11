@@ -21,6 +21,6 @@
   "example": "{\"path\": \"inputs/disk.raw\", \"offset\": 1048576}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 8,
-  "sha256": "ba404d4b6cb64da3da51f20d83a38efa4588cf943519f700d815fd6fbcac3546"
+  "version": 9,
+  "sha256": "1b28da1ebfe8c855996617f612bb79e7210a73b14d00450d63bc32f012ee23f6"
 }

@@ -57,12 +57,12 @@
   "example": "{\"path\": \"inputs/normalised.jsonl\"}",
   "by": "maintainer",
   "at": "2026-11-04T12:00:00.000Z",
-  "version": 1,
+  "version": 2,
   "use": {
     "names": [
       "*normalised*.jsonl*",
       "*normalized*.jsonl*"
     ]
   },
-  "sha256": "049f0585ca8e819e3144780700db9e3db4957b772fc99d18c0865623d342093d"
+  "sha256": "ab1c52005c87bab30bfa88d38418001fa7fef85827eaba7817b840577ead5617"
 }

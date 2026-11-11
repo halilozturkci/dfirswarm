@@ -59,6 +59,6 @@
   "example": "{\"pattern\": \"Prefetch/.*\\\\.pf$\", \"which\": \"filelist\"}",
   "by": "sd1d100",
   "at": "2026-09-18T14:14:47.839Z",
-  "version": 19,
-  "sha256": "11ddb67e259a18bf3189d063c5eabd70c6fcb6172f2aaee94c7a1cfdc50a5466"
+  "version": 20,
+  "sha256": "0ae5175e9787dccac4fa775d02a30fe82705d3a1c60092226baeb6881de70d4d"
 }

@@ -62,7 +62,7 @@
   "example": "{\"root\": \"work/extracted/vm\"}",
   "by": "maintainer",
   "at": "2026-10-15T09:00:00.000Z",
-  "version": 14,
+  "version": 15,
   "use": {
     "extensions": [
       ".vmdk",
@@ -94,5 +94,5 @@
       }
     ]
   },
-  "sha256": "c7d59fe86314dbe06c54722b64b799ab548e2b8bbf3e17cf7d5a0b3ebefcb1e8"
+  "sha256": "7085b87c4c155a8bd25744e557231d98d5b57e154e94ae5e5445bbfd5ba6d009"
 }

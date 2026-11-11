@@ -2866,25 +2866,57 @@ def main():
     run_items(args)
 
 
-if __name__ == "__main__":
-    install_stop_handlers()
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees
+    what the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole
+    answer already printed. What the interpreter would have run at its end (the atexit hooks that remove a temporary file) is run here, with the
+    handlers still in; a signal before this point is answered by the handlers as before."""
     try:
-        main()
-    except SystemExit:
-        raise
-    except Interrupted as stop:
-        close_values()
-        remove_temporaries()
-        emit({"error": "the tool was stopped by %s %s" % (signal_name(stop.signum), "after its read had begun and before its answer was made" if SWEEP["began"] else "before its read began"),
-              "status": "failed",
-              "status_basis": ("stopped by %s after the read had begun: some rows may have been written, and none of that is in this answer" if SWEEP["began"] else
-                               "stopped by %s before the read began: no row had been read and no result was made") % signal_name(stop.signum),
-              "interrupted": signal_name(stop.signum)})
-        sys.exit(128 + stop.signum)
-    except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the evidence)
-        close_values()
-        remove_temporaries()
-        emit({"error": "the tool stopped on an unexpected error", "type": type(exc).__name__, "status": "failed",
-              "status_basis": "the tool stopped with an unexpected error: nothing is complete",
-              **({"partial_out_file": PARTIAL["out_file"], "partial_out_file_note": "written before the error, rows whole up to the last newline; the last row may be cut"} if PARTIAL["out_file"] else {})})
-        sys.exit(1)
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    try:
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import atexit as _atexit
+        _atexit._run_exitfuncs()
+    except Exception:  # noqa: BLE001 - a hook that fails is not a failure of the answer
+        pass
+    os._exit(code)
+
+
+if __name__ == "__main__":
+    exit_code = 0
+    try:
+        install_stop_handlers()
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Interrupted as stop:
+            close_values()
+            remove_temporaries()
+            emit({"error": "the tool was stopped by %s %s" % (signal_name(stop.signum), "after its read had begun and before its answer was made" if SWEEP["began"] else "before its read began"),
+                  "status": "failed",
+                  "status_basis": ("stopped by %s after the read had begun: some rows may have been written, and none of that is in this answer" if SWEEP["began"] else
+                                   "stopped by %s before the read began: no row had been read and no result was made") % signal_name(stop.signum),
+                  "interrupted": signal_name(stop.signum)})
+            sys.exit(128 + stop.signum)
+        except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the evidence)
+            close_values()
+            remove_temporaries()
+            emit({"error": "the tool stopped on an unexpected error", "type": type(exc).__name__, "status": "failed",
+                  "status_basis": "the tool stopped with an unexpected error: nothing is complete",
+                  **({"partial_out_file": PARTIAL["out_file"], "partial_out_file_note": "written before the error, rows whole up to the last newline; the last row may be cut"} if PARTIAL["out_file"] else {})})
+            sys.exit(1)
+    except SystemExit as stop:
+        exit_code = _code(stop)
+    _leave(exit_code)

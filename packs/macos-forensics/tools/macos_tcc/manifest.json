@@ -37,8 +37,8 @@
   "example": "{\"path\": \"work/extracted/Library/Application Support/com.apple.TCC/TCC.db\", \"out_file\": \"work/<your id>/tcc.jsonl\"}",
   "by": "maintainer",
   "at": "2026-11-03T12:00:00.000Z",
-  "version": 3,
-  "sha256": "41511dcb13d716a5e200d2e36608f9a3e41acbec0fd0d28cd42efc4cbc95773f",
+  "version": 4,
+  "sha256": "8c53cc2c44f68578cd9fa4fd2872b38214779b3cdf0b04670477f6481f59ff00",
   "use": {
     "names": [
       "TCC.db"

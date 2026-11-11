@@ -65,8 +65,8 @@
   "example": "{\"db\": \"work/extracted/knowledgeC.db\", \"stream\": \"/app/inFocus\", \"out_file\": \"work/<your id>/knowledgec.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
-  "version": 14,
-  "sha256": "0f4f73f83701143dde034947c73b2dcdc50f85d4870d8405f78322548a00b2c5",
+  "version": 15,
+  "sha256": "067a707bc61e1e8caf5c2c56ead9d7494f20f5fab75afe1b985c04fa8af04a08",
   "use": {
     "names": [
       "knowledgeC.db"

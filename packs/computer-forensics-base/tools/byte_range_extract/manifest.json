@@ -46,6 +46,6 @@
   "example": "{\"source\":\"inputs/disk.dd\",\"ranges\":[{\"offset\":4096,\"length\":512}],\"out_dir\":\"{OUT}/ranges\"}",
   "by": "maintainer",
   "at": "2026-11-03T09:00:00.000Z",
-  "version": 2,
-  "sha256": "a4111a10eb5f64010b6fe0148074ee75bec28a1636e30568e558842e214132db"
+  "version": 3,
+  "sha256": "cd75e598ddd5d1580f3c622c40e127cf43ab920fb6354a1692e57adc361e3915"
 }

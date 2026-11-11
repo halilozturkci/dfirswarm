@@ -21,8 +21,8 @@
   "example": "{\"image\": \"inputs/disk.raw\", \"offset\": 1048576}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 13,
-  "sha256": "6d9d1fbfa6919f704325fedc7b2a547105b1c5450a605ad397ec2f0e3f7c5bd9",
+  "version": 14,
+  "sha256": "21d5d9d36b33bd2b64f08f0ec8b6cd3c40db8d9d5a674520889beb90a0f64d28",
   "needs": [
     "fuse"
   ],

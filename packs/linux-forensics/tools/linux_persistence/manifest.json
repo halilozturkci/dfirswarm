@@ -34,7 +34,7 @@
   "example": "{\"root\": \"work/extracted\", \"limit\": 100}",
   "by": "maintainer",
   "at": "2026-11-02T12:00:00.000Z",
-  "version": 1,
+  "version": 2,
   "use": {
     "names": [
       "*.service",
@@ -45,5 +45,5 @@
       "rc.local"
     ]
   },
-  "sha256": "3323a00575ee022d577186763e62147b167e404457be73ba86683f7b4f9db698"
+  "sha256": "462aa685538b2a04c7cf67641e038e235fb75fd22cf674eda31e90e5948236f9"
 }

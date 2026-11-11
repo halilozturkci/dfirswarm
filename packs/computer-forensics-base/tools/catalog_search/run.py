@@ -243,7 +243,34 @@ class _Held:
 HELD = _Held()             # the hidden file of the match list being written
 PAGES.append(HELD)
 
-TOOL = {"name": "catalog_search", "version": 19}
+def _code(stop):
+    return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+
+
+def _leave(code):
+    """End the call at once, after the answer is out. The interpreter's own teardown resets the signal handlers to their defaults before it frees
+    what the call held, and a stop signal that lands there kills the process by its default action (exit null, not 128 + the signal) with a whole
+    answer already printed. What the interpreter would have run at its end (the atexit hooks that remove a temporary file) is run here, with the
+    handlers still in; a signal before this point is answered by the handlers as before."""
+    try:
+        sys.stdout.flush()
+    except SystemExit as stop:
+        code = _code(stop)
+    except Exception:  # noqa: BLE001 - a reader that is gone: the exit code is the one the call had
+        pass
+    try:
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import atexit as _atexit
+        _atexit._run_exitfuncs()
+    except Exception:  # noqa: BLE001 - a hook that fails is not a failure of the answer
+        pass
+    os._exit(code)
+
+
+TOOL = {"name": "catalog_search", "version": 20}
 PATTERN_MAX = 4096
 LINE_MAX = 1 << 20
 BUDGET_SECONDS = 25
@@ -287,7 +314,7 @@ def _answer(result, code=0):
     if "status" not in result:
         result["status"], result["status_basis"] = _status(result)
     print_answer(result)
-    sys.exit(code)
+    _leave(code)
 
 
 def _unexpected(kind, value, _tb):
