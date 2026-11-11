@@ -1898,6 +1898,14 @@ def read_bounded(proc, seconds, cap, on_line, stderr_sink):
                 on_line(line)
     if carry and not (timed_out or over):
         on_line(carry)
+    if not (timed_out or over) and proc.poll() is None:
+        # both pipes reached their end and the program has not: it is still exiting (it closes its descriptors before it is a zombie), and
+        # what it left is still its child. The kill below would end that leftover uncounted and the program by SIGKILL, and the answer said
+        # "ran to its end" with left_behind 0 (CI, Python 3.11 container: a holder of the standard input only). It is given PIPE_GRACE to end.
+        try:
+            proc.wait(timeout=PIPE_GRACE)
+        except subprocess.TimeoutExpired:
+            pass
     if timed_out or over or proc.poll() is None:
         kill_tree(proc)
         reap_orphans(_pipe_inodes(proc))
@@ -2242,6 +2250,9 @@ def main():
         problems.append(out["program"].get("why") or "the program did not run")
     if ran and tally.unparsed:
         problems.append("%d line(s) of the program's output were not in the shape this tool reads (see parse)" % tally.unparsed)
+    if ran and isinstance(out["program"].get("exit_code"), int) and out["program"]["exit_code"] < 0:
+        # ended by a signal, its own or the tool's (a program that closed its pipes and did not end within PIPE_GRACE is ended): it did not run to its end
+        problems.append("the program was ended by signal %d before it exited by itself: the lines it had written are all that was read" % -out["program"]["exit_code"])
     if ran and tally.lines == 0 and out["program"].get("exit_code") not in (0,):
         problems.append("the program wrote nothing and ended with exit code %s: the database may be one the installed program cannot open (see program.stderr)" % out["program"].get("exit_code"))
     if family == "debian" and ran and scope["database"]["packages_without_md5sums"]:

@@ -2573,6 +2573,14 @@ def run_bounded(argv, work, stdout_path, stderr_path, seconds, cap_bytes, env):
             raise
         finally:
             ACTIVE.remove(proc)
+    if ended is None:
+        # A program that exits within the first FLOOD_STEP is never looked at in the loop: its work directory is held to the same bounds now
+        # (the hosted Mac: a backend made 1200 files and 400 MiB and exited before the first look, and its output was taken as unbounded).
+        written, entries = tree_bytes(work)
+        if written > cap_bytes:
+            ended = "what it wrote passed %d bytes (it had exited before the tool looked)" % cap_bytes
+        elif entries > MAX_WORK_FILES:
+            ended = "it made more than %d entries in its work directory, past which its bytes are not counted (it had exited before the tool looked)" % MAX_WORK_FILES
     reap_orphans()
     return code, ended, time.monotonic() - began
 
@@ -2743,7 +2751,7 @@ def main():
         code, ended, took = run_bounded([exif, "-json", "-G1", "-a", "-struct", real], str(work), str(so), str(se), max(5.0, min(60.0, max_seconds * EXIFTOOL_STAGE)), MAX_LOG_BYTES, env)
         raw, over = read_capped(so, MAX_LOG_BYTES)
         if ended or code not in (0, 1) and not raw:
-            metadata = {"status": "failed", "reason": "exiftool %s" % (("was ended: " + ended) if ended else "exited %s: %s" % (code, scrub_text(read_capped(se, 4000)[0]))), "exit_code": code}
+            metadata = {"status": "failed", "reason": "exiftool %s" % ((("was ended: " if code is None else "output is not used: ") + ended) if ended else "exited %s: %s" % (code, scrub_text(read_capped(se, 4000)[0]))), "exit_code": code}
             problems_why.append("exiftool did not finish: no metadata of the original was read")
         elif over:
             metadata = {"status": "too_large", "reason": "exiftool wrote more than %d bytes: not read" % MAX_LOG_BYTES}
@@ -2822,7 +2830,7 @@ def main():
                           "errors": scrub_text(read_capped(se, 4000)[0]), "output": scrub_text(read_capped(so, 4000)[0], 500)}
             chosen, why = None, None
             if ended:
-                why = "the backend was ended: %s" % ended
+                why = ("the backend was ended: %s" if code is None else "the backend's output is not used: %s") % ended
             elif code != 0:
                 why = "the backend exited %s" % code
             elif not produced:

@@ -445,3 +445,42 @@ test("linux-target run: the same wrapper without a flooder is complete", { skip:
     assert.equal(line.status, "complete", JSON.stringify(line.status_basis));
   });
 });
+
+// ---- package_verify: a program whose pipes have ended while it is still exiting (round 11) ---------------------------------------------------------------
+// read_bounded returned on the end of both pipes and killed the tree below a program that was still running: the program closes its descriptors before
+// it is a zombie, and what it left is its child until then. The Python 3.11 job met it with a holder of the standard input only: the holder was ended
+// uncounted, and the answer said complete ("the program ran to its end", left_behind 0). The window is made wide here: the stand-in closes its pipes and
+// exits 0.3 s later (within PIPE_GRACE: the leftover is counted, partial), or 2 s later (past it: the program is ended, and the answer says so, partial).
+for (const window of ["0.3", "2"]) {
+  test(`package_verify: a debsums that closes its pipes and exits ${window} s later, leaving a holder of the standard input, is never complete`, { skip: NO_ADOPTION, timeout: 120000 }, async () => {
+    await withCwd(async (cwd, bin) => {
+      const root = join(cwd, "work", "r");
+      await mkdir(join(root, "var/lib/dpkg/info"), { recursive: true });
+      await writeFile(join(root, "var/lib/dpkg/status"), "Package: a\nStatus: install ok installed\n");
+      await writeFile(join(root, "var/lib/dpkg/info/a.md5sums"), "d41d8cd98f00b204e9800998ecf8427e  usr/bin/a\n");
+      const holder = join(cwd, "holder.pid");
+      await writeFile(join(bin, "debsums"), `#!/bin/sh
+case "$1" in --version) echo "debsums version 9.9.9"; exit 0;; esac
+printf '%s\n' '/usr/bin/a                                        OK'
+sleep 600 >/dev/null 2>&1 &
+echo $! > "${holder}"
+exec >&- 2>&-
+sleep ${window}
+exit 0
+`);
+      await chmod(join(bin, "debsums"), 0o755);
+      try {
+        const run = await exec(VERIFY, [], { root: "work/r", family: "debian" }, cwd, bin, {}, "linux");
+        assert.equal(run.code, 0, run.stderr + run.stdout);
+        const out = JSON.parse(run.stdout);
+        assert.equal(out.status, "partial", out.status_basis);
+        if (window === "0.3") assert.ok(out.program_group.left_behind >= 1, JSON.stringify(out.program_group));
+        else assert.match(out.status_basis, /the program was ended by signal 9 before it exited by itself/);
+        const pid = Number((await readFile(holder, "utf8")).trim());
+        assert.equal(alive(pid), false, "the holder is gone");
+      } finally {
+        try { process.kill(Number((await readFile(holder, "utf8")).trim()), "SIGKILL"); } catch { /* gone */ }
+      }
+    });
+  });
+}
