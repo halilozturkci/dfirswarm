@@ -174,6 +174,9 @@ class WriteSweep(Scenarios):
         env = dict(os.environ)
         for k in ("JOB_ID", "OUT", "AGENT_ID", "SECRET_OUTPUT"):
             env.pop(k, None)
+        # development mode, as in test_write_failures: an error a file's finalizer meets is reported on every Python, not only on 3.14
+        env["PYTHONDEVMODE"] = "1"
+        env["PYTHONWARNINGS"] = "ignore"
         if extra_path:
             env["PATH"] = extra_path + os.pathsep + env["PATH"]
 

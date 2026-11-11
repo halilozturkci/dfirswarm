@@ -2745,9 +2745,15 @@ class Engine:
                 try:
                     fh.flush()
                     os.fsync(fh.fileno())
-                    fh.close()
                 except OSError:
                     pass
+                finally:
+                    # closed whatever the flush did: a file left open with bytes it could not write is closed by the garbage collector,
+                    # whose flush fails again (Python 3.14 prints that as a traceback)
+                    try:
+                        fh.close()
+                    except OSError:
+                        pass
         self.tree.close()
 
     # -- one member --
@@ -2833,11 +2839,16 @@ class Engine:
         acc = {"crc": 0, "written": 0, "head": b""}
         status, reason, stop = "extracted", None, None
         stream = None
+        unwritten = None
         cap = min(self.a["max_member_bytes"], self.a["max_total_bytes"] - self.total_written)
 
         def put(block):
             """Write a block that is within the cap; every byte written is counted, hashed and CRC'd."""
-            fh.write(block)
+            try:
+                fh.write(block)
+            except OSError as exc:
+                exc.archive_extract_write = True       # a write the file system refused, not a read of the archive
+                raise
             sha.update(block)
             acc["crc"] = zlib.crc32(block, acc["crc"])
             acc["written"] += len(block)
@@ -2880,6 +2891,8 @@ class Engine:
             if isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, errno.EDQUOT):
                 reason = "write_failed: no space left to write (%s); %d bytes are kept as .partial" % (msg, acc["written"])
                 stop = "disk_full"
+            elif isinstance(exc, OSError) and getattr(exc, "archive_extract_write", False):
+                reason = "write_failed: the file system refused a write (%s); %d bytes are kept as .partial" % (msg, acc["written"])
             else:
                 reason = "read_failed: %s" % msg
                 # A reader that raises throws away the block it was reading. A stream that knows what it handed out can give back the
@@ -2896,14 +2909,25 @@ class Engine:
         finally:
             try:
                 fh.flush()
-                fh.close()
-            except OSError:
-                pass
+            except OSError as exc:
+                unwritten = exc            # the bytes counted as written were only buffered: the file holds fewer
+            try:
+                fh.close()                 # closed whatever the flush did (above)
+            except OSError as exc:
+                unwritten = unwritten or exc
             if stream is not None and hasattr(stream, "close"):
                 try:
                     stream.close()
                 except Exception:   # noqa: BLE001 - a close that fails changes nothing about the bytes written
                     pass
+        if unwritten is not None:
+            # the last block(s) handed to the file were refused when they were flushed: the file is shorter than what was counted. The member
+            # is not extracted, and the row says what size_written and sha256 are then.
+            status = "partial"
+            reason = ("write_failed: the file could not be written to its end (%s); it is kept as .partial and holds fewer bytes than size_written, "
+                      "and sha256 is that of the bytes read from the archive, not of the file" % describe(unwritten))
+            if unwritten.errno in (errno.ENOSPC, errno.EDQUOT):
+                stop = "disk_full"
         written, crc, head = acc["written"], acc["crc"], acc["head"]
         verified = None
         if status == "extracted":
