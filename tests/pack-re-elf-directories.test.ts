@@ -10,6 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { closeSync, openSync, readSync } from "node:fs";
 import { mkdir, readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -313,9 +314,20 @@ test("SIGTERM during a read answers with one JSON document and exit 143", async 
 // --- agreement with readelf on the files this machine has ----------------------------------------------------------------------------
 
 const haveReadelf = spawnSync("sh", ["-c", "command -v readelf"]).status === 0;
+/** A file that begins with the ELF magic: a macOS host's programs are Mach-O, which elf_directories rightly refuses. */
+function isElf(path: string): boolean {
+  const head = Buffer.alloc(4);
+  const fd = openSync(path, "r");
+  try {
+    readSync(fd, head, 0, 4, 0);
+  } finally {
+    closeSync(fd);
+  }
+  return head.toString("latin1") === "\x7fELF";
+}
 test("agreement with readelf -d -s -n on binaries present on this machine (read only)", { skip: haveReadelf ? false : "readelf is not installed on this machine" }, async (t) => {
   const candidates = ["/bin/ls", "/bin/sh", "/usr/bin/env", "/bin/true", "/lib/x86_64-linux-gnu/libc.so.6", "/lib/x86_64-linux-gnu/libm.so.6", "/lib/aarch64-linux-gnu/libc.so.6", process.execPath]
-    .filter((p) => spawnSync("test", ["-f", p]).status === 0 && spawnSync("test", ["-L", p]).status !== 0);
+    .filter((p) => spawnSync("test", ["-f", p]).status === 0 && spawnSync("test", ["-L", p]).status !== 0 && isElf(p));
   if (!candidates.length) return t.skip("no ELF binary found to read");
   await withCwd(async (cwd) => {
     for (const p of candidates) {
@@ -372,7 +384,10 @@ test("a hash table of 16 million buckets is scanned under the clock: max_seconds
 // --- readelf on files gcc makes here: no-PIE with no exports, PIE, static, stripped, a shared object with a soname and a runpath ---------
 
 const haveGcc = spawnSync("sh", ["-c", "command -v gcc"]).status === 0 && haveReadelf;
-test("agreement with readelf on files gcc makes: no-PIE with no exports, PIE, static, stripped, a shared object with soname and runpath", { skip: haveGcc ? false : "gcc or readelf is not installed on this machine" }, async () => {
+// gcc on macOS is clang and makes Mach-O: its target (gcc -dumpmachine) says which.
+const gccTarget = haveGcc ? (spawnSync("gcc", ["-dumpmachine"], { encoding: "utf8" }).stdout ?? "").trim() : "";
+const gccMakesElf = /linux|elf|bsd/i.test(gccTarget);
+test("agreement with readelf on files gcc makes: no-PIE with no exports, PIE, static, stripped, a shared object with soname and runpath", { skip: !haveGcc ? "gcc or readelf is not installed on this machine" : gccMakesElf ? false : `gcc here makes files for ${gccTarget || "an unknown target"}, not ELF` }, async () => {
   await withCwd(async (cwd) => {
     await put(cwd, "work/h.c", '#include <stdio.h>\nint main(void){puts("hi");return 0;}\n');
     await put(cwd, "work/lib.c", "int exported_one(int x){return x+1;}\nint exported_two(void){return 2;}\n");

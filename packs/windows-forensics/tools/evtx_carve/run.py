@@ -2290,8 +2290,10 @@ def answer_object(doc):
             out["status"] = "partial"
             basis = out.get("status_basis")
             why = []
-            if BOUNDARY["replaced"] > 0:
-                why.append("%d string(s) still held a secret-shaped text when the answer was checked on its way out and were replaced" % BOUNDARY["replaced"])
+            # a string withheld unjudged because judging stopped held nothing that was seen: the stop says it, not this count
+            shaped = BOUNDARY["replaced"] - BOUNDARY["replaced_by"].get("the judging time ran out", 0)
+            if shaped > 0:
+                why.append("%d string(s) still held a secret-shaped text when the answer was checked on its way out and were replaced" % shaped)
             if _STOP["by"] is not None:
                 why.append("judging the strings stopped at %s: %d string(s) after it were withheld by their size" % (_STOP["by"], _STOP["strings"]))
             out["status_basis"] = "%s%s (see boundary)" % (basis + "; " if isinstance(basis, str) and basis else "", "; ".join(why))

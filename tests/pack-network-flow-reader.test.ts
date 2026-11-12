@@ -570,6 +570,12 @@ test("with the real nfdump: the files built from the specifications read as the 
     t.skip("nfdump is not installed here; the recorded outputs of nfdump 1.7.1 stand in (the same files were read with the real program when this was written)");
     return;
   }
+  // The image carries Debian 12's nfdump 1.7.1, the release whose words the parser was written from; another release words its output
+  // otherwise (Homebrew's 1.7.10 prints -o json over many lines, and more -v and -E lines), and the tool does not take those for a reading.
+  if (!/Version: \D*1\.7\.1(?!\d)/.test(probe.stdout)) {
+    t.skip(`nfdump here is not 1.7.1, the release the parser reads (${probe.stdout.trim().split("\n")[0]?.replace(/^\S*nfdump: /, "") ?? "no version line"})`);
+    return;
+  }
   await withCwd(async (cwd) => {
     await mkdir(join(cwd, "stub"), { recursive: true });
     for (const f of (await readdir(FIX)).filter((n) => n.startsWith("nfcapd."))) await copyFile(join(FIX, f), join(cwd, "inputs", f));

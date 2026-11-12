@@ -34,8 +34,8 @@
   "example": "{\"hive\": \"work/extracted/UsrClass.dat\", \"contains\": \"usb\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 14,
-  "sha256": "72f77bc1cff433efe44411bcde46726a0ed0b2063de16cad6f33bdf5a69b90ea",
+  "version": 15,
+  "sha256": "043f026a93f475d326efb238bb7887a5f7381d4d09f0fc5bdc93149ad8d7bdc7",
   "use": {
     "extensions": [
       ".dat"

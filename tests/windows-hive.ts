@@ -12,9 +12,13 @@ const u16z = (text: string): Buffer => Buffer.concat([Buffer.from(text, "utf16le
  * of the first 127 dwords); then one hbin ("hbin", its offset and size, 24 reserved
  * bytes) of cells. A cell is a negative 32-bit size (allocated), its data, padded to 8
  * bytes. A key is an "nk" cell (flags 0x2C for the root, 0x20 for a key whose name is
- * ASCII; the last-written FILETIME; the parent, subkey count and "li" list, value count
- * and value list; the name); a value is a "vk" cell (name length, data size with the top
- * bit set when the data is inline in the offset field, the type, flags 1 for an ASCII name).
+ * stored one byte a character; the last-written FILETIME; the parent, subkey count and "li"
+ * list, value count and value list; the name); a value is a "vk" cell (name length, data size
+ * with the top bit set when the data is inline in the offset field, the type, flags 1 for a
+ * name stored one byte a character). A name is stored one byte a character, as Windows stores
+ * it (CmpNameSize), when every character of it is below U+0100, and as UTF-16LE otherwise. A
+ * key with more children than an "li" list can count (65,535) has them in "li" lists of 1,000
+ * under an "ri" index, as a real hive has a long list in leaves under an index root.
  */
 export type HiveValue = { name: string; type: "sz" | "expand_sz" | "binary" | "dword" | "qword" | "multi_sz"; value: string | number | bigint | Buffer | string[] };
 export type HiveKey = {
@@ -32,6 +36,13 @@ export type HiveKey = {
 };
 
 const REG_TYPE = { sz: 1, expand_sz: 2, binary: 3, dword: 4, multi_sz: 7, qword: 11 } as const;
+const LEAF = 1000;
+
+/** A name's bytes as Windows writes them: one byte a character when every character is below U+0100 (compressed), else UTF-16LE. */
+function nameBytes(text: string): { bytes: Buffer; compressed: boolean } {
+  const compressed = /^[\u0000-\u00ff]*$/.test(text);
+  return { bytes: Buffer.from(text, compressed ? "latin1" : "utf16le"), compressed };
+}
 
 function hiveValueData(v: HiveValue): Buffer {
   switch (v.type) {
@@ -71,28 +82,36 @@ export function hive(root: HiveKey, opts: { primarySeq?: number; secondarySeq?: 
   };
   // The root key is the first cell of the first hbin (regipy, like the kernel's reader, starts there),
   // so its cell is reserved before anything else is written and filled in last.
-  const rootName = Buffer.from(root.name, "latin1");
+  const rootName = nameBytes(root.name).bytes;
   const reservedRoot = cell(Buffer.alloc(0x4c + rootName.length));
   const key = (k: HiveKey, isRoot: boolean): number => {
     const childOffsets = (k.children ?? []).map((c) => key(c, false));
     let listOffset = 0xffffffff;
     if (childOffsets.length) {
-      const li = Buffer.alloc(4 + childOffsets.length * 4);
-      li.write("li", 0, "latin1");
-      li.writeUInt16LE(childOffsets.length, 2);
-      childOffsets.forEach((o, i) => li.writeUInt32LE(o, 4 + i * 4));
-      listOffset = cell(li);
-      if (k.indexRepeats && k.indexRepeats > 1) {
-        const ri = Buffer.alloc(4 + k.indexRepeats * 4);
+      const leaf = (offsets: number[]): number => {
+        const li = Buffer.alloc(4 + offsets.length * 4);
+        li.write("li", 0, "latin1");
+        li.writeUInt16LE(offsets.length, 2);
+        offsets.forEach((o, i) => li.writeUInt32LE(o, 4 + i * 4));
+        return cell(li);
+      };
+      // One leaf, or (past what a leaf's 16-bit count holds) leaves of LEAF under an index.
+      const leaves = childOffsets.length <= 0xffff ? [leaf(childOffsets)]
+        : Array.from({ length: Math.ceil(childOffsets.length / LEAF) }, (_, i) => leaf(childOffsets.slice(i * LEAF, (i + 1) * LEAF)));
+      listOffset = leaves[0];
+      const repeats = k.indexRepeats && k.indexRepeats > 1 ? k.indexRepeats : 1;
+      if (repeats > 1 || leaves.length > 1) {
+        const elements = Array.from({ length: repeats }, () => leaves).flat();
+        const ri = Buffer.alloc(4 + elements.length * 4);
         ri.write("ri", 0, "latin1");
-        ri.writeUInt16LE(Math.min(k.indexRepeats, 0xffff), 2);
-        for (let i = 0; i < k.indexRepeats; i++) ri.writeUInt32LE(listOffset, 4 + i * 4);
+        ri.writeUInt16LE(Math.min(elements.length, 0xffff), 2);
+        elements.forEach((o, i) => ri.writeUInt32LE(o, 4 + i * 4));
         listOffset = cell(ri);
       }
     }
     const valueOffsets = (k.values ?? []).map((v) => {
       const data = hiveValueData(v);
-      const name = Buffer.from(v.name, "latin1");
+      const { bytes: name, compressed } = nameBytes(v.name);
       const vk = Buffer.alloc(0x14 + name.length);
       vk.write("vk", 0, "latin1");
       vk.writeUInt16LE(name.length, 2);
@@ -104,7 +123,7 @@ export function hive(root: HiveKey, opts: { primarySeq?: number; secondarySeq?: 
         vk.writeUInt32LE(cell(data), 8);
       }
       vk.writeUInt32LE(REG_TYPE[v.type], 12);
-      vk.writeUInt16LE(1, 16);
+      vk.writeUInt16LE(compressed ? 1 : 0, 16);
       name.copy(vk, 0x14);
       return cell(vk);
     });
@@ -115,10 +134,10 @@ export function hive(root: HiveKey, opts: { primarySeq?: number; secondarySeq?: 
       for (let i = 0; i < total; i++) list.writeUInt32LE(valueOffsets[i % valueOffsets.length], i * 4);
       valuesListOffset = cell(list);
     }
-    const name = Buffer.from(k.name, "latin1");
+    const { bytes: name, compressed } = nameBytes(k.name);
     const nk = Buffer.alloc(0x4c + name.length);
     nk.write("nk", 0, "latin1");
-    nk.writeUInt16LE(isRoot ? 0x2c : 0x20, 2);
+    nk.writeUInt16LE((isRoot ? 0x0c : 0) | (compressed ? 0x20 : 0), 2);
     nk.writeBigUInt64LE(k.lastWritten ?? 133_443_104_000_000_000n, 4);
     nk.writeUInt32LE(0xffffffff, 0x10); // parent, patched below
     nk.writeUInt32LE(childOffsets.length, 0x14);

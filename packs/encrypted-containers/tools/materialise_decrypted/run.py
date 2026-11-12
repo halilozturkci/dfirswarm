@@ -2891,10 +2891,9 @@ def main():
 
     # The reader is looked for before the key is touched. The native modules are never imported in this process: a library that dies
     # (a signal in its code) must not take the tool down with it, so every import and every call of a reader is made by a child of this file.
-    found = probe_reader(spec["module"], operation, seconds)
-    if found is None:
+    available, version = probe_reader(spec["module"], operation, seconds)
+    if not available:
         return
-    version = found
     if kind != "clear_key":
         kfd, ksize = open_regular(key_ref, "key_ref", secret=True)       # the key file is checked here, its bytes are read by the child only
         os.close(kfd)
@@ -3189,13 +3188,14 @@ def _death(code):
 
 
 def probe_reader(name, operation, seconds):
-    """The reader's version, or None after the 'unavailable' answer has been given. The import is made by a child: a library that cannot be
-    imported, or dies on import, never takes the tool with it."""
+    """(True, the reader's version or None when the module names none), or (False, None) after the 'unavailable' answer has been given. The
+    import is made by a child: a library that cannot be imported, or dies on import, never takes the tool with it. A module that is importable
+    and names no version (pyAesCrypt 6.1.1 has neither get_version nor __version__) is available: its version is null, and it is read."""
     left = max(1.0, STOP["deadline"] - time.monotonic())
     code, doc, timed_out, why = _run_child("probe", {"module": name}, min(PROBE_SECONDS, left))
     if doc is not None and doc.get("ok") is True:
         v = doc.get("version")
-        return withhold(v) if isinstance(v, str) and len(v) <= 40 else None
+        return True, (withhold(v) if isinstance(v, str) and len(v) <= 40 else None)
     if doc is None and (timed_out or why or (code is not None and code != 0)):
         fail("the reader module %s could not be probed: its import child %s; nothing was read" % (
             name, "did not return in %d seconds and was ended" % min(PROBE_SECONDS, left) if timed_out else ("could not be started" if why else "ended with " + _death(code))))
@@ -3203,7 +3203,7 @@ def probe_reader(name, operation, seconds):
     print(json.dumps({"status": "unavailable", "parser": PARSER, "operation": operation,
                       "status_basis": "the Python module %s (package %s) is not importable, so nothing was read: the key file's bytes were not read" % (
                           name, {"pybde": "libbde-python", "pyluksde": "libluksde-python", "pyAesCrypt": "pyAesCrypt"}[name])}))
-    return None
+    return False, None
 
 
 def run_reader(operation, kind, key_ref, offset, size, budget, sfd, pfd, seconds):

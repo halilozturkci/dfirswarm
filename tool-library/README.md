@@ -120,7 +120,7 @@ or `tools/`.
 | `aes_inverse_scan` | node | `s3472f0` | 2 | Find AES-128 and AES-256 key schedules stored as a decryption routine keeps them (InvMixColumns on the middle… |
 | `aes_schedule_scan` | node | `s3472f0` | 2 | Find AES-128 and AES-256 key schedules in a file or memory image, at every byte alignment, as the standard la… |
 | `aescrypt_v2_decrypt` | python3 | `s864a02` | 3 | Decrypt AES Crypt 3.10 Windows GUI v2 files (KDF: SHA256(IV||zeros16||UTF16LE pw)×8192). Returns plaintext pa… |
-| `amcache_apps` | python3 | `maintainer` | 13 | Application and file inventory from Amcache.hve (presence, not execution): path, hash, publisher, version and… |
+| `amcache_apps` | python3 | `maintainer` | 14 | Application and file inventory from Amcache.hve (presence, not execution): path, hash, publisher, version and… |
 | `browser_history` | python3 | `maintainer` | 8 | Query a browser history database from a copy of it and its -wal, -shm and -journal sidecars, made in a privat… |
 | `catalog_grep` | python3 | `s864a02` | 1 | Grep catalog/AF-Case2.E01/p0/filelist.txt for a pattern; return matching lines. |
 | `catalog_search` | python3 | `sd1d100` | 20 | Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or a… |
@@ -130,9 +130,9 @@ or `tools/`.
 | `csearch` | python3 | `sf6df06` | 2 | Search the kickoff catalog files (filelist/timeline/bodyfile/pslist/cmdline/netscan/malfind/dlllist/psscan) f… |
 | `destlist_v4` | python3 | `sd29252` | 1 | Read the DestList stream of a Windows jump list, version 4 (the 130-byte entry layout): for each entry its pl… |
 | `encoded_literal_scan` | python3 | `s3472f0` | 1 | Find a literal you know the start and end of (marker ... closer) hidden in base64, base32, hex, rot13 or as U… |
-| `esedb_query` | python3 | `maintainer` | 22 | Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as TABLES through esedbexport: list the tables… |
+| `esedb_query` | python3 | `maintainer` | 23 | Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as TABLES through esedbexport: list the tables… |
 | `evtx_filter` | python3 | `sd1d101` | 1 | Parse a local EVTX; return EventID/TimeCreated/EventData for matching IDs or a time prefix |
-| `evtx_query` | python3 | `sbe1801` | 12 | Query an EVTX event log and return filtered events with timestamp, event id, channel, computer, provider, Eve… |
+| `evtx_query` | python3 | `sbe1801` | 13 | Query an EVTX event log and return filtered events with timestamp, event id, channel, computer, provider, Eve… |
 | `extract_stream` | python3 | `sfcc303` | 14 | Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream i… |
 | `file_carver` | python3 | `s183904` | 13 | Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own struc… |
 | `fls_root` | python3 | `s9d8306` | 2 | Run fls on an EXT4 volume (default offset 503808, image inputs/Webserver.E01). Reads inode/recursive/image/of… |
@@ -150,12 +150,12 @@ or `tools/`.
 | `mam_scan` | python3 | `s183901` | 6 | Scan a raw dump or image region for MAM-compressed Prefetch records (the signature MAM\x04 and a declared siz… |
 | `marshal_inspect` | python3 | `sd29252` | 6 | Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and neve… |
 | `master_icat` | bash | `s9a5f06` | 3 | Extract a file by inode from an E01 with icat. The HDFS master image and sector offset 2048 are the defaults;… |
-| `nested_vdi` | python3 | `sae6e7d` | 1 | Read a VirtualBox VDI that lies inside an E01 or raw image, in place: found by its NTFS data runs (a deleted … |
+| `nested_vdi` | python3 | `sae6e7d` | 2 | Read a VirtualBox VDI that lies inside an E01 or raw image, in place: found by its NTFS data runs (a deleted … |
 | `prefetch_mam` | python3 | `sbe1803` | 6 | Read a Windows Prefetch file, MAM-compressed (MAM\x04) or plain (SCCA), field by field by the layout of its S… |
 | `recyclebin_i` | python3 | `maintainer` | 8 | Parse $Recycle.Bin $I metadata (version 1 and 2 records, unsigned fields): the original path, original size a… |
 | `reg_hive_query` | python3 | `sbe1805` | 1 | Query a Windows registry hive file (regipy) and return a key's values and subkey names as JSON. |
 | `regkeys` | python3 | `sf4b205` | 4 | Dump a registry key's values and subkeys from a hive with regipy. Text values are decoded, REG_BINARY comes b… |
-| `regkv` | python3 | `s9f2005` | 14 | Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole:… |
+| `regkv` | python3 | `s9f2005` | 15 | Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole:… |
 | `sig_carve` | python3 | `s183906` | 17 | A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, an… |
 | `sigscan_e01` | python3 | `s5d1001` | 3 | Scan an E01/raw image for a byte signature via TSK img_cat (logical media, not the EWF wrapper). Returns offs… |
 | `sqlite_query` | python3 | `s881002` | 19 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |
