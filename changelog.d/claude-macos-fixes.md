@@ -34,3 +34,10 @@ python-evtx, Pillow and pytsk3), so the cases gated on them ran there for the fi
   1,000,001 lines in about 29 s, before max_seconds; the run then reaches its cap of characters judged after about 604,000 rows of the paging
   file and withholds the 396,236 strings after it by their size. The answer is rightly partial and says so in `status_basis` and
   `boundary.stopped_by`, with no entry in `partial_reasons`, which the case required. It now takes either.
+- **The BOUNDARY block no longer counts the strings it withheld unjudged as secret-shaped texts (macos-forensics, virtualization-backup-forensics,
+  windows-forensics: the 22 tools that carry the block, and the tool-library twins of esedb_query, evtx_query, regkv and amcache_apps).** When
+  judging stopped (the run's cap of characters judged, or the judging time), every string withheld by its size after the stop was also
+  counted in the sentence "N string(s) still held a secret-shaped text when the answer was checked on its way out and were replaced": the
+  million-line `pbs_task_log` case said 396,236 strings held a secret-shaped text when none of them had been judged. That sentence now
+  counts only the strings the backstop found; the strings withheld by the stop are said in the sentence of the stop, as before, and
+  `boundary.replaced_by_check` is unchanged.
