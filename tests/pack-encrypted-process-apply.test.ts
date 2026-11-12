@@ -357,7 +357,7 @@ function aesContainer(plain: Buffer): Buffer {
 }
 const PYAES = `
 import glob
-def get_version(): return "6.1.1"
+# pyAesCrypt 6.1.1, the release the pack pins, names no version (no get_version, no __version__), and neither does this stand-in
 def decryptStream(fin, fout, passw, bufferSize, inputLength):
     if passw != open(os.environ["STANDIN_EXPECT_FILE"]).read().strip(): raise ValueError("Wrong password")
     data = fin.read()

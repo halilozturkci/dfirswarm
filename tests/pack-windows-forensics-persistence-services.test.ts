@@ -307,9 +307,9 @@ for (const variant of VARIANTS) {
   });
 }
 
-test("the manifest says what the tool reads, that no second reader is started, and is version 3", async () => {
+test("the manifest says what the tool reads, that no second reader is started, and is version 5", async () => {
   const manifest = JSON.parse(await readFile(join(WIN, TOOL, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, 4);
+  assert.equal(manifest.version, 5);
   assert.deepEqual(manifest.requires, [], "no second reader is started, so nothing is required");
   assert.match(manifest.description, /every ControlSetNNN Services key/);
   assert.match(manifest.description, /Second reader: NOT DONE/);

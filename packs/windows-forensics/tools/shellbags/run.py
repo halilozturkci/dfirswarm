@@ -555,6 +555,21 @@ import warnings
 
 KEY_CELL_BYTES = 76
 VALUE_CELL_BYTES = 20
+# regipy decodes a name the hive stores one byte a character (Windows stores a name so whenever every character of it is below U+0100: "M\u00fcller",
+# "Caf\u00e9") as ASCII, with errors replaced, and a broken UTF-16 name the same way: each character it could not decode is U+FFFD, and the name it
+# gives is not the hive's. Such a name is counted here and said, so an answer that shows one is not complete.
+LOST_CHARACTER = "\ufffd"
+
+
+def _lost_names(items):
+    return sum(1 for item in items if LOST_CHARACTER in str(getattr(item, "name", "") or ""))
+
+
+def _lost_names_problem(where, what, count):
+    return {"where": where, "what": what,
+            "error": "%d %s name(s) here hold U+FFFD where regipy could not decode a character (a name stored one byte a character, as Windows stores "
+                     "one whose every character is below U+0100, is decoded as ASCII): each such name is shown as regipy gives it, which is not the "
+                     "hive's, and a filter or a path made from it may not match the hive" % (count, "key" if what == "subkeys" else "value")}
 
 
 class LibraryLog(logging.Handler):
@@ -608,6 +623,9 @@ class HiveBounds:
             self.repeats += repeated
             problems.append({"where": where, "what": "subkeys",
                              "error": "its subkey list names %d key(s) more than once; each is listed once" % repeated})
+        lost = _lost_names(distinct)
+        if lost:
+            problems.append(_lost_names_problem(where, "subkeys", lost))
         return distinct
 
     def values(self, node, where, problems, **kwargs):
@@ -628,6 +646,9 @@ class HiveBounds:
                                           "the values past that are not read" % self.hive_bytes})
                 break
             raw.append(v)
+        lost = _lost_names(raw)
+        if lost:
+            problems.append(_lost_names_problem(where, "values", lost))
         return raw
 # END SHARED HIVE BOUNDS
 

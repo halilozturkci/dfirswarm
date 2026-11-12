@@ -26,6 +26,7 @@ tests/pack-virtualization-chain.test.ts               # 80 / 42
 tests/pack-windows-forensics-boundary-block.test.ts   # the boundary block cases (129 / 80 over its suites)
 tests/pack-windows-forensics-boundary-block-2.test.ts # the boundary block cases
 tests/pack-windows-forensics-boundary-block-3.test.ts # the boundary block cases
+tests/pack-windows-forensics-persistence-tasks.test.ts # its 100,000-task case with the real regipy: 119 to 136 s on an M3 Max, 253 s loaded; cut off at 300 s
 tests/pack-triage-slots.test.ts                       # 223 / 112
 tests/pack-triage-slots-index.test.ts                 # 87 / 56; cut off at 300 s on the Mac mini
 tests/pack-mobile-forensics.test.ts                   # 109 / 92

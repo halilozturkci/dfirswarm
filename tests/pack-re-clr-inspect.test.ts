@@ -12,6 +12,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -468,7 +469,9 @@ test("a program found only through a relative PATH entry is not run: the evidenc
     await put(cwd, "ilspycmd", evil, 0o755);
     await put(cwd, "bin/ilspycmd", evil, 0o755);
     await mkdir(join(cwd, "out"), { recursive: true });
-    const out = await tool(CLR, cwd, { path: "work/a.dll", decompile: true }, { JOB_ID: "j000001", OUT: join(cwd, "out"), SECRET_OUTPUT: "1", PATH: `.:bin::${process.env.PATH ?? ""}` });
+    // The relative entries are the only ones that hold an ilspycmd: a directory of PATH with a real one installed (dotnet's tools) is left out.
+    const absolute = (process.env.PATH ?? "").split(":").filter((d) => d.startsWith("/") && !existsSync(join(d, "ilspycmd"))).join(":");
+    const out = await tool(CLR, cwd, { path: "work/a.dll", decompile: true }, { JOB_ID: "j000001", OUT: join(cwd, "out"), SECRET_OUTPUT: "1", PATH: `.:bin::${absolute}` });
     const a = parse(out);
     assert.equal(a.status, "failed");
     assert.match(a.error, /ilspycmd is not installed/);

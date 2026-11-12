@@ -91,6 +91,6 @@
   "example": "{\"action\": \"ls\", \"image\": \"inputs/disk.E01\", \"offset\": 2048, \"runs_file\": \"work/s01/vdi-runs.json\", \"path\": \"/\", \"recursive\": true}",
   "by": "sae6e7d",
   "at": "2026-09-28T07:48:41.000Z",
-  "version": 1,
-  "sha256": "9f55acdab0c61f44a48fcea2810b7798e3b4bcda39653d958f10af11023b1d63"
+  "version": 2,
+  "sha256": "c9c3ae7aecde58babd8ad3f545a0abccd1c1b50e69856b3e621a9749e879b4e2"
 }

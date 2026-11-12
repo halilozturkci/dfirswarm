@@ -252,6 +252,7 @@ test("with the real upx: an ELF built here is packed, unpacked, and the derivati
     await put(cwd, "work/hello.c", '#include <stdio.h>\nint main(void){puts("hello, hello, hello, hello");return 0;}\n');
     assert.equal(spawnSync("cc", ["-O0", "-o", join(cwd, "work/hello"), join(cwd, "work/hello.c")]).status, 0);
     const original = await readFile(join(cwd, "work/hello"));
+    if (original.subarray(0, 4).toString("latin1") !== "\x7fELF") return t.skip("cc here does not make ELF files (macOS makes Mach-O): the case packs an ELF");
     assert.equal(spawnSync("upx", ["-q", "-o", join(cwd, "work/hello.packed"), join(cwd, "work/hello")]).status, 0);
     t.diagnostic(spawnSync("upx", ["--version"], { encoding: "utf8" }).stdout.split("\n")[0] ?? "");
     const out = body(await tool(UNPACK, cwd, { path: "work/hello.packed" }));

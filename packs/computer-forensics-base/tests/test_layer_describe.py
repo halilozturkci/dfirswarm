@@ -204,7 +204,8 @@ class LayerDescribe(Case):
         segments = sorted(os.path.join(self.path("evidence"), n) for n in os.listdir(self.path("evidence")))
         a = run_tool("layer_describe", {"sources": segments, "out_dir": self.path("out", "e01")}, self.dir).json
         self.assertEqual((a["container"]["layer"], a["media"]["bytes"], a["partition_table"]), ("ewf", 4 << 20, True), a["status_basis"])
-        self.assertEqual(a["status"], "complete" if have("mke2fs") else "partial", a["status_basis"])
+        # complete where the file system is made and the host can adopt the orphans of its programs (CLEAN: Linux); partial elsewhere
+        self.assertEqual(a["status"], CLEAN if have("mke2fs") else "partial", a["status_basis"])
         b = run_tool("layer_describe", {"sources": segments[:-1], "out_dir": self.path("out", "e01b")}, self.dir).json
         self.assertEqual(b["status"], "partial")
         self.assertEqual([d["kind"] for d in b["missing_dependencies"]], ["segment"])
