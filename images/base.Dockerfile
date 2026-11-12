@@ -25,7 +25,7 @@
 # purpose: the date by a monthly pull request (.github/workflows/apt-snapshot.yml),
 # the digests by scripts/apt-snapshot-bump.sh --digests.
 ARG APT_SNAPSHOT=20261030T000000Z
-FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS seekfix
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS seekfix
 ARG APT_SNAPSHOT
 COPY debian-snapshot /tmp/debian-snapshot
 RUN set -eu; d="$(tr -d '[:space:]' < /tmp/debian-snapshot)"; rm /tmp/debian-snapshot; \
