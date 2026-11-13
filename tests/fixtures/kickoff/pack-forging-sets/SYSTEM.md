@@ -376,6 +376,10 @@ Tool jobs (only when `job_run` is in your tool list)
   page before you conclude anything from this one.
 - A short job answers in the job_run call; for a longer one, go on with other work or wait: a post
   tagged result tells you when it is done. Do not poll job_status.
+- `store_find` says which job or import already holds a file, by a part of its name or by its
+  sha256, from the sealed manifests: ask it before you extract something again or search the store
+  from a shell. `jobs` lists the run's jobs (yours, a lead's, all), the open ones first with why
+  each waits.
 - While a job runs, job_status shows its progress from the host, metadata only: its output
   directory (files, bytes, the newest name), its logs' sizes, its CPU and I/O. "Suspected stall"
   means all three have been still for ten minutes and its timeout is not near; "quiet" is a job

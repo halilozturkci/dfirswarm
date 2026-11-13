@@ -6282,7 +6282,7 @@ export const TOOL_RESERVED_NAMES = new Set([
   // hypothesis), its hash on the trace (HARNESS_RECORD_TOOL).
   "harness_record",
   // Tool jobs in worker VMs and the catalogue they grow (scripts/job-service.ts).
-  "job_run", "job_status", "catalog_request",
+  "job_run", "job_status", "store_find", "jobs", "catalog_request",
   // The hub's note of a seat's access to a sensitive output (scripts/sensitive-access.ts).
   "sensitive_access",
   // The host-side model gateway (scripts/model-gateway.ts).

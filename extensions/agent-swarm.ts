@@ -181,6 +181,8 @@ import {
   jobSubmit,
   jobStatus,
   catalogRequest,
+  storeFind,
+  jobsList,
   runFinishLine,
   leadOpen,
   leadClaim,
@@ -281,6 +283,8 @@ export const SWARM_TOOLS = new Set([
   "self_compact",
   "job_run",
   "job_status",
+  "store_find",
+  "jobs",
   "catalog_request",
   "lead_open",
   "lead_claim",
@@ -2928,6 +2932,45 @@ export default function (pi: ExtensionAPI) {
       await logEvent(toolCtx.cwd, agentId, "job_status", params, { ok: st.ok, state: st.job?.state, ...(st.ok ? {} : { reason: st.reason }) }, Date.now() - started);
       if (!st.ok) return { content: [{ type: "text" as const, text: st.reason ?? "no answer" }], details: st, isError: true };
       return okResult({ ok: true, ...st.job, ...(st.stdout ? stdoutWithNote(params.job_id, st.stdout) : {}) });
+    },
+  });
+
+  pi.registerTool({
+    name: "store_find",
+    label: "Find a file in the store",
+    description:
+      "Which job or import holds a file: by a part of its name (name: \"ntuser.dat\", case-insensitive, of the path as the manifest has it) or by its content (sha256, 64 hex). Read from the sealed manifests' indexes across every job and import, in a second: use it before you extract something again or search the store with a shell. Each hit is a reference (job:<id>/<path>) to cite or to give a tool as its path. job limits it to one job; limit is 50 by default, 200 at most; the answer says how many matched in all.",
+    parameters: Type.Object({
+      name: Type.Optional(Type.String({ description: "A part of the file's path or name" })),
+      sha256: Type.Optional(Type.String({ description: "The content's sha256 (64 hex)" })),
+      job: Type.Optional(Type.String({ description: "Only this job or import: j000123, mat-4" })),
+      limit: Type.Optional(Type.Integer({ description: "How many hits to return (default 50, at most 200)" })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+      const started = Date.now();
+      const r = (await storeFind(toolCtx.cwd, { ...params })) as { ok: boolean; reason?: string; matched?: number; returned?: number };
+      await logEvent(toolCtx.cwd, agentId, "store_find", params, { ok: r.ok, ...(r.ok ? { matched: r.matched, returned: r.returned } : { reason: r.reason }) }, Date.now() - started);
+      if (!r.ok) return { content: [{ type: "text" as const, text: r.reason ?? "no answer" }], details: r, isError: true };
+      return okResult(r);
+    },
+  });
+
+  pi.registerTool({
+    name: "jobs",
+    label: "The run's jobs",
+    description:
+      "The run's jobs in one list: yours by default (scope: \"mine\"), a lead's (scope: \"lead\", lead: \"L-7\") or everyone's (scope: \"all\"). The ones still open come first, each with why it waits (queued behind N, running, finished and waiting to be sealed), then the finished ones with their file counts. Use it instead of calling job_status in a loop, and before you run something a peer may already have run.",
+    parameters: Type.Object({
+      scope: Type.Optional(Type.String({ description: "mine (default), lead or all" })),
+      lead: Type.Optional(Type.String({ description: "With scope lead: L-<n>" })),
+      limit: Type.Optional(Type.Integer({ description: "How many jobs to return (default 40, at most 100)" })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+      const started = Date.now();
+      const r = (await jobsList(toolCtx.cwd, { ...params })) as { ok: boolean; reason?: string; jobs?: unknown[] };
+      await logEvent(toolCtx.cwd, agentId, "jobs", params, { ok: r.ok, ...(r.ok ? { jobs: r.jobs?.length } : { reason: r.reason }) }, Date.now() - started);
+      if (!r.ok) return { content: [{ type: "text" as const, text: r.reason ?? "no answer" }], details: r, isError: true };
+      return okResult(r);
     },
   });
 

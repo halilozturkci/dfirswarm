@@ -6491,7 +6491,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   fi
   # Tool jobs in worker VMs, when the run has a job service.
   if [[ "$isolation" == "microvm" && "${jobs:-1}" -eq 1 ]]; then
-    PI_TOOLS+=",job_run,job_status,catalog_request"
+    PI_TOOLS+=",job_run,job_status,store_find,jobs,catalog_request"
   fi
   # The dynamic network's tools, when the run has its fetch service.
   if [[ "$isolation" == "microvm" && "${network_mode:-closed}" != "closed" ]]; then
