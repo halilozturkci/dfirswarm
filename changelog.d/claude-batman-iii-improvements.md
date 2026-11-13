@@ -101,3 +101,10 @@ same value, and each new answer moved the fingerprint the summary and the narrat
 an hour, and the finish line's acknowledgements were cut each time. A coverage record superseded by a coverage record for the same questions
 at the same coverage now carries the answer: the answer rests on the correction as it stands, which is still reviewed, swept and read by
 the gates, and is weighed again only when the questions or the coverage change. The sweep's fix says to leave the answer as it is then.
+
+### Added: what holds the finish is on the trace, by code
+
+The finish register recorded readiness only when it turned, and the trace kept only whether the run was ready, so after a run nobody could
+say what had held each `finish prepare` (on one run: eight prepares, one readiness line). `finish status` and `prepare` now give `held`,
+each section with the ledger gate's code holding it (`sweep_hits`, `no_critic_act`, `answer_support`, …), and the `finish` trace row keeps
+how many items held the finish and how many sections each code held, never the items' words.

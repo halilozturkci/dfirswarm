@@ -1176,7 +1176,7 @@ export async function prepareFinish(ctx: P.SwarmContext, input: { report?: strin
   if (!report) return { ok: false, reason: "name the report you drafted (report, e.g. work/report.md): prepare binds the finish to it" };
   if (!(await reportDigest(S, report))) return { ok: false, reason: `${report} does not exist yet: write the report and publish it, then prepare the finish on it` };
   const r = await readiness(S);
-  const readinessOut = { ready: r.ready, revision: r.revision, items: r.items, limited: r.limited, ...(r.warnings.length ? { warnings: r.warnings } : {}) };
+  const readinessOut = { ready: r.ready, revision: r.revision, items: r.items, limited: r.limited, ...heldOut(r), ...(r.warnings.length ? { warnings: r.warnings } : {}) };
   const got = await withFinish(S, async (held) => {
     const turn = await takeLease(ctx, report, now, held);
     if (!turn.mine) return { turn, mine: false as const };
@@ -1265,6 +1265,32 @@ async function goalExtraSections(sandboxRoot: string): Promise<string[]> {
 export type ReadinessHold = { section: string; code: string; why: string };
 
 export type Readiness = { ready: boolean; revision: string; items: string[]; limited: string[]; confirming: string[]; warnings: string[]; warned: P.LedgerWarning[]; held?: ReadinessHold[] };
+
+/**
+ * What holds each section, by the ledger gate's code (sweep_hits,
+ * no_critic_act, answer_support, …): the codes of the items, for the seat
+ * and for the trace, which keeps codes and counts and never the items' words.
+ */
+export function heldOut(r: Pick<Readiness, "held">): { held?: Array<{ section: string; code: string }> } {
+  return r.held?.length ? { held: r.held.map((h) => ({ section: h.section, code: h.code })) } : {};
+}
+
+/** The codes that hold the finish, with how many sections each holds: what the trace records of a readiness. */
+export function heldCodes(held: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!Array.isArray(held)) return out;
+  for (const h of held) {
+    const code = h && typeof h === "object" ? String((h as { code?: unknown }).code ?? "") : "";
+    if (code) out[code] = (out[code] ?? 0) + 1;
+  }
+  return out;
+}
+
+/** What the trace keeps of a readiness a finish act gave: ready, how many items, and the codes holding sections; never the items' words. */
+export function readinessCounts(r: Record<string, unknown>): { ready: boolean; items?: number; held?: Record<string, number> } {
+  const held = heldCodes(r.held);
+  return { ready: r.ready === true, ...(Array.isArray(r.items) ? { items: r.items.length } : {}), ...(Object.keys(held).length ? { held } : {}) };
+}
 
 const readinessCache = new Map<string, Readiness>();
 
@@ -1646,6 +1672,7 @@ export async function finishStatus(ctx: P.SwarmContext): Promise<Record<string, 
     revision: r.revision,
     items: r.items,
     limited: r.limited,
+    ...heldOut(r),
     // What the answers check warns of and the finish never holds on: the coordinator weighs each before its done.
     ...(r.warnings.length ? { warnings: r.warnings } : {}),
     // The boundary late items are read against (the lease's since), its resume segment and what it carries from before a resume.

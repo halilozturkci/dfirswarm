@@ -438,3 +438,26 @@ test("the metric: a run whose only first-done refusal would have been late items
   // What the trace keeps of the finish acts is read back from the register too.
   assert.match(await readFile(join(b.S, "leads", "finish.jsonl"), "utf8"), /"ev":"prepare"/);
 });
+
+test("what holds the finish is given by code, and the trace keeps the codes and counts: an answer with no critic act holds it as no_critic_act", async () => {
+  const r = await run("fp-held");
+  const f = await P.recordEntry(r.a0, { kind: "finding", ...FINDING, value: "a logon at 09:14 by the first account", source: "the log", evidence: "line 12", refs: ["job:j000001/hits.txt"], answers: ["1"] } as unknown as P.LedgerInput);
+  assert.ok(f.ok, JSON.stringify(f));
+  const seq = (f as { entry: P.LedgerEntry }).entry.seq;
+  const a = await P.recordEntry(r.a1, { kind: "answer", section: "question:1", value: "The first account, at 09:14", reasoning: `E-${seq}`, confidence: "high", confidence_why: "direct", alternatives_open: "none open", would_change: "a second source", result: "established" } as unknown as P.LedgerInput);
+  assert.ok(a.ok, JSON.stringify(a));
+  const st = (await F.finishStatus(r.a0)) as { ready: boolean; items: string[]; held?: Array<{ section: string; code: string }> };
+  assert.equal(st.ready, false);
+  assert.ok(st.held?.some((h) => h.section === "question:1" && h.code === "no_critic_act"), JSON.stringify(st.held));
+  const counts = F.readinessCounts(st as unknown as Record<string, unknown>);
+  assert.equal(counts.ready, false);
+  assert.equal(counts.items, st.items.length);
+  assert.ok((counts.held?.no_critic_act ?? 0) >= 1, JSON.stringify(counts));
+  // No words of an item reach the counts.
+  assert.ok(!JSON.stringify(counts).includes("question:1"), JSON.stringify(counts));
+  await publish(r.S, "a0", "# Report\n\n## 1\n\nThe first account.\n");
+  const p = await prepare(r.a0, REPORT);
+  assert.ok(p.ok, JSON.stringify(p));
+  assert.ok(((p.readiness as { held?: unknown[] }).held ?? []).length >= 1, JSON.stringify(p.readiness));
+  assert.deepEqual(F.heldCodes([{ code: "sweep_hits" }, { code: "sweep_hits" }, { code: "no_critic_act" }, {}]), { sweep_hits: 2, no_critic_act: 1 });
+});

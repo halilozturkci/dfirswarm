@@ -777,7 +777,7 @@ anywhere; the model's own trailer names the same file.
 | `finish_line` | `done` tool, before the sentinel | `{ok, total, passed, failing?, note?}`, `args.abandon` |
 | `done` | `done` tool | `{reason, output_file, created_sentinel}`, or `{ok:false, reason}` when the finish line refused it |
 | `done_deferred` | `done` tool, from a seat that does not coordinate the finish | `{ok:true, coordinator, generation, ready}`: "not yours", answered quietly (no finish line, no board post); never a refusal and never counted as one |
-| `finish` | `finish` tool | `{ok, action, ready?, seq?}`: `status`, a review of the report (`ack`) or the coordinator's resolution of a late item (`resolve`) |
+| `finish` | `finish` tool | `{ok, action, ready?, items?, held?, seq?}`: `status`, the coordinator's `prepare`, a review of the report (`ack`) or the coordinator's resolution of a late item (`resolve`); for `status` and `prepare`, how many items hold the finish and the ledger gate's codes holding sections with how many each (`held: {sweep_hits: 1, no_critic_act: 2}`), never the items' words. The seat's answer carries `held`, each section with its code |
 | `offer` | `offer` tool | `{ok, id, action}`: an offer of a lead or a question accepted or declined |
 | `secrets_renewed` | `scripts/idle-nudge.sh` (`agent:"system"`), when the seats' tokens are due | `{ok, seats[{agent, outcome, rotated, why}]}`; `args` = `{next_at}`: rotated live in each seat's VM, or why not; never a value |
 | `cap_steer`, `wall_steer` | budget fold | `{reason:"cannot_complete", delivered}`, `args.hard_kill` |

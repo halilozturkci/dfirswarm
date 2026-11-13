@@ -206,7 +206,7 @@ import {
 // The lead register's host-side pieces: a host run's wait checks it itself (a VM's hub does it there).
 import { LEAD_DISPOSITIONS, leadsWaitCheck, reopenOnLedger } from "./leads.ts";
 // The finish's host-side pieces: one check result per revision, recorded where the finish line runs.
-import { checkAt, LATE_PENDING, lateRefusal, NOT_YOURS, recordCheck } from "./finish.ts";
+import { checkAt, LATE_PENDING, lateRefusal, NOT_YOURS, readinessCounts, recordCheck } from "./finish.ts";
 import { evidenceCodeNote, evidenceCodeRun, withOwnJobOutputs } from "./evidence-code.ts";
 import { registerPlaywrightTool, runBrowserCheck } from "./playwright-tool.ts";
 import { readToolchainAt, TOOLCHAIN_DIR } from "./toolchain.ts";
@@ -4121,8 +4121,9 @@ export default function (pi: ExtensionAPI) {
       const r = (await finishAct(ctxFrom(toolCtx.cwd, agentId), params as never)) as { ok: boolean; reason?: string } & Record<string, unknown>;
       // What the trace keeps of the act: its codes and counts, never its words.
       const counts = {
-        ...(params.action === "status" ? { ready: r.ready } : {}),
-        ...(params.action === "prepare" ? { mine: r.mine !== false, ...(Array.isArray(r.late) ? { late: (r.late as unknown[]).length } : {}), ...(typeof r.generation === "number" ? { generation: r.generation } : {}), ...(r.readiness && typeof r.readiness === "object" ? { ready: (r.readiness as { ready?: unknown }).ready === true } : {}) } : {}),
+        // Readiness: ready, how many items hold it and the codes that hold sections (sweep_hits: 2, no_critic_act: 1, …).
+        ...(params.action === "status" ? readinessCounts(r) : {}),
+        ...(params.action === "prepare" ? { mine: r.mine !== false, ...(Array.isArray(r.late) ? { late: (r.late as unknown[]).length } : {}), ...(typeof r.generation === "number" ? { generation: r.generation } : {}), ...(r.readiness && typeof r.readiness === "object" ? readinessCounts(r.readiness as Record<string, unknown>) : {}) } : {}),
         ...(params.action === "ack" && Array.isArray(r.sections) ? { sections: (r.sections as unknown[]).length, whole: r.whole === true } : {}),
         ...(params.action === "resolve" && Array.isArray(params.items) ? { items: params.items.length, ...(typeof r.resolved === "number" ? { resolved: r.resolved } : {}), ...(r.replayed ? { replayed: true } : {}), ...(Array.isArray(r.late) ? { late: (r.late as unknown[]).length } : {}) } : {}),
         ...(typeof r.seq === "number" ? { seq: r.seq } : {}),
