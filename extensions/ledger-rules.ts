@@ -5,6 +5,7 @@
  * each other both ways, so it is not split further. It imports the core statically.
  */
 
+import { formatMiss, formatNote } from "./answer-format.ts";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
@@ -3148,10 +3149,10 @@ async function personsQuestion(sandboxRoot: string, sectionId: string): Promise<
 }
 
 /** A question section's register id and current revision, or null when the register has no question for it. */
-async function registerRevision(sandboxRoot: string, sectionId: string): Promise<{ id: string; rev: number } | null> {
+async function registerRevision(sandboxRoot: string, sectionId: string): Promise<{ id: string; rev: number; text: string } | null> {
   const Q = await import("./questions.ts");
   const q = (await Q.questionsSnapshot(sandboxRoot)).bySection.get(sectionId);
-  return q ? { id: q.id, rev: q.rev } : null;
+  return q ? { id: q.id, rev: q.rev, text: q.text } : null;
 }
 
 /**
@@ -3716,8 +3717,11 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
   // the answer; one amended past revision 1 needs its revision said.
   const recorded = await withNamedLock(ctx.sandboxRoot, REGISTER_LOCK, async (): Promise<LedgerResult> => {
     let premiseReg: ReadonlyMap<string, PM.Premise> | undefined;
+    // The question's words as the register holds them now: the answer format it asks for is read from them (answer-format.ts).
+    let questionWords: string | null = null;
     if (question) {
       const reg = await registerRevision(ctx.sandboxRoot, sec.id).catch(() => null);
+      questionWords = reg?.text ?? null;
       if (reg) {
         if (questionRev !== undefined && questionRev !== reg.rev) return { ok: false as const, reason: `${reg.id} (${sec.section}) is at revision ${reg.rev}, amended since the revision ${questionRev} this answers: read it again (questions show ${reg.id}) and answer revision ${reg.rev}, with question_rev: ${reg.rev}` };
         if (questionRev === undefined && reg.rev > 1) return { ok: false as const, reason: `${reg.id} (${sec.section}) was amended to revision ${reg.rev}: say which revision this answers (question_rev: ${reg.rev}, after reading it with questions show ${reg.id}); an answer to an earlier revision is stale` };
@@ -3976,6 +3980,11 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
       }
       const notes: string[] = [];
       if (bound.length) notes.push(`${bound.map((b) => `E-${b.seq} (the answer to ${b.section}${b.standing !== null && b.standing !== b.seq ? `, now E-${b.standing}` : ""})`).join(", ")} ${bound.length === 1 ? "is" : "are"} cited as ${[...new Set(bound.map((b) => b.section))].join(", ")}: a ${sec.section} is bound to the questions it sums up, to each answer's conclusion (its result, the revision it answers, its support and contrary evidence), not to its seq, so a reworded correction of an answer keeps it standing. Cite Q-<n> or question:<n> for an answer in a ${sec.section}`);
+      // The format the question asks for (a "Format:" line), when no line of the value is in it: said, never refused.
+      if (question && questionWords) {
+        const miss = formatMiss(questionWords, value);
+        if (miss) notes.push(formatNote(sec.section, miss));
+      }
       if (tokens.length) notes.push(`in none of the cited entries: ${tokens.join(", ")}; cite the entry that holds each, or record how it was derived as its own entry and cite that (marked on the answer; the release counts them)`);
       if (question && resultText !== "not_determinable" && standingCites.every((e) => e.kind === "limitation")) notes.push("it rests on limitations only: if the ledger cannot answer it, say so with result not_determinable, resting on a coverage record");
       if (question && negative && bar?.material) {

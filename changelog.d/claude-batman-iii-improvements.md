@@ -108,3 +108,11 @@ The finish register recorded readiness only when it turned, and the trace kept o
 say what had held each `finish prepare` (on one run: eight prepares, one readiness line). `finish status` and `prepare` now give `held`,
 each section with the ledger gate's code holding it (`sweep_hits`, `no_critic_act`, `answer_support`, …), and the `finish` trace row keeps
 how many items held the finish and how many sections each code held, never the items' words.
+
+### Added: an answer out of the format its question asks for is told so when it is recorded
+
+Answers that were right lost their marks for the form the case grades: on one run nine of eleven answers were sentences where the question
+gave a format (`Name_md5(file)`, `DD-MM-YYYY-HH-MM`, `ip:port`), on another a date came as `2024-02-21 16:33`. A question's `Format:` line
+is now read into a pattern (a hash's hex digits, a date and time's digits in the placeholders' order, an address, a port, an email, free
+words between the separators), and an answer whose value holds no line in that form gets a note naming the format. It is recorded as
+written: the pattern is a reading of free text, so it is said, never refused.
