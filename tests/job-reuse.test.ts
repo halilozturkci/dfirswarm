@@ -97,6 +97,9 @@ test("similar jobs are ranked and bounded without loss: the closest first, the r
   assert.equal((view.similar as Similar[]).length, SIMILAR_SHOWN);
   assert.equal(view.similar_more, `3 more, every one on the job_similar line for j000100 in store/journal.jsonl`);
   assert.match(String(view.similar_note), /independent: true/);
+  // What happens now: this job runs because it was not the identical whole-object tool call, which is the one thing joined.
+  assert.match(String(view.similar_note), /This job was not joined to theirs and runs \(job_status cancel=true stops it\): only an identical whole-object tool call \(the same tool and arguments over the same declared objects, no members named\) is answered with the job that already runs or is committed; a command, a call that names members and a call with other arguments or objects run on their own\./);
+  assert.doesNotMatch(String(view.similar_note), /runs as asked/);
   assert.match(String(similarView("j000100", many.slice(0, 1), true).similar_note), /independent reproduction/);
   assert.deepEqual(similarView("j000100", [], false), {}, "nothing similar, nothing said");
   const index = new Map([["c".repeat(64), { job: "j000001", file: "a.txt" }]]);
@@ -110,7 +113,10 @@ test("similar jobs are ranked and bounded without loss: the closest first, the r
   const long = Array.from({ length: SAME_AS_SHOWN + 2 }, (_, i) => ({ path: `f${i}`, sha256: "c".repeat(64), bytes: 1, job: "j000001", file: "a.txt" }));
   const sv = sameAsView("j000002", long);
   assert.equal((sv.same_as as unknown[]).length, SAME_AS_SHOWN);
-  assert.equal(sv.same_as_more, "2 more, every one on the job_same_as line for j000002 in store/journal.jsonl");
+  assert.equal(sv.same_as_more, "2 more, every one in store/jobs/j000002/same_as.jsonl, the side file the job_same_as line for j000002 in store/journal.jsonl names with its sha256 (a journal from before the side file has every one on that line)");
+  // With the line's own count, bytes and side file: the count is the line's, not the length of what the record holds.
+  assert.equal(sameAsView("j000002", long.slice(0, SAME_AS_SHOWN), { files: 5000, bytes: 65000, list: "store/jobs/j000002/same_as.jsonl" }).same_as_more, `${5000 - SAME_AS_SHOWN} more (65000 bytes in all 5000), every one in store/jobs/j000002/same_as.jsonl`);
+  assert.equal(sameAsView("j000002", long.slice(0, 3), { files: 3, bytes: 30 }).same_as_more, undefined, "a short list is all on the line, and nothing more is said");
 });
 
 test("at acceptance, another seat's job over the same objects with the same command word is named with its lead, state and outputs; nothing is merged", async () => {

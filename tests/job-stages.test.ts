@@ -115,7 +115,10 @@ test("a slot is free from job_fenced: with two workers and a seal of three secon
   await svc.start();
   const a = ok(await svc.submit("a1", { kind: "command", command: "printf a > \"$OUT/a\"", inputs: [] }));
   await until(svc, a.job.id, ["fenced"]);
-  assert.equal(JSON.parse(readFileSync(join(storePaths(S).jobs, a.job.id, "job.json"), "utf8")).state, "fenced", "job.json says where it is, not running");
+  // The record in memory is fenced a moment before job.json is written again: read once it is.
+  const projected = () => JSON.parse(readFileSync(join(storePaths(S).jobs, a.job.id, "job.json"), "utf8")).state as string;
+  await eventually(() => projected() !== "finished", "job.json written at the fence", 2000);
+  assert.equal(projected(), "fenced", "job.json says where it is, not running");
   const asked = Date.now();
   const b = ok(await svc.submit("a2", { kind: "command", command: "printf b > \"$OUT/b\"", inputs: [] }));
   const c = ok(await svc.submit("a3", { kind: "command", command: "printf c > \"$OUT/c\"", inputs: [] }));

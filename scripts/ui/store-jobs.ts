@@ -104,8 +104,16 @@ export type StoreJobRow = {
    * accepted (its job_similar line, every entry as written: docs/adr/0017).
    */
   similar: Array<Record<string, unknown>>;
-  /** Its files that are an earlier job's output byte for byte (its job_same_as line, every entry as written). */
+  /**
+   * Its files that are an earlier job's output byte for byte: the entries its
+   * job_same_as line itself carries. That is every one for a short list, and
+   * the first few for a long one, whose whole list is the side file
+   * `same_as_total.list` names; the count and bytes of all of them are in
+   * `same_as_total`, read from the line and never from the list.
+   */
   same_as: Array<Record<string, unknown>>;
+  /** How many of its files are an earlier job's bytes and their bytes (the line's `files` and `bytes`), and the side file that lists every one when the line does not; null with no job_same_as line. */
+  same_as_total: { files: number; bytes: number; list: string | null; list_sha256: string | null; jobs: Array<Record<string, unknown>> } | null;
   cancel_requested: string | null;
   parent: string | null;
   note: string | null;
@@ -384,6 +392,7 @@ function fold(lines: Array<Record<string, unknown>>): { rows: Map<string, StoreJ
         independent: spec.independent === true,
         similar: [],
         same_as: [],
+        same_as_total: null,
         cancel_requested: null,
         parent: str(spec.parent),
         note: str(spec.note),
@@ -453,8 +462,19 @@ function fold(lines: Array<Record<string, unknown>>): { rows: Map<string, StoreJ
       case "job_similar":
         if (Array.isArray(l.similar)) j.similar = l.similar.filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object");
         break;
-      case "job_same_as":
+      case "job_same_as": {
         if (Array.isArray(l.same_as)) j.same_as = l.same_as.filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object");
+        // The count and the bytes are the line's own; a line from before the side file holds every entry and no count.
+        const bytesOf = (x: Record<string, unknown>) => (typeof x.bytes === "number" && Number.isFinite(x.bytes) ? x.bytes : 0);
+        j.same_as_total = {
+          files: num(l.files) ?? j.same_as.length,
+          bytes: num(l.bytes) ?? j.same_as.reduce((a, x) => a + bytesOf(x), 0),
+          list: str(l.list) ?? null,
+          list_sha256: str(l.list_sha256) ?? null,
+          jobs: Array.isArray(l.jobs) ? l.jobs.filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object") : [],
+        };
+        break;
+      }
         break;
       default:
         break;

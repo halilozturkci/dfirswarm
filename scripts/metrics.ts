@@ -50,7 +50,7 @@ import * as R from "../extensions/requests.ts";
 import * as NB from "../extensions/negative-bar.ts";
 import * as SW from "../extensions/store-sweep.ts";
 import { readNetState, grantStatus } from "./net-grants.ts";
-import { storePaths } from "./evidence-store.ts";
+import { manifestOf, storePaths } from "./evidence-store.ts";
 import { questionCost, roundParts, runCalls } from "./question-cost.ts";
 
 type Rec = Record<string, unknown>;
@@ -358,7 +358,10 @@ export type RunMetrics = {
     independent: string[];
     independent_with_similar: string[];
     same_as: { jobs: string[]; files: number; bytes: number; whole: string[] };
+    /** Requests for a recipe answered with the job that ran it (job_deduplicated without `kind`, or `kind: "recipe"`). */
     recipe_merged: number;
+    /** Identical whole-object tool calls answered with the job under way or committed (job_deduplicated with `kind: "tool"`). */
+    tool_joined: number;
     shadow_would_merge: number;
   };
   network: {
@@ -1073,13 +1076,29 @@ async function duplicates(c: Context): Promise<RunMetrics["duplicates"]> {
   let files = 0;
   let bytes = 0;
   const whole: string[] = [];
+  // How many files each job's first committed output has, from its job_committed line: what "wholly" is held to before any file is read.
+  const sealed = new Map<string, number>();
+  for (const l of c.journal) if (l.type === "job_committed" && !sealed.has(str(l.job))) sealed.set(str(l.job), num((l.outputs as Rec | undefined)?.files));
   for (const l of same) {
+    // The line's own count and bytes (`files`, `bytes`): its `same_as` is the first few of a list kept in the side
+    // file the line names (store/jobs/<id>/same_as.jsonl), every one only on a line from before the side file.
     const list = (l.same_as as Rec[] | undefined) ?? [];
-    files += list.length;
-    bytes += list.reduce((a, s) => a + num(s.bytes), 0);
-    const m = await readFile(join(storePaths(c.S).jobs, str(l.job), "manifest.json"), "utf8").then((t) => JSON.parse(t) as { files?: Array<{ bytes?: number }> }).catch(() => null);
-    const nonEmpty = (m?.files ?? []).filter((f) => num(f.bytes) > 0).length;
-    if (m && nonEmpty > 0 && list.length >= nonEmpty) whole.push(str(l.job));
+    const n = l.files === undefined ? list.length : num(l.files);
+    files += n;
+    bytes += l.bytes === undefined ? list.reduce((a, s) => a + num(s.bytes), 0) : num(l.bytes);
+    if (!n) continue;
+    // Wholly an earlier job's: every file of it that is not empty. Its manifest is not read when the line's count is
+    // every file it sealed; else its files are counted from the manifest's index, as a stream, never the manifest parsed whole.
+    const all = sealed.get(str(l.job)) ?? 0;
+    if (all > 0 && n >= all) {
+      whole.push(str(l.job));
+      continue;
+    }
+    const view = await manifestOf(join(storePaths(c.S).jobs, str(l.job), "manifest.json")).catch(() => null);
+    if (!view) continue;
+    let nonEmpty = 0;
+    for await (const rows of view.files()) for (const f of rows) if (num(f.bytes) > 0) nonEmpty += 1;
+    if (nonEmpty > 0 && n >= nonEmpty) whole.push(str(l.job));
   }
   const withSimilar = similar.map((l) => str(l.job));
   return {
@@ -1089,7 +1108,8 @@ async function duplicates(c: Context): Promise<RunMetrics["duplicates"]> {
     independent,
     independent_with_similar: withSimilar.filter((j) => independent.includes(j)),
     same_as: { jobs: same.map((l) => str(l.job)), files, bytes, whole },
-    recipe_merged: c.journal.filter((l) => l.type === "job_deduplicated").length,
+    recipe_merged: c.journal.filter((l) => l.type === "job_deduplicated" && l.kind !== "tool").length,
+    tool_joined: c.journal.filter((l) => l.type === "job_deduplicated" && l.kind === "tool").length,
     shadow_would_merge: c.journal.filter((l) => l.type === "job_would_merge").length,
   };
 }
@@ -1346,7 +1366,7 @@ export function metricsText(m: RunMetrics): string {
     ["Interpretations", i.recorded ? `${i.total}: ${i.valid} valid, ${i.superseded} on a superseded entry, ${i.disputed} on a disputed one${i.missing ? `, ${i.missing} on no entry` : ""}; ${i.jobs_uninterpreted.length} of ${i.jobs_under_leads} lead jobs uninterpreted, ${i.jobs_without_valid.length} with no valid interpretation` : absent(LEADS)],
     ["Reversals", r.recorded ? `${r.result_changes.length + r.negative_reopens.length}: ${r.new_evidence} after new evidence, ${r.discoverable} discoverable in the original evidence (${r.result_changes.length} answer result changes, ${r.leads_recorded ? `${r.negative_reopens.length} negative leads reopened` : `negative reopens ${absent(LEADS)}`}); ${r.corrections} corrections kept the result; ${r.partial_after_cap.length} established answer(s) recorded partial after a capped attest${r.partial_after_cap.length ? ` (${list(r.partial_after_cap.map((x) => `question:${x.section} ${x.from} to ${x.to}, capped by ${x.capped_by.join(" ")}`))})` : ""}` : absent(LEDGER)],
     ["Cost", m.cost.source ? `${m.cost.tokens} tokens, $${m.cost.usd} (from ${m.cost.source === "model-gateway" ? "the model gateway's log" : m.cost.source === "pi-sessions" ? "the seats' Pi sessions" : "each seat's total spread over its calls on the trace, an estimate"}); ${m.cost.named.tokens} given to the questions and leads a call made holding no lead named (reviews, records, lead acts), ${m.cost.finish_and_report.tokens} on the finish and the report, ${m.cost.unheld.tokens} spent holding no lead and naming nothing (${Object.entries(m.cost.unheld.by_kind).map(([k, n]) => `${k} ${n}`).join(", ") || "none"}), ${m.cost.leads_without_question.tokens} on leads that answer no question${m.cost.no_trace.tokens ? `, ${m.cost.no_trace.tokens} a seat spent that the trace could not place (${m.cost.no_trace.seats.join(", ")})` : ""}` : "not measured (no per-call token record)"],
-    ["Duplicates", m.duplicates.recorded ? `${m.duplicates.jobs_with_similar.length} jobs with similar work by another seat (${m.duplicates.exact_repeats.length} exact repeats); ${m.duplicates.independent.length} independent reproductions; same_as ${m.duplicates.same_as.files} file(s), ${m.duplicates.same_as.bytes} bytes in ${m.duplicates.same_as.jobs.length} job(s), ${m.duplicates.same_as.whole.length} wholly; recipes merged ${m.duplicates.recipe_merged}` : `not recorded${m.duplicates.shadow_would_merge ? ` (the retired shadow merge said ${m.duplicates.shadow_would_merge})` : " (no reuse hints on the store's journal)"}`],
+    ["Duplicates", m.duplicates.recorded ? `${m.duplicates.jobs_with_similar.length} jobs with similar work by another seat (${m.duplicates.exact_repeats.length} exact repeats); ${m.duplicates.independent.length} independent reproductions; same_as ${m.duplicates.same_as.files} file(s), ${m.duplicates.same_as.bytes} bytes in ${m.duplicates.same_as.jobs.length} job(s), ${m.duplicates.same_as.whole.length} wholly; recipes merged ${m.duplicates.recipe_merged}; identical tool calls joined ${m.duplicates.tool_joined}` : `not recorded${m.duplicates.shadow_would_merge ? ` (the retired shadow merge said ${m.duplicates.shadow_would_merge})` : " (no reuse hints on the store's journal)"}`],
     ["Skills", m.skills ? skillMetricsWords(m.skills) : absent("readable traces/events.jsonl")],
     ["Harness", m.harness ? frictionWords(m.harness) : absent("readable traces/events.jsonl")],
     ["Network", n.recorded ? `${n.requests} request(s): ${n.granted} granted, ${n.denied} denied (${counts(n.denied_by_code)}); ${n.operator_items} operator item(s), ${n.operator_items_open} open; ${n.grants} grant(s) (${counts(n.grants_by_status)}); ${n.fetches} fetch(es), ${n.captures} capture(s), ${n.fetch_refusals} refused by the fetch service${n.contamination ? `; contamination ${n.contamination}` : ""}` : "not used (no network/ records)"],

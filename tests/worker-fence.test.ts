@@ -23,7 +23,7 @@ import { destroyWorker as destroyOnce, listedNames, stopMaker as stopMakerOnce }
  * again (at most five times) when, and only when, that is the answer; every other answer is returned as it is.
  */
 const NO_LISTING = /^could not list processes/;
-async function destroyWorker(name: string): Promise<{ ok: boolean; error?: string }> {
+async function destroyWorker(name: string): Promise<{ ok: boolean; error?: string; gone_at?: string }> {
   for (let tries = 1; ; tries++) {
     const r = await destroyOnce(name);
     if (r.ok || !NO_LISTING.test(r.error ?? "") || tries >= 5) return r;
@@ -91,7 +91,11 @@ async function showsAs(pid: number | undefined, needle: string): Promise<void> {
 
 test("a worker msb neither inspects nor lists is gone", async () => {
   standIn("normal", [NAME, "dfs-s000000-s00000000"]);
-  assert.deepEqual(await destroyWorker(NAME), { ok: true });
+  {
+    // Gone, and when: once msb's stop and rm had returned, in the pass msb then confirmed it by (the job's worker_gone_at).
+    const gone = await destroyWorker(NAME);
+    assert.deepEqual({ ...gone, gone_at: typeof gone.gone_at === "string" && Math.abs(Date.now() - Date.parse(gone.gone_at)) < 60_000 }, { ok: true, gone_at: true });
+  }
 });
 
 test("inspect saying 'not found' while the list still shows the worker is not a fence", async () => {
@@ -104,7 +108,11 @@ test("inspect saying 'not found' while the list still shows the worker is not a 
 
 test("a row that goes on the second attempt is fenced then", async () => {
   standIn("late", [NAME]);
-  assert.deepEqual(await destroyWorker(NAME), { ok: true });
+  {
+    // Gone, and when: once msb's stop and rm had returned, in the pass msb then confirmed it by (the job's worker_gone_at).
+    const gone = await destroyWorker(NAME);
+    assert.deepEqual({ ...gone, gone_at: typeof gone.gone_at === "string" && Math.abs(Date.now() - Date.parse(gone.gone_at)) < 60_000 }, { ok: true, gone_at: true });
+  }
 });
 
 test("msb that cannot answer is not a fence", async () => {
@@ -134,7 +142,11 @@ test("the process making a worker is stopped before msb is asked, found by the w
   try {
     await showsAs(maker.pid, `worker-once --name ${NAME}`);
     await showsAs(bystander.pid, `worker-once --name ${other}`);
-    assert.deepEqual(await destroyWorker(NAME), { ok: true });
+    {
+      // Gone, and when: once msb's stop and rm had returned, in the pass msb then confirmed it by (the job's worker_gone_at).
+      const gone = await destroyWorker(NAME);
+      assert.deepEqual({ ...gone, gone_at: typeof gone.gone_at === "string" && Math.abs(Date.now() - Date.parse(gone.gone_at)) < 60_000 }, { ok: true, gone_at: true });
+    }
     // Bounded, so that a maker that was not stopped fails this case by name instead of holding the run until the suite's timeout.
     // The timer is cleared once the maker is gone: left pending it kept this file's process alive for the full 60 s after the last test, which every CI run then waited out.
     let bound: NodeJS.Timeout | undefined;

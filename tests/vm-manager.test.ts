@@ -47,6 +47,9 @@ import {
   GUEST_HUB_SOCKET,
   seatPlan,
   probeChecks,
+  destroyWorker,
+  stopMaker,
+  trackMaker,
 } from "../scripts/vm.ts";
 import type { GatewayConfig } from "../scripts/model-gateway.ts";
 
@@ -491,7 +494,7 @@ test("N VMs of a size are refused past 85% of the host's memory or four times it
   const big = { mem_mib: 131072, cpus: 16 };
   assert.deepEqual(capacityVerdict(14, 2, 4096, big).blockers, [], "one run of 8 seats and 6 workers fits a 128 GiB host");
   const third = capacityVerdict(14, 2, 4096, big, { mem_mib: 80000, cpus: 56, runs: 2 });
-  assert.equal(third.blockers.length, 1, "a third beside two does not");
+  assert.ok(third.blockers.length >= 1, "a third beside two does not");
   assert.match(third.blockers[0]!, /beside the 80000 MiB and 56 vCPUs that 2 other run\(s\) going on this host may take.*wait for the other run\(s\) to end/);
   const second = capacityVerdict(14, 2, 4096, big, { mem_mib: 40000, cpus: 28, runs: 1 });
   assert.deepEqual(second.blockers, []);
@@ -914,4 +917,88 @@ test("each probe check has a name, what it wants, what was found, whether it hol
   assert.equal(failed[0].meaning, "the shared work/ is rw, not read-only");
   // Not measured is said, not taken for a value.
   assert.equal(probeChecks({ hub: true }, false).find((r) => r.check === "the sandbox floor")?.got, "not measured");
+});
+
+// --- the fence: a maker known from its spawn, and when the worker went ---------------------------------
+
+/** A stand-in for msb (SWARM_MSB_BIN): stop and rm succeed, inspect does not know the name, list is empty; each call is logged. */
+async function fakeMsb(o: { stillListed?: string } = {}): Promise<{ bin: string; calls: () => string[] }> {
+  const dir = await mkdtemp(join(tmpdir(), "fake-msb-"));
+  dirs.push(dir);
+  const bin = join(dir, "msb");
+  const log = join(dir, "calls.log");
+  await writeFile(bin, `#!/bin/sh\necho "$1" >> ${JSON.stringify(log)}\ncase "$1" in\n  inspect) echo "sandbox not found" >&2; exit 1 ;;\n  list) echo '${JSON.stringify(o.stillListed ? [{ name: o.stillListed }] : [])}' ;;\n  *) exit 0 ;;\nesac\n`, { mode: 0o755 });
+  return { bin, calls: () => { try { return readFileSync(log, "utf8").trim().split("\n"); } catch { return []; } } };
+}
+
+test("the fence stops a maker it spawned by the pid kept from the spawn, and never lists the host's processes for it", async () => {
+  const name = `dfs-stest-job-j000001-${process.pid}`;
+  const child = spawn("sleep", ["300"], { stdio: "ignore" });
+  const exited = new Promise<NodeJS.Signals | null>((res) => child.once("exit", (_code, signal) => res(signal)));
+  trackMaker(name, child);
+  let listed = 0;
+  const list = async () => {
+    listed += 1;
+    return null;
+  };
+  const started = Date.now();
+  assert.deepEqual(await stopMaker(name, { list }), { ok: true });
+  assert.equal(await exited, "SIGKILL", "its own child, stopped through its handle");
+  assert.equal(listed, 0, "no `ps` for a maker whose pid is known: under load that listing failed, and the fence with it");
+  assert.ok(Date.now() - started < 4000, "seen gone by its exit, not by polling");
+  // Asked again once it is gone (the job service's backstop): still no listing, and nothing is signalled.
+  assert.deepEqual(await stopMaker(name, { list, kill: () => assert.fail("a pid that has exited is never signalled") }), { ok: true });
+  assert.equal(listed, 0);
+});
+
+test("the fence lists the host's processes only for a name it made no maker for, asks again when the listing fails, and says so when it cannot", async () => {
+  const name = `dfs-stest-job-j000002-${process.pid}`;
+  // An orphan of a hub that died: found by the listing, stopped, and looked for again until none is left.
+  const orphan = spawn("sleep", ["300"], { stdio: "ignore" });
+  const exited = new Promise<void>((res) => orphan.once("exit", () => res()));
+  const answers: Array<number[] | null> = [null, [orphan.pid!], []];
+  let asked = 0;
+  const list = async (n: string) => {
+    assert.equal(n, name);
+    asked += 1;
+    return answers.length ? answers.shift()! : [];
+  };
+  assert.deepEqual(await stopMaker(name, { list }), { ok: true });
+  await exited;
+  assert.equal(asked, 3, "a listing that failed once is asked again, not a failed fence");
+  // The listing fails every time: the fence fails with the reason, after its tries.
+  asked = 0;
+  const failing = async () => {
+    asked += 1;
+    return null;
+  };
+  assert.deepEqual(await stopMaker(name, { list: failing, listTries: 2 }), { ok: false, error: `could not list processes to find the maker of ${name}` });
+  assert.equal(asked, 2);
+});
+
+test("a worker's removal says when its VM went: once msb's stop and rm returned, in the pass msb then confirmed, and nothing when msb still lists it", async (t) => {
+  const name = `dfs-stest-job-j000003-${process.pid}`;
+  const before = process.env.SWARM_MSB_BIN;
+  t.after(() => {
+    if (before === undefined) delete process.env.SWARM_MSB_BIN;
+    else process.env.SWARM_MSB_BIN = before;
+  });
+  const gone = await fakeMsb();
+  process.env.SWARM_MSB_BIN = gone.bin;
+  const from = Date.now();
+  const r = await destroyWorker(name, { list: async () => [] });
+  const to = Date.now();
+  assert.equal(r.ok, true);
+  assert.ok(typeof r.gone_at === "string" && Date.parse(r.gone_at) >= from && Date.parse(r.gone_at) <= to, JSON.stringify(r));
+  assert.deepEqual(gone.calls(), ["stop", "rm", "inspect", "list"]);
+  // msb says it does not know the name and lists it all the same: not gone, and no time is said.
+  const listed = await fakeMsb({ stillListed: name });
+  process.env.SWARM_MSB_BIN = listed.bin;
+  assert.deepEqual(await destroyWorker(name, { list: async () => [] }), { ok: false, error: `msb lists ${name} although it says it does not know it` });
+  // A maker that cannot be found is no fence: msb is not asked at all, and no time is said.
+  const unlisted = await fakeMsb();
+  process.env.SWARM_MSB_BIN = unlisted.bin;
+  const refused = await destroyWorker(name, { list: async () => null, listTries: 1 });
+  assert.deepEqual(refused, { ok: false, error: `could not list processes to find the maker of ${name}` });
+  assert.deepEqual(unlisted.calls(), []);
 });

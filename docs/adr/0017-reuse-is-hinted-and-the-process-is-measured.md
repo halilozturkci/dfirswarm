@@ -9,7 +9,12 @@ same object is answered with the earlier job. How a run worked is measured
 from its own registers, metric by named metric, with each definition written
 down, and two runs of one goal can be set side by side, question by question.
 
-Status: accepted, 2026-09-28. Designed by Claude, Fable and Astra (Plan 3,
+Amended 2026-11-13: one tool call is now joined to the job that already
+runs it, the identical whole-object call; see "Amendment: an identical
+whole-object tool call is joined" at the end. A command is still never
+merged.
+
+Status: accepted, 2026-09-28; amended 2026-11-13. Designed by Claude, Fable and Astra (Plan 3,
 joint-final A5 and round 3's Phase 5) and approved by the owner with the rest
 of Plan 3. It is Phase 5's reuse and metrics part; the calibration cases are
 their own (`calibration/`, `scripts/calibrate.ts`).
@@ -196,3 +201,53 @@ is trusted or a paid run is spent on it.
   whether it helps is measured by paired, repeated calibration runs with
   the versions, the team, the scorer and the budget frozen (Astra's H1),
   and a single run proves nothing.
+
+## Amendment: an identical whole-object tool call is joined (2026-11-13)
+
+"A tool is never merged" is no longer true for one case. The rest of this
+record stands: a command is never merged, the hints are given as before, and
+the choice to run a reproduction stays the agent's.
+
+- **What was seen.** On the run s17fdfe-E1 six seats asked for the same
+  whole-image extraction (the same tool, the same arguments, the same image
+  by digest) within 188 seconds. Each got its `job_similar` hint, and every
+  one ran: 655,871 files and 117.9 GB were sealed for 27 GB of distinct
+  bytes, the seals of those trees held the store for most of the run, and a
+  second walk of the same image put 17.7 MB on one `job_same_as` line. The
+  hint arrives with the answer to `job_run`, after the job is queued; a seat
+  that has already asked does not cancel a job over a hint.
+- **Why this is not the merge the Context refused.** That merge was by
+  operation over object, where the harness would have to know what two
+  different commands mean. This one needs no semantics: the calls are the
+  same in every part the harness can compare, and a tool, unlike a command,
+  is a script fixed by its manifest's sha256 with typed arguments. The
+  shadow key of 2026-09-27 matched nothing because it keyed commands byte
+  for byte and included the timeout; tool calls over a declared image repeat
+  exactly, and the timeout is not part of what is compared.
+- **What is joined** (`scripts/job-service.ts` `sameWholeCall`): a `tool`
+  job whose tool, arguments and declared objects (`reuse.objects`: files by
+  digest, the run's directories by path) are the same as those of a job that
+  is queued, running, being sealed or committed `ok`, when neither call
+  names `members` (a call that picks members is its seat's own selection),
+  neither has network or grants (two such runs may differ by themselves),
+  and both run the same way (profile, supplied programs, secret output). A
+  job that declared no objects is never the same as another. The committed
+  job is preferred, else the oldest under way; one asked to cancel is never
+  joined, and neither is a failed one.
+- **What the asker gets.** The earlier job, with `joined` in the `job_run`
+  answer saying whose it is, where it stands and how to cite it, and a post
+  when it is done, as its requester gets. The line is `job_deduplicated`
+  with `kind: "tool"`; the metrics count it apart from a merged recipe
+  (`tool_joined`). The join is looked for before the seat's queue limit is
+  counted: a joined call adds no job.
+- **The way out is unchanged**: `independent: true` runs the call again as
+  an intended reproduction, named and counted as before. Nothing is joined
+  behind an agent that said so.
+- **What goes with it.** A `job_same_as` line carries a count, the bytes and
+  a few entries, and a long list is a side file beside the job
+  (`store/jobs/<id>/same_as.jsonl`, named on the line with its sha256); the
+  `derived_offered` line is bounded the same way
+  (`store/jobs/<id>/derived_offered.json`). The Consequences' "a heavier job
+  over the same image by another seat is still run" now holds for a command,
+  for a tool call that differs in any compared part, and for an independent
+  reproduction.

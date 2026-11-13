@@ -2274,16 +2274,19 @@ export function workerName(run: string, job: string, attempt: number): string {
  * that no VM of that name is left. Only then is the job's staging directory
  * safe to seal — a VM that may still write to it is not fenced.
  */
-export async function destroyWorker(name: string): Promise<{ ok: boolean; error?: string }> {
+export async function destroyWorker(name: string, o: MakerSeams = {}): Promise<{ ok: boolean; error?: string; gone_at?: string }> {
   // A maker still at work (or orphaned by a hub that died) could make the VM
   // again after it is removed: it goes first.
-  const maker = await stopMaker(name);
+  const maker = await stopMaker(name, o);
   if (!maker.ok) return maker;
   let last = "";
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (attempt) await new Promise((r) => setTimeout(r, 1000 * attempt));
     await run(msbBinary(), ["stop", name], { timeoutMs: 120_000 });
     const rm1 = await run(msbBinary(), ["rm", name], { timeoutMs: 60_000 });
+    // When its VM went: msb's stop and rm have returned. Said only when msb then confirms it (below): the two
+    // questions that follow can take a minute on a loaded host, and they are not part of the worker's life.
+    const goneAt = new Date().toISOString();
     const inspect = await run(msbBinary(), ["inspect", name, "--format", "json"], { timeoutMs: 30_000 });
     // Gone only when msb says it does not know the name, and its list, read
     // whole and understood, agrees: on Ali Hadi #10 a worker whose boot had
@@ -2292,7 +2295,7 @@ export async function destroyWorker(name: string): Promise<{ ok: boolean; error?
     if (notFound) {
       const list = await run(msbBinary(), ["list", "--format", "json"], { timeoutMs: 30_000 });
       const names = list.code === 0 ? listedNames(list.stdout) : null;
-      if (names && !names.includes(name)) return { ok: true };
+      if (names && !names.includes(name)) return { ok: true, gone_at: goneAt };
       last = list.code !== 0 ? `msb could not list its VMs: ${(list.stderr || list.stdout).trim() || `exit ${list.code}`}` : !names ? `msb's list (${list.stdout.length} bytes) was not a list of VMs` : `msb lists ${name} although it says it does not know it`;
       continue;
     }
@@ -2320,28 +2323,98 @@ export function listedNames(text: string): string[] | null {
 }
 
 /**
- * Stop the process making or running worker `name` (runWorker's child,
- * `vm.ts worker-once --name <name>`), found by its command line so an orphan
- * of a hub that died is found too. ok when none is left.
+ * The makers this process spawned (runWorkerInChild), by the worker's name:
+ * the child itself, and whether it has exited. The fence asks here first: a
+ * maker this process made is its own child, known from the spawn, and needs
+ * no search of the host's processes to be found or to be seen gone.
  */
-export async function stopMaker(name: string): Promise<{ ok: boolean; error?: string }> {
-  const find = async () => {
-    // -ww: the whole command line, however long (the hub's is past 200 characters).
-    const ps = await run("ps", ["-e", "-ww", "-o", "pid=,args="], { timeoutMs: 15_000 });
-    if (ps.code !== 0) return null;
-    return ps.stdout
-      .split("\n")
-      .map((l) => l.trim().match(/^(\d+)\s+(.*)$/))
-      .filter((m): m is RegExpMatchArray => !!m && / worker-once --name (\S+)$/.exec(m[2])?.[1] === name && Number(m[1]) !== process.pid)
-      .map((m) => Number(m[1]));
+type KnownMaker = { pid: number | undefined; exited: boolean; kill: () => void; wait: (ms: number) => Promise<boolean> };
+const makers = new Map<string, KnownMaker>();
+
+/** Keep a maker's process under its worker's name from its spawn; the registration ends with a later maker of the same name, never with the exit. */
+export function trackMaker(name: string, child: { pid?: number; kill: (signal?: NodeJS.Signals) => boolean; once: (event: "exit", fn: () => void) => unknown }): KnownMaker {
+  let seen: Array<() => void> = [];
+  const known: KnownMaker = {
+    pid: child.pid,
+    // A child that was never started (no pid: the spawn failed) has nothing to exit.
+    exited: child.pid === undefined,
+    // Through the child's own handle, and never once its exit was seen: a pid is not signalled after it may be another process's.
+    kill: () => {
+      if (!known.exited) child.kill("SIGKILL");
+    },
+    wait: (ms) =>
+      known.exited
+        ? Promise.resolve(true)
+        : new Promise<boolean>((res) => {
+            const t = setTimeout(() => res(known.exited), ms);
+            seen.push(() => {
+              clearTimeout(t);
+              res(true);
+            });
+          }),
   };
+  child.once("exit", () => {
+    known.exited = true;
+    for (const fn of seen) fn();
+    seen = [];
+  });
+  makers.set(name, known);
+  // Not a map that only grows in a hub that runs for days: past 4096 names the exited ones are forgotten (a fence of one then lists the host's processes, as for an orphan).
+  if (makers.size > 4096) for (const [n, m] of makers) if (m.exited && n !== name) makers.delete(n);
+  return known;
+}
+
+/** Seams for the tests of the fence: the host's process list, and how a pid found there is stopped. */
+export type MakerSeams = { list?: (name: string) => Promise<number[] | null>; kill?: (pid: number) => void; listTries?: number };
+
+/** The pids of every `vm.ts worker-once --name <name>` on the host but this process, or null when the host's processes could not be listed. */
+async function listMakers(name: string): Promise<number[] | null> {
+  // -ww: the whole command line, however long (the hub's is past 200 characters).
+  const ps = await run("ps", ["-e", "-ww", "-o", "pid=,args="], { timeoutMs: 15_000 });
+  if (ps.code !== 0) return null;
+  return ps.stdout
+    .split("\n")
+    .map((l) => l.trim().match(/^(\d+)\s+(.*)$/))
+    .filter((m): m is RegExpMatchArray => !!m && / worker-once --name (\S+)$/.exec(m[2])?.[1] === name && Number(m[1]) !== process.pid)
+    .map((m) => Number(m[1]));
+}
+
+/**
+ * Stop the process making or running worker `name` (runWorker's child,
+ * `vm.ts worker-once --name <name>`). ok when none is left.
+ *
+ * A maker this process spawned is known from its spawn (trackMaker): it is
+ * stopped through its own handle and seen gone by its exit, and the host's
+ * processes are not listed at all. On the runs of s17fdfe the listing (`ps
+ * -e -ww` under a 15 s limit) failed 21, 7 and 20 times on a loaded host,
+ * each a fence that failed ("could not list processes to find the maker
+ * of ..."), and workers were confirmed gone up to 248 s late. The listing
+ * is the fallback for a name this process made no maker for: an orphan of a
+ * hub that died, found by its command line. It is asked a few times before
+ * it is given up.
+ */
+export async function stopMaker(name: string, o: MakerSeams = {}): Promise<{ ok: boolean; error?: string }> {
+  const known = makers.get(name);
+  if (known) {
+    if (known.exited) return { ok: true };
+    known.kill();
+    if (await known.wait(5000)) return { ok: true };
+    return { ok: false, error: `the process making ${name} (pid ${known.pid ?? "unknown"}) did not stop` };
+  }
+  const find = o.list ?? listMakers;
+  const kill = o.kill ?? ((pid: number) => process.kill(pid, "SIGKILL"));
+  const listTries = Math.max(1, o.listTries ?? 3);
   for (let i = 0; i < 20; i += 1) {
-    const pids = await find();
+    let pids = await find(name);
+    for (let k = 1; pids === null && k < listTries; k += 1) {
+      await new Promise((r) => setTimeout(r, 500 * k));
+      pids = await find(name);
+    }
     if (pids === null) return { ok: false, error: `could not list processes to find the maker of ${name}` };
     if (!pids.length) return { ok: true };
     for (const pid of pids) {
       try {
-        process.kill(pid, "SIGKILL");
+        kill(pid);
       } catch {
         // gone already
       }
@@ -2366,7 +2439,7 @@ export async function stopMaker(name: string): Promise<{ ok: boolean; error?: st
  * and the fence runs after it has exited. A VM that failed to boot (nothing
  * ran) is removed and made once more.
  */
-export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => void } = {}): Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string; create_ms?: number }> {
+export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => void } = {}): Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string; create_ms?: number; gone_at?: string }> {
   const asked = Date.now();
   let createMs: number | undefined;
   const timed = { onCreated: () => { createMs = Date.now() - asked; hooks.onCreated?.(); } };
@@ -2388,7 +2461,9 @@ export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => voi
   const gone = await destroyWorker(spec.name);
   const { phase: _phase, ...result } = ran;
   // create_ms: from asking to the VM up, the wait at the make gate included.
-  return { ...result, ...(bootRetry ? { boot_retry: bootRetry } : {}), ...(createMs !== undefined ? { create_ms: createMs } : {}), fenced: gone.ok, ...(gone.ok ? {} : { fence_error: gone.error }) };
+  // gone_at: when msb's stop and rm of the VM had returned, in the pass msb then confirmed it gone by (destroyWorker): the
+  // job's worker_gone_at, which was the time this call returned (after msb's inspect and list, and whatever the hub did before it read the answer).
+  return { ...result, ...(bootRetry ? { boot_retry: bootRetry } : {}), ...(createMs !== undefined ? { create_ms: createMs } : {}), fenced: gone.ok, ...(gone.ok ? (gone.gone_at ? { gone_at: gone.gone_at } : {}) : { fence_error: gone.error }) };
 }
 
 type WorkerRan = { code: number | null; digest?: string; error?: string; phase?: "create" | "exec" };
@@ -2413,6 +2488,8 @@ async function runWorkerInChild(spec: WorkerSpec, hooks: { onCreated?: () => voi
   const release = await takeMakeGate();
   return new Promise((done) => {
     const child = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", fileURLToPath(import.meta.url), "worker-once", "--name", spec.name], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+    // Known by its worker's name from here on: the fence stops it and sees it gone without listing the host's processes.
+    trackMaker(spec.name, child);
     let out = "";
     let err = "";
     let created = false;
