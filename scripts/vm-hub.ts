@@ -77,6 +77,7 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { appendFileSync, chmodSync, closeSync, createReadStream, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { stat } from "node:fs/promises";
+import v8 from "node:v8";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { jsonlLines } from "../extensions/jsonl-lines.ts";
@@ -409,6 +410,12 @@ type HubState = {
   /** Per seat: the bytes of file history it has stored, against its quota. */
   history_bytes?: Record<string, number>;
 };
+
+/** The hub process's memory, in MB: what status.json and hub_memory_high say. */
+export function hubMemory(): { rss_mb: number; heap_used_mb: number; heap_limit_mb: number } {
+  const mb = (x: number) => Math.round(x / 2 ** 20);
+  return { rss_mb: mb(process.memoryUsage.rss()), heap_used_mb: mb(process.memoryUsage().heapUsed), heap_limit_mb: mb(v8.getHeapStatistics().heap_size_limit) };
+}
 
 /**
  * A Unix socket path the kernel will take: 104 bytes on macOS. The collector
@@ -916,6 +923,8 @@ export function boardTable(hub: {
         ...(raw.independent === true ? { independent: true } : {}),
         // Every output sensitive at seal time (docs/adr/0016); anything but a boolean is refused by the service.
         ...(raw.secret_output !== undefined ? { secret_output: raw.secret_output as boolean } : {}),
+        // Supplied programs the job runs (job-service.ts programLines); the service checks each.
+        ...(raw.programs !== undefined ? { programs: (Array.isArray(raw.programs) ? raw.programs.map(String) : raw.programs) as string[] } : {}),
       };
       // A job run under a lead: the lead must be the seat's own, checked
       // before the job is accepted, and the job goes on the lead's record.
@@ -1057,6 +1066,9 @@ export class Hub {
   /** Uploads and downloads in progress, by seat, kind and id. */
   private transfers = new Map<string, Transfer>();
   private transferTimer: ReturnType<typeof setInterval> | null = null;
+  /** Its own memory, read each minute: written to status.json, and said once on the trace past three quarters of the heap's limit. */
+  private memoryTimer: ReturnType<typeof setInterval> | null = null;
+  private memoryHigh = false;
   /** The sockets a seat's VM holds, and whose: every line written on one is checked against P.WIRE_LINE_MAX. */
   private seatSockets = new WeakMap<Socket, string>();
   private table: ReturnType<typeof boardTable>;
@@ -1359,6 +1371,11 @@ export class Hub {
   async start(): Promise<void> {
     this.transferTimer = setInterval(() => this.sweepTransfers(), Math.max(1_000, Math.min(60_000, Math.floor((this.cfg.transferIdleMs ?? TRANSFER_IDLE_MS) / 2))));
     this.transferTimer.unref();
+    // The run s082123's hub ran out of heap after 90 minutes with nothing said before it died (several store sweeps at once, each holding
+    // the store's object list): what it holds is now in status.json, a crossing of three quarters of the limit is on the trace, and the
+    // launchers start it with --heapsnapshot-near-heap-limit, so a hub that dies of it leaves a snapshot in its own directory.
+    this.memoryTimer = setInterval(() => void this.checkMemory(), 60_000);
+    this.memoryTimer.unref();
     // A Unix socket path the kernel takes is 103 bytes and its NUL (104 on
     // macOS): past it `listen` fails with a bare EINVAL, which said nothing
     // about why (measured: a 3-byte run id under macOS's TMPDIR made 105).
@@ -1532,6 +1549,7 @@ export class Hub {
     await this.jobService?.stop("the hub is stopping").catch((err: Error) => this.log(`jobs: stop: ${err.message}`));
     if (this.backstopTimer) clearInterval(this.backstopTimer);
     if (this.transferTimer) clearInterval(this.transferTimer);
+    if (this.memoryTimer) clearInterval(this.memoryTimer);
     for (const key of [...this.transfers.keys()]) this.dropTransfer(key, false);
     await this.flushRefusals().catch(() => undefined);
     // Its link to the collector closes below: a harness line written after it goes the CLI's way.
@@ -2572,10 +2590,20 @@ export class Hub {
     return Object.fromEntries(this.status);
   }
 
+  /** Said once each time the heap passes three quarters of its limit, and again after it has gone back under two thirds. */
+  async checkMemory(m = hubMemory()): Promise<void> {
+    this.writeStatus();
+    if (!this.memoryHigh && m.heap_used_mb > 0.75 * m.heap_limit_mb) {
+      this.memoryHigh = true;
+      await this.event("hub_memory_high", {}, { ok: true, ...m }).catch(() => undefined);
+      this.log(`memory: ${m.heap_used_mb} MB of a ${m.heap_limit_mb} MB heap in use (rss ${m.rss_mb} MB)`);
+    } else if (this.memoryHigh && m.heap_used_mb < (2 / 3) * m.heap_limit_mb) this.memoryHigh = false;
+  }
+
   private writeStatus(): void {
     try {
       const tmp = `${this.statusFile()}.tmp`;
-      writeFileSync(tmp, `${JSON.stringify({ at: new Date().toISOString(), pid: process.pid, agents: this.statusSnapshot(), finished: this.finished, finish_done: this.finishDone }, null, 2)}\n`);
+      writeFileSync(tmp, `${JSON.stringify({ at: new Date().toISOString(), pid: process.pid, memory: hubMemory(), agents: this.statusSnapshot(), finished: this.finished, finish_done: this.finishDone }, null, 2)}\n`);
       renameSync(tmp, this.statusFile());
     } catch {
       // the admin socket answers the same question

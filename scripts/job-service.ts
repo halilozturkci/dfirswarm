@@ -224,6 +224,16 @@ export type JobSpec = {
    */
   independent?: boolean;
   /**
+   * Programs the operator supplied (import:mat-<n>, swarm.sh tool-supply) the
+   * job runs: each is copied into an executable directory inside the worker
+   * before the command, its bin/ directories put on PATH and its lib/
+   * directories on LD_LIBRARY_PATH. Nothing runs where it stands in store/
+   * (sealed files have no execute bit, $OUT is no-exec): on the run sf4406b a
+   * seat copied ffmpeg and zbarimg into $OUT, every call was refused, and the
+   * job ended 0. A command or a tool only; each is added to a declared scope.
+   */
+  programs?: string[];
+  /**
    * Every output this job seals is sensitive (docs/adr/0016): its result
    * may hold a secret. Said by the agent, or declared by the tool's manifest
    * (secret_output_by); the harness never reads the bytes to decide. The
@@ -533,6 +543,31 @@ export function boundInputSets(S: string): string[] {
     }
   }
   return out;
+}
+
+/** Whether an import is a program the operator supplied with tool-supply: its committed record (material.json) carries `tool`. */
+export async function suppliedTool(importDir: string): Promise<boolean> {
+  try {
+    const rec = JSON.parse(await readFile(join(importDir, "material.json"), "utf8")) as { tool?: unknown };
+    return Boolean(rec.tool) && typeof rec.tool === "object";
+  } catch {
+    return false;
+  }
+}
+
+/** microsandbox's write quota for a bind with none given (measured on msb: a write stops at 4,294,967,296 bytes). */
+export const MSB_DEFAULT_QUOTA_MB = 4096;
+
+/**
+ * The write quota of a job's $OUT, in MiB: `SWARM_JOB_OUT_QUOTA_MB` when set,
+ * else the room free where it is kept less the room the service keeps free,
+ * and never below microsandbox's default (a job could write that much before).
+ */
+export function outQuotaMb(free: number | null, minFreeMb: number, env: NodeJS.ProcessEnv = process.env): number {
+  const set = Number(env.SWARM_JOB_OUT_QUOTA_MB);
+  if (Number.isFinite(set) && set > 0) return Math.floor(set);
+  if (free === null) return MSB_DEFAULT_QUOTA_MB;
+  return Math.max(MSB_DEFAULT_QUOTA_MB, Math.floor(free - minFreeMb));
 }
 
 export class JobService {
@@ -1098,7 +1133,20 @@ export class JobService {
     if (grants.length && kind !== "command" && kind !== "tool") return { reason: "network grants go with a command or a tool job" };
     if (grants.some((g) => !/^N-[1-9]\d{0,6}$/.test(g)) || grants.length > 8) return { reason: "net_grants names up to 8 grants, N-<k>" };
     if (raw.secret_output !== undefined && typeof raw.secret_output !== "boolean") return { reason: "secret_output is true or false" };
-    const base = { kind, inputs, scope: declared.kind, timeout_seconds: timeout, network, ...(raw.scratch ? { scratch: true } : {}), ...(raw.note ? { note: String(raw.note) } : {}), ...(raw.parent ? { parent: String(raw.parent) } : {}), ...(profile ? { profile } : {}), ...(grants.length ? { net_grants: grants } : {}), ...(raw.independent === true && (kind === "command" || kind === "tool") ? { independent: true } : {}), ...(raw.secret_output === true ? { secret_output: true } : {}) } as JobSpec;
+    const programs = Array.isArray(raw.programs) ? [...new Set(raw.programs.map((p) => String(p).trim().replace(/\/+$/, "")))].filter(Boolean) : [];
+    if (raw.programs !== undefined && !Array.isArray(raw.programs)) return { reason: "programs is a list of supplied programs, import:mat-<n>" };
+    if (programs.length && kind !== "command" && kind !== "tool") return { reason: "programs go with a command or a tool job" };
+    for (const p of programs) {
+      const id = /^import:(mat-\d{1,8})$/.exec(p)?.[1];
+      if (!id) return { reason: `programs names programs the operator supplied, as import:mat-<n> (swarm.sh tool-supply lists them on the board and in SWARM.md): ${JSON.stringify(p)} is not one` };
+      if (!existsSync(join(storePaths(this.S).imports, id, "out"))) return { reason: `programs: no supplied program ${p} in this run's store` };
+      // A program, not any material: only what tool-supply sealed (its record carries `tool`, the operator's statement of it) is made
+      // executable. Other operator material (a sample, a reference binary, a library) is read as an input, never run or put on a path.
+      if (!(await suppliedTool(join(storePaths(this.S).imports, id)))) return { reason: `programs: ${p} is operator material, not a supplied program (swarm.sh tool-supply seals programs; material add seals data): name it in inputs to read it` };
+    }
+    // A declared scope is given the programs it runs too: they are read from the store like any import.
+    if (programs.length && declared.kind === "declared") for (const p of programs) if (!inputs.some((x) => x.replace(/\/+$/, "") === p)) inputs.push(p);
+    const base = { kind, inputs, scope: declared.kind, timeout_seconds: timeout, network, ...(raw.scratch ? { scratch: true } : {}), ...(raw.note ? { note: String(raw.note) } : {}), ...(raw.parent ? { parent: String(raw.parent) } : {}), ...(profile ? { profile } : {}), ...(grants.length ? { net_grants: grants } : {}), ...(raw.independent === true && (kind === "command" || kind === "tool") ? { independent: true } : {}), ...(raw.secret_output === true ? { secret_output: true } : {}), ...(programs.length ? { programs } : {}) } as JobSpec;
     if (kind === "tool") {
       const args = raw.args && typeof raw.args === "object" && !Array.isArray(raw.args) ? raw.args : {};
       const checked = await this.toolCheck(String(raw.tool ?? ""), args);
@@ -1332,9 +1380,11 @@ export class JobService {
     const kind = scopeKindOf(job.spec);
     const tail: Array<Mount & { note?: string }> = [];
     for (const pack of this.o.packDirs) if (existsSync(pack)) tail.push({ host: pack, guest: pack, readonly: true });
-    tail.push({ host: st.out, guest: this.outPath(job), noexec: true });
+    // $OUT's write quota: what the disk holds beyond the room the service keeps free, never below microsandbox's own default (4 GiB),
+    // which stopped whole-image extractions part way through a file (outQuotaMb).
+    tail.push({ host: st.out, guest: this.outPath(job), noexec: true, quota_mb: outQuotaMb(freeMb(st.out), this.o.minFreeMb) });
     tail.push({ host: st.ctl, guest: "/job", noexec: true });
-    const accessOf = (list: Array<Mount & { note?: string }>) => list.map((m) => ({ path: m.guest ?? m.host, access: `${m.readonly ? "read-only" : "read-write"}${m.noexec ? ", no-exec" : ""}${m.note ? `; ${m.note}` : ""}` }));
+    const accessOf = (list: Array<Mount & { note?: string }>) => list.map((m) => ({ path: m.guest ?? m.host, access: `${m.readonly ? "read-only" : "read-write"}${m.noexec ? ", no-exec" : ""}${m.quota_mb ? `, writes up to ${m.quota_mb} MiB` : ""}${m.note ? `; ${m.note}` : ""}` }));
     const strip = (list: Array<Mount & { note?: string }>) => list.map(({ note: _note, ...m }) => m);
     if (kind !== "declared") {
       const all = [...this.broadMounts(), ...tail];
@@ -1422,7 +1472,7 @@ export class JobService {
     // A heartbeat beside the command (job-telemetry.ts): the VM's CPU and I/O counters every 15 s, for the host to read while it runs.
     const run = (cmd: string) => [...pip, ...HEARTBEAT_LINES, `timeout --kill-after=10 ${box} ${cmd} > /job/stdout.log 2> /job/stderr.log`, "echo $? > /job/exit", HEARTBEAT_STOP, ...pipAfter];
     // SECRET_OUTPUT=1 for a job run as secret output (the agent's flag, or its tool's manifest), so a tool can refuse a values mode in a job that is not; unset for any other, whatever the image carries.
-    const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`, job.spec.secret_output === true ? "export SECRET_OUTPUT=1" : "unset SECRET_OUTPUT", WORKER_PROBE_LINE];
+    const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`, job.spec.secret_output === true ? "export SECRET_OUTPUT=1" : "unset SECRET_OUTPUT", WORKER_PROBE_LINE, ...programLines((job.spec.programs ?? []).map((p) => p.slice("import:".length)), storePaths(this.S).imports)];
     if (job.spec.kind === "tool") {
       const checked = await this.toolCheck(job.spec.tool ?? "", job.spec.args ?? {});
       if (!checked.ok) throw new Error(checked.reason);
@@ -1630,7 +1680,9 @@ export class JobService {
     // store/, work/extracted/, inputs/ or $OUT (job-exec-refused.ts). Read
     // first: the loader's refusal to map a segment ends in exit 127, which is
     // no program missing from the image.
-    const unexecuted = failed ? await execRefused({ ctl: st.ctl, out: st.out, cwd: this.S, exit }).catch(() => null) : null;
+    // At exit 0 only the shell's line for a program in $OUT is read (a script that went on): the job is ok, and its reason says what did not run.
+    const noexec = [{ guest: this.outPath(job), host: st.out }, { guest: st.out, host: st.out }];
+    const unexecuted = failed || (exit === 0 && !cancelled && !stopped) ? await execRefused({ ctl: st.ctl, out: st.out, cwd: this.S, exit, noexec }).catch(() => null) : null;
     if (unexecuted) {
       job.exec_refused = unexecuted;
       await this.journal.append({ type: "job_exec_refused", job: job.id, attempt: job.attempt, exit, ...unexecuted });
@@ -1655,6 +1707,8 @@ export class JobService {
       stopped ??
       (exit === 124 || exit === 137
         ? `stopped at its limit of ${job.spec.timeout_seconds}s`
+        : exit === 0 && unexecuted
+          ? `exit 0, but ${execRefusedWords(unexecuted, { job: job.id, out: this.outPath(job), cwd: this.S })}`
         : exit === null
           ? result.error ?? "the worker did not report an exit status"
           : job.spec.kind === "import" && exit === 3
@@ -2124,17 +2178,40 @@ export class JobService {
   }
 
   private inputShaCache: Map<string, string> | null = null;
-  /** The run's inputs by content: a job's copy of an input is not a new object. */
+  private importShaSeen = new Set<string>();
+  /**
+   * The run's inputs and imports by content: a job's copy of an input, of a
+   * program the operator supplied or of evidence added later is not a new
+   * object (on the run s68ce47 the derived catalogue spent 37 of its 50
+   * generations on the libraries of a supplied ffmpeg a seat had copied into
+   * $OUT). Imports sealed since the last look are added as they come.
+   */
   private async inputShas(): Promise<Map<string, string>> {
-    if (this.inputShaCache) return this.inputShaCache;
-    const m = new Map<string, string>();
-    try {
-      const inputs = JSON.parse(await readFile(join(this.S, "inputs.json"), "utf8")) as { files?: Array<{ path: string; sha256?: string }> };
-      for (const f of inputs.files ?? []) if (f.sha256) m.set(f.sha256, `input:${f.path.replace(/^inputs\//, "")}`);
-    } catch {
-      // no inputs.json: nothing to skip by
+    if (!this.inputShaCache) {
+      const m = new Map<string, string>();
+      try {
+        const inputs = JSON.parse(await readFile(join(this.S, "inputs.json"), "utf8")) as { files?: Array<{ path: string; sha256?: string }> };
+        for (const f of inputs.files ?? []) if (f.sha256) m.set(f.sha256, `input:${f.path.replace(/^inputs\//, "")}`);
+      } catch {
+        // no inputs.json: nothing to skip by
+      }
+      this.inputShaCache = m;
     }
-    this.inputShaCache = m;
+    const m = this.inputShaCache;
+    const dir = storePaths(this.S).imports;
+    let ids: string[] = [];
+    try {
+      ids = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    } catch {
+      ids = [];
+    }
+    for (const id of ids) {
+      if (this.importShaSeen.has(id)) continue;
+      const found = await readManifest(join(dir, id, "manifest.json")).catch(() => null);
+      if (!found) continue;
+      this.importShaSeen.add(id);
+      for (const f of found.manifest.files) if (!m.has(f.sha256)) m.set(f.sha256, `import:${id}/${Buffer.from(f.path_b64, "base64").toString("utf8")}`);
+    }
     return m;
   }
 
@@ -2181,9 +2258,11 @@ export class JobService {
   }
 
   /**
-   * Start a derived pass when the lane is free: the largest waiting objects
-   * first (a cap lands on small noise, never on a disk), up to the pass's
-   * pairs, as the lowest lane's job.
+   * Start a derived pass when the lane is free, up to the pass's pairs, as the
+   * lowest lane's job: what a user made or kept first, a vendor's or the
+   * system's own files last (derivedRank), and within each the largest first
+   * (a cap lands on small noise, never on a disk). On the run sf4406b 49 of the
+   * 50 generations went to Office's files under Program Files/Common Files.
    */
   private async maybeDrainDerived(): Promise<void> {
     if (!this.o.derived || this.stopping || !this.derivedPending.length || this.draining) return;
@@ -2192,7 +2271,7 @@ export class JobService {
     this.draining = true;
     try {
       const L = this.limits();
-      this.derivedPending.sort((a, b) => b.bytes - a.bytes);
+      this.derivedPending.sort((a, b) => derivedRank(a.path) - derivedRank(b.path) || b.bytes - a.bytes);
       const take: Candidate[] = [];
       let pairs = 0;
       while (this.derivedPending.length && (pairs === 0 || pairs + this.derivedPending[0].recipes.length <= L.pairsPerPass) && take.length < DETECT_FILES_MAX) {
@@ -2738,6 +2817,49 @@ export async function programMissing(ctl: string, exit: number | null): Promise<
   return dash ? dash[1]! : "?";
 }
 
+/**
+ * The lines that make a job's supplied programs runnable (JobSpec.programs):
+ * each import's out/ copied into one executable directory under /tmp, every
+ * file in it given its owner's execute bit, its bin/ and sbin/ directories (and
+ * its own top) on PATH, its lib/, lib64/ and *-linux-gnu/ directories on
+ * LD_LIBRARY_PATH, and PROGRAMS naming the directory. What could not be copied
+ * is said in /job/programs.log, which the job keeps with its logs.
+ */
+export function programLines(ids: readonly string[], importsDir: string): string[] {
+  if (!ids.length) return [];
+  const q = shQuote;
+  const lines = ['PROGRAMS="$(mktemp -d /tmp/programs.XXXXXX)"', ": > /job/programs.log"];
+  for (const id of ids) {
+    const dst = `"$PROGRAMS"/${q(id)}`;
+    lines.push(
+      `mkdir -p ${dst} && cp -R ${q(join(importsDir, id, "out"))}/. ${dst}/ 2>>/job/programs.log && chmod -R u+rwX ${dst} && find ${dst} -type f -exec chmod u+x {} + || echo "programs: ${id} could not be made runnable" >> /job/programs.log`,
+      `while IFS= read -r d; do PATH="$d:$PATH"; done < <(find ${dst} -type d \\( -name bin -o -name sbin \\) 2>/dev/null | sort -r)`,
+      `PATH="${"$"}PROGRAMS/${id}:$PATH"`,
+      `while IFS= read -r d; do LD_LIBRARY_PATH="$d\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; done < <(find ${dst} -type d \\( -name lib -o -name lib64 -o -name '*-linux-gnu' \\) 2>/dev/null | sort -r)`,
+    );
+  }
+  lines.push("export PATH PROGRAMS; export LD_LIBRARY_PATH=\"${LD_LIBRARY_PATH:-}\"");
+  return lines;
+}
+
+/**
+ * Where a derived object's path puts it in the derived catalogue's queue: 0
+ * for what a user made or kept (a profile's own folders), 2 for a vendor's or
+ * the system's files (Program Files, Windows, ProgramData, a profile's
+ * AppData/Local/Microsoft, /usr, /lib, a package's libraries, a shared
+ * library), 1 for anything else. Words of the path only: no file is read.
+ */
+export function derivedRank(path: string): number {
+  const p = `/${path.replace(/\\/g, "/")}`.toLowerCase();
+  if (
+    /\/(program files( \(x86\))?|programdata|windows|winsxs|\$windows\.~bt|system volume information|appdata\/local\/microsoft|appdata\/local\/packages|usr|lib|lib64|opt|snap|node_modules|site-packages|dist-packages|\.cache)\//.test(p) ||
+    /\.(so(\.\d+)*|dll|mui|cat|manifest)$/.test(p)
+  )
+    return 2;
+  if (/\/(users|home|documents and settings)\/[^/]+\/(desktop|documents|downloads|pictures|videos|music|onedrive[^/]*|dropbox)\//.test(p)) return 0;
+  return 1;
+}
+
 /** One post, for the agent that asked. */
 export function describe(job: JobRecord): string {
   const what = job.spec.kind === "tool" ? `tool ${job.spec.tool}` : job.spec.kind === "command" ? "command" : job.spec.kind === "recipe" ? `recipe ${job.spec.recipe}` : job.spec.seal ? `the seal of ${job.spec.seal.ref}` : job.spec.kind === "import" ? `import of ${job.spec.source}${scopeKindOf(job.spec) === "declared" ? ", from the snapshot the hub took at its start" : ", copied live from where it was"}` : "detect pass";
@@ -2745,7 +2867,7 @@ export function describe(job: JobRecord): string {
   if (job.state === "cancelled") return `Job ${job.id} (${what}) was cancelled${job.reason ? `: ${job.reason}` : ""}.`;
   const o = job.outputs;
   const files = o ? `${o.files} file(s), ${o.bytes} bytes in ${o.path}/${o.rejected ? ` (${o.rejected} link(s) or special file(s) left out, named in its manifest)` : ""}` : "no output";
-  const head = job.status === "ok" ? "done" : `${job.status}${job.reason ? ` (${job.reason})` : ""}`;
+  const head = job.status === "ok" ? `done${job.exec_refused && job.reason ? ` (${job.reason})` : ""}` : `${job.status}${job.reason ? ` (${job.reason})` : ""}`;
   const cite = job.spec.seal && job.status === "ok" ? `record again citing ${job.spec.seal.ref}: it resolves to import:${job.id}/<name>` : `cite its files as job:${job.id}/<path>`;
   const same = job.same_as?.length ? ` ${job.same_as.length} of its files are an earlier job's output byte for byte (job_status ${job.id} names them).` : "";
   return `Job ${job.id} (${what}) ${head}: ${files}; stdout and stderr whole in store/jobs/${job.id}/. job_status ${job.id} for the details; ${cite}.${job.generation ? ` Catalogued as ${job.generation}.` : ""}${same}${job.sensitive ? ` ${sensitiveWords(job)}` : ""}`;
@@ -2786,6 +2908,7 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
     ...(job.generation ? { generation: job.generation, revision: job.revision } : {}),
     ...(job.program_missing ? { program_missing: { ...job.program_missing, note: "the image of its profile does not hold it: run it in a profile that does, install it if the job may, or tell the operator (the console lists these for the images' upkeep)" } } : {}),
     ...(job.spec.independent ? { independent: true } : {}),
+    ...(job.spec.programs?.length ? { programs: job.spec.programs } : {}),
     ...(job.spec.secret_output ? { secret_output: true } : {}),
     ...(job.spec.secret_output_by ? { secret_output_by: job.spec.secret_output_by } : {}),
     ...(job.sensitive ? { sensitive: sensitiveWords(job) } : {}),

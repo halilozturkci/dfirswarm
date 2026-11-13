@@ -114,6 +114,13 @@ if os.path.isdir(sdir):
             # pack. A run whose index is over budget shows routers only.
             if "router" in meta and meta["router"] not in ("true", "false"):
                 errors.append("skills/%s: router must be true or false, not %r" % (rel, meta["router"]))
+            # `core: <rank>` marks a note the pack's cases reach for most: when
+            # the index collapses it is shown beside the router, rank 1 first,
+            # as the run's budget allows (extensions/skills.ts).
+            if "core" in meta and not re.fullmatch(r"[1-9]", str(meta["core"])):
+                errors.append("skills/%s: core is a rank from 1 to 9, not %r" % (rel, meta["core"]))
+            if meta.get("core") and meta.get("router") == "true":
+                errors.append("skills/%s: the router is shown already; it is not also core" % rel)
             sid = meta.get("id", "")
             expect = rel[:-3].replace(os.sep, "/")
             if sid and sid != expect:
@@ -131,6 +138,9 @@ if os.path.isdir(sdir):
 routers = sorted(sid for sid, meta in skills.items() if meta.get("router") == "true")
 if len(routers) > 1:
     errors.append("a pack names at most one router; these skills all say router: true: %s" % ", ".join(routers))
+core = sorted((sid for sid, meta in skills.items() if re.fullmatch(r"[1-9]", str(meta.get("core", "")))), key=lambda sid: (int(skills[sid]["core"]), sid))
+if len(core) > 6:
+    errors.append("a pack names at most six core notes (core: <rank>); these say core: %s" % ", ".join(core))
 
 # --- tools ------------------------------------------------------------------
 tools = {}
@@ -635,6 +645,10 @@ if mode == "seal":
     # no router has no such line, so its index (and its checksum) is as before.
     if len(routers) == 1:
         lines.extend(["Router: `%s`" % routers[0], ""])
+    # Its core notes, by rank: shown beside the router when the index
+    # collapses. A pack that names none has no such line.
+    if core:
+        lines.extend(["Core: %s" % ", ".join("`%s`" % c for c in core), ""])
     for sid in sorted(skills):
         meta = skills[sid]
         lines.append("- `%s` %s: %s" % (sid, meta.get("title", ""), meta.get("when", "")))

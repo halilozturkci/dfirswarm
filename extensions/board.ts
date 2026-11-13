@@ -520,11 +520,24 @@ export async function ownFileWire(
 
 export type OwnFileWire = { bytes_b64?: string; hash_only?: { sha256: string; bytes: number }; missing?: true };
 
+/**
+ * Whether the hub said this seat's history quota is spent (`not_stored` on a
+ * revision it kept by its hash): from then on a revision of a file in the
+ * seat's own directory goes as its hash, not its bytes. On the run s082123 a
+ * seat sent about a hundred 11 MB files whole, as base64, after its quota was
+ * full, and the hub hashed each and threw the bytes away.
+ */
+const historySpent = new Set<string>();
 export const recordFileVersion: typeof P.recordFileVersion = async (sandboxRoot, rawPath, agentId, options = {}) => {
   const socket = boardSocket();
   if (!socket) return P.recordFileVersion(sandboxRoot, rawPath, agentId, options);
-  const wire = options.bytes ? { bytes_b64: options.bytes.toString("base64") } : await ownFileWire(sandboxRoot, rawPath, agentId);
-  return (await callBoard(socket, "recordFileVersion", [sandboxRoot, rawPath, agentId, wire ?? null])) as Awaited<ReturnType<typeof P.recordFileVersion>>;
+  // Per run and seat: the quota is the run's hub's.
+  const seatKey = `${sandboxRoot}\u0000${agentId}`;
+  const spent = historySpent.has(seatKey);
+  const wire = options.bytes && !spent ? { bytes_b64: options.bytes.toString("base64") } : options.bytes ? { hash_only: { sha256: P.sha256Hex(options.bytes), bytes: options.bytes.byteLength } } : await ownFileWire(sandboxRoot, rawPath, agentId, spent ? 0 : P.HISTORY_STORE_MAX_BYTES);
+  const rec = (await callBoard(socket, "recordFileVersion", [sandboxRoot, rawPath, agentId, wire ?? null])) as Awaited<ReturnType<typeof P.recordFileVersion>> & { not_stored?: unknown };
+  if (rec && typeof rec.not_stored === "string" && rec.not_stored) historySpent.add(seatKey);
+  return rec;
 };
 
 /** What a VM may publish in one call: its bytes cross the hub link. */

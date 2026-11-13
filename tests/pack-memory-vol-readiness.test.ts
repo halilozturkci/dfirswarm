@@ -75,6 +75,15 @@ sys.exit(b.get("code", 0))
 const argvLog = async (cwd: string): Promise<string[][]> =>
   (await readFile(join(cwd, "vol-argv.log"), "utf8").catch(() => "")).split("\n").filter(Boolean).map((l) => JSON.parse(l) as string[]);
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Whether a process is gone, giving it a moment: a stand-in killed as the tool ends is reaped by init after the tool exits, not before. */
+const gone = async (pid: number, waitMs = 5_000): Promise<boolean> => {
+  const until = Date.now() + waitMs;
+  while (alive(pid)) {
+    if (Date.now() > until) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return true;
+};
 const pidOf = async (file: string): Promise<number | null> => { try { return Number((await readFile(file, "utf8")).trim()) || null; } catch { return null; } };
 
 type Answer = { status: string; status_basis: string; verdict?: string; checks: Record<string, any>; missing: any[]; interrupted?: boolean; partial_results?: Record<string, any>; error?: string };
@@ -204,13 +213,13 @@ test("a vol that hangs is ended at the clock, with its tree, and the view is unk
     assert.equal(out.status, "partial");
     assert.ok(run.ms < 25 * SECOND, `the call took ${run.ms} ms`);
     const stub = await pidOf(pid);
-    assert.ok(stub && !alive(stub), "the stand-in vol is gone");
+    assert.ok(stub && (await gone(stub)), "the stand-in vol is gone");
     // a step with no time left is not attempted: two programs, the clock gone after the first
     const env2 = await stubVol(cwd, bin, { info: { sleep: 120, pid } });
     const run2 = await runTool(VOL, cwd, { path: "inputs/mem.raw", views: ["symbols"], max_seconds: 10 }, env2, bin);
     assert.equal(json<Answer>(run2).checks.symbols.verdict, "unknown");
     const stub2 = await pidOf(pid);
-    assert.ok(stub2 && !alive(stub2));
+    assert.ok(stub2 && (await gone(stub2)));
   });
 });
 
@@ -227,7 +236,7 @@ test("SIGTERM ends the program (one that ignores SIGTERM too) and answers once: 
       assert.ok(out.partial_results && out.partial_results.fuse, "the view that had finished is kept");
       assert.equal(run.stdout.trim().split("\n}\n").length, 1, "one document");
       const stub = await pidOf(pid);
-      assert.ok(stub && !alive(stub), `the stand-in is gone (ignore_term ${ignore})`);
+      assert.ok(stub && (await gone(stub)), `the stand-in is gone (ignore_term ${ignore})`);
     }
   });
 });
@@ -249,7 +258,7 @@ test("two signals in a row give one document", { timeout: 120 * SECOND }, async 
     assert.ok(code === 143 || code === 130, `exit ${code}`);
     assert.doesNotThrow(() => JSON.parse(text), "stdout holds exactly one JSON document");
     const stub = await pidOf(pid);
-    assert.ok(stub && !alive(stub));
+    assert.ok(stub && (await gone(stub)));
   });
 });
 
@@ -343,7 +352,7 @@ test("an engine that never stops writing is ended at the cap of what is read, an
     assert.equal(out.checks.symbols.verdict, "unknown");
     assert.match(out.checks.symbols.reason, /wrote more than the tool reads/);
     const stub = await pidOf(pid);
-    assert.ok(stub && !alive(stub));
+    assert.ok(stub && (await gone(stub)));
   });
 });
 

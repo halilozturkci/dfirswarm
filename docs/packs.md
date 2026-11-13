@@ -63,6 +63,20 @@ So a pack's skills are small files, and an agent loads one when it needs it:
   the whole index in the prompt, in which case it points there.
 - A body may name other skills under `needs`. The result lists them with what
   each costs in tokens, and loads none: the agent loads the ones the case needs.
+- **Cards** (`--skill-cards on|off`, `SWARM_SKILL_CARDS`; on by default). A call
+  to a tool a skill lists under `tools` (`job_run tool=X`, or the tool itself), by
+  a seat that does not hold that skill, comes back with the skill's card after
+  the result: its own `card:` line when its front matter has one, else the
+  paragraph that says when to use it, its first example call (an indented block,
+  three lines at most) and its "Does not show" paragraph, cut at 700 characters.
+  The most specific skill (fewest tools) is the one shown, once per skill and
+  seat in a context: a compaction shows it again at the next call, and the
+  hand-off header carries the cards of up to three skills it took out. A tool
+  more than three skills list (`regkv`, `pe_info`) has no one method: its first
+  call in a context lists the skills that name it instead. Pull alone did not
+  reach the open models of the Batman III runs (2026-11-13): 5 of 8 seats of one
+  run never loaded a skill, and 9 % of its pack-tool calls came from a seat that
+  held the tool's skill, against 74 % on a Codex run. `skill_card` on the trace.
 - `skill_done(id, note)` says the agent is finished with a body: the event is on
   the trace, and the body is marked releasable (a seat that holds three bodies
   it has not finished is reminded to finish one before it loads a fourth). What
@@ -235,6 +249,11 @@ Front matter, then a short imperative body.
 The `id` is the path under the pack's `skills/` without `.md`, as the index lists
 it; it carries no pack name (`pack:id` is how a caller names one pack's copy).
 
+`card:` (optional, one line) is what a seat is shown with the result of a call to
+one of the skill's tools when it does not hold the skill (section 1, "Cards"):
+the two or three rules a call goes wrong without. Without it the card is taken
+from the body.
+
 `needs` names skills this one assumes. `tools` lists the tools the body names,
 and `requires_host` the host programs it names (the binaries its commands call):
 a name the body uses is in the list, and a name in the list is in the body.
@@ -256,8 +275,13 @@ matter, optional and at most one a pack:
 
     router: true
 
-A router names no program, tool or rule, only which note answers which
-question. Its id is the pack's own (`base/router` and `windows/router`, but
+A router names no program or tool, only which note answers which question,
+save an `Always` block under its first line: at most a few one-line rules
+that every note of the pack holds, each naming the note it comes from (the
+base pack's "a negative says No evidence of X was found in A", the Windows
+pack's "keep the raw value beside every converted time"). A weak model that
+loads the router and no note under it still has those; such a router has
+100 tokens more (`scripts/skill-budgets.json`). Its id is the pack's own (`base/router` and `windows/router`, but
 `router/start` in `virtualization-backup-forensics`), and the `Router:` line of a
 pack's `skills/INDEX.md` says which pack has one and under what id. A pack that
 names none is shown whole whatever the budget.
@@ -272,6 +296,13 @@ packs have routers, and how long a router may be, are the pack standard's and
 the pack lint's to say. A run of the base pack with `windows-forensics` and
 `linux-forensics` has index entries whole over the run's 2,500 tokens; with
 each pack shown by its router the prompt carries three router lines and fits.
+
+A skill may also say `core: <rank>` (1 to 9; at most six a pack, never the
+router): a note the pack's cases reach for most. The generated index carries
+``Core: `<id>`, …`` under the `Router:` line, in rank order, and a run whose
+index collapses shows beside each router its core notes, one pack's at a time
+in turn, while the run's budget and the pack's have room (the report's
+`core_shown`). A pack that names none shows its router only.
 
 ### Tool help stays out of the context window
 

@@ -184,10 +184,10 @@ swarm.sh start — prepare a sandbox, write the contract, launch the agents.
       [--notify CMD] [--ledger-from RUN] [--no-verify-copy] [--allow-root] [--model-gateway] [--check]
       [--cap-per-agent USD] [--cap-per-agent-tokens N] [--cap-tokens N] [--token-alert N[,M...]] [--idle-nudge-sec N] [--allow-tool-forging]
       [--no-self-compact] [--compact-at SPEC] [--compact-warn-at SPEC] [--compact-notice-at SPEC]
-      [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N] [--skill-release compaction|auto|off]
+      [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N] [--skill-release compaction|auto|off] [--skill-cards on|off] [--pack-skills on|off]
       [--allow-install] [--no-pypi] [--no-read DIR]... [--accept-signer-exposure]
       [--tools-from DIR] [--inputs DIR]... [--inputs-enforce auto|on|off]
-      [--inputs-max-mb N] [--inputs-max-files N] [--catalog] [--allow-missing-symbols] [--toolbox SETS|auto|off] [--toolbox-required]
+      [--inputs-max-mb N] [--inputs-max-files N] [--catalog] [--allow-missing-symbols] [--toolbox SETS|auto|off] [--toolbox-required] [--requires CAPS]
       [--quarantine] [--case-id ID] [--examiner NAME] [--operator ID] [--allow-host HOST]...
       [--no-netguard] [--local-only] [--playwright] [--probe-violation]
       [--network closed|dynamic|open] [--policy standard|live_adversary|internal|ctf]
@@ -396,6 +396,22 @@ Limits
                       and the summary input is not shaped. Recorded as
                       skill_release in the registry; skill_release_policy and
                       skill_unload on the trace. Needs --pack.
+  --skill-cards on|off
+                      Whether a call to a tool a skill names (job_run tool=X,
+                      or the tool itself), by an agent that does not hold that
+                      skill, comes back with the skill's card: its own card:
+                      line, or the lines that say when to use it, its first
+                      example call and what it does not show. Once per skill
+                      and agent until a compaction; a tool more than three
+                      skills name shows none; the hand-off header carries the
+                      cards of the skills a compaction took out. on, the
+                      default; off leaves skills to skill(id) alone. Recorded
+                      as skill_cards in the registry; skill_card on the trace.
+  --pack-skills on|off
+                      off: the packs' tools and recipes only. No skill index in
+                      the prompt, no skill tool, no cards: the arm of an
+                      experiment that measures what the notes add. on, the
+                      default. Recorded as pack_skills in the registry.
 
 Evidence
   --inputs DIR        A read-only copy of DIR under inputs/. Agents read and grep
@@ -439,6 +455,13 @@ Evidence
                       SWARM.md: dfir, crypto, linux, comma-separated. auto picks
                       dfir when --catalog is on; off checks nothing.
   --toolbox-required  A missing tool is a blocker rather than a warning.
+  --requires CAPS     What the case's questions need done, comma-separated:
+                      video-decode, audio-decode, qr-decode, ocr, image-convert,
+                      pdf-text, office-macros, archive-7z, pcap, stego, memory
+                      (or the goal's metadata block, requires: ...). Checked
+                      where the agents run, by a program that does the work;
+                      one not met is a warning before the run starts (a
+                      blocker with --toolbox-required), and SWARM.md says it.
   --inputs-image FILE Attach a disk image read-only and use it as inputs/, instead of
                       copying a directory. The refusal comes from the host kernel on
                       the device: the write bit cannot be put back, so the metadata
@@ -3587,6 +3610,7 @@ cmd_start() {
   # only one, for one set), and says whether there is evidence at all.
   local inputs_dirs=() inputs_names=()
   local pack_tools_as_jobs=""
+  local requires_caps=""
   local allow_hosts="" tools_from="" catalog=0 toolbox="off" toolbox_required=0 quarantine=0 cap_per_agent="" cap_per_agent_tokens="" case_id="" examiner=""
   # The run's operator (--operator ID): a person enrolled on this install,
   # recorded with the run; `--as operator` on the run's acts names them.
@@ -3648,6 +3672,9 @@ cmd_start() {
   local inbox_page_chars=""
   # When a skill body an agent has marked done leaves its context: compaction, auto or off. Empty means compaction.
   local skill_release=""
+  # Whether a note's card comes with the result of a call to one of its tools: on (empty) or off.
+  local skill_cards=""
+  local pack_skills=""
   local extra_env=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -3737,6 +3764,7 @@ cmd_start() {
       --pack) packs="${packs:+$packs,}$2"; shift 2 ;;
       --pack-tools-as-jobs) pack_tools_as_jobs="${pack_tools_as_jobs:+$pack_tools_as_jobs,}${2:-}"; shift 2 ;;
       --toolbox-required) toolbox_required=1; shift ;;
+      --requires) requires_caps="$2"; shift 2 ;;
       --quarantine) quarantine=1; shift ;;
       --no-write-guard) write_guard=0; shift ;;
       --accept-signer-exposure) accept_signer_exposure=1; shift ;;
@@ -3773,6 +3801,8 @@ cmd_start() {
       --compact-model) compact_model="$2"; shift 2 ;;
       --inbox-page-chars) inbox_page_chars="$2"; shift 2 ;;
       --skill-release) skill_release="$2"; shift 2 ;;
+      --skill-cards) skill_cards="$2"; shift 2 ;;
+      --pack-skills) pack_skills="$2"; shift 2 ;;
       --case-id) case_id="$2"; shift 2 ;;
       --examiner) examiner="$2"; shift 2 ;;
       --operator) operator_id="${2:-}"; shift 2 ;;
@@ -4286,7 +4316,7 @@ import json, re, sys
 path = sys.argv[1]
 text = open(path, encoding="utf-8").read()
 m = re.match(r"^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)", text)
-out = {"toolbox": "", "until_solved": "", "stall_minutes": "", "stop": ""}
+out = {"toolbox": "", "until_solved": "", "stall_minutes": "", "stop": "", "requires": ""}
 premises = []
 if m:
     for k in out:
@@ -4381,6 +4411,14 @@ print(json.dumps(out))
 STRIP
 )"
   goal_toolbox="$(jq -r '.toolbox' <<<"$goal_meta")"
+  # What the case requires done: the kickoff's --requires, else the goal's metadata block.
+  if [[ -z "$requires_caps" ]]; then
+    requires_caps="$(jq -r '.requires // ""' <<<"$goal_meta" | tr -d '[]"' | tr -s ', ' ',' | sed 's/^,//; s/,$//')"
+  fi
+  if [[ -n "$requires_caps" && ! "$requires_caps" =~ ^(video-decode|audio-decode|qr-decode|ocr|image-convert|pdf-text|office-macros|archive-7z|pcap|stego|memory)(,(video-decode|audio-decode|qr-decode|ocr|image-convert|pdf-text|office-macros|archive-7z|pcap|stego|memory))*$ ]]; then
+    echo "BLOCKER: requires: $requires_caps names a capability the toolbox does not know; it takes video-decode, audio-decode, qr-decode, ocr, image-convert, pdf-text, office-macros, archive-7z, pcap, stego, memory, comma-separated." >&2
+    exit 2
+  fi
   local goal_brief
   goal_brief="$(jq -r '.brief_without_premises // empty' <<<"$goal_meta")"
   # A must_establish: key that names no question (docs/adr/0013): said, never guessed.
@@ -4468,6 +4506,8 @@ STRIP
       fi ;;
   esac
   if [[ "$catalog" -eq 1 && "$toolbox" == "off" ]]; then toolbox="dfir"; fi
+  # A case that says what it requires is checked for it, whatever the sets.
+  if [[ -n "$requires_caps" && "$toolbox" == "off" ]]; then toolbox="dfir"; fi
   if [[ "$catalog" -eq 1 ]]; then quarantine=1; fi
   local pack_dirs=""
   if [[ -n "$packs" ]]; then
@@ -4560,6 +4600,14 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
   fi
   if [[ -n "$compact_model" && "$self_compact" -ne 1 ]]; then
     echo "BLOCKER: --compact-model names the summary model of self-compaction; drop --no-self-compact." >&2
+    exit 2
+  fi
+  if [[ -n "$skill_cards" && "$skill_cards" != "on" && "$skill_cards" != "off" ]]; then
+    echo "BLOCKER: --skill-cards is on or off, got $skill_cards." >&2
+    exit 2
+  fi
+  if [[ -n "$pack_skills" && "$pack_skills" != "on" && "$pack_skills" != "off" ]]; then
+    echo "BLOCKER: --pack-skills is on or off, got $pack_skills." >&2
     exit 2
   fi
   if [[ -n "$skill_release" && "$skill_release" != "auto" && "$skill_release" != "compaction" && "$skill_release" != "off" ]]; then
@@ -5364,6 +5412,7 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
     # tools are the image's, and this host's are none of theirs.
     local toolbox_args=()
     [[ "$toolbox_required" -eq 1 ]] && toolbox_args+=(--required)
+    [[ -n "$requires_caps" ]] && toolbox_args+=(--requires "$requires_caps")
     vm_cli toolbox --image "${job_image:-$vm_image}" --preset "$toolbox" --packs "$(paste -sd: - <<< "$pack_dirs")" --out "$sandbox/toolbox.json" ${toolbox_args[@]+"${toolbox_args[@]}"} || exit $?
   elif [[ "$toolbox" != "off" && "$isolation" == "microvm" ]]; then
     # A prepared VM run: the check belongs to the image, not this host, and
@@ -5372,6 +5421,7 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
   elif [[ "$toolbox" != "off" ]]; then
     local toolbox_args=()
     [[ "$toolbox_required" -eq 1 ]] && toolbox_args+=(--required)
+    [[ -n "$requires_caps" ]] && toolbox_args+=(--requires "$requires_caps")
     bash "$ROOT/scripts/toolbox.sh" "$sandbox" "$toolbox" ${toolbox_args[@]+"${toolbox_args[@]}"} || exit $?
   fi
   if [[ -n "$resume_of" ]]; then
@@ -5887,14 +5937,17 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
   [[ "$self_compact" -eq 1 ]] && sp_args+=(--self-compact)
   [[ "$forging" -eq 1 ]] && sp_args+=(--forging)
   for sp_id in "${agent_ids[@]}"; do sp_args+=(--seat "$sp_id"); done
-  while IFS= read -r sp_d; do [[ -n "$sp_d" ]] && sp_args+=(--pack-dir "$sp_d"); done <<< "$pack_dirs"
+  # --pack-skills off: the packs' tools only, so their skill index is not written into the prompt.
+  [[ "${pack_skills:-on}" == "off" ]] || while IFS= read -r sp_d; do [[ -n "$sp_d" ]] && sp_args+=(--pack-dir "$sp_d"); done <<< "$pack_dirs"
   if ! sp_out="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/seat-prompt.ts" "${sp_args[@]}" 2>&1)"; then
     echo "BLOCKER: the lines every agent's prompt carries could not be written ($(tail -1 <<<"$sp_out")). Every agent is started with them, so none was started." >&2
     exit 1
   fi
   echo "Prompt:       every agent's prompt carries its id and the stop rule$(jq -r '(.lines | map(", " + (if . == "self_compact" then "the self-compaction mechanics" elif . == "inputs" then "the read-only inputs rule" else "the forging rule" end)) | join(""))' <<<"$sp_out") in files Pi keeps for every run (.pi/seat-<id>.md, .pi/APPEND_SYSTEM.md)"
-  if [[ -n "$pack_dirs" ]]; then
-    echo "Skills:       $(jq -r 'if .written then "the index of \(.packs | length) pack(s) is in every agent'"'"'s prompt: \(.packs | map(.skills) | add) skills, \(.shown_tokens) tokens of entries" + (if .mode == "routers" then " (over budget: " + ([.packs[] | select(.shown == "router") | .id] | join(", ")) + " show their router only)" else "" end) else "the packs carry no skills" end' <<<"$sp_out")"
+  if [[ -n "$pack_dirs" && "${pack_skills:-on}" == "off" ]]; then
+    echo "Skills:       off (--pack-skills off): the packs' tools and recipes only; no index, no skill tool, no cards"
+  elif [[ -n "$pack_dirs" ]]; then
+    echo "Skills:       $(jq -r 'if .written then "the index of \(.packs | length) pack(s) is in every agent'"'"'s prompt: \(.packs | map(.skills) | add) skills, \(.shown_tokens) tokens of entries" + (if .mode == "routers" then " (over budget: " + ([.packs[] | select(.shown == "router") | .id + (if (.core_shown // [] | length) > 0 then " (router and \(.core_shown | length) core)" else "" end)] | join(", ")) + " show their router" + (if any(.packs[]; (.core_shown // [] | length) > 0) then ", and the core notes they name as the budget allows)" else " only)" end) else "" end) else "the packs carry no skills" end' <<<"$sp_out")"
     jq -r '(.unreadable | map("WARN: the skill index of pack " + .pack + " could not be read (" + .reason + "): its skills are not in the agents'"'"' prompt; skill() still reaches them") | .[]), (.over_budget | map("WARN: the skill index is over its budget: " + .) | .[]), (if (.no_router | length) > 0 then "WARN: no router to shorten the index of " + (.no_router | join(", ")) + ": shown whole" else empty end), (if (.long_entries | length) > 0 then "WARN: " + (.long_entries | length | tostring) + " index entr(ies) pass " + (.budget.entry | tostring) + " tokens (" + ([.long_entries[] | .pack + ":" + .id] | join(", ")) + "); shown whole" else empty end)' <<<"$sp_out" >&2
   fi
   # Pi's own compaction settings, pinned per run: a pane read whatever the
@@ -5974,6 +6027,8 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --arg compact_model "$compact_model" \
     --arg inbox_page_chars "${inbox_page_chars:-40000}" \
     --arg skill_release "${skill_release:-compaction}" \
+    --arg skill_cards "${skill_cards:-on}" \
+    --arg pack_skills "${pack_skills:-on}" \
     --argjson metered "$metered" \
     --arg unmetered_why "$(unmetered_why_word "$metered" "$subscription_models_csv")" \
     --arg cap_tokens "$cap_tokens" \
@@ -6069,6 +6124,8 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
       },
       inbox_page_chars: ($inbox_page_chars | tonumber),
       skill_release: $skill_release,
+      skill_cards: $skill_cards,
+      pack_skills: $pack_skills,
       metered: ($metered == 1),
       unmetered_why: (if $unmetered_why == "" then null else $unmetered_why end),
       cap_tokens: (if $cap_tokens == "" then null else ($cap_tokens | tonumber) end),
@@ -6196,6 +6253,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
         ;;
     esac
     echo "Skill release: ${skill_release:-compaction} (${skill_release_says})"
+    if [[ "${pack_skills:-on}" == "off" ]]; then :; elif [[ "${skill_cards:-on}" == "off" ]]; then echo "Skill cards: off (a note reaches a seat only when it calls skill(id))"; else echo "Skill cards: on (a call to a tool a note names, by a seat that does not hold the note, comes back with the note's card)"; fi
   fi
   if [[ -n "$models_spec" ]]; then
     echo "Models:       $MODEL_SUMMARY"
@@ -6458,6 +6516,12 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   fi
   if [[ -n "$skill_release" ]]; then
     provider_env+=(--env "SWARM_SKILL_RELEASE=$skill_release")
+  fi
+  if [[ -n "$skill_cards" ]]; then
+    provider_env+=(--env "SWARM_SKILL_CARDS=$skill_cards")
+  fi
+  if [[ "${pack_skills:-on}" == "off" ]]; then
+    provider_env+=(--env "SWARM_PACK_SKILLS=off")
   fi
   # A case can turn on a library the host does not have. The answer is not
   # root — nothing here needs it, and the read-only guard over inputs/ is the
@@ -8422,7 +8486,7 @@ start_vm_hub() { # <sandbox> <hub dir> <run id> <collector socket> <agent ids...
   [[ "${vm_snapshot:-1}" -eq 1 ]] || hub_args+=(--no-snapshot)
   # The inbox page bound is read by readInbox, which for a VM runs here.
   # The custody the hub takes at the finish has the operator's deadline.
-  printf '%s' "$input" | SWARM_RUNS_DIR="$RUNS_DIR" SWARM_INBOX_PAGE_CHARS="${inbox_page_chars:-}" SWARM_VM_IMAGE_DIGEST="${vm_image_digest:-}" SWARM_CUSTODY_TIMEOUT="${custody_timeout:-${SWARM_CUSTODY_TIMEOUT:-14400}}" detach_exec node --experimental-strip-types --no-warnings "$script" \
+  printf '%s' "$input" | SWARM_RUNS_DIR="$RUNS_DIR" SWARM_INBOX_PAGE_CHARS="${inbox_page_chars:-}" SWARM_VM_IMAGE_DIGEST="${vm_image_digest:-}" SWARM_CUSTODY_TIMEOUT="${custody_timeout:-${SWARM_CUSTODY_TIMEOUT:-14400}}" detach_exec node --experimental-strip-types --no-warnings --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$dir" "$script" \
     "$sandbox" --dir "$dir" --run "$run" "${hub_args[@]}" --quiet >"$sandbox/traces/vm-hub.log" 2>&1 &
   local hub_pid=$!
   echo "$hub_pid" > "$sandbox/hub.pid"
@@ -8810,6 +8874,15 @@ stop_vm_run() { # <sandbox> <run id> <snapshot 0|1>  (returns 3 when finalisatio
   if dir="$(hub_dir_of "$sandbox")"; then
     # The hub's own lines the collector did not take stay with the run.
     [[ -f "$dir/hub-spill.jsonl" && ! -L "$dir/hub-spill.jsonl" && -s "$dir/hub-spill.jsonl" ]] && cp -P "$dir/hub-spill.jsonl" "$sandbox/traces/hub-spill.jsonl" 2>/dev/null
+    # A heap snapshot a hub left when it ran out of memory (--heapsnapshot-near-heap-limit) is the operator's to read, not the run's
+    # (a hub's memory holds the seats' tokens): kept under ~/.dfirswarm/diagnostics/<run>/, 0700, and said.
+    local snap kept_snaps=0
+    for snap in "$dir"/*.heapsnapshot; do
+      [[ -f "$snap" && ! -L "$snap" ]] || continue
+      mkdir -p "$HOME/.dfirswarm/diagnostics/$run" && chmod 700 "$HOME/.dfirswarm/diagnostics" "$HOME/.dfirswarm/diagnostics/$run" 2>/dev/null
+      mv "$snap" "$HOME/.dfirswarm/diagnostics/$run/" 2>/dev/null && kept_snaps=$((kept_snaps + 1))
+    done
+    [[ "$kept_snaps" -gt 0 ]] && echo "Hub heap snapshot(s) kept: $kept_snaps in $HOME/.dfirswarm/diagnostics/$run/ (the hub ran out of memory; they hold its tokens, so they stay out of the run)." >&2
     # Only a directory this run could have made, and only once its hub has
     # gone: a hub still up keeps it (and hub.dir, hub.pid), so the next stop
     # finds the hub, waits for it and seals after it, never beside it.
@@ -8953,6 +9026,8 @@ vm_build_spec() { # <hub dir> <out file>
   fi
   [[ -n "$inbox_page_chars" ]] && add_env SWARM_INBOX_PAGE_CHARS "$inbox_page_chars"
   [[ -n "${skill_release:-}" ]] && add_env SWARM_SKILL_RELEASE "$skill_release"
+  [[ -n "${skill_cards:-}" ]] && add_env SWARM_SKILL_CARDS "$skill_cards"
+  [[ "${pack_skills:-on}" == "off" ]] && add_env SWARM_PACK_SKILLS off
   # The hub refuses a part larger than its own size: a size set for this run
   # reaches the guests too, so both ends cut the same parts.
   [[ -n "${SWARM_TRANSFER_PART_BYTES:-}" ]] && add_env SWARM_TRANSFER_PART_BYTES "$SWARM_TRANSFER_PART_BYTES"

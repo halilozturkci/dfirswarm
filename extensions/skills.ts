@@ -105,6 +105,12 @@ export type PackIndex = PackRef & {
   entries: IndexEntry[];
   /** The skill the pack declares as its router (`Router:` line of INDEX.md), when it names one the index lists. */
   router: string | null;
+  /**
+   * The notes the pack names as its core (`Core:` line of INDEX.md: the ones
+   * its cases reach for most), those the index lists, in its order: shown
+   * beside the router, as the run's budget allows, when the index collapses.
+   */
+  core?: string[];
   /** Tokens of every entry line. */
   tokens: number;
   /** Why the pack's index could not be read, when it carries skills and it could not. */
@@ -132,10 +138,11 @@ export async function readPackRef(dir: string): Promise<PackRef> {
   return { id, version, dir, ...(declared !== undefined ? { declared } : {}) };
 }
 
-/** The entries of one INDEX.md, and the router it names. */
-export function parseIndex(text: string): { entries: IndexEntry[]; router: string | null } {
+/** The entries of one INDEX.md, the router it names and its core notes. */
+export function parseIndex(text: string): { entries: IndexEntry[]; router: string | null; core: string[] } {
   const entries: IndexEntry[] = [];
   let router: string | null = null;
+  let core: string[] = [];
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     const entry = /^- `([^`]+)`/.exec(line);
@@ -145,9 +152,11 @@ export function parseIndex(text: string): { entries: IndexEntry[]; router: strin
     }
     const named = /^Router: `([^`]+)`\s*$/.exec(line);
     if (named) router = named[1]!;
+    if (/^Core: /.test(line)) core = [...line.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
   }
   if (router && !entries.some((e) => e.id === router)) router = null;
-  return { entries, router };
+  core = [...new Set(core)].filter((id) => id !== router && entries.some((e) => e.id === id));
+  return { entries, router, core };
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -170,6 +179,7 @@ export async function readPackIndex(dir: string): Promise<PackIndex> {
   const parsed = parseIndex(text);
   out.entries = parsed.entries;
   out.router = parsed.router;
+  if (parsed.core.length) out.core = parsed.core;
   out.tokens = parsed.entries.reduce((sum, e) => sum + e.tokens, 0);
   // An index that lists nothing for a pack that counts skills is a broken index, not a pack with none.
   if (parsed.entries.length === 0 && (out.declared ?? 0) > 0) out.error = `skills/INDEX.md lists no skill although pack.json counts ${out.declared}`;
@@ -199,7 +209,7 @@ function entryLine(pack: PackIndex, entry: IndexEntry, colliding: Set<string>): 
 export type SectionReport = {
   /** Every pack's entries are in the section, or at least one pack shows its router only. */
   mode: "full" | "routers";
-  packs: Array<{ id: string; version: string; skills: number; tokens: number; shown: "full" | "router"; router: string | null }>;
+  packs: Array<{ id: string; version: string; skills: number; tokens: number; shown: "full" | "router"; router: string | null; core_shown?: string[] }>;
   /** Tokens of every entry of every pack, and of the entries the section carries. */
   index_tokens: number;
   shown_tokens: number;
@@ -249,6 +259,26 @@ export function renderSkillsSection(packs: PackIndex[], budget: SkillBudget = SK
     overBudget.push(`run ${fmt(indexTokens)} > ${fmt(budget.run)}`);
     for (const p of live) if (p.router) shown.set(p.id, "router");
   }
+  // Graded, not all or nothing: beside each collapsed pack's router, the notes it names as its core, one pack's at a time in turn, while
+  // the run's budget (and the pack's) has room. A pack that names none shows its router only, as before.
+  const beside = new Map<string, IndexEntry[]>();
+  const besideTokens = () => [...beside.values()].flat().reduce((sum, e) => sum + e.tokens, 0);
+  const packShown = (p: PackIndex) => p.entries.find((e) => e.id === p.router)!.tokens + (beside.get(p.id) ?? []).reduce((sum, e) => sum + e.tokens, 0);
+  const queues = live.filter((p) => shown.get(p.id) === "router" && p.core?.length).map((p) => ({ p, ids: [...p.core!] }));
+  for (let added = true; added; ) {
+    added = false;
+    for (const q of queues) {
+      const id = q.ids.shift();
+      if (!id) continue;
+      const entry = q.p.entries.find((e) => e.id === id)!;
+      if (cost() + besideTokens() + entry.tokens > budget.run || packShown(q.p) + entry.tokens > budget.pack) {
+        q.ids.length = 0;
+        continue;
+      }
+      beside.set(q.p.id, [...(beside.get(q.p.id) ?? []), entry]);
+      added = true;
+    }
+  }
   // A pack that was part of the overrun and names no router: nothing to shorten it to.
   const noRouter = live.filter((p) => !p.router && (p.tokens > budget.pack || runOver)).map((p) => p.id);
   const collapsed = live.some((p) => shown.get(p.id) === "router");
@@ -260,16 +290,17 @@ export function renderSkillsSection(packs: PackIndex[], budget: SkillBudget = SK
   );
   if (collapsed) {
     lines.push(
-      `This index is over its budget (${fmt(indexTokens)} tokens of entries; ${fmt(budget.pack)} a pack, ${fmt(budget.run)} the run), so a pack marked "router only" shows the one note that routes to the rest: load it and it names the notes under it. skill() with no id lists every skill of every pack.`,
+      `This index is over its budget (${fmt(indexTokens)} tokens of entries; ${fmt(budget.pack)} a pack, ${fmt(budget.run)} the run), so a pack marked "router only" shows the one note that routes to the rest: load it and it names the notes under it. A pack marked "router and N core notes" shows beside its router the notes it names as its core, as the budget allows. skill() with no id lists every skill of every pack.`,
     );
   }
   let shownTokens = 0;
   for (const p of live) {
     const router = shown.get(p.id) === "router";
+    const core = new Set((beside.get(p.id) ?? []).map((e) => e.id));
     lines.push("");
-    lines.push(`${p.id}${p.version ? ` ${p.version}` : ""} (${p.entries.length} skill${p.entries.length === 1 ? "" : "s"}${router ? ", router only" : ""})`);
+    lines.push(`${p.id}${p.version ? ` ${p.version}` : ""} (${p.entries.length} skill${p.entries.length === 1 ? "" : "s"}${router ? (core.size ? `, router and ${core.size} core note${core.size === 1 ? "" : "s"}` : ", router only") : ""})`);
     for (const entry of p.entries) {
-      if (router && entry.id !== p.router) continue;
+      if (router && entry.id !== p.router && !core.has(entry.id)) continue;
       lines.push(entryLine(p, entry, colliding));
       shownTokens += entry.tokens;
     }
@@ -277,7 +308,7 @@ export function renderSkillsSection(packs: PackIndex[], budget: SkillBudget = SK
   const text = live.length ? lines.join("\n") : "";
   const report: SectionReport = {
     mode: collapsed ? "routers" : "full",
-    packs: live.map((p) => ({ id: p.id, version: p.version, skills: p.entries.length, tokens: p.tokens, shown: shown.get(p.id)!, router: p.router })),
+    packs: live.map((p) => ({ id: p.id, version: p.version, skills: p.entries.length, tokens: p.tokens, shown: shown.get(p.id)!, router: p.router, ...(beside.get(p.id)?.length ? { core_shown: beside.get(p.id)!.map((e) => e.id) } : {}) })),
     index_tokens: indexTokens,
     shown_tokens: shownTokens,
     section_tokens: estimateTokens(text),
@@ -345,6 +376,8 @@ export type SkillFile = {
   tokens: number;
   needs: string[];
   tools: string[];
+  /** The note's own card (`card:` in its front matter), when it writes one: what a seat is shown when it calls one of the note's tools without holding it. */
+  card: string | null;
 };
 
 const SKILL_ID = /^[a-z0-9][a-z0-9_/-]{0,127}$/;
@@ -367,7 +400,88 @@ export async function readSkillFile(pack: PackRef, id: string): Promise<SkillFil
     tokens: estimateTokens(body),
     needs: listOf(meta.needs),
     tools: listOf(meta.tools),
+    card: typeof meta.card === "string" && meta.card.trim() ? meta.card.trim() : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Cards: a note's rules where its tool is called
+// ---------------------------------------------------------------------------
+
+/**
+ * A card is a note's few lines a seat must not miss, shown with the result of a
+ * call to one of the tools the note names (`tools:`) when the seat does not hold
+ * the note: the method comes to the call instead of waiting to be asked for.
+ * Pull alone did not reach the open models of the Batman III runs: 5 of 8 seats
+ * of the run sf4406b never loaded a note, and 5 of its 55 pack-tool calls (9 %)
+ * came from a seat that held the tool's note (48 of 65, 74 %, on a Codex run).
+ * Its ad1_extract errors were what evidence/ad1 says. Once per note and seat in
+ * a context: a compaction shows it again at the next call. A tool more than
+ * CARD_TOOL_SPREAD notes name (regkv, pe_info) has no one method: its first
+ * call lists the notes that name it instead. `--skill-cards off`
+ * (SWARM_SKILL_CARDS) turns both off.
+ */
+export const CARD_MAX_CHARS = 700;
+/** A tool more notes than this name is a generic one (catalog_search): its calls show no card. */
+export const CARD_TOOL_SPREAD = 3;
+/** The notes named for a generic tool's call, at most. */
+export const NOTES_LISTED_MAX = 8;
+/** Cards the hand-off header carries, of the notes a compaction took out. */
+export const HANDOFF_CARDS_MAX = 3;
+export type CardsMode = "on" | "off";
+export function parseCardsMode(raw: string | undefined): CardsMode {
+  return raw?.trim().toLowerCase() === "off" ? "off" : "on";
+}
+
+/**
+ * A note's card: its own `card:` when it writes one; else, from its body, the
+ * paragraph that says when to use it, its first example call (an indented
+ * block, three lines at most) and what it does not show. Cut at a sentence
+ * within CARD_MAX_CHARS.
+ */
+export function skillCard(file: Pick<SkillFile, "title" | "body" | "card">): string {
+  const cut = (t: string) => {
+    if (t.length <= CARD_MAX_CHARS) return t;
+    const head = t.slice(0, CARD_MAX_CHARS);
+    const end = Math.max(head.lastIndexOf(". "), head.lastIndexOf(".\n"));
+    return `${(end > CARD_MAX_CHARS / 2 ? head.slice(0, end + 1) : head).trimEnd()} …`;
+  };
+  if (file.card) return cut(file.card);
+  const paras = file.body.split(/\n\s*\n/).map((p) => p.replace(/\s+$/, "")).filter((p) => p.trim());
+  const out: string[] = [];
+  if (file.title) out.push(file.title.endsWith(".") ? file.title : `${file.title}.`);
+  const use = paras.find((p) => /^Use when\b/.test(p.trim()));
+  if (use) out.push(use.trim().replace(/\s*\n\s*/g, " "));
+  const example = paras.find((p) => p.split("\n").every((l) => /^( {4}|\t)/.test(l)));
+  if (example) out.push(example.split("\n").slice(0, 3).map((l) => `    ${l.trim()}`).join("\n"));
+  const limit = paras.find((p) => /^\*\*Does not show\.?\*\*/.test(p.trim()));
+  if (limit) out.push(limit.trim().replace(/\s*\n\s*/g, " "));
+  return cut(out.join("\n"));
+}
+
+/** Each tool a note names, and the notes naming it, the most specific (fewest tools) first. */
+export async function toolNotes(packs: readonly PackIndex[]): Promise<Map<string, Array<{ pack: PackRef; id: string; spread: number }>>> {
+  const map = new Map<string, Array<{ pack: PackRef; id: string; spread: number }>>();
+  for (const pack of packs) {
+    for (const entry of pack.entries) {
+      const file = await readSkillFile(pack, entry.id);
+      if (!file) continue;
+      for (const t of file.tools) {
+        const list = map.get(t) ?? [];
+        list.push({ pack, id: entry.id, spread: file.tools.length });
+        map.set(t, list);
+      }
+    }
+  }
+  for (const list of map.values()) list.sort((a, b) => a.spread - b.spread || a.id.localeCompare(b.id));
+  return map;
+}
+
+/** The tool a call is of, as the notes name tools: a job's tool for job_run, else the call's own name. */
+export function cardToolOf(name: string, input: Record<string, unknown> | undefined): string | null {
+  if (name === "skill" || name === "skill_done") return null;
+  if (name === "job_run") return typeof input?.tool === "string" && input.tool.trim() ? input.tool.trim() : null;
+  return name || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -394,28 +508,54 @@ export type Located = {
   prefix?: string;
 };
 
+/**
+ * The short names a pack goes by in what seats write: each whole word of its
+ * id ("base" of computer-forensics-base, "windows" of windows-forensics,
+ * "ransomware" of ransomware-response), its words up to a dash
+ * ("computer-forensics"), and the namespace its router sits in (base/router,
+ * windows/router), which is the name the index shows a seat when it is over
+ * budget. 24 of 25 failed loads in three Batman III runs were an id with one
+ * of these in front, as `base:evidence/ad1` or `base/evidence/ad1`. A part of a
+ * word ("lin", "comp") is no pack's name.
+ */
+async function packGoesBy(pack: PackRef, name: string): Promise<boolean> {
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) return false;
+  if (pack.id === name || pack.id.startsWith(`${name}-`)) return true;
+  if (pack.id.split("-").includes(name)) return true;
+  return exists(join(pack.dir, "skills", name, "router.md"));
+}
+
 export async function locateSkill(packs: PackRef[], wanted: Wanted): Promise<{ found: Located } | { missing: "no such pack" | "no such skill" }> {
   const has = (pack: PackRef, id = wanted.id) => exists(join(pack.dir, "skills", `${id}.md`));
   if (wanted.pack) {
     const pack = packs.find((p) => p.id === wanted.pack);
-    if (!pack) return { missing: "no such pack" };
-    return (await has(pack)) ? { found: { pack, id: wanted.id, others: [] } } : { missing: "no such skill" };
+    if (pack) return (await has(pack)) ? { found: { pack, id: wanted.id, others: [] } } : { missing: "no such skill" };
+    // A pack's short name in front ("base:evidence/ad1", "windows:execution/prefetch"): the one pack that goes by it and carries the id; else the
+    // one pack of the run that carries the id at all. Two that carry it: none is chosen, the seat is told the ids.
+    const named: PackRef[] = [];
+    for (const p of packs) if ((await packGoesBy(p, wanted.pack)) && (await has(p))) named.push(p);
+    if (named.length === 1) return { found: { pack: named[0]!, id: wanted.id, others: [], prefix: `${wanted.pack}:` } };
+    if (!named.length) {
+      const carrying: PackRef[] = [];
+      for (const p of packs) if (await has(p)) carrying.push(p);
+      if (carrying.length === 1) return { found: { pack: carrying[0]!, id: wanted.id, others: [], prefix: `${wanted.pack}:` } };
+    }
+    return { missing: named.length ? "no such skill" : "no such pack" };
   }
   const carrying: PackRef[] = [];
   for (const pack of packs) if (await has(pack)) carrying.push(pack);
   if (carrying.length) return { found: { pack: carrying[0]!, id: wanted.id, others: carrying.slice(1) } };
   // The id with its pack in front, slash separated ("windows/execution/prefetch", 17 of 143 calls; the
-  // first microVM case run asked for "linux/accounts/users"): a leading segment that is a pack id of
-  // this run, or its words up to a dash ("linux" of linux-forensics, "computer-forensics" of
-  // computer-forensics-base), is taken off, and the rest is looked up in those packs only. Carried by
-  // exactly one of them, it is that note; otherwise there is none. A part of a word ("lin", "comp") is
-  // no pack's name: a misspelt id is not sent to some other pack's note.
+  // first microVM case run asked for "linux/accounts/users"; "base/evidence/ad1" after the index showed
+  // base/router): a leading segment that is a name the pack goes by (packGoesBy) is taken off, and the
+  // rest is looked up in those packs only. Carried by exactly one of them, it is that note; otherwise
+  // there is none. A misspelt id is not sent to some other pack's note.
   const cut = wanted.id.indexOf("/");
   if (cut >= 3) {
     const prefix = wanted.id.slice(0, cut);
     const rest = wanted.id.slice(cut + 1);
     const named: PackRef[] = [];
-    for (const pack of packs) if ((pack.id === prefix || pack.id.startsWith(`${prefix}-`)) && (await has(pack, rest))) named.push(pack);
+    for (const pack of packs) if ((await packGoesBy(pack, prefix)) && (await has(pack, rest))) named.push(pack);
     if (named.length === 1) return { found: { pack: named[0]!, id: rest, others: [], prefix } };
   }
   return { missing: "no such skill" };
@@ -1045,6 +1185,8 @@ export type SkillsDeps = {
   release?: string;
   /** True while a hand-off compaction is about to run (the seat saved its note): the prefix is rewritten anyway, so finished bodies leave with it. */
   compactionPending?: () => boolean;
+  /** `--skill-cards` as the kickoff passed it (`SWARM_SKILL_CARDS`): on, the default, or off. */
+  cards?: string;
 };
 
 export type SkillsHandle = {
@@ -1108,6 +1250,12 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
   let sectionText = "";
 
   const sectionOnce = async () => (section ??= packIndexes().then((all) => renderSkillsSection(all)));
+  const cardsMode = parseCardsMode(deps.cards);
+  let notesByTool: Promise<Map<string, Array<{ pack: PackRef; id: string; spread: number }>>> | null = null;
+  /** Notes whose card this context has shown: a compaction empties it. */
+  const cardsShown = new Set<string>();
+  /** Each note's card, by its key, once read: the hand-off header's cards are taken from here (it is written without a wait). */
+  const cardText = new Map<string, string>();
 
   // Pi runs the tool calls of one assistant message at the same time. Both of ours read
   // and write one ledger with awaits between, so they take turns, in the order the
@@ -1169,6 +1317,11 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
     const account = releaseMode === "off" ? "" : renderHandoffReads(ledger.compactionAccount());
     if (account) lines.push(account);
     else if (ids.length) lines.push(`Skill bodies a compaction took out of your context: ${ids.join(", ")}. Load again (skill(id)) the ones you still need.`);
+    // The cards of the notes the compaction took out, the last read first: what must not be lost with the bodies.
+    if (cardsMode === "on") {
+      const cards = ids.slice().reverse().map((k) => [k, cardText.get(k)] as const).filter((x): x is readonly [string, string] => Boolean(x[1])).slice(0, HANDOFF_CARDS_MAX);
+      if (cards.length) lines.push(`Cards of the notes you were working with (the whole note: skill(id)):\n${cards.map(([k, c]) => `- ${k}:\n${c.split("\n").map((l) => `  ${l}`).join("\n")}`).join("\n")}`);
+    }
     // A prompt the extension had to add the index to loses it with the run a hand-off starts: it comes back here.
     if (sectionText && (source === "extension" || source === "stale")) lines.push(`The index of this run's packs (your prompt no longer carries it):\n${sectionText}`);
     return lines.join("\n");
@@ -1197,6 +1350,8 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
     }
     // A compaction rebuilt the ledger from the session: what was waiting to be checked is settled by it.
     unverified = [];
+    // The cards it showed went with the context: the next call of a tool shows its note's card again.
+    cardsShown.clear();
     unreleasable.clear();
     watch = { after: "compaction", turn: deps.turns() };
     const stubbed = ledger.compactionAccount().released;
@@ -1262,6 +1417,7 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
     }
 
     const file = await readSkillFile(pack, id);
+    if (file) cardText.set(SkillLedger.key(pack.id, id), skillCard(file));
     if (!file) {
       await deps.trace(cwd, "skill", { id: wantedRaw }, { ok: false, error: "no such skill" }, Date.now() - started);
       return text(`No skill "${wantedRaw}" in this run's packs.`, { ok: false, error: "no such skill" });
@@ -1560,6 +1716,49 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
       return await releaseAtBoundary(event as unknown as BoundaryEvent, ctx as unknown as BoundaryCtx);
     } catch {
       // a release that cannot be made leaves the body where it is: nothing worse than before the unloader
+      return undefined;
+    }
+  });
+
+  pi.on("tool_result", async (event, ctx) => {
+    if (cardsMode === "off") return undefined;
+    const ev = event as unknown as { toolName?: string; input?: Record<string, unknown> };
+    const content = Array.isArray(event.content) ? event.content : [];
+    const tool = cardToolOf(ev.toolName ?? "", ev.input);
+    if (!tool) return undefined;
+    try {
+      const notes = (await (notesByTool ??= packIndexes().then((all) => toolNotes(all)))).get(tool);
+      if (!notes?.length) return undefined;
+      const refOf = (n: { pack: PackRef; id: string }) => (notes.filter((x) => x.id === n.id).length > 1 ? `${n.pack.id}:${n.id}` : n.id);
+      if (notes.length > CARD_TOOL_SPREAD) {
+        // A generic tool (regkv, evtx_query, pe_info): no one note is its method, so the notes that name it are listed, once a context, unless the seat holds one.
+        const listKey = `tool:${tool}`;
+        if (cardsShown.has(listKey) || notes.some((n) => ledger.get(SkillLedger.key(n.pack.id, n.id)))) return undefined;
+        cardsShown.add(listKey);
+        const shown = notes.slice(0, NOTES_LISTED_MAX).map(refOf);
+        const words = `Notes that name ${tool}: ${shown.join(", ")}${notes.length > shown.length ? ` and ${notes.length - shown.length} more` : ""}. Load the one for what you are reading: skill(id).`;
+        await deps.trace((ctx as unknown as { cwd: string }).cwd, "skill_card", { tool, ids: shown }, { ok: true, listed: notes.length, tokens: estimateTokens(words), turn: deps.turns() }).catch(() => undefined);
+        return { content: [...content, { type: "text" as const, text: words }] };
+      }
+      const pick = notes.find((n) => {
+        const key = SkillLedger.key(n.pack.id, n.id);
+        return !cardsShown.has(key) && !ledger.get(key);
+      });
+      if (!pick) return undefined;
+      const key = SkillLedger.key(pick.pack.id, pick.id);
+      cardsShown.add(key);
+      let card = cardText.get(key);
+      if (!card) {
+        const file = await readSkillFile(pick.pack, pick.id);
+        if (!file) return undefined;
+        card = skillCard(file);
+        cardText.set(key, card);
+      }
+      const ref = refOf(pick);
+      const words = `Skill card for ${tool}: \`${ref}\` (${pick.pack.id}). The whole note: skill('${ref}').\n${card}`;
+      await deps.trace((ctx as unknown as { cwd: string }).cwd, "skill_card", { tool, id: pick.id }, { ok: true, pack: pick.pack.id, tokens: estimateTokens(words), turn: deps.turns() }).catch(() => undefined);
+      return { content: [...content, { type: "text" as const, text: words }] };
+    } catch {
       return undefined;
     }
   });

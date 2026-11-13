@@ -196,7 +196,8 @@ while :; do
   fi
   sleep 2
   over && exit 0
-  node --experimental-strip-types --no-warnings "$HUB_SCRIPT" --resume "$HUB_DIR" >>"$SANDBOX/traces/vm-hub.log" 2>&1 </dev/null &
+  # A hub that runs out of heap leaves a snapshot in its own directory (operator-only), never in the run's.
+  node --experimental-strip-types --no-warnings --heapsnapshot-near-heap-limit=1 --diagnostic-dir="$HUB_DIR" "$HUB_SCRIPT" --resume "$HUB_DIR" >>"$SANDBOX/traces/vm-hub.log" 2>&1 </dev/null &
   PID=$!
   up_since=$SECONDS
   echo "$PID" > "$SANDBOX/hub.pid"

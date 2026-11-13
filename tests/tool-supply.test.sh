@@ -96,9 +96,9 @@ jq -e --arg h "$want" '.tool.source == "vendor source 1.0, sha256 abc" and .tool
 grep -q '"type":"material_added"' "$sb/store/journal.jsonl" || fail "no journal line"
 jq -e --arg h "$want" 'select(.kind == "external") | .source_class == "operator_supplied" and .provenance.tool.checked == [$h] and .provenance.tool.for == ["R-1", "L-1"] and .refs == ["import:mat-0001/finder"]' "$sb/ledger/entries.jsonl" >/dev/null || fail "the ledger: $(cat "$sb/ledger/entries.jsonl")"
 post="$(cat "$sb"/threads/main/*-system.md | grep 'TOOL SUPPLIED')" || fail "no board post"
-grep -q 'job_run with inputs \["import:mat-0001/finder"\]' <<<"$post" || fail "$post"
-grep -q 'Nothing in the store can be executed where it stands (sealed files have no execute bit)' <<<"$post" || fail "$post"
-grep -q 'executable temporary directory inside the job' <<<"$post" || fail "$post"
+grep -q 'job_run with programs \["import:mat-0001"\] (and inputs \["import:mat-0001/finder"\] when you declare them)' <<<"$post" || fail "$post"
+grep -q 'Nothing in the store or in a job.s $OUT can be executed where it stands (sealed files have no execute bit, $OUT is no-exec)' <<<"$post" || fail "$post"
+grep -q 'copies it into an executable directory in the worker' <<<"$post" || fail "$post"
 grep -q '"command":"tool-supply"' "$TMP/runs/operator-audit.jsonl" && grep -q '"command":"tool_supply_outcome"' "$TMP/runs/operator-audit.jsonl" || fail "the act is not on the operator's record"
 pass "a tool is sealed with its provenance, on the ledger, on the journal and on the board with the way to run it"
 

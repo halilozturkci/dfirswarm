@@ -2,6 +2,7 @@
 id: registry/clock
 title: Windows clocks
 when: Convert or compare a Windows time.
+core: 1
 needs: []
 tools: [mft_records, regkv]
 requires_host: [istat]

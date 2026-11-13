@@ -96,7 +96,7 @@ test("the store sweep: a hit outside the record's objects holds the negative, UT
   assert.deepEqual(codes(r, "question:2"), ["sweep_hits"]);
   const d = r.defects.find((x) => x.code === "sweep_hits")!;
   assert.match(d.what, /found what it looked for in objects the record does not name: "alice" in job:j000007\/export\.csv \(1 time, first at byte 21\); "bob-laptop" in job:j000008\/strings\.bin \(1 time, first at byte 16, utf-16le\)/);
-  assert.match(d.fix, new RegExp(`record the coverage again with supersedes=${cov.seq} naming each in refs, with what it showed: those entries in result_refs`));
+  assert.match(d.fix, new RegExp(`record the coverage again with supersedes=${cov.seq} naming each object \\(in refs, which hold 20, or in result_refs, which hold 200 and where an object named counts the same: put them there rather than drop one named before\\), with what it showed: those entries in result_refs`));
   assert.match(d.fix, /one entry per object \(a finding, an event or a limitation whose refs name the object itself\), or one absence whose refs list several/);
   assert.deepEqual(d.named_by, []);
   assert.equal(r.dispositions["question:2"], undefined);

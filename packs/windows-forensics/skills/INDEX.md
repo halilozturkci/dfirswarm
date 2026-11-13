@@ -4,6 +4,8 @@ Fetch a body with `skill("<id>")`. A body may name others; fetch those the same 
 
 Router: `windows/router`
 
+Core: `registry/clock`, `execution/prefetch`
+
 - `accounts/logons` Accounts, SIDs, groups: Account map; read a SID, RID or group.
 - `accounts/sessions` Account, session, person: Tie activity to an account or session.
 - `antiforensics/controls` Controls changed: Exclusion, disabled protection, deleted VM disk.

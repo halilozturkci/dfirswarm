@@ -81,6 +81,8 @@ test("an echo is not held: an output made from the run's registers, a summary th
   const summary = await kept(S, "a2", "20260930080100000-compact_summary-bbbb.text.log", "## Where I am\nsearching the disk for alice; nothing yet\n", { tool: "compact_failed", args: { stage: "summary", attempt: 1 } });
   // A search for the string over a named object the sweep finds it in: its matches say again what the named hit says.
   const grep = await kept(S, "a3", "20260930080200000-bash-cccc.out.log", "store/jobs/j000007/out/export.csv:09:58,alice\n", { tool: "bash", args: { command: "grep -Hi 'alice' store/jobs/j000007/out/export.csv" } });
+  // A page of the ledger the harness's own ledger tool kept (its arguments name no path): the registers' words again (the run sf4406b's loop).
+  const page = await kept(S, "a2", "20260930080300000-ledger-dddd.text.log", '{"seq":12,"kind":"absence","value":"alice was looked for"}\n', { tool: "ledger", args: { limit: 12 } });
   // The trace spilled under a seat's tool-output/ (a microVM seat that could not reach its collector): the trace itself.
   await writeFile(join(S, "tool-output", "a3", "trace-spill.jsonl"), `${JSON.stringify({ agent: "a3", tool: "bash", args: { command: "grep -ri alice inputs/" } })}\n`);
   const spill = "tool:a3/trace-spill.jsonl";
@@ -93,12 +95,13 @@ test("an echo is not held: an output made from the run's registers, a summary th
   assert.equal(sw.state, "clean", JSON.stringify(sw.hits));
   assert.deepEqual(sw.hits, []);
   assert.deepEqual(sw.named_hits.map((h) => h.ref), ["job:j000007/export.csv"]);
-  assert.deepEqual(sw.echoes!.map((h) => h.ref).sort(), [dump.ref, summary.ref, grep.ref, spill].sort());
+  assert.deepEqual(sw.echoes!.map((h) => h.ref).sort(), [dump.ref, summary.ref, grep.ref, spill, page.ref].sort());
   const why = (ref: string) => sw.echoes!.find((h) => h.ref === ref)!.origins!;
   assert.deepEqual(why(dump.ref), [{ name: dump.ref, by: `trace:${dump.line}`, why: "registers" }]);
   assert.deepEqual(why(summary.ref), [{ name: summary.ref, by: `trace:${summary.line}`, why: "harness" }]);
   assert.deepEqual(why(grep.ref), [{ name: grep.ref, by: `trace:${grep.line}`, why: "searched", reads: ["job:j000007/export.csv"] }]);
   assert.deepEqual(why(spill), [{ name: spill, by: "trace-spill", why: "registers" }]);
+  assert.deepEqual(why(page.ref), [{ name: page.ref, by: `trace:${page.line}`, why: "registers" }]);
   assert.equal(SW.verifySweepChain(await readFile(join(S, SW.LEDGER_SWEEPS), "utf8")).ok, true);
   // Said, where the record is read and where it is reviewed.
   const words = SW.sweepWords(sw, cov);
@@ -120,7 +123,7 @@ test("an echo is not held: an output made from the run's registers, a summary th
   assert.deepEqual(codes(r, "question:2"), [], r.lines.join("\n"));
   assert.equal(r.dispositions["question:2"], "bounded_negative");
   const m = await measureRun(S);
-  assert.deepEqual([m.sweeps.with_hits, m.sweeps.hit_objects, m.sweeps.echoes], [0, 0, 4]);
+  assert.deepEqual([m.sweeps.with_hits, m.sweeps.hit_objects, m.sweeps.echoes], [0, 0, 5]);
 });
 
 test("a hit still holds when what made it read evidence the record does not name, an input (which the sweep never reads), a path it cannot tell or none, or when no attributed line on the chain kept it", async () => {
@@ -231,6 +234,12 @@ test("the run paths a maker's words name, and the harness's own events that keep
   assert.deepEqual(at("grep -i alice inputs/logs/b.log ./ledger/entries.jsonl"), ["inputs/logs/b.log", "ledger/entries.jsonl"]);
   assert.deepEqual(at(`python3 -c "open('${root}/store/jobs/j1/out/x.csv')"`), ["store/jobs/j1/out/x.csv"], "the run's absolute path is the run");
   assert.deepEqual(at("cat $PWD/SWARM.md"), ["SWARM.md"]);
+  // cd to the run's root, with no slash after it, names nothing: what follows is read from there (the run sf4406b's seats).
+  assert.deepEqual(at(`cd ${root} && grep -n Nj1ypLD8 ledger/ledger.md`), ["ledger/ledger.md"]);
+  assert.deepEqual(at(`cd "${root}"; sed -n 1,40p ledger/ledger.md`), ["ledger/ledger.md"]);
+  assert.deepEqual(at(`pushd ${root}/ >/dev/null && cat SWARM.md`), ["SWARM.md"]);
+  assert.deepEqual(at(`grep -r Nj1ypLD8 ${root}`), [root], "a bare root anywhere else is still the root: read as unnamed evidence");
+  assert.deepEqual(at(`cd ${root}x && cat SWARM.md`), [`${root}x`, "SWARM.md"], "another directory whose name begins with the root's is not the root");
   assert.deepEqual(at("for f in a b; do echo $f; done"), [], "a word the layout shares, unquoted and bare, is a word");
   assert.deepEqual(at("os.walk('inputs')"), ["inputs/"], "a directory's name quoted whole is the directory");
   assert.deepEqual(at("grep -r alice ."), ["."], "the root: read as unnamed evidence");
@@ -242,6 +251,11 @@ test("the run paths a maker's words name, and the harness's own events that keep
   // The self-compaction's events are the harness's keepers of a seat's own words, all of them and nothing else.
   assert.deepEqual([...SW.HARNESS_KEEPERS].sort(), [...SELF_COMPACT_EVENTS].sort());
   for (const e of SW.HARNESS_KEEPERS) assert.ok(P.TOOL_RESERVED_NAMES.has(e), `${e} is a reserved name: no seat's tool can take it`);
+  // The harness's tools that read the registers alone: none can be a seat's forged tool, and none keeps the self-compaction's words.
+  for (const t of SW.REGISTER_READERS) {
+    assert.ok(P.TOOL_RESERVED_NAMES.has(t), `${t} is a reserved name: no seat's tool can take it`);
+    assert.ok(!SW.HARNESS_KEEPERS.has(t));
+  }
 });
 
 test("replay --resweep reads a recorded sweep again: the hit an older harness held on a kept output whose sealed import the record names moves to the named hits, on a synthetic line in the copy, the run untouched; without it, the checkout's answers check reads the line again, recorded under older rules", async () => {
@@ -284,4 +298,55 @@ test("replay --resweep reads a recorded sweep again: the hit an older harness he
   assert.equal(again.evaluations[0]!.projection!.store_sweeps?.reread, 0, "the synthetic line is under this checkout's rules: the answers check leaves it alone");
   assert.equal(again.unchanged, true);
   assert.equal(await readFile(join(S, SW.LEDGER_SWEEPS), "utf8"), before, "the run's own sweeps are untouched");
+});
+
+/** A committed job whose outputs are `files` (name to body), made as `spec` says. */
+async function jobFiles(S: string, id: string, files: Record<string, string>, spec: Record<string, unknown>): Promise<void> {
+  const staging = join(S, "..", `staging-${id}-${Math.random().toString(16).slice(2)}`);
+  await mkdir(staging, { recursive: true });
+  for (const [f, body] of Object.entries(files)) await writeFile(join(staging, f), body);
+  await sealTree(S, staging, join(storePaths(S).jobs, id, "out"), id, 1);
+  await writeFile(join(storePaths(S).jobs, id, "job.json"), JSON.stringify({ id, state: "committed", requester: { agent: "a0" }, status: "ok", exit: 0, spec }));
+}
+
+test("a job that read a whole job read what is accounted for when the record names every object under it that holds the string (the run sf4406b's j000468); one object under it holding the string unnamed, and its hit stands", async () => {
+  const { S, a0 } = await run();
+  const disk = { kind: "command", scope: "declared", inputs: ["input:disk.E01"], network: "off", command: "export" };
+  await jobFiles(S, "j000104", { "a.txt": "09:58 alice\n", "b.txt": "nothing here\n" }, disk);
+  await jobFiles(S, "j000105", { "a.txt": "09:58 alice, second export\n", "c.txt": "10:02 alice again\n" }, disk);
+  const grep = (inputs: string[]) => ({ kind: "command", scope: "declared", inputs, network: "off", command: "grep -rh 09:58 \"$IN\" > \"$OUT/hits.txt\"" });
+  await jobFiles(S, "j000468", { "hits.txt": "a.txt:09:58 alice\n" }, grep(["job:j000104"]));
+  await jobFiles(S, "j000469", { "hits.txt": "a.txt:09:58 alice (j000105)\n" }, grep(["job:j000105"]));
+  await planned(a0, "2");
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const cov = ok(await rec(a0, coverage("2", ["input:disk.E01", "job:j000104/a.txt", "job:j000105/a.txt"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
+  await SW.awaitSweeps(S);
+  const sw = SW.sweepOf(cov, await SW.readSweeps(S))!;
+  const said = sw.named_hits.find((h) => h.ref === "job:j000468/hits.txt");
+  assert.deepEqual(said?.origins, [{ name: "job:j000468/hits.txt", by: "job:j000468", why: "named_sources", reads: ["job:j000104"] }], "every object under job:j000104 holding the string is named: said among the named hits");
+  assert.deepEqual(sw.hits.map((h) => h.ref).sort(), ["job:j000105/c.txt", "job:j000469/hits.txt"], "c.txt holds it unnamed: what read the whole of j000105 holds, and so does c.txt");
+  assert.equal(SW.SWEEP_RULES, 3);
+});
+
+test("a sweep hit examined in place: an entry for the question naming the hit object, written after the sweep, clears it once another seat attests it, with no new coverage record; unattested, or attested by its author, it holds", async () => {
+  const { S, a0, a1, a2 } = await run();
+  await jobFiles(S, "j000201", { "hits.txt": "b.log: alice logged on\n" }, { kind: "command", scope: "declared", inputs: ["input:logs/b.log"], network: "off", command: "grep -H alice" });
+  await planned(a0, "2");
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const cov = ok(await rec(a0, coverage("2", ["input:disk.E01"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
+  ok(await rec(a1, { kind: "answer", section: "question:2", value: "No evidence of a remote tool was found on the disk", reasoning: `E-${cov.seq}`, ...A, result: "bounded_negative" }));
+  await SW.awaitSweeps(S);
+  assert.deepEqual(SW.sweepOf(cov, await SW.readSweeps(S))!.hits.map((h) => h.ref), ["job:j000201/hits.txt"]);
+  await attested(a2, { seq: cov.seq, how: "ran the search again", review: REVIEW });
+  assert.deepEqual(codes(await checkLedgerAnswers(S, ["2"], ["2"]), "question:2"), ["sweep_hits"]);
+  // What the object showed, for the question: alice's logon is not a remote tool.
+  const f = ok(await rec(a0, { kind: "finding", ...F, value: "b.log's alice line is an interactive logon, no remote tool", source: "b.log", evidence: "line 1", refs: ["job:j000201/hits.txt"], answers: ["2"] })).entry;
+  let r = await checkLedgerAnswers(S, ["2"], ["2"]);
+  assert.deepEqual(codes(r, "question:2"), ["sweep_hits"], "unattested, the hit holds");
+  assert.match(r.defects.find((d) => d.code === "sweep_hits")!.fix, /Another seat's attest on that entry clears the hit where it stands/);
+  await attested(a2, { seq: f.seq, how: "read line 1 of the hit file" });
+  r = await checkLedgerAnswers(S, ["2"], ["2"]);
+  assert.deepEqual(codes(r, "question:2"), [], "attested by another seat, the hit is examined in place");
+  const entries = (await P.readLedger(S)) as P.LedgerEntry[];
+  assert.equal(entries.filter((e) => e.kind === "coverage").length, 1, "no new coverage record");
 });

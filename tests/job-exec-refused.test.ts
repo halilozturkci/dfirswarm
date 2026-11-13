@@ -75,6 +75,17 @@ test("what counts: the shell's status 126 with its own line, the loader's refusa
   assert.equal(execRefusedIn("bash: tool: command not found", { ...at, exit: 127 }), null);
 });
 
+test("at exit 0, only the shell's own line for an existing file in the job's $OUT is read: a script that went on after a copied program could not run (the run sf4406b's j000279)", () => {
+  const noexec = [{ guest: OUT, host: "/host/staging/j000090" }];
+  const there = (p: string) => p === "/host/staging/j000090/mat-0002/bin/zbarimg";
+  const line = `/job/command.sh: line 58: ${OUT}/mat-0002/bin/zbarimg: Permission denied`;
+  assert.deepEqual(execRefusedIn(line, { cwd: RUN, exit: 0, noexec, isFile: there }), { error: "Permission denied", path: `${OUT}/mat-0002/bin/zbarimg` });
+  assert.equal(execRefusedIn(line, { cwd: RUN, exit: 0, noexec, isFile: () => false }), null, "a file that is not there: a refused write or a missing one, not read here");
+  assert.equal(execRefusedIn(line, { cwd: RUN, exit: 0, isFile: there }), null, "no no-exec place given: not read");
+  assert.equal(execRefusedIn(`/job/command.sh: line 3: /tmp/x/prog: Permission denied`, { cwd: RUN, exit: 0, noexec, isFile: () => true }), null, "a file outside $OUT: not read at exit 0");
+  assert.equal(execRefusedIn(`cp: cannot open '${OUT}/mat-0002/bin/zbarimg': Permission denied`, { cwd: RUN, exit: 0, noexec, isFile: there }), null, "another program's words: not read");
+});
+
 test("where a program stands decides what the reply says: a supplied import, evidence (an evidence import too), anywhere else", () => {
   assert.equal(placeOf(`${RUN}/store/imports/mat-0002/out/prog`, RUN), "supplied");
   for (const p of [`${RUN}/inputs/dropper`, `${RUN}/inputs/set/x`, `${RUN}/work/extracted/a1/x`, `${RUN}/work/quarantine/a1/x`, `${RUN}/store/imports/ev-0001/out/x`]) assert.equal(placeOf(p, RUN), "evidence", p);
@@ -124,7 +135,7 @@ test("the words: a supplied program is run from a copy; evidence is read and nev
   // Supplied.
   const supplied = execRefusedWords(base, o);
   assert.match(supplied, /^a program it ran could not be executed \("Permission denied" on \/runs\/s3472f0\/store\/imports\/mat-0002\/out\/prog, store\/jobs\/j000090\/stdout\.log line 3; 3 such lines in 2 files\)\./);
-  assert.match(supplied, /Nothing a worker holds in store\/ can be executed where it stands: sealed files have no execute bit\. This is a program the operator supplied, so copy the program, and every library it loads, into an executable temporary directory inside the job \(for example one made with mktemp -d under \/tmp\), make it executable there and run it from that copy; what it writes that you want kept goes to \$OUT \(\/runs\/s3472f0\/\.jobs\/j000090\)$/);
+  assert.match(supplied, /Nothing a worker holds in store\/ can be executed where it stands: sealed files have no execute bit\. This is a program the operator supplied: name it in the job's programs \(programs: \["import:mat-<n>"\]\), which copies it into an executable directory with its bin\/ on PATH and its lib\/ on LD_LIBRARY_PATH; or copy the program, and every library it loads, into an executable temporary directory inside the job \(for example one made with mktemp -d under \/tmp\), make it executable there and run it from that copy; what it writes that you want kept goes to \$OUT \(\/runs\/s3472f0\/\.jobs\/j000090\)$/);
   // Evidence: no recipe, the operator's tool-supply or a reimplementation.
   for (const p of [`${RUN}/inputs/dropper`, `${RUN}/work/extracted/a1/x/dropper`, `${RUN}/work/quarantine/a1/x`, `${RUN}/store/imports/ev-0001/out/e`]) {
     const w = execRefusedWords({ ...base, path: p, file: "out/p1/run.stderr", lines: 1, files: 1 }, o);
@@ -198,6 +209,19 @@ test("through the service: a job that could not execute a program has it in its 
   assert.match(denied.exec_refused?.path ?? "", /\/prog$/);
   assert.equal(denied.exec_refused?.error, "Permission denied");
   assert.equal(denied.program_missing, undefined);
+  // The same program run by a script that goes on and ends 0: the job is ok, and its reason and its requester's post say what did not run.
+  const swallowed = await run(`printf '#!/bin/sh\necho hi\n' > "$OUT/prog"; "$OUT/prog"; "$OUT/prog"; echo went on`);
+  assert.equal(swallowed.status, "ok");
+  assert.equal(swallowed.exit, 0);
+  assert.match(swallowed.reason ?? "", /^exit 0, but a program it ran could not be executed \("Permission denied" on \S+\/prog, store\/jobs\/\S+\/stderr\.log line 1; 2 such lines in that file\)/);
+  assert.equal(swallowed.exec_refused?.error, "Permission denied");
+  assert.match(describe(swallowed), /\) done \(exit 0, but a program it ran could not be executed/);
+  assert.ok(journal().some((l) => l.type === "job_exec_refused" && l.job === swallowed.id && l.exit === 0));
+  // A script that ends 0 with no such line has no reason.
+  const fine = await run(`echo fine`);
+  assert.equal(fine.status, "ok");
+  assert.equal(fine.reason, undefined);
+  assert.equal(fine.exec_refused, undefined);
   assert.equal(denied.write_refused, undefined);
   assert.ok(journal().some((l) => l.type === "job_exec_refused" && l.job === denied.id && l.exit === 126 && l.path === denied.exec_refused?.path));
   assert.ok(journal().some((l) => l.type === "job_finished" && l.job === denied.id && l.reason === denied.reason), "the journal's job_finished carries the reason whole");
@@ -206,7 +230,7 @@ test("through the service: a job that could not execute a program has it in its 
   // A supplied program in the store, run in place: the recipe.
   const supplied = await run("store/imports/mat-0001/out/prog");
   assert.equal(supplied.exit, 126);
-  assert.match(supplied.reason ?? "", new RegExp(`^exit 126: a program it ran could not be executed \\("Permission denied" on ${S_RE}/store/imports/mat-0001/out/prog, store/jobs/${supplied.id}/stderr\\.log line 1\\)\\. Nothing a worker holds in store/ can be executed where it stands: sealed files have no execute bit\\. This is a program the operator supplied, so copy the program, and every library it loads, into an executable temporary directory`));
+  assert.match(supplied.reason ?? "", new RegExp(`^exit 126: a program it ran could not be executed \\("Permission denied" on ${S_RE}/store/imports/mat-0001/out/prog, store/jobs/${supplied.id}/stderr\\.log line 1\\)\\. Nothing a worker holds in store/ can be executed where it stands: sealed files have no execute bit\\. This is a program the operator supplied: name it in the job's programs \\(programs: \\["import:mat-<n>"\\]\\), which copies it into an executable directory with its bin/ on PATH and its lib/ on LD_LIBRARY_PATH; or copy the program, and every library it loads, into an executable temporary directory`));
   assert.equal(supplied.write_refused, undefined);
   // Evidence run in place: no recipe, the operator's tool-supply.
   for (const [cmd, path] of [["inputs/dropper", "inputs/dropper"], ["work/extracted/a1/x", "work/extracted/a1/x"], ["store/imports/ev-0001/out/e", "store/imports/ev-0001/out/e"]] as const) {

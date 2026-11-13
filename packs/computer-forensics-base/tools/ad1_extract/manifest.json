@@ -13,7 +13,7 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "A new or empty directory for the tree. Default: in a job $OUT/<image name less .ad1> (in a job it must be inside $OUT); called directly, work/<your id>/ad1/<image name less .ad1>"
+      "description": "A new or empty directory for the tree. Default: in a job $OUT/<image name less .ad1> (in a job it must be inside $OUT, and a relative one is taken under $OUT, said in adjusted); called directly, work/<your id>/ad1/<image name less .ad1>"
     },
     "max_items": {
       "type": "integer",
@@ -25,7 +25,7 @@
     },
     "max_bytes": {
       "type": "integer",
-      "description": "Most bytes written in this call (default 256 GiB); past it the call stops, keeping the file it was in as a .partial"
+      "description": "Most bytes written in this call (default 256 GiB; in a job held to the room free where $OUT is, less 64 MiB, said in adjusted); past it the call stops, keeping the file it was in as a .partial"
     },
     "max_ratio": {
       "type": "integer",
@@ -33,7 +33,7 @@
     },
     "max_seconds": {
       "type": "integer",
-      "description": "Wall-clock budget in seconds (default 1500, at most 1700); past it the call stops, keeping the file it was in as a .partial"
+      "description": "Wall-clock budget in seconds (default 1500, at most 1700: more is held to 1700, said in adjusted); past it the call stops, keeping the file it was in as a .partial"
     }
   },
   "runtime": "python3",
@@ -54,5 +54,5 @@
   "by": "maintainer",
   "at": "2026-10-01T12:00:00.000Z",
   "version": 15,
-  "sha256": "5ddfa4d53063a32472831173cd5c6821b09df3891b4d629abd4200716e39b648"
+  "sha256": "a62cd1e98bb277f1a975cc8767708ea217ffe71d1ccf5fbf82e5bd8ffba5010b"
 }

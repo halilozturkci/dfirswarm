@@ -92,6 +92,27 @@ test("a pack over its budget shows its router only; a pack within it is shown wh
   assert.ok(report.shown_tokens < report.index_tokens);
 });
 
+test("collapsed, a pack shows beside its router the notes its index names as core, one pack's at a time, as the run's budget allows", () => {
+  assert.deepEqual(parseIndex("Router: `a/router`\nCore: `a/two`, `a/one`, `a/router`, `a/none`\n\n- `a/router` R: r.\n- `a/one` One: o.\n- `a/two` Two: t.").core, ["a/two", "a/one"], "the core it lists, in its order, without the router or an id it does not list");
+  const mk = (id: string) => ({ ...fakePack(id, [[`${id}/router`, "Router: go."], [`${id}/one`, "One: " + "o".repeat(60)], [`${id}/two`, "Two: " + "t".repeat(60)], [`${id}/leaf`, "Leaf: " + "z".repeat(200)]], `${id}/router`), core: [`${id}/two`, `${id}/one`] });
+  const packs = [mk("p1"), mk("p2"), { ...fakePack("p3", [["p3/router", "Router: go."], ["p3/leaf", "Leaf: " + "z".repeat(300)]], "p3/router") }];
+  const router = packs[0]!.entries[0]!.tokens;
+  const one = packs[0]!.entries[1]!.tokens;
+  // Room for the three routers and three core notes: p1 and p2 get their first core note, then p1 its second.
+  const run = 3 * router + 3 * one;
+  const { text, report } = renderSkillsSection(packs, { entry: 1000, pack: 10_000, run });
+  assert.equal(report.mode, "routers");
+  assert.deepEqual(report.packs.map((p) => [p.id, p.shown, p.core_shown ?? []]), [["p1", "router", ["p1/two", "p1/one"]], ["p2", "router", ["p2/two"]], ["p3", "router", []]]);
+  assert.match(text, /p1 1\.0\.0 \(4 skills, router and 2 core notes\)\n- `p1\/router` Router: go\.\n- `p1\/one`/);
+  assert.match(text, /p2 1\.0\.0 \(4 skills, router and 1 core note\)/);
+  assert.match(text, /p3 1\.0\.0 \(2 skills, router only\)/);
+  assert.ok(!text.includes("p1/leaf") && !text.includes("p2/one"), "what does not fit stays out");
+  assert.ok(report.shown_tokens <= run, `${report.shown_tokens} > ${run}`);
+  // A pack held to its own budget gets no core note past it.
+  const held = renderSkillsSection([mk("p1")], { entry: 1000, pack: router + one - 1, run: 10_000 });
+  assert.deepEqual(held.report.packs[0]!.core_shown, undefined);
+});
+
 test("a run over its budget shows every pack's router only", () => {
   const mk = (id: string) => fakePack(id, [[`${id}/router`, "Router: go."], [`${id}/leaf`, "Leaf: " + "z".repeat(120)]], `${id}/router`);
   const packs = [mk("p1"), mk("p2"), mk("p3")];
@@ -390,8 +411,10 @@ test("pack:id names one pack's copy; a bare id two packs carry is served by the 
       // A pack-qualified id for a skill the pack does not have, and a pack the run does not carry.
       const wrongPack = await seat.skill("pack-b:evidence/one");
       assert.match(wrongPack.text, /No skill "pack-b:evidence\/one"/);
-      const noPack = await seat.skill("nope:evidence/one");
+      const noPack = await seat.skill("nope:evidence/none");
       assert.match(noPack.text, /No pack "nope" in this run \(it carries: pack-a, pack-b\)/);
+      // A name no pack goes by, in front of an id one pack carries: that pack's note, and the id to use from then on.
+      assert.match((await seat.skill("nope:evidence/one")).text, /Asked as `nope:evidence\/one`: its id is `evidence\/one` \(pack pack-a\)/);
     });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -668,6 +691,78 @@ test("the hand-off header lists the skill bodies the seat held before its contex
   assert.match(withSkills, /Skill bodies a compaction took out of your context: pack-a:evidence\/one, pack-b:shared\/dup\./);
 });
 
+test("a note's card comes with a call to one of its tools, for a seat that does not hold the note: once a context, again after a compaction, none for a generic tool, and the hand-off header carries the cards of the notes it took out", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skills-packs-"));
+  try {
+    const AD1 = "Use when evidence is an AD1 image. Not for a disk image.\n\nLong prose about the format that the card leaves out.\n\n    job_run tool=ad1_extract args={\"image\": \"inputs/case.ad1\"} inputs=[\"input:case.ad1\"]\n\nDeclare every segment.\n\n**Does not show.** That the source held nothing else.";
+    const base = await writePack(root, "computer-forensics-base", "1.0.0", {
+      "evidence/ad1": { title: "An AD1 image is a collection", when: "An AD1.", tools: ["ad1_extract", "catalog_search"], body: AD1 },
+      "evidence/e01": { title: "EWF", when: "An E01.", tools: ["catalog_search", "ewf_verify"], card: "Verify the set first with ewf_verify; a hash mismatch is said before anything rests on the image.", body: "Long E01 body." },
+      "data/a": { title: "A", when: "a.", tools: ["catalog_search"], body: "a" },
+      "data/b": { title: "B", when: "b.", tools: ["catalog_search"], body: "b" },
+    });
+    const { registerSkills, skillCard, cardToolOf } = await import("../extensions/skills.ts");
+    // The card a note's body gives: when to use it, its first example call, what it does not show; the prose between is left out.
+    const auto = skillCard({ title: "An AD1 image is a collection", body: AD1, card: null });
+    assert.equal(auto, 'An AD1 image is a collection.\nUse when evidence is an AD1 image. Not for a disk image.\n    job_run tool=ad1_extract args={"image": "inputs/case.ad1"} inputs=["input:case.ad1"]\n**Does not show.** That the source held nothing else.');
+    assert.equal(skillCard({ title: "t", body: "b", card: "Its own words." }), "Its own words.");
+    assert.ok(skillCard({ title: "", body: "", card: "x. ".repeat(400) }).length <= 702);
+    assert.equal(cardToolOf("job_run", { tool: "ad1_extract" }), "ad1_extract");
+    assert.equal(cardToolOf("job_run", { command: "ls" }), null);
+    assert.equal(cardToolOf("skill", { id: "x" }), null);
+    assert.equal(cardToolOf("ewf_verify", {}), "ewf_verify");
+
+    const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => Promise<unknown>>>();
+    const tools = new Map<string, { execute: (...a: unknown[]) => Promise<{ content: Array<{ text: string }> }> }>();
+    const fake = {
+      on: (event: string, h: (event: unknown, ctx: unknown) => Promise<unknown>) => handlers.set(event, [...(handlers.get(event) ?? []), h]),
+      registerTool: (def: { name: string; execute: (...a: unknown[]) => Promise<{ content: Array<{ text: string }> }> }) => tools.set(def.name, def),
+    };
+    const sandbox = await mkdtemp(join(tmpdir(), "skills-fake-"));
+    await initSandbox(sandbox, { reset: true });
+    const rows: Array<{ tool: string; args: Record<string, unknown>; result: Record<string, unknown> }> = [];
+    const handle = registerSkills(fake as never, { packDirs: [base], agentId: () => "agent00", trace: async (_c, tool, args, result) => void rows.push({ tool, args, result: result as Record<string, unknown> }), turns: () => 0, fault: async () => undefined });
+    const ctx = { cwd: sandbox, sessionManager: { buildContextEntries: () => [], getBranch: () => [] } };
+    const result = async (toolName: string, input: Record<string, unknown>) => {
+      const [h] = handlers.get("tool_result") ?? [];
+      const out = (await h!({ type: "tool_result", toolName, input, content: [{ type: "text", text: "Job j000001 done" }] }, ctx)) as { content?: Array<{ text: string }> } | undefined;
+      return out?.content?.map((c) => c.text).join("\n") ?? null;
+    };
+    const first = await result("job_run", { tool: "ad1_extract", args: {} });
+    assert.ok(first?.startsWith("Job j000001 done\nSkill card for ad1_extract: `evidence/ad1` (computer-forensics-base). The whole note: skill('evidence/ad1')."), String(first));
+    assert.ok(first?.includes("Declare every segment") === false && first.includes("**Does not show.**"));
+    assert.deepEqual(rows.at(-1)?.tool, "skill_card");
+    assert.deepEqual(rows.at(-1)?.args, { tool: "ad1_extract", id: "evidence/ad1" });
+    assert.equal(await result("job_run", { tool: "ad1_extract" }), null, "once a context");
+    assert.equal(await result("catalog_search", { query: "x" }), "Job j000001 done\nNotes that name catalog_search: data/a, data/b, evidence/ad1, evidence/e01. Load the one for what you are reading: skill(id).", "a tool four notes name is a generic one: the notes are listed, the most specific first");
+    assert.equal(await result("catalog_search", { query: "y" }), null, "once a context");
+    assert.match((await result("ewf_verify", {}))!, /Skill card for ewf_verify: `evidence\/e01` .*\nVerify the set first with ewf_verify/, "a note's own card: line");
+    // A note the seat holds shows no card; a compaction that takes it out shows it again, and the hand-off header carries it.
+    for (const h of handlers.get("session_compact") ?? []) await h({ type: "session_compact" }, ctx);
+    await tools.get("skill")!.execute("c1", { id: "evidence/ad1" }, undefined, undefined, { cwd: sandbox });
+    assert.equal(await result("job_run", { tool: "ad1_extract" }), null, "the seat holds the note");
+    for (const h of handlers.get("session_compact") ?? []) await h({ type: "session_compact" }, ctx);
+    assert.match(handle.handoffLine(), /Cards of the notes you were working with \(the whole note: skill\(id\)\):\n- computer-forensics-base:evidence\/ad1:\n  An AD1 image is a collection\.\n  Use when evidence/);
+    assert.match((await result("job_run", { tool: "ad1_extract" }))!, /Skill card for ad1_extract/, "the compaction took the note out: the card comes again");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("--skill-cards off: no card with any call", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skills-packs-"));
+  try {
+    const pack = await writePack(root, "p", "1.0.0", { "evidence/ad1": { title: "AD1", when: "x.", tools: ["ad1_extract"], body: "Use when x." } });
+    const { registerSkills } = await import("../extensions/skills.ts");
+    const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => Promise<unknown>>>();
+    registerSkills({ on: (e: string, h: (event: unknown, ctx: unknown) => Promise<unknown>) => handlers.set(e, [...(handlers.get(e) ?? []), h]), registerTool: () => undefined } as never, { packDirs: [pack], agentId: () => "a", trace: async () => undefined, turns: () => 0, fault: async () => undefined, cards: "off" });
+    const [h] = handlers.get("tool_result") ?? [];
+    assert.equal(await h!({ type: "tool_result", toolName: "job_run", input: { tool: "ad1_extract" }, content: [] }, { cwd: root }), undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the seat's hand-off line names what a compaction took, until the seat loads it again", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "skills-packs-"));
   try {
@@ -839,6 +934,24 @@ test("the ids a seat guesses under a pack's name are not answered with a note ab
     });
     await withSeat(t, [lin, lin2], async (seat) => {
       assert.match((await seat.skill("linux/accounts/users")).text, /^No skill "linux\/accounts\/users"/, "two packs the prefix names carry it: none is chosen");
+      assert.match((await seat.skill("linux:accounts/users")).text, /^No skill "linux:accounts\/users"/, "nor with a colon");
+    });
+    // The short names a pack goes by, as the Batman III runs wrote them (24 of 25 failed loads): a whole word of its id, or the namespace its
+    // router sits in (base/router is what an index over budget shows), with a slash or a colon in front of the id.
+    const base = await writePack(root, "computer-forensics-base", "1.0.0", { "base/router": { title: "Router", when: "None listed.", body: "r" }, "evidence/ad1": { title: "AD1", when: "An AD1 image.", body: "a" }, "data/documents-media": { title: "Documents", when: "Office files.", body: "d" } });
+    await withSeat(t, [win, base], async (seat) => {
+      const slash = await seat.skill("base/evidence/ad1");
+      assert.match(slash.text, /^Skill `evidence\/ad1` \(pack computer-forensics-base 1\.0\.0/);
+      assert.match(slash.text, /Asked as `base\/evidence\/ad1`: its id is `evidence\/ad1` \(pack computer-forensics-base\)/);
+      const colon = await seat.skill("base:data/documents-media");
+      assert.match(colon.text, /^Skill `data\/documents-media` \(pack computer-forensics-base/);
+      assert.match(colon.text, /Asked as `base:data\/documents-media`/);
+      assert.match((await seat.skill("windows:execution/prefetch")).text, /^Skill `execution\/prefetch` \(pack windows-forensics/);
+      // A short name that is no pack's, in front of an id one pack carries: that pack's note.
+      assert.match((await seat.skill("win:memory/windows")).text, /^Skill `memory\/windows` \(pack windows-forensics/);
+      // A short name whose pack does not carry the id, nor any other: no note, and the nearest ids.
+      assert.match((await seat.skill("base:evidence/e01")).text, /^No skill "base:evidence\/e01"|^No pack "base"/);
+      assert.match((await seat.skill("nosuch:evidence/e01")).text, /^No pack "nosuch"/);
     });
   } finally {
     await rm(root, { recursive: true, force: true });

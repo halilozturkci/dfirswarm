@@ -2514,6 +2514,7 @@ def version_of(exe, out_dir, seconds=VERSION_SECONDS):
     try:
         for kind in ("out", "err"):
             fd, name = tempfile.mkstemp(prefix=".version-", suffix="." + kind, dir=out_dir)
+            RECEIPT_TMP.append(name)     # a stop signal ends with os._exit, past this finally: its last word removes what is listed there
             os.close(fd)
             paths.append(name)
         rc, timed = run_to_files([exe, "--version"], paths[0], paths[1], seconds)
@@ -2530,6 +2531,8 @@ def version_of(exe, out_dir, seconds=VERSION_SECONDS):
                 os.unlink(name)
             except OSError:
                 pass
+            if name in RECEIPT_TMP:
+                RECEIPT_TMP.remove(name)
 
 
 def shown_text(text, keep):
@@ -2750,7 +2753,7 @@ def make_out_dir(out_dir):
     return None
 
 
-RECEIPT_TMP = []                    # temporary files of a receipt being written: a stop signal removes them before it writes the last receipt
+RECEIPT_TMP = []                    # temporary files of a receipt being written (and of version_of): a stop signal removes them before it writes the last receipt
 
 
 def write_receipt(out_dir, name, text):

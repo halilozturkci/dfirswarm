@@ -14,7 +14,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, symlinkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -296,10 +296,32 @@ test("in a job ad1_extract writes under $OUT, and a file whose content breaks is
   const row = tsv(join(out, "bad", "ad1_extract.tsv")).find((x) => x.n === "8")!;
   assert.deepEqual([row.written, row.check, row.note], ["C:/Users/alice/bomb.bin.partial", "not-read", "partial: 0 of 10000 bytes kept"]);
   assert.deepEqual(readFileSync(join(out, "bad", "C:", "Users", "alice", "notes.txt")), notes, "the rest is whole");
-  // In a job only $OUT is written: a place under work/ is refused before anything is read.
-  const elsewhere = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: "work/s1/x" }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
+  // In a job only $OUT is written: an absolute place outside it is refused before anything is read.
+  const elsewhere = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: join(cwd, "work", "s1", "x") }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
   assert.equal(elsewhere.code, 1);
   assert.match(JSON.parse(elsewhere.stdout).error, /in a job out_dir must be inside \$OUT/);
+  // A relative one is taken under $OUT, and a budget over the ceiling is held to it, each said (the run s571aaa's seats were refused both).
+  writeFileSync(join(cwd, "inputs", "ok.ad1"), ad1Image(tree()));
+  const relative = await runPy(TOOL, cwd, { image: "inputs/ok.ad1", out_dir: "tree", max_seconds: 3000 }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
+  assert.equal(relative.code, 0, relative.stdout);
+  const rel = JSON.parse(relative.stdout);
+  assert.equal(rel.out_dir, join(out, "tree"));
+  assert.ok(existsSync(join(out, "tree", "ad1_extract.tsv")));
+  assert.equal(rel.budgets.max_seconds, 1700);
+  assert.ok(rel.adjusted.includes("max_seconds 3000 is over this tool's ceiling of 1700: held to 1700"), rel.adjusted);
+  assert.ok(rel.adjusted.some((x: string) => x.startsWith("out_dir 'tree' is relative: in a job it is taken under $OUT")), rel.adjusted);
+  // The bytes written are held to the room where $OUT is, less a margin, and said.
+  const fs = statfsSync(out);
+  const free = Number(fs.bavail) * Number(fs.bsize);
+  const big = await runPy(TOOL, cwd, { image: "inputs/ok.ad1", out_dir: "tree2", max_bytes: 1024 ** 4 }, undefined, { AGENT_ID: "s1", JOB_ID: "j000007", OUT: out });
+  const bigRes = JSON.parse(big.stdout);
+  if (free < 1024 ** 4) {
+    assert.ok(bigRes.budgets.max_bytes < free && bigRes.budgets.max_bytes > free - 2 * 64 * 1024 ** 2, JSON.stringify(bigRes.budgets));
+    assert.ok(bigRes.adjusted.some((x: string) => /^max_bytes 1099511627776 is more than the \d+ bytes free where \$OUT is, less a margin of 67108864: held to \d+, so the call stops by its budget/.test(x)), bigRes.adjusted);
+  }
+  // Called directly nothing is adjusted: a relative out_dir is under the run directory.
+  const direct = await runPy(TOOL, cwd, { image: "inputs/ok.ad1", out_dir: "work/s1/direct" }, undefined, { AGENT_ID: "s1" });
+  assert.equal(JSON.parse(direct.stdout).adjusted, undefined);
 });
 
 test("a real FTK Imager image reads as dissect.evidence reads it: its items, content, digests and the time keys", async () => {
@@ -437,7 +459,7 @@ test("an item's locator names it in a partial read and in a whole one alike, whe
   const byNumber = await runPy(TOOL, cwd, { image: "inputs/n.ad1", members: [1], out_dir: "work/s1/num" }, undefined, { AGENT_ID: "s1" });
   assert.deepEqual(tsv(join(cwd, "work", "s1", "num", "ad1_extract.tsv")).map((x) => x.path), ["A/B.txt"]);
   const unknown = await runPy(TOOL, cwd, { image: "inputs/n.ad1", members: ["ad1:item=7"], out_dir: "work/s1/none" }, undefined, { AGENT_ID: "s1" });
-  assert.match(JSON.parse(unknown.stdout).errors[0], /no item at ad1:item=7 in this read of the image/);
+  assert.match(JSON.parse(unknown.stdout).errors[0], /no item at ad1:item=7 in this read of the image; the nearest items this read holds are at ad1:item=\d+\. A locator is an item's address as the ad1-items generation's members\.tsv lists it \(catalog_search which=members\), not an offset in a segment file/);
 });
 
 test("ad1_extract renames every name a file system cannot hold, keeps a file's children beside it, and a name a sibling took stays taken", async () => {
@@ -569,10 +591,14 @@ test("the item budget and the byte budget stop ad1_extract, keep what it wrote, 
   const base = join(cwd, "work", "s1", "ad1", "two");
   assert.ok(existsSync(join(base, "a.bin.partial")) && !existsSync(join(base, "a.bin")) && !existsSync(join(base, "b.bin")));
   assert.ok(readFileSync(join(base, "a.bin.partial")).length <= 1000 + 512, "what was kept is within a chunk of the budget");
-  for (const bad of [{ max_items: 0 }, { max_bytes: -1 }, { max_seconds: 10 ** 9 }]) {
+  for (const bad of [{ max_items: 0 }, { max_bytes: -1 }, { max_seconds: 1.5 }]) {
     const r = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: `work/s1/bad${Object.keys(bad)[0]}`, ...bad }, undefined, { AGENT_ID: "s1" });
     assert.equal(r.code, 1, JSON.stringify(bad));
   }
+  // Over the ceiling is held to it, and said.
+  const held = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: "work/s1/held", max_seconds: 10 ** 9 }, undefined, { AGENT_ID: "s1" });
+  assert.equal(held.code, 0, held.stdout);
+  assert.deepEqual(JSON.parse(held.stdout).adjusted, ["max_seconds 1000000000 is over this tool's ceiling of 1700: held to 1700"]);
 });
 
 test("an item the walk did not reach before a budget stop is not claimed absent", async () => {
@@ -916,10 +942,12 @@ test("ad1_extract holds what it writes to a ratio of what it read: a chunk seque
   // The default (1000) lets an ordinary image through, and the parameter is bounded.
   const fine = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: "work/s1/fine" }, undefined, { AGENT_ID: "s1" });
   assert.equal(JSON.parse(fine.stdout).processing_status, "complete");
-  for (const bad of [0, -1, 1_000_001, 1.5, "10", true]) {
+  for (const bad of [0, -1, 1.5, "10", true]) {
     const refused = await runPy(TOOL, cwd, { image: "inputs/zeros.ad1", max_ratio: bad, out_dir: "work/s1/bad" }, undefined, { AGENT_ID: "s1" });
     assert.equal(JSON.parse(refused.stdout).ok, false, String(bad));
   }
+  const over = await runPy(TOOL, cwd, { image: "inputs/case.ad1", max_ratio: 1_000_001, out_dir: "work/s1/over" }, undefined, { AGENT_ID: "s1" });
+  assert.deepEqual(JSON.parse(over.stdout).adjusted, ["max_ratio 1000001 is over this tool's ceiling of 1000000: held to 1000000"]);
 });
 
 /** An image whose second file is 512 MiB of zeros (8,192 small chunks): reading it takes seconds, so a stop can come in the middle of it. */
@@ -1043,8 +1071,8 @@ test("the census catalogues an AD1 input with the base pack's recipe, and names 
   const rows = Object.fromEntries(readFileSync(join(sb, "catalog", "coverage.tsv"), "utf8").trimEnd().split("\n").slice(1).map((l) => { const [p, , status, why] = l.split("\t"); return [p, [status, why]]; }));
   assert.deepEqual(rows["inputs/case.ad1"], ["catalogued", "under catalog/case.ad1/ by computer-forensics-base/ad1-items:complete"]);
   assert.deepEqual(rows["inputs/split.ad1"], ["catalogued", "under catalog/split.ad1/ by computer-forensics-base/ad1-items:complete"], "its second segment is read from beside it");
-  assert.equal(rows["inputs/split.ad2"][0], "not catalogued");
-  assert.match(rows["inputs/split.ad2"][1], /computer-forensics-base\/ad1-items: segment 2 of 2 of an AD1 image: the image is read, and catalogued, from its first segment/);
+  // A further segment is one of the set (the census knows .adN): named, not handed to a recipe.
+  assert.deepEqual(rows["inputs/split.ad2"], ["segment", "a further segment of split.ad1: the set is read, and catalogued, from that one"]);
   assert.equal(tsv(join(sb, "catalog", "case.ad1", "members.tsv")).length, 12);
   assert.match(readFileSync(join(sb, "catalog", "README.md"), "utf8"), /^Summary: .*, 2 AD1 logical image\(s\), /m);
 });

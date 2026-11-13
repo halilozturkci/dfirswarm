@@ -2,6 +2,7 @@
 id: encryptor/traces
 title: Encryptor execution, deployment and affected files
 when: Establishing what executed, under which security context and on which assets.
+core: 1
 needs: []
 tools: []
 requires_host: []

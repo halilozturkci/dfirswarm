@@ -206,7 +206,7 @@ import {
 // The lead register's host-side pieces: a host run's wait checks it itself (a VM's hub does it there).
 import { LEAD_DISPOSITIONS, leadsWaitCheck, reopenOnLedger } from "./leads.ts";
 // The finish's host-side pieces: one check result per revision, recorded where the finish line runs.
-import { checkAt, LATE_PENDING, lateRefusal, NOT_YOURS, recordCheck } from "./finish.ts";
+import { checkAt, LATE_PENDING, lateRefusal, NOT_YOURS, readinessCounts, recordCheck } from "./finish.ts";
 import { evidenceCodeNote, evidenceCodeRun, withOwnJobOutputs } from "./evidence-code.ts";
 import { registerPlaywrightTool, runBrowserCheck } from "./playwright-tool.ts";
 import { readToolchainAt, TOOLCHAIN_DIR } from "./toolchain.ts";
@@ -284,6 +284,80 @@ export const SWARM_TOOLS = new Set([
   "question_ask",
   "premise_propose",
 ]);
+
+/**
+ * The limit of one shell call in a seat's own VM, in seconds: a call that names
+ * none gets SWARM_SHELL_TIMEOUT_S (900), and one that names more than
+ * SWARM_SHELL_TIMEOUT_MAX_S (1800) gets that. A job (job_run) is where longer
+ * work goes: it has a limit of its own and the seat goes on working meanwhile.
+ */
+export const SHELL_TIMEOUT_DEFAULT_S = 900;
+export const SHELL_TIMEOUT_MAX_S = 1800;
+export type ShellLimit = { seconds: number; why: "default" | "capped" | null; asked?: number };
+export function shellTimeout(asked: unknown, env: NodeJS.ProcessEnv = process.env): ShellLimit {
+  const num = (v: string | undefined, d: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : d;
+  };
+  const max = num(env.SWARM_SHELL_TIMEOUT_MAX_S, SHELL_TIMEOUT_MAX_S);
+  const dflt = Math.min(num(env.SWARM_SHELL_TIMEOUT_S, SHELL_TIMEOUT_DEFAULT_S), max);
+  if (typeof asked !== "number" || !Number.isFinite(asked) || asked <= 0) return { seconds: dflt, why: "default" };
+  if (asked > max) return { seconds: max, why: "capped", asked };
+  return { seconds: asked, why: null };
+}
+export function shellTimeoutNote(l: ShellLimit): string {
+  const was = l.why === "capped" ? `the ${l.asked} s it asked for is over the harness's limit of ${l.seconds} s for one shell call in your VM` : `a shell call in your VM that names no timeout has the harness's limit of ${l.seconds} s`;
+  return `The call was stopped at its limit: ${was}. Run longer work as a job (job_run with command, or a tool): it has a limit of its own, its output is kept in the store, and you go on working while it runs (job_status, or wait for its post).`;
+}
+
+/**
+ * Images a model call carries, at most (SWARM_MAX_IMAGES; 0 for no limit). A
+ * provider refuses a request over its own limit, and the context is the same
+ * on the next turn, so every turn after is refused too: a seat of the run
+ * sf4406b read 71 images with `read`, its provider took 32, and it was refused
+ * six times and lost for the last 74 minutes. Past the limit the oldest images
+ * are left out of what the model is sent (the session keeps them), each as a
+ * line that names it; a provider's own number in a refusal lowers the limit.
+ */
+export const MAX_IMAGES_DEFAULT = 24;
+export function imageLimit(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.SWARM_MAX_IMAGES);
+  return env.SWARM_MAX_IMAGES !== undefined && env.SWARM_MAX_IMAGES.trim() !== "" && Number.isInteger(n) && n >= 0 ? n : MAX_IMAGES_DEFAULT;
+}
+/** The provider's own limit, from its refusal ("at most 32 images per request"), or null. */
+export function providerImageLimit(reason: string): number | null {
+  const m = /at most (\d+) images?\b/i.exec(reason) ?? /\btoo[_ ]many[_ ]images\b.*?\b(\d+)\b/i.exec(reason);
+  if (m) return Number(m[1]);
+  return /\btoo[_ ]many[_ ]images\b/i.test(reason) ? 0 : null;
+}
+export const IMAGE_LEFT_OUT = "[an image left out of this call: the call carries the newest {cap} images only, the provider's limit. The session keeps it; read the file again if you need to see it.]";
+/**
+ * The messages with the oldest images replaced by a line; how many were left
+ * out. Past `cap` the oldest go until half of it is left, and the same number
+ * goes on later calls (`before`, the last call's) until the cap is passed
+ * again: the history the model is sent changes at one place, now and then,
+ * not at every new image (a provider's prompt cache keeps what comes before).
+ * A cap of 0 leaves all in.
+ */
+export function capImages<M>(messages: readonly M[], cap: number, before = 0): { messages: M[]; dropped: number; images: number } {
+  type Block = { type?: string };
+  const at: Array<[number, number]> = [];
+  messages.forEach((m, i) => {
+    const content = (m as { content?: unknown }).content;
+    if (Array.isArray(content)) content.forEach((b, j) => (b as Block)?.type === "image" && at.push([i, j]));
+  });
+  if (cap <= 0 || at.length <= cap) return { messages: [...messages], dropped: 0, images: at.length };
+  const count = before >= at.length - cap && before < at.length ? before : at.length - Math.max(1, Math.floor(cap / 2));
+  const drop = at.slice(0, count);
+  const out = messages.map((m) => m);
+  const byMessage = new Map<number, Set<number>>();
+  for (const [i, j] of drop) byMessage.set(i, (byMessage.get(i) ?? new Set()).add(j));
+  for (const [i, js] of byMessage) {
+    const m = out[i] as { content: unknown[] };
+    out[i] = { ...m, content: m.content.map((b, j) => (js.has(j) ? { type: "text", text: IMAGE_LEFT_OUT.replace("{cap}", String(cap)) } : b)) } as M;
+  }
+  return { messages: out, dropped: drop.length, images: at.length };
+}
 
 /** A bash command run this many times by one agent earns a hint to forge a tool. */
 const FORGE_HINT_AT = 8;
@@ -497,6 +571,12 @@ export default function (pi: ExtensionAPI) {
   useHarnessTrace((root, line) => logEvent(root, agentId, line.tool, line.args, line.result));
   /** Start times per tool call, so every trace row can carry its duration. */
   const toolStarts = new Map<string, number>();
+  /** The limit the harness gave a shell call that named none, or named more than the most: said with its result when it is stopped there. */
+  const shellLimits = new Map<string, ShellLimit>();
+  /** Images a model call carries at most, and where that number came from: the run's setting, or a provider's refusal. */
+  let imageCap = imageLimit();
+  let imageCapFrom: "setting" | "provider" = "setting";
+  let imagesDropped = 0;
   /** Watched-path snapshot taken before a bash call, keyed by tool call id. */
   const bashSnapshots = new Map<string, { at: number; snapshot: WatchSnapshot; command: string }>();
   /** Limits this process has already steered on; the clock itself is shared. */
@@ -1215,14 +1295,23 @@ export default function (pi: ExtensionAPI) {
       ? `Your assigned id is ${agentId}. Use it on every post and claim.`
       : "AGENT_ID is unset. Refuse to claim or post until the spawner sets it.";
     // Independent reads of the sandbox: issue them together.
+    // A read the hub link lost (a hub restart) leaves its line unknown and says so, never the whole prompt lost (the run s082123: a seat
+    // ran a turn on Pi's base prompt when the sentinel read was refused).
+    const unread: string[] = [];
     const [done, status, mine, inputs, onDisk] = await Promise.all([
-      swarmDoneExists(cwd),
+      swarmDoneExists(cwd).catch(() => {
+        unread.push("whether done/SWARM_DONE exists");
+        return false;
+      }),
       readBudgetStatus(ctxFrom(cwd, agentId || "agent00")).catch(() => null),
       agentId ? nameOf(cwd, agentId).catch(() => undefined) : undefined,
-      readInputsManifest(cwd),
+      readInputsManifest(cwd).catch(() => {
+        unread.push("the inputs manifest");
+        return null;
+      }),
       forging ? listForgedTools(cwd).catch(() => [] as ForgedToolManifest[]) : ([] as ForgedToolManifest[]),
     ]);
-    const capLine = status?.over_budget ? `\n\n${capHitLine(status)}` : "";
+    const capLine = (status?.over_budget ? `\n\n${capHitLine(status)}` : "") + (unread.length ? `\n\nThe harness could not read ${unread.join(" or ")} for this turn (the hub link was down): it is unknown, not absent. Check it before you act on it (inbox, or the file).` : "");
     // The prompt files the kickoff passes: Pi takes the path of one that is not there as the text of the prompt.
     await reportMissingPromptFiles(cwd, event.systemPrompt);
     // What holds for the whole run is in Pi's own prompt (the kickoff's .pi/APPEND_SYSTEM.md and .pi/seat-<id>.md),
@@ -1326,6 +1415,22 @@ export default function (pi: ExtensionAPI) {
   let pauseHeld = "";
   /** The turn in flight was ended by a pause: Pi files that abort as an error, and it is not the provider's. */
   let pauseAborted = false;
+  // The newest images only, within the provider's limit (capImages): what the model is sent, not what the session keeps.
+  pi.on("context", async (event, ctx) => {
+    const messages = event.messages;
+    if (!Array.isArray(messages) || imageCap <= 0) return undefined;
+    const capped = capImages(messages, imageCap, imagesDropped);
+    if (!capped.dropped) {
+      imagesDropped = 0;
+      return undefined;
+    }
+    if (agentId && capped.dropped !== imagesDropped) {
+      imagesDropped = capped.dropped;
+      await logEvent(ctx.cwd, agentId, "images_left_out", { cap: imageCap }, { ok: true, images: capped.images, dropped: capped.dropped, from: imageCapFrom }).catch(() => undefined);
+    }
+    return { messages: capped.messages };
+  });
+
   pi.on("context", async (_event, ctx) => {
     if (!agentId || precallStopped) return;
     // A VM whose hub is down has no budget or sentinel to read; the lost-hub
@@ -1409,12 +1514,25 @@ export default function (pi: ExtensionAPI) {
     if (providerErrorEntry === entryKey) return;
     providerErrorEntry = entryKey;
     await logEvent(ctx.cwd, agentId, "agent_error", { model }, { ok: false, reason }).catch(() => undefined);
+    // A refusal for too many images comes again on every turn, the context being the same: the limit is lowered to the provider's, with room for
+    // the images a turn adds, and the next call carries fewer.
+    const said0 = providerImageLimit(reason);
+    let imageWords: string | undefined;
+    if (said0 !== null) {
+      const next = Math.max(1, Math.min(imageCap > 0 ? imageCap : Infinity, said0 > 0 ? Math.floor(said0 * 0.75) : Math.floor((imageCap > 0 ? imageCap : MAX_IMAGES_DEFAULT) / 2)));
+      if (next !== imageCap) {
+        imageCap = next;
+        imageCapFrom = "provider";
+        await logEvent(ctx.cwd, agentId, "image_cap", { cap: next }, { ok: true, from: "provider", provider_limit: said0 || null }).catch(() => undefined);
+      }
+      imageWords = `The request carried more images than the provider takes. From the next turn the harness sends ${agentId}'s newest ${imageCap} images only (the session keeps the rest), so the next turn should go through.`;
+    }
     const said = normalizeProviderError(reason);
     const tell = !providerErrorSpell && providerErrorTold !== said;
     providerErrorSpell = true;
     if (!tell) return;
     providerErrorTold = said;
-    await systemPost(ctx.cwd, { tag: "veto", body: providerErrorPost(agentId, model, reason) }).catch(() => undefined);
+    await systemPost(ctx.cwd, { tag: "veto", body: providerErrorPost(agentId, model, reason, imageWords) }).catch(() => undefined);
   }
 
   /**
@@ -1461,6 +1579,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     const callId = (event as { toolCallId?: string }).toolCallId;
     if (callId) toolStarts.set(callId, Date.now());
+    // A shell call in the seat's own VM has a limit (Pi's bash has none unless the model gives one). A seat of the run s082123 waited 178 minutes on
+    // one that never returned, and nothing saw it: the nudger leaves a seat that is working alone. Longer work is a job, which has its own limit.
+    if ((event.toolName === "bash" || event.toolName === "powershell") && event.input && typeof event.input === "object") {
+      const limited = shellTimeout((event.input as { timeout?: unknown }).timeout);
+      (event.input as { timeout?: number }).timeout = limited.seconds;
+      if (callId && limited.why) shellLimits.set(callId, limited);
+    }
 
     // Once the sentinel exists the run is over by definition, and the only
     // tool left to call is `done`. An agent that keeps going anyway — a model
@@ -1939,6 +2064,13 @@ export default function (pi: ExtensionAPI) {
     let fullOutputError: string | undefined;
     let content = (event as unknown as { content?: Array<Record<string, unknown>> }).content;
     let contentChanged = false;
+    const limit = callId ? shellLimits.get(callId) : undefined;
+    if (callId) shellLimits.delete(callId);
+    if (limit && isError && /timeout|timed out/i.test(JSON.stringify(content ?? ""))) {
+      content = [...(Array.isArray(content) ? content : []), { type: "text", text: shellTimeoutNote(limit) }];
+      contentChanged = true;
+      if (agentId) await logEvent(ctx.cwd, agentId, "shell_timeout", { tool: name }, { ok: true, seconds: limit.seconds, why: limit.why }).catch(() => undefined);
+    }
     const hostSpill = details?.fullOutputPath;
     if ((name === "bash" || name === "powershell") && hostSpill && agentId) {
       try {
@@ -2634,6 +2766,7 @@ export default function (pi: ExtensionAPI) {
       lead: Type.Optional(Type.String({ description: "The lead (L-<n>, one you hold) this job is run under; left out, the one active lead you hold, if you hold exactly one. A lead's jobs wait for an interpretation (record with interprets) before the run may end." })),
       net_grants: Type.Optional(Type.Array(Type.String(), { description: "Network grants (N-<k>) you asked for a job (net_request for: \"job\"): bound to this job, which makes each one's exact request with python3 /job/net_fetch.py N-<k> --out \"$OUT/<name>\"; its worker reaches the fetch service on the host and nothing else of it" })),
       independent: Type.Optional(Type.Boolean({ description: "true: an intended reproduction of work another seat did (a second check), recorded as such; similar jobs are still named" })),
+      programs: Type.Optional(Type.Array(Type.String(), { description: "Programs the operator supplied that the command or tool runs, as import:mat-<n> (SWARM.md, Supplied programs): each is copied into an executable directory in the worker before it starts, its bin/ on PATH and its lib/ on LD_LIBRARY_PATH ($PROGRAMS names the directory). Nothing runs where it stands in store/ or $OUT" })),
       secret_output: Type.Optional(Type.Boolean({ description: "true for a job whose output may hold a secret (a key, a credential or a decrypted value the evidence holds): every output it seals is sensitive, a job reading them seals sensitive output too, an entry citing them is recorded sensitive, and a redacted package withholds them" })),
     }),
     async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
@@ -2664,6 +2797,7 @@ export default function (pi: ExtensionAPI) {
         ...(params.net_grants?.length ? { net_grants: params.net_grants } : {}),
         ...(params.independent === true ? { independent: true } : {}),
         ...(params.secret_output === true ? { secret_output: true } : {}),
+        ...(params.programs?.length ? { programs: params.programs } : {}),
       };
       const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
       const res = await submitAndWait(toolCtx.cwd, spec, wait, signal as AbortSignal | undefined);
@@ -2862,7 +2996,8 @@ export default function (pi: ExtensionAPI) {
   // every prompt on every turn. extensions/skills.ts is the whole of it: the
   // index section, the `skill` and `skill_done` tools, what each seat holds.
   const packDirs = packDirsFromEnv();
-  if (packDirs.length) {
+  // --pack-skills off (docs/usage.md): the packs' tools only; no skill tool, index or card (the arm of the skills experiment).
+  if (packDirs.length && process.env.SWARM_PACK_SKILLS?.trim() !== "off") {
     skills = registerSkills(pi, {
       packDirs,
       agentId: () => agentId,
@@ -2878,6 +3013,8 @@ export default function (pi: ExtensionAPI) {
       release: process.env.SWARM_SKILL_RELEASE?.trim() || undefined,
       // A hand-off that is pending or being compacted (not one that failed and was given up): finished bodies leave with that compaction.
       compactionPending: () => selfCompact?.handoffPending() ?? false,
+      // --skill-cards (docs/usage.md): a note's card with the result of a call to one of its tools, for a seat that does not hold it.
+      cards: process.env.SWARM_SKILL_CARDS?.trim() || undefined,
     });
   }
 
@@ -3994,8 +4131,9 @@ export default function (pi: ExtensionAPI) {
       const r = (await finishAct(ctxFrom(toolCtx.cwd, agentId), params as never)) as { ok: boolean; reason?: string } & Record<string, unknown>;
       // What the trace keeps of the act: its codes and counts, never its words.
       const counts = {
-        ...(params.action === "status" ? { ready: r.ready } : {}),
-        ...(params.action === "prepare" ? { mine: r.mine !== false, ...(Array.isArray(r.late) ? { late: (r.late as unknown[]).length } : {}), ...(typeof r.generation === "number" ? { generation: r.generation } : {}), ...(r.readiness && typeof r.readiness === "object" ? { ready: (r.readiness as { ready?: unknown }).ready === true } : {}) } : {}),
+        // Readiness: ready, how many items hold it and the codes that hold sections (sweep_hits: 2, no_critic_act: 1, …).
+        ...(params.action === "status" ? readinessCounts(r) : {}),
+        ...(params.action === "prepare" ? { mine: r.mine !== false, ...(Array.isArray(r.late) ? { late: (r.late as unknown[]).length } : {}), ...(typeof r.generation === "number" ? { generation: r.generation } : {}), ...(r.readiness && typeof r.readiness === "object" ? readinessCounts(r.readiness as Record<string, unknown>) : {}) } : {}),
         ...(params.action === "ack" && Array.isArray(r.sections) ? { sections: (r.sections as unknown[]).length, whole: r.whole === true } : {}),
         ...(params.action === "resolve" && Array.isArray(params.items) ? { items: params.items.length, ...(typeof r.resolved === "number" ? { resolved: r.resolved } : {}), ...(r.replayed ? { replayed: true } : {}), ...(Array.isArray(r.late) ? { late: (r.late as unknown[]).length } : {}) } : {}),
         ...(typeof r.seq === "number" ? { seq: r.seq } : {}),

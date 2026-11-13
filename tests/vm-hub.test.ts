@@ -1664,6 +1664,9 @@ test("a seat past its file-history quota still has every revision recorded, by i
   await writeFile(f, "another\n");
   const r3 = (await vm(() => board.recordFileVersion(sandbox, "work/a0/notes.md", "a0"))) as { stored?: false };
   assert.equal(r3.stored, false);
+  // Told the quota is spent, the seat sends a revision's hash, not its bytes (the run s082123 sent a hundred 11 MB files whole after it).
+  const told0 = await board.ownFileWire(sandbox, "work/a0/notes.md", "a0", 0);
+  assert.deepEqual(Object.keys(told0 ?? {}), ["hash_only"]);
   await until(() => lines.some((l) => l.tool === "history_quota"), "the quota on the trace");
   assert.equal(lines.filter((l) => l.tool === "history_quota").length, 1, "said once");
   const told = (await readdir(join(sandbox, "threads", "main"))).filter((n) => n.endsWith("-system.md"));

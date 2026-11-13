@@ -275,6 +275,18 @@ function toolboxSection(sandbox: string): string {
       for (const t of (get(tb, "missing", []) as Obj[])) lines.push(`| \`${pyStr(t.name)}\` | missing | ${pyStr(get(t, "use", ""))} — install: \`${pyStr(get(t, "install", ""))}\` |`);
       section = `${lines.join("\n")}\n\n`;
     }
+    // What the case requires done (the goal's requires: or --requires), and whether the check found a program that does it.
+    const req = get(tb, "requires", []) as Obj[];
+    if (Array.isArray(req) && req.length) {
+      const rows = ["The case requires these done; checked at kickoff where you run:", "", "| Capability | Met by | Use |", "| --- | --- | --- |"];
+      for (const r of req) {
+        const by = (get(r, "by", []) as unknown[]).map((b) => `\`${pyStr(b)}\``).join(", ");
+        const failed = (get(r, "present_but_failed_probe", []) as unknown[]).map((b) => `\`${pyStr(b)}\``).join(", ");
+        rows.push(`| ${pyStr(r.capability)} | ${get(r, "met") === true ? by : `not met${failed ? ` (${failed} is there and failed a test input)` : ` (none of ${(get(r, "wanted", []) as unknown[]).map((b) => `\`${pyStr(b)}\``).join(", ")})`}`} | ${pyStr(get(r, "use", ""))} |`);
+      }
+      if (req.some((r) => get(r, "met") !== true)) rows.push("", "A capability not met is not a reason to stop at not determinable: a program the operator supplies runs in a job (`job_run` with `programs`), and asking for one is an acquisition ask.");
+      section += `${rows.join("\n")}\n\n`;
+    }
   }
   // In a VM the install paragraph is the host section's; this one describes the host's shared toolchain.
   if (env("SWARM_CONTRACT_ISOLATION") === "microvm") {
@@ -489,6 +501,9 @@ function hostSection(): string {
         "writes only its own $OUT, sealed into store/jobs/<id>/out/. It has the image's programs " +
         "(/etc/dfirswarm/tools.md) and nothing installed in an agent's own VM; with network=allowlist it reaches " +
         `${hosts}. An exit status of 0 is not the work's success: read what the job wrote, and its stderr. ` +
+        "A program the operator supplies (posted on the board as `TOOL SUPPLIED as import:mat-<n>`) runs in a job that " +
+        'names it in `programs: ["import:mat-<n>"]`: it is copied into an executable directory in the worker, its bin/ on ' +
+        "PATH and its lib/ on LD_LIBRARY_PATH; nothing runs where it stands in store/ or $OUT. " +
         "A file you made in your own VM is not an object of the run until it is sealed: `job_run import=work/<you>/<file>` " +
         "copies it into the store as it is now, and a finding then cites it as job:<id>/<file> in its refs. A whole " +
         "output the harness kept for you under tool-output/<you>/ is cited as `tool:<you>/<file>` (one line of the " +

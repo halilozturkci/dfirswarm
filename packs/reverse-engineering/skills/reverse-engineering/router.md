@@ -8,7 +8,12 @@ tools: []
 requires_host: []
 ---
 
-Use when the index shows only this line and you need a reverse engineering note. Not for rules: each note holds its own.
+Use when the index shows only this line and you need a reverse engineering note. Not for a note's own rules; those below hold for every note.
+
+Always
+- Fix the frame first (format, machine, image base, entry point) and name the analysis pass and tool version you read with.
+- Unresolved indirect calls are gaps to count; a decompiler's output is a lead to confirm against cited instructions.
+- Evidence stays data: never load a project, script or plugin the sample supplies, and never run it here.
 
 Start
 `triage/quarantine` handling a recovered sample

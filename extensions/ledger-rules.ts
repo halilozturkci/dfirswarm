@@ -5,6 +5,7 @@
  * each other both ways, so it is not split further. It imports the core statically.
  */
 
+import { formatMiss, formatNote } from "./answer-format.ts";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
@@ -40,7 +41,7 @@ import { fileURLToPath } from "node:url";
 import * as NB from "./negative-bar.ts";
 import * as PM from "./premises.ts";
 import * as PR from "./preparation.ts";
-import { importHitExamined, importHitsFor, importHitWords, unexaminedHits, type ImportSweepRecord, type SweepRecord, type UnexaminedHit } from "./store-sweep.ts";
+import { importHitExamined, importHitsFor, importHitWords, INTERPRETING_KINDS, unexaminedHits, type ImportSweepRecord, type SweepHit, type SweepRecord, type UnexaminedHit } from "./store-sweep.ts";
 import type { LedgerAlternative, LedgerEdge, LedgerEntry, LedgerKind, LedgerLocator, LedgerMethod, LedgerQualify, LedgerRel, SwarmContext } from "./protocol-core.ts";
 import { ANSWER_ONLY_REL_KINDS, DELTA_REL_KINDS, LEDGER_ACT_MAX_CHARS, LEDGER_ALTERNATIVE_STATUS, LEDGER_ANSWER_ID, LEDGER_ANSWER_RESULTS, LEDGER_ATTESTATIONS, LEDGER_BASIS, LEDGER_BECAUSE_MAX_CHARS, LEDGER_CLOCK_MAX_CHARS, LEDGER_COMPLETION, LEDGER_CONFIDENCE, LEDGER_DIR, LEDGER_DISPUTES, LEDGER_ENTRIES, LEDGER_EVIDENCE_MAX_CHARS, LEDGER_HYPOTHESIS_STATUS, LEDGER_INDICATES_MAX_CHARS, LEDGER_KINDS, LEDGER_LIMITATION_REASONS, LEDGER_LOCATOR_MAX_CHARS, LEDGER_MAX_ALTERNATIVES, LEDGER_MAX_ANSWERS, LEDGER_MAX_CITATIONS, LEDGER_MAX_ENTRIES, LEDGER_MAX_LOCATORS, LEDGER_MAX_QUALIFIES, LEDGER_MAX_REFS, LEDGER_MAX_REL, LEDGER_MD, LEDGER_PRECISION, LEDGER_REASONING_MAX_CHARS, LEDGER_REF_MAX_CHARS, LEDGER_REL_KINDS, LEDGER_SECTION_SPECIAL, LEDGER_SOURCE_CLASSES, LEDGER_SOURCE_MAX_CHARS, LEDGER_SUBJECT_MAX_CHARS, LEDGER_SUBJECT_TYPES, LEDGER_VALUE_MAX_CHARS, LEDGER_VERSION, LEDGER_WHY_MAX_CHARS, REGISTER_LOCK, canonicalValue, ledgerContent, ledgerHash, sha256Hex, traceHarnessEntry, withNamedLock, withTableLock } from "./protocol-core.ts";
 
@@ -2349,9 +2350,41 @@ export function disputeWords(d: DisputeInForce): string {
 
 export type LedgerActInput = { seq?: number | string; how?: string; why?: string; refs?: string[] | string; withdraw?: boolean; review?: unknown; strength?: unknown; answer_review?: unknown; second_review_why?: string };
 
-/** The standing entries an answer cites that were recorded for its own question (`id`, its section key). */
+/**
+ * The coverage record that carries a superseded one an answer cites, or null:
+ * the standing correction of a coverage record, itself a coverage record, for
+ * the same questions and at the same coverage (complete, partial, …). A
+ * coverage record is revised to name what a sweep found, and on the run
+ * sf4406b each revision made the answer resting on it be written again with
+ * the same value (18 versions of one answer in an hour, each cutting the
+ * report's acknowledgements). Such a revision does not change what the answer
+ * rests on: the answer rests on the record as it now stands, which is still
+ * reviewed (an unreviewed correction holds the negative), still swept, and
+ * still read by the gates in place of the one cited. A correction that
+ * changes the questions or the coverage is not carried: the answer is weighed
+ * again.
+ */
+export function carriedCoverage(t: LedgerEntry, bySeq: Map<number, LedgerEntry>, replaced: Map<number, number>): LedgerEntry | null {
+  if (t.kind !== "coverage" || !replaced.has(t.seq)) return null;
+  const c = bySeq.get(standingSeq(t.seq, replaced));
+  if (!c || c.kind !== "coverage" || c.seq === t.seq) return null;
+  const qs = (e: LedgerEntry) => [...new Set((e.answers ?? []).map((x) => sectionKey(x)))].sort().join("\u0000");
+  if (qs(c) !== qs(t)) return null;
+  if (String((c as { coverage?: unknown }).coverage ?? "") !== String((t as { coverage?: unknown }).coverage ?? "")) return null;
+  return c;
+}
+
+/** The standing entries an answer cites that were recorded for its own question (`id`, its section key); a coverage record carried by its correction (carriedCoverage) is that correction. */
 export function citedForQuestion(a: LedgerEntry, bySeq: Map<number, LedgerEntry>, replaced: Map<number, number>, id: string): LedgerEntry[] {
-  return (a.support ?? []).map((x) => bySeq.get(x.seq)).filter((e): e is LedgerEntry => Boolean(e) && !replaced.has((e as LedgerEntry).seq) && ((e as LedgerEntry).answers ?? []).some((x) => sectionKey(x) === id));
+  const out: LedgerEntry[] = [];
+  for (const x of a.support ?? []) {
+    const e = bySeq.get(x.seq);
+    if (!e) continue;
+    const now = replaced.has(e.seq) ? carriedCoverage(e, bySeq, replaced) : e;
+    if (!now || out.includes(now)) continue;
+    if ((now.answers ?? []).some((q) => sectionKey(q) === id)) out.push(now);
+  }
+  return out;
 }
 
 /**
@@ -3039,7 +3072,7 @@ export function answerProblems(entries: LedgerEntry[], disputes: LedgerDispute[]
     }
     for (const [edges, role, citedAs] of [[a.support ?? [], "rests on", "support"], [a.limitations ?? [], "is bounded by", "limitation"]] as const) {
       for (const edge of edges) {
-        const t = bySeq.get(edge.seq);
+        let t = bySeq.get(edge.seq);
         if (!t) {
           out.push(`it ${role} E-${edge.seq}, which is not in the ledger`);
           continue;
@@ -3050,10 +3083,17 @@ export function answerProblems(entries: LedgerEntry[], disputes: LedgerDispute[]
         }
         if (replaced.has(t.seq)) {
           const now = standingSeq(t.seq, replaced);
-          if (!cited.has(now)) out.push(`it ${role} E-${t.seq}, superseded by #${now}, and does not cite the correction`);
-          continue;
+          if (cited.has(now)) continue;
+          // A coverage record revised for the same questions and coverage carries the answer (carriedCoverage): what follows is read on the
+          // correction, which the answer now rests on.
+          const carried = carriedCoverage(t, bySeq, replaced);
+          if (!carried) {
+            out.push(`it ${role} E-${t.seq}, superseded by #${now}, and does not cite the correction`);
+            continue;
+          }
+          t = carried;
         }
-        const against = disputed.get(edge.hash);
+        const against = disputed.get(t.hash ?? edge.hash);
         if (against?.length && !qualified(t.seq)) out.push(`it ${role} E-${t.seq}, disputed by ${against.map(disputeWords).join("; ")}`);
         const bad = failed.get(t.seq);
         if (bad?.length && !qualified(t.seq) && failedJobIsDefect(citedAs)) out.push(`it ${role} E-${t.seq}, which rests on the kept output of a job that did not succeed (${bad.join(", ")}) and says nothing of it`);
@@ -3109,10 +3149,10 @@ async function personsQuestion(sandboxRoot: string, sectionId: string): Promise<
 }
 
 /** A question section's register id and current revision, or null when the register has no question for it. */
-async function registerRevision(sandboxRoot: string, sectionId: string): Promise<{ id: string; rev: number } | null> {
+async function registerRevision(sandboxRoot: string, sectionId: string): Promise<{ id: string; rev: number; text: string } | null> {
   const Q = await import("./questions.ts");
   const q = (await Q.questionsSnapshot(sandboxRoot)).bySection.get(sectionId);
-  return q ? { id: q.id, rev: q.rev } : null;
+  return q ? { id: q.id, rev: q.rev, text: q.text } : null;
 }
 
 /**
@@ -3677,8 +3717,11 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
   // the answer; one amended past revision 1 needs its revision said.
   const recorded = await withNamedLock(ctx.sandboxRoot, REGISTER_LOCK, async (): Promise<LedgerResult> => {
     let premiseReg: ReadonlyMap<string, PM.Premise> | undefined;
+    // The question's words as the register holds them now: the answer format it asks for is read from them (answer-format.ts).
+    let questionWords: string | null = null;
     if (question) {
       const reg = await registerRevision(ctx.sandboxRoot, sec.id).catch(() => null);
+      questionWords = reg?.text ?? null;
       if (reg) {
         if (questionRev !== undefined && questionRev !== reg.rev) return { ok: false as const, reason: `${reg.id} (${sec.section}) is at revision ${reg.rev}, amended since the revision ${questionRev} this answers: read it again (questions show ${reg.id}) and answer revision ${reg.rev}, with question_rev: ${reg.rev}` };
         if (questionRev === undefined && reg.rev > 1) return { ok: false as const, reason: `${reg.id} (${sec.section}) was amended to revision ${reg.rev}: say which revision this answers (question_rev: ${reg.rev}, after reading it with questions show ${reg.id}); an answer to an earlier revision is stale` };
@@ -3937,6 +3980,11 @@ async function recordAnswer(ctx: SwarmContext, input: LedgerInput): Promise<Ledg
       }
       const notes: string[] = [];
       if (bound.length) notes.push(`${bound.map((b) => `E-${b.seq} (the answer to ${b.section}${b.standing !== null && b.standing !== b.seq ? `, now E-${b.standing}` : ""})`).join(", ")} ${bound.length === 1 ? "is" : "are"} cited as ${[...new Set(bound.map((b) => b.section))].join(", ")}: a ${sec.section} is bound to the questions it sums up, to each answer's conclusion (its result, the revision it answers, its support and contrary evidence), not to its seq, so a reworded correction of an answer keeps it standing. Cite Q-<n> or question:<n> for an answer in a ${sec.section}`);
+      // The format the question asks for (a "Format:" line), when no line of the value is in it: said, never refused.
+      if (question && questionWords) {
+        const miss = formatMiss(questionWords, value);
+        if (miss) notes.push(formatNote(sec.section, miss));
+      }
       if (tokens.length) notes.push(`in none of the cited entries: ${tokens.join(", ")}; cite the entry that holds each, or record how it was derived as its own entry and cite that (marked on the answer; the release counts them)`);
       if (question && resultText !== "not_determinable" && standingCites.every((e) => e.kind === "limitation")) notes.push("it rests on limitations only: if the ledger cannot answer it, say so with result not_determinable, resting on a coverage record");
       if (question && negative && bar?.material) {
@@ -4288,8 +4336,45 @@ export function coverageNamesAreas(c: LedgerEntry): boolean {
  * For a negative the bar holds, a partial answer on a material question,
  * and an answer that says the event did not happen; empty for any other.
  */
-export type SweepHold = { code: "sweep_pending" | "sweep_hits" | "sweep_partial"; coverage: LedgerEntry; sweep: SweepRecord | null; unexamined?: UnexaminedHit[] };
-export function sweepHolds(answer: LedgerEntry, entries: LedgerEntry[], sweeps: readonly SweepRecord[], disputes: LedgerDispute[] = [], material = true): SweepHold[] {
+export type SweepHold = {
+  code: "sweep_pending" | "sweep_hits" | "sweep_partial";
+  coverage: LedgerEntry;
+  sweep: SweepRecord | null;
+  unexamined?: UnexaminedHit[];
+  /** The sweep's hits that hold: those not examined in place (examinedInPlace). Absent when every hit holds as the sweep found it. */
+  hits?: SweepHit[];
+  /** The sweep's hits examined in place, each with the entry that examined it. */
+  examined?: Array<{ ref: string; term: string; by: number }>;
+};
+
+/**
+ * A sweep hit examined in place, without the coverage record being written
+ * again (the run sf4406b's finish loop: each revision of a record to name
+ * what its sweep found was swept anew, and the revision's own outputs were
+ * found in turn): a standing finding, event, absence or limitation for one of
+ * the record's questions, written at or after the sweep, whose refs name the
+ * hit object (any name of its bytes), and which a seat other than its authors
+ * attested, says what the object showed. The entry that examined it, or null.
+ * With no attestations given, none is: the hit holds until the record names
+ * it with what it showed, as before.
+ */
+export function examinedInPlace(hit: SweepHit, cov: LedgerEntry, sw: SweepRecord, entries: readonly LedgerEntry[], replaced: ReadonlyMap<number, number>, attests: readonly LedgerAttestation[] | undefined, disputes: readonly LedgerDispute[]): LedgerEntry | null {
+  if (!attests?.length) return null;
+  const questions = new Set((cov.answers ?? []).map((x) => sectionKey(x)));
+  const names = new Set([hit.ref, ...(hit.also ?? [])].map((n) => n.replace(/^(job:[^/]+)\/out\//, "$1/").replace(/\/+$/, "")));
+  const inForce = disputesInForce(entries as LedgerEntry[], disputes as LedgerDispute[]);
+  for (const e of entries) {
+    if (!INTERPRETING_KINDS.has(e.kind) || replaced.has(e.seq) || Date.parse(e.at) < Date.parse(sw.at)) continue;
+    if (!(e.answers ?? []).some((x) => questions.has(sectionKey(x)))) continue;
+    if (!(e.refs ?? []).some((r) => names.has(r.replace(/^(job:[^/]+)\/out\//, "$1/").replace(/\/+$/, "")))) continue;
+    const h = e.hash ?? ledgerHash(e, "genesis");
+    if (inForce.some((d) => d.target === h)) continue;
+    if (attests.some((x) => attestationAct(x) === "attest" && x.target === h && !e.authors.includes(x.by))) return e;
+  }
+  return null;
+}
+
+export function sweepHolds(answer: LedgerEntry, entries: LedgerEntry[], sweeps: readonly SweepRecord[], disputes: LedgerDispute[] = [], material = true, attests?: readonly LedgerAttestation[]): SweepHold[] {
   if (answer.kind !== "answer" || !answer.section?.startsWith("question:")) return [];
   const bySeq = new Map(entries.map((e) => [e.seq, e]));
   const replaced = supersededBy(entries);
@@ -4307,7 +4392,14 @@ export function sweepHolds(answer: LedgerEntry, entries: LedgerEntry[], sweeps: 
     const h = c.hash ?? ledgerHash(c, "genesis");
     const sw = c.looked_for?.length ? (sweeps.filter((x) => x.target === h).at(-1) ?? null) : null;
     if (c.looked_for?.length && !sw) out.push({ code: "sweep_pending", coverage: c, sweep: null });
-    if (sw?.hits.length || unexamined.length) out.push({ code: "sweep_hits", coverage: c, sweep: sw, ...(unexamined.length ? { unexamined } : {}) });
+    // A hit another seat attested an entry examining in place no longer holds (examinedInPlace); the rest do.
+    const examined: NonNullable<SweepHold["examined"]> = [];
+    const holding = (sw?.hits ?? []).filter((h) => {
+      const by = sw ? examinedInPlace(h, c, sw, entries, replaced, attests, disputes) : null;
+      if (by) examined.push({ ref: h.ref, term: h.term, by: by.seq });
+      return !by;
+    });
+    if (holding.length || unexamined.length) out.push({ code: "sweep_hits", coverage: c, sweep: sw, ...(unexamined.length ? { unexamined } : {}), ...(examined.length ? { hits: holding, examined } : {}) });
     if (sw?.unsearched.length) out.push({ code: "sweep_partial", coverage: c, sweep: sw });
   }
   return out;
@@ -4665,13 +4757,13 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
     // record is revised to name it, or the answer is; a partial sweep holds
     // until the operator accepts the question's limits.
     if (bar && result && o.sweeps) {
-      for (const hold of sweepHolds(a, entries, o.sweeps, o.disputes, bar.material)) {
+      for (const hold of sweepHolds(a, entries, o.sweeps, o.disputes, bar.material, o.attestations)) {
         const c = hold.coverage;
         const sw = hold.sweep;
         if (hold.code === "sweep_pending") {
           defects.push({ code: "sweep_pending", section: sec.section, seqs: [a.seq, c.seq], what: `answer #${a.seq} (${sec.section}) rests on coverage record E-${c.seq}, whose store sweep for ${c.looked_for!.map((t) => `"${t}"`).join(", ")} has not finished (pending)`, fix: "wait for the sweep: the hub runs it when the record is written and records it in ledger/sweeps.jsonl (the finish line runs one lost with its process); then examine what it found", named_by: [] });
         } else if (hold.code === "sweep_hits") {
-          const words = (sw?.hits ?? []).map((h) => `"${h.term}" in ${h.ref}${h.also?.length ? ` (also ${h.also.join(", ")})` : ""} (${h.count} time${h.count === 1 ? "" : "s"}, first at byte ${h.first_offset}${h.encodings.includes("utf-16le") ? `, ${h.encodings.join(" and ")}` : ""})`);
+          const words = (hold.hits ?? sw?.hits ?? []).map((h) => `"${h.term}" in ${h.ref}${h.also?.length ? ` (also ${h.also.join(", ")})` : ""} (${h.count} time${h.count === 1 ? "" : "s"}, first at byte ${h.first_offset}${h.encodings.includes("utf-16le") ? `, ${h.encodings.join(" and ")}` : ""})`);
           const unexamined = hold.unexamined ?? [];
           const named = unexamined.map((u) => `${u.ref}${u.also.length ? ` (also ${u.also.join(", ")})` : ""} (${u.terms.map((t) => `"${t}"`).join(", ")}, found by the sweep of E-${u.found_by})`);
           const said = [
@@ -4683,7 +4775,7 @@ export function ledgerGate(o: { entries: LedgerEntry[]; attestations: LedgerAtte
             section: sec.section,
             seqs: [a.seq, c.seq],
             what: `answer #${a.seq} (${sec.section}) is ${NB.resultWords(result)}, and ${said.join("; and ")}`,
-            fix: `examine each object the sweep names and record what it showed: one entry per object (a finding, an event or a limitation whose refs name the object itself), or one absence whose refs list several (a search that found nothing that bears on the question in them), written after the sweep; then record the coverage again with supersedes=${c.seq} naming each in refs, with what it showed: those entries in result_refs (and coverage_actual), and the answer again with supersedes=${a.seq} citing it; or record the answer again on what those objects show`,
+            fix: `examine each object the sweep names and record what it showed: one entry per object (a finding, an event or a limitation whose refs name the object itself), or one absence whose refs list several (a search that found nothing that bears on the question in them), written after the sweep and naming the question in answers. Another seat's attest on that entry clears the hit where it stands, and the coverage record is not written again; without one, record the coverage again with supersedes=${c.seq} naming each object (in refs, which hold 20, or in result_refs, which hold 200 and where an object named counts the same: put them there rather than drop one named before), with what it showed: those entries in result_refs (and coverage_actual), and leave the answer as it is when its value and the coverage stay the same (it stands on the revised record); record it again with supersedes=${a.seq} only when what those objects show changes it`,
             named_by: [],
           });
         } else {
