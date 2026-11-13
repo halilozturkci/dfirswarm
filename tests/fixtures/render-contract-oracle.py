@@ -130,7 +130,10 @@ if os.path.isfile(catalog_readme) and not os.path.islink(catalog_readme):
         + ("The inputs marked planned are being catalogued now, as jobs in worker VMs, while you work: you need not wait "
            "for them. Each result is a generation under `catalog/gen/`, each change a new revision "
            "(`catalog/revisions/<n>/index.md`), announced on the board; `catalog_search` reads the newest and says which "
-           "revision it read. A disk's file list is also at `catalog/<input>/` once its generation is in.\n\n" if growing else "")
+           "revision it read. A disk's file list is also at `catalog/<input>/` once its generation is in. A large logical "
+           "image is catalogued in two steps: its listing first (every member's path, size and times, within about a "
+           "minute, posted as \"the listing\"), then the same catalogue with each member's digest, as a later revision. "
+           "The listing is enough to find a member and name it to a tool: do not walk the image for a list of your own.\n\n" if growing else "")
         + ("An archive or disk image a job makes, or a file you seal with `job_run import=`, is catalogued the same way on "
            "its own, in a lane that never holds up your jobs: a complete catalogue of it is posted to everyone, a partial one "
            "to whoever made it, with why. `catalog_search which=generations` lists every generation, what it covers, and, for "

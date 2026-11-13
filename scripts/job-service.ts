@@ -213,6 +213,8 @@ export type JobSpec = {
   note?: string;
   parent?: string;
   alias?: string;
+  /** recipe: the one phase of the recipe to run, of those its recipe.json declares (`phases`); the recipe is told in RECIPE_PHASE. Without it the recipe runs whole. */
+  phase?: string;
   experimental?: boolean;
   /** The job image to run in, by profile (disk, memory, mobile, …), when the run declares job images; else the run's worker image. */
   profile?: string;
@@ -401,6 +403,8 @@ export type RecipeInfo = {
   sha256: string;
   seconds: number;
   auto: string[];
+  /** The phases the recipe can be run to alone (recipe.json `phases`): "listing" is its catalogue's list before any digest. */
+  phases?: string[];
   experimental?: boolean;
   minBytes?: number;
   suffixes?: string[];
@@ -1016,6 +1020,7 @@ export class JobService {
             seconds: Number(r.limits?.seconds ?? 900),
             // A recipe the images cannot run, or that carries a declaration it cannot honour, is never triggered.
             auto: unavailable || refused ? [] : (r.auto ?? []),
+            ...(Array.isArray((r as { phases?: unknown }).phases) ? { phases: ((r as { phases: unknown[] }).phases).map(String).filter((x) => /^[a-z][a-z0-9_]{0,31}$/.test(x)) } : {}),
             ...(refused ? { refused } : {}),
             minBytes: Number(r.min_bytes ?? 0) || 0,
             ...(Array.isArray(r.suffixes) ? { suffixes: r.suffixes.map((x) => String(x).toLowerCase()) } : {}),
@@ -1306,7 +1311,9 @@ export class JobService {
     // An object of the store is itself by content, wherever it sits (the
     // same vault image extracted twice is one object); an input by its stat.
     const image = (await this.imageFor(spec)).ref;
-    if (spec.target?.sha256) return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image, content: spec.target.sha256 }));
+    // A phase of a recipe is not the recipe whole: its own key (absent from the key of a whole run, so those keep theirs).
+    const phase = spec.phase ? { phase: spec.phase } : {};
+    if (spec.target?.sha256) return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image, content: spec.target.sha256, ...phase }));
     const hashes: string[] = [];
     for (const p of spec.target?.paths ?? []) {
       try {
@@ -1316,7 +1323,7 @@ export class JobService {
         hashes.push(`${p}:missing`);
       }
     }
-    return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image, target: hashes }));
+    return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image, target: hashes, ...phase }));
   }
 
   /**
@@ -1415,7 +1422,9 @@ export class JobService {
       const target = raw.target;
       if (!target || !Array.isArray(target.paths) || !target.paths.length) return { reason: "a recipe job needs a target" };
       for (const p of target.paths) if (!this.insideRun(p)) return { reason: `${p} is not an object of this run` };
-      return { ...base, recipe: r.id, target, timeout_seconds: Math.min(r.seconds, TIMEOUT_MAX_SECONDS), ...(raw.alias ? { alias: String(raw.alias) } : {}), ...(r.experimental ? { experimental: true } : {}) };
+      const phase = raw.phase === undefined ? undefined : String(raw.phase);
+      if (phase !== undefined && !(r.phases ?? []).includes(phase)) return { reason: `${r.id} has no phase ${JSON.stringify(phase.slice(0, 40))} to run alone${r.phases?.length ? ` (it declares ${r.phases.join(", ")})` : " (its recipe.json declares none)"}; leave phase out to run it whole` };
+      return { ...base, recipe: r.id, target, timeout_seconds: Math.min(r.seconds, TIMEOUT_MAX_SECONDS), ...(raw.alias ? { alias: String(raw.alias) } : {}), ...(phase ? { phase } : {}), ...(r.experimental ? { experimental: true } : {}) };
     }
     const targets = Array.isArray(raw.targets) ? raw.targets.filter((t) => t && Array.isArray(t.paths) && t.paths.every((p) => this.insideRun(p))).map((t) => ({ paths: t.paths, ...(t.name ? { name: String(t.name) } : {}), ...(t.ref ? { ref: String(t.ref) } : {}), ...(t.sha256 && /^[0-9a-f]{64}$/.test(t.sha256) ? { sha256: t.sha256 } : {}) })) : [];
     if (!targets.length) return { reason: "a detect pass needs objects of this run" };
@@ -1728,7 +1737,9 @@ export class JobService {
       // The manifest or recipe.json may carry the key now, though it did not when the job was accepted: not run.
       if (r.refused) throw new Error(r.refused);
       await writeFile(join(ctl, "target.json"), JSON.stringify(job.spec.target));
-      return { lines: [...head, ...run(`${r.runtime} ${q(r.entry)} run --target /job/target.json --out "$OUT"`)], tool_sha256: r.sha256 };
+      // One phase of the recipe, when the job names one it declares: the recipe reads it from RECIPE_PHASE.
+      const phase = job.spec.phase && (r.phases ?? []).includes(job.spec.phase) ? [`export RECIPE_PHASE=${q(job.spec.phase)}`] : ["unset RECIPE_PHASE"];
+      return { lines: [...head, ...phase, ...run(`${r.runtime} ${q(r.entry)} run --target /job/target.json --out "$OUT"`)], tool_sha256: r.sha256 };
     }
     // detect: every recipe of the trigger asked about every target, or, for
     // a derived pass, the pairs whose prefilter matched; one line each.
@@ -2515,7 +2526,7 @@ export class JobService {
       }));
       Object.assign(job, { generation: generation.id, revision });
       await this.project(job);
-      if (job.spec.target?.sha256) this.derivedKnown.set(job.spec.target.sha256, "catalogued");
+      if (job.spec.target?.sha256 && !job.spec.phase) this.derivedKnown.set(job.spec.target.sha256, "catalogued");
       if (trigger === "derived") this.derivedOutputBytes += job.outputs?.bytes ?? 0;
       const where = `Files: catalog/gen/${generation.id}/${generation.alias ? ` (also ${generation.alias}/)` : ""}; index: catalog/revisions/${revision}/index.md.`;
       const what = `${generation.id} ${generation.recipe} over ${generation.target.name ?? generation.target.ref ?? "an object"}`;
@@ -2525,7 +2536,7 @@ export class JobService {
       const lacks = generation.sensitive ? [] : missingOf(generation.coverage);
       const lackNote = lacks.length ? ` Missing from the images: ${lacks.join("; ")}.` : "";
       if (trigger === "kickoff") {
-        await this.o.notify("all", `Catalogue revision ${revision}: ${what} — ${generation.status}${generation.experimental ? " (experimental recipe)" : ""}.${lackNote} ${where}`).catch(() => undefined);
+        await this.o.notify("all", `Catalogue revision ${revision}: ${what} — ${phaseWords(job.spec.phase, generation.status)}${generation.experimental ? " (experimental recipe)" : ""}.${lackNote} ${where}`).catch(() => undefined);
       } else if (trigger === "derived") {
         // A complete catalogue of something a job made is everyone's news;
         // a partial or failed one is its maker's, with the recipe's reasons.
@@ -3225,6 +3236,15 @@ export class JobService {
     // A recipe the plan names that the service refuses is named with why, on the record: a broad extraction refused here is declined with that why (scripts/preparation.ts).
     const refused: Array<{ recipe: string; input: string; reason: string }> = [];
     for (const p of plan) {
+      // A recipe that can list before it digests is run twice: the listing alone first (a catalogue of a 400,000-item image in
+      // under a minute, where the whole took twenty and every seat walked the image itself meanwhile), then whole. The listing
+      // takes no alias: catalog/<input>/ is the whole catalogue's.
+      const info = await this.recipe(p.recipe);
+      if (info?.phases?.includes(LISTING_PHASE)) {
+        const first = await this.submit("system", { kind: "recipe", recipe: p.recipe, phase: LISTING_PHASE, target: p.target, inputs: [p.target.ref ?? "all"], timeout_seconds: 900, network: "allowlist", note: `kickoff: ${p.input} (the listing; the digests follow)` });
+        if (first.ok) ids.push(first.job.id);
+        else this.log(`kickoff recipe ${p.recipe} (listing) over ${p.input} refused: ${first.reason}`);
+      }
       const r = await this.submit("system", { kind: "recipe", recipe: p.recipe, target: p.target, alias: p.alias, inputs: [p.target.ref ?? "all"], timeout_seconds: 900, network: "allowlist", note: `kickoff: ${p.input}` });
       if (r.ok) ids.push(r.job.id);
       else {
@@ -3730,6 +3750,20 @@ export function derivedRank(path: string, o: { picked?: boolean } = {}): number 
 
 /** A program, a script, a document, a mail, an archive or an image of a disk, by its name's ending. */
 const CASE_FILE = /\.(exe|dll|scr|com|pif|cpl|sys|msi|msix|appx|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|lnk|url|jar|py|sh|elf|bin|apk|dmg|pkg|deb|rpm|doc[xm]?|dot[xm]?|xls[xmb]?|xlt[xm]?|ppt[xm]?|pps[xm]?|rtf|pdf|one|odt|ods|odp|csv|txt|eml|msg|pst|ost|mbox|zip|7z|rar|tar|gz|tgz|bz2|xz|cab|iso|img|vhdx?|vmdk|ova|e01|ad1|kdbx|sqlite|db)$/;
+
+/** The phase a recipe may declare to be run to alone at kickoff: its catalogue's list, before any digest. */
+export const LISTING_PHASE = "listing";
+
+/**
+ * What a kickoff catalogue post says of its generation: its status, or, for
+ * a listing run alone, that the list is whole and what is still to come. A
+ * listing's own status is partial by its record (the digests are pending),
+ * which read alone would send seats to walk the image themselves.
+ */
+export function phaseWords(phase: string | undefined, status: string): string {
+  if (phase !== LISTING_PHASE) return status;
+  return `the listing (every member's path, size and times; search it now with catalog_search). Its digests are not computed yet: the whole catalogue follows as a later revision, from a job that is already queued, so nobody need walk the image for a list (${status} until then)`;
+}
 
 /** One post, for the agent that asked. */
 export function describe(job: JobRecord): string {
