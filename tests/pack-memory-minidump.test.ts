@@ -21,7 +21,7 @@ import { ROOT } from "./tool-library-harness.ts";
 import { rng } from "./memory-f1-support.ts";
 import {
   assemble, bareDump, type Built, call, doc, encode, handleEntry, hex, IMAGE, inProcess, mdString, memoryInfo, moduleEntry, PAGE, PRIVATE, RW, RWX, RX, scene, SCRIPT, SIGMA, STRADDLE,
-  TOOL_DIR, u32, u64, WIDE_NEEDLE,
+  TOOL_DIR, u16, u32, u64, WIDE_NEEDLE,
 } from "./pack-memory-minidump-support.ts";
 
 const B62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -72,7 +72,7 @@ test("summary: header, flags, kind of dump, system, process, exception, handles,
     assert.equal(a.process.integrity_level.name, "high");
     assert.equal(a.process.build_string, "19041.1.amd64fre.vb_release.191206-1406");
     assert.deepEqual(a.counts, { streams: 11, modules: 2, unloaded_modules: 1, threads: 2, memory_ranges: 9, memory_ranges_declared: 9, memory_ranges_empty: 0,
-      memory_ranges_overlapping: 0, memory_ranges_cut_by_end_of_file: 0, memory_info_regions: 11, memory_info_regions_overlapping: 0 });
+      memory_ranges_overlapping: 0, memory_ranges_cut_by_end_of_file: 0, memory_ranges_not_readable: 0, memory_info_regions: 11, memory_info_regions_overlapping: 0 });
     assert.equal(a.memory.mapped_bytes, d.mapped);
     assert.equal(a.memory.declared_bytes, d.mapped);
     assert.equal(a.exception.thread_id, 4242);
@@ -818,7 +818,7 @@ test("summary counts every handle's type: a type name that was not read, not lis
   assert.equal(lost.status, "partial");
   assert.deepEqual(lost.handles.by_type, expect300);
   assert.deepEqual([lost.handles.without_a_type_name, lost.handles.type_name_unreadable], [5, 3]);
-  assert.equal(lost.problems.filter((x: any) => x.stream === "HandleData" && /a handle's type name: 4 bytes are needed/.test(x.problem)).length, 3);
+  assert.equal(lost.problems.filter((x: any) => x.stream === "HandleData" && /a handle's type name: a MINIDUMP_STRING declared at file offset \d+, at or past the end of the file/.test(x.problem)).length, 3);
   assert.match(lost.status_basis, /the handle count by type is not whole: 0 handle\(s\) have a type name that was not read, 0 one past the names listed, 3 one the file does not hold/);
   // more distinct names than the answer lists: the handles of the names past the bound are counted apart, and said
   await writeFile(join(dir, "inputs", "handles-many.dmp"), handles(600, { untyped: 5 }));
@@ -857,7 +857,8 @@ test("modules: a PDB record that is declared and cannot be read whole is in prob
   assert.deepEqual(a.modules.map((m: any) => m.pdb_record), ["none declared", "declared, not readable", "declared, not readable", "read", "read", "read, not RSDS"]);
   assert.equal(none.pdb, null);
   assert.deepEqual([past.pdb.read, past.pdb.format, past.pdb.declared_bytes, past.pdb.file_offset], [false, null, 64, 0x7fff0000]);
-  assert.match(past.pdb.why_not, /declared and not readable, which is not a module without a record/);
+  assert.match(past.pdb.why_not, /at or past the end of the file \(\d+ bytes\): not read \(problems\)\. A record is declared, so this is not an entry without one/);
+  assert.equal(past.pdb.location, "declared_not_readable");
   assert.deepEqual([cut.pdb.read, cut.pdb.format, cut.pdb.file_offset], [false, "RSDS", bad.memoryAt], "the record begins with RSDS and the file ends ten bytes into it");
   assert.deepEqual([long.pdb.read, long.pdb.format, long.pdb.age, long.pdb.path_cut, long.pdb.path_bytes_read, long.pdb.path], [true, "RSDS", 7, true, 520, longPath.slice(0, 520)]);
   assert.match(long.pdb.path_note, /the first 520 bytes of its path were read and the path does not end in them/);
@@ -866,7 +867,7 @@ test("modules: a PDB record that is declared and cannot be read whole is in prob
   const said = a.problems.map((x: any) => [x.stream, x.file_offset, x.problem.replace(/:.*/, "")]);
   assert.deepEqual(said, [["ModuleList", 0x7fff0000, "the CodeView (PDB) record of module 1"], ["ModuleList", bad.memoryAt, "the CodeView (PDB) record of module 2"],
     ["ModuleList", long.pdb.file_offset, "the CodeView (PDB) record of module 3"]]);
-  assert.match(a.problems[1].problem, /64 bytes are needed at file offset \d+ and the file \(\d+ bytes\) holds 10 of them/);
+  assert.match(a.problems[1].problem, /64 bytes declared at file offset \d+ and the file \(\d+ bytes\) ends 10 bytes into it/);
   // the same list without the three faulty records is complete, and a module with no record is still "none declared"
   await writeFile(join(dir, "inputs", "cv-ok.dmp"), build(["none", "good", "nb10"]).file);
   const ok = await ask({ path: "inputs/cv-ok.dmp", view: "modules" });
@@ -889,7 +890,7 @@ test("modules: a PDB record that is declared and cannot be read whole is in prob
   const past2 = await ask({ path: "inputs/cv-past-end.dmp", view: "modules" });
   assert.deepEqual([past2.status, past2.modules[0].pdb_record, past2.modules[0].pdb.read, past2.modules[0].pdb.cut_by_file, past2.modules[0].pdb.path],
     ["partial", "read", true, true, "ok.pdb"]);
-  assert.match(JSON.stringify(past2.problems), /declares \d+ bytes and the file ends \d+ bytes into it/);
+  assert.match(JSON.stringify(past2.problems), /\d+ bytes declared at file offset \d+ and the file \(\d+ bytes\) ends \d+ bytes into it/);
 });
 
 test("memory: the protect and type filters ask every region a range lies over, and the row says which part met them", async () => {
@@ -966,4 +967,253 @@ test("smaller truths: a ThreadExList beside a ThreadList, names the summary does
   assert.equal(kept.modules[0].name, "x.dll");
   for (let i = 0; i + 12 <= tokenish.length; i++) assert.ok(!JSON.stringify(kept).includes(tokenish.slice(i, i + 12)), `a piece of the token at ${i}`);
   assert.match(kept.modules[1].path, /^<withheld \d+ characters: /, "the backstop reads the path as it stands and calls the token a secret: withheld whole");
+});
+
+/**
+ * Every (size, RVA) location the tool follows, laid out here from the published layouts: a thread's context and stack (MINIDUMP_THREAD:
+ * the stack descriptor at +24, the context's size and RVA at +40), the exception's context (MINIDUMP_EXCEPTION_STREAM +160), a memory
+ * descriptor, a thread's, a module's and a handle type's name, a CodeView record and a stream of the directory. Each is pointed at RVA 0
+ * (the header), past the end of the file, at a record the file cuts and at one smaller than its type; each must be partial, named in
+ * problems, and never said to be absent.
+ */
+type Where = number | "here" | "tail" | "past";
+const NOT_ABSENT = /no context record|has no context|gives no name|none is declared/;
+const sysInfo = (put: (b: Buffer) => number, arch: number): Buffer =>
+  Buffer.concat([u16(arch), u16(6), u16(0x9e0d), Buffer.from([8, 1]), u32(10), u32(0), u32(19045), u32(2), u32(put(mdString("Service Pack 1"))), u16(0x100), u16(0), Buffer.alloc(24)]);
+/** A CONTEXT of `bytes` bytes (an x64 one has its rip at 0xf8 and rsp at 0x98; an x86 one its eip at 0xb8 and esp at 0xc4). */
+const ctxBytes = (bits: 32 | 64, bytes: number): Buffer => {
+  const c = Buffer.alloc(Math.max(bytes, 0x100));
+  if (bits === 64) { c.writeBigUInt64LE(0x7ff6a1b21234n, 0xf8); c.writeBigUInt64LE(0xe51f701f00n, 0x98); } else { c.writeUInt32LE(0x401234, 0xb8); c.writeUInt32LE(0x18ff00, 0xc4); }
+  return c.subarray(0, bytes);
+};
+/** A dump with SystemInfo and one thread (ThreadList, or ThreadExList with `ex`), its context and stack placed by `ctx` and `stack`. */
+function threadDump(bits: 32 | 64, ctx: { size: number; at: Where; body?: Buffer }, stack: { size: number; at: Where }, o: { ex?: boolean; tail?: Buffer } = {}): Buffer {
+  let ctxAt = 0, stackAt = 0;
+  const built = assemble((put) => {
+    if (ctx.at === "here") ctxAt = put(ctx.body ?? ctxBytes(bits, ctx.size));
+    if (stack.at === "here") stackAt = put(Buffer.alloc(stack.size, 0x5a));
+    const entry = Buffer.concat([u32(77), u32(0), u32(0x20), u32(8), u64(bits === 64 ? 0xe51f400000n : 0x7ffde000n), u64(bits === 64 ? 0xe51f700000n : 0x18e000n),
+      u32(stack.size), u32(stackAt), u32(ctx.size), u32(ctxAt), ...(o.ex ? [u64(0), u32(0), u32(0)] : [])]);
+    return [{ type: 7, body: sysInfo(put, bits === 64 ? 9 : 0) }, { type: o.ex ? 8 : 3, body: Buffer.concat([u32(1), entry]) }];
+  }, { memory: o.tail });
+  const entry = built.at[o.ex ? 8 : 3] + 4;
+  const place = (w: Where, field: number): void => {
+    if (typeof w === "number") built.file.writeUInt32LE(w, entry + field);
+    else if (w === "tail") built.file.writeUInt32LE(built.memoryAt, entry + field);
+    else if (w === "past") built.file.writeUInt32LE(built.file.length + 4096, entry + field);
+  };
+  place(ctx.at, 44);
+  place(stack.at, 36);
+  return built.file;
+}
+const goodStack = { size: 0x200, at: "here" as Where };
+const declaredFault = (a: Record<string, any>, stream: string, what: RegExp): void => {
+  assert.equal(a.status, "partial", JSON.stringify(a.problems));
+  assert.match(a.status_basis, new RegExp(`malformed in [^;]*${stream}`));
+  assert.ok(a.problems.some((x: any) => x.stream === stream && what.test(x.problem) && Number.isInteger(x.file_offset)), JSON.stringify(a.problems));
+};
+
+test("a thread's context at RVA 0, past the file, cut by the file or smaller than its architecture's CONTEXT is partial, named, and never decoded as one", async () => {
+  const at = async (name: string, file: Buffer, view = "threads"): Promise<Record<string, any>> => { await writeFile(join(dir, "inputs", name), file); return ask({ path: `inputs/${name}`, view }); };
+  // a clean x64 and x86 thread: complete, decoded, the stack read from its descriptor
+  for (const bits of [64, 32] as const) {
+    const ok = await at(`ctx-ok-${bits}.dmp`, threadDump(bits, { size: bits === 64 ? 1232 : 716, at: "here" }, goodStack));
+    assert.deepEqual([ok.status, ok.problems, ok.threads[0].context.location, ok.threads[0].context.decoded, ok.threads[0].stack.location, ok.threads[0].stack.bytes_in_file],
+      ["complete", [], "read", true, "read", 0x200]);
+    assert.equal(ok.threads[0].context.layout, bits === 64 ? "x64 CONTEXT" : "x86 CONTEXT");
+  }
+  // declared and not readable: RVA 0, past the file, undersized for the architecture (in ThreadList and ThreadExList)
+  const cases: Array<[string, 32 | 64, { size: number; at: Where }, RegExp]> = [
+    ["x64 at RVA 0", 64, { size: 1232, at: 0 }, /context of thread 77 \(entry 0\): 1232 bytes declared at file offset 0, where the file's header is/],
+    ["x86 at RVA 0", 32, { size: 716, at: 0 }, /context of thread 77 \(entry 0\): 716 bytes declared at file offset 0/],
+    ["x64 past the file", 64, { size: 1232, at: "past" }, /1232 bytes declared at file offset \d+, at or past the end of the file/],
+    ["x64 of 128 bytes", 64, { size: 128, at: "here" }, /128 bytes are declared and an x64 CONTEXT needs at least 1232/],
+    ["x86 of 100 bytes", 32, { size: 100, at: "here" }, /100 bytes are declared and an x86 CONTEXT needs at least 716/],
+    ["x64 of 716 bytes", 64, { size: 716, at: "here" }, /716 bytes are declared and an x64 CONTEXT needs at least 1232/],
+  ];
+  for (const ex of [false, true]) {
+    for (const [label, bits, ctx, what] of cases) {
+      const a = await at("ctx-bad.dmp", threadDump(bits, ctx, goodStack, { ex }));
+      const stream = ex ? "ThreadExList" : "ThreadList";
+      declaredFault(a, stream, what);
+      const c = a.threads[0].context;
+      assert.deepEqual([c.location, c.decoded, c.layout, c.registers, a.threads[0].instruction_pointer_in_module], ["declared_not_readable", false, undefined, undefined, undefined], `${label} (${stream})`);
+      assert.match(c.why_not, /not read/);
+      assert.doesNotMatch(JSON.stringify(a.threads[0]), NOT_ABSENT, label);
+    }
+  }
+  // cut by the file: the registers are decoded when the bytes the file holds reach them, and the answer is partial either way
+  const cut300 = await at("ctx-cut.dmp", threadDump(64, { size: 1232, at: "tail" }, goodStack, { tail: ctxBytes(64, 300) }));
+  declaredFault(cut300, "ThreadList", /1232 bytes declared at file offset \d+ and the file \(\d+ bytes\) ends 300 bytes into it/);
+  assert.deepEqual([cut300.threads[0].context.location, cut300.threads[0].context.cut_by_file, cut300.threads[0].context.decoded, cut300.threads[0].context.registers.rip],
+    ["cut_by_file", true, true, "0x7ff6a1b21234"]);
+  const cut100 = await at("ctx-cut2.dmp", threadDump(64, { size: 1232, at: "tail" }, goodStack, { tail: ctxBytes(64, 100) }));
+  declaredFault(cut100, "ThreadList", /ends 100 bytes into it/);
+  assert.deepEqual([cut100.threads[0].context.location, cut100.threads[0].context.decoded], ["cut_by_file", false]);
+  assert.match(cut100.threads[0].context.why_not, /the file ends 100 bytes into the record/);
+  // none declared: 0 bytes (at RVA 0, or at an RVA) is no record and no fault, said as what the entry declares
+  const none = await at("ctx-none.dmp", threadDump(64, { size: 0, at: 0 }, goodStack));
+  assert.deepEqual([none.status, none.threads[0].context.location, none.threads[0].context.why_not], ["complete", "none", "none is declared (0 bytes at RVA 0)"]);
+  const zero = await at("ctx-zero.dmp", threadDump(64, { size: 0, at: 64 }, goodStack));
+  assert.deepEqual([zero.status, zero.threads[0].context.location], ["complete", "none"]);
+  assert.match(zero.threads[0].context.why_not, /^0 bytes are declared \(at file offset 64\)/);
+});
+
+test("a thread's stack descriptor at RVA 0 or past the file holds no byte of the file; one the file cuts holds what it holds; each is partial", async () => {
+  const ctx = { size: 1232, at: "here" as Where };
+  const at = async (name: string, file: Buffer): Promise<Record<string, any>> => { await writeFile(join(dir, "inputs", name), file); return ask({ path: `inputs/${name}`, view: "threads" }); };
+  const zero = await at("stack-0.dmp", threadDump(64, ctx, { size: 0x1000, at: 0 }));
+  declaredFault(zero, "ThreadList", /the stack of thread 77 \(entry 0\): 4096 bytes declared at file offset 0, where the file's header is/);
+  assert.deepEqual([zero.threads[0].stack.location, zero.threads[0].stack.bytes_in_file, zero.threads[0].stack.bytes_in_memory_lists], ["declared_not_readable", 0, 0],
+    "the header's bytes are not the stack's");
+  const past = await at("stack-past.dmp", threadDump(64, ctx, { size: 0x1000, at: "past" }));
+  declaredFault(past, "ThreadList", /the stack of thread 77 \(entry 0\): 4096 bytes declared at file offset \d+, at or past the end of the file/);
+  assert.deepEqual([past.threads[0].stack.location, past.threads[0].stack.bytes_in_file], ["declared_not_readable", 0]);
+  const cut = await at("stack-cut.dmp", threadDump(64, ctx, { size: 0x1000, at: "tail" }, { tail: Buffer.alloc(100, 0x5a) }));
+  declaredFault(cut, "ThreadList", /the stack of thread 77 \(entry 0\): 4096 bytes declared at file offset \d+ and the file \(\d+ bytes\) ends 100 bytes into it/);
+  assert.deepEqual([cut.threads[0].stack.location, cut.threads[0].stack.bytes_in_file], ["cut_by_file", 100]);
+  for (const a of [zero, past, cut]) assert.doesNotMatch(JSON.stringify(a.threads[0].stack), NOT_ABSENT);
+  // a full-memory dump lays a stack out at RVA 0 with its bytes in the Memory64List: whole there, it is read by address and is no fault;
+  // with part of its range missing from the memory lists, the RVA of 0 is the fault it is anywhere else
+  const full = (held: number): Buffer => assemble((put) => {
+    const entry = Buffer.concat([u32(77), u32(0), u32(0x20), u32(8), u64(0n), u64(0xe51f700000n), u32(0x200), u32(0), u32(1232), u32(put(ctxBytes(64, 1232)))]);
+    return [{ type: 7, body: sysInfo(put, 9) }, { type: 3, body: Buffer.concat([u32(1), entry]) },
+      { type: 9, body: Buffer.concat([u64(1), u64(0), u64(0xe51f700000n), u64(held)]) }];
+  }, { flags: 2n, memory: Buffer.alloc(held, 0x5a) }).file;
+  const whole = await at("stack-full.dmp", full(0x200));
+  assert.deepEqual([whole.status, whole.problems, whole.threads[0].stack.location, whole.threads[0].stack.bytes_in_file, whole.threads[0].stack.bytes_in_memory_lists],
+    ["complete", [], "in_memory_lists", 0, 0x200]);
+  const half = await at("stack-half.dmp", full(0x100));
+  declaredFault(half, "ThreadList", /the stack of thread 77 \(entry 0\): 512 bytes declared at file offset 0, where the file's header is/);
+  assert.deepEqual([half.threads[0].stack.location, half.threads[0].stack.bytes_in_file, half.threads[0].stack.bytes_in_memory_lists], ["declared_not_readable", 0, 0x100]);
+});
+
+test("the exception's context location and NumberParameters, memory descriptors at RVA 0, thread, module and handle-type names and directory entries are judged by the same rule", async () => {
+  const exception = (ctx: [number, 0 | "good" | "tail" | "past"], params = 2, tail?: Buffer): Buffer => {
+    const built = assemble((put) => {
+      const good = put(ctxBytes(64, 1232));
+      const e = Buffer.alloc(168);
+      e.writeUInt32LE(77, 0);
+      e.writeUInt32LE(0xc0000005, 8);
+      e.writeBigUInt64LE(0x401000n, 24);
+      e.writeUInt32LE(params, 32);
+      e.writeUInt32LE(ctx[0], 160);
+      e.writeUInt32LE(ctx[1] === "good" ? good : 0, 164);
+      return [{ type: 7, body: sysInfo(put, 9) }, { type: 6, body: e }];
+    }, { memory: tail });
+    if (ctx[1] === "tail") built.file.writeUInt32LE(built.memoryAt, built.at[6] + 164);
+    if (ctx[1] === "past") built.file.writeUInt32LE(built.file.length + 99, built.at[6] + 164);
+    return built.file;
+  };
+  const sum = async (name: string, file: Buffer, args: Record<string, unknown> = {}): Promise<Record<string, any>> => { await writeFile(join(dir, "inputs", name), file); return ask({ path: `inputs/${name}`, ...args }); };
+  const clean = await sum("exc-ok.dmp", exception([1232, "good"]));
+  assert.deepEqual([clean.status, clean.problems, clean.exception.context.location], ["complete", [], "read"]);
+  for (const [label, file, what] of [
+    ["at RVA 0", exception([1232, 0]), /the context of the exception's thread: 1232 bytes declared at file offset 0/],
+    ["past the file", exception([1232, "past"]), /at or past the end of the file/],
+    ["cut by the file", exception([1232, "tail"], 2, Buffer.alloc(50)), /ends 50 bytes into it/],
+    ["of 716 bytes in an x64 dump", exception([716, "good"]), /716 bytes are declared and an x64 CONTEXT needs at least 1232/],
+  ] as Array<[string, Buffer, RegExp]>) {
+    const a = await sum("exc-bad.dmp", file);
+    declaredFault(a, "Exception", what);
+    assert.notEqual(a.exception.context.location, "read", label);
+    assert.doesNotMatch(JSON.stringify(a.exception.context), NOT_ABSENT, label);
+  }
+  const params = await sum("exc-params.dmp", exception([1232, "good"], 16));
+  declaredFault(params, "Exception", /NumberParameters is 16 and EXCEPTION_RECORD holds at most 15/);
+  assert.equal(params.exception.parameters.length, 15);
+
+  // a MemoryList descriptor at RVA 0: the header's bytes are not mapped as the process's memory; a Memory64List whose BaseRva is 0 likewise
+  const list32 = assemble((put) => {
+    const data = put(Buffer.alloc(0x100, 0x41));
+    return [{ type: 5, body: Buffer.concat([u32(2), u64(0x10000n), u32(0x40), u32(0), u64(0x20000n), u32(0x100), u32(data)]) }];
+  }).file;
+  const mem = await sum("mem-rva0.dmp", list32, { view: "memory" });
+  declaredFault(mem, "MemoryList", /the memory range at 0x10000: 64 bytes declared at file offset 0, where the file's header is/);
+  assert.deepEqual(mem.ranges.map((x: any) => x.va), ["0x20000"], "the range at RVA 0 is not mapped");
+  const va = await sum("mem-rva0.dmp", list32, { view: "va", va: "0x10000" });
+  assert.deepEqual([va.status, va.addresses[0].in_dump], ["partial", false]);
+  const counted = await sum("mem-rva0.dmp", list32);
+  assert.equal(counted.counts.memory_ranges_not_readable, 1);
+  const list64 = assemble(() => [{ type: 9, body: Buffer.concat([u64(1), u64(0), u64(0x10000n), u64(0x20)]) }], { flags: 2n }).file;     // BaseRva 0
+  const mem64 = await sum("mem64-rva0.dmp", list64, { view: "memory" });
+  declaredFault(mem64, "Memory64List", /the memory of the Memory64List \(1 ranges, from its BaseRva\): 32 bytes declared at file offset 0/);
+  assert.deepEqual(mem64.ranges, []);
+
+  // a ThreadNames entry at RVA 0: the name was not read, partial, and not "no name"
+  const named = assemble((put) => [{ type: 7, body: sysInfo(put, 9) },
+    { type: 3, body: Buffer.concat([u32(1), u32(77), u32(0), u32(0x20), u32(8), u64(0n), u64(0n), u32(0), u32(0), u32(0), u32(0)]) },
+    { type: 24, body: Buffer.concat([u32(1), u32(77), u64(0n)]) }]).file;
+  const tn = await sum("tname-rva0.dmp", named, { view: "threads" });
+  declaredFault(tn, "ThreadNames", /the name of thread 77: a MINIDUMP_STRING declared at file offset 0, where the file's header is/);
+  assert.deepEqual([tn.threads[0].name, tn.threads[0].name_why_not], [null, "the ThreadNames entry gives a name at RVA 0 and it could not be read (problems)"]);
+
+  // a module whose name RVA is 0: modules and memory are partial (memory names the module that holds a range's address)
+  const mods = assemble((put) => {
+    const data = put(Buffer.alloc(0x100, 0x41));
+    return [{ type: 4, body: Buffer.concat([u32(1), moduleEntry({ base: 0x20000n, size: 0x1000, nameRva: 0 })]) },
+      { type: 5, body: Buffer.concat([u32(1), u64(0x20000n), u32(0x100), u32(data)]) }];
+  }).file;
+  const m0 = await sum("modname-rva0.dmp", mods, { view: "modules" });
+  declaredFault(m0, "ModuleList", /the name of module 0: a MINIDUMP_STRING declared at file offset 0/);
+  assert.equal(m0.modules[0].name, null);
+  assert.match(m0.modules[0].name_why_not, /name RVA is 0, where the file's header is: the name was not read \(problems\), and this is not a module without a name/);
+  const memView = await sum("modname-rva0.dmp", mods, { view: "memory" });
+  assert.equal(memView.status, "partial", "a module name the memory view could not read makes it partial");
+
+  // CodeView at RVA 0 and of two bytes (smaller than a signature): declared, not readable, never "read, not RSDS"
+  const cv = assemble((put) => {
+    const two = put(Buffer.from("RS"));
+    return [{ type: 4, body: Buffer.concat([u32(2), moduleEntry({ base: 0x10000n, size: 0x1000, nameRva: put(mdString("a.dll")), cv: [64, 0] }),
+      moduleEntry({ base: 0x20000n, size: 0x1000, nameRva: put(mdString("b.dll")), cv: [2, two] })]) }];
+  }).file;
+  const cvs = await sum("cv-more.dmp", cv, { view: "modules" });
+  declaredFault(cvs, "ModuleList", /the CodeView \(PDB\) record of module 1: 2 bytes are declared and a CodeView record \(a 4-byte signature\) needs at least 4/);
+  assert.deepEqual(cvs.modules.map((x: any) => [x.pdb_record, x.pdb.location, x.pdb.read]), [["declared, not readable", "declared_not_readable", false], ["declared, not readable", "declared_not_readable", false]]);
+  assert.ok(cvs.problems.some((x: any) => /CodeView \(PDB\) record of module 0: 64 bytes declared at file offset 0/.test(x.problem)));
+
+  // a stream of the directory at RVA 0: no byte of the header is read as the stream
+  const dirRva0 = assemble((put) => [{ type: 4, body: Buffer.concat([u32(1), moduleEntry({ base: 0x10000n, size: 0x1000, nameRva: put(mdString("a.dll")) })]) }]).file;
+  dirRva0.writeUInt32LE(0, dirRva0.readUInt32LE(12) + 8);
+  const d0 = await sum("dir-rva0.dmp", dirRva0);
+  declaredFault(d0, "ModuleList", /the ModuleList stream \(directory entry 0\): 112 bytes declared at file offset 0/);
+  assert.deepEqual([d0.streams[0].bytes_in_file, d0.streams[0].location, d0.counts.modules], [0, "declared_not_readable", 0]);
+});
+
+test("lossy decoding is said and partial; an empty handle type name has its own key; a clean dump is complete in every view", async () => {
+  const lossy = assemble((put) => {
+    const name = put(Buffer.concat([u32(10), Buffer.from("a\0b\0", "latin1"), Buffer.from([0x00, 0xd8]), Buffer.from("c\0.\0", "latin1"), Buffer.alloc(2)]));      // a lone high surrogate
+    const rec = put(Buffer.concat([Buffer.from("RSDS"), Buffer.alloc(16, 1), u32(1), Buffer.from("C:\\", "latin1"), Buffer.from([0xff, 0xfe]), Buffer.from("\\x.pdb\0", "latin1")]));
+    return [{ type: 4, body: Buffer.concat([u32(1), moduleEntry({ base: 0x10000n, size: 0x1000, nameRva: name, cv: [24 + 12, rec] })]) }];
+  }).file;
+  await writeFile(join(dir, "inputs", "lossy.dmp"), lossy);
+  const l = await ask({ path: "inputs/lossy.dmp", view: "modules" });
+  assert.equal(l.status, "partial");
+  assert.ok(l.modules[0].name.includes("\ufffd") && l.modules[0].pdb.path.includes("\ufffd"));
+  assert.equal(l.modules[0].pdb.path_lossy, true);
+  assert.ok(l.problems.some((x: any) => /the name of module 0: the string is not valid UTF-16/.test(x.problem)), JSON.stringify(l.problems));
+  assert.ok(l.problems.some((x: any) => /the path is not UTF-8 \(1 byte sequence\(s\) could not be decoded\)/.test(x.problem) || /the path is not UTF-8/.test(x.problem)), JSON.stringify(l.problems));
+
+  const handles = assemble((put) => {
+    const empty = put(mdString(""));
+    const file = put(mdString("File"));
+    return [{ type: 12, body: Buffer.concat([u32(16), u32(32), u32(3), u32(0), handleEntry(4, empty), handleEntry(8, file), handleEntry(12, 0)]) }];
+  }).file;
+  await writeFile(join(dir, "inputs", "handles-empty.dmp"), handles);
+  const h = await ask({ path: "inputs/handles-empty.dmp" });
+  assert.equal(h.status, "complete", JSON.stringify(h.problems));
+  assert.deepEqual([h.handles.by_type, h.handles.without_a_type_name], [{ "<an empty type name>": 1, File: 1 }, 1]);
+
+  for (const [path, d] of both()) {
+    const s = d.scene;
+    const views: Array<Record<string, unknown>> = [{ view: "summary" }, { view: "modules" }, { view: "memory" }, { view: "memory", list: "regions" }, { view: "threads" },
+      { view: "va", va: hex(s.heap) }, { view: "read", va: hex(s.heap), length: 64 }, { view: "module", module: "ntdll.dll" }, { view: "find", needle: SIGMA }];
+    for (const args of views) {
+      const a = await ask({ path, ...args });
+      assert.deepEqual([a.status, a.problems], ["complete", []], `${path} ${JSON.stringify(args)}`);
+    }
+    const t = await ask({ path, view: "threads" });
+    assert.ok(t.threads.every((x: any) => x.context.location === "read" && x.stack.location === "read" && x.stack.bytes_in_file === x.stack.bytes));
+    assert.equal((await ask({ path })).exception.context.location, "read");
+  }
 });

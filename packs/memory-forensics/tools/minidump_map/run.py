@@ -215,8 +215,8 @@ import os
 import signal
 import sys
 
-PARSER = "minidump_map/2"
-TOOL = 4
+PARSER = "minidump_map/3"
+TOOL = 5
 
 
 def _before_start(signum, _frame):
@@ -301,7 +301,7 @@ INTEGRITY = {0x0000: "untrusted", 0x1000: "low", 0x2000: "medium", 0x2100: "medi
 VIEW_STREAMS = {
     "summary": None,            # every stream
     "modules": {"ModuleList", "UnloadedModuleList", "MemoryList", "Memory64List"},
-    "memory": {"MemoryList", "Memory64List", "MemoryInfoList"},
+    "memory": {"MemoryList", "Memory64List", "MemoryInfoList", "ModuleList"},     # a row names the module that holds its address
     "threads": {"ThreadList", "ThreadExList", "ThreadInfoList", "ThreadNames", "SystemInfo", "ModuleList", "MemoryList", "Memory64List"},
     "va": {"MemoryList", "Memory64List", "MemoryInfoList", "ModuleList"},
     "read": {"MemoryList", "Memory64List", "ModuleList"},
@@ -1645,6 +1645,30 @@ def protect_name(value):
     return "|".join([base] + flags_of(value, PROTECT_MOD))
 
 
+def decode_utf16(raw):
+    """UTF-16LE bytes as text, and how many units could not be decoded (a lone surrogate): each is U+FFFD in the text, and a caller
+    that gets a count above 0 says so (a U+FFFD the bytes themselves hold is not counted)."""
+    try:
+        return raw.decode("utf-16-le"), 0
+    except UnicodeDecodeError:
+        text = raw.decode("utf-16-le", "replace")
+        return text, max(1, text.count("�") - raw.decode("utf-16-le", "surrogatepass").count("�"))
+
+
+def decode_utf8(raw):
+    """UTF-8 bytes as text, and how many byte sequences could not be decoded (each is U+FFFD in the text)."""
+    try:
+        return raw.decode("utf-8"), 0
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", "replace")
+        return text, max(1, text.count("�") - raw.decode("utf-8", "surrogateescape").count("�"))
+
+
+EMPTY_TYPE_NAME = "<an empty type name>"       # the key of by_type that counts the handles whose type name string has 0 characters
+# The size of the CONTEXT record of an architecture whose registers this tool decodes; a context declared smaller is not one.
+CONTEXT_BYTES = {9: (1232, "an x64 CONTEXT"), 0: (716, "an x86 CONTEXT")}
+
+
 class Dump:
     """The file, read with pread; the faults found in it (stream, file offset, what) are kept in `problems`."""
 
@@ -1672,7 +1696,7 @@ class Dump:
         self.seg_sum = [0]
         self.declared_bytes = self.mapped_bytes = 0
         self.ranges_declared = 0
-        self.ranges_empty = self.ranges_overlapping = self.ranges_cut = self.regions_overlapping = 0
+        self.ranges_empty = self.ranges_overlapping = self.ranges_cut = self.regions_overlapping = self.ranges_unreadable = 0
         self.reg_va, self.reg_len, self.reg_state, self.reg_protect, self.reg_type, self.reg_abase, self.reg_aprot = [], [], [], [], [], [], []
         self.absent = []            # the names of the streams the directory does not list, of those this tool reads
         self.mod_order, self.mod_bases = [], []
@@ -1707,19 +1731,64 @@ class Dump:
             return None
         return data
 
-    def string(self, stream, rva, what):
-        """A MINIDUMP_STRING (a u32 byte length, then UTF-16LE) at `rva`: the text, or None with the fault recorded."""
+    def locate(self, stream, size, rva, what, minimum, at=None, kind="its type"):
+        """Where a location record (a byte count and an RVA) points, judged one way for every record this tool follows: a CodeView
+        record, a thread's context and stack, the exception's context, a memory descriptor, a string. `size` None is a record whose
+        length is in its own first bytes (a MINIDUMP_STRING), located by its first `minimum` bytes. Returns {state, in_file, why}:
+
+          none                   no bytes are declared (size 0); nothing to read, and no fault
+          read                   every declared byte is in the file
+          cut_by_file            the record begins in the file and its declared end is past it; in_file bytes of it are there
+          declared_not_readable  bytes are declared at RVA 0 (where the header is), at or past the end of the file, or fewer than
+                                 `minimum`, the smallest record of its `kind`; nothing of it is read as that record
+
+        cut_by_file and declared_not_readable are recorded in problems under `stream` (at the RVA, or at `at`, the place of the location
+        itself, when the RVA is 0), so every view that rests on that stream is partial. `why` is a sentence for the answer; none of
+        them says that a declared record is absent."""
+        declared = "%d bytes" % size if size is not None else kind
+        if size is not None and not size:
+            why = ("none is declared (0 bytes at RVA 0)" if not rva else
+                   "0 bytes are declared (at file offset %d), so there is no record to read" % rva)
+            return {"state": "none", "in_file": 0, "why": why}
+        need = size if size is not None else minimum
         if not rva:
+            self.problem(stream, at if at is not None else 0, "%s: %s declared at file offset 0, where the file's header is; it was not read"
+                         % (what, declared))
+            return {"state": "declared_not_readable", "in_file": 0,
+                    "why": "%s declared at file offset 0, where the file's header is: not read (problems). A record is declared, so this "
+                           "is not an entry without one" % declared}
+        if rva >= self.size:
+            self.problem(stream, rva, "%s: %s declared at file offset %d, at or past the end of the file (%d bytes); it was not read"
+                         % (what, declared, rva, self.size))
+            return {"state": "declared_not_readable", "in_file": 0,
+                    "why": "%s declared at file offset %d, at or past the end of the file (%d bytes): not read (problems). A record is "
+                           "declared, so this is not an entry without one" % (declared, rva, self.size)}
+        if size is not None and size < minimum:
+            self.problem(stream, rva, "%s: %d bytes are declared and %s needs at least %d; it was not read as one" % (what, size, kind, minimum))
+            return {"state": "declared_not_readable", "in_file": 0,
+                    "why": "%d bytes are declared at file offset %d and %s needs at least %d: not read as one (problems)" % (size, rva, kind, minimum)}
+        if rva + need > self.size:
+            held = self.size - rva
+            self.problem(stream, rva, "%s: %s declared at file offset %d and the file (%d bytes) ends %d bytes into it" % (what, declared, rva, self.size, held))
+            return {"state": "cut_by_file", "in_file": held,
+                    "why": "%s declared at file offset %d and the file ends %d bytes into it (problems): what is said is from the bytes "
+                           "the file holds" % (declared, rva, held)}
+        return {"state": "read", "in_file": need, "why": None}
+
+    def string(self, stream, rva, what, at=None):
+        """A MINIDUMP_STRING (a u32 byte length, then UTF-16LE) at `rva`: the text, or None with the fault recorded. Located by
+        `locate`, so an RVA of 0 (the header's place), one past the file and a string the file cuts are each a fault, never "no name";
+        `at` is the place of the RVA itself. Text that is not valid UTF-16 is printed with U+FFFD and said in problems."""
+        if self.locate(stream, None, rva, what, 4, at, "a MINIDUMP_STRING")["state"] != "read":
             return None
-        head = self.need(stream, rva, 4, what)
-        if head is None:
-            return None
-        length = struct.unpack("<I", head)[0]
+        length = struct.unpack("<I", self.read(rva, 4))[0]
         take = min(length, MAX_STRING_BYTES) & ~1
-        raw = self.need(stream, rva + 4, take, what)
-        if raw is None:
+        if self.locate(stream, 4 + take, rva, what, 4, at, "a MINIDUMP_STRING")["state"] != "read":
             return None
-        text = raw.decode("utf-16-le", "replace")
+        text, lossy = decode_utf16(self.read(rva + 4, take))
+        if lossy:
+            self.problem(stream, rva, "%s: the string is not valid UTF-16 (%d unit(s) could not be decoded, a lone surrogate among them); "
+                         "U+FFFD stands for each in what is printed" % (what, lossy))
         if length > take:
             self.problem(stream, rva, "%s: the string declares %d bytes; the first %d were read" % (what, length, take))
         return text
@@ -1764,13 +1833,17 @@ class Dump:
                 tick("the directory was read")
             kind, size, rva = struct.unpack_from("<III", raw, i * 12)
             name = STREAM_NAMES.get(kind, "stream %d" % kind if kind <= 0xFFFF else "user stream 0x%x" % kind)
-            in_file = max(0, min(size, self.size - rva))
-            self.directory.append({"index": i, "type": kind, "name": name, "bytes": size, "file_offset": rva, "bytes_in_file": in_file})
+            row = {"index": i, "type": kind, "name": name, "bytes": size, "file_offset": rva}
+            self.directory.append(row)
             if kind == 0:
+                row["bytes_in_file"] = max(0, min(size, self.size - rva)) if rva else 0       # an unused entry: nothing is read
                 continue
-            if in_file < size:
-                self.problem(name, rva, "the stream declares %d bytes at file offset %d and the file (%d bytes) holds %d of them"
-                             % (size, rva, self.size, in_file))
+            # A stream is a location like the records inside it: one at RVA 0 (the header) or past the file holds no byte of it, and one
+            # the file cuts holds what is before the end of the file; each is said once, here, and its parser reads only what is held.
+            loc = self.locate(name, size, rva, "the %s stream (directory entry %d)" % (name, i), 1, directory + 12 * i + 4)
+            in_file = row["bytes_in_file"] = loc["in_file"]
+            if loc["state"] not in ("none", "read"):
+                row["location"] = loc["state"]
             if name in self.streams:
                 self.problem(name, rva, "a second %s stream (directory entry %d); the first is the one read" % (name, i))
                 continue
@@ -1821,7 +1894,7 @@ class Dump:
                        "processor_level": level, "processor_revision": hx(revision), "processors": cpus,
                        "product_type": PRODUCT.get(product, "unknown (%d)" % product),
                        "windows_version": "%d.%d.%d" % (major, minor, build), "platform_id": platform, "suite_mask": hx(suite)}
-        text = self.string("SystemInfo", csd, "the service pack string (CSDVersionRva)")
+        text = self.string("SystemInfo", csd, "the service pack string (CSDVersionRva)", rva + 24)
         self.system["service_pack"] = shown(text, "text") if text else None
 
     def parse_misc(self):
@@ -1850,7 +1923,10 @@ class Dump:
         if flags1 & 0x80 and len(data) >= 56:
             misc["protected_process"] = struct.unpack_from("<I", data, 52)[0]
         if flags1 & 0x100 and len(data) >= 232 + 520:
-            text = data[232:232 + 520].decode("utf-16-le", "replace").split("\x00", 1)[0]
+            text, lossy = decode_utf16(data[232:232 + 520])
+            text = text.split("\x00", 1)[0]
+            if lossy and "\ufffd" in text:
+                self.problem("MiscInfo", rva + 232, "the build string is not valid UTF-16; U+FFFD stands for what could not be decoded")
             misc["build_string"] = shown(text, "build") if text else None
         self.misc = misc
 
@@ -1895,7 +1971,7 @@ class Dump:
         if not module["named"]:
             key = (stream, module["name_rva"])
             if key not in self._names:      # read once: a fault in it is one problem, whatever the number of modules that name it
-                self._names[key] = self.string(stream, module["name_rva"], "the name of module %d" % module["index"])
+                self._names[key] = self.string(stream, module["name_rva"], "the name of module %d" % module["index"], module["entry_offset"] + 20)
             module["name"] = self._names[key]
             module["named"] = True
         return module["name"]
@@ -1965,7 +2041,7 @@ class Dump:
                     if not i & 1023:
                         tick("the thread names were read")
                     tid, name_rva = struct.unpack_from("<IQ", data, i * 12)
-                    self.thread_names.setdefault(tid, name_rva)
+                    self.thread_names.setdefault(tid, (name_rva, rva + 4 + i * 12 + 4))
 
     def parse_memory(self):
         raw = []                    # (va, declared bytes, file offset, source)
@@ -1978,12 +2054,24 @@ class Dump:
                 count, base_rva = struct.unpack("<QQ", self.read(rva, 16))
                 self.ranges_declared += count
                 data, take = self.table("Memory64List", rva, size, in_file, 16, count, 16, MAX_RANGES, "MINIDUMP_MEMORY_DESCRIPTOR64")
-                at = base_rva
+                listed = []
                 for va, length in struct.iter_unpack("<QQ", data[:take * 16]):
-                    if not len(raw) & 4095:
+                    if not len(listed) & 4095:
                         tick("the Memory64List was read")
-                    raw.append((va, length, at, "Memory64List"))
-                    at += length
+                    listed.append((va, length))
+                # The ranges' data lie one after another from BaseRva: a BaseRva of 0 (the header's place) with bytes declared is a
+                # location that is not read, and none of those bytes is taken for the process's memory.
+                total = sum(length for _va, length in listed)
+                if base_rva or not total:
+                    at = base_rva
+                    for va, length in listed:
+                        if not len(raw) & 4095:
+                            tick("the Memory64List was read")
+                        raw.append((va, length, at, "Memory64List"))
+                        at += length
+                else:
+                    self.locate("Memory64List", total, base_rva, "the memory of the Memory64List (%d ranges, from its BaseRva)" % len(listed), 1, rva + 8)
+                    self.ranges_unreadable += sum(1 for _va, length in listed if length)
         got = self.stream("MemoryList")
         if got is not None:
             rva, size, in_file = got
@@ -1993,9 +2081,15 @@ class Dump:
                 count = struct.unpack("<I", self.read(rva, 4))[0]
                 self.ranges_declared += count
                 data, take = self.table("MemoryList", rva, size, in_file, 4, count, 16, max(0, MAX_RANGES - len(raw)), "MINIDUMP_MEMORY_DESCRIPTOR")
-                for va, length, at in struct.iter_unpack("<QII", data[:take * 16]):
+                for n, (va, length, at) in enumerate(struct.iter_unpack("<QII", data[:take * 16])):
                     if not len(raw) & 4095:
                         tick("the MemoryList was read")
+                    if length and not at:
+                        # Bytes declared at RVA 0 are the file's header, not the process's memory: said, and the range is not mapped. A
+                        # range past the file or cut by it is mapped for the bytes the file holds and said once, below, for all of them.
+                        self.locate("MemoryList", length, at, "the memory range at %s" % hx(va), 1, rva + 4 + n * 16 + 12)
+                        self.ranges_unreadable += 1
+                        continue
                     raw.append((va, length, at, "MemoryList"))
         # One address, one place: the ranges in address order, an overlap given to the range that starts first, a range the file ends
         # inside counted for what the file holds of it.
@@ -2117,10 +2211,18 @@ class Dump:
         tid, _pad, code, flags, record, where, count, _pad2 = struct.unpack_from("<IIIIQQII", data)
         params = struct.unpack_from("<15Q", data, 40)
         ctx_size, ctx_rva = struct.unpack_from("<II", data, 160)
+        if count > 15:
+            self.problem("Exception", rva + 32, "NumberParameters is %d and EXCEPTION_RECORD holds at most 15 (EXCEPTION_MAXIMUM_PARAMETERS); "
+                                                "the 15 the record holds are listed" % count)
+        minimum, kind = CONTEXT_BYTES.get(self.arch, (1, "a context"))
+        loc = self.locate("Exception", ctx_size, ctx_rva, "the context of the exception's thread", minimum, rva + 160, kind)
+        context = {"bytes": ctx_size, "file_offset": ctx_rva, "location": loc["state"]}
+        if loc["why"]:
+            context["why"] = loc["why"]
         self.exception = {"thread_id": tid, "code": hx(code), "code_name": EXCEPTIONS.get(code), "flags": hx(flags), "nested_record": hx(record),
                           "address": hx(where), "address_in_module": self.module_ref(where),
                           "parameters": [hx(v) for v in params[:min(count, 15)]], "parameters_declared": count,
-                          "context": {"bytes": ctx_size, "file_offset": ctx_rva},
+                          "context": context,
                           "note": "the exception the dump's writer recorded; a dump taken of a running process (Task Manager, procdump with no "
                                   "trigger) has no exception stream or a zero code, and neither says the process crashed"}
 
@@ -2169,7 +2271,10 @@ class Dump:
                 if len(keys) >= MAX_HANDLE_TYPES:
                     not_listed += n
                     continue
-                key = keys[text] = str(shown(text, "name"))
+                key = str(shown(text, "name")) if text else EMPTY_TYPE_NAME
+                if text and key == EMPTY_TYPE_NAME:
+                    key += " (a type name of that text)"        # the bucket of empty names is never shared with a name the dump holds
+                keys[text] = key
             by_type[key] = by_type.get(key, 0) + n
         if not_listed:
             self.problem("HandleData", rva, "the handles have more than %d distinct type names: %d handle(s) whose type name is a further one "
@@ -2178,10 +2283,11 @@ class Dump:
                         "without_a_type_name": without, "type_name_unreadable": unreadable, "type_name_not_listed": not_listed,
                         "type_name_not_read": not_read, "type_name_strings_read": read, "type_names_listed_at_most": MAX_HANDLE_TYPES,
                         "note": "a count by object type. without_a_type_name counts the handles whose TypeNameRva is 0 and no other; a type "
+                                "name string of 0 characters is counted under the key %s; a type "
                                 "name the file does not hold (type_name_unreadable, each in problems), one past the %d distinct names "
                                 "listed (type_name_not_listed) and one the clock left unread (type_name_not_read) are counted apart, and "
                                 "any of the three makes the status partial. Object names are not printed here (they are in the dump at "
-                                "each descriptor's ObjectNameRva)" % MAX_HANDLE_TYPES}
+                                "each descriptor's ObjectNameRva)" % (EMPTY_TYPE_NAME, MAX_HANDLE_TYPES)}
 
     def comments(self):
         """The comment streams (CommentA, CommentW): text the dump's writer put in, such as the command line of the dumping tool. Lines, judged."""
@@ -2192,7 +2298,11 @@ class Dump:
                 continue
             rva, size, in_file = got
             take = min(size, in_file, MAX_STRING_BYTES) & (~1 if name == "CommentW" else ~0)
-            text = self.read(rva, take).decode(encoding, "replace").replace("\x00", "")
+            raw = self.read(rva, take)
+            text, lossy = decode_utf16(raw) if name == "CommentW" else (raw.decode(encoding), 0)
+            text = text.replace("\x00", "")
+            if lossy:
+                self.problem(name, rva, "the comment is not valid UTF-16 (%d unit(s) could not be decoded); U+FFFD stands for each in what is printed" % lossy)
             lines = [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
             if min(size, in_file) > take or len(lines) > 32:
                 self.problem(name, rva, "the comment is %d bytes in %d line(s); the first %d bytes and 32 lines are read" % (size, len(lines), take))
@@ -2383,7 +2493,7 @@ def dump_kind(dump):
 # --- the views --------------------------------------------------------------------------------------------------------------------------
 
 def unicode_string(dump, va):
-    """A UNICODE_STRING at `va` in the process: (length in bytes, buffer address, text or None)."""
+    """A UNICODE_STRING at `va` in the process: (length in bytes, buffer address, text or None, units that could not be decoded)."""
     head = dump.read_va(va, 16 if dump.pointer == 8 else 8)
     if head is None:
         return None
@@ -2392,7 +2502,8 @@ def unicode_string(dump, va):
     else:
         length, _maximum, buffer = struct.unpack("<HHI", head)
     raw = dump.read_va(buffer, length & ~1) if buffer and length else None
-    return length, buffer, raw.decode("utf-16-le", "replace") if raw is not None else None
+    text, lossy = decode_utf16(raw) if raw is not None else (None, 0)
+    return length, buffer, text, lossy
 
 
 def process_parameters(dump):
@@ -2436,10 +2547,17 @@ def process_parameters(dump):
         if got is None:
             out[key] = {"in_dump": False, "why_not": "the UNICODE_STRING at %s is not in the dump" % hx(params + at)}
             continue
-        length, buffer, text = got
+        length, buffer, text, lossy = got
         place = next(dump.pieces(buffer, 1)) if buffer else None
         row = {"in_dump": text is not None, "va": hx(buffer), "bytes": length, "characters": length // 2,
                "file_offset": place[2] if place else None}
+        if lossy:
+            row["lossy"] = True
+            row["lossy_note"] = "the string is not valid UTF-16: U+FFFD stands for each of the %d unit(s) that could not be decoded" % lossy
+            i = dump.segment(buffer)
+            dump.problem(dump.seg_src[i] if i >= 0 else "memory", place[2] if place else None,
+                         "the %s the PEB points at (%s) is not valid UTF-16 (%d unit(s) could not be decoded); U+FFFD stands for each in what "
+                         "is printed" % (key.replace("_", " "), hx(buffer), lossy))
         if text is not None:
             row["shown"] = shown(text, "text") if key == "command_line" else shown_path(text)
         elif length:
@@ -2467,6 +2585,7 @@ def view_summary(dump, p):
     out["counts"] = {"streams": len(dump.directory), "modules": len(dump.modules), "unloaded_modules": len(dump.unloaded), "threads": len(dump.threads),
                      "memory_ranges": len(dump.seg_va), "memory_ranges_declared": dump.ranges_declared, "memory_ranges_empty": dump.ranges_empty,
                      "memory_ranges_overlapping": dump.ranges_overlapping, "memory_ranges_cut_by_end_of_file": dump.ranges_cut,
+                     "memory_ranges_not_readable": dump.ranges_unreadable,
                      "memory_info_regions": len(dump.reg_va), "memory_info_regions_overlapping": dump.regions_overlapping}
     out["memory"] = {"mapped_bytes": dump.mapped_bytes, "declared_bytes": dump.declared_bytes,
                      "lowest_address": hx(dump.seg_va[0]) if dump.seg_va else None,
@@ -2507,34 +2626,34 @@ def view_summary(dump, p):
 
 
 def pdb_record(dump, module):
-    """What a module's entry says of its CodeView record, in three cases a reader can tell apart: None (the entry declares no record), a
-    record that was read (RSDS with its GUID, age and path, or one of another format), and a record that is declared and is not in the
-    file whole (read false, named in problems, so the answer is partial). A path that the PDB_PATH_BYTES read of it do not end is said
-    to be cut."""
+    """What a module's entry says of its CodeView record, in cases a reader can tell apart: None (the entry declares no record: 0 bytes),
+    a record that was read (RSDS with its GUID, age and path, or one of another format), and a record that is declared and was not read
+    (read false: at RVA 0, past the file, smaller than a signature, or with fewer bytes in the file than are read of it). Where the record
+    points is judged by Dump.locate, which names every fault in problems, so the answer is partial; location says its state. A record
+    whose first bytes are in the file and whose declared end is not is read and says cut_by_file. A path that the PDB_PATH_BYTES read of
+    it do not end is said to be cut, and a path that is not UTF-8 is said to be lossy."""
     cv_size, cv_rva = module["cv"]
-    if not cv_size:
-        return None
     what = "the CodeView (PDB) record of module %d" % module["index"]
-    out = {"read": False, "declared_bytes": cv_size, "file_offset": cv_rva, "format": None}
-    if not cv_rva:
-        dump.problem("ModuleList", module["entry_offset"], "%s: the entry declares %d bytes at file offset 0, where the header is; it is not read" % (what, cv_size))
-        out["why_not"] = "the entry declares a record of %d bytes at file offset 0; it was not read, and this is not a module without a record" % cv_size
+    loc = dump.locate("ModuleList", cv_size, cv_rva, what, 4, module["entry_offset"] + 76, "a CodeView record (a 4-byte signature)")
+    if loc["state"] == "none":
+        return None
+    out = {"read": False, "declared_bytes": cv_size, "file_offset": cv_rva, "format": None, "location": loc["state"]}
+    if loc["state"] == "declared_not_readable":
+        out["why_not"] = loc["why"]
         return out
+    if loc["state"] == "cut_by_file":
+        # The record's declared end is not in the file (said once, in problems, by locate); what the file holds of it is read.
+        out["cut_by_file"] = True
+        out["cut_note"] = loc["why"]
     take = min(cv_size, 24 + PDB_PATH_BYTES)
-    raw = dump.need("ModuleList", cv_rva, take, what)
-    if raw is None:
-        if dump.read(cv_rva, 4) == b"RSDS":
+    raw = dump.read(cv_rva, take)
+    if len(raw) < take:
+        if raw[:4] == b"RSDS":
             out["format"] = "RSDS"
-        out["why_not"] = ("the entry declares a record of %d bytes at file offset %d and the file does not hold the %d bytes to be read of it "
-                          "(problems): the record is declared and not readable, which is not a module without a record" % (cv_size, cv_rva, take))
+        out["why_not"] = ("the record declares %d bytes at file offset %d and the file holds %d of the %d bytes that are read of it "
+                          "(problems): the record is declared and not readable, which is not a module without a record" % (cv_size, cv_rva, len(raw), take))
         return out
     out["read"] = True
-    if cv_rva + cv_size > dump.size:
-        # The bytes read are in the file; the record's declared end is not. Said, and the answer is partial.
-        out["cut_by_file"] = True
-        out["cut_note"] = ("the record declares %d bytes at file offset %d and the file ends %d bytes into it; what is printed is from "
-                           "the bytes the file holds" % (cv_size, cv_rva, max(dump.size - cv_rva, 0)))
-        dump.problem("ModuleList", cv_rva, "%s: it declares %d bytes and the file ends %d bytes into it" % (what, cv_size, max(dump.size - cv_rva, 0)))
     if raw[:4] != b"RSDS":
         out["format"] = "not RSDS"
         return out
@@ -2546,9 +2665,15 @@ def pdb_record(dump, module):
         return out
     d1, d2, d3 = struct.unpack_from("<IHH", raw, 4)
     path, ended, _rest = raw[24:].partition(b"\x00")
-    text = path.decode("utf-8", "replace")
+    text, lossy = decode_utf8(path)
     out.update(format="RSDS", guid="%08X%04X%04X%s" % (d1, d2, d3, raw[12:20].hex().upper()), age=struct.unpack_from("<I", raw, 20)[0],
                path=shown_path(text) if text else None, path_bytes_read=len(path), path_cut=False)
+    if lossy:
+        out["path_lossy"] = True
+        out["path_lossy_note"] = ("the path is not UTF-8: %d byte sequence(s) could not be decoded and U+FFFD stands for each in what is "
+                                  "printed, so the printed path is not the path's bytes" % lossy)
+        dump.problem("ModuleList", cv_rva + 24, "%s: the path is not UTF-8 (%d byte sequence(s) could not be decoded); U+FFFD stands for each "
+                                                "in what is printed" % (what, lossy))
     if not ended and cv_size > take:
         out["path_cut"] = True
         out["path_note"] = ("the record declares %d bytes; the first %d bytes of its path were read and the path does not end in them, so "
@@ -2568,7 +2693,8 @@ def module_row(dump, module, state):
            "timestamp": {"raw": module["stamp"], "utc": iso(module["stamp"]), "epoch": "seconds since 1970-01-01 UTC (the PE header's TimeDateStamp as the loader recorded it)"},
            "checksum": hx(module["checksum"]), "entry_file_offset": module["entry_offset"]}
     if not name:
-        row["name_why_not"] = ("the entry gives no name (its name RVA is 0)" if not module["name_rva"] else
+        row["name_why_not"] = ("the entry's name RVA is 0, where the file's header is: the name was not read (problems), and this is not a "
+                               "module without a name" if not module["name_rva"] else
                                "the name string at file offset %d is empty (0 characters)" % module["name_rva"] if name == "" else
                                "the name string at file offset %d could not be read (problems)" % module["name_rva"])
     if state == "loaded":
@@ -2737,39 +2863,43 @@ X86_REGS = (("edi", 0x9C), ("esi", 0xA0), ("ebx", 0xA4), ("edx", 0xA8), ("ecx", 
             ("eflags", 0xC0), ("esp", 0xC4))
 
 
-def context(dump, size, rva, stream):
-    """The register values of a thread context: x64 (CONTEXT of 1,232 bytes) and x86 (716 bytes); any other is located and not decoded."""
-    out = {"bytes": size, "file_offset": rva, "decoded": False}
-    if not size or not rva:
-        out["why_not"] = "the thread has no context record"
+def context(dump, size, rva, stream, what, at):
+    """The register values of a thread context: x64 (CONTEXT of 1,232 bytes) and x86 (716 bytes); any other architecture's is located and
+    not decoded. Where it points is judged by Dump.locate: a context declared at RVA 0, at or past the end of the file, or smaller than
+    the architecture's CONTEXT is declared_not_readable (in problems, never decoded as a CONTEXT it is too short to be), one the file cuts
+    is decoded from the bytes the file holds when they reach the registers, and both make the answer partial. `at` is the place of the
+    location in the thread's entry."""
+    minimum, kind = CONTEXT_BYTES.get(dump.arch, (1, "a context"))
+    loc = dump.locate(stream, size, rva, what, minimum, at, kind)
+    out = {"bytes": size, "file_offset": rva, "location": loc["state"], "decoded": False}
+    if loc["state"] in ("none", "declared_not_readable"):
+        out["why_not"] = loc["why"]
         return out
-    if rva + size > dump.size:
+    if loc["state"] == "cut_by_file":
         out["cut_by_file"] = True
-        dump.problem(stream, rva, "a thread's context declares %d bytes at file offset %d and the file ends %d bytes into it"
-                     % (size, rva, max(dump.size - rva, 0)))
-    if dump.arch == 9 and size >= 0x100:
-        raw = dump.need(stream, rva, 0x100, "a thread's x64 context")
-        if raw is None:
-            out["why_not"] = "the context record is past the end of the file"
+        out["cut_note"] = loc["why"]
+    if dump.arch in (9, 0):
+        need = 0x100 if dump.arch == 9 else 0xCC
+        raw = dump.read(rva, need)
+        if len(raw) < need:
+            out["why_not"] = ("the file ends %d bytes into the record, before the end of the first %d bytes, where the registers are read; it "
+                              "was not decoded (problems)" % (loc["in_file"], need))
             return out
+    if dump.arch == 9:
         out.update(decoded=True, layout="x64 CONTEXT", context_flags=hx(struct.unpack_from("<I", raw, 0x30)[0]), eflags=hx(struct.unpack_from("<I", raw, 0x44)[0]),
                    registers={name: hx(struct.unpack_from("<Q", raw, at)[0]) for name, at in X64_REGS})
         segs = struct.unpack_from("<6H", raw, 0x38)
         out["segments"] = dict(zip(("cs", "ds", "es", "fs", "gs", "ss"), (hx(s) for s in segs)))
         out["ip"], out["sp"] = struct.unpack_from("<Q", raw, 0xF8)[0], struct.unpack_from("<Q", raw, 0x98)[0]
-    elif dump.arch == 0 and size >= 0xCC:
-        raw = dump.need(stream, rva, 0xCC, "a thread's x86 context")
-        if raw is None:
-            out["why_not"] = "the context record is past the end of the file"
-            return out
+    elif dump.arch == 0:
         out.update(decoded=True, layout="x86 CONTEXT", context_flags=hx(struct.unpack_from("<I", raw, 0)[0]),
                    registers={name: hx(struct.unpack_from("<I", raw, at)[0]) for name, at in X86_REGS})
         gs, fs, es, ds = struct.unpack_from("<4I", raw, 0x8C)
         out["segments"] = {"cs": hx(struct.unpack_from("<I", raw, 0xBC)[0]), "ds": hx(ds), "es": hx(es), "fs": hx(fs), "gs": hx(gs), "ss": hx(struct.unpack_from("<I", raw, 0xC8)[0])}
         out["ip"], out["sp"] = struct.unpack_from("<I", raw, 0xB8)[0], struct.unpack_from("<I", raw, 0xC4)[0]
     else:
-        out["why_not"] = ("register values are decoded for x86 (a context of at least 204 bytes) and x64 (at least 256); this dump's architecture is %s "
-                          "and the record is %d bytes" % ((dump.system or {}).get("architecture", "not stated (no SystemInfo stream)"), size))
+        out["why_not"] = ("register values are decoded for x86 and x64 contexts; this dump's architecture is %s and the record of %d bytes is "
+                          "located, not decoded" % ((dump.system or {}).get("architecture", "not stated (no SystemInfo stream)"), size))
     return out
 
 
@@ -2780,13 +2910,25 @@ def view_threads(dump, p):
     def make(i):
         t = dump.threads[i]
         stack_va, stack_size, stack_rva = t["stack"]
-        ctx = context(dump, t["context"][0], t["context"][1], stream)
+        ctx = context(dump, t["context"][0], t["context"][1], stream, "the context of thread %d (entry %d)" % (t["id"], i), t["entry_offset"] + 40)
         ip, sp = ctx.pop("ip", None), ctx.pop("sp", None)
+        # The stack descriptor is a location like any other: bytes_in_file counts only what it points at in the file, never the header's
+        # bytes for an RVA of 0; bytes_in_memory_lists says how much of the stack's address range the memory lists hold, found by address.
+        # One case is not a fault: an RVA of 0 with the whole range in the memory lists, which is how a full-memory dump's writer lays
+        # its stacks out (their bytes are in the Memory64List, which a 32-bit RVA cannot point into); location says in_memory_lists.
+        held = dump.present(stack_va, stack_size) if stack_size and stack_va + stack_size <= U64 + 1 else 0
+        if stack_size and not stack_rva and held == stack_size:
+            loc = {"state": "in_memory_lists", "in_file": 0,
+                   "why": "the descriptor gives RVA 0 and the memory lists hold the stack's whole address range (bytes_in_memory_lists), as a "
+                          "full-memory dump's writer lays a stack out: its bytes are read by address, and none of the header's is taken for them"}
+        else:
+            loc = dump.locate(stream, stack_size, stack_rva, "the stack of thread %d (entry %d)" % (t["id"], i), 1, t["entry_offset"] + 24)
+        stack = {"va": hx(stack_va), "bytes": stack_size, "end": hx(stack_va + stack_size), "file_offset": stack_rva, "location": loc["state"],
+                 "bytes_in_file": loc["in_file"], "bytes_in_memory_lists": held}
+        if loc["why"]:
+            stack["why"] = loc["why"]
         row = {"index": i, "thread_id": t["id"], "suspend_count": t["suspend"], "priority_class": t["class"], "priority": t["priority"],
-               "teb": hx(t["teb"]), "teb_in_dump": dump.segment(t["teb"]) >= 0,
-               "stack": {"va": hx(stack_va), "bytes": stack_size, "end": hx(stack_va + stack_size), "file_offset": stack_rva,
-                         "bytes_in_file": max(0, min(stack_size, dump.size - stack_rva))},
-               "context": ctx, "entry_file_offset": t["entry_offset"]}
+               "teb": hx(t["teb"]), "teb_in_dump": dump.segment(t["teb"]) >= 0, "stack": stack, "context": ctx, "entry_file_offset": t["entry_offset"]}
         if ip is not None:
             row["instruction_pointer_in_module"] = dump.module_ref(ip)
             row["stack_pointer_in_stack"] = stack_va <= sp < stack_va + stack_size
@@ -2798,8 +2940,13 @@ def view_threads(dump, p):
             info["start_address_in_module"] = dump.module_ref(start)
             row["info"] = info
         if t["id"] in dump.thread_names:
-            text = dump.string("ThreadNames", dump.thread_names[t["id"]], "the name of thread %d" % t["id"])
+            name_rva, name_at = dump.thread_names[t["id"]]
+            text = dump.string("ThreadNames", name_rva, "the name of thread %d" % t["id"], name_at)
             row["name"] = shown(text, "name") if text else None
+            if text is None:
+                row["name_why_not"] = "the ThreadNames entry gives a name at RVA %d and it could not be read (problems)" % name_rva
+            elif not text:
+                row["name_why_not"] = "the name string at file offset %d is empty (0 characters)" % name_rva
         return row
     rows, facts = paged(len(dump.threads), p["offset"], min(p["limit"], 500), make, p["deadline"])
     out["threads"] = rows
@@ -2811,7 +2958,7 @@ def view_threads(dump, p):
                    "which is a lead to look at (view va, then memory), not a finding that code was injected. Times and start addresses come "
                    "from the ThreadInfoList and are absent when the dump has none")
     extra = ["%d of %d threads are on this page (page.next_offset continues)" % (facts["returned"], facts["total"])] if facts["truncated"] else []
-    status, basis = status_of(dump, "threads", "every thread of the dump's thread list was read, with its context record", extra)
+    status, basis = status_of(dump, "threads", "every thread of the dump's thread list was read, with the context and stack records it declares", extra)
     finish(dump, out, status, basis)
 
 
