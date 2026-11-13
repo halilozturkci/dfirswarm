@@ -458,7 +458,7 @@ export const HANDOFF_LEADS_MAX = 2000;
  * hand-off of the run s01a4f4 named 76 jobs of other seats and ten leads the seat did not hold (17,486 characters),
  * and one of s5d814f was 38 MB. Bounded at HANDOFF_LEADS_MAX characters.
  */
-export function handoffLeads(digest: string): string {
+export function handoffLeads(digest: string, max: number = HANDOFF_LEADS_MAX): string {
   const keep = /^(Leads:|Yours:|Blocked on you:|Awaiting your interpretation:|Questions nobody holds|Your running jobs|Found but not answered)/;
   const out: string[] = [];
   for (const line of digest.split("\n")) {
@@ -469,12 +469,21 @@ export function handoffLeads(digest: string): string {
     }
   }
   const text = out.join("\n");
-  return text.length > HANDOFF_LEADS_MAX ? `${text.slice(0, HANDOFF_LEADS_MAX - 40)}\u2026 (cut: leads gives it whole)` : text;
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 40))}\u2026 (cut: leads gives it whole)` : text;
 }
+
+/**
+ * The whole of a hand-off's header but the note and the skills line: 2,000 characters. Hand-offs of eight runs carried 5,000
+ * to 13,000 characters beside the note, most of it other seats' work and tool lists, into a context that had just been
+ * emptied. The skills line is apart (it is the rules of the tools the seat has run, which a compaction would otherwise lose).
+ */
+export const HANDOFF_HEADER_MAX = 2000;
+
+const cutTo = (text: string, max: number, where: string): string => (text.length > max ? `${text.slice(0, Math.max(0, max - where.length - 9))}\u2026 (cut: ${where})` : text);
 
 export function handoffHeader(agentId: string, cycle: number, facts: HandoffFacts, hadNote: boolean, reason: string): string {
   const who = facts.name ? `you are ${agentId} "${facts.name}"${facts.doing ? ` (${facts.doing})` : ""}` : `you are ${agentId}; you have not named yourself yet (call name)`;
-  const claims = facts.claims.length ? facts.claims.join(", ") : "none";
+  const claims = facts.claims.length ? cutTo(facts.claims.join(", "), 240, `${facts.claims.length} claims, claims lists them`) : "none";
   const unreadEntries = Object.entries(facts.unread).filter(([, n]) => n > 0);
   const unread = unreadEntries.length ? `${unreadEntries.map(([thread, n]) => `${n} in ${thread}`).join(", ")}. Call inbox before acting.` : "none.";
   const sentinel = facts.sentinel ? "PRESENT: the swarm is over, call done now" : "absent";
@@ -485,10 +494,9 @@ export function handoffHeader(agentId: string, cycle: number, facts: HandoffFact
     ...(facts.unknown
       ? ["Live claims, unread posts, the ledger, the sentinel and spend: unknown (the hub could not be reached when this was written). Call inbox and check done/SWARM_DONE before acting."]
       : [`Live claims: ${claims}.`, `Unread posts: ${unread}`, `Ledger: ${facts.ledgerTotal} entries, ${facts.ledgerMine} yours. Sentinel: ${sentinel}. Spend: ${spend}.`]),
-    ...(facts.leads ? [`The lead register now (your leads are yours: go on with them, or release them; leads and finish status give the rest):\n${handoffLeads(facts.leads)}`] : []),
-    ...(facts.skills ? [facts.skills] : []),
+    // The cap rule is an order and is never cut: the lead register gives way to it.
     ...(facts.capHit ? [facts.capHit] : []),
-    ...(facts.forged ? [facts.forged] : []),
+    ...(facts.forged ? [cutTo(facts.forged, 240, "tools lists them")] : []),
   ];
   // On run 6 all four agents answered this message, a few tool calls later,
   // with a status update to "the user" and ended their turns; three sat idle
@@ -500,7 +508,14 @@ export function handoffHeader(agentId: string, cycle: number, facts: HandoffFact
       ? "This message is the harness, not a person: do not answer it with a status or a summary. The swarm is ending, as the lines above say: do what they say and start nothing new."
       : "This message is the harness, not a person: do not answer it with a status or a summary, and do not end your turn. Work on until SWARM.md's definition of done is met; when you are waiting on a peer, call wait and keep it open, because a turn that ends is not waiting and nothing prompts you again.",
   );
-  lines.push(hadNote ? "Your note follows verbatim; continue from its NEXT ACTION and never restart work it marks as done:\n---" : "No note was saved before this compaction (it was Pi's own recovery, not a hand-off). Read the summary above, call inbox, then continue.");
+  const last = hadNote ? "Your note follows verbatim; continue from its NEXT ACTION and never restart work it marks as done:\n---" : "No note was saved before this compaction (it was Pi's own recovery, not a hand-off). Read the summary above, call inbox, then continue.";
+  // The lead register takes what the rest leaves of HANDOFF_HEADER_MAX; the skills line is counted apart.
+  const LEADS_HEAD = "The lead register now (your leads are yours: go on with them, or release them; leads and finish status give the rest):\n";
+  const used = [...lines, last].reduce((a, l) => a + l.length + 1, 0);
+  const room = HANDOFF_HEADER_MAX - used - LEADS_HEAD.length - 1;
+  const leads = facts.leads && room >= 120 ? [`${LEADS_HEAD}${handoffLeads(facts.leads, Math.min(HANDOFF_LEADS_MAX, room))}`] : facts.leads ? ["The lead register: call leads (no room for it here)."] : [];
+  const tail = lines.pop() as string;
+  lines.push(...leads, ...(facts.skills ? [facts.skills] : []), tail, last);
   return lines.join("\n");
 }
 
