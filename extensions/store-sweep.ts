@@ -174,6 +174,12 @@ export const SWEEP_RULE_CHANGES: readonly SweepRuleChange[] = [
     what: "the same bytes under several names are one object (a kept output and the import it was sealed as), and a hit in an object made from the run's own words is an echo, holding nothing",
     bytes: false,
   },
+  {
+    version: 2,
+    since: "2026-11-13",
+    what: "a whole output kept by one of the harness's tools that read the registers alone (REGISTER_READERS: ledger, leads, questions) is an echo, whatever its arguments name",
+    bytes: false,
+  },
 ];
 /** This harness's version of the sweep's rules: written on every coverage record's sweep line. */
 export const SWEEP_RULES: number = SWEEP_RULE_CHANGES.at(-1)!.version;
@@ -506,6 +512,20 @@ export const RUN_REGISTERS: readonly string[] = ["ledger/", "leads/", "questions
  */
 export const HARNESS_KEEPERS: ReadonlySet<string> = new Set(["context", "compact_notice", "compact_warning", "compact_forced", "compact_hold", "compact_note", "compact_start", "compact_done", "compact_failed", "compact_stalled", "compact_config"]);
 
+/**
+ * The harness's own seat tools that read the run's registers and nothing
+ * else: the ledger tool's page of entries, the leads and questions views. A
+ * whole output one of them kept under tool-output/ is the registers' words
+ * again, whatever its arguments name (they name no path: `{limit: 12}`), so
+ * it is an echo. Without this a seat that read the ledger after recording
+ * an answer made a new hit for the answer's own strings each time, and the
+ * coverage record that had to name it made the next (the run sf4406b: one
+ * question's answer written 18 times in an hour). A tool not here that
+ * keeps a file is read by what its arguments name (tests keep each a name
+ * no seat's tool can take).
+ */
+export const REGISTER_READERS: ReadonlySet<string> = new Set(["ledger", "leads", "questions"]);
+
 /** The trace spilled under a seat's tool-output/ when its collector could not be reached (protocol.ts traceSpillRel): the trace itself. */
 const TRACE_SPILL = "trace-spill.jsonl";
 
@@ -650,6 +670,7 @@ export function hitOrigins(sandboxRoot: string, refs: readonly string[]): (names
       if (!line) return null;
       const by = `trace:${line.line_sha256}`;
       if (HARNESS_KEEPERS.has(line.tool)) return { name, by, why: "harness" };
+      if (REGISTER_READERS.has(line.tool)) return { name, by, why: "registers" };
       // What a command read is what its words name: nothing it names, or anything but registers and objects the record names, and the hit stands.
       const { text, verdict } = await readsOf(stringsIn(line.args).join("\n"), term, said);
       if (!verdict) return null;

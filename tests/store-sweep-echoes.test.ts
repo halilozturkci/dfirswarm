@@ -81,6 +81,8 @@ test("an echo is not held: an output made from the run's registers, a summary th
   const summary = await kept(S, "a2", "20260930080100000-compact_summary-bbbb.text.log", "## Where I am\nsearching the disk for alice; nothing yet\n", { tool: "compact_failed", args: { stage: "summary", attempt: 1 } });
   // A search for the string over a named object the sweep finds it in: its matches say again what the named hit says.
   const grep = await kept(S, "a3", "20260930080200000-bash-cccc.out.log", "store/jobs/j000007/out/export.csv:09:58,alice\n", { tool: "bash", args: { command: "grep -Hi 'alice' store/jobs/j000007/out/export.csv" } });
+  // A page of the ledger the harness's own ledger tool kept (its arguments name no path): the registers' words again (the run sf4406b's loop).
+  const page = await kept(S, "a2", "20260930080300000-ledger-dddd.text.log", '{"seq":12,"kind":"absence","value":"alice was looked for"}\n', { tool: "ledger", args: { limit: 12 } });
   // The trace spilled under a seat's tool-output/ (a microVM seat that could not reach its collector): the trace itself.
   await writeFile(join(S, "tool-output", "a3", "trace-spill.jsonl"), `${JSON.stringify({ agent: "a3", tool: "bash", args: { command: "grep -ri alice inputs/" } })}\n`);
   const spill = "tool:a3/trace-spill.jsonl";
@@ -93,12 +95,13 @@ test("an echo is not held: an output made from the run's registers, a summary th
   assert.equal(sw.state, "clean", JSON.stringify(sw.hits));
   assert.deepEqual(sw.hits, []);
   assert.deepEqual(sw.named_hits.map((h) => h.ref), ["job:j000007/export.csv"]);
-  assert.deepEqual(sw.echoes!.map((h) => h.ref).sort(), [dump.ref, summary.ref, grep.ref, spill].sort());
+  assert.deepEqual(sw.echoes!.map((h) => h.ref).sort(), [dump.ref, summary.ref, grep.ref, spill, page.ref].sort());
   const why = (ref: string) => sw.echoes!.find((h) => h.ref === ref)!.origins!;
   assert.deepEqual(why(dump.ref), [{ name: dump.ref, by: `trace:${dump.line}`, why: "registers" }]);
   assert.deepEqual(why(summary.ref), [{ name: summary.ref, by: `trace:${summary.line}`, why: "harness" }]);
   assert.deepEqual(why(grep.ref), [{ name: grep.ref, by: `trace:${grep.line}`, why: "searched", reads: ["job:j000007/export.csv"] }]);
   assert.deepEqual(why(spill), [{ name: spill, by: "trace-spill", why: "registers" }]);
+  assert.deepEqual(why(page.ref), [{ name: page.ref, by: `trace:${page.line}`, why: "registers" }]);
   assert.equal(SW.verifySweepChain(await readFile(join(S, SW.LEDGER_SWEEPS), "utf8")).ok, true);
   // Said, where the record is read and where it is reviewed.
   const words = SW.sweepWords(sw, cov);
@@ -120,7 +123,7 @@ test("an echo is not held: an output made from the run's registers, a summary th
   assert.deepEqual(codes(r, "question:2"), [], r.lines.join("\n"));
   assert.equal(r.dispositions["question:2"], "bounded_negative");
   const m = await measureRun(S);
-  assert.deepEqual([m.sweeps.with_hits, m.sweeps.hit_objects, m.sweeps.echoes], [0, 0, 4]);
+  assert.deepEqual([m.sweeps.with_hits, m.sweeps.hit_objects, m.sweeps.echoes], [0, 0, 5]);
 });
 
 test("a hit still holds when what made it read evidence the record does not name, an input (which the sweep never reads), a path it cannot tell or none, or when no attributed line on the chain kept it", async () => {
@@ -242,6 +245,11 @@ test("the run paths a maker's words name, and the harness's own events that keep
   // The self-compaction's events are the harness's keepers of a seat's own words, all of them and nothing else.
   assert.deepEqual([...SW.HARNESS_KEEPERS].sort(), [...SELF_COMPACT_EVENTS].sort());
   for (const e of SW.HARNESS_KEEPERS) assert.ok(P.TOOL_RESERVED_NAMES.has(e), `${e} is a reserved name: no seat's tool can take it`);
+  // The harness's tools that read the registers alone: none can be a seat's forged tool, and none keeps the self-compaction's words.
+  for (const t of SW.REGISTER_READERS) {
+    assert.ok(P.TOOL_RESERVED_NAMES.has(t), `${t} is a reserved name: no seat's tool can take it`);
+    assert.ok(!SW.HARNESS_KEEPERS.has(t));
+  }
 });
 
 test("replay --resweep reads a recorded sweep again: the hit an older harness held on a kept output whose sealed import the record names moves to the named hits, on a synthetic line in the copy, the run untouched; without it, the checkout's answers check reads the line again, recorded under older rules", async () => {
