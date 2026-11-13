@@ -6150,6 +6150,11 @@ export type FullOutputRef = {
   sha256: string;
   /** Set when the file could not be written whole; the prefix the model saw is still on the trace. */
   write_error?: string;
+  /**
+   * Set when the output was larger than the keep bound: the file holds its first and last part with a line between them
+   * that says so, `bytes` and `sha256` are the file's, and these are the whole output's (which is kept nowhere).
+   */
+  cut?: { whole_bytes: number; whole_sha256: string; head_bytes: number; tail_bytes: number };
 };
 
 function fmtBytes(n: number): string {
@@ -6197,25 +6202,64 @@ export async function keepToolOutput(sandboxRoot: string, rel: string, data: Buf
  * tool past 50 KB) into the sandbox, streamed: the file is the record and
  * may be far larger than memory should hold.
  */
-export async function keepToolOutputFromFile(sandboxRoot: string, rel: string, source: string): Promise<FullOutputRef> {
-  const hash = createHash("sha256");
+export async function keepToolOutputFromFile(sandboxRoot: string, rel: string, source: string, keepMax: number = shellKeepMaxBytes()): Promise<FullOutputRef> {
+  const whole = createHash("sha256");
+  const kept = createHash("sha256");
   let bytes = 0;
   let lines = 0;
+  let written = 0;
+  const half = Math.max(1, Math.floor(keepMax / 2));
+  // Past the head's half the newest bytes are held, at most a half of the bound, and written last.
+  let tail: Buffer[] = [];
+  let tailBytes = 0;
   const target = join(sandboxRoot, rel);
   await mkdir(dirname(target), { recursive: true });
   const out = await open(target, "w");
+  const put = async (b: Buffer) => {
+    if (!b.length) return;
+    kept.update(b);
+    written += b.length;
+    await out.write(b);
+  };
   try {
     for await (const chunk of createReadStream(source)) {
       const buffer = chunk as Buffer;
-      hash.update(buffer);
+      whole.update(buffer);
       bytes += buffer.length;
       lines += countNewlines(buffer);
-      await out.write(buffer);
+      const room = half - written;
+      if (room > 0) await put(buffer.subarray(0, room));
+      const rest = room > 0 ? buffer.subarray(room) : buffer;
+      if (!rest.length) continue;
+      tail.push(rest);
+      tailBytes += rest.length;
+      while (tail.length > 1 && tailBytes - tail[0]!.length >= half) tailBytes -= tail.shift()!.length;
     }
+    const headBytes = written;
+    if (bytes <= keepMax) {
+      for (const b of tail) await put(b);
+      return { path: rel, bytes, lines, sha256: kept.digest("hex") };
+    }
+    let last = Buffer.concat(tail);
+    tail = [];
+    if (last.length > half) last = last.subarray(last.length - half);
+    const wholeSha = whole.digest("hex");
+    await put(Buffer.from(`\n[... ${bytes - headBytes - last.length} bytes of this output are not kept: it was ${bytes} bytes (sha256 ${wholeSha}), more than the ${keepMax} a shell's output is kept to (SWARM_SHELL_KEEP_MAX_BYTES). Above is its first ${headBytes} bytes, below its last ${last.length}. Run what wrote it as a job (job_run) to have its whole output sealed. ...]\n`, "utf8"));
+    await put(last);
+    return { path: rel, bytes: written, lines, sha256: kept.digest("hex"), cut: { whole_bytes: bytes, whole_sha256: wholeSha, head_bytes: headBytes, tail_bytes: last.length } };
   } finally {
     await out.close();
   }
-  return { path: rel, bytes, lines, sha256: hash.digest("hex") };
+}
+
+/**
+ * How much of a seat's shell output is kept (SWARM_SHELL_KEEP_MAX_BYTES, 64 MiB): its first and last half of that.
+ * Four kept outputs of one run were 170 to 202 MB each, and every store sweep read them. A job's output is not bounded
+ * here: it is sealed whole.
+ */
+export function shellKeepMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.SWARM_SHELL_KEEP_MAX_BYTES);
+  return Number.isFinite(n) && n >= 4096 ? Math.floor(n) : 64 * 1024 * 1024;
 }
 
 /** The line a prefix result ends with, so the model knows what it has and where the rest is. */

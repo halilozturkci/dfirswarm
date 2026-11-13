@@ -2181,6 +2181,11 @@ export default function (pi: ExtensionAPI) {
           );
           contentChanged = true;
         }
+        // An output past the keep bound is kept as its first and last part: the seat is told, since the file reads as whole otherwise.
+        if (fullOutput.cut) {
+          content = [...(Array.isArray(content) ? content : []), { type: "text", text: `This command wrote ${fullOutput.cut.whole_bytes} bytes; ${fullOutput.path} holds its first ${fullOutput.cut.head_bytes} and its last ${fullOutput.cut.tail_bytes}, with a line between them that says so. To keep an output of that size whole, run the command as a job (job_run): a job's output is sealed whole and citable.` }];
+          contentChanged = true;
+        }
       } catch (error) {
         fullOutputError = error instanceof Error ? error.message : String(error);
       }
