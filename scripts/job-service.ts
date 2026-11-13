@@ -545,6 +545,16 @@ export function boundInputSets(S: string): string[] {
   return out;
 }
 
+/** Whether an import is a program the operator supplied with tool-supply: its committed record (material.json) carries `tool`. */
+export async function suppliedTool(importDir: string): Promise<boolean> {
+  try {
+    const rec = JSON.parse(await readFile(join(importDir, "material.json"), "utf8")) as { tool?: unknown };
+    return Boolean(rec.tool) && typeof rec.tool === "object";
+  } catch {
+    return false;
+  }
+}
+
 /** microsandbox's write quota for a bind with none given (measured on msb: a write stops at 4,294,967,296 bytes). */
 export const MSB_DEFAULT_QUOTA_MB = 4096;
 
@@ -1130,6 +1140,9 @@ export class JobService {
       const id = /^import:(mat-\d{1,8})$/.exec(p)?.[1];
       if (!id) return { reason: `programs names programs the operator supplied, as import:mat-<n> (swarm.sh tool-supply lists them on the board and in SWARM.md): ${JSON.stringify(p)} is not one` };
       if (!existsSync(join(storePaths(this.S).imports, id, "out"))) return { reason: `programs: no supplied program ${p} in this run's store` };
+      // A program, not any material: only what tool-supply sealed (its record carries `tool`, the operator's statement of it) is made
+      // executable. Other operator material (a sample, a reference binary, a library) is read as an input, never run or put on a path.
+      if (!(await suppliedTool(join(storePaths(this.S).imports, id)))) return { reason: `programs: ${p} is operator material, not a supplied program (swarm.sh tool-supply seals programs; material add seals data): name it in inputs to read it` };
     }
     // A declared scope is given the programs it runs too: they are read from the store like any import.
     if (programs.length && declared.kind === "declared") for (const p of programs) if (!inputs.some((x) => x.replace(/\/+$/, "") === p)) inputs.push(p);

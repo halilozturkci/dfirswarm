@@ -44,6 +44,12 @@ test("through the service: a supplied program sealed 0444 runs when the job name
   writeFileSync(join(S, "staging/bin/greet"), '#!/bin/sh\necho "hello from $(cat "$(dirname "$0")/../lib/word.txt") ld=${LD_LIBRARY_PATH:+set}"\n', { mode: 0o755 });
   writeFileSync(join(S, "staging/lib/word.txt"), "the supply\n");
   await sealTree(S, join(S, "staging"), join(storePaths(S).imports, "mat-0001", "out"), "mat-0001", 1);
+  // tool-supply's record says it is a program (`tool`); material add's does not.
+  writeFileSync(join(storePaths(S).imports, "mat-0001", "material.json"), JSON.stringify({ id: "mat-0001", tool: { source: "vendor 1.0", built: "make" } }));
+  mkdirSync(join(S, "staging2"), { recursive: true });
+  writeFileSync(join(S, "staging2/sample.so"), "not a supplied program\n");
+  await sealTree(S, join(S, "staging2"), join(storePaths(S).imports, "mat-0002", "out"), "mat-0002", 1);
+  writeFileSync(join(storePaths(S).imports, "mat-0002", "material.json"), JSON.stringify({ id: "mat-0002", reason: "a reference sample" }));
   writeFileSync(join(S, "store/imports/ev-0001/out/e"), "evidence\n");
   chmodSync(join(S, "store/imports/ev-0001/out/e"), 0o444);
   const svc = new JobService({ sandbox: S, run: "s000000", image: "img:test", workers: 1, workerCpus: 1, workerMemoryMib: 512, allowHosts: [], openNet: false, packDirs: [], forging: false, minFreeMb: 1, runWorker: localWorker(), destroyWorker: async () => ({ ok: true }), notify: async () => undefined, identity: async () => ({}) });
@@ -76,6 +82,8 @@ test("through the service: a supplied program sealed 0444 runs when the job name
   // Only supplied programs, only a command or a tool.
   assert.match((await run({ command: "x", programs: ["import:ev-0001"] })).refused ?? "", /names programs the operator supplied, as import:mat-<n>/);
   assert.match((await run({ command: "x", programs: ["import:mat-0009"] })).refused ?? "", /no supplied program import:mat-0009/);
+  // Operator material that tool-supply did not seal is data: read as an input, never made executable or put on a path.
+  assert.match((await run({ command: "x", programs: ["import:mat-0002"] })).refused ?? "", /import:mat-0002 is operator material, not a supplied program/);
   assert.match((await run({ command: "x", programs: ["job:j000001"] })).refused ?? "", /is not one/);
   assert.match((await run({ command: "x", programs: "import:mat-0001" })).refused ?? "", /a list of supplied programs/);
   await svc.stop("test over");
