@@ -67,3 +67,11 @@ run a supplied program came at minute 2: on one run a seat copied ffmpeg and zba
 `job_run(programs: ["import:mat-<n>"])` now copies each supplied program into an executable directory in the worker, with its `bin/` on
 `PATH` and its `lib/` on `LD_LIBRARY_PATH` (`$PROGRAMS` names the directory), and adds it to a declared scope. Only a supplied import is
 taken. The contract's Tool jobs section, the tool-supply post and the exec-refused reason for a supplied program say so.
+
+### Changed: the derived catalogue spends its generations on what a user made, not on a vendor's files
+
+It took the largest waiting objects first, and its 50 generations went where the bytes were: 49 of 50 to Office's files under
+`Program Files/Common Files` on one run, 37 of 50 to the libraries of a supplied ffmpeg a seat had copied into `$OUT` on another. What a
+user made or kept (a profile's Desktop, Documents, Downloads, …) now goes first and a vendor's or the system's files last (Program Files,
+Windows, ProgramData, AppData/Local/Microsoft, /usr, /lib, shared libraries), the largest first within each; a job's copy of a file an
+import holds is skipped and named, as a copy of an input is.

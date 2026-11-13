@@ -2148,17 +2148,40 @@ export class JobService {
   }
 
   private inputShaCache: Map<string, string> | null = null;
-  /** The run's inputs by content: a job's copy of an input is not a new object. */
+  private importShaSeen = new Set<string>();
+  /**
+   * The run's inputs and imports by content: a job's copy of an input, of a
+   * program the operator supplied or of evidence added later is not a new
+   * object (on the run s68ce47 the derived catalogue spent 37 of its 50
+   * generations on the libraries of a supplied ffmpeg a seat had copied into
+   * $OUT). Imports sealed since the last look are added as they come.
+   */
   private async inputShas(): Promise<Map<string, string>> {
-    if (this.inputShaCache) return this.inputShaCache;
-    const m = new Map<string, string>();
-    try {
-      const inputs = JSON.parse(await readFile(join(this.S, "inputs.json"), "utf8")) as { files?: Array<{ path: string; sha256?: string }> };
-      for (const f of inputs.files ?? []) if (f.sha256) m.set(f.sha256, `input:${f.path.replace(/^inputs\//, "")}`);
-    } catch {
-      // no inputs.json: nothing to skip by
+    if (!this.inputShaCache) {
+      const m = new Map<string, string>();
+      try {
+        const inputs = JSON.parse(await readFile(join(this.S, "inputs.json"), "utf8")) as { files?: Array<{ path: string; sha256?: string }> };
+        for (const f of inputs.files ?? []) if (f.sha256) m.set(f.sha256, `input:${f.path.replace(/^inputs\//, "")}`);
+      } catch {
+        // no inputs.json: nothing to skip by
+      }
+      this.inputShaCache = m;
     }
-    this.inputShaCache = m;
+    const m = this.inputShaCache;
+    const dir = storePaths(this.S).imports;
+    let ids: string[] = [];
+    try {
+      ids = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    } catch {
+      ids = [];
+    }
+    for (const id of ids) {
+      if (this.importShaSeen.has(id)) continue;
+      const found = await readManifest(join(dir, id, "manifest.json")).catch(() => null);
+      if (!found) continue;
+      this.importShaSeen.add(id);
+      for (const f of found.manifest.files) if (!m.has(f.sha256)) m.set(f.sha256, `import:${id}/${Buffer.from(f.path_b64, "base64").toString("utf8")}`);
+    }
     return m;
   }
 
@@ -2205,9 +2228,11 @@ export class JobService {
   }
 
   /**
-   * Start a derived pass when the lane is free: the largest waiting objects
-   * first (a cap lands on small noise, never on a disk), up to the pass's
-   * pairs, as the lowest lane's job.
+   * Start a derived pass when the lane is free, up to the pass's pairs, as the
+   * lowest lane's job: what a user made or kept first, a vendor's or the
+   * system's own files last (derivedRank), and within each the largest first
+   * (a cap lands on small noise, never on a disk). On the run sf4406b 49 of the
+   * 50 generations went to Office's files under Program Files/Common Files.
    */
   private async maybeDrainDerived(): Promise<void> {
     if (!this.o.derived || this.stopping || !this.derivedPending.length || this.draining) return;
@@ -2216,7 +2241,7 @@ export class JobService {
     this.draining = true;
     try {
       const L = this.limits();
-      this.derivedPending.sort((a, b) => b.bytes - a.bytes);
+      this.derivedPending.sort((a, b) => derivedRank(a.path) - derivedRank(b.path) || b.bytes - a.bytes);
       const take: Candidate[] = [];
       let pairs = 0;
       while (this.derivedPending.length && (pairs === 0 || pairs + this.derivedPending[0].recipes.length <= L.pairsPerPass) && take.length < DETECT_FILES_MAX) {
@@ -2785,6 +2810,24 @@ export function programLines(ids: readonly string[], importsDir: string): string
   }
   lines.push("export PATH PROGRAMS; export LD_LIBRARY_PATH=\"${LD_LIBRARY_PATH:-}\"");
   return lines;
+}
+
+/**
+ * Where a derived object's path puts it in the derived catalogue's queue: 0
+ * for what a user made or kept (a profile's own folders), 2 for a vendor's or
+ * the system's files (Program Files, Windows, ProgramData, a profile's
+ * AppData/Local/Microsoft, /usr, /lib, a package's libraries, a shared
+ * library), 1 for anything else. Words of the path only: no file is read.
+ */
+export function derivedRank(path: string): number {
+  const p = `/${path.replace(/\\/g, "/")}`.toLowerCase();
+  if (
+    /\/(program files( \(x86\))?|programdata|windows|winsxs|\$windows\.~bt|system volume information|appdata\/local\/microsoft|appdata\/local\/packages|usr|lib|lib64|opt|snap|node_modules|site-packages|dist-packages|\.cache)\//.test(p) ||
+    /\.(so(\.\d+)*|dll|mui|cat|manifest)$/.test(p)
+  )
+    return 2;
+  if (/\/(users|home|documents and settings)\/[^/]+\/(desktop|documents|downloads|pictures|videos|music|onedrive[^/]*|dropbox)\//.test(p)) return 0;
+  return 1;
 }
 
 /** One post, for the agent that asked. */
