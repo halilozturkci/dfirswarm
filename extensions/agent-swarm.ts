@@ -218,7 +218,7 @@ import { readToolchainAt, TOOLCHAIN_DIR } from "./toolchain.ts";
 import { installChunkedEgress } from "./vm-egress.ts";
 import { toolsListing } from "./tools-view.ts";
 import { lastKnown } from "./last-known.ts";
-import { pngForModel } from "./png-scale.ts";
+import { cropPng, pngForModel } from "./png-scale.ts";
 import { coerceArgs } from "./forged-args.ts";
 
 /** How long a read made before a model call may take before the call goes out on the last known value. */
@@ -285,6 +285,7 @@ export const SWARM_TOOLS = new Set([
   "job_status",
   "store_find",
   "jobs",
+  "image_crop",
   "catalog_request",
   "lead_open",
   "lead_claim",
@@ -2180,7 +2181,7 @@ export default function (pi: ExtensionAPI) {
       });
       if (scaledNotes.length) {
         const where = typeof input?.path === "string" ? ` The file itself is unchanged at ${input.path}.` : "";
-        content = [...next, { type: "text", text: `The image above was scaled down for viewing, from ${scaledNotes.join("; ")}.${where} For detail too small to read here (small text, a code, single pixels), crop the region at full size in a job and read the crop.` }];
+        content = [...next, { type: "text", text: `The image above was scaled down for viewing, from ${scaledNotes.join("; ")}.${where} For detail too small to read here (small text, a code, single pixels), crop the region at full size with image_crop (a PNG), or in a job for another format.` }];
         contentChanged = true;
         if (agentId) await logEvent(ctx.cwd, agentId, "image_scaled", { path: typeof input?.path === "string" ? input.path : undefined }, { ok: true, scaled: scaledNotes }).catch(() => undefined);
       }
@@ -2969,6 +2970,41 @@ export default function (pi: ExtensionAPI) {
       await logEvent(toolCtx.cwd, agentId, "job_status", params, { ok: st.ok, state: st.job?.state, ...(st.ok ? {} : { reason: st.reason }) }, Date.now() - started);
       if (!st.ok) return { content: [{ type: "text" as const, text: st.reason ?? "no answer" }], details: st, isError: true };
       return okResult({ ok: true, ...st.job, ...(st.stdout ? stdoutWithNote(params.job_id, st.stdout) : {}) });
+    },
+  });
+
+  pi.registerTool({
+    name: "image_crop",
+    label: "Crop an image",
+    description:
+      "A region of a PNG at its own resolution: `read` scales a large picture to 1,568 pixels on its long side, which loses small text, a code or single pixels. path is a PNG you can read (a job's output under store/jobs/<id>/out/, or your own under work/); x, y, width and height are in the original's pixels (read says the original's size when it scaled it). A region past the image is clipped to it; one larger than 1,568 x 1,568 pixels is scaled to fit, and the answer says so. Other formats, and interlaced, 16-bit or palette PNGs, are cropped in a job.",
+    parameters: Type.Object({
+      path: Type.String({ description: "The PNG, relative to the run's directory" }),
+      x: Type.Integer({ description: "Left edge, in the original's pixels" }),
+      y: Type.Integer({ description: "Top edge, in the original's pixels" }),
+      width: Type.Integer({ description: "Width, in pixels" }),
+      height: Type.Integer({ description: "Height, in pixels" }),
+    }),
+    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+      const started = Date.now();
+      const refuse = async (reason: string) => {
+        await logEvent(toolCtx.cwd, agentId, "image_crop", params, { ok: false, reason }, Date.now() - started);
+        return { content: [{ type: "text" as const, text: reason }], details: { ok: false, reason }, isError: true };
+      };
+      const { resolve: res, relative } = await import("node:path");
+      const { lstat, readFile: rf } = await import("node:fs/promises");
+      const abs = res(toolCtx.cwd, String(params.path ?? ""));
+      const rel = relative(res(toolCtx.cwd), abs);
+      if (!rel || rel.startsWith("..")) return refuse(`${params.path} is not under the run's directory`);
+      const st = await lstat(abs).catch(() => null);
+      if (!st?.isFile()) return refuse(`${params.path} is not a regular file (a link is not followed)`);
+      if (st.size > 64 * 1024 * 1024) return refuse(`${params.path} is ${st.size} bytes, more than the 64 MiB this crops in place: crop it in a job`);
+      if (![params.x, params.y, params.width, params.height].every((n) => Number.isInteger(n)) || params.width < 1 || params.height < 1) return refuse("x, y, width and height are whole numbers, width and height at least 1");
+      const out = cropPng(await rf(abs), { x: params.x, y: params.y, width: params.width, height: params.height });
+      if ("error" in out) return refuse(`${params.path}: ${out.error}`);
+      const words = `${params.path}: the region at (${out.region.x}, ${out.region.y}), ${out.region.width} x ${out.region.height} pixels, of an image of ${out.from.width} x ${out.from.height}${out.scaled_to ? `, scaled to ${out.scaled_to.width} x ${out.scaled_to.height} to fit` : ", at its own resolution"}.`;
+      await logEvent(toolCtx.cwd, agentId, "image_crop", params, { ok: true, region: out.region, from: out.from, ...(out.scaled_to ? { scaled_to: out.scaled_to } : {}), bytes: out.png.length }, Date.now() - started);
+      return { content: [{ type: "text" as const, text: words }, { type: "image" as const, data: out.png.toString("base64"), mimeType: "image/png" }], details: { ok: true, region: out.region, from: out.from } };
     },
   });
 

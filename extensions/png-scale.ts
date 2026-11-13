@@ -173,3 +173,35 @@ export function pngForModel(png: Buffer, o: { max?: number; minBytes?: number } 
   if (data.length >= png.length) return null;
   return { data, from: { width: img.width, height: img.height, bytes: png.length }, to: { width: small.width, height: small.height, bytes: data.length } };
 }
+
+/** The most pixels a crop may hold (a 1568 x 1568 square): past it the crop is scaled down, and said. */
+export const CROP_PIXELS_MAX = LONG_SIDE_MAX * LONG_SIDE_MAX;
+
+export type Cropped = { png: Buffer; region: { x: number; y: number; width: number; height: number }; from: { width: number; height: number }; scaled_to?: { width: number; height: number } };
+
+/**
+ * A region of a PNG at its own resolution, for detail a scaled view loses (small text, a code, single pixels). The
+ * region is clipped to the image; one that lies wholly outside it, or a PNG this reader cannot decode (interlaced,
+ * 16-bit, a palette), is refused with why. A region larger than CROP_PIXELS_MAX is scaled down to fit, and says so.
+ */
+export function cropPng(png: Buffer, r: { x: number; y: number; width: number; height: number }): Cropped | { error: string } {
+  const img = decodePng(png);
+  if (!img) return { error: "this PNG cannot be read here (interlaced, 16-bit or palette PNGs, and other formats, are not): crop it in a job" };
+  const x0 = Math.max(0, Math.floor(r.x));
+  const y0 = Math.max(0, Math.floor(r.y));
+  const x1 = Math.min(img.width, Math.floor(r.x + r.width));
+  const y1 = Math.min(img.height, Math.floor(r.y + r.height));
+  if (x1 <= x0 || y1 <= y0) return { error: `the region (${r.x}, ${r.y}, ${r.width} x ${r.height}) lies outside the image, which is ${img.width} x ${img.height}` };
+  const w = x1 - x0;
+  const h = y1 - y0;
+  const c = img.channels;
+  const pixels = Buffer.alloc(w * h * c);
+  for (let y = 0; y < h; y += 1) img.pixels.copy(pixels, y * w * c, ((y0 + y) * img.width + x0) * c, ((y0 + y) * img.width + x1) * c);
+  let out: Decoded = { width: w, height: h, channels: c, pixels };
+  let scaled_to: { width: number; height: number } | undefined;
+  if (w * h > CROP_PIXELS_MAX) {
+    out = scaleDown(out, LONG_SIDE_MAX);
+    scaled_to = { width: out.width, height: out.height };
+  }
+  return { png: encodePng(out), region: { x: x0, y: y0, width: w, height: h }, from: { width: img.width, height: img.height }, ...(scaled_to ? { scaled_to } : {}) };
+}

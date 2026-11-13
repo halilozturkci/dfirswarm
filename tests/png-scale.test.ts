@@ -63,3 +63,27 @@ test("a large image is scaled for the model and says from what; a small one, a J
   assert.equal(pngForModel(Buffer.concat([big.subarray(0, 60), Buffer.alloc(400_000)])), null, "a PNG cut short");
   assert.equal(decodePng(Buffer.alloc(10)), null);
 });
+
+test("a crop is the region at the original's resolution, clipped to the image; a large one is scaled and says so; one outside the image is refused", async () => {
+  const { cropPng, decodePng, encodePng, CROP_PIXELS_MAX } = await import("../extensions/png-scale.ts");
+  const w = 300, h = 200;
+  const px = Buffer.alloc(w * h * 3);
+  for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) px.set([x % 256, y % 256, (x + y) % 256], (y * w + x) * 3);
+  const png = encodePng({ width: w, height: h, channels: 3, pixels: px });
+  const c = cropPng(png, { x: 10, y: 20, width: 5, height: 4 });
+  assert.ok(!("error" in c));
+  if ("error" in c) return;
+  assert.deepEqual([c.region, c.from, c.scaled_to], [{ x: 10, y: 20, width: 5, height: 4 }, { width: w, height: h }, undefined]);
+  const d = decodePng(c.png)!;
+  assert.deepEqual([...d.pixels.subarray(0, 3)], [10, 20, 30], "the crop's first pixel is the original's (10, 20)");
+  assert.deepEqual([...d.pixels.subarray((3 * 5 + 4) * 3, (3 * 5 + 4) * 3 + 3)], [14, 23, 37], "and its last is (14, 23)");
+  const clipped = cropPng(png, { x: 290, y: 190, width: 50, height: 50 });
+  assert.ok(!("error" in clipped) && clipped.region.width === 10 && clipped.region.height === 10);
+  const outside = cropPng(png, { x: 400, y: 0, width: 5, height: 5 });
+  assert.ok("error" in outside && /lies outside the image, which is 300 x 200/.test(outside.error));
+  assert.ok("error" in cropPng(Buffer.from("not a png"), { x: 0, y: 0, width: 1, height: 1 }));
+  assert.ok(CROP_PIXELS_MAX >= 1568 * 1568);
+  const big = encodePng({ width: 2000, height: 1600, channels: 3, pixels: Buffer.alloc(2000 * 1600 * 3, 7) });
+  const scaled = cropPng(big, { x: 0, y: 0, width: 2000, height: 1600 });
+  assert.ok(!("error" in scaled) && scaled.scaled_to && Math.max(scaled.scaled_to.width, scaled.scaled_to.height) <= 1568);
+});
