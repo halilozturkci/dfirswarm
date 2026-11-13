@@ -37,7 +37,7 @@
   "example": "{\"path\": \"work/extracted/Users/a/AppData/Local/Microsoft/Windows/Explorer\"}",
   "by": "maintainer",
   "at": "2026-11-13T12:00:00.000Z",
-  "version": 3,
+  "version": 4,
   "use": {
     "names": [
       "thumbcache_*.db",
@@ -51,5 +51,5 @@
     ]
   },
   "requires": [],
-  "sha256": "c32475adf6e12fdb36ab3a332a654d60692b3198debb15f700e9856316267926"
+  "sha256": "bca03159a29de064404a492e5155e80a1a4312c0ca673cd948fd59d47785f76a"
 }

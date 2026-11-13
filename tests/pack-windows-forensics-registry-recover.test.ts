@@ -464,7 +464,7 @@ test("a name with a quote, a bracket, a newline or 300 characters, and a raw non
 
 // ---- time, signals, processes -----------------------------------------------------------------------------------------------
 
-test("a program it starts stays in its group: its own clock ends regfexport, and SIGTERM leaves JSON (status interrupted) and exit 143 with the program gone", { skip }, async () => {
+test("a program it starts stays in its group: its own clock ends regfexport, and SIGTERM leaves JSON (status failed, interrupted true) and exit 143 with the program gone", { skip }, async () => {
   const { spawn } = await import("node:child_process");
   await withCwd(async (cwd, bin) => {
     const pidFile = join(cwd, "regfexport.pid");
@@ -488,7 +488,7 @@ test("a program it starts stays in its group: its own clock ends regfexport, and
     const code = await new Promise<number | null>((resolve) => child.on("close", (c) => resolve(c)));
     assert.equal(code, 143);
     const last = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Answer;
-    assert.equal(last.status, "interrupted");
+    assert.deepEqual([last.status, last.interrupted], ["failed", true]);
     await new Promise((r) => setTimeout(r, 300));
     assert.throws(() => process.kill(second, 0), "the program is gone with the tool");
   });

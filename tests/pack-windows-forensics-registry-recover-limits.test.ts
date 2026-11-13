@@ -474,7 +474,7 @@ test("a signal that ends the tool after the recovered copy was placed and before
     const code = await new Promise<number | null>((resolve) => child.on("close", (c) => resolve(c)));
     assert.equal(code, 143);
     const last = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Answer;
-    assert.equal(last.status, "interrupted");
+    assert.deepEqual([last.status, last.interrupted], ["failed", true]);
     assert.match(last.status_basis, /the recovered copy, which had no receipt yet/);
     const left = await everyFileUnder(join(cwd, "work"));
     assert.deepEqual(left.filter((f) => /recovered/.test(f)), [], "no recovered copy without its receipt");

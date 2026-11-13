@@ -1240,7 +1240,7 @@ def read_keys_file(path):
 # END CREDENTIAL IO
 
 
-PARSER = "chromium_logins/3"
+PARSER = "chromium_logins/4"
 DEADLINE_SECONDS = 45             # the manifest allows 60: the reads stop here, so that the page is placed and the answer printed before the harness ends the tool
 VALUES_NAME = "chromium_logins-values.jsonl"
 DEFAULT_LIMIT = 100
@@ -1577,7 +1577,7 @@ def main():
                 return sqlite3.SQLITE_OK
             if action == sqlite3.SQLITE_READ and isinstance(arg1, str) and arg1.lower() in ("logins", "sqlite_master"):
                 return sqlite3.SQLITE_OK                                   # (SQLite's names are not case-sensitive: 'Logins' is the logins table)
-            if action == sqlite3.SQLITE_PRAGMA and arg1 == "table_info" and arg2 == "logins":
+            if action == sqlite3.SQLITE_PRAGMA and arg1 in ("table_info", "table_xinfo") and arg2 == "logins":
                 return sqlite3.SQLITE_OK
             if action == sqlite3.SQLITE_FUNCTION and arg2 in ("count", "typeof", "length"):
                 return sqlite3.SQLITE_OK
@@ -1590,18 +1590,32 @@ def main():
             else:
                 # SQLite matches a column's name without regard to case, so this reader does too: the fields are named as the reader names them
                 # (COLUMNS), and the table's own spelling is what the statements select.
-                info = conn.execute("PRAGMA table_info(logins)").fetchall()
+                # table_xinfo lists the generated columns too, which table_info leaves out (its last field is 0 for an ordinary column).
+                try:
+                    every = conn.execute("PRAGMA table_xinfo(logins)").fetchall()
+                    info = [r for r in every if len(r) < 7 or r[6] == 0]
+                except sqlite3.Error:
+                    every = info = conn.execute("PRAGMA table_info(logins)").fetchall()
                 columns = [(r[1].lower(), r[1]) for r in info if isinstance(r[1], str) and r[1].lower() in COLUMNS and '"' not in r[1]]
                 present = [name for name, _real in columns]
-                # A column named rowid (or _rowid_, or oid) is read where its name is written, in place of the row id: the first of the three
-                # names that no column takes is the one the rows are read in order by.
-                taken = {r[1].lower() for r in info if isinstance(r[1], str)}
+                # A column named rowid (or _rowid_, or oid), generated ones included, is read where its name is written, in place of the row id:
+                # the first of the three names that no column takes is the one the rows are read in order by.
+                taken = {r[1].lower() for r in every if isinstance(r[1], str)}
                 rowid_name = next((n for n in ROWID_NAMES if n not in taken), None)
+                without_rowid = False
+                if rowid_name is not None:
+                    try:
+                        conn.execute("SELECT %s FROM logins LIMIT 0" % rowid_name).fetchall()
+                    except sqlite3.OperationalError as exc:
+                        without_rowid = "no such column" in str(exc)
                 if "password_value" not in present or "origin_url" not in present:
                     read_error = "the logins table has no origin_url or no password_value column: not a layout this reader knows"
                 elif rowid_name is None:
                     read_error = ("the logins table has columns named rowid, _rowid_ and oid, which take all three of SQLite's names for its row id: its rows "
                                   "cannot be read in order by their row id, and none was read (not a layout Chromium writes)")
+                elif without_rowid:
+                    read_error = ("the logins table is a WITHOUT ROWID table: it has no row id to read its rows in order by, and none was read "
+                                  "(not a layout Chromium writes)")
         except sqlite3.Error as exc:
             read_error = "the schema could not be read (%s)" % type(exc).__name__
         if read_error is None:

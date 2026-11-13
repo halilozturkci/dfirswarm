@@ -219,7 +219,7 @@ import tempfile
 import time
 from pathlib import Path
 
-PARSER = "registry_recover/4"
+PARSER = "registry_recover/5"
 BASE_BLOCK = 4096
 LOG_HEADER = 512
 MARVIN_SEED = 0x82EF4D887A4E55C5
@@ -1577,14 +1577,17 @@ def install_signal_handlers():
 
 
 # BEGIN SHARED HIVE BOUNDS
-# The same text is in regkv, shellbags and amcache_apps (a windows-forensics test holds the copies equal).
+# The same text is in regkv, shellbags, amcache_apps, userassist_bam_shimcache, persistence_normalise and registry_recover, and in the
+# tool-library twins of regkv and amcache_apps (tests/shared-blocks-census.test.ts holds the copies equal).
 # A hive of N bytes holds at most N // 76 key cells (an nk cell is at least 76 bytes) and N // 20 value cells (a vk cell is at least 20), however
 # many elements an index claims: regipy follows a subkey index (ri) element by element, so one list repeated by an index is read as many times as
 # it is repeated (a 61 KB hive listed a million keys and took 1.2 GB). Every list of subkeys and values is read through these bounds, and what is
 # past one is said, never followed.
+import binascii
 import itertools
 import logging
 import struct
+import time
 import warnings
 
 KEY_CELL_BYTES = 76
@@ -1624,6 +1627,8 @@ def withhold_library_output():
 
 
 INLINE_DATA = 0x80000000                  # a value record whose data size has this bit set holds its data (four bytes at most) in the offset field
+HBIN_START = 0x1000                       # a cell offset counts from the end of the hive's 4096-byte base block
+SEGMENT_DATA = 0x3FD8                     # the data one big-data segment holds: a value with more is kept in segments that a "db" record lists
 
 
 def bound_value_reads():
@@ -1656,6 +1661,29 @@ def bound_value_reads():
     return True
 
 
+def multi_strings(data):
+    """REG_MULTI_SZ data as regipy 6.3 gives it, read in one pass: the UTF-16LE strings between NULs that start on an even byte, empty ones left
+    out, up to the bytes after the last NUL (dropped) or up to a string that is not valid UTF-16 (dropped, and every string after it). regipy
+    parses it with construct's GreedyRange(CString), which grows each string a code unit at a time: a string with no NUL after it took 4.3 s for
+    1 MiB and 50 s for 2 MiB, and no clock of the tool could stop it. Returns (strings, the bytes dropped that are not NUL padding, whether a
+    string that is not valid UTF-16 began them), so that what is dropped is said."""
+    strings, at = [], 0
+    while True:
+        end = data.find(b"\x00\x00", at)
+        while end != -1 and (end - at) % 2:
+            end = data.find(b"\x00\x00", end + 1)
+        if end == -1:
+            break
+        if end > at:
+            try:
+                strings.append(data[at:end].decode("utf-16-le"))
+            except UnicodeDecodeError:
+                return strings, len(data) - at, True
+        at = end + 2
+    tail = data[at:]
+    return strings, (len(tail) if tail.strip(b"\x00") else 0), False
+
+
 class HiveBounds:
     def __init__(self, hive_path, size=None):
         self.inline_values_bounded = bound_value_reads()
@@ -1666,11 +1694,21 @@ class HiveBounds:
         self.keys_read = 0                      # subkey elements read over the whole walk
         self.data_read = 0                      # bytes of value data read over the whole walk
         self.repeats = 0                        # elements that named a key already named in the same list
+        self.not_read = 0                       # values a key lists that this block did not read (refused, or past a bound or the clock)
+        self._skipped = 0                       # values of the key being read that regipy itself leaves out
+        self.deadline = None                    # a monotonic time the caller sets for its walk; else the tool's own deadline is read
 
     def subkeys(self, node, where, problems):
         """The distinct subkeys of `node`, at most the keys the hive can still hold; what is past that, or repeated, is a problem line."""
         room = max(self.key_cells - self.keys_read, 0)
-        raw = list(itertools.islice(node.iter_subkeys() or [], room + 1))
+        raw, in_time = [], not self.past_deadline()          # a list begun past the deadline (a tool that finishes what it needs) is read whole
+        for sub in itertools.islice(node.iter_subkeys() or [], room + 1):
+            raw.append(sub)
+            if in_time and len(raw) % 256 == 0 and len(raw) <= room and self.past_deadline():
+                # The library reads a key record for every element: an index that repeats lists in a large hive is a million of them.
+                problems.append({"where": where, "what": "subkeys",
+                                 "error": "the time limit was reached after %d elements of its subkey list: the elements past that are not read" % len(raw)})
+                break
         if len(raw) > room:
             raw = raw[:room]
             problems.append({"where": where, "what": "subkeys",
@@ -1696,28 +1734,240 @@ class HiveBounds:
             problems.append(_lost_names_problem(where, "subkeys", lost))
         return distinct
 
+    def key(self, root, path, problems):
+        """The key at `path` below `root` (parts split at backslashes, matched without regard to case), each subkey list on the way read through
+        subkeys(); None when a part is not there. regipy's get_key reads the elements of each list on the way until one has the name, and an
+        index that names one list again and again is read as many times as it says (65,535 lists of 65,535 keys), past any clock of the tool.
+        Each list is read to what the hive can hold; a lookup is not counted against the walk's own count of keys read (a tool looks a few
+        paths up, and may look one list up again for each)."""
+        parts = [p for p in str(path).replace("/", "\\").split("\\") if p]
+        node = root
+        for i, part in enumerate(parts):
+            said, walked = [], self.keys_read
+            self.keys_read = 0
+            try:
+                kids = self.subkeys(node, "\\" + "\\".join(parts[:i]), said)
+            finally:
+                self.keys_read = walked
+            # What a list on the way was cut or de-duplicated for is the caller's; names of keys that are not on the path are not.
+            lost = _lost_names_problem("", "subkeys", 0)["error"].split(" ", 1)[1]
+            for item in said:
+                if not str(item.get("error", "")).endswith(lost):
+                    problems.append(item)
+            node = next((kid for kid in kids if str(getattr(kid, "name", "")).lower() == part.lower()), None)
+            if node is None:
+                return None
+        return node
+
+    def past_deadline(self):
+        """Whether the walk's deadline has passed: the one the caller set (self.deadline), else the tool's own (the "deadline" that set_deadline
+        writes into STOP or CLOCK). The deadline is read here, not through the tool's out_of_time(), so that a tool's count of its own clock
+        readings is not moved by this block."""
+        deadline = self.deadline
+        if deadline is None:
+            for box in (globals().get("STOP"), globals().get("CLOCK")):
+                at = box.get("deadline") if isinstance(box, dict) else None
+                if isinstance(at, (int, float)) and not isinstance(at, bool):
+                    deadline = at
+                    break
+        return deadline is not None and time.monotonic() > deadline
+
     def values(self, node, where, problems, **kwargs):
         """At most the values the hive can hold, as a list, and at most the data it can hold over the whole walk (a value list that names one big
-        record again and again reads that record every time); a key that lists more is a problem line."""
-        raw = []
-        for v in itertools.islice(node.iter_values(**kwargs), self.value_cells + 1):
-            if len(raw) >= self.value_cells:
-                problems.append({"where": where, "what": "values",
-                                 "error": "its value list yields more values than a %d-byte hive can hold (%d at most): the elements past that are not read"
-                                          % (self.hive_bytes, self.value_cells)})
-                break
-            data = getattr(v, "value", None)
-            self.data_read += len(data) if isinstance(data, (bytes, bytearray, str)) else sum(len(x) for x in data if isinstance(x, (str, bytes))) if isinstance(data, list) else 0
-            if self.data_read > 4 * self.hive_bytes:
-                problems.append({"where": where, "what": "values",
-                                 "error": "the values read in this walk hold more data than a %d-byte hive can: records that a value list names again and again; "
-                                          "the values past that are not read" % self.hive_bytes})
-                break
-            raw.append(v)
+        record again and again reads that record every time); a key that lists more is a problem line. The deadline is read before every value
+        of a list begun before it: a key whose values are not all read in time is a problem line. With the real library the values are read here (read_values), every big
+        data value checked before its data is put together; with a stand-in that has no stream, through its iter_values."""
+        declared = getattr(node, "values_count", None)
+        declared = declared if isinstance(declared, int) and not isinstance(declared, bool) else None
+        reg = _library_for(node)
+        own = reg is not None
+        self._skipped = 0
+        source = self.read_values(node, reg, where, problems, **kwargs) if own else iter(node.iter_values(**kwargs) or ())
+        raw, cut = [], False
+        in_time = not self.past_deadline()                   # a list begun past the deadline (a tool that finishes what it needs) is read whole
+        try:
+            while True:
+                if in_time and self.past_deadline():
+                    if declared is None or len(raw) + self._skipped < declared:
+                        problems.append({"where": where, "what": "values",
+                                         "error": "the time limit was reached after %d of the %s value(s) its list holds: the values past that are not read"
+                                                  % (len(raw), declared if declared is not None else "unknown number of")})
+                        cut = True
+                    break
+                try:
+                    v = next(source)
+                except StopIteration:
+                    break
+                if len(raw) >= self.value_cells:
+                    problems.append({"where": where, "what": "values",
+                                     "error": "its value list yields more values than a %d-byte hive can hold (%d at most): the elements past that are not read"
+                                              % (self.hive_bytes, self.value_cells)})
+                    cut = True
+                    break
+                if not own:
+                    data = getattr(v, "value", None)
+                    self.data_read += len(data) if isinstance(data, (bytes, bytearray, str)) else sum(len(x) for x in data if isinstance(x, (str, bytes))) if isinstance(data, list) else 0
+                    if self.data_read > 4 * self.hive_bytes:
+                        problems.append({"where": where, "what": "values",
+                                         "error": "the values read in this walk hold more data than a %d-byte hive can: records that a value list names again and again; "
+                                                  "the values past that are not read" % self.hive_bytes})
+                        cut = True
+                        break
+                raw.append(v)
+        finally:
+            close = getattr(source, "close", None)
+            if callable(close):
+                close()
+        if declared is not None and (own or cut):
+            # What the list holds and is not in `raw`: regipy's own skips (a type it leaves out, the rest of a list after a record it cannot
+            # parse) are the library's; every other one this block refused or did not reach.
+            self.not_read += max(declared - len(raw) - self._skipped, 0)
         lost = _lost_names(raw)
         if lost:
             problems.append(_lost_names_problem(where, "values", lost))
         return raw
+
+    def read_values(self, node, reg, where, problems, as_json=False, max_len=None, trim_values=True):
+        """regipy 6.3's NKRecord.iter_values, read from the library's copy of the hive with the same records, names, types and decoding, except
+        where its own reading costs without bound: a big data value (a "db" record and its list of segments) is checked before its data is put
+        together, and refused when it declares more data than the file holds past its base block, when its list holds fewer segments than its
+        size needs, runs past the file or names a segment twice, or when a segment lies outside the file (regipy put together whatever the list
+        named: one 16 KB segment named 160 times was a 2.5 MiB value, and a 548 KB hive declared a value of 2 GiB); every value's data is counted
+        against the walk's data budget before it is read; REG_MULTI_SZ is split by multi_strings. A refused value is a problem line and is not in
+        the list."""
+        count = node.values_count
+        if not count:
+            return
+        max_len = reg.MAX_LEN if max_len is None else max_len
+        library_log = logging.getLogger("regipy.registry")
+        stream = node._stream
+        with stream.getbuffer() as buf:
+            end = len(buf)
+            room = max(end - HBIN_START, 0)
+            listed_at = HBIN_START + 4 + node.header.values_list_offset
+            for i in range(min(count, self.value_cells + 1)):
+                at = listed_at + 4 * i
+                if at + 4 > end:
+                    raise reg.RegistryParsingException("Bad registry VK at %d" % at)
+                vk_at = HBIN_START + 4 + struct.unpack_from("<I", buf, at)[0]
+                here = stream.tell()
+                try:
+                    stream.seek(vk_at)
+                    vk = reg.VALUE_KEY.parse_stream(stream)     # the layout as the library holds it (a tool may have put a checking one in its place)
+                except (reg.ConstError, reg.StreamError):
+                    # regipy ends the list without an error at a value record it cannot parse; so does this
+                    library_log.error("Could not parse VK at %d, registry hive is probably corrupted." % vk_at)
+                    self._skipped += count - i
+                    return
+                finally:
+                    stream.seek(here)
+                where_value = "its value %d of the %d its list holds (%s)" % (i + 1, count, vk.data_type)
+                kind = int(vk.data_type)
+                if kind > 0xFFFF0000:
+                    data_type = reg.VALUE_TYPE_ENUM.parse(reg.Int32ul.build(kind & 0xFFFF))
+                elif kind == 0x200000:
+                    self._skipped += 1           # regipy skips this type without a word
+                    continue
+                else:
+                    data_type = str(vk.data_type)
+                if vk.name_size == 0:
+                    name = "(default)"
+                elif vk.flags.VALUE_COMP_NAME:
+                    name = vk.name.decode("ascii", errors="replace")
+                else:
+                    name = vk.name.decode("utf-16-le", errors="replace")
+                size, offset = vk.data_size, vk.data_offset
+                inline = size >= INLINE_DATA
+                if inline:
+                    data = struct.pack("<I", offset & 0xFFFFFFFF)[:min(size - INLINE_DATA, 4)]
+                    big = False
+                else:
+                    start = HBIN_START + 4 + offset
+                    big = (size > SEGMENT_DATA and bytes(buf[start:start + 2]) == b"db"
+                           and data_type in ("REG_SZ", "REG_EXPAND", "REG_EXPAND_SZ", "REG_BINARY", "REG_NONE", "REG_MULTI_SZ"))
+                    if big:
+                        segments, why = big_data_segments(buf, start, size, room)
+                        if why:
+                            problems.append({"where": where, "what": "values", "error": "%s is not read: %s" % (where_value, why)})
+                            continue
+                        cost = size
+                    else:
+                        cost = max(min(size, end - start), 0) if start < end else 0
+                    if self.data_read + cost > 4 * self.hive_bytes:
+                        problems.append({"where": where, "what": "values",
+                                         "error": "the values read in this walk hold more data than a %d-byte hive can: records that a value list names again "
+                                                  "and again; the values past that are not read" % self.hive_bytes})
+                        return
+                    self.data_read += cost
+                    data = b"".join(bytes(buf[s:s + n]) for s, n in segments) if big else bytes(buf[start:start + size]) if start < end else b""
+                if data_type in ("REG_SZ", "REG_EXPAND", "REG_EXPAND_SZ"):
+                    value = reg.try_decode_binary(data, as_json=as_json, trim_values=trim_values)
+                elif data_type in ("REG_BINARY", "REG_NONE"):
+                    if big:
+                        value = reg.try_decode_binary(data, as_json=True, trim_values=trim_values) if as_json else data
+                    else:
+                        value = binascii.b2a_hex(data).decode()[:max_len] if trim_values else data
+                elif data_type == "REG_DWORD":
+                    value = offset if inline else reg.Int32ul.parse(data)
+                elif data_type == "REG_QWORD":
+                    value = offset if inline else reg.Int64ul.parse(data)
+                elif data_type == "REG_MULTI_SZ":
+                    value, dropped, undecodable = multi_strings(data)
+                    if dropped:
+                        problems.append({"where": where, "what": "values",
+                                         "error": ("%s holds a string that is not valid UTF-16: it and the rest of the data, %d byte(s), are not in the answer "
+                                                   "(regipy drops them too), the strings before it are" if undecodable else
+                                                   "%s ends in %d byte(s) that no NUL ends: they are not in the answer (regipy drops them too), the strings "
+                                                   "before them are") % (where_value, dropped)})
+                elif data_type in ("REG_RESOURCE_REQUIREMENTS_LIST", "REG_RESOURCE_LIST"):
+                    value = binascii.b2a_hex(data).decode()[:max_len] if trim_values else data
+                elif data_type == "REG_FILETIME":
+                    value = reg.convert_wintime(reg.Int64ul.parse(data), as_json=as_json)
+                else:
+                    value = reg.try_decode_binary(data, as_json=as_json, trim_values=trim_values)
+                yield reg.Value(name=name, value_type=data_type, value=value, is_corrupted=False)
+
+
+def _library_for(node):
+    """regipy's registry module when `node` is its key record over a copy of the hive in memory (what read_values reads), else None (a stand-in)."""
+    if not hasattr(getattr(node, "_stream", None), "getbuffer") or not isinstance(getattr(getattr(node, "header", None), "values_list_offset", None), int):
+        return None
+    try:
+        import regipy.registry as reg
+        for name in ("VALUE_KEY", "VALUE_TYPE_ENUM", "Int32ul", "Int64ul", "Value", "MAX_LEN", "try_decode_binary", "convert_wintime", "RegistryParsingException",
+                     "ConstError", "StreamError"):
+            getattr(reg, name)
+    except Exception:  # noqa: BLE001 - another library under the name: its own iter_values is read
+        return None
+    return reg if isinstance(node, reg.NKRecord) else None
+
+
+def big_data_segments(buf, start, size, room):
+    """The (place, length) of each segment of the big data value whose "db" record starts at `start`, or a reason to refuse it. Nothing is read
+    but the record and its list: the value is put together by the caller only when every segment is a distinct place inside the file."""
+    if size > room:
+        return None, "it declares %d bytes of data, more than the %d bytes the hive file holds past its base block" % (size, room)
+    end = len(buf)
+    if start + 8 > end:
+        return None, "its big data record runs past the end of the hive file"
+    listed, list_offset = struct.unpack_from("<HI", buf, start + 2)
+    needed = -(-size // SEGMENT_DATA)
+    if listed < needed:
+        return None, "its big data record lists %d segment(s) and %d are needed for the %d bytes it declares" % (listed, needed, size)
+    at = HBIN_START + 4 + list_offset
+    if at + 4 * needed > end:
+        return None, "its list of segments runs past the end of the hive file"
+    offsets = struct.unpack_from("<%dI" % needed, buf, at)
+    if len(set(offsets)) < needed:
+        return None, ("its list of segments names one segment more than once (%d distinct of %d): a list made to read one segment again and again"
+                      % (len(set(offsets)), needed))
+    segments = []
+    for n, offset in enumerate(offsets):
+        place, length = HBIN_START + 4 + offset, min(SEGMENT_DATA, size - n * SEGMENT_DATA)
+        if place + length > end:
+            return None, "its segment %d of %d lies past the end of the hive file" % (n + 1, needed)
+        segments.append((place, length))
+    return segments, None
 # END SHARED HIVE BOUNDS
 
 
@@ -2678,10 +2928,11 @@ class Walk:
         del CELL_DAMAGE[:]
         self.hive = RegistryHive(path)
         self.bounds = HiveBounds(path)
+        self.bounds.deadline = deadline_at          # the block reads this clock before every value
         self.inline_bounded = self.bounds.inline_values_bounded
         self.deadline_at = deadline_at
         self.keys = self.values = self.withheld = self.problems_count = 0
-        self.values_declared = self.values_not_yielded = self.keys_short_of_values = 0
+        self.values_declared = self.values_not_yielded = self.keys_short_of_values = self.values_not_read = 0
         self.stopped_by_time = False
         self.problems = []
         self.type_counts = collections.Counter()
@@ -2725,7 +2976,7 @@ class Walk:
             seen_names = collections.Counter()
             declared = getattr(node, "values_count", None)
             declared = declared if isinstance(declared, int) and not isinstance(declared, bool) and 0 <= declared <= self.bounds.value_cells else None
-            yielded, before = 0, self.problems_count
+            yielded, before, left_before = 0, self.problems_count, self.bounds.not_read
             try:
                 for v in self.bounds.values(node, shown, _ProblemSink(self), trim_values=False):
                     self.values += 1
@@ -2738,17 +2989,21 @@ class Walk:
                     on_value(rec, payload, kind)
             except Exception as exc:
                 self.problem(shown, "values", "%s: %s" % (type(exc).__name__, exc))
+            # The values the HIVE BOUNDS block refused (a big data value that cannot be what it declares) or did not reach (a bound, the clock)
+            # are its own, each said in a problem line; they are not counted as values regipy left out.
+            left = self.bounds.not_read - left_before
+            self.values_not_read += left
             if declared is not None:
                 self.values_declared += declared
-                if yielded < declared:
+                if yielded + left < declared:
                     # regipy gives no sign of a value it leaves out: it skips a value of registry type 0x00200000 by design, and ends a key's list
                     # without an error at a value record it cannot parse. The count the key declares is the only trace, so it is said per key.
-                    self.values_not_yielded += declared - yielded
+                    self.values_not_yielded += declared - yielded - left
                     self.keys_short_of_values += 1
                     if self.problems_count == before:
                         self.problem(shown, "values", "the key declares %d value(s) and regipy gave %d: the %d it left out are not in keys.jsonl (the library skips a value of "
                                                       "registry type 0x00200000 and ends a key's list at a value record it cannot parse, in both cases without an error)"
-                                     % (declared, yielded, declared - yielded))
+                                     % (declared, yielded, declared - yielded - left))
             self.drain(shown)
             if not descend:
                 continue
@@ -3317,6 +3572,7 @@ def main():
                     "status": "complete" if not walk.stopped_by_time and not walk.problems_count else "partial",
                     "keys": walk.keys, "values": walk.values, "value_types": dict(sorted(walk.type_counts.items())),
                     "values_declared_by_keys": walk.values_declared, "values_not_yielded_by_regipy": walk.values_not_yielded,
+                    "values_not_read_by_bounds": walk.values_not_read,
                     "keys_short_of_values": walk.keys_short_of_values, "inline_values_bounded": walk.inline_bounded,
                     "withheld_values": len(sensitive_log), "problem_count": walk.problems_count, "walk_stopped_by_time_limit": walk.stopped_by_time,
                     "keys_file": keys_result.get("all_results"), "keys_inline": key_page.page, "keys_page": key_page.said(keys_result),
@@ -3336,11 +3592,13 @@ def main():
                 if reader.get("ran") and reader.get("finished"):
                     reader["agrees"] = reader["keys"] == walk.keys and reader["values"] == walk.values
                     reader["regipy"] = {"keys": walk.keys, "values": walk.values, "values_declared_by_keys": walk.values_declared,
-                                        "values_not_yielded": walk.values_not_yielded}
+                                        "values_not_yielded": walk.values_not_yielded, "values_not_read_by_bounds": walk.values_not_read}
                     # The difference is explained when the values regfexport counted are the ones the keys declare: what is missing is then
-                    # exactly what regipy left out (said per key under problems), and nothing else differs between the two readers.
+                    # exactly what regipy left out and what this tool did not read (each said per key under problems), and nothing else differs
+                    # between the two readers.
+                    missing = walk.values_not_yielded + walk.values_not_read
                     reader["difference_explained"] = (not reader["agrees"] and reader["keys"] == walk.keys
-                                                      and reader["values"] == walk.values + walk.values_not_yielded and walk.values_not_yielded > 0)
+                                                      and reader["values"] == walk.values + missing and missing > 0)
                 export_receipt["independent_reader"] = {"regfexport": reader}
                 if reader.get("agrees") is False:
                     export_receipt["status"] = "partial"
@@ -3382,6 +3640,10 @@ def main():
             if export_receipt.get("values_not_yielded_by_regipy"):
                 said_why.append("%d of the %d value(s) the keys declare were not given by regipy and are not in keys.jsonl" % (
                     export_receipt["values_not_yielded_by_regipy"], export_receipt.get("values_declared_by_keys", 0)))
+            if export_receipt.get("values_not_read_by_bounds"):
+                said_why.append("%d of the %d value(s) the keys declare were not read by this tool and are not in keys.jsonl (a big data value refused, "
+                                "or a value past a bound or the time limit; each key is named under records.problems)" % (
+                    export_receipt["values_not_read_by_bounds"], export_receipt.get("values_declared_by_keys", 0)))
             if export_receipt.get("walk_stopped_by_time_limit"):
                 said_why.append("the walk stopped at the time limit")
             reasons.append("the key and value records are %s%s" % (export_receipt.get("status"), (": " + "; ".join(said_why)) if said_why else ""))
@@ -3389,12 +3651,16 @@ def main():
         if reader_said.get("ran") and not reader_said.get("finished"):
             reasons.append(reader_said["why_not_finished"])
         if reader_said.get("agrees") is False:
+            not_read = reader_said["regipy"].get("values_not_read_by_bounds") or 0
+            not_read_said = (" and the %d value(s) this tool did not read (a big data value refused, or a value past a bound or the time limit; each named under "
+                             "records.problems)" % not_read) if not_read else ""
             reasons.append("regfexport counted %d keys and %d values where regipy counted %d and %d%s" % (
                 reader_said["keys"], reader_said["values"], reader_said["regipy"]["keys"], reader_said["regipy"]["values"],
                 (": the difference is the %d value(s) the keys declare and regipy did not give (%d key(s), each named under records.problems; the library skips a value of "
-                 "registry type 0x00200000 and ends a list at a value record it cannot parse), and those values are not in keys.jsonl"
-                 % (reader_said["regipy"]["values_not_yielded"], export_receipt.get("keys_short_of_values", 0))) if reader_said.get("difference_explained") else
-                (" (the keys walked declare %d values, and regipy did not give %d of them)" % (reader_said["regipy"]["values_declared_by_keys"], reader_said["regipy"]["values_not_yielded"]))))
+                 "registry type 0x00200000 and ends a list at a value record it cannot parse)%s, and those values are not in keys.jsonl"
+                 % (reader_said["regipy"]["values_not_yielded"], export_receipt.get("keys_short_of_values", 0), not_read_said)) if reader_said.get("difference_explained") else
+                (" (the keys walked declare %d values, and regipy did not give %d of them%s)" % (reader_said["regipy"]["values_declared_by_keys"], reader_said["regipy"]["values_not_yielded"],
+                                                                                                not_read_said))))
         if hive.get("problems"):
             reasons.append("the hive's base block has a problem: " + "; ".join(hive["problems"]))
         if not_hashed:
@@ -3493,7 +3759,8 @@ def forget_placed():
 def last_word(signum):
     forget_temps()
     copies = forget_placed()
-    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+    # A stop is not a status (the statuses are complete, partial and failed): nothing made is a result, so the status is failed, with interrupted true.
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "failed", "interrupted": True,
                       "status_basis": "the tool was stopped by signal %d; nothing it had made is a result (the temporary files were removed%s)" % (
                           signum, ", and so was the recovered copy, which had no receipt yet" if copies else ""), "signal": signum}), flush=True)
 

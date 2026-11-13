@@ -665,7 +665,7 @@ test("a logins table with a column named rowid is read by its real row id: every
     assert.deepEqual(lines(join(env.OUT, "chromium_logins-values.jsonl")).map((v) => v.password), SECRETS);
     assert.equal(out.status, "partial", "the cell over the limit is said");
     assert.doesNotMatch(out.status_basis, /bound of \d+ rows|clock/);
-    assert.equal(out.parser, "chromium_logins/3");
+    assert.equal(out.parser, "chromium_logins/4");
     // rowid, _rowid_ and oid all taken by columns: the real row id has no name left, and the table is refused rather than read by a column.
     py(
       "import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\nc.execute('CREATE TABLE logins (rowid, _rowid_, OID, origin_url, password_value BLOB)')\n" +
@@ -675,6 +675,35 @@ test("a logins table with a column named rowid is read by its real row id: every
     const refused = await call("chromium_logins", cwd, { login_data: "all.db", key_file: keyFile }, secretJob(cwd));
     assert.equal(refused.out.status, "failed");
     assert.match(refused.out.status_basis, /columns named rowid, _rowid_ and oid, which take all three of SQLite's names for its row id/);
+    assert.equal(refused.out.row_count, 0);
+  });
+});
+
+test("a generated column named rowid does not stand in for the row id, and a WITHOUT ROWID logins table is said to be one", async () => {
+  await withCwd(async (cwd) => {
+    const key = randomBytes(32);
+    const keyFile = secretFile(cwd, "work/k", key);
+    // PRAGMA table_info leaves generated columns out: a reader that looks there takes "rowid" as free, and reads the column (7 on every row).
+    py(
+      "import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\n" +
+        "c.execute('CREATE TABLE logins (origin_url TEXT, username_value TEXT, password_value BLOB, rowid INTEGER GENERATED ALWAYS AS (7) VIRTUAL)')\n" +
+        "for i in range(3):\n    c.execute('INSERT INTO logins (origin_url, username_value, password_value) VALUES (?,?,?)', ('https://g%d.example/' % i, 'u%d' % i, bytes.fromhex(sys.argv[2 + i])))\n" +
+        "c.commit(); c.close()",
+      join(cwd, "generated.db"),
+      ...SECRETS.map((s) => v10(key, s).toString("hex")),
+    );
+    const { out } = await call("chromium_logins", cwd, { login_data: "generated.db", key_file: keyFile }, secretJob(cwd));
+    assert.deepEqual(out.rows.map((r: Answer) => [r.rowid, r.origin]), [[1, "https://g0.example/"], [2, "https://g1.example/"], [3, "https://g2.example/"]], out.status_basis);
+    assert.deepEqual([out.rows_in_table, out.rows_read, out.decrypted], [3, 3, 3]);
+    py(
+      "import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\n" +
+        "c.execute('CREATE TABLE logins (origin_url TEXT PRIMARY KEY, username_value TEXT, password_value BLOB) WITHOUT ROWID')\n" +
+        "c.execute('INSERT INTO logins VALUES (?,?,?)', ('https://w.example/', 'w', b'v10'))\nc.commit(); c.close()",
+      join(cwd, "norowid.db"),
+    );
+    const refused = await call("chromium_logins", cwd, { login_data: "norowid.db", key_file: keyFile }, secretJob(cwd));
+    assert.equal(refused.out.status, "failed");
+    assert.match(refused.out.status_basis, /the logins table is a WITHOUT ROWID table: it has no row id to read its rows in order by/);
     assert.equal(refused.out.row_count, 0);
   });
 });

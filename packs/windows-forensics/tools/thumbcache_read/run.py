@@ -180,6 +180,7 @@ if __name__ == "__main__":
 # END SHARED ENDS
 
 
+import heapq
 import json
 import os
 import re
@@ -872,9 +873,16 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
         # never from its declared end: what lies in the rest of its declared size (its slack) is read like any other stretch of the file. An entry
         # that begins there is read as an entry and marked inside_entry_at; bytes there that are neither an entry nor zero are counted in
         # bytes_not_in_an_entry; zeros there are the entry's own and are not counted.
-        slacks = []                                            # (offset of the entry, its declared end) of the entries whose slack is being read
+        # Kept as a stack and a heap, each entry pushed and popped once (a list filtered at every step was quadratic: 150,000 entries, each
+        # inside the one before, ran into the clock): the stack's top is the last entry whose slack is being read, the heap's top the nearest
+        # declared end. An entry whose end the read has passed is dropped from either when it comes to the top; pos only grows.
+        slacks = []                                            # (offset of the entry, its declared end), in the order the entries were read
+        slack_ends = []                                        # the declared ends of the same entries, a heap
         while pos < end:
-            slacks = [s for s in slacks if s[1] > pos]
+            while slacks and slacks[-1][1] <= pos:
+                slacks.pop()
+            while slack_ends and slack_ends[0] <= pos:
+                heapq.heappop(slack_ends)
             if out_of_time():
                 budget.stopped = "the tool's own clock (%d s) ran out" % DEADLINE_SECONDS
             if budget.stopped is None and budget.entries_left <= 0:
@@ -885,7 +893,7 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
             head = pread(fd, entry_header, pos)
             if head[:4] != MAGIC and slacks:
                 owner = slacks[-1][0]
-                at, nonzero = next_magic(fd, pos, min(min(s[1] for s in slacks), end))
+                at, nonzero = next_magic(fd, pos, min(slack_ends[0], end))
                 if at is None:
                     continue                                   # the clock ran out inside the search: said at the top of the loop
                 if nonzero:
@@ -1012,6 +1020,7 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, 
                 break                                          # the file ends inside the entry's parts: there is nothing after them
             if entry_size > inside:
                 slacks.append((pos, pos + entry_size))
+                heapq.heappush(slack_ends, pos + entry_size)
             pos += inside
         said["bytes_not_in_an_entry"] = gaps
         skipped_by_header = said.get("entries_before_first_entry_offset", 0)
