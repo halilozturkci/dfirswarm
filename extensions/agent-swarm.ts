@@ -2878,6 +2878,8 @@ export default function (pi: ExtensionAPI) {
       release: process.env.SWARM_SKILL_RELEASE?.trim() || undefined,
       // A hand-off that is pending or being compacted (not one that failed and was given up): finished bodies leave with that compaction.
       compactionPending: () => selfCompact?.handoffPending() ?? false,
+      // --skill-cards (docs/usage.md): a note's card with the result of a call to one of its tools, for a seat that does not hold it.
+      cards: process.env.SWARM_SKILL_CARDS?.trim() || undefined,
     });
   }
 

@@ -34,3 +34,12 @@ A seat's `cd /…/runs/<id> && grep … ledger/ledger.md` read the bare root as 
 or `pushd` to the run's root now names nothing, while a bare root anywhere else (`grep -r x <root>`) still reads as the whole run. The
 `sweep_hits` fix said to name each object in `refs`, which hold 20: a seat that followed it in the same run dropped objects named before and
 had them come back as hits. It now says `result_refs`, which hold 200 and count the same.
+
+### Added: a skill's card comes with a call to its tool (`--skill-cards`, on by default)
+
+Skills reached a seat only when it called `skill(id)`. On the open models of the Batman III runs that almost never happened: 5 of 8 seats of
+one run loaded no skill, and 9 % of its pack-tool calls came from a seat that held the tool's skill (74 % on a Codex run); its `ad1_extract`
+errors were what `evidence/ad1` says. Now a call to a tool a skill lists under `tools`, by a seat that does not hold the skill, comes back with
+the skill's card: its `card:` front-matter line, or the lines that say when to use it, its first example call and what it does not show. Once
+per skill and seat in a context; a compaction shows it again, and the hand-off header carries the cards of the skills it took out. A tool
+more than three skills list shows the list of those skills instead. `--skill-cards off` leaves skills to `skill(id)`; `skill_card` on the trace.

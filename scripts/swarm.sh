@@ -184,7 +184,7 @@ swarm.sh start — prepare a sandbox, write the contract, launch the agents.
       [--notify CMD] [--ledger-from RUN] [--no-verify-copy] [--allow-root] [--model-gateway] [--check]
       [--cap-per-agent USD] [--cap-per-agent-tokens N] [--cap-tokens N] [--token-alert N[,M...]] [--idle-nudge-sec N] [--allow-tool-forging]
       [--no-self-compact] [--compact-at SPEC] [--compact-warn-at SPEC] [--compact-notice-at SPEC]
-      [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N] [--skill-release compaction|auto|off]
+      [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N] [--skill-release compaction|auto|off] [--skill-cards on|off]
       [--allow-install] [--no-pypi] [--no-read DIR]... [--accept-signer-exposure]
       [--tools-from DIR] [--inputs DIR]... [--inputs-enforce auto|on|off]
       [--inputs-max-mb N] [--inputs-max-files N] [--catalog] [--allow-missing-symbols] [--toolbox SETS|auto|off] [--toolbox-required]
@@ -396,6 +396,17 @@ Limits
                       and the summary input is not shaped. Recorded as
                       skill_release in the registry; skill_release_policy and
                       skill_unload on the trace. Needs --pack.
+  --skill-cards on|off
+                      Whether a call to a tool a skill names (job_run tool=X,
+                      or the tool itself), by an agent that does not hold that
+                      skill, comes back with the skill's card: its own card:
+                      line, or the lines that say when to use it, its first
+                      example call and what it does not show. Once per skill
+                      and agent until a compaction; a tool more than three
+                      skills name shows none; the hand-off header carries the
+                      cards of the skills a compaction took out. on, the
+                      default; off leaves skills to skill(id) alone. Recorded
+                      as skill_cards in the registry; skill_card on the trace.
 
 Evidence
   --inputs DIR        A read-only copy of DIR under inputs/. Agents read and grep
@@ -3648,6 +3659,8 @@ cmd_start() {
   local inbox_page_chars=""
   # When a skill body an agent has marked done leaves its context: compaction, auto or off. Empty means compaction.
   local skill_release=""
+  # Whether a note's card comes with the result of a call to one of its tools: on (empty) or off.
+  local skill_cards=""
   local extra_env=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -3773,6 +3786,7 @@ cmd_start() {
       --compact-model) compact_model="$2"; shift 2 ;;
       --inbox-page-chars) inbox_page_chars="$2"; shift 2 ;;
       --skill-release) skill_release="$2"; shift 2 ;;
+      --skill-cards) skill_cards="$2"; shift 2 ;;
       --case-id) case_id="$2"; shift 2 ;;
       --examiner) examiner="$2"; shift 2 ;;
       --operator) operator_id="${2:-}"; shift 2 ;;
@@ -4560,6 +4574,10 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
   fi
   if [[ -n "$compact_model" && "$self_compact" -ne 1 ]]; then
     echo "BLOCKER: --compact-model names the summary model of self-compaction; drop --no-self-compact." >&2
+    exit 2
+  fi
+  if [[ -n "$skill_cards" && "$skill_cards" != "on" && "$skill_cards" != "off" ]]; then
+    echo "BLOCKER: --skill-cards is on or off, got $skill_cards." >&2
     exit 2
   fi
   if [[ -n "$skill_release" && "$skill_release" != "auto" && "$skill_release" != "compaction" && "$skill_release" != "off" ]]; then
@@ -5974,6 +5992,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --arg compact_model "$compact_model" \
     --arg inbox_page_chars "${inbox_page_chars:-40000}" \
     --arg skill_release "${skill_release:-compaction}" \
+    --arg skill_cards "${skill_cards:-on}" \
     --argjson metered "$metered" \
     --arg unmetered_why "$(unmetered_why_word "$metered" "$subscription_models_csv")" \
     --arg cap_tokens "$cap_tokens" \
@@ -6069,6 +6088,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
       },
       inbox_page_chars: ($inbox_page_chars | tonumber),
       skill_release: $skill_release,
+      skill_cards: $skill_cards,
       metered: ($metered == 1),
       unmetered_why: (if $unmetered_why == "" then null else $unmetered_why end),
       cap_tokens: (if $cap_tokens == "" then null else ($cap_tokens | tonumber) end),
@@ -6196,6 +6216,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
         ;;
     esac
     echo "Skill release: ${skill_release:-compaction} (${skill_release_says})"
+    if [[ "${skill_cards:-on}" == "off" ]]; then echo "Skill cards: off (a note reaches a seat only when it calls skill(id))"; else echo "Skill cards: on (a call to a tool a note names, by a seat that does not hold the note, comes back with the note's card)"; fi
   fi
   if [[ -n "$models_spec" ]]; then
     echo "Models:       $MODEL_SUMMARY"
@@ -6458,6 +6479,9 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   fi
   if [[ -n "$skill_release" ]]; then
     provider_env+=(--env "SWARM_SKILL_RELEASE=$skill_release")
+  fi
+  if [[ -n "$skill_cards" ]]; then
+    provider_env+=(--env "SWARM_SKILL_CARDS=$skill_cards")
   fi
   # A case can turn on a library the host does not have. The answer is not
   # root — nothing here needs it, and the read-only guard over inputs/ is the
@@ -8953,6 +8977,7 @@ vm_build_spec() { # <hub dir> <out file>
   fi
   [[ -n "$inbox_page_chars" ]] && add_env SWARM_INBOX_PAGE_CHARS "$inbox_page_chars"
   [[ -n "${skill_release:-}" ]] && add_env SWARM_SKILL_RELEASE "$skill_release"
+  [[ -n "${skill_cards:-}" ]] && add_env SWARM_SKILL_CARDS "$skill_cards"
   # The hub refuses a part larger than its own size: a size set for this run
   # reaches the guests too, so both ends cut the same parts.
   [[ -n "${SWARM_TRANSFER_PART_BYTES:-}" ]] && add_env SWARM_TRANSFER_PART_BYTES "$SWARM_TRANSFER_PART_BYTES"
