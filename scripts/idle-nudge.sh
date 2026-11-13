@@ -744,9 +744,19 @@ ensure_hub() {
   echo "idle-nudge: the hub was down; restarted (ok=$ok)" >&2
 }
 
+# Each line of the log says when (SWARM_LOG_TS=1, set where the kickoff starts the watchdog): a log without times could
+# not be laid beside the trace (the runs s17fdfe and s5d814f).
+log_ts() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+if [[ "${SWARM_LOG_TS:-}" == 1 ]]; then
+  echo() { if [[ "${1:-}" == idle-nudge:* ]]; then log_ts "$@"; else builtin echo "$@"; fi; }
+fi
+
 while :; do
   [[ -d "$SANDBOX" ]] || exit 0
   [[ -f "$SANDBOX/done/SWARM_DONE" || -f "$SANDBOX/done/ALL_AGENTS_DEAD" ]] && exit 0
+  # A stop has begun (swarm.sh stop marks the hub directory first): nobody is nudged or regrouped while the run is put
+  # away. On s17fdfe 28 prompts and a regroup went to seats whose VMs were already stopped.
+  [[ -n "${HUB_DIR:-}" && -e "$HUB_DIR/.stop" ]] && exit 0
   ensure_hub
   host_backstop
   host_token_alerts
@@ -903,7 +913,7 @@ while :; do
       echo "idle-nudge: prompted $id after ${clock}s ${why} (nudge $n/$MAX_NUDGES)"
     else
       log_event "$id" "$clock" false "$n" "$why"
-      echo "idle-nudge: could not prompt $id (pane gone?)" >&2
+      echo "idle-nudge: could not prompt $id (not delivered: the seat is not linked to the hub, its pane is gone, or the hub did not answer in time)" >&2
     fi
   done
   [[ "$ONCE" -eq 1 ]] && exit 0

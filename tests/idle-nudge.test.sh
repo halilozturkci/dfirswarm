@@ -488,4 +488,32 @@ grep -q 'The ready lead the register ranks first is L-1 "Open the encrypted cont
 grep -q 'Questions nobody holds a lead for: question:1, question:2 (open: L-1)' <<<"$nudge" || fail "the nudge does not name the uncovered questions: $nudge"
 pass "an idle agent's nudge names the ready lead the register ranks first and the questions nobody holds"
 
+# --- a stop in progress ------------------------------------------------------
+# swarm.sh stop marks the hub directory first. On s17fdfe the watchdog went on
+# for a quarter of an hour of the stop: 28 prompts and a regroup to seats whose
+# VMs were gone.
+STOP_HUB="$TMP/stophub"; mkdir -p "$STOP_HUB"; : > "$STOP_HUB/.stop"
+: > "$PROMPT_LOG"
+touch -t "$old" "$CS/.pi-sessions/k0/session.jsonl"
+out="$(SWARM_HUB_DIR="$STOP_HUB" HERDR_BIN="$TMP/bin/herdr" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$CS" --once --idle-sec 30 --compact-grace-sec 1 2>&1)"; rc=$?
+[[ "$rc" -eq 0 ]] || fail "the watchdog did not exit cleanly when a stop had begun (exit $rc): $out"
+[[ "$(grep -c '^k0	' "$PROMPT_LOG")" -eq 0 ]] || fail "a seat was nudged while the run was being stopped"
+pass "once a stop has begun the watchdog exits and nudges nobody"
+
+# --- the log says when --------------------------------------------------------
+: > "$PROMPT_LOG"
+out="$(SWARM_LOG_TS=1 HERDR_BIN="$TMP/bin/herdr" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$CS" --once --idle-sec 30 --compact-grace-sec 1 2>&1)"
+grep -Eq '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z idle-nudge: ' <<<"$out" || fail "a log line carries no time with SWARM_LOG_TS=1: $out"
+pass "each log line carries its time when the kickoff starts the watchdog (SWARM_LOG_TS=1)"
+
+# --- the launcher reads its last command before it runs it --------------------
+tail -1 "$ROOT/scripts/swarm.sh" | grep -qx 'main "\$@"; exit "\$?"' || fail "swarm.sh does not end with main and its exit on one line: $(tail -1 "$ROOT/scripts/swarm.sh")"
+EDIT="$TMP/edit.sh"
+printf '%s\n' 'main() { sleep 1; return 0; }' 'main "$@"; exit "$?"' > "$EDIT"
+bash "$EDIT" & edit_pid=$!
+sleep 0.3; printf '%s\n' ';; this is not shell' >> "$EDIT"; sed -i.bak '1s/^/# a line added while it runs\n/' "$EDIT" 2>/dev/null || true
+wait "$edit_pid"; rc=$?
+[[ "$rc" -eq 0 ]] || fail "a script edited while it ran ended with exit $rc"
+pass "a launcher edited while a command runs still ends with that command's exit status"
+
 echo "idle-nudge.test.sh: all checks passed"

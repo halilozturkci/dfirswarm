@@ -6808,7 +6808,7 @@ EOF
   fi
   # The run's frozen copy when it has one, as the hub and its keeper.
   nudge_script="$(run_script "$hub_dir_now" scripts/idle-nudge.sh)"
-  detach_exec env SWARM_TRACE_TOKEN="$(trace_token_for system)" SWARM_TRACE_SOCKET="${trace_gate:-}" SWARM_RUNS_DIR="$RUNS_DIR" ${hub_env[@]+"${hub_env[@]}"} \
+  detach_exec env SWARM_LOG_TS=1 SWARM_TRACE_TOKEN="$(trace_token_for system)" SWARM_TRACE_SOCKET="${trace_gate:-}" SWARM_RUNS_DIR="$RUNS_DIR" ${hub_env[@]+"${hub_env[@]}"} \
     bash "$nudge_script" --sandbox "$sandbox" --idle-sec "$idle_nudge_sec" \
     >"$sandbox/traces/idle-nudge.log" 2>&1 &
   echo $! > "$sandbox/idle-nudge.pid"
@@ -6821,7 +6821,7 @@ EOF
   # watchdog sits idle until the wall clock, which is what run 6 showed.
   sleep 2
   if ! kill -0 "$(cat "$sandbox/idle-nudge.pid" 2>/dev/null || echo 0)" 2>/dev/null; then
-    detach_exec env SWARM_TRACE_TOKEN="$(trace_token_for system)" SWARM_TRACE_SOCKET="${trace_gate:-}" SWARM_RUNS_DIR="$RUNS_DIR" ${hub_env[@]+"${hub_env[@]}"} \
+    detach_exec env SWARM_LOG_TS=1 SWARM_TRACE_TOKEN="$(trace_token_for system)" SWARM_TRACE_SOCKET="${trace_gate:-}" SWARM_RUNS_DIR="$RUNS_DIR" ${hub_env[@]+"${hub_env[@]}"} \
       bash "$nudge_script" --sandbox "$sandbox" --idle-sec "$idle_nudge_sec" \
       >>"$sandbox/traces/idle-nudge.log" 2>&1 </dev/null &
     echo $! > "$sandbox/idle-nudge.pid"
@@ -12515,4 +12515,6 @@ main() {
   esac
 }
 
-main "$@"
+# One line, so bash has read the exit before main runs: with the exit on a line of its own, a file edited while a long
+# command ran was read on from the old offset afterwards, and a start that had worked ended "line 12500: syntax error", exit 2.
+main "$@"; exit "$?"
