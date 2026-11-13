@@ -9508,7 +9508,7 @@ last_trace_ts() { # <sandbox>
 
 cmd_stop() {
   local stop_args=("$@")
-  local id="${1:-}" no_custody=0 custody_timeout="" after_hub=0 vms_left=0 found_dead=0 dead_last_trace=""
+  local id="${1:-}" no_custody=0 custody_timeout="" after_hub=0 vms_left=0 found_dead=0 dead_last_trace="" ask_first=0
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -9517,11 +9517,15 @@ cmd_stop() {
       # what is left is cleared, and the run keeps the state the hub gave it.
       --after-hub) after_hub=1; no_custody=1; shift ;;
       --custody-timeout) custody_timeout="$2"; shift 2 ;;
+      # Ask the seats for what they hold before the run is put away: a seat of the run s01a4f4 had computed an answer a
+      # minute before the stop and had not recorded it. The seats are told the run stops in N minutes and to record every
+      # value they have, as an answer or a finding; the stop goes on after N minutes.
+      --ask-first) ask_first="${2:-}"; [[ "$ask_first" =~ ^[0-9]+$ && "$ask_first" -ge 1 && "$ask_first" -le 30 ]] || { echo "stop: --ask-first takes minutes, 1 to 30" >&2; exit 2; }; shift 2 ;;
       *) echo "stop: unknown argument $1" >&2; exit 2 ;;
     esac
   done
   if [[ -z "$id" ]]; then
-    echo "stop requires <id> [--no-custody] [--custody-timeout SEC]" >&2
+    echo "stop requires <id> [--ask-first MINUTES] [--no-custody] [--custody-timeout SEC]" >&2
     exit 2
   fi
   ensure_registry
@@ -9541,6 +9545,18 @@ cmd_stop() {
   trap 'echo >&2; echo "stop interrupted while ${stop_step}. Nothing is lost: scripts/swarm.sh stop '"$id"' again finishes it (every step is safe to repeat)." >&2; exit 130' INT TERM
   local sandbox stop_hub_dir
   sandbox="$(jq -r '.sandbox // empty' <<<"$rec")"
+  if [[ "$ask_first" -gt 0 && -n "$sandbox" && -d "$sandbox" && "$after_hub" -eq 0 ]]; then
+    stop_step="asking the seats what they hold"
+    node --experimental-strip-types --no-warnings -e '
+      const [protocol, S, body] = process.argv.slice(1);
+      import(protocol).then((P) => P.systemPost(S, { tag: "ask", to: "all", body })).catch(() => process.exit(1));
+    ' "$ROOT/extensions/protocol.ts" "$sandbox" "THE RUN STOPS IN ${ask_first} MINUTE(S), by the operator. Before it does, put on the ledger everything you hold and have not recorded: every value you have found for a question (record it as the answer, or as a finding with answers: [n] if you are not its lead's holder; an unverified value is recorded as a candidate, with what is still open), and the state of what you are in the middle of. Start nothing new. What is not on the ledger when the run stops is lost." >/dev/null 2>&1 \
+      && echo "Asked:        the seats were told the run stops in ${ask_first} minute(s) and to record what they hold; waiting" \
+      || echo "WARN: the seats could not be told (the post failed); stopping now" >&2
+    operator_trace "$sandbox" stop_ask_first "$id" "$ask_first"
+    sleep $((ask_first * 60))
+    stop_step="holding the jobs"
+  fi
   # Hold jobs before closing panes: Herdr may take time to answer, and the
   # hub must not accept a job or start a worker during that wait.
   if [[ -n "$sandbox" ]] && stop_hub_dir="$(hub_dir_of "$sandbox" 2>/dev/null)"; then

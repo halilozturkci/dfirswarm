@@ -30,7 +30,7 @@ scripts/swarm.sh start --model <provider/id> --cap-usd <n> --n <N>
 scripts/swarm.sh image-for [--pack ID]... [--tools-from DIR] [--playwright] [--no-jobs] [--brains-with-packs]
 scripts/swarm.sh list
 scripts/swarm.sh status <id>
-scripts/swarm.sh stop <id> [--no-custody] [--custody-timeout SEC]
+scripts/swarm.sh stop <id> [--ask-first MINUTES] [--no-custody] [--custody-timeout SEC]
 scripts/swarm.sh extend <id> [--minutes N] [--tokens N] [--usd N]
 scripts/swarm.sh pause <id> [--why TEXT]
 scripts/swarm.sh unpause <id>

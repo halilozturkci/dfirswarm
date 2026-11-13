@@ -566,4 +566,12 @@ wait "$edit_pid"; rc=$?
 [[ "$rc" -eq 0 ]] || fail "a script edited while it ran ended with exit $rc"
 pass "a launcher edited while a command runs still ends with that command's exit status"
 
+# --- stop --ask-first: the seats are asked what they hold before the run is put away -----
+out="$(bash "$ROOT/scripts/swarm.sh" stop nosuch --ask-first 99 2>&1)" && fail "--ask-first 99 was taken: $out"
+grep -q 'stop: --ask-first takes minutes, 1 to 30' <<<"$out" || fail "$out"
+out="$(bash "$ROOT/scripts/swarm.sh" stop nosuch --ask-first 2 2>&1)" && fail "an unknown run was stopped: $out"
+grep -q 'Unknown swarm id: nosuch' <<<"$out" || fail "--ask-first 2 was not taken as an option: $out"
+grep -q 'THE RUN STOPS IN ${ask_first} MINUTE(S)' "$ROOT/scripts/swarm.sh" || fail "the stop does not tell the seats to record what they hold"
+pass "stop --ask-first N takes 1 to 30 minutes and tells the seats to record what they hold before the stop"
+
 echo "idle-nudge.test.sh: all checks passed"
