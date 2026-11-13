@@ -272,11 +272,11 @@ if [[ "${#cap_unmet[@]}" -gt 0 ]]; then
   where="this host"
   [[ -n "$image_file" ]] && where="the image"
   if [[ "$required" -eq 1 ]]; then
-    echo "BLOCKER: --toolbox-required and the case requires what $where cannot do: ${cap_unmet[*]}. The questions that need it would close not determinable; supply a program (material add, then job_run programs) or use an image that has it." >&2
+    echo "BLOCKER: --toolbox-required and the case requires what $where cannot do: ${cap_unmet[*]}. The questions that need it would close not determinable; supply a program right after the start with `swarm.sh tool-supply <id> add PATH --provides <capability>`, which tests it against a known answer in a worker job before the seats rely on it (they run it with job_run programs) or use an image that has it." >&2
     exit 3
   fi
   for u in "${cap_unmet[@]}"; do
-    echo "WARN: the case requires ${u%% *} and $where cannot do it ${u#* }. The questions that need it may close not determinable; supply a program (material add, then job_run programs), use an image that has it, or stop now." >&2
+    echo "WARN: the case requires ${u%% *} and $where cannot do it ${u#* }. The questions that need it may close not determinable; supply a program right after the start with `swarm.sh tool-supply <id> add PATH --provides <capability>`, which tests it against a known answer in a worker job before the seats rely on it (they run it with job_run programs), use an image that has it, or stop now." >&2
   done
 fi
 echo "toolbox: $(( ${#present[@]} )) present, ${#missing[@]} missing$( [[ "${#cap_rows[@]}" -gt 0 ]] && echo ", $(( ${#cap_rows[@]} - ${#cap_unmet[@]} ))/${#cap_rows[@]} required capabilities met") -> $sandbox/toolbox.json"

@@ -147,6 +147,17 @@ grep -q "WARN: the run's hub did not record the tool's provenance" <<<"$out" || 
 grep -q 'Added mat-0002 (operator_supplied' <<<"$out" || fail "$out"
 pass "a hub that does not know tools is said, not trusted"
 
+echo "# --provides: what the program is for is tested where there is a job service; without one it is said not to be tested"
+out="$(swarm material "$id" add "$TMP/supply/finder" --why "data" --provides qr-decode 2>&1)" && fail "--provides was taken for data: $out"
+grep -q -- '--provides is for tool-supply' <<<"$out" || fail "$out"
+out="$(swarm tool-supply "$id" add "$TMP/supply/finder" --why "a second finder" --source "vendor source 1.1" --provides 2>&1)" && fail "--provides with no capability was taken: $out"
+grep -q -- '--provides takes a capability list' <<<"$out" || fail "$out"
+printf '#!/bin/sh\necho scanning v2\n' > "$TMP/supply/finder2"
+out="$(swarm tool-supply "$id" add "$TMP/supply/finder2" --why "a second finder" --source "vendor source 1.1" --provides qr-decode 2>&1)" || fail "a supply with --provides failed on a run with no job service: $out"
+grep -q 'NOT tested' <<<"$out" || fail "a run with no job service did not say the program was not tested: $out"
+grep -q 'NOTE: nothing says what this program is for' <<<"$out" && fail "the no---provides note was printed with --provides: $out"
+pass "--provides is tool-supply's, needs a capability, and a run with no job service says the program is sealed and not tested"
+
 echo "# help"
 swarm help tool-supply | grep -q 'tool-supply <id> add PATH --why W --source TEXT' || fail "help tool-supply"
 swarm --help | grep -q 'tool-supply <id>' || fail "the short help does not name tool-supply"

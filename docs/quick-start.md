@@ -259,6 +259,10 @@ scripts/swarm.sh material <id> add memo.pdf --why "the client's timeline"
 scripts/swarm.sh tool-supply <id> add ./detector --why "a key detector, asked for in R-4" \
   --source "Debian bookworm source package 1.0-11" --built "make, debian:bookworm-slim arm64" \
   --sha256 <sha256 of ./detector> --for R-4
+# --provides says what it is for (qr-decode, video-decode, image-convert): each is then
+# tested against a known answer in a worker job before the seats rely on it, the
+# result goes on the board, and a program that fails the test ends the command non-zero
+scripts/swarm.sh tool-supply <id> add ./zbar --why "a QR decoder" --source "..." --provides qr-decode
 
 # the dynamic network: what was asked, decided and granted; grant or deny
 scripts/swarm.sh net <id> list
