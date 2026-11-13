@@ -545,6 +545,21 @@ export function boundInputSets(S: string): string[] {
   return out;
 }
 
+/** microsandbox's write quota for a bind with none given (measured on msb: a write stops at 4,294,967,296 bytes). */
+export const MSB_DEFAULT_QUOTA_MB = 4096;
+
+/**
+ * The write quota of a job's $OUT, in MiB: `SWARM_JOB_OUT_QUOTA_MB` when set,
+ * else the room free where it is kept less the room the service keeps free,
+ * and never below microsandbox's default (a job could write that much before).
+ */
+export function outQuotaMb(free: number | null, minFreeMb: number, env: NodeJS.ProcessEnv = process.env): number {
+  const set = Number(env.SWARM_JOB_OUT_QUOTA_MB);
+  if (Number.isFinite(set) && set > 0) return Math.floor(set);
+  if (free === null) return MSB_DEFAULT_QUOTA_MB;
+  return Math.max(MSB_DEFAULT_QUOTA_MB, Math.floor(free - minFreeMb));
+}
+
 export class JobService {
   readonly o: Required<Pick<JobServiceOptions, "perRequesterRunning" | "perRequesterQueued" | "minFreeMb" | "derived">> & JobServiceOptions;
   readonly S: string;
@@ -1352,9 +1367,11 @@ export class JobService {
     const kind = scopeKindOf(job.spec);
     const tail: Array<Mount & { note?: string }> = [];
     for (const pack of this.o.packDirs) if (existsSync(pack)) tail.push({ host: pack, guest: pack, readonly: true });
-    tail.push({ host: st.out, guest: this.outPath(job), noexec: true });
+    // $OUT's write quota: what the disk holds beyond the room the service keeps free, never below microsandbox's own default (4 GiB),
+    // which stopped whole-image extractions part way through a file (outQuotaMb).
+    tail.push({ host: st.out, guest: this.outPath(job), noexec: true, quota_mb: outQuotaMb(freeMb(st.out), this.o.minFreeMb) });
     tail.push({ host: st.ctl, guest: "/job", noexec: true });
-    const accessOf = (list: Array<Mount & { note?: string }>) => list.map((m) => ({ path: m.guest ?? m.host, access: `${m.readonly ? "read-only" : "read-write"}${m.noexec ? ", no-exec" : ""}${m.note ? `; ${m.note}` : ""}` }));
+    const accessOf = (list: Array<Mount & { note?: string }>) => list.map((m) => ({ path: m.guest ?? m.host, access: `${m.readonly ? "read-only" : "read-write"}${m.noexec ? ", no-exec" : ""}${m.quota_mb ? `, writes up to ${m.quota_mb} MiB` : ""}${m.note ? `; ${m.note}` : ""}` }));
     const strip = (list: Array<Mount & { note?: string }>) => list.map(({ note: _note, ...m }) => m);
     if (kind !== "declared") {
       const all = [...this.broadMounts(), ...tail];

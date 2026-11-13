@@ -103,7 +103,14 @@ const GUEST_OAUTH_EXPIRES = Date.UTC(2099, 0, 1);
  * anything runs. `view` marks a tree the hub built for one job: it may hold
  * only directories and regular files, checked the same way.
  */
-export type Mount = { host: string; guest?: string; readonly?: boolean; noexec?: boolean; expect?: { dev: number; ino: number }; view?: boolean };
+/**
+ * A share into a VM. `quota_mb` bounds what the guest may add under a writable
+ * bind: microsandbox applies a default of 4 GiB when none is given (measured:
+ * a write stops at 4,294,967,296 bytes; three whole-image extractions of one
+ * run stopped there with ENOSPC), so a share that takes a job's output names
+ * its own.
+ */
+export type Mount = { host: string; guest?: string; readonly?: boolean; noexec?: boolean; quota_mb?: number; expect?: { dev: number; ino: number }; view?: boolean };
 
 export type ProviderSpec = {
   provider: string;
@@ -1350,6 +1357,7 @@ async function createOne(
       v.bind(hostPath);
       if (m.readonly) v.readonly();
       if (m.noexec) v.noexec();
+      if (!m.readonly && m.quota_mb && m.quota_mb > 0) v.quota(Math.floor(m.quota_mb));
       return v;
     });
   }
@@ -2589,6 +2597,7 @@ async function runWorkerOnce(spec: WorkerSpec, hooks: { onCreated?: () => void }
         let b = v.bind(host);
         if (m.readonly) b = b.readonly();
         if (m.noexec) b = b.noexec();
+        if (!m.readonly && m.quota_mb && m.quota_mb > 0) b = b.quota(Math.floor(m.quota_mb));
         return b;
       });
     }

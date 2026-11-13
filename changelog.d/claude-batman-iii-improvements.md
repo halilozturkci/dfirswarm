@@ -165,3 +165,10 @@ its authors attested it. Unattested, or attested only by its author, the hit hol
 When the hub restarted, a compaction's hand-off header fell back to zeros and printed them as fact ("Ledger: 0 entries", "Sentinel:
 absent"), and a turn whose sentinel or inputs read was refused ran on Pi's base prompt alone. The header now says those facts are unknown
 and to check the inbox and the sentinel; the prompt is built with the reads it has and says which it could not make.
+
+### Fixed: a job's $OUT is no longer cut at 4 GiB
+
+Three whole-image AD1 extractions of one run stopped with ENOSPC at 4,294,967,274 bytes, on the same file. The source is microsandbox's own
+quota on a bind mount given none: measured on msb, a write in a VM stops at exactly 4,294,967,296 bytes, and the same write with
+`.quota(8192)` goes past it. A job's `$OUT` is now mounted with a quota of its own: the room free where it is kept less the service's
+reserve, never below 4 GiB (`SWARM_JOB_OUT_QUOTA_MB` sets it). The job's accessible mounts say it.
