@@ -40,7 +40,9 @@ is not, and write nothing.
 BOUNDS. Lists are paged by `offset` and `limit`: every paged answer says total, returned and next_offset, and a page is cut at 256 KiB of
 JSON as well. `find` reads the dump in 8 MiB pieces (the memory the tool uses does not grow with the dump), stops at `max_hits` or at
 `max_seconds` with status partial and `resume_va`, the address to pass as `va_start` for the rest: every hit that starts below it is in
-the answer and none that starts at or above it is, so the calls together give each hit once. `read` writes at most 64 MiB and `module`
+the answer and none that starts at or above it is, so the calls together give each hit once. The hits that start at one address (the
+UTF-8 and UTF-16LE forms of a one-character needle) are never split by a stop: when they alone would pass max_hits at the head of an
+answer, all of them are given and page.same_address_note says so. `read` writes at most 64 MiB and `module`
 at most 512 MiB a call. At most 250,000 memory ranges, 250,000 regions, 16,384 modules, 65,536 threads and 250,000 handles are read; a
 dump that declares more is partial and says so. Every handle's type name is read, and 512 distinct names are listed.
 
@@ -214,7 +216,7 @@ import signal
 import sys
 
 PARSER = "minidump_map/2"
-TOOL = 2
+TOOL = 3
 
 
 def _before_start(signum, _frame):
@@ -3143,20 +3145,27 @@ def view_find(dump, p):
     is the address where the next piece's buffer will begin, so a hit that starts at or above it is found by the next piece, whole, at
     the front of its buffer. Every hit is thus found once, in address order whatever the forms' lengths, and at any moment every hit that
     starts below the frontier is in the list and none that starts at or above it is. That is what a stop rests on: the search resumes
-    at the frontier (the clock, a read that failed), or at the first hit that was not taken (max_hits, the answer's size), and a call
-    that starts there finds exactly the hits this one did not give. Where two ranges are not adjacent the tail is searched by itself and
+    at the frontier (the clock, a read that failed), or at the address of the first hits that were not taken (max_hits, the answer's
+    size; the hits that start at one address are given together or not at all), and a call that starts there finds exactly the hits
+    this one did not give. Where two ranges are not adjacent the tail is searched by itself and
     nothing is carried."""
     out = base_answer(dump, p)
     forms = needle_forms(p)
     longest = max(len(raw) for _l, raw, _p in forms)
     lo, hi = p["va_start"], p["va_end"] if p["va_end"] is not None else U64 + 1
-    hits, read_bytes, stop, resume = [], 0, None, None
+    hits, read_bytes, stop, resume, over = [], 0, None, None, None
     tail, tail_va, previous_end = b"", None, None
 
     def take(buf, buf_va, limit):
-        """The hits of `buf` that start below buf_va + limit, in address order, added to the list; False when max_hits ended the search."""
-        nonlocal stop, resume
-        room = p["max_hits"] - len(hits) + 1
+        """The hits of `buf` that start below buf_va + limit, in address order, added to the list; False when max_hits ended the search.
+        The hits that start at one address (the UTF-8 and UTF-16LE forms of a one-character needle, or of text that ends in NUL
+        characters) are taken together or not at all, so that a stop never puts the resume address on a hit already given: max_hits
+        stops before a group that would pass it, at the group's address, unless the list is still empty, and then the whole group is
+        taken past max_hits (said in the answer) and the search stops at the next address that holds a hit."""
+        nonlocal stop, resume, over
+        # Each form gives at most `room` positions: enough for every hit this piece can add and the whole group after them (a group is
+        # one hit of each form, at most two), so the merged list is exact as far as it is read.
+        room = max(p["max_hits"] - len(hits), 0) + 3
         lowered = buf.lower() if p["ignore_case"] else None
         found, reached = [], limit
         for form in forms:              # a form the clock cut short lowers `reached`, and the forms after it look no further than that
@@ -3164,13 +3173,19 @@ def view_find(dump, p):
             found.extend((buf_va + i, form[0], len(form[1])) for i in positions)
         del lowered
         found.sort()
-        for hit in found:
-            if hit[0] >= buf_va + reached:
-                break
-            if len(hits) >= p["max_hits"]:
-                stop, resume = "max_hits (%d) was reached" % p["max_hits"], hit[0]
-                return False
-            hits.append(hit)
+        i = 0
+        while i < len(found) and found[i][0] < buf_va + reached:
+            j = i + 1
+            while j < len(found) and found[j][0] == found[i][0]:
+                j += 1
+            if len(hits) + (j - i) > p["max_hits"]:
+                if hits:
+                    stop, resume = "max_hits (%d) was reached" % p["max_hits"], found[i][0]
+                    return False
+                over = ("the first %d hits start at one address, %s (one per form of the needle): a stop never splits the hits at one "
+                        "address, so all of them are in this answer, past max_hits (%d)" % (j - i, hx(found[i][0]), p["max_hits"]))
+            hits.extend(found[i:j])
+            i = j
         if reached < limit:             # the clock, inside a piece: every hit that starts below buf_va + reached is in the list
             stop, resume = "max_seconds (%d) was reached" % p["seconds"], buf_va + reached
             return False
@@ -3240,8 +3255,23 @@ def view_find(dump, p):
         rows.append(row)
     shown_rows, facts = paged(len(rows), 0, len(rows) or 1, lambda i: rows[i])
     if facts["truncated"]:              # the page's byte ceiling: the rest is found again from the first hit that is not shown
-        resume = hits[facts["returned"]][0]
-        stop = "the answer reached %d bytes of JSON" % INLINE_BYTES
+        # The cut never falls inside the hits that start at one address: it moves back to the first of them, or, when that would leave
+        # the answer empty, forward past the last of them.
+        cut = facts["returned"]
+        while cut > 0 and hits[cut - 1][0] == hits[cut][0]:
+            cut -= 1
+        if cut == 0:
+            cut = facts["returned"]
+            while cut < len(rows) and hits[cut][0] == hits[0][0]:
+                cut += 1
+            over = ("the first %d hits start at one address, %s (one per form of the needle): a stop never splits the hits at one "
+                    "address, so all of them are in this answer, past the page's %d bytes of JSON" % (cut, hx(hits[0][0]), INLINE_BYTES))
+            shown_rows = rows[:cut]
+        else:
+            shown_rows = shown_rows[:cut]
+        if cut < len(rows):
+            resume = hits[cut][0]
+            stop = "the answer reached %d bytes of JSON" % INLINE_BYTES
     seconds = time.monotonic() - p["started"]
     # What was searched is the memory the dump holds below the address the search ended at: every hit that starts there is in the answer.
     reached = min(resume, hi) if resume is not None else hi
@@ -3249,6 +3279,8 @@ def view_find(dump, p):
     out["hits"] = shown_rows
     out["page"] = {"total": len(shown_rows) if stop is None else None, "returned": len(shown_rows), "next_offset": None, "truncated": stop is not None,
                    "resume_va": hx(resume) if resume is not None else None}
+    if over is not None:
+        out["page"]["same_address_note"] = over
     if stop is not None:
         out["page"]["total_note"] = "the search stopped early, so the total is not known: at least %d" % len(shown_rows)
         out["page"]["how_to_continue"] = ("call again with va_start %s: every hit that starts below that address is in this answer and none that "

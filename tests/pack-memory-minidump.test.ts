@@ -6,7 +6,8 @@
  * What is held: each view's facts; that an address which is not in the dump is said to be absent and never read as zero; that a module
  * with a gap is written only with allow_gaps, then with a map of the gap and status partial; that memory content is written only in a job
  * run as secret output and never printed; that a truncated or malformed dump gives a partial that names the stream and the file offset,
- * and no traceback; paging (total, returned, next_offset); and the shared blocks the script carries.
+ * and no traceback; paging (total, returned, next_offset); that a chain of `find` calls gives each hit once, the hits that start at one
+ * address never split by a stop; and the shared blocks the script carries.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -19,7 +20,7 @@ import { PYTHON3 } from "./host-gates.ts";
 import { ROOT } from "./tool-library-harness.ts";
 import { rng } from "./memory-f1-support.ts";
 import {
-  assemble, type Built, call, doc, encode, handleEntry, hex, IMAGE, inProcess, mdString, memoryInfo, moduleEntry, PAGE, PRIVATE, RW, RWX, RX, scene, SCRIPT, SIGMA, STRADDLE,
+  assemble, bareDump, type Built, call, doc, encode, handleEntry, hex, IMAGE, inProcess, mdString, memoryInfo, moduleEntry, PAGE, PRIVATE, RW, RWX, RX, scene, SCRIPT, SIGMA, STRADDLE,
   TOOL_DIR, u32, u64, WIDE_NEEDLE,
 } from "./pack-memory-minidump-support.ts";
 
@@ -708,6 +709,91 @@ test("find, stopped by the clock, by max_hits or by a read that fails, resumes w
   const rest = await ask({ ...base, va_start: cut.page.resume_va });
   assert.equal(rest.status, "complete");
   assert.deepEqual([...cut.hits, ...rest.hits].map((h: any) => [h.va, h.form, h.file_offset]), expected);
+});
+
+test("find: the hits that start at one address (both forms of a one-character needle) are never split by a stop, and every chain gives each hit once and ends", { timeout: 300_000 }, async () => {
+  // The verifier's dump: one range at 0x100000 holding `a\0` at +0x10, +0x20, +0x30 and `a` at +0x40. At each of the first three addresses
+  // the needle "a" has two hits, UTF-16LE and UTF-8; with max_hits 1 the answer gave the UTF-16LE one and resume_va on the same address,
+  // and the chain from there gave it again for ever.
+  const A = 0x100000n;
+  const mem = Buffer.alloc(0x80, 0x2e);
+  for (const at of [0x10, 0x20, 0x30]) Buffer.from("a\0", "latin1").copy(mem, at);
+  mem[0x40] = 0x61;
+  const { head } = bareDump([{ va: A, size: mem.length }]);
+  await writeFile(join(dir, "inputs", "groups.dmp"), Buffer.concat([head, mem]));
+  const hitsOf = (buf: Buffer, base: bigint, forms: Array<[string, Buffer]>): Array<[string, string]> => {
+    const out: Array<[bigint, string]> = [];
+    for (const [form, bytes] of forms) for (let at = buf.indexOf(bytes); at >= 0; at = buf.indexOf(bytes, at + 1)) out.push([base + BigInt(at), form]);
+    out.sort((x, y) => (x[0] !== y[0] ? (x[0] < y[0] ? -1 : 1) : x[1] < y[1] ? -1 : 1));     // utf-16le sorts before utf-8 at one address
+    return out.map(([va, form]) => [hex(va), form]);
+  };
+  const one = (t: string): Array<[string, Buffer]> => [["utf-8", Buffer.from(t, "utf8")], ["utf-16le", Buffer.from(t, "utf16le")]];
+  const expected = hitsOf(mem, A, one("a"));
+  assert.deepEqual(expected.map((e) => e[0]), ["0x100010", "0x100010", "0x100020", "0x100020", "0x100030", "0x100030", "0x100040"]);
+  type Answer = Record<string, any>;
+  const chain = async (args: Record<string, unknown>, run: (a: Record<string, unknown>) => Promise<Answer> | Answer, limit = 50): Promise<{ hits: Array<[string, string]>; answers: Answer[] }> => {
+    const hits: Array<[string, string]> = [];
+    const answers: Answer[] = [];
+    let start = "0x0";
+    for (;;) {
+      const a = await run({ ...args, va_start: start });
+      answers.push(a);
+      hits.push(...a.hits.map((h: any) => [h.va, h.form] as [string, string]));
+      if (a.page.resume_va === null) { assert.equal(a.status, "complete"); break; }
+      assert.equal(a.status, "partial");
+      assert.ok(a.hits.length > 0, "a stop that is not the clock or a failed read gives at least one hit");
+      assert.ok(a.hits.every((h: any) => BigInt(h.va) < BigInt(a.page.resume_va)), "no hit at or above the resume address is in the answer");
+      assert.ok(BigInt(a.page.resume_va) > BigInt(start), `the resume address ${a.page.resume_va} is above ${start}`);
+      start = a.page.resume_va;
+      assert.ok(answers.length < limit, `the chain did not end in ${limit} calls (it gave ${hits.length} hits)`);
+    }
+    return { hits, answers };
+  };
+  const base = { path: "inputs/groups.dmp", view: "find", needle: "a" };
+  for (const max_hits of [1, 2, 3, 4]) {
+    for (const [how, run] of [["a call of the tool", (a: Record<string, unknown>) => ask(a)], ["pieces of 16 bytes", (a: Record<string, unknown>) => inProcess(dir, a, { chunk: 16 })]] as const) {
+      const got = await chain({ ...base, max_hits }, run);
+      assert.deepEqual(got.hits, expected, `max_hits ${max_hits}, ${how}: every hit once, in order`);
+      for (const a of got.answers) {
+        if (a.hits.length > max_hits) {
+          assert.deepEqual([max_hits, a.hits.length, new Set(a.hits.map((h: any) => h.va)).size], [1, 2, 1], "only a group at the head passes max_hits");
+          assert.match(a.page.same_address_note, /^the first 2 hits start at one address, 0x1000[1-3]0 \(one per form of the needle\): a stop never splits the hits at one address, so all of them are in this answer, past max_hits \(1\)$/);
+        } else {
+          assert.equal(a.page.same_address_note, undefined);
+        }
+      }
+      // max_hits 1 and 2 give one address a call (the next would pass max_hits); 3 takes the last two addresses in one; 4 the first two
+      assert.equal(got.answers.length, { 1: 4, 2: 4, 3: 3, 4: 2 }[max_hits], `max_hits ${max_hits}, ${how}: ${got.answers.length} calls`);
+    }
+  }
+  // the page's byte ceiling, with a dense one-character needle (a hit of each form at every even address) and a module whose name escapes
+  // to six bytes a character in JSON, so that 1,000 rows pass 256 KiB: the cut moves back to the first hit of its address
+  const D = 0x200000n, size = 0x800;
+  const dense = Buffer.from("Q\0".repeat(size / 2), "latin1");
+  const longName = "C:\\Program Files\\" + "\u00e9".repeat(100) + ".dll";
+  const dd = bareDump([{ va: D, size }], { module: { base: D, size, name: longName } });
+  await writeFile(join(dir, "inputs", "dense.dmp"), Buffer.concat([dd.head, dense]));
+  const denseExpected = hitsOf(dense, D, one("Q"));
+  assert.equal(denseExpected.length, size);
+  const cut = await chain({ path: "inputs/dense.dmp", view: "find", needle: "Q", max_hits: 1000 }, (a) => ask(a));
+  assert.equal(cut.hits.length, denseExpected.length, "no hit twice");
+  assert.deepEqual(cut.hits, denseExpected);
+  assert.ok(cut.answers.length > 3 && cut.answers.slice(0, -1).every((a) => /stopped early: the answer reached 262144 bytes of JSON/.test(a.status_basis)), "the byte ceiling is what cut each page");
+  for (const a of cut.answers) assert.equal(a.hits.length % 2, 0, "a page holds whole addresses: both forms of each");
+  // a needle of several characters: its two forms never start at one address, so max_hits 1 gives one hit a call, as before
+  const multi = Buffer.alloc(0x100, 0x2e);
+  for (const at of [0x08, 0x40, 0x42, 0x90]) Buffer.from("ab", "latin1").copy(multi, at);
+  for (const at of [0x20, 0x60, 0xc1]) Buffer.from("ab", "utf16le").copy(multi, at);
+  const md = bareDump([{ va: A, size: multi.length }]);
+  await writeFile(join(dir, "inputs", "multi.dmp"), Buffer.concat([md.head, multi]));
+  const multiExpected = hitsOf(multi, A, one("ab"));
+  assert.equal(multiExpected.length, 7);
+  for (const [how, run] of [["a call of the tool", (a: Record<string, unknown>) => ask(a)], ["pieces of 16 bytes", (a: Record<string, unknown>) => inProcess(dir, a, { chunk: 16 })]] as const) {
+    const got = await chain({ path: "inputs/multi.dmp", view: "find", needle: "ab", max_hits: 1 }, run);
+    assert.deepEqual(got.hits, multiExpected, how);
+    assert.equal(got.answers.length, multiExpected.length, `${how}: one hit a call`);
+    assert.ok(got.answers.every((a) => a.hits.length === 1 && a.page.same_address_note === undefined));
+  }
 });
 
 test("summary counts every handle's type: a type name that was not read, not listed or not readable is counted apart and the answer is partial", async () => {
