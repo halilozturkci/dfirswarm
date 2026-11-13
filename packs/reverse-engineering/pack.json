@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.16.13",
+  "version": "1.16.14",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -67,7 +67,7 @@
       "skills/runtimes/python-packaged.md": "cff9431a9876d09b2321729ca4d3d7a9086c1ce570766df1d87866368422c0e6",
       "skills/scripts/static-analysis.md": "6379f5106767d8dde5c85a43202d4a02f43bb218f2ccea538ee538bd1b5496b3",
       "skills/strings/decoding-and-similarity.md": "cf3625d59f59ebc9d4c84c705c37d3d50f0fa7989c959aa6ce54bfef73a990e7",
-      "skills/strings/obfuscated.md": "7fddce7a16791f415795b405fb9eb062a2da24cb181bdee83fa6bfe44c9d52bd",
+      "skills/strings/obfuscated.md": "0113316f5746fc5739244b717bf0c5ef02d5d83b47c253a23a5d51f9b07a2eb5",
       "skills/triage/quarantine.md": "9dc146f556456b0a21a3eae242ba1a1ca9458c2799aad6de22ca9f703007aa4a",
       "tools/authenticode_verify/manifest.json": "d772eba21af851d67133cdfba5e23d8d80c0302de8eccc24a4af794ea9ee9aae",
       "tools/authenticode_verify/run.py": "adf8382559c9cf5c3820accf5eede5a0e4fdca9b46922a2f74754a232ddb39f4",

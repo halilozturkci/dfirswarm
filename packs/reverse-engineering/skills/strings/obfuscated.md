@@ -17,6 +17,6 @@ Use when you need strings out of a binary and must say what they can support. No
 
 Only if you must decode a blob or compare samples, read `strings/decoding-and-similarity`.
 
-Sensitive output: strings, `ioc_scan` snippets and FLOSS output can contain credentials and keys. Run those jobs with `secret_output: true` and write the output to a file under `$OUT` (`strings -a -t x SAMPLE > "$OUT/strings.txt"`), reading offsets and lengths rather than values; report place, kind and length, never the value, a fragment or a hash.
+Sensitive output: strings, an `ioc_scan` values file and FLOSS output can contain credentials and keys. Run those jobs with `secret_output: true` and write the output to a file under `$OUT` (`strings -a -t x SAMPLE > "$OUT/strings.txt"`), reading offsets and lengths rather than values; report place, kind and length, never the value, a fragment or a hash.
 
 Shows: byte strings and where they sit. Does not show: use, origin or intent. Record: command, encoding, minimum length, tool versions, a reference to the complete output.
