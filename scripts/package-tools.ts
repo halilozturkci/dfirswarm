@@ -2168,7 +2168,9 @@ export async function packSessions(
       const version = spawnSync("tar", ["--version"], { encoding: "utf8" });
       if (version.error) throw new Error(`tar could not run (${version.error.message})`);
       const flags = String(version.stdout).includes("GNU") ? ["--sort=name", "--owner=0", "--group=0", "--numeric-owner", `--mtime=@${Math.floor(cutoff / 1000)}`] : [];
-      const made = spawnSync("tar", ["-czf", join(dir, SESSIONS_ARCHIVE), ...flags, "-C", stage, SESSIONS_ROOT], { encoding: "utf8" });
+      // macOS's tar adds an AppleDouble member (._name) for each file that carries an extended attribute: members the
+      // manifest does not name, which the package's own verify then refuses. COPYFILE_DISABLE turns them off; GNU tar ignores it.
+      const made = spawnSync("tar", ["-czf", join(dir, SESSIONS_ARCHIVE), ...flags, "-C", stage, SESSIONS_ROOT], { encoding: "utf8", env: { ...process.env, COPYFILE_DISABLE: "1" } });
       if (made.status !== 0) throw new Error(`tar could not write the archive (${String(made.stderr ?? "").trim().split("\n")[0] || `exit ${made.status}`})`);
       archiveSha = sha256FileSync(join(dir, SESSIONS_ARCHIVE));
       archiveBytes = statSync(join(dir, SESSIONS_ARCHIVE)).size;
