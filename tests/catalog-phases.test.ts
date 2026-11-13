@@ -59,7 +59,7 @@ async function boxRun(phases: string[] | undefined) {
   const census = spawnSync("python3", [join(ROOT, "scripts", "evidence_catalog.py"), S, "--plan-only", "--recipes-from", pack], { encoding: "utf8" });
   assert.equal(census.status, 0, census.stderr);
   const posts: Array<[string, string]> = [];
-  const svc = new JobService({ sandbox: S, run: "s000000", image: "img:test", workers: 2, workerCpus: 1, workerMemoryMib: 512, allowHosts: [], openNet: false, packDirs: [pack], forging: false, minFreeMb: 1, runWorker: localWorker(), destroyWorker: async () => ({ ok: true }), notify: async (to, body) => void posts.push([to, body]) });
+  const svc = new JobService({ sandbox: S, run: "s000000", image: "img:test", workers: 2, workerCpus: 1, workerMemoryMib: 512, allowHosts: [], openNet: false, packDirs: [pack], forging: false, minFreeMb: 1, runWorker: localWorker(), destroyWorker: async () => ({ ok: true }), notify: async (to, body) => void posts.push([to, body]), identity: async (a) => ({ name: `${a}-name` }) });
   return { S, svc, posts };
 }
 

@@ -47,6 +47,7 @@ import { buildView, declaredScope, dropProjected, freeMb, PROJECTED_DIR, resolve
 import { assessJob, HEARTBEAT_LINES, HEARTBEAT_STOP, keepSample, readSamples, sampleJob, type JobProgress } from "./job-telemetry.ts";
 import type { Mount, WorkerSpec } from "./vm.ts";
 import { jobNetworkHosts } from "./net-grants.ts";
+import { dumpMembers, dumpsPost, membersTsv } from "./dump-members.ts";
 import { indexOutputs, objectsMatch, opMatch, rankSimilar, reuseOf, SAME_AS_SHOWN, sameAsOf, sameAsView, type Reuse, type SameAs, type Similar } from "./job-reuse.ts";
 import { declaredSecretOutput, jobSensitivity, parseSecretDeclaration, recipeSecretRefusal, sensitiveIndex, targetPaths, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
 import { execRefused, execRefusedWords, type ExecRefused } from "./job-exec-refused.ts";
@@ -2542,6 +2543,7 @@ export class JobService {
       const lackNote = lacks.length ? ` Missing from the images: ${lacks.join("; ")}.` : "";
       if (trigger === "kickoff") {
         await this.o.notify("all", `Catalogue revision ${revision}: ${what} — ${phaseWords(job.spec.phase, generation.status)}${generation.experimental ? " (experimental recipe)" : ""}.${lackNote} ${where}`).catch(() => undefined);
+        void this.tellDumps(job, generation.id, generation.target.name ?? generation.target.ref ?? "an object", Boolean(generation.sensitive));
       } else if (trigger === "derived") {
         // A complete catalogue of something a job made is everyone's news;
         // a partial or failed one is its maker's, with the recipe's reasons.
@@ -3226,6 +3228,31 @@ export class JobService {
     const out: string[] = [];
     for await (const rows of view.files()) for (const f of rows) out.push(f.sha256);
     return out;
+  }
+
+  /** Kickoff targets whose dump-named members were already said (a listing and then the whole catalogue list the same). */
+  private readonly dumpsTold = new Set<string>();
+
+  /**
+   * The dump-named members of a kickoff catalogue, said to everyone once per
+   * target (scripts/dump-members.ts), with the tools of the run's packs that
+   * read a dump. Off the commit's path: a table of 400,000 rows is a stream
+   * read of a second, and a failure here is a log line.
+   */
+  private async tellDumps(job: JobRecord, generation: string, over: string, sensitive: boolean): Promise<void> {
+    const key = job.spec.target?.sha256 ?? job.spec.target?.ref ?? (job.spec.target?.paths ?? []).join("|");
+    if (sensitive || !key || this.dumpsTold.has(key)) return;
+    try {
+      const found = await dumpMembers(membersTsv(this.S, generation));
+      if (!found || !found.total) return;
+      this.dumpsTold.add(key);
+      const readers: string[] = [];
+      for (const pack of this.o.packDirs) for (const t of ["minidump_map", "mem_profile"]) if (existsSync(join(pack, "tools", t, "manifest.json"))) readers.push(t);
+      const post = dumpsPost(generation, over, found, [...new Set(readers)]);
+      if (post) await this.o.notify("all", post).catch(() => undefined);
+    } catch (e) {
+      this.log(`dump members of ${generation}: ${(e as Error).message}`);
+    }
   }
 
   /** The jobs that may still write at once: this one and every other that runs (what an ended job wrote is already out of the free room). */
