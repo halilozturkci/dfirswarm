@@ -68,7 +68,7 @@ const SECOND: Record<string, string> = {
 // A second-level leaf made by a later split (it is in SECOND below, and pointed to by its parent in the text).
 const SECOND_ADDED = ["scope/triage-tools-names"];
 // Leaves added after the split pass: each one is a leaf of its own, named once by the router and listed in the index.
-const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage", "intrusion/entry-and-spread", "recovery/preserve-and-restore", "impact/services-and-data", "recovery/public-decryptors"];
+const ADDED = ["platforms/esxi-hypervisors", "platforms/nas-storage", "intrusion/entry-and-spread", "recovery/preserve-and-restore", "impact/services-and-data", "recovery/public-decryptors", "recovery/scheme-from-sample"];
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);

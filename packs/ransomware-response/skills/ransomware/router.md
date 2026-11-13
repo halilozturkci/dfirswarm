@@ -42,6 +42,7 @@ Recovery
 `recovery/preserve-and-restore` preserve before rebuild
 `recovery/public-decryptors` public decryptors, tested on copies
 `recovery/routes-and-decryptors` partial damage, deleted originals
+`recovery/scheme-from-sample` key scheme from sample, dump, files
 
 Reporting
 `reporting/conclusions-and-controls` conclusions, control findings

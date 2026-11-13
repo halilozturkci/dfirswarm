@@ -24,6 +24,10 @@ survives whole, who the family is, or when anything ran. What it does:
     candidates. The clock is the filesystem's mtime as collected, which an extraction
     or a copy can change; it is not an execution time of anything;
   * reports what the sampled tails share as an observation pending a reference match;
+  * reports what points at the scheme (`scheme_pointers`): the smallest member, the bytes each member gained over a same-name
+    plaintext twin beside it (sizes only), and whether the last bytes are unique per file, for members of 4096 bytes or less too
+    (read whole, their tails measured and not printed). A constant overhead with a tail that is unique per file is said in
+    status_basis: that is where per-file key material is usually kept;
   * prints a path only through shown() (the same rule ransom_note_scan uses): every
     directory component, and the name of a file that is named like a note
     (ransom_note_scan's pattern), is withheld when it holds a token shaped like an
@@ -212,7 +216,7 @@ import tempfile
 import unicodedata
 from pathlib import Path
 
-PARSER = "encrypted_survey/3"
+PARSER = "encrypted_survey/4"
 WINDOW = 65536
 SMALL = 4096                 # a file of at most this many bytes has no entropy measurement
 HEAD_THRESHOLD = 7.5         # bits per byte in the head window
@@ -232,7 +236,7 @@ KNOWN = {"jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp", "heic", "hei
          "pst", "ost", "txt", "csv", "xml", "json", "html", "md", "log", "ini", "cfg", "conf", "yml", "yaml",
          "zip", "gz", "tgz", "bz2", "xz", "zst", "7z", "rar", "tar", "jar", "apk",
          "mp4", "mp3", "mkv", "avi", "mov", "wmv", "flac", "ogg", "wav", "m4a", "aac",
-         "exe", "dll", "sys", "dat", "sql", "bak", "db", "mdb", "accdb",
+         "exe", "dll", "sys", "dat", "sql", "bak", "db", "sqlite", "sqlite3", "mdb", "accdb",
          "vhd", "vhdx", "vmdk", "iso", "img", "py", "js", "c", "cpp", "h", "java", "php"}
 # Formats that are normally compressed or packed: a high-entropy head is what they look like
 # whole, so entropy alone is the weakest reason to call one of them a candidate.
@@ -1989,6 +1993,16 @@ def main():
     sampled = 0
     not_profiled = collections.Counter()
     stopped = {}
+    # What points at the encryption scheme (parser 4): the smallest member, the size a member gained over a same-name plaintext twin,
+    # and whether the last bytes are unique per file. A member here is a candidate by its name (an extension after a known one).
+    scheme = {"members": 0, "smallest": None, "twins": 0, "overheads": collections.Counter(), "examples": [], "tails": set(), "tails_read": 0,
+              "small_read": 0, "small_failed": 0, "small_bytes_read": 0, "pooled": collections.Counter(), "distinct": []}
+
+    def tail_seen(tail):
+        scheme["tails"].add(tail)
+        scheme["tails_read"] += 1
+        scheme["pooled"].update(tail)
+        scheme["distinct"].append(len(set(tail)))
 
     for path, st in walk(root, set(exclude_top), counters, exceptions, skipped, exclusions, census, stopped):
         counters["regular_files_visited"] += 1
@@ -2067,6 +2081,21 @@ def main():
                 bump(cand_hours, hour_bucket(modified), HOUR_CAP, cand_over)
             if head is None:
                 row["entropy_unmeasured"] = unmeasured
+            if reasons:
+                scheme["members"] += 1
+                if scheme["smallest"] is None or size < scheme["smallest"][0]:
+                    scheme["smallest"] = (size, shown_path, evidence)
+                try:
+                    twin = os.lstat(os.path.splitext(path)[0])
+                except (OSError, ValueError):
+                    twin = None
+                if twin is not None and stat.S_ISREG(twin.st_mode):
+                    scheme["twins"] += 1
+                    scheme["overheads"][size - twin.st_size] += 1
+                    row["plaintext_twin"] = {"bytes": twin.st_size, "overhead_bytes": size - twin.st_size}
+                    if len(scheme["examples"]) < 5:
+                        scheme["examples"].append(seal_row({"file": shown_path, "bytes": size, "twin_bytes": twin.st_size,
+                                                            "overhead_bytes": size - twin.st_size}, evidence))
             # Profile: the first `sample` candidates that have a head window, while the budget lasts.
             if head is not None and fd is not None:
                 if sampled >= sample_size:
@@ -2103,6 +2132,8 @@ def main():
                             if tail:
                                 row["tail_hex"] = tail.hex()
                                 tails[tail.hex()] += 1
+                                if reasons:
+                                    tail_seen(tail)
                                 shared = tail if shared is None else common_suffix(shared, tail)
                             if end_exact is not None and end_exact < END_LOW:
                                 low_tail.add({"file": shown_path, "bytes": size, "end_entropy": windows[2]["entropy"],
@@ -2119,6 +2150,25 @@ def main():
                 row["profiled"] = False
                 row["profile_skipped"] = unmeasured
                 not_profiled[unmeasured] += 1
+                # A small member has no entropy windows, and its last bytes are still where a trailer is: they are measured, not printed.
+                if unmeasured == "too_small_for_entropy" and reasons and size and scheme["small_read"] < sample_size:
+                    small_fd = None
+                    try:
+                        small_fd, _small_st = open_regular(path)
+                        data = pread_full(small_fd, SMALL, 0)
+                        scheme["small_read"] += 1
+                        scheme["small_bytes_read"] += len(data)
+                        small_tail = data[-tail_bytes:] if tail_bytes else b""
+                        row["small_profile"] = {"bytes_read": len(data), "tail_bytes": len(small_tail),
+                                                "tail_distinct_byte_values": len(set(small_tail))}
+                        if small_tail:
+                            tail_seen(small_tail)
+                    except OSError as exc:
+                        scheme["small_failed"] += 1
+                        row["small_profile_error"] = describe(exc)
+                    finally:
+                        if small_fd is not None:
+                            os.close(small_fd)
             row = candidates.add(row, evidence)
             census.add(row, evidence)
         elif head is None:
@@ -2167,8 +2217,54 @@ def main():
              "appended_extension_observations": finish_page(ext_page), "repeated_tails": finish_page(tail_page)}
     OWN_NAMES.update(page["all_results"] for page in pages.values() if page.get("all_results"))
 
+    constant = None
+    if scheme["twins"] and len(scheme["overheads"]) == 1:
+        constant = next(iter(scheme["overheads"]))
+    pooled_bytes = sum(scheme["pooled"].values())
+    pooled_entropy = None
+    if pooled_bytes:
+        pooled_entropy = round(-sum(n / pooled_bytes * math.log2(n / pooled_bytes) for n in scheme["pooled"].values()), 2)
+    unique_tails = None if scheme["tails_read"] < 2 else len(scheme["tails"]) == scheme["tails_read"]
+    trailer_seen = bool(constant and constant > 0 and unique_tails and (pooled_bytes < 256 or pooled_entropy >= 6.0))
+    if trailer_seen:
+        pointer = ("every plaintext twin found (%d) is smaller than its encrypted member by the same %d bytes, and the last %d bytes are different "
+                   "in each of the %d members read: a constant-size trailer that is unique per file is where per-file key material is usually "
+                   "kept. Test it (stream_kpa_check, with a tail slice as the key source) before hunting memory" % (scheme["twins"], constant, tail_bytes, scheme["tails_read"]))
+    elif constant is not None and constant > 0:
+        pointer = ("every plaintext twin found (%d) is smaller than its encrypted member by the same %d bytes: the encryptor added that much "
+                   "per file. Whether the added bytes are unique per file was not shown here" % (scheme["twins"], constant))
+    elif unique_tails:
+        pointer = ("the last %d bytes are different in each of the %d members read, and no plaintext twin measured what was added: a per-file "
+                   "trailer is possible, not shown" % (tail_bytes, scheme["tails_read"]))
+    else:
+        pointer = "no constant overhead and no per-file tail was seen in what was read"
+    scheme_pointers = {
+        "basis": "observation",
+        "members_by_name": scheme["members"],
+        "smallest_member": None if scheme["smallest"] is None else seal_row({"file": scheme["smallest"][1], "bytes": scheme["smallest"][0]}, scheme["smallest"][2]),
+        "plaintext_twins": {"pairs": scheme["twins"], "constant_overhead_bytes": constant,
+                            "overheads": [{"overhead_bytes": k, "pairs": n} for k, n in scheme["overheads"].most_common(10)],
+                            "examples": scheme["examples"],
+                            "twin": "a regular file beside the member whose name is the member's without its last extension; sizes only, "
+                                    "its content is not compared"},
+        "tails": {"tail_bytes": tail_bytes, "members_read": scheme["tails_read"], "small_members_read": scheme["small_read"],
+                  "small_members_not_read": scheme["small_failed"], "small_members_bytes_read": scheme["small_bytes_read"],
+                  "distinct_tails": len(scheme["tails"]), "unique_per_file": unique_tails,
+                  "pooled_entropy_bits_per_byte": pooled_entropy, "pooled_bytes": pooled_bytes,
+                  "distinct_byte_values_per_tail": {"least": min(scheme["distinct"]), "most": max(scheme["distinct"])} if scheme["distinct"] else None,
+                  "scope": "the profiled members of more than 4096 bytes, and the first `sample` members of 4096 bytes or less (read whole; their "
+                           "tails are measured and not printed)"},
+        "trailer_seen": trailer_seen,
+        "reading": pointer,
+        "rules": ["measure what the encryptor added", "read the routine to the last use of the per-file secret: where is it written?",
+                  "one member that opens, with what opened it, verifies a trailer guess on every other member",
+                  "a search that finds nothing is a negative only after its planted control passed"],
+    }
+
     c = counters
     reasons = []
+    if scheme["small_failed"]:
+        reasons.append("%d members of 4096 bytes or less could not be read for their tails" % scheme["small_failed"])
     if c["read_failed_files"]:
         reasons.append("%d files could not be read (read_failed)" % c["read_failed_files"])
     if c["profile_failures"]:
@@ -2205,6 +2301,8 @@ def main():
     basis = ("; ".join(reasons) if reasons else
              "every entry under the root was visited and accounted for (candidate, noncandidate, unmeasured or read_failed), the read "
              "budget and the time limit were not reached, every candidate of more than 4096 bytes was profiled and no table was capped")
+    if trailer_seen:
+        basis = "%s. Seen besides: %s" % (basis, pointer)
     receipt = {"parser": PARSER, "complete": complete, "status": complete, "status_basis": basis, "partial_reasons": reasons,
                "coverage": {**counters, "bytes_read": budget.read, "paths_withheld": WITHHELD_PATHS[0]}, "bytes": sizes,
                "parameters": {"root": shown_root, "sample": sample_size, "tail_bytes": tail_bytes, "read_budget_bytes": budget.total,
@@ -2246,6 +2344,7 @@ def main():
             for name, over in (("all_files", all_over), ("candidates", cand_over))},
         "repeated_tails": tail_page.page,
         "shared_tail_suffix": shared_out,
+        "scheme_pointers": scheme_pointers,
         "note_name_candidates": note_names.page,
         "exclusions": exclusions,
         "skipped": skipped.page,

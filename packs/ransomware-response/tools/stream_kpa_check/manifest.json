@@ -1,0 +1,80 @@
+{
+  "name": "stream_kpa_check",
+  "description": "Check key and nonce hypotheses against a family of encrypted files by the first bytes each file should have, and say exactly what was tried. RULES for an encrypted-file family (they are in every answer too): (1) measure what the encryptor added before hunting a key: a member against a same-name plaintext twin, the members against each other (encrypted_survey reports the overhead, the smallest member and whether the tails are unique per file); (2) read the encryption routine to the key's LAST use: where is the per-file key written? A constant-size trailer or header that is unique per file is where per-file key material is usually kept, often masked by a constant: test it (stream_kpa_check) before hunting memory; (3) one known (file, key) pair verifies any footer hypothesis; (4) a scan that finds nothing is a negative only after its planted control passed, and only for the shapes it lists. The chain, with no code to write: cipher_state_scan on a process dump (key and nonce candidates to a values file) -> stream_kpa_check on the encrypted files with that values file as key and nonce source (verdict per file, and the recipe) -> family_decrypt with the recipe file (every member, a receipt each). Inputs: the members (files, or dir with glob and recursive); the expected first bytes by the type in each member's name (photo.png.locked is a png; built in: png, jpg, gif, bmp, tif, psd, webp, pdf, rtf, zip/docx/xlsx/pptx/odt/jar/apk, doc/xls/ppt/msg, mp4/m4a/m4v/3gp/heic/mov (ftyp at offset 4), avi/wav (RIFF), mkv, flac, ogg, wmv, sqlite, 7z, rar, gz, xz, bz2, exe/dll, elf, lnk, evtx, pst, pcap, vhdx, vmdk; more with `magics`), and, when a same-name plaintext twin lies beside a member (the name without its last extension), the twin's first 64 bytes; and SOURCES for the key and for the nonce. A source is an object with exactly one of: {\"hex\": \"...\"} (a literal; it is recorded with the call, so use it for a constant read from the sample, such as a mask or a nonce, and give a key by reference), {\"file\": path, \"offset\": n, \"length\": n} (bytes of a file: a constant inside the sample, a key file), {\"candidates\": path} (the values file of cipher_state_scan: every key in it, or every nonce in each layout), or {\"slice\": \"head\" or \"tail\", \"length\": n, \"skip\": n, \"xor\": {a hex or file source of the same length}} (bytes of each member itself: its first or last n bytes after skipping `skip`, optionally XORed with a constant). Every key and nonce the sources yield is tried on every member that has a crib, with each cipher in `ciphers` (chacha20-ietf: 12-byte nonce and 32-bit counter; chacha20-original: 8-byte nonce and 64-bit counter; salsa20: 8-byte nonce, 20 rounds; aes-ctr: a 16-byte nonce is the first counter block, a 12-byte one is followed by a 32-bit big-endian counter, an 8-byte one by a 64-bit one; rc4; xor with a repeating key) at each counter in `counters` (default 0 and 1). The ciphertext is taken to start at header_bytes (default: what the head slices take); only the first 64 bytes of a member are decrypted, in memory. THE FOOTER HYPOTHESIS IS MADE FOR YOU (`derive`, default true): when a key that is not a slice (a key from a dump) opens a member, that key XOR the member's own last (or, inside header_bytes, first) bytes is taken as a constant mask at every skip from 0 to 64 and tried on every other member; a mask that opens others is reported in derived_rules and becomes the recipe's key rule. Output: `outcome` (one_rule_explains_every_member, some_members_explained, no_combination_matched, nothing_to_check), one row per member (verdict match, no_match, no_crib, head_is_plaintext, too_small, read_failed or not_tried; the combinations that matched, named by the place of their sources in the call and by finding id; crib_bytes; trials; expected_false_positives = trials times 2^(-8 x crib length), and a crib_note for a crib of 4 bytes or less), the totals, `tried` (ciphers, counters, layouts, each source by kind and length, the bounds) and `not_tried`. A NEGATIVE is bounded: no_combination_matched says none of the listed trials gave the expected first bytes; it never says that no key exists (not tried: other modes and ciphers, other counters, a key derived by a KDF or wrapped by RSA, another slice, an encryption that skips the first block). A match is the expected first bytes under one combination, not an integrity check: a stream cipher has none. `status` is about the check (complete: every member named was opened and every planned trial run; partial: max_files, the clock, an unreadable file), `outcome` is about what it found. SENSITIVE: no plaintext byte and no key, nonce or mask byte is in the answer. The recipe (the key rule with its mask, the nonce, the cipher per member, header and trailer bytes) holds key material and is written to stream-recipe.json under $OUT only in a job run as secret output (the manifest makes every job of this tool one); outside one the verdicts are given and the recipe is not written, with the reason. A recipe is written when its rule explains every member with a crib, or at least two of them (then family_decrypt marks the others as not confirmed). Its trailer_bytes is what the call gave, or at least what the key and nonce slices take from the end: a longer trailer leaves its other bytes at the end of each decrypted file, and encrypted_survey's overhead against a plaintext twin is the measure. Bounds: max_files (default 200), max_trials (default 500000; a call that would pass it is refused before anything is tried, with the count), max_seconds (default 480, below the manifest's 600); a trial costs about 0.1 ms in pure Python; a member whose trials the clock cuts has the verdict not_tried, never a match or a miss. A link is not followed and only regular files are read. A stop signal ends it with one JSON answer (status failed, interrupted) and no recipe. Paths and file names are printed as given.",
+  "params": {
+    "files": {
+      "type": "array",
+      "description": "Paths of the encrypted members (1 to 100000). Give this or dir"
+    },
+    "dir": {
+      "type": "string",
+      "description": "A directory holding the members; with glob and recursive. Give this or files"
+    },
+    "glob": {
+      "type": "string",
+      "description": "A pattern on a file's name within dir (default \"*\"; \"*.locked\" keeps to the members)"
+    },
+    "recursive": {
+      "type": "boolean",
+      "description": "true: also the directories below dir (no link followed). Default false"
+    },
+    "max_files": {
+      "type": "integer",
+      "description": "The most members checked (default 200, at most 5000), in the order of their names; more than this makes the answer partial"
+    },
+    "key_sources": {
+      "type": "array",
+      "description": "Sources of the key, each tried (required, at most 32). Examples: [{\"candidates\": \"store/jobs/j000012/out/cipher-state-candidates.jsonl\"}] for keys from a dump; [{\"slice\": \"tail\", \"length\": 32}, {\"slice\": \"tail\", \"length\": 32, \"xor\": {\"file\": \"work/sample.exe\", \"offset\": 91200, \"length\": 32}}] for a per-file key in a 32-byte trailer, plain or masked by a constant of the sample",
+      "required": true
+    },
+    "nonce_sources": {
+      "type": "array",
+      "description": "Sources of the nonce, each tried (at most 32; rc4 and xor need none). A candidates file yields every state's nonce in each layout (12 bytes IETF, 8 bytes original)"
+    },
+    "ciphers": {
+      "type": "array",
+      "description": "Ciphers to try: any of \"chacha20-ietf\", \"chacha20-original\", \"salsa20\", \"aes-ctr\", \"rc4\", \"xor\" (default all six)"
+    },
+    "counters": {
+      "type": "array",
+      "description": "First block numbers to try (default [0, 1]; 1 to 8 numbers)"
+    },
+    "magics": {
+      "type": "object",
+      "description": "More expected first bytes by extension: {\"dwg\": \"41433130\"} or {\"iso\": {\"hex\": \"4344303031\", \"offset\": 1}} (hex, within the first 64 bytes); an entry replaces a built-in one"
+    },
+    "header_bytes": {
+      "type": "integer",
+      "description": "Bytes at the start of each member that are not ciphertext (default: what the head slices of the sources take, else 0)"
+    },
+    "trailer_bytes": {
+      "type": "integer",
+      "description": "Bytes at the end of each member that are not ciphertext (default: what the tail slices take; the recipe carries it). Give the overhead encrypted_survey measured against a plaintext twin"
+    },
+    "derive": {
+      "type": "boolean",
+      "description": "Make the footer hypothesis from a key that opened one member (default true); false tries only the sources as given"
+    },
+    "max_trials": {
+      "type": "integer",
+      "description": "The most trials in all (default 500000, at most 5000000); a call that would pass it is refused before anything is tried"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds (default 480, at most 540; the manifest's timeout is 600)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Member rows shown inline (default 200, at most 5000)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 600,
+  "example": "{\"dir\": \"work/extracted/Users/a/Documents\", \"glob\": \"*.locked\", \"key_sources\": [{\"candidates\": \"store/jobs/j000012/out/cipher-state-candidates.jsonl\"}], \"nonce_sources\": [{\"candidates\": \"store/jobs/j000012/out/cipher-state-candidates.jsonl\"}]}",
+  "secret_output": "required",
+  "by": "maintainer",
+  "at": "2026-11-13T12:00:00.000Z",
+  "version": 1,
+  "sha256": "6fd70fb82c6d3fd64818483c1f2cd55f532f7c421fc913df16860a90cc508ab9"
+}

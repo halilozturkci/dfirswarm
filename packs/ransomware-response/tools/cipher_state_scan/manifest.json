@@ -1,0 +1,54 @@
+{
+  "name": "cipher_state_scan",
+  "description": "Scan one file (a process dump, a memory image, any binary; several GB) for the shapes a cipher leaves in memory, and list exactly what was looked for. RULES for an encrypted-file family (they are in every answer too): (1) measure what the encryptor added before hunting a key: a member against a same-name plaintext twin, the members against each other (encrypted_survey reports the overhead, the smallest member and whether the tails are unique per file); (2) read the encryption routine to the key's LAST use: where is the per-file key written? A constant-size trailer or header that is unique per file is where per-file key material is usually kept, often masked by a constant: test it (stream_kpa_check) before hunting memory; (3) one known (file, key) pair verifies any footer hypothesis; (4) a scan that finds nothing is a negative only after its planted control passed, and only for the shapes it lists. The chain, with no code to write: cipher_state_scan on a process dump (key and nonce candidates to a values file) -> stream_kpa_check on the encrypted files with that values file as key and nonce source (verdict per file, and the recipe) -> family_decrypt with the recipe file (every member, a receipt each). What it looks for (look_for narrows it): ChaCha and Salsa20 states (the constant 'expand 32-byte k' or 'expand 16-byte k' as the four constant words of a 64-byte state, contiguous for ChaCha or at words 0, 5, 10 and 15 for Salsa20; the key, the block counter and the nonce are decoded in both ChaCha layouts, the original 64-bit counter with an 8-byte nonce and the IETF 32-bit counter with a 12-byte nonce); AES encryption key schedules for 128, 192 and 256-bit keys (176, 208 or 240 bytes that equal the FIPS-197 expansion of their own first bytes, words as stored or byte-swapped); 256-byte permutations (an RC4 state kept as bytes has this shape, and so has any substitution table); and constant tables as markers of the algorithms a program carries (AES S-box, inverse S-box and Te0, SHA-256 and SHA-512 round constants, SHA-256 initial values, the MD5 sine table, the MD5/SHA-1 initial state, the CRC-32 table, the Blowfish P-array). Every hit is a CANDIDATE at an offset until a file decrypts with it: a ChaCha constant followed by low-variety bytes is the constant in a program's data, and the answer says so per hit (key_shape, a heuristic on how many distinct byte values the key bytes have). It does NOT find (not_looked_for in every answer): a key with no constant beside it, constants kept as big-endian words or only in registers, AES decryption schedules and AES-NI-only key forms, a schedule holding 16 zero bytes in a row, an RC4 state kept as 32-bit integers or its i and j, other ciphers, and anything inside compressed, encrypted or paged-out content: the bytes are read as they are, and a file that begins like a compressed container (gzip, zip, 7z, xz, zstd, bzip2, lz4, RAR, AD1, E01, a hibernation file) is answered `partial` and says its content was not searched. CONTROL: before the file is read, every shape asked for is planted in random bytes (inside a piece, at its edge, in its overlap) and must be found at its planted offset with the code that reads the file; a failed control ends the tool as failed without reading the file, and `self_test: true` runs the control alone. A `complete` answer with no hit therefore means: the whole file was read, none of the listed shapes is in these bytes, and the scanner finds those shapes when they are there; it does not mean that no key exists. `complete` is said only when every byte from 0 to the end was read in this call. SENSITIVE: a decoded key or nonce is key material. The answer carries kinds, offsets, counts, the 32-bit counter of a state and shape words, never a byte of a key, a nonce or a permutation; the values go to one file, cipher-state-candidates.jsonl under $OUT (JSON Lines, mode 0600, created before the scan, never over an existing file), and only in a job run as secret output: the manifest's secret_output makes every job of this tool one, and outside such a job (a call from a shell, SECRET_OUTPUT not 1) the hits are listed, no value is written and the answer is partial and says why. Bounds: the file is read once in 16 MiB pieces overlapping by 4096 bytes, peak memory about 250 MB, nothing is searched byte by byte in Python (bytes.find for constants, whole-buffer integer arithmetic and one regular expression for the AES and permutation shapes). Measured: 1 GiB of mixed random and zero bytes in 27 s (about 40 MB/s) with Python 3.12 on an Apple M-series host; a job VM may be several times slower, so the tool's own clock (max_seconds, default 780, below the manifest's 900) ends a larger scan as `partial` with the offset it reached, and `offset` goes on from there. At most 20000 hits are kept and 5000 values written; past that they are counted and the answer is partial. A 00..ff ramp in any rotation is counted (identity_tables) and not reported; where a permutation starts is not decided by its shape when the window one byte on is a permutation too (one time in 256 in random surroundings): the hit is at the first such offset and says how many of the next offsets are permutations as well; a piece with more than 200000 runs of bytes that have no near repeat and are no permutation has its permutation search given up, and the answer is partial and says so. More than `limit` hits are written whole as JSON Lines under tool-output (all_hits). A stop signal (SIGTERM, SIGINT, SIGHUP) ends it with one JSON answer, status failed and interrupted, exit 128 + the signal; a values file begun by then holds the rows written before the stop. Paths are printed as given. Known limits of the claim: the control proves the scanner, not the dump (a state that was wiped, never captured or paged out is not there to find), and the order and count of hits follow the file's content.",
+  "params": {
+    "file": {
+      "type": "string",
+      "description": "The file to scan: a process dump, a memory image or any binary (a regular file). Required unless self_test is true"
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Start reading at this byte (default 0). An answer that started past 0 is partial: use it to go on where a clock-limited scan stopped"
+    },
+    "look_for": {
+      "type": "array",
+      "description": "Which shapes to look for: any of \"chacha-salsa\", \"aes-schedule\", \"rc4\", \"tables\" (default all four). Without \"rc4\" a scan takes about a third of the time (1 GiB in 10 s where all four take 27 s)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Hits shown inline (default 100, at most 20000); every hit is counted, and more than this are written whole as JSON Lines and named in all_hits"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds (default 780, at most 840; the manifest's timeout is 900). When it runs out the answer is partial and says the offset reached"
+    },
+    "self_test": {
+      "type": "boolean",
+      "description": "true: run only the planted control (every shape planted in random bytes and searched) and answer whether each was found at its planted offset. No evidence is read"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 900,
+  "example": "{\"file\": \"work/extracted/encryptor.dmp\"}",
+  "secret_output": "required",
+  "use": {
+    "extensions": [
+      ".dmp",
+      ".mdmp",
+      ".dump",
+      ".vmem",
+      ".core"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "4d444d5093a7"
+      }
+    ]
+  },
+  "by": "maintainer",
+  "at": "2026-11-13T12:00:00.000Z",
+  "version": 1,
+  "sha256": "fa5907b0d987963becc0412182b658321a64d16bc3152bca6e8c48665dce4422"
+}

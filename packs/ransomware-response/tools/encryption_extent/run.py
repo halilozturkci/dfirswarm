@@ -199,7 +199,7 @@ from pathlib import Path
 PARSER = "encryption_extent/1"
 WORK = "measurement"
 TOOL = "encryption_extent"
-ACCEPTED_CENSUS_PARSERS = ("encrypted_survey/3",)
+ACCEPTED_CENSUS_PARSERS = ("encrypted_survey/3", "encrypted_survey/4")      # 4 adds fields to a candidate row (plaintext_twin, small_profile); what is read here is unchanged
 CENSUS_STATUSES = ("candidate", "noncandidate", "unmeasured", "read_failed")
 DEFAULT_WINDOW, MIN_WINDOW, MAX_WINDOW = 4096, 64, 67108864
 DEFAULT_THRESHOLD = 7.5      # this pack's: the survey's head threshold, so that the two tools agree on what is high (the reverse-engineering pack's is 7.2)
