@@ -874,6 +874,22 @@ test("modules: a PDB record that is declared and cannot be read whole is in prob
   // view module reads the same record: a module whose record cannot be read is partial there too
   const one = await ask({ path: "inputs/cv.dmp", view: "module", base: "0x20000" });
   assert.deepEqual([one.module.pdb_record, one.status], ["declared, not readable", "partial"]);
+  // a record whose first bytes are in the file and whose declared end is past it: what was read is printed, cut_by_file says so, partial
+  const pad = assemble((put) => {
+    const name = put(mdString("C:\\app\\m0-good.dll"));
+    const cvAt = put(rsds("ok.pdb"));
+    return [{ type: 4, body: Buffer.concat([u32(1), moduleEntry({ base: 0x10000n, size: 0x1000, nameRva: name, cv: [24 + 7, cvAt] })]) }];
+  }, { memory: Buffer.alloc(1000) });
+  const cvSizeAt = pad.at[4] + 4 + 76;
+  const cvRva = pad.file.readUInt32LE(cvSizeAt + 4);
+  const avail = pad.file.length - cvRva;
+  assert.ok(avail >= 544, "the file holds the bytes the reader takes of the record");
+  pad.file.writeUInt32LE(avail + 100, cvSizeAt);
+  await writeFile(join(dir, "inputs", "cv-past-end.dmp"), pad.file);
+  const past2 = await ask({ path: "inputs/cv-past-end.dmp", view: "modules" });
+  assert.deepEqual([past2.status, past2.modules[0].pdb_record, past2.modules[0].pdb.read, past2.modules[0].pdb.cut_by_file, past2.modules[0].pdb.path],
+    ["partial", "read", true, true, "ok.pdb"]);
+  assert.match(JSON.stringify(past2.problems), /declares \d+ bytes and the file ends \d+ bytes into it/);
 });
 
 test("memory: the protect and type filters ask every region a range lies over, and the row says which part met them", async () => {

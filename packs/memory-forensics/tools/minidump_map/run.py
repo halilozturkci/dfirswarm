@@ -216,7 +216,7 @@ import signal
 import sys
 
 PARSER = "minidump_map/2"
-TOOL = 3
+TOOL = 4
 
 
 def _before_start(signum, _frame):
@@ -2529,6 +2529,12 @@ def pdb_record(dump, module):
                           "(problems): the record is declared and not readable, which is not a module without a record" % (cv_size, cv_rva, take))
         return out
     out["read"] = True
+    if cv_rva + cv_size > dump.size:
+        # The bytes read are in the file; the record's declared end is not. Said, and the answer is partial.
+        out["cut_by_file"] = True
+        out["cut_note"] = ("the record declares %d bytes at file offset %d and the file ends %d bytes into it; what is printed is from "
+                           "the bytes the file holds" % (cv_size, cv_rva, max(dump.size - cv_rva, 0)))
+        dump.problem("ModuleList", cv_rva, "%s: it declares %d bytes and the file ends %d bytes into it" % (what, cv_size, max(dump.size - cv_rva, 0)))
     if raw[:4] != b"RSDS":
         out["format"] = "not RSDS"
         return out
@@ -2561,8 +2567,9 @@ def module_row(dump, module, state):
            "path": shown_path(name) if name else None,
            "timestamp": {"raw": module["stamp"], "utc": iso(module["stamp"]), "epoch": "seconds since 1970-01-01 UTC (the PE header's TimeDateStamp as the loader recorded it)"},
            "checksum": hx(module["checksum"]), "entry_file_offset": module["entry_offset"]}
-    if name is None:
+    if not name:
         row["name_why_not"] = ("the entry gives no name (its name RVA is 0)" if not module["name_rva"] else
+                               "the name string at file offset %d is empty (0 characters)" % module["name_rva"] if name == "" else
                                "the name string at file offset %d could not be read (problems)" % module["name_rva"])
     if state == "loaded":
         fixed = module["fixed"]
@@ -2736,6 +2743,10 @@ def context(dump, size, rva, stream):
     if not size or not rva:
         out["why_not"] = "the thread has no context record"
         return out
+    if rva + size > dump.size:
+        out["cut_by_file"] = True
+        dump.problem(stream, rva, "a thread's context declares %d bytes at file offset %d and the file ends %d bytes into it"
+                     % (size, rva, max(dump.size - rva, 0)))
     if dump.arch == 9 and size >= 0x100:
         raw = dump.need(stream, rva, 0x100, "a thread's x64 context")
         if raw is None:
