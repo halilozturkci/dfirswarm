@@ -96,6 +96,7 @@ import { readCasePolicy } from "./case-policy.ts";
 import { resolveScope, scopeKindOf } from "./job-scope.ts";
 import { commandNames, freshCoverage, libraryHint, shortHint, type CoverageHint, type ShortHint } from "./library-hint.ts";
 import { boundRpcAnswer } from "./reply-bound.ts";
+import { jobsListing, storeFind } from "./store-find.ts";
 import { loopMonitor, sampleHealth, snapshotAt, snapshotDue } from "./hub-health.ts";
 import { sensitiveIndex } from "./output-hygiene.ts";
 import { ACCESS_RULES, apiPageHit, classifyTraceRow, type AccessHit } from "./sensitive-access.ts";
@@ -958,12 +959,27 @@ export function boardTable(hub: {
       return {
         ok: true,
         job: await shown(who, "jobSubmit", r.job),
+        // An identical whole-object call was joined to a job that runs or is committed: say whose it is and why the id is not new.
+        ...((r as { joined?: unknown }).joined ? { joined: (r as { joined?: unknown }).joined } : {}),
         ...(attached?.ok && attached.lead ? { lead: attached.lead } : {}),
         ...(coverage ? { coverage: { ...coverage, note: "a hint: another seat works the same questions or objects now; overlap is not identity, so read what they have (leads, list_team) before you duplicate it" } } : {}),
         // The reuse hint (ADR 0017): other seats' same operation over the same objects, under way or committed.
         ...similarView(r.job.id, r.similar ?? [], r.job.spec.independent === true, r.similar_recorded !== false),
         ...(library ? { library } : {}),
       };
+    },
+    // Which job holds a file, by name or content hash, from the manifests (store-find.ts): never a grep over the store.
+    storeFind: async (_who, a) => {
+      const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
+      return storeFind(S, { name: typeof raw.name === "string" ? raw.name : undefined, sha256: typeof raw.sha256 === "string" ? raw.sha256 : undefined, limit: typeof raw.limit === "number" ? raw.limit : undefined, job: typeof raw.job === "string" ? raw.job : undefined });
+    },
+    // The run's jobs for a seat (its own, a lead's, all), the open ones first with why each waits.
+    jobsList: async (who, a) => {
+      const svc = hub.jobs?.();
+      if (!svc) return { ok: false, reason: NO_JOBS };
+      const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
+      const snap = await L.leadsSnapshot(S).catch(() => null);
+      return jobsListing([...svc.jobs.values()], { who, scope: typeof raw.scope === "string" ? raw.scope : undefined, lead: typeof raw.lead === "string" ? raw.lead : undefined, limit: typeof raw.limit === "number" ? raw.limit : undefined, leadOf: (id) => snap?.state.jobLead.get(id), waitWords: (j) => svc.waitWords(j as never) });
     },
     jobStatus: async (who, a) => {
       const svc = hub.jobs?.();

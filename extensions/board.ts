@@ -672,6 +672,9 @@ export const releaseAllOwned = remote("releaseAllOwned", P.releaseAllOwned);
 export const releaseFile = remote("releaseFile", P.releaseFile);
 export const swarmDoneExists = remote("swarmDoneExists", P.swarmDoneExists);
 export const systemPost = remote("systemPost", P.systemPost);
+/** Hub-only questions about the store and the job service (scripts/store-find.ts): with no hub there is no job service to ask. */
+export const storeFind = remote("storeFind", async (_root: string, _q: Record<string, unknown>) => ({ ok: false as const, reason: "store_find needs the run's hub (a microVM run with a job service)" }));
+export const jobsList = remote("jobsList", async (_root: string, _q: Record<string, unknown>) => ({ ok: false as const, reason: "jobs needs the run's hub (a microVM run with a job service)" }));
 export const threadJoin = remote("threadJoin", P.threadJoin);
 export const threadOpen = remote("threadOpen", P.threadOpen);
 export const updateToolchainRecord = remote("updateToolchainRecord", T.updateToolchainRecord);
