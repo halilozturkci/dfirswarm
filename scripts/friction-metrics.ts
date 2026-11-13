@@ -24,6 +24,11 @@ export type FrictionMetrics = {
   hub: { samples: number; loop_p99_max_ms: number | null; heap_share_max: number | null; memory_high: number; restarts: number; answers_too_large: number; lock_timeouts: number };
   seats: { down: number; relaunched: number; dead: number; images_scaled: number };
   platform_stalls: number;
+  /** job_run's answers: their text, and the share the hints at admission (library, similar, coverage) took of it. */
+  job_run_text: { answers: number; chars: number; hint_share: number | null };
+  /** The largest answer a seat's tool call returned, in characters, and which tool; and empty compaction summaries. */
+  largest_answer: { chars: number; tool: string | null };
+  empty_summaries: number;
 };
 
 type Row = { ts?: string; at?: string; recv_ts?: string; agent?: string; tool?: string; args?: Record<string, unknown>; result?: Record<string, unknown> };
@@ -51,7 +56,11 @@ export function frictionMetrics(events: readonly P.SwarmEvent[], journal: readon
     hub: { samples: 0, loop_p99_max_ms: null, heap_share_max: null, memory_high: 0, restarts: 0, answers_too_large: 0, lock_timeouts: 0 },
     seats: { down: 0, relaunched: 0, dead: 0, images_scaled: 0 },
     platform_stalls: 0,
+    job_run_text: { answers: 0, chars: 0, hint_share: null },
+    largest_answer: { chars: 0, tool: null },
+    empty_summaries: 0,
   };
+  let hintChars = 0;
   const first = new Map<string, number>();
   const last = new Map<string, number>();
   for (const raw of events) {
@@ -63,13 +72,26 @@ export function frictionMetrics(events: readonly P.SwarmEvent[], journal: readon
       last.set(r.agent, at);
     }
     const text = JSON.stringify(r.result ?? {});
+    // A row's own size stands for its answer's when the row carries no figure: the trace keeps a tool's result whole.
+    const size = typeof r.result?.answer_chars === "number" ? (r.result.answer_chars as number) : text.length;
+    if (r.agent && r.agent !== "system" && size > m.largest_answer.chars) m.largest_answer = { chars: size, tool: r.tool ?? null };
     if (/Timed out waiting for locks\//.test(text)) m.hub.lock_timeouts += 1;
     switch (r.tool) {
       case "record": ok ? (m.record.accepted += 1) : (m.record.refused += 1); break;
       case "attest": ok ? (m.attest.accepted += 1) : (m.attest.refused += 1); break;
-      case "job_run": if (!ok && (r.result?.refused || r.result?.reason) && !r.result?.job) m.job_run_refused += 1; break;
+      case "job_run":
+        if (!ok && (r.result?.refused || r.result?.reason) && !r.result?.job) m.job_run_refused += 1;
+        if (typeof r.result?.answer_chars === "number") {
+          m.job_run_text.answers += 1;
+          m.job_run_text.chars += r.result.answer_chars as number;
+          hintChars += Number(r.result?.hint_chars ?? 0) || 0;
+        }
+        break;
       case "shell_timeout": r.args?.kind === "sleep_loop" ? (m.shell.sleep_loops_refused += 1) : (m.shell.timeouts += 1); break;
-      case "compact_done": m.compactions.done += 1; break;
+      case "compact_done":
+        m.compactions.done += 1;
+        if (r.result?.summary_chars === 0) m.empty_summaries += 1;
+        break;
       case "compact_failed": m.compactions.failed += 1; break;
       case "hub_health": {
         m.hub.samples += 1;
@@ -90,6 +112,7 @@ export function frictionMetrics(events: readonly P.SwarmEvent[], journal: readon
       default: break;
     }
   }
+  if (m.job_run_text.chars) m.job_run_text.hint_share = Math.round((hintChars / m.job_run_text.chars) * 100) / 100;
   if (m.record.accepted) m.record.per_accepted = Math.round((m.record.refused / m.record.accepted) * 100) / 100;
   let seatHours = 0;
   for (const [a, f] of first) seatHours += Math.max(0, (last.get(a) ?? f) - f) / 3_600_000;
@@ -131,7 +154,8 @@ export function frictionWords(m: FrictionMetrics): string {
     `record: ${m.record.refused} refused for ${m.record.accepted} accepted (${n(m.record.per_accepted)} per accepted); attest: ${m.attest.refused} for ${m.attest.accepted}; job_run refused ${m.job_run_refused}`,
     `commit wait: median ${n(m.commit_wait.median_s, " s")}, p90 ${n(m.commit_wait.p90_s, " s")}, max ${n(m.commit_wait.max_s, " s")} over ${m.commit_wait.jobs} job(s); ${m.commit_wait.small_over_30s} small job(s) waited over 30 s (${m.commit_wait.small_job_seconds} job-seconds)`,
     `queue wait: median ${n(m.queue_wait.median_s, " s")}, p90 ${n(m.queue_wait.p90_s, " s")}, max ${n(m.queue_wait.max_s, " s")}`,
-    `compactions: ${m.compactions.done} (${m.compactions.failed} failed), ${n(m.compactions.per_seat_hour)} per seat-hour`,
+    `compactions: ${m.compactions.done} (${m.compactions.failed} failed, ${m.empty_summaries} with an empty summary), ${n(m.compactions.per_seat_hour)} per seat-hour`,
+    `job_run answers: ${m.job_run_text.answers}, ${m.job_run_text.chars} characters, ${m.job_run_text.hint_share === null ? "?" : `${Math.round(m.job_run_text.hint_share * 100)}%`} of them hints at admission; largest answer ${m.largest_answer.chars} characters${m.largest_answer.tool ? ` (${m.largest_answer.tool})` : ""}`,
     `shell: ${m.shell.timeouts} stopped at the limit, ${m.shell.sleep_loops_refused} sleep loop(s) refused`,
     `hub: loop p99 at most ${n(m.hub.loop_p99_max_ms, " ms")}, heap at most ${m.hub.heap_share_max === null ? "?" : `${Math.round(m.hub.heap_share_max * 100)}%`} of its limit (${m.hub.samples} sample(s)), ${m.hub.memory_high} memory warning(s), ${m.hub.restarts} restart(s), ${m.hub.answers_too_large} answer(s) too large to send, ${m.hub.lock_timeouts} lock timeout(s)`,
     `seats: ${m.seats.down} down, ${m.seats.relaunched} started again, ${m.seats.dead} recorded dead; ${m.platform_stalls} platform stall(s) said`,

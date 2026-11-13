@@ -2945,7 +2945,10 @@ export default function (pi: ExtensionAPI) {
       // Where each output path the agent gave went instead: the job's sealed output, read and cited from there, when it holds something.
       const placed = toolArgs ? placedOutputs(toolCtx.cwd, writtenToOf(params.args ?? {}, toolArgs, res.job), res.result, { emptyDirs }) : {};
       const result = { ok: true, ...placed, ...res.result, ...(code ? { evidence_code: { ...code, note: evidenceCodeNote(code, "job") } } : {}) };
-      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status, ...placed, ...(res.result.lead ? { lead: res.result.lead } : {}), ...(Array.isArray(res.result.similar) ? { similar: (res.result.similar as Array<{ job?: unknown }>).map((x) => x.job) } : {}), ...(code ? { evidence_code: code } : {}) }, Date.now() - started);
+      // How much of the answer the hints at admission take (metrics: the library hint was three quarters of job_run's text in two runs).
+      const answerChars = JSON.stringify(result).length;
+      const hintChars = (["library", "similar", "similar_more", "similar_note", "coverage"] as const).reduce((n, k) => n + ((res.result as Record<string, unknown>)[k] === undefined ? 0 : JSON.stringify((res.result as Record<string, unknown>)[k]).length), 0);
+      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status, answer_chars: answerChars, hint_chars: hintChars, ...placed, ...(res.result.lead ? { lead: res.result.lead } : {}), ...(Array.isArray(res.result.similar) ? { similar: (res.result.similar as Array<{ job?: unknown }>).map((x) => x.job) } : {}), ...(code ? { evidence_code: code } : {}) }, Date.now() - started);
       return okResult(result);
     },
   });

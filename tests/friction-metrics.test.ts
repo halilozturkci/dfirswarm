@@ -50,3 +50,22 @@ test("refusals per accepted record, the waits of small jobs behind a seal, compa
   assert.match(words, /hub: loop p99 at most 840 ms, heap at most 75% of its limit/);
   assert.doesNotThrow(() => frictionWords(frictionMetrics([], [])));
 });
+
+test("job_run's text and the hints' share of it, the largest answer, and empty compaction summaries", () => {
+  const ev = (tool: string, result: Record<string, unknown>, agent = "a1") => ({ ts: "2026-11-13T10:00:00.000Z", agent, tool, args: {}, result }) as never;
+  const m = frictionMetrics([
+    ev("job_run", { ok: true, job: "j000001", answer_chars: 1000, hint_chars: 750 }),
+    ev("job_run", { ok: true, job: "j000002", answer_chars: 1000, hint_chars: 50 }),
+    ev("job_run", { ok: false, reason: "refused" }),
+    ev("ledger", { ok: true, text: "x".repeat(5000) }),
+    ev("hub_health", { ok: true, text: "y".repeat(9000) }, "system"),
+    ev("compact_done", { ok: true, summary_chars: 0 }),
+    ev("compact_done", { ok: true, summary_chars: 4000 }),
+  ]);
+  assert.deepEqual(m.job_run_text, { answers: 2, chars: 2000, hint_share: 0.4 });
+  assert.equal(m.largest_answer.tool, "ledger", "a system row is not a seat's answer");
+  assert.ok(m.largest_answer.chars > 5000);
+  assert.equal(m.empty_summaries, 1);
+  assert.match(frictionWords(m), /job_run answers: 2, 2000 characters, 40% of them hints at admission; largest answer \d+ characters \(ledger\)/);
+  assert.match(frictionWords(m), /compactions: 2 \(0 failed, 1 with an empty summary\)/);
+});
