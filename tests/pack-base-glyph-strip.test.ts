@@ -14,6 +14,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { CLEAN } from "./host-gates.ts";
 import { call, CFB, filesBelow, greyPng, withRun, type Doc } from "./pack-base-media-fixture.ts";
+import { spawnSync } from "node:child_process";
+import { PYTHON3 } from "./host-gates.ts";
 
 // 5 x 7 glyphs, a row a string. The apostrophe and the backtick differ by their slant, l and I by their serifs, O and 0 by a slash.
 const FONT: Record<string, string[]> = {
@@ -144,19 +146,23 @@ test("an OCR engine is a second reader when the image holds one, and the answer 
     const ocrText = "x'7IO a`I0p";
     const withIt = await call("glyph_strip", run, args, { out, path: await engine(run, ocrText) });
     assert.equal(withIt.doc.status, CLEAN, withIt.doc.status_basis);
-    assert.deepEqual(withIt.doc.ocr, { available: true, engine: "tesseract 0.0-standin", read: true, characters: 11, characters_without_spaces: 10, text_file: "store/jobs/j000001/out/glyph_strip-2/ocr.txt" });
+    // The OCR text's length is not in the answer either: only whether its characters besides spaces are as many as the ink runs.
+    assert.deepEqual(withIt.doc.ocr, { available: true, engine: "tesseract 0.0-standin", read: true, text_file: "store/jobs/j000001/out/glyph_strip-2/ocr.txt" });
+    assert.deepEqual(Object.keys(withIt.doc.readers[0]).sort(), ["agrees_with_count", "read", "reader"], "the OCR reader's entry carries no length");
+    assert.ok(!withIt.stdout.includes('"same_length"'));
     assert.deepEqual(withIt.doc.readers.map((x: Doc) => [x.reader, x.agrees_with_count ?? null]), [["tesseract 0.0-standin", true], ["glyph_strip (this tool)", null], ["the caller", true]]);
     // Where the two texts differ follows the OCR text, which the answer does not show: the positions are in a file of their own, never in
     // the answer, so that calls with readings varied a character at a time cannot rebuild ocr.txt from answers.
     const against = withIt.doc.reading_against_ocr as Doc;
-    assert.deepEqual(Object.keys(against).sort(), ["file", "same_length", "what"]);
-    assert.equal(against.same_length, true);
+    assert.deepEqual(Object.keys(against).sort(), ["file", "what"]);
     assert.equal(against.file, "store/jobs/j000001/out/glyph_strip-2/reading_against_ocr.tsv");
     for (const key of ["positions_that_differ", "differ", "of_them_uncertain"]) assert.ok(!withIt.stdout.includes(`"${key}"`), `${key} is not in the answer`);
     const rows = (await readFile(join(out, "glyph_strip-2", "reading_against_ocr.tsv"), "utf8")).trim().split("\n").map((l) => l.split("\t"));
     assert.deepEqual(rows[0], ["at", "differs", "uncertain"]);
-    assert.equal(rows.length, 12, "a row a position of the longer text");
-    assert.deepEqual(rows.slice(1).filter((r) => r[1] === "1").map((r) => [r[0], r[2]]), [["1", "1"]], "position 1 differs, and it was marked uncertain");
+    assert.equal(rows.length, 1 + 400 + 1, "a row for each of the first 400 positions whatever the two lengths, and the length row: the size says nothing of the OCR text");
+    assert.deepEqual(rows.at(-1), ["same_length", "1", "-"]);
+    assert.deepEqual(rows.slice(1, 12).filter((r) => r[1] === "1").map((r) => [r[0], r[2]]), [["1", "1"]], "position 1 differs, and it was marked uncertain");
+    assert.ok(rows.slice(12, -1).every((r) => r[1] === "1" && r[2] === "0"), "a position past the reading differs");
     assert.equal((await lstat(join(out, "glyph_strip-2", "reading_against_ocr.tsv"))).mode & 0o777, 0o600);
     assert.equal(await readFile(join(out, "glyph_strip-2", "ocr.txt"), "utf8"), ocrText + "\n");
     assert.ok(!withIt.stdout.includes(ocrText), "the OCR text is not in the answer");
@@ -318,4 +324,118 @@ test("the rules are in the manifest, in every refusal and on the note's card; th
   const tesseract = host.binaries.find((b) => b.name === "tesseract")!;
   assert.equal(tesseract.optional, true);
   assert.match(tesseract.install.apt, /tesseract-ocr tesseract-ocr-eng fonts-dejavu-core/);
+});
+
+// ---- the second verification of 1.17.1: Pillow's decode ends at the clock; the OCR engine is not started past it; the frames are named ---
+
+/** Pillow as the tool sees it (the tool runs without -I, so a user site counts). */
+const pillowHere = (cwd: string): boolean => spawnSync(PYTHON3, ["-c", "import PIL.Image"], { cwd }).status === 0;
+
+/** A fixture script that needs Pillow (run without -I, as the tool is): its stdout, or a failed assertion. */
+function withPillow(code: string, args: string[], cwd: string): string {
+  const r = spawnSync(PYTHON3, ["-c", code, ...args], { cwd, encoding: "utf8", maxBuffer: 64 << 20 });
+  assert.equal(r.status, 0, `the fixture builder failed: ${r.stderr.slice(-600)}`);
+  return r.stdout;
+}
+
+/**
+ * A progressive JPEG with `n` more AC scans of its one component, each coding every block in end-of-band runs (EOB14: one code of one bit
+ * in the scan's own table, then 14 bits of run length, so 32767 blocks in 15 bits; ISO/IEC 10918-1 G.1.2.2). A decoder works through
+ * every block of every scan, so the scans cost time far beyond their bytes. 3000 x 2000 pixels (a crop this tool takes): 93,750 blocks.
+ */
+const JPEG_SCANS = String.raw`
+import io, struct, sys
+from PIL import Image, ImageDraw
+out, n, w, h = sys.argv[1], int(sys.argv[2]), 3000, 2000
+im = Image.new("L", (w, h), 255)
+d = ImageDraw.Draw(im)
+for i in range(0, w - 20, 40): d.rectangle([i + 5, 20, i + 20, h - 20], fill=0)
+buf = io.BytesIO(); im.save(buf, "JPEG", progressive=True, quality=90); data = buf.getvalue()
+assert data[-2:] == b"\xff\xd9"
+left, bits = ((w + 7) // 8) * ((h + 7) // 8), ""
+while left > 0:
+    run = min(left, 32767); assert run >= 16384; bits += "0" + format(run - 16384, "014b"); left -= run
+bits += "1" * (-len(bits) % 8)
+entropy = bytearray()
+for i in range(0, len(bits), 8):
+    entropy.append(int(bits[i:i + 8], 2))
+    if entropy[-1] == 0xFF: entropy.append(0)
+table = bytes([0x10]) + bytes([1] + [0] * 15) + bytes([0xE0])
+dht = b"\xff\xc4" + struct.pack(">H", 2 + len(table)) + table
+scan = b"\xff\xda" + struct.pack(">H", 8) + bytes([1, 1, 0x00, 1, 63, 0x00]) + bytes(entropy)
+open(out, "wb").write(data[:-2] + dht + scan * n + b"\xff\xd9")
+`;
+
+test("a JPEG of 250,000 scans is refused by its count, and with that bound lifted Pillow's decode is ended at the clock", async () => {
+  await withRun(async (run, out) => {
+    if (!pillowHere(run)) return;
+    withPillow(JPEG_SCANS, [join(run, "inputs/case files/scans.jpg"), "250000"], run);
+    const refused = await call("glyph_strip", run, { image: "inputs/case files/scans.jpg", max_seconds: 5, ocr: "none" }, { out, limitMs: 40_000 });
+    assert.ok(refused.ms < 10_000, `${refused.ms} ms`);
+    assert.equal(refused.doc.status, "failed");
+    assert.match(refused.doc.error, /a JPEG of 25000\d scans \(start-of-scan markers\): this tool hands Pillow a JPEG of up to 256/);
+    // The bound of scans is lifted (an environment variable for the tests): Pillow, which reads no clock of its own, decodes in a child
+    // that the tool kills at its clock (the decode of all the scans takes over a minute).
+    const lifted = await call("glyph_strip", run, { image: "inputs/case files/scans.jpg", max_seconds: 5, ocr: "none" }, { out, limitMs: 40_000, env: { TOOL_MAX_JPEG_SCANS: "100000000" } });
+    assert.equal(lifted.killed, false, "the call ended by itself");
+    assert.ok(lifted.ms < 12_000, `answered in ${lifted.ms} ms on a 5 second clock`);
+    assert.equal(lifted.doc.status, "failed", lifted.stdout.slice(0, 600));
+    assert.match(lifted.doc.error, /the tool's clock \(max_seconds 5\) ran out while the picture was being read/);
+  });
+});
+
+test("the OCR engine is not started once the clock is nearly out; a picture of several frames says the others were not read; the chunk walk reads the clock", async () => {
+  await withRun(async (run, out) => {
+    await writeFile(join(run, "inputs/case files/line one.png"), line(TRUTH));
+    // A stand-in whose --version takes four of the five seconds: no time is left to read the crop, so the engine is not run on it.
+    const bin = join(run, "work", "bin");
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "tesseract"), `#!/bin/sh\nif [ "$1" = "--version" ]; then sleep 4; echo "tesseract 0.0-standin"; exit 0; fi\necho "x'7lO a\`I0p"\n`);
+    await chmod(join(bin, "tesseract"), 0o755);
+    const late = await call("glyph_strip", run, { image: "inputs/case files/line one.png", max_seconds: 5 }, { out, path: `${bin}:/usr/bin:/bin`, limitMs: 30_000 });
+    assert.ok(late.ms < 7_000, `answered in ${late.ms} ms on a 5 second clock`);
+    assert.equal(late.doc.status, "partial", late.stdout.slice(0, 600));
+    assert.equal(late.doc.ocr.read, false);
+    assert.match(late.doc.ocr.said, /not run on the crop: the tool's clock had less than 2 seconds left/);
+    assert.match(late.doc.partial_reasons.join(" "), /OCR engine was not run/);
+
+    // A PNG whose 8 x 8 picture is followed by 22 million empty chunks: the built-in reader's walk of them reads the clock.
+    const fs = await import("node:fs");
+    const { deflateSync, crc32 } = await import("node:zlib");
+    const chunk = (kind: string, body: Buffer): Buffer => {
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(body.length, 0);
+      head.write(kind, 4, "latin1");
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), body])), 0);
+      return Buffer.concat([head, body, crc]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(8, 0);
+    ihdr.writeUInt32BE(8, 4);
+    ihdr[8] = 8;
+    const fd = fs.openSync(join(run, "inputs/case files/chunks.png"), "w");
+    fs.writeSync(fd, Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(Buffer.concat(Array.from({ length: 8 }, () => Buffer.from([0, 255, 255, 255, 255, 255, 255, 255, 255])))))]));
+    const many = Buffer.concat(Array.from({ length: 65536 }, () => chunk("zzZz", Buffer.alloc(0))));
+    for (let i = 0; i < Math.floor((250 << 20) / many.length); i++) fs.writeSync(fd, many);
+    fs.writeSync(fd, chunk("IEND", Buffer.alloc(0)));
+    fs.closeSync(fd);
+    const chunks = await call("glyph_strip", run, { image: "inputs/case files/chunks.png", max_seconds: 5, ocr: "none", reader: "builtin" }, { out, limitMs: 40_000 });
+    assert.equal(chunks.killed, false);
+    assert.ok(chunks.ms < 10_000, `answered in ${chunks.ms} ms on a 5 second clock`);
+    assert.match(chunks.doc.error, /clock \(max_seconds 5\) ran out while the picture was being read/);
+
+    if (!pillowHere(run)) return;
+    withPillow(String.raw`
+import sys
+from PIL import Image
+first = Image.open(sys.argv[1]).convert("L")
+second = Image.new("L", first.size, 255)
+first.save(sys.argv[2], save_all=True, append_images=[second], duration=100)
+`, [join(run, "inputs/case files/line one.png"), join(run, "inputs/case files/two frames.gif")], run);
+    const two = await call("glyph_strip", run, { image: "inputs/case files/two frames.gif", ocr: "none" }, { out });
+    assert.equal(two.doc.count, 10, two.stdout.slice(0, 600));
+    assert.equal(two.doc.status, "partial");
+    assert.match(two.doc.frames_not_read, /holds frames after the first, and they were not read/);
+  });
 });

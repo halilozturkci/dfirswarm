@@ -1428,6 +1428,8 @@ def _unexpected_tool(kind, value, _tb):
     exit 1; what was written before it is not claimed. A stop signal that arrives while this runs is held with the answer's write and is answered by
     this document and exit 1, not by 128 + the signal."""
     try:
+        if "kill_decoder" in globals():
+            kill_decoder()
         left = drop_temporaries()
         reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
         said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
@@ -1445,10 +1447,11 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "glyph_strip", "version": 2}
-PARSER = "glyph_strip/2"
+TOOL = {"name": "glyph_strip", "version": 3}
+PARSER = "glyph_strip/3"
 DEFAULT_SECONDS, MAX_SECONDS = 50, 55           # under the manifest's 60
 OCR_SECONDS = 20
+OCR_START_SECONDS = 2              # the OCR engine is started only with this much of the clock left (it is given at least a second, and its pipes one more)
 MAX_GLYPHS = 400
 MAX_CROP_PIXELS = 6_000_000        # a crop of one line; a whole photograph is cropped first
 MAX_CROP_HEIGHT, MAX_CROP_WIDTH = 2000, 50000      # its shape: a line is neither a column of pixels nor a thread (the rows held, the strip built)
@@ -1701,7 +1704,7 @@ def _stopped(signum):
     sys.stdout.flush()
 
 
-STATE["last_word"] = _stopped
+STATE["last_word"] = lambda signum: (kill_decoder(), _stopped(signum))     # the child that decodes a picture with Pillow ends first
 install_signal_handlers()
 STOP_CLOCK = {"deadline": None}
 
@@ -1712,6 +1715,10 @@ def set_deadline(seconds):
 
 def out_of_time():
     return STOP_CLOCK["deadline"] is not None and time.monotonic() > STOP_CLOCK["deadline"]
+
+
+def seconds_until_clock():
+    return float("inf") if STOP_CLOCK["deadline"] is None else STOP_CLOCK["deadline"] - time.monotonic()
 
 
 def seconds_left(most):
@@ -1745,10 +1752,12 @@ def check_crop(width, height):
 
 
 class Picture:
-    """A picture as rows of bytes: `gray` (one byte a pixel, 0 black to 255 white) always, `rgb` (three bytes a pixel) when it was asked for."""
+    """A picture as rows of bytes: `gray` (one byte a pixel, 0 black to 255 white) always, `rgb` (three bytes a pixel) when it was asked for.
+    It is the picture's first frame; `more_frames` is True when the file holds others (they are not read), None when that is not known."""
 
     def __init__(self, width, height, gray, rgb=None, reader=""):
         self.width, self.height, self.gray, self.rgb, self.reader = width, height, gray, rgb, reader
+        self.more_frames = False
 
 
 def _unfilter(kind, line, previous, bpp):
@@ -1781,11 +1790,15 @@ def _unfilter(kind, line, previous, bpp):
 
 def read_png(data, want_rgb=False, tick=None):
     """A PNG read with the standard library alone: 8 and 16-bit grey, RGB, palette and alpha forms and the 1, 2 and 4-bit grey and palette
-    forms, not interlaced. Transparency is put on white. NotAPicture for anything else; tick() is called once a row (the clock)."""
+    forms, not interlaced. Transparency is put on white. NotAPicture for anything else; tick() is the clock, read every 1024 chunks and
+    once a row (a row is at most MAX_CROP_WIDTH pixels: the header is checked as soon as it is read)."""
     if data[:8] != PNG_MAGIC:
         raise NotAPicture("not a PNG (no PNG signature)")
-    at, header, palette, alpha, parts = 8, None, None, None, []
+    at, header, palette, alpha, parts, chunks, animation, default_in_animation = 8, None, None, None, [], 0, None, False
     while at + 12 <= len(data):
+        chunks += 1
+        if tick and chunks % 1024 == 0:
+            tick()
         length = int.from_bytes(data[at:at + 4], "big")
         kind = data[at + 4:at + 8]
         body = data[at + 8:at + 8 + length]
@@ -1794,10 +1807,15 @@ def read_png(data, want_rgb=False, tick=None):
         if zlib.crc32(kind + body) != int.from_bytes(data[at + 8 + length:at + 12 + length], "big"):
             raise NotAPicture("a PNG whose %s chunk fails its CRC" % "".join(ch if ch.isalpha() else "?" for ch in kind.decode("latin-1")))
         at += 12 + length
+        if kind == b"acTL" and length == 8:
+            animation = int.from_bytes(body[:4], "big")
+        elif kind == b"fcTL" and not parts:
+            default_in_animation = True
         if kind == b"IHDR":
             if length != 13:
                 raise NotAPicture("a PNG with a header of the wrong length")
             header = struct.unpack(">IIBBBBB", body)
+            check_crop(header[0], header[1])
         elif kind == b"PLTE":
             palette = body
         elif kind == b"tRNS":
@@ -1876,15 +1894,22 @@ def read_png(data, want_rgb=False, tick=None):
                 rgb.append(bytes((line[i + k] * line[i + 3] + 255 * (255 - line[i + 3])) // 255 for i in range(0, 4 * width, 4) for k in range(3)))
             else:
                 rgb.append(bytes(v for v in g for _ in range(3)))
-    return Picture(width, height, gray, rgb, "the built-in PNG reader")
+    picture = Picture(width, height, gray, rgb, "the built-in PNG reader")
+    picture.more_frames = animation is not None and animation + (0 if default_in_animation else 1) > 1     # an animated PNG: its default image is read
+    return picture
 
 
 def pillow():
-    """The Pillow module, or None when it does not import here."""
+    """The Pillow module, or None when it does not import here. The plugins of PILLOW_FORMATS are loaded here, once, before a child is forked."""
     if "module" not in _PILLOW:
         try:
             from PIL import Image
             Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+            for plugin in ("BmpImagePlugin", "GifImagePlugin", "JpegImagePlugin", "MpoImagePlugin", "PngImagePlugin", "TiffImagePlugin", "WebPImagePlugin"):
+                try:
+                    __import__("PIL." + plugin)
+                except Exception:  # noqa: BLE001 - a plugin that does not load leaves its format unread
+                    pass
             _PILLOW["module"] = Image
             _PILLOW["version"] = getattr(__import__("PIL"), "__version__", "?")
         except Exception:  # noqa: BLE001 - not installed, or broken: the built-in reader is what there is
@@ -1895,9 +1920,291 @@ def pillow():
 _PILLOW = {}
 
 
+def clock_deadline():
+    """When the tool's clock runs out (time.monotonic()), or None before it is set."""
+    return STOP_CLOCK["deadline"]
+
+
+# ---- Pillow in a child process that the clock ends (the same code is in qr_read and glyph_strip) --------------------------------------
+# Pillow's decoders do not read this tool's clock: a progressive JPEG of a quarter of a million scans, a TIFF of a quarter of a million
+# pages (Pillow counts them by walking every page) and a format Pillow decodes in Python each ran for minutes inside one call. So Pillow
+# never runs in the tool's own process. A child is forked for one picture; it opens the picture as one of PILLOW_FORMATS only, and sends
+# each frame's size and then its grey rows on a pipe, frame after frame (seeking to the next, never asking how many there are), up to the
+# frames asked for, and then whether there is another. The tool reads the pipe against its clock and kills the child (SIGKILL) when the
+# clock runs out or the picture is done. The child's address space is bounded (DECODE_MEMORY more than it was forked with; Linux, where
+# the limit is enforced), its CPU time by the clock, it dies with the tool (Linux), it takes the stop signals' default action, it writes
+# nothing on standard output, and it ends with os._exit (no hook of the tool runs in it). A JPEG is counted before it is handed over: one
+# with more than MAX_JPEG_SCANS start-of-scan markers is refused (a picture has one, a progressive one about ten).
+import resource as _resource
+import select as _decode_select
+
+PILLOW_FORMATS = ("PNG", "JPEG", "BMP", "GIF", "WEBP", "TIFF")     # a JPEG of several pictures (MPO) is opened by the JPEG plugin
+PILLOW_FORMAT_NAMES = "PNG, JPEG, BMP, GIF, WebP and TIFF"
+MAX_ROWS = 100_000                 # a picture higher than this is refused: each row is one object, and a picture one pixel wide would take gigabytes
+MAX_JPEG_SCANS = int(os.environ.get("TOOL_MAX_JPEG_SCANS") or 256)        # the environment variable is for the tests
+DECODE_MEMORY = 1 << 30            # what the decoding child may add to the address space it was forked with (Linux)
+DECODER = {"pid": None}            # the decoding child that is running, which the stop's last word and the exit end
+
+
+def kill_decoder():
+    """End the decoding child that is running, if one is, and reap it."""
+    pid, DECODER["pid"] = DECODER["pid"], None
+    if pid:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            os.waitpid(pid, 0)
+        except OSError:
+            pass
+
+
+atexit.register(kill_decoder)
+
+
+def jpeg_scans(data):
+    """The start-of-scan markers of a JPEG (0 for any other format). Inside entropy-coded data a 0xFF byte is always followed by 0x00 or a
+    restart marker, so FF DA is a marker wherever it is; one inside an embedded thumbnail is counted too, which only errs on the side of
+    refusing."""
+    return data.count(b"\xff\xda") if data[:2] == b"\xff\xd8" else 0
+
+
+def _send(fd, kind, body=b""):
+    for part in (kind + len(body).to_bytes(4, "big"), body):
+        view = memoryview(part)
+        while len(view):
+            view = view[os.write(fd, view[:1 << 20]):]
+
+
+def _bound_decoder(parent):
+    deadline = clock_deadline()
+    if deadline is not None:
+        cpu = int(max(1.0, deadline - time.monotonic())) + 2
+        try:
+            _resource.setrlimit(_resource.RLIMIT_CPU, (cpu, cpu + 1))
+        except (ValueError, OSError, AttributeError):
+            pass
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/self/status", "rb") as status:
+                size = next(int(line.split()[1]) for line in status if line.startswith(b"VmSize:")) * 1024
+            _hard = _resource.getrlimit(_resource.RLIMIT_AS)[1]
+            limit = size + DECODE_MEMORY
+            _resource.setrlimit(_resource.RLIMIT_AS, (limit if _hard == _resource.RLIM_INFINITY else min(limit, _hard), _hard))
+        except Exception:  # noqa: BLE001 - the clock still bounds the child
+            pass
+        try:
+            import ctypes
+            ctypes.CDLL(None).prctl(1, signal.SIGKILL)       # PR_SET_PDEATHSIG: the child dies with the tool
+            if os.getppid() != parent:                       # the tool was gone before the request was made (the tool can be pid 1)
+                os._exit(1)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _decode_frames(data, image_module, fd, frames):
+    import io
+    k = 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")         # a decompression-bomb warning is an error, as in the tool
+        try:
+            image = image_module.open(io.BytesIO(data), formats=PILLOW_FORMATS)
+        except Exception as exc:  # noqa: BLE001 - the class is sent, never the message
+            _send(fd, b"U" if type(exc).__name__ == "UnidentifiedImageError" else b"X", json.dumps({"frame": 0, "class": type(exc).__name__}).encode("ascii"))
+            return
+        try:
+            while True:
+                width, height = image.size
+                _send(fd, b"H", struct.pack(">II", width, height))
+                if width * height > MAX_PIXELS or height > MAX_ROWS:
+                    return                     # the tool refuses it by the size it was sent
+                image.load()
+                frame = image
+                if frame.mode in ("RGBA", "LA", "PA") or "transparency" in frame.info:
+                    frame = frame.convert("RGBA")
+                    flat = image_module.new("RGB", frame.size, (255, 255, 255))
+                    flat.paste(frame, mask=frame.split()[3])
+                    frame = flat
+                _send(fd, b"F", frame.convert("L").tobytes())
+                k += 1
+                try:
+                    image.seek(k)
+                except EOFError:
+                    _send(fd, b"E", struct.pack(">I", k))
+                    return
+                if k >= frames:
+                    _send(fd, b"M", struct.pack(">I", k))
+                    return
+        except Exception as exc:  # noqa: BLE001 - the class is sent, never the message
+            _send(fd, b"X", json.dumps({"frame": k, "class": type(exc).__name__}).encode("ascii"))
+
+
+def _decoder_child(data, image_module, fd, frames, parent):
+    """The forked child: it never returns."""
+    code = 0
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(signum, signal.SIG_DFL)
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, set())
+        except (AttributeError, ValueError, OSError):
+            pass
+        null = os.open(os.devnull, os.O_RDWR)
+        for target in (0, 1, 2):
+            os.dup2(null, target)
+        _bound_decoder(parent)
+        _decode_frames(data, image_module, fd, frames)
+    except BaseException as exc:  # noqa: BLE001 - nothing may return into the tool's own code
+        try:
+            _send(fd, b"X", json.dumps({"frame": None, "class": type(exc).__name__}).encode("ascii"))
+        except BaseException:  # noqa: BLE001
+            code = 1
+    finally:
+        os._exit(code)
+
+
+class PillowFrames:
+    """The frames of one picture as Pillow decodes them in a child. next_frame() is the next frame as a Picture, or None when there is no
+    other: then `total` is how many frames the picture has, or `more` is True when it has more than were asked for. NotAPicture when
+    Pillow does not read it (or a frame of it), Clock when the clock runs out first; either way the child is ended. `check(width, height)`
+    may refuse a frame by its size before its rows are taken. close() ends the child."""
+
+    def __init__(self, data, image_module, frames, check=None):
+        self.total, self.more, self.check, self.k, self.buf, self.pid, self.fd = None, False, check, 0, bytearray(), None, None
+        read_fd, write_fd = os.pipe()
+        stops = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+        try:
+            before = signal.pthread_sigmask(signal.SIG_BLOCK, stops)   # a stop between the fork and the child's own handlers waits
+        except (AttributeError, ValueError, OSError):
+            before = None
+        parent = os.getpid()
+        try:
+            pid = os.fork()
+        except OSError as exc:
+            os.close(read_fd)
+            os.close(write_fd)
+            if before is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, before)
+            raise NotAPicture("Pillow decodes in a child process here, and none could be started (%s)" % describe(exc))
+        if pid == 0:
+            os.close(read_fd)
+            _decoder_child(data, image_module, write_fd, frames, parent)
+        DECODER["pid"] = self.pid = pid
+        os.close(write_fd)
+        self.fd = read_fd
+        if before is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+    def close(self, kill=True):
+        """End the child (kill, or wait up to a second for one that has said its last) and reap it: its wait status, or None."""
+        status, pid, self.pid = None, self.pid, None
+        if pid:
+            if DECODER["pid"] == pid:
+                DECODER["pid"] = None
+            try:
+                if not kill:
+                    for _wait in range(100):
+                        done, status = os.waitpid(pid, os.WNOHANG)
+                        if done:
+                            break
+                        time.sleep(0.01)
+                    else:
+                        kill = True
+                if kill:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                    _done, status = os.waitpid(pid, 0)
+            except OSError:
+                pass
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+        return status
+
+    def _fill(self, need):
+        while len(self.buf) < need:
+            deadline = clock_deadline()
+            wait = 1.0 if deadline is None else deadline - time.monotonic()
+            if wait <= 0:
+                raise Clock()
+            if not _decode_select.select([self.fd], [], [], min(wait, 1.0))[0]:
+                continue
+            block = os.read(self.fd, max(1 << 16, min(need - len(self.buf), 1 << 22)))
+            if not block:
+                return False
+            self.buf += block
+        return True
+
+    def _ended(self):
+        status = self.close(kill=False)
+        if status is not None and os.WIFSIGNALED(status):
+            return ("Pillow's decoding process was ended by signal %d before it answered (past its bound of memory or of CPU time, or a "
+                    "fault in a decoder)" % os.WTERMSIG(status))
+        return "Pillow's decoding process ended without an answer (exit code %s)" % (os.WEXITSTATUS(status) if status is not None and os.WIFEXITED(status) else "unknown")
+
+    def _message(self):
+        if not self._fill(5):
+            raise NotAPicture(self._ended())
+        kind, length = bytes(self.buf[:1]), int.from_bytes(self.buf[1:5], "big")
+        if length > MAX_PIXELS + 4096 or not self._fill(5 + length):
+            raise NotAPicture(self._ended())
+        body = bytes(self.buf[5:5 + length])
+        del self.buf[:5 + length]
+        return kind, body
+
+    def _refusal(self, kind, body):
+        try:
+            said = json.loads(body.decode("ascii"))
+            frame, name = said.get("frame"), str(said.get("class"))[:80]
+        except (ValueError, UnicodeDecodeError, AttributeError):
+            frame, name = None, "an unreadable report"
+        if kind == b"U":
+            return "Pillow does not read it as a picture of the formats this tool hands it (%s: %s)" % (PILLOW_FORMAT_NAMES, name)
+        if frame:
+            return "Pillow does not read frame %d (%s)" % (frame + 1, name)
+        return "Pillow does not read it as a picture (%s)" % name
+
+    def next_frame(self):
+        if self.total is not None or self.more or self.pid is None:
+            return None
+        try:
+            kind, body = self._message()
+            if kind in (b"E", b"M"):
+                if kind == b"E":
+                    self.total = int.from_bytes(body, "big")
+                else:
+                    self.more = True
+                self.close(kill=False)
+                return None
+            if kind != b"H" or len(body) != 8:
+                raise NotAPicture(self._refusal(kind, body) if kind in (b"U", b"X") else "Pillow's decoding process sent what it should not")
+            width, height = struct.unpack(">II", body)
+            what = "frame %d is" % (self.k + 1) if self.k else "a picture of"
+            if width * height > MAX_PIXELS or width == 0 or height == 0:
+                raise NotAPicture("%s %d x %d pixels (this tool reads up to %d pixels)" % (what, width, height, MAX_PIXELS))
+            if height > MAX_ROWS:
+                raise NotAPicture("%s %d x %d pixels (this tool reads up to %d rows)" % (what, width, height, MAX_ROWS))
+            if self.check is not None:
+                self.check(width, height)
+            kind, body = self._message()
+            if kind != b"F" or len(body) != width * height:
+                raise NotAPicture(self._refusal(kind, body) if kind in (b"U", b"X") else "Pillow's decoding process sent what it should not")
+            self.k += 1
+            gray = [body[y * width:(y + 1) * width] for y in range(height)]
+            return Picture(width, height, gray, None, "Pillow %s" % _PILLOW.get("version", "?"))
+        except BaseException:
+            self.close()
+            raise
+
+
 def read_picture(data, want_rgb=False, reader="auto", tick=None):
-    """The picture in `data`: a PNG by the built-in reader when it reads it (or when reader is "builtin"), anything else, and a PNG the
-    built-in reader refuses, by Pillow when it imports. NotAPicture says which reader said what."""
+    """The picture in `data` (its first frame): a PNG by the built-in reader when it reads it (or when reader is "builtin"), anything else,
+    and a PNG the built-in reader refuses, by Pillow in a child when it imports (grey only: want_rgb is for the built-in reader).
+    NotAPicture says which reader said what; Refused for a picture that is no crop of one line (by its size, before its rows are taken);
+    Clock when the clock runs out first. `more_frames` says whether the file holds frames after the first."""
     first = None
     if data[:8] == PNG_MAGIC or reader == "builtin":
         try:
@@ -1909,33 +2216,26 @@ def read_picture(data, want_rgb=False, reader="auto", tick=None):
     image_module = pillow() if reader != "builtin" else None
     if image_module is None:
         raise NotAPicture(first or "not a PNG, and Pillow, which reads the other picture formats, does not import here")
-    import io
+    said = "the built-in reader: %s; " % first if first else ""
+    scans = jpeg_scans(data)
+    if scans > MAX_JPEG_SCANS:
+        raise NotAPicture("%sa JPEG of %d scans (start-of-scan markers): this tool hands Pillow a JPEG of up to %d (a picture has one, a "
+                          "progressive one about ten)" % (said, scans, MAX_JPEG_SCANS))
+    stream = PillowFrames(data, image_module, 1, check_crop)
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            image = image_module.open(io.BytesIO(data))
-            if image.width * image.height > MAX_PIXELS:
-                raise NotAPicture("a picture of %d x %d pixels (this tool reads up to %d pixels)" % (image.width, image.height, MAX_PIXELS))
-            check_crop(image.width, image.height)
-            image.load()
-            if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
-                image = image.convert("RGBA")
-                flat = image_module.new("RGB", image.size, (255, 255, 255))
-                flat.paste(image, mask=image.split()[3])
-                image = flat
-            grey = image.convert("L")
-            width, height = grey.size
-            flat_gray = grey.tobytes()
-            gray = [flat_gray[y * width:(y + 1) * width] for y in range(height)]
-            rgb = None
-            if want_rgb:
-                flat_rgb = image.convert("RGB").tobytes()
-                rgb = [flat_rgb[y * width * 3:(y + 1) * width * 3] for y in range(height)]
-    except (NotAPicture, Refused):
-        raise
-    except Exception as exc:  # noqa: BLE001 - Pillow's own errors, a decompression-bomb warning included: the class is said, never the message
-        raise NotAPicture("%sPillow does not read it as a picture (%s)" % ("the built-in reader: %s; " % first if first else "", type(exc).__name__))
-    return Picture(width, height, gray, rgb, "Pillow %s" % _PILLOW.get("version", "?"))
+        picture = stream.next_frame()
+        if picture is None:
+            raise NotAPicture("Pillow found no frame in it")
+        try:
+            stream.next_frame()                 # whether a second frame is there: the child says so after the first
+            picture.more_frames = stream.more
+        except NotAPicture:
+            picture.more_frames = None          # Pillow could not say (it does not read past the first frame)
+    except NotAPicture as exc:
+        raise NotAPicture("%s%s" % (said, exc))
+    finally:
+        stream.close()
+    return picture
 
 
 def png_bytes(width, height, rows, channels=1):
@@ -2274,17 +2574,20 @@ def run_ocr(image_path, place):
         return {"available": False, "said": "no OCR engine is in this image (tesseract is not on PATH): the count and the strip are this tool's own, and no second reading was made"}, None
     target = image_path if os.path.isabs(image_path) else os.path.join(".", image_path)
     _code, out, cut = read_program([program, "--version"], seconds_left(10), MAX_OCR_BYTES, merge=True)     # an older tesseract prints it on stderr
+    if seconds_until_clock() < OCR_START_SECONDS:
+        return {"available": True, "read": False, "said": "the OCR engine was not run on the crop: the tool's clock had less than %d seconds left" % OCR_START_SECONDS,
+                "_partial": "the OCR engine was not run on the crop: the clock had run out, or nearly"}, None
     version = out.decode("utf-8", "replace").splitlines()[0].strip()[:60] if out.strip() and not cut else "tesseract, version not printed"
     version = "".join(ch if " " <= ch < "\x7f" else "?" for ch in version)
     code, out, cut = read_program([program, target, "stdout", "--psm", "7"], seconds_left(OCR_SECONDS), MAX_OCR_BYTES)
     if cut or code != 0:
-        return {"available": True, "engine": version, "read": False,
-                "said": "the OCR engine did not read the crop (%s)" % (cut or "exit code %s" % code)}, None
+        return {"available": True, "engine": version, "read": False, "said": "the OCR engine did not read the crop (%s)" % (cut or "exit code %s" % code),
+                **({"_partial": "the OCR engine was cut before it had read the crop (%s)" % cut} if cut else {})}, None
     try:
         text = out.decode("utf-8").split("\n")[0].rstrip("\r")
     except UnicodeDecodeError:
         return {"available": True, "engine": version, "read": False, "said": "the OCR engine's output is not UTF-8 text"}, None
-    result = {"available": True, "engine": version, "read": True, "characters": len(text), "characters_without_spaces": len(text.replace(" ", ""))}
+    result = {"available": True, "engine": version, "read": True}
     try:
         result["text_file"] = place.write("ocr.txt", (text + "\n").encode("utf-8"), 0o600)
     except OSError as exc:
@@ -2324,8 +2627,14 @@ def main():
     except Clock:
         raise Refused("the tool's clock (max_seconds %d) ran out while the picture was being read: nothing was counted" % seconds)
     check_crop(picture.width, picture.height)
+    frames_not_read = None
+    if picture.more_frames is None:
+        frames_not_read = "whether the picture holds frames after the first is not known (Pillow did not say): the first was read"
+    elif picture.more_frames:
+        frames_not_read = "the picture holds frames after the first, and they were not read: this tool reads the first frame of a crop"
     common = {"tool": TOOL, "parser": PARSER, "image": printable(image), "sha256": hashlib.sha256(data).hexdigest(), "pixels": "%d x %d" % (picture.width, picture.height),
-              "picture_reader": picture.reader, "rules": RULES, **({"unrecognised_parameters": unknown} if unknown else {})}
+              "picture_reader": picture.reader, "rules": RULES, **({"unrecognised_parameters": unknown} if unknown else {}),
+              **({"frames_not_read": frames_not_read} if frames_not_read else {})}
     try:
         found = segment(picture)
     except Clock:
@@ -2334,11 +2643,15 @@ def main():
         raise SystemExit(1)
     glyphs = found["glyphs"]
     if not glyphs and reading is None:
-        print_answer({**common, "status": "complete", "count": 0, "polarity": found["polarity"],
-                      "status_basis": "the whole picture was read and it holds no ink against its background at the threshold %d: no glyph, and nothing was written" % found["threshold"]})
+        print_answer({**common, "status": "partial" if frames_not_read else "complete", "complete": not frames_not_read, "count": 0, "polarity": found["polarity"],
+                      "status_basis": "the whole %s was read and it holds no ink against its background at the threshold %d: no glyph, and nothing was written%s"
+                      % ("first frame" if frames_not_read else "picture", found["threshold"], "; but %s" % frames_not_read if frames_not_read else ""),
+                      **({"partial_reasons": [frames_not_read]} if frames_not_read else {})})
         return
     place = Place("glyph_strip")
     reasons, files = [], {}
+    if frames_not_read:
+        reasons.append(frames_not_read)
     spaces, wide, narrow_pairs, groups, rows = [], [], [], [], []
     if glyphs:
         widths = sorted(g["width"] for g in glyphs)
@@ -2388,30 +2701,38 @@ def main():
     # The readers: the caller's reading, and an OCR engine when the image holds one.
     readers = []
     ocr_text = None
-    if ocr_mode == "auto":
+    if ocr_mode == "auto" and seconds_until_clock() < OCR_START_SECONDS:
+        ocr = {"available": None, "read": False, "said": "the OCR engine was not run: the tool's clock (max_seconds %d) had less than %d seconds left" % (seconds, OCR_START_SECONDS)}
+        reasons.append("the OCR engine was not run: the clock had run out, or nearly")
+    elif ocr_mode == "auto":
         ocr, ocr_text = run_ocr(image, place)
+        if "_partial" in ocr:
+            reasons.append(ocr.pop("_partial"))
         if "write_error" in ocr:
             reasons.append("the OCR text could not be written")
     else:
         ocr = {"available": None, "said": "no OCR engine was asked for (ocr: none)"}
     answer["ocr"] = ocr
     if ocr.get("read"):
-        readers.append({"reader": ocr["engine"], "read": "the line as text (in text_file)", "characters_without_spaces": ocr["characters_without_spaces"],
-                        "agrees_with_count": ocr["characters_without_spaces"] == len(glyphs)})
+        # The OCR text's length is not printed (it is evidence text, and a length is a hint of it): whether its characters besides spaces are
+        # as many as the ink runs is.
+        readers.append({"reader": ocr["engine"], "read": "the line as text (in text_file)", "agrees_with_count": len(ocr_text.replace(" ", "")) == len(glyphs)})
     readers.append({"reader": "glyph_strip (this tool)", "read": "the count of ink runs and their boxes, no character"})
     if reading is not None:
         bare = len(reading.replace(" ", ""))
         readers.append({"reader": "the caller", "read": "the reading given", "characters": len(reading), "characters_without_spaces": bare, "agrees_with_count": bare == len(glyphs)})
         if ocr_text is not None:
-            # Where the two texts differ follows the OCR text, which the answer does not show: the positions go to a file beside it, a row a
-            # position of the longer text, so that the file's size follows the two lengths (which the answer shows) and not the differences.
-            span = max(len(reading), len(ocr_text))
-            against = {"same_length": len(reading) == len(ocr_text),
-                       "what": "the positions where the reading and the OCR text differ, and which of them are uncertain, are in the file, not here: they follow the OCR text, which the answer does not show"}
+            # Where the two texts differ follows the OCR text, which the answer does not show, and so does its length: the positions go to a
+            # file beside it, a row for each of the first MAX_READING positions whatever the two lengths (a position past either text differs),
+            # so that the file's size says nothing of the OCR text; whether the two have the same length is in the file's last line.
+            span = MAX_READING
+            against = {"what": "the positions where the reading and the OCR text differ, which of them are uncertain, and whether the two texts have the same "
+                               "length, are in the file, not here: they follow the OCR text, which the answer does not show"}
             try:
                 against["file"] = place.write("reading_against_ocr.tsv", (b"at\tdiffers\tuncertain\n",
                                                                          *(("%d\t%d\t%d\n" % (i, int(i >= len(reading) or i >= len(ocr_text) or reading[i] != ocr_text[i]),
-                                                                                              int(i in uncertain))).encode("ascii") for i in range(span))), 0o600)
+                                                                                              int(i in uncertain))).encode("ascii") for i in range(span)),
+                                                                         b"same_length\t%d\t-\n" % int(len(reading) == len(ocr_text))), 0o600)
             except OSError as exc:
                 against["write_error"] = "the comparison could not be written (%s)" % describe(exc)
                 reasons.append("the comparison with the OCR text could not be written")

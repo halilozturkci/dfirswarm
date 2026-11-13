@@ -11,6 +11,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -332,6 +333,148 @@ test("a name with an error word is not an error, a second video stream is said, 
     for (const [args, range] of [[{ every: 0 }, "every must be a whole number from 1 to 100000"], [{ tile_width: 10 }, "tile_width must be a whole number from 64 to 480"], [{ columns: 50 }, "columns must be a whole number from 1 to 20"]] as const) {
       const r = await call("frame_survey", run, { video: "inputs/case files/a.mp4", ...args }, { out });
       assert.equal(r.doc.error, range);
+    }
+  });
+});
+
+/** An MPEG-2 video stream (the host's ffmpeg encodes it, its own encoder) that changes size twice: frames 0 to 8 at 160 x 90, 9 to 17 at
+ * 200 x 120 and 18 to 29 at 160 x 90 again, the three parts' bytes one after the other. Every frame is one flat grey, 10 + 8k for the k-th
+ * frame drawn, so that a frame is known by its mean whatever size it was scaled to (a scaled frame's grey can move by a step or two). */
+function sizeChanging(run: string, name: string): void {
+  const parts: Buffer[] = [];
+  for (const [w, h, a, b] of [[160, 90, 0, 9], [200, 120, 9, 18], [160, 90, 18, 30]] as const) {
+    const frames = Buffer.concat(Array.from({ length: b - a }, (_, i) => Buffer.alloc(w * h * 3, 10 + 8 * (a + i))));
+    const r = spawnSync("ffmpeg", ["-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", `${w}x${h}`, "-r", "10", "-i", "-", "-c:v", "mpeg2video", "-q:v", "2", "-g", "5", "-bf", "0", "-f", "mpeg2video", "-"], { input: frames, maxBuffer: 64 << 20 });
+    assert.equal(r.status, 0, r.stderr.toString());
+    parts.push(r.stdout);
+  }
+  writeFileSync(join(run, name), Buffer.concat(parts));
+}
+
+/** The size of every decoded frame, as ffprobe reads them, "w x h". */
+function decodedSizes(file: string): string[] {
+  const r = spawnSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "frame=width,height", "-of", "csv=p=0", file], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.trim().split("\n").map((l) => l.split(",").filter(Boolean).join(" x "));
+}
+
+/** The mean of every decoded frame, as ffmpeg itself decodes the stream (frame k is the k-th it gives), each scaled to 160 x 90 grey. */
+function decodedMeans(file: string): number[] {
+  const r = spawnSync("ffmpeg", ["-v", "error", "-i", file, "-map", "0:v:0", "-vf", "scale=160:90", "-fps_mode", "passthrough", "-pix_fmt", "gray", "-f", "rawvideo", "-"], { maxBuffer: 64 << 20 });
+  assert.equal(r.status, 0, r.stderr.toString());
+  const n = 160 * 90;
+  return Array.from({ length: r.stdout.length / n }, (_, i) => r.stdout.subarray(i * n, (i + 1) * n).reduce((a, b) => a + b, 0) / n);
+}
+
+const mean = (b: Buffer): number => b.reduce((a, v) => a + v, 0) / b.length;
+const nearest = (means: number[], m: number): number => means.reduce((best, v, i) => (Math.abs(v - m) < Math.abs(means[best]! - m) ? i : best), 0);
+
+test("a stream that changes size mid-way: every frame written or tiled is the decoded frame its number names, and the size change is said", { skip: NO_DECODER }, async () => {
+  await withRun(async (run, out) => {
+    const name = "inputs/case files/size change.m2v";
+    sizeChanging(run, name);
+    const means = decodedMeans(join(run, name));
+    const sizes = decodedSizes(join(run, name));
+    assert.ok(means.length >= 25 && sizes.length === means.length, `${means.length} frames decoded by ffmpeg itself, ${sizes.length} sized by ffprobe`);
+    for (const [first, last] of [[0, 1], [10, 11], [19, 22], [7, 20]] as const) {
+      const r = await call("frame_survey", run, { video: name, mode: "extract", first, last }, { out });
+      assert.equal(r.code, 0, r.stdout + r.stderr);
+      assert.equal(r.doc.frames_written, last - first + 1, r.stdout);
+      for (const f of r.doc.frames as Doc[]) {
+        const png = pngRgb(await readFile(join(run, f.file)));
+        assert.deepEqual([png.width, png.height], [160, 90]);
+        assert.equal(nearest(means, mean(png.pixels)), f.frame, `extract ${first}..${last}: the file named frame ${f.frame} holds that decoded frame`);
+        assert.deepEqual([f.native, f.decoded_size], sizes[f.frame] === "160 x 90" ? [undefined, undefined] : [false, sizes[f.frame]], `frame ${f.frame}`);
+      }
+      if ((r.doc.frames as Doc[]).some((f) => f.native === false)) assert.match(JSON.stringify(r.doc.partial_reasons), /decoded at another size than the stream's 160 x 90/);
+    }
+    // Frames 0 and 1 are of the stream's own size: native, and the answer for them names no other size.
+    const head = await call("frame_survey", run, { video: name, mode: "extract", first: 0, last: 1 }, { out });
+    assert.deepEqual((head.doc.frames as Doc[]).map((f) => f.native), [undefined, undefined]);
+    assert.equal(head.doc.status, CLEAN, head.doc.status_basis);
+    // A survey that starts past the change tiles the frames its labels name.
+    const survey = await call("frame_survey", run, { video: name, start_frame: 20, max_frames: 5 }, { out });
+    assert.deepEqual([survey.doc.first_frame, survey.doc.last_frame, survey.doc.frames_decoded], [20, 24, 5]);
+    const sheet = pngRgb(await readFile(join(run, survey.doc.sheet_files[0].sheet)));
+    for (let slot = 0; slot < 5; slot++) {
+      const x0 = slot * 164 + 2;
+      const tile = Buffer.concat(Array.from({ length: 90 }, (_, y) => sheet.pixels.subarray(((2 + y) * sheet.width + x0) * 3, ((2 + y) * sheet.width + x0 + 160) * 3)));
+      assert.equal(nearest(means, mean(tile)), 20 + slot, `the tile labelled ${20 + slot}`);
+    }
+    // The whole stream: the frames of another size are named, and the answer is partial for them.
+    const whole = await call("frame_survey", run, { video: name }, { out });
+    assert.equal(whole.doc.frames_decoded, means.length);
+    const other = sizes.flatMap((size, k) => (size === "160 x 90" ? [] : [k]));
+    assert.equal(whole.doc.frames_of_another_size.count, other.length);
+    assert.deepEqual(whole.doc.frames_of_another_size.first.map((f: Doc) => [f.frame, f.size]), other.map((k) => [k, "200 x 120"]));
+    assert.match(JSON.stringify(whole.doc.partial_reasons), /frame\(s\) were decoded at another size than the stream's 160 x 90/);
+  });
+});
+
+test("a cut Matroska file is partial: the demuxer's word on the cut is a line about an error, and its last frame falls short of the stated duration", { skip: NO_DECODER }, async () => {
+  await withRun(async (run, out) => {
+    clip(run, "inputs/case files/whole.mkv");
+    py(String.raw`
+import sys
+d = sys.argv[1]
+whole = open(d + "/whole.mkv", "rb").read()
+open(d + "/cut.mkv", "wb").write(whole[:len(whole) // 2])
+`, [join(run, "inputs/case files")], run);
+    const clean = await call("frame_survey", run, { video: "inputs/case files/whole.mkv" }, { out });
+    assert.equal(clean.doc.status, CLEAN, clean.doc.status_basis);
+    assert.equal(clean.doc.partial_reasons, undefined, "a whole file: no line about an error, and no shortfall");
+    const r = await call("frame_survey", run, { video: "inputs/case files/cut.mkv" }, { out });
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(r.doc.status, "partial");
+    assert.ok(r.doc.frames_decoded > 20 && r.doc.frames_decoded < 140, `${r.doc.frames_decoded} frames`);
+    assert.match(JSON.stringify(r.doc.partial_reasons), /the container states a duration of 6\.000 s .* and the last frame decoded is at \d+\.\d+ s/);
+    if (r.doc.decoder_said) assert.match(JSON.stringify(r.doc.decoder_said), /prematurely|end of file|truncat|corrupt|error/i);
+  });
+});
+
+test("the edges of the bounds: a stream of exactly max_frames frames is whole, a side past its limit is refused, a mirror is said, an AGENT_ID that is no name is refused", { skip: NO_DECODER }, async (t) => {
+  await withRun(async (run, out) => {
+    clip(run, "inputs/case files/clip one.mp4");
+    const exact = await call("frame_survey", run, { video: "inputs/case files/clip one.mp4", max_frames: 150 }, { out });
+    assert.deepEqual([exact.doc.status, exact.doc.frames_decoded, exact.doc.skipped], [CLEAN, 150, undefined]);
+    const r = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=2x8192:r=5:d=1", "-c:v", "rawvideo", "-pix_fmt", "gray", join(run, "inputs/case files/tall.mkv")]);
+    assert.equal(r.status, 0, r.stderr.toString());
+    const tall = await call("frame_survey", run, { video: "inputs/case files/tall.mkv" }, { out });
+    assert.deepEqual([tall.code, tall.doc.status], [1, "failed"]);
+    assert.match(tall.doc.error, /frame size is not one this tool takes \(2 x 8192; it takes 2 to 8192 wide and 2 to 4320 high, as coded\)/);
+    const agent = await call("frame_survey", run, { video: "inputs/case files/clip one.mp4", max_frames: 5 }, { env: { AGENT_ID: ".." } });
+    assert.equal(agent.code, 1);
+    assert.match(agent.doc.error, /^AGENT_ID is not a plain name/);
+    assert.deepEqual(filesBelow(run).filter((f) => f.includes("tool-output")), [], "nothing was written outside a job");
+    const flip = spawnSync("ffmpeg", ["-v", "error", "-y", "-display_rotation", "0", "-display_hflip", "-i", join(run, "inputs/case files/clip one.mp4"), "-c", "copy", join(run, "inputs/case files/mirrored.mp4")]);
+    if (flip.status !== 0) {
+      t.diagnostic("the mirror was not checked: this ffmpeg has no -display_hflip (ffmpeg 7's) to write one");
+      return;
+    }
+    const mirrored = await call("frame_survey", run, { video: "inputs/case files/mirrored.mp4", max_frames: 5 }, { out });
+    assert.match(mirrored.doc.rotation_note, /display matrix MIRRORS the picture/);
+  });
+});
+
+test("a decoder that rebuilds its filters anyway: extract keeps no frame under a number that may not be its own", async () => {
+  await withRun(async (run, out) => {
+    const bin = join(run, "work", "bin");
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "ffprobe"), `#!/bin/sh\necho '{"streams": [{"codec_name": "standin", "width": 32, "height": 18, "avg_frame_rate": "25/1"}], "format": {"format_name": "standin"}}'\n`);
+    await writeFile(join(run, "inputs/case files/any.mp4"), "the stand-ins read no byte of it");
+    const info = (n: number, t: string): string => `echo "[Parsed_showinfo_1 @ 0x1] n:   ${n} pts:0 pts_time:${t} duration:1 s:32x18 i:P" >&2`;
+    const rebuild = 'echo "[vf#0:0 @ 0x2] Reconfiguring filter graph because video parameters changed to yuv420p, 32x18" >&2';
+    // Two whole frames, and the log a decoder writes when it rebuilds its filters: before the first frame (both are in doubt), and
+    // between them (showinfo's count starts again at 0, and the second is in doubt).
+    for (const [log, kept] of [[[rebuild, info(0, "0"), info(1, "0.04")], 0], [[info(0, "0"), rebuild, info(0, "0.04")], 1]] as const) {
+      await writeFile(join(bin, "ffmpeg"), ["#!/bin/sh", 'case "$*" in *-version*) echo "ffmpeg version 9.0"; exit 0;; esac', ...log, "head -c 3456 /dev/zero", ""].join("\n"));
+      for (const name of ["ffprobe", "ffmpeg"]) await chmod(join(bin, name), 0o755);
+      const r = await call("frame_survey", run, { video: "inputs/case files/any.mp4", mode: "extract", first: 5, last: 6 }, { out, path: `${bin}:/usr/bin:/bin`, limitMs: 30_000 });
+      assert.deepEqual([r.code, r.doc.status, r.doc.frames_written], kept ? [0, "partial", 1] : [1, "failed", 0], r.stdout);
+      assert.match(r.doc.partial_reasons[0], new RegExp(`^the decoder rebuilt its filters 1 time\\(s\\) .* the ${2 - kept} frame\\(s\\) it gave after that cannot be numbered, and ${2 - kept} were removed$`));
+      assert.deepEqual((r.doc.frames as Doc[]).map((f) => f.frame), kept ? [5] : []);
+      const dir = r.doc.output_directory.replace("store/jobs/j000001/out/", "");
+      assert.deepEqual(filesBelow(join(out, dir)).filter((f) => f.endsWith(".png")), kept ? ["frame-000005.png"] : [], "no frame file is left under a number in doubt");
     }
   });
 });

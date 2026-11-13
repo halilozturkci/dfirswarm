@@ -15,8 +15,8 @@ Use when a video may show something for a moment (a caption, a screen, a code, a
 
 1. **Survey every frame first.** The default call tiles every decoded frame with its number and time and scores it. Sampling by eye, or one frame a second, misses a stretch of ten frames.
 2. **Read `runs`, then the sheets.** A run is a region that changed and changed again with no scene cut between: a candidate, from block means. `scene_cuts` and `windows_that_stand_out` are the other two leads. Look at the sheets a run names.
-3. **Read text off native frames.** A tile is a reduced copy: `extract` the run's frames, then `data/glyphs` for exact characters or `data/qr` for a code.
-4. **Partial means skipped.** `every` above 1, `max_frames`, the clock or a damaged stream make the survey `partial`, and `skipped` says what was not decoded: a negative holds for the frames decoded. Go on with `start_frame`.
+3. **Read text off native frames.** A tile is a reduced copy: `extract` the run's frames, then `data/glyphs` for exact characters or `data/qr` for a code. `rotation_note` says when frames are turned or mirrored as a player shows them.
+4. **Partial means skipped.** `every` above 1, `max_frames`, the clock, a damaged stream, one that ends short of the duration its container states, or frames of another size (`frames_of_another_size`) make the survey `partial`, and `skipped` says what was not decoded: a negative holds for the frames decoded. Go on with `start_frame`.
 5. **A file that will not open** goes to `mode: repair`: it reads the container (an MP4 with its moov missing, at the end or its data cut; an AVI without an index), writes a remuxed copy and counts the frames that copy decodes. That count is the claim. A missing moov is not rebuilt: say so, and ask for a whole file from the same recorder.
 6. **`failed` with no decoder** (`ffmpeg`, `ffprobe` not installed) is not an empty video: say the video was not examined.
 

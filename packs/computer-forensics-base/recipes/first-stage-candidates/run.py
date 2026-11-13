@@ -18,6 +18,11 @@ the record, which the Windows pack's readers read.
 
 coverage.json says whether the whole list was read (whole_list_read) and carries the rule the ranking exists for: to answer
 "cannot be determined" to a "which file" question the whole member list must have been searched.
+
+Two rules hold every loop. Each one reads the clock often enough that no single step of it can carry the run past its seconds, and
+what it keeps is bounded by a limit named below. Every limit met (seconds, documents, antivirus files, Recent names, a directory's
+entries, a list's line, a file's size, a ZIP directory's records) is a line of limits_hit and makes the run partial, and so does a
+document whose VBA check could not be told (it is ranked, and its row says so). candidates.tsv has every scored document.
 """
 
 # BEGIN SHARED ENDS
@@ -177,9 +182,9 @@ import json
 import os
 import re
 import stat
+import struct
 import sys
 import time
-import zipfile
 
 
 # BEGIN SHARED STOP
@@ -510,7 +515,7 @@ def open_regular(path):
 
 
 RECIPE = "first-stage-candidates"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 COLUMNS = ["rank", "score", "path", "kind", "size", "profile", "signals"]
 MACRO_NAMES = {".docm": "word", ".dotm": "word", ".xlsm": "excel", ".xltm": "excel", ".xlam": "excel", ".xlsb": "excel", ".pptm": "powerpoint", ".potm": "powerpoint",
@@ -525,13 +530,22 @@ DELIVERY = (("/appdata/local/temp/", "a temporary folder of the profile"), ("/lo
 DOWNLOADS = ("/downloads/",)
 ARCHIVE_TEMP = re.compile(r"/(7z[a-z0-9]{6,}|rar\$[a-z0-9.]+|temp\d+_[^/]+\.zip|[^/]+\.zip\.[a-z0-9]{3,})/", re.I)
 PROFILE = re.compile(r"(?:^|/)(?:users|documents and settings)/([^/]+)/", re.I)
+LISTED_PROFILE = re.compile(r"(?:^|[/\t])(?:users|documents and settings)/([^/\t\n]+)/", re.I | re.M)     # a line or a cell of a list
 ANTIVIRUS = re.compile(r"(microsoft-windows-windows defender%4(operational|whc)\.evtx|/mplog-[^/]*\.log|/detectionhistory/|/windows defender/support/|/quarantine/)", re.I)
 VBA_OLE = "_VBA_PROJECT".encode("utf-16-le")
 MAX_MEMBERS = 5_000_000
-MAX_CANDIDATES = 20000
+MAX_DOCUMENTS = 100_000           # the most documents scored; every one of them is a row of candidates.tsv
+MAX_ANTIVIRUS = 400               # the most antivirus logs and detection files searched for names
+MAX_RECENT = 200_000              # the most Recent shortcut names (of documents) kept
 SCAN_BYTES = 512 << 20            # the most of one hive or log file that is searched for names
 OLE_BYTES = 64 << 20
+ZIP_RECORDS = 20_000              # the most ZIP central-directory records walked for a VBA project
+LINE_MAX = 1 << 20                # the longest line of a member list that is read
 COVERAGE_MAX_BYTES = 4 << 20      # the list's own coverage record, read up to this size
+LIST_NAME = "members.tsv"         # the name every lister of the house gives the member list its coverage record stands for
+DETECT_LIST_BYTES = 256 << 20     # detect reads at most this much of a member list ...
+DETECT_SECONDS = 60               # ... and for at most this long; past either, it cannot tell
+CLOCK_EVERY = 256                 # a loop reads the clock at least once per this many steps of its own
 WHY_MAX, WHY_CHARS = 5, 400
 
 
@@ -548,7 +562,10 @@ def limits():
 
 
 def refuse(message):
-    print_answer({"ok": False, "status": "failed", "error": message, "status_basis": "the target could not be used, so nothing was run"})
+    if sys.argv[1:2] == ["detect"]:      # a call detect could not use is no answer about the object: it cannot tell
+        print_answer({"ok": False, "applies": "unknown", "why": message, "error": message})
+    else:
+        print_answer({"ok": False, "status": "failed", "error": message, "status_basis": "the target could not be used, so nothing was run"})
     sys.exit(2)
 
 
@@ -584,19 +601,53 @@ def esc(text):
     return "".join(out)
 
 
+def esc_listed(text):
+    """A member list's path as the list has it: a backslash stays one backslash (a Windows path matches the list's text); only an
+    undecodable byte or a control character is written as \\xNN."""
+    out = []
+    for ch in text:
+        o = ord(ch)
+        if 0xDC80 <= o <= 0xDCFF:
+            out.append("\\x%02x" % (o - 0xDC00))
+        elif o < 0x20 or o == 0x7F:
+            out.append("\\x%02x" % o)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def listing_rows(path, deadline, max_members, cov):
     """The paths of a member list: a TSV whose header has a `path` column (and maybe `type` and `size`), or a path a line. Backslashes are
-    read as separators. Yields (path, size or None)."""
+    read as separators. Yields (path, size or None). A line is read LINE_MAX bytes at a time at most: a longer one is skipped (it is
+    in limits_hit, and the run is partial), so memory is bounded whatever the list holds."""
     with open_regular(path) as raw:
         column = size_column = type_column = None
         first = True
-        for number, line in enumerate(raw):
+        number = 0
+        while True:
             if number % 4096 == 0 and time.monotonic() > deadline:
                 cov["limits_hit"].append("seconds: the clock ran out after %d lines of the list" % number)
                 return
             if cov["members"] >= max_members:
                 cov["limits_hit"].append("members: the list has more than %d rows" % max_members)
                 return
+            line = raw.readline(LINE_MAX + 1)
+            if not line:
+                return
+            number += 1
+            if len(line) > LINE_MAX:
+                skipped = 0
+                while line and not line.endswith(b"\n"):
+                    skipped += 1
+                    if skipped % 16 == 0 and time.monotonic() > deadline:
+                        cov["limits_hit"].append("seconds: the clock ran out inside line %d of the list, which is longer than %d bytes" % (number, LINE_MAX))
+                        return
+                    line = raw.readline(LINE_MAX + 1)
+                cov["long_lines"] = cov.get("long_lines", 0) + 1
+                if cov["long_lines"] == 1:
+                    cov["limits_hit"].append("lines: line %d of the list (and any other line longer than %d bytes) was not read" % (number, LINE_MAX))
+                first = False
+                continue
             text = line.rstrip(b"\r\n").decode("utf-8", "surrogateescape")
             if first:
                 first = False
@@ -627,14 +678,22 @@ def listing_rows(path, deadline, max_members, cov):
 
 
 def list_coverage(path):
-    """What the member list's own coverage record (coverage.json beside it, as a recipe that wrote the list leaves it) says of the list:
-    {status, read_from, why, recipe}. status is the record's (complete, partial, failed), "unknown" when the record gives none or cannot be
-    read, and "not recorded" when there is no record: only "complete" says the list is the whole of its object. The record is opened
-    without waiting and without following a link, and read only when it is a regular file of at most COVERAGE_MAX_BYTES."""
-    where = os.path.join(os.path.dirname(path) or ".", "coverage.json")
-    out = {"status": "not recorded", "read_from": where}
+    """What the member list's own coverage record says of the list: {status, read_from, why, recipe}. The record is the coverage.json in
+    the directory where the list really lies (a link to a list is resolved, so a record beside the link is not taken for the list's own),
+    and it stands for one list: the one named members.tsv (LIST_NAME), the name every lister of the house gives its member list
+    (ad1-items, archive-members and android-backup write it beside their record; ad1-items' attributes.tsv lies beside the same record and
+    is not a member list). status is the record's (complete, partial, failed); "unknown" when the record gives none or cannot be read;
+    "not recorded" when there is no record; "not named" when the record does not stand for this list. A record that says complete and
+    lists a limit, an error or a missing segment contradicts itself and counts as partial. Only "complete" says the list is the whole of
+    its object. The record is opened without waiting and without following a link, and read only when it is a regular file of at most
+    COVERAGE_MAX_BYTES."""
+    real = os.path.realpath(path)
+    where = os.path.join(os.path.dirname(real), "coverage.json")
+    out = {"status": "not recorded", "read_from": esc(os.path.relpath(where))}
+    if real != os.path.abspath(path):
+        out["list_is_a_link_to"] = esc(os.path.relpath(real))
     if not os.path.lexists(where):
-        out["why"] = ["no coverage.json beside the list: nothing records whether the list is the whole of its object"]
+        out["why"] = ["no coverage.json beside the list (where it really lies): nothing records whether the list is the whole of its object"]
         return out
     fd = None
     try:
@@ -659,8 +718,18 @@ def list_coverage(path):
     out["status"] = status if status in ("complete", "partial", "failed") else "unknown"
     if isinstance(record.get("recipe"), str):
         out["recipe"] = esc(record["recipe"])[:100]
+    why = []
+    if os.path.basename(real) != LIST_NAME:
+        out["record_status"] = out["status"]
+        out["status"] = "not named"
+        why.append("the coverage record beside the list stands for the member list named %s, and this list is %s: the record says nothing of it"
+                   % (LIST_NAME, esc(os.path.basename(real))[:200]))
+    elif out["status"] == "complete":
+        said = [key for key in ("limits_hit", "errors", "segments_missing") if isinstance(record.get(key), list) and record[key]]
+        if said:
+            out["status"] = "partial"
+            why.append("the record says complete and lists %s: it contradicts itself, and is read as partial" % " and ".join(said))
     if out["status"] != "complete":
-        why = []
         for key in ("limits_hit", "errors", "segments_missing"):
             if isinstance(record.get(key), list):
                 why += ["%s: %s" % (key, v) if key != "errors" else str(v) for v in record[key]]
@@ -668,6 +737,8 @@ def list_coverage(path):
             why.append(record["status_basis"])
         if out["status"] == "unknown":
             why.append("the record gives no status that can be read")
+        if not why:
+            why.append("the record's status is %s, and it says no more" % out["status"])
         seen = []
         for text in why:
             text = esc(text)
@@ -680,25 +751,57 @@ def list_coverage(path):
     return out
 
 
+def note_error(cov, text):
+    """An error of the walk: every one is counted (errors_total), the first 200 are kept with their words, so memory stays bounded."""
+    cov["errors_total"] = cov.get("errors_total", 0) + 1
+    if len(cov["errors"]) < 200:
+        cov["errors"].append(text)
+
+
+def _inside(real, top):
+    return real == top or real.startswith(top.rstrip(os.sep) + os.sep)
+
+
 def tree_rows(root, deadline, max_members, cov):
-    """Every file below a directory, links never followed: (path relative to it, size, False), and a link by its own name: (path, None, True)."""
+    """Every file below a directory, links never followed: (path relative to it, size, False), and a link by its own name: (path, None, True).
+    The clock is read at least once per 4096 entries of a directory, and a directory is listed up to max_members entries. A link whose
+    target is a directory outside the tree is counted in links_to_directories_outside: what lies below it is not read (only a stat of the
+    target tells it is a directory; nothing in it is listed)."""
     stack = [""]
+    top = os.path.realpath(root)
     while stack:
         rel = stack.pop()
         if time.monotonic() > deadline:
             cov["limits_hit"].append("seconds: the clock ran out inside %s; %d directories were not entered" % (esc(rel) or "the tree's root", len(stack) + 1))
             return
+        listed = []
         try:
             with os.scandir(os.path.join(root, rel) if rel else root) as entries:
-                listed = sorted(entries, key=lambda e: e.name)
+                for entry in entries:
+                    listed.append(entry)
+                    if len(listed) % 4096 == 0 and time.monotonic() > deadline:
+                        cov["limits_hit"].append("seconds: the clock ran out while %s was listed; %d directories were not entered" % (esc(rel) or "the tree's root", len(stack) + 1))
+                        return
+                    if len(listed) > max_members:
+                        cov["limits_hit"].append("members: the tree has more than %d entries: %s alone has more, and was not listed" % (max_members, esc(rel)[:200] or "the tree's root"))
+                        return
         except OSError as exc:
-            cov["errors"].append("a directory could not be listed (%s): %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__, esc(rel)[:200]))
+            note_error(cov, "a directory could not be listed (%s): %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__, esc(rel)[:200]))
             continue
-        for entry in listed:
+        listed.sort(key=lambda e: e.name)
+        for number, entry in enumerate(listed, 1):
+            if number % 4096 == 0 and time.monotonic() > deadline:
+                cov["limits_hit"].append("seconds: the clock ran out inside %s; %d directories were not entered" % (esc(rel) or "the tree's root", len(stack) + 1))
+                return
             name = os.path.join(rel, entry.name) if rel else entry.name
             try:
                 if entry.is_symlink():
                     cov["links_not_followed"] = cov.get("links_not_followed", 0) + 1
+                    try:
+                        if os.path.isdir(entry.path) and not _inside(os.path.realpath(entry.path), top):
+                            cov["links_to_directories_outside"] = cov.get("links_to_directories_outside", 0) + 1
+                    except (OSError, ValueError):
+                        pass
                     if cov["members"] >= max_members:
                         cov["limits_hit"].append("members: the tree has more than %d files" % max_members)
                         return
@@ -711,86 +814,170 @@ def tree_rows(root, deadline, max_members, cov):
                         return
                     yield name, entry.stat(follow_symlinks=False).st_size, False
             except OSError:
-                cov["errors"].append("an entry could not be read: %s" % esc(name)[:200])
+                note_error(cov, "an entry could not be read: %s" % esc(name)[:200])
+
+
+def zip_vba(fh, size, deadline):
+    """A VBA project in a ZIP's central directory, walked here record by record (no member is opened, and no more than ZIP_RECORDS
+    records are walked, so memory is the same whatever the directory declares): (True | False | None, how, limit or None)."""
+    tail_len = min(size, 22 + 0xFFFF)
+    fh.seek(size - tail_len)
+    tail = fh.read(tail_len)
+    at, eocd = tail.rfind(b"PK\x05\x06"), None
+    while at >= 0:                          # the record whose comment ends the file, else the last one that fits
+        if at + 22 <= len(tail):
+            if at + 22 + struct.unpack_from("<H", tail, at + 20)[0] == len(tail):
+                eocd = at
+                break
+            eocd = at if eocd is None else eocd
+        at = tail.rfind(b"PK\x05\x06", 0, at)
+    if eocd is None:
+        return None, "it begins like a ZIP and has no end-of-central-directory record: its directory cannot be found", None
+    _sig, _disk, _cd_disk, _n_disk, entries, cd_size, _cd_offset, _comment = struct.unpack_from("<IHHHHIIH", tail, eocd)
+    cd_end = size - tail_len + eocd
+    locator = b""
+    if cd_end >= 20 + 56:
+        fh.seek(cd_end - 20)
+        locator = fh.read(20)
+    if locator[:4] == b"PK\x06\x07":            # a ZIP64 end record before the end record: its counts are the ones that hold
+        fh.seek(cd_end - 20 - 56)
+        record = fh.read(56)
+        if len(record) < 56 or record[:4] != b"PK\x06\x06":
+            return None, "its ZIP64 end record does not read: its directory does not read", None
+        entries, cd_size = struct.unpack_from("<QQ", record, 32)
+        cd_end -= 20 + 56
+    start = cd_end - cd_size
+    if start < 0:
+        return None, "its end record puts the directory before the file's start: its directory does not read", None
+    fh.seek(start)
+    walked, at = 0, start
+    while walked < entries and at < cd_end:
+        if walked >= ZIP_RECORDS:
+            return None, "its ZIP directory has more than %d members: the first %d were walked and hold no VBA project" % (ZIP_RECORDS, ZIP_RECORDS), \
+                "vba: a ZIP directory of more than %d members was walked only that far" % ZIP_RECORDS
+        if walked % CLOCK_EVERY == 0 and time.monotonic() > deadline:
+            return None, "the clock ran out while its ZIP directory was walked", "seconds: the clock ran out while a ZIP directory was walked"
+        head = fh.read(46)
+        if len(head) < 46 or head[:4] != b"PK\x01\x02":
+            return None, "its ZIP directory does not read (record %d is not a directory record)" % (walked + 1), None
+        name_len, extra_len, comment_len = struct.unpack_from("<HHH", head, 28)
+        name = fh.read(name_len)
+        if name.lower().endswith(b"vbaproject.bin"):
+            return True, "the member list of its ZIP directory (no member was opened)", None
+        if extra_len or comment_len:
+            fh.seek(extra_len + comment_len, 1)
+        at += 46 + name_len + extra_len + comment_len
+        walked += 1
+    if walked < entries:
+        return None, "its ZIP directory ends after %d of the %d members its end record declares" % (walked, entries), None
+    return False, "the member list of its ZIP directory (no member was opened)", None
 
 
 def vba_in_file(path, kind, deadline):
-    """What the file's own bytes say about a VBA project: (True | False | None when it could not be told, how)."""
+    """What the file's own bytes say about a VBA project: (True | False | None when it could not be told, how, limit or None). limit is
+    a line for limits_hit when a limit of the recipe (size, records, clock) is why it could not be told."""
     try:
-        if os.path.getsize(path) > SCAN_BYTES:
-            return None, "it is over %d bytes: not looked into" % SCAN_BYTES
+        size = os.path.getsize(path)
+        if size > SCAN_BYTES:
+            return None, "it is over %d bytes: not looked into" % SCAN_BYTES, "vba: a document over %d bytes was not looked into" % SCAN_BYTES
+        if size == 0:
+            return False, "it is empty (0 bytes)", None
         with open_regular(path) as fh:
             head = fh.read(8)
             if head[:4] == b"PK\x03\x04":
                 try:
-                    with zipfile.ZipFile(fh) as archive:
-                        names = []
-                        for info in archive.infolist():
-                            names.append(info.filename.lower())
-                            if len(names) > 20000:
-                                return None, "its ZIP directory has more than 20,000 members: not read"
-                        return any(n.endswith("vbaproject.bin") for n in names), "the member list of its ZIP directory (no member was opened)"
-                except (zipfile.BadZipFile, OSError, ValueError, NotImplementedError, RuntimeError):
-                    return None, "it begins like a ZIP and its directory does not read"
+                    return zip_vba(fh, os.fstat(fh.fileno()).st_size, deadline)
+                except (OSError, ValueError, struct.error):
+                    return None, "it begins like a ZIP and its directory does not read", None
             if head == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
                 fh.seek(0)
                 read, tail = 0, b""
                 while read < OLE_BYTES:
                     if time.monotonic() > deadline:
-                        return None, "the clock ran out while it was read"
+                        return None, "the clock ran out while it was read", "seconds: the clock ran out while a document was read"
                     block = fh.read(1 << 20)
                     if not block:
-                        return False, "a search of its bytes for the directory name _VBA_PROJECT (UTF-16LE)"
+                        return False, "a search of its bytes for the directory name _VBA_PROJECT (UTF-16LE)", None
                     if VBA_OLE in tail + block:
-                        return True, "a search of its bytes for the directory name _VBA_PROJECT (UTF-16LE)"
+                        return True, "a search of its bytes for the directory name _VBA_PROJECT (UTF-16LE)", None
                     read += len(block)
                     tail = block[-len(VBA_OLE):]
-                return None, "it is over %d bytes: only that much was searched" % OLE_BYTES
-            return None, "it is neither a ZIP nor an OLE compound file by its first bytes (its name says %s)" % kind
+                return None, "it is over %d bytes: only that much was searched" % OLE_BYTES, "vba: an OLE document over %d bytes was searched only that far" % OLE_BYTES
+            return None, "it is neither a ZIP nor an OLE compound file by its first bytes (its name says %s)" % kind, None
     except (OSError, ValueError):
-        return None, "it could not be opened"
+        return None, "it could not be opened", None
 
 
-def names_in_file(path, names, deadline):
-    """Which of the names (lower-case strings) occur in a file's bytes as UTF-16LE or UTF-8, case folded for ASCII: a set, and whether
-    the whole file was read."""
-    found = set()
-    patterns = {}
+def name_index(names):
+    """The names (lower-case file names, each ending in its suffix) as byte patterns, by the bytes of their suffix: {suffix bytes: (the
+    pattern lengths, {pattern: name})}, UTF-16LE and UTF-8; and the longest pattern. A name occurs in a text exactly when, at some place
+    where its suffix ends, the bytes of the name's length that end there are the name: so a search costs a find of each suffix and a few
+    look-ups per place, whatever the number of names."""
+    index, longest = {}, 0
     for name in names:
-        try:
-            patterns[name] = (name.encode("utf-16-le"), name.encode("utf-8"))
-        except UnicodeError:
+        dot = name.rfind(".")
+        if dot <= 0:
             continue
-    longest = max((len(p[0]) for p in patterns.values()), default=0)
+        for encoding in ("utf-16-le", "utf-8"):
+            try:
+                pattern, suffix = name.encode(encoding), name[dot:].encode(encoding)
+            except UnicodeError:
+                continue
+            lengths, patterns = index.setdefault(suffix, (set(), {}))
+            lengths.add(len(pattern))
+            patterns[pattern] = name
+            longest = max(longest, len(pattern))
+    return {suffix: (sorted(lengths), patterns) for suffix, (lengths, patterns) in index.items()}, longest
+
+
+def names_in_file(path, index, deadline):
+    """Which of the names of a name_index occur in a file's bytes as UTF-16LE or UTF-8, case folded for ASCII: a set, and why the whole
+    file was not searched (None when it was; "seconds", "size" past SCAN_BYTES, or "error"). The clock is read once per CLOCK_EVERY places a suffix occurs, so no block can hold the run past it."""
+    found = set()
+    by_suffix, longest = index
+    steps = 0
     try:
         with open_regular(path) as fh:
             read, tail = 0, b""
             while read < SCAN_BYTES:
                 if time.monotonic() > deadline:
-                    return found, False
+                    return found, "seconds"
                 block = fh.read(4 << 20)
                 if not block:
-                    return found, True
+                    return found, None
                 window = (tail + block).lower()
-                for name, (wide, narrow) in patterns.items():
-                    if name not in found and (wide in window or narrow in window):
-                        found.add(name)
+                for suffix, (lengths, patterns) in by_suffix.items():
+                    at = window.find(suffix)
+                    while at >= 0:
+                        steps += 1
+                        if steps % CLOCK_EVERY == 0 and time.monotonic() > deadline:
+                            return found, "seconds"
+                        end = at + len(suffix)
+                        for length in lengths:
+                            if length > end:
+                                break
+                            name = patterns.get(window[end - length:end])
+                            if name is not None:
+                                found.add(name)
+                        at = window.find(suffix, at + 1)
                 read += len(block)
                 tail = block[-longest:] if longest else b""
-            return found, False
+            return found, "size" if fh.read(1) else None
     except (OSError, ValueError):
-        return found, False
+        return found, "error"
 
 
 def detect(path):
-    """(True | False | "unknown", why). A directory applies when a profile folder is within three levels of it; a list when one of its
-    first lines names a profile path."""
+    """(True | False | "unknown", why). A directory applies when a profile folder is within three levels of it; a list when a line of it
+    names a profile path. A directory that could not be listed, or a list read only in part (DETECT_LIST_BYTES, DETECT_SECONDS), with
+    no profile found in what was read, cannot be told: "unknown", never False."""
+    began = time.monotonic()
     try:
         st = os.stat(path)
     except (OSError, ValueError) as exc:
         return "unknown", "the target cannot be read: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__)
     if stat.S_ISDIR(st.st_mode):
-        level, seen = [path], 0
+        level, seen, unlisted = [path], 0, 0
         for _depth in range(4):
             below = []
             for directory in level:
@@ -800,28 +987,47 @@ def detect(path):
                             seen += 1
                             if seen > 20000:
                                 return "unknown", "more than 20,000 entries in the first levels of the tree: not told"
-                            if entry.is_dir(follow_symlinks=False):
-                                if entry.name.lower() in ("users", "documents and settings"):
-                                    return True, "a profile folder (%s) is in the tree" % entry.name
-                                below.append(entry.path)
-                            elif entry.name.lower() == "ntuser.dat":
-                                return True, "a user's registry hive is in the tree: it is a profile"
+                            if seen % 4096 == 0 and time.monotonic() - began > DETECT_SECONDS:
+                                return "unknown", "the first levels of the tree were not walked in %d seconds: not told" % DETECT_SECONDS
+                            try:
+                                if entry.is_dir(follow_symlinks=False):
+                                    if entry.name.lower() in ("users", "documents and settings"):
+                                        return True, "a profile folder (%s) is in the tree" % entry.name
+                                    below.append(entry.path)
+                                elif entry.name.lower() == "ntuser.dat":
+                                    return True, "a user's registry hive is in the tree: it is a profile"
+                            except OSError:
+                                unlisted += 1
                 except OSError:
-                    continue
+                    unlisted += 1
             level = below
+        if unlisted:
+            return "unknown", "%d director%s within three levels of the directory could not be listed or read, and no profile folder was found in the rest: not told" % (
+                unlisted, "y" if unlisted == 1 else "ies")
         return False, "no Users or Documents and Settings folder and no NTUSER.DAT within three levels of the directory"
     if not stat.S_ISREG(st.st_mode):
         return False, "neither a directory nor a regular file"
     try:
         with open_regular(path) as fh:
-            head = fh.read(4 << 20)
+            read, tail = 0, ""
+            while True:
+                if read >= DETECT_LIST_BYTES:
+                    return "unknown", "no path of a user profile in the first %d bytes of the list, and the rest was not read: not told" % read
+                if time.monotonic() - began > DETECT_SECONDS:
+                    return "unknown", "no path of a user profile in the first %d bytes of the list, read in %d seconds; the rest was not read: not told" % (read, DETECT_SECONDS)
+                block = fh.read(4 << 20)
+                if not block:
+                    break
+                if read == 0 and b"\x00" in block[:4096]:
+                    return False, "not a text list (it holds NUL bytes)"
+                read += len(block)
+                text = tail + block.decode("utf-8", "replace").replace("\\", "/")
+                if LISTED_PROFILE.search(text):
+                    return True, "the list names paths inside a user profile"
+                tail = text[-1024:]
     except (OSError, ValueError) as exc:
         return "unknown", "the list cannot be read: %s" % (getattr(exc, "strerror", None) or exc.__class__.__name__)
-    if b"\x00" in head[:4096]:
-        return False, "not a text list (it holds NUL bytes)"
-    if PROFILE.search(head.decode("utf-8", "replace").replace("\\", "/")):
-        return True, "the list names paths inside a user profile"
-    return False, "no path of a user profile in the first %d bytes of the list" % len(head)
+    return False, "no path of a user profile in the whole list (%d bytes)" % read
 
 
 def run(path, out_dir):
@@ -853,11 +1059,12 @@ def run(path, out_dir):
     install_signal_handlers(_stopped)
 
     documents, recent, hives, antivirus, prefetch, linked = [], collections.defaultdict(set), {}, [], set(), set()
+    applications = {a.lower() for a in APPLICATION.values()}
+    document_suffixes = set(MACRO_NAMES) | set(LEGACY_NAMES) | (set(PLAIN_OOXML) if is_tree else set())
+    antivirus_seen, source_limits = 0, []      # a cut of a signal's source: in limits_hit, but the names were still all read
     rows = tree_rows(path, deadline, max_members, cov) if is_tree else listing_rows(path, deadline, max_members, cov)
     try:
         for raw, size, link in rows:
-            if link:
-                linked.add(raw)
             cov["members"] += 1
             plain = raw.replace("\\", "/")
             lower = "/" + plain.lower().lstrip("/")
@@ -866,56 +1073,95 @@ def run(path, out_dir):
             suffix = base[dot:] if dot > 0 else ""
             profile = PROFILE.search(lower)
             owner = profile.group(1) if profile else ""
-            if suffix in MACRO_NAMES or suffix in LEGACY_NAMES or (is_tree and suffix in PLAIN_OOXML):
+            if suffix in document_suffixes:
                 if base.startswith("~$"):
                     cov["owner_files_skipped"] = cov.get("owner_files_skipped", 0) + 1
-                elif len(documents) < MAX_CANDIDATES * 5:
+                elif len(documents) < MAX_DOCUMENTS:
                     documents.append((raw, lower, base, suffix, size, owner))
+                    if link:
+                        linked.add(raw)
                 else:
-                    cov["limits_hit"].append("candidates: more than %d documents; the rest were not scored" % (MAX_CANDIDATES * 5))
+                    cov["limits_hit"].append("documents: more than %d macro-capable documents; the list was not read further and the rest were not scored" % MAX_DOCUMENTS)
                     break
             elif suffix == ".lnk" and ("/microsoft/windows/recent/" in lower or "/microsoft/office/recent/" in lower):
-                recent[base[:-4]].add(owner)
+                shortcut = base[:-4]
+                dot = shortcut.rfind(".")
+                if dot > 0 and shortcut[dot:] in document_suffixes:      # only a shortcut of a document can be a signal
+                    if shortcut in recent or len(recent) < MAX_RECENT:
+                        recent[shortcut].add(owner)
+                    elif not cov.get("recent_cut"):
+                        cov["recent_cut"] = True
+                        source_limits.append("recent: more than %d Recent shortcuts of documents; the names of the rest were not kept" % MAX_RECENT)
             elif base == "ntuser.dat" and owner and lower.endswith("/%s/ntuser.dat" % owner) and not link:
                 hives[owner] = raw
-            elif suffix == ".pf" and "/prefetch/" in lower:
+            elif suffix == ".pf" and "/prefetch/" in lower and base.split("-")[0] in applications:
                 prefetch.add(base.split("-")[0])
-            if ANTIVIRUS.search(lower) and len(antivirus) < 400 and not link:
-                antivirus.append(raw)
+            if ANTIVIRUS.search(lower) and not link:
+                antivirus_seen += 1
+                if len(antivirus) < MAX_ANTIVIRUS:
+                    antivirus.append(raw)
+                elif antivirus_seen == MAX_ANTIVIRUS + 1:
+                    source_limits.append("antivirus: more than %d antivirus logs and detection files; the names were searched for in the first %d only" % (MAX_ANTIVIRUS, MAX_ANTIVIRUS))
     except (OSError, ValueError) as exc:
         cov["errors"].append("the %s could not be read to its end: %s" % ("tree" if is_tree else "list", getattr(exc, "strerror", None) or exc.__class__.__name__))
-    read_to_the_end = not cov["limits_hit"] and not cov["errors"]
+    if antivirus_seen > MAX_ANTIVIRUS:
+        cov["antivirus_files_not_searched"] = antivirus_seen - MAX_ANTIVIRUS
+    outside = cov.get("links_to_directories_outside", 0)
+    read_to_the_end = not cov["limits_hit"] and not cov["errors"] and not outside
     # A member list is the whole of its object only when its own coverage record says so: a list cut by the recipe that wrote it (a
     # missing segment, a limit) is read to its end here and is still not the whole member list.
     list_cov = None if is_tree else list_coverage(path)
     whole = read_to_the_end and (list_cov is None or list_cov["status"] == "complete")
+    cov["limits_hit"] += source_limits
 
     # What the files themselves say, in a tree: a VBA project inside, the name in the profile's hive, the name in an antivirus log.
     vba = {}
     hive_names, antivirus_names, read_notes = {}, set(), []
-    names = sorted({d[2] for d in documents})
     if is_tree:
-        for raw, _lower, _base, suffix, _size, _owner in documents:
+        vba_limits, not_told, first_not_told = collections.Counter(), 0, None
+        for number, (raw, _lower, _base, suffix, _size, _owner) in enumerate(documents):
             if time.monotonic() > deadline:
-                cov["limits_hit"].append("seconds: the clock ran out before every document was looked into for a VBA project")
+                cov["limits_hit"].append("seconds: the clock ran out before %d of the %d documents were looked into for a VBA project" % (len(documents) - number, len(documents)))
                 break
             if raw in linked:
                 vba[raw] = (None, "it is a link, which is not followed: only its name was read")
                 continue
-            vba[raw] = vba_in_file(os.path.join(path, raw), MACRO_NAMES.get(suffix) or LEGACY_NAMES.get(suffix) or PLAIN_OOXML.get(suffix), deadline)
-        documents = [d for d in documents if d[3] not in PLAIN_OOXML or vba.get(d[0], (None,))[0]]
-        names = sorted({d[2] for d in documents})
+            has, how, limit = vba_in_file(os.path.join(path, raw), MACRO_NAMES.get(suffix) or LEGACY_NAMES.get(suffix) or PLAIN_OOXML.get(suffix), deadline)
+            vba[raw] = (has, how)
+            if has is None:
+                if limit:
+                    vba_limits[limit] += 1
+                else:
+                    not_told += 1
+                    first_not_told = first_not_told or "%s (%s)" % (esc(raw)[:200], how)
+        for limit, count in sorted(vba_limits.items()):
+            cov["limits_hit"].append("%s (%d document%s: ranked, with whether a VBA project is inside not told)" % (limit, count, "" if count == 1 else "s"))
+        if not_told:
+            read_notes.append("whether a VBA project is inside could not be told for %d document(s), each ranked with that said in its row; the first: %s" % (not_told, first_not_told))
+        # A document under a plain name is a candidate unless its own directory says it holds no VBA project: one that could not be told
+        # (or was not looked into) is ranked, and says so.
+        documents = [d for d in documents if d[3] not in PLAIN_OOXML or vba.get(d[0], (None,))[0] is not False]
+        index = name_index(sorted({d[2] for d in documents}))
+        searched = collections.Counter()
         for owner, hive in sorted(hives.items()):
-            found, all_read = names_in_file(os.path.join(path, hive), names, deadline)
+            found, cut = names_in_file(os.path.join(path, hive), index, deadline)
             hive_names[owner] = found
-            if not all_read:
-                read_notes.append("the registry hive of %s was not searched to its end" % esc(owner))
+            if cut == "error":
+                read_notes.append("the registry hive of %s could not be read to its end" % esc(owner))
+            elif cut:
+                searched[cut] += 1
         for log in antivirus:
             if os.path.isfile(os.path.join(path, log)) and not os.path.islink(os.path.join(path, log)):
-                found, all_read = names_in_file(os.path.join(path, log), names, deadline)
+                found, cut = names_in_file(os.path.join(path, log), index, deadline)
                 antivirus_names |= found
-                if not all_read:
-                    read_notes.append("an antivirus file was not searched to its end: %s" % esc(log)[:200])
+                if cut == "error":
+                    read_notes.append("an antivirus file could not be read to its end: %s" % esc(log)[:200])
+                elif cut:
+                    searched[cut] += 1
+        if searched["seconds"]:
+            cov["limits_hit"].append("seconds: the clock ran out before %d registry hive(s) or antivirus file(s) were searched to their end for the names" % searched["seconds"])
+        if searched["size"]:
+            cov["limits_hit"].append("scan: %d registry hive(s) or antivirus file(s) are over %d bytes and were searched only that far for the names" % (searched["size"], SCAN_BYTES))
 
     scored = []
     for raw, lower, base, suffix, size, owner in documents:
@@ -927,6 +1173,8 @@ def run(path, out_dir):
         elif suffix in LEGACY_NAMES:
             score += 1
             signals.append("+1 a legacy Office name (%s), a format that can hold macros" % suffix)
+        if is_tree and raw not in vba:
+            signals.append("+0 not looked into for a VBA project: the clock ran out first")
         if raw in vba:
             has, how = vba[raw]
             if has:
@@ -976,10 +1224,11 @@ def run(path, out_dir):
             signals.append("+1 a Prefetch file of %s exists (the application ran; which files it loaded was not read)" % APPLICATION[kind])
         scored.append((score, raw, kind, size, owner, signals))
     scored.sort(key=lambda s: (-s[0], s[1].lower()))
-    kept = scored[:MAX_CANDIDATES]
+    # Every scored document is a row (at most MAX_DOCUMENTS, a limit that is in limits_hit when it is met): the ranking is never cut here.
+    shown = esc if is_tree else esc_listed
     _write_text_whole(os.path.join(out_dir, "candidates.tsv"), "".join(
-        ["\t".join(COLUMNS) + "\n"] + ["%d\t%d\t%s\t%s\t%s\t%s\t%s\n" % (rank, score, esc(raw), kind, "" if size is None else size, esc(owner), "; ".join(signals))
-                                       for rank, (score, raw, kind, size, owner, signals) in enumerate(kept, 1)]))
+        ["\t".join(COLUMNS) + "\n"] + ["%d\t%d\t%s\t%s\t%s\t%s\t%s\n" % (rank, score, shown(raw), kind, "" if size is None else size, esc(owner), "; ".join(signals))
+                                       for rank, (score, raw, kind, size, owner, signals) in enumerate(scored, 1)]))
     cov["candidates"] = len(scored)
     cov["whole_list_read"] = whole
     cov["list_read_to_its_end"] = read_to_the_end
@@ -988,18 +1237,20 @@ def run(path, out_dir):
         if list_cov["status"] != "complete":
             read_notes.insert(0, "the member list itself is not known to be whole: its coverage record (%s) says %s%s" % (
                 esc(os.path.basename(list_cov["read_from"])), list_cov["status"], ": %s" % list_cov["why"][0] if list_cov.get("why") else ""))
-    if linked:
-        read_notes.append("%d link(s) in the tree were not followed: each is ranked by its own name only, and what it points at was not read" % len(linked))
+    if cov.get("links_not_followed"):
+        read_notes.append("%d link(s) in the tree were not followed: each is ranked by its own name only, and what it points at was not read" % cov["links_not_followed"])
+    if outside:
+        read_notes.insert(0, "%d link(s) in the tree lead to a directory outside it, which was not entered: the file names below them were not read" % outside)
     cov["sources"] = {"recent_shortcuts": sum(len(v) for v in recent.values()), "registry_hives": len(hives), "antivirus_files": len(antivirus), "prefetch_applications": sorted(prefetch & {a.lower() for a in APPLICATION.values()})}
     if read_notes:
         cov["not_read_to_the_end"] = read_notes[:20]
-    cov["covered"] = ("every file name of the %s (%d), ranked for macro-capable Office documents by their name%s, their folder, a Recent shortcut of the same name and the document application's Prefetch file%s"
-                      % ("tree" if is_tree else "member list", cov["members"], ", a VBA project inside (the ZIP directory, or the OLE directory name)" if is_tree else "",
+    cov["covered"] = ("%s file name%s of the %s (%d), ranked for macro-capable Office documents by their name%s, their folder, a Recent shortcut of the same name and the document application's Prefetch file%s"
+                      % ("every" if read_to_the_end else "the first", "" if read_to_the_end else "s read", "tree" if is_tree else "member list", cov["members"], ", a VBA project inside (the ZIP directory, or the OLE directory name)" if is_tree else "",
                          ", and their name in the bytes of the profile's NTUSER.DAT and of the antivirus files" if is_tree else ""))
     cov["not_covered"] = ("no macro was read or run and no document was opened as a document; the registry key, the event record and the Prefetch file's list were not parsed (regkv, evtx_query and prefetch_mam of the Windows pack read them); "
                           + ("a member list has names only: nothing inside a file was read, so a macro in a file named .docx, the registry and the antivirus logs are not in the ranking; " if not is_tree else "")
                           + "other first stages (a shortcut, a script, an installer, a disc image, a OneNote file) are not ranked; a name that occurs in a hive or a log is a lead to the record, not the record")
-    status = "complete" if whole and not read_notes else "partial"
+    status = "complete" if whole and not read_notes and not cov["limits_hit"] and not cov["errors"] else "partial"
     cov["status"] = status
     cov["status_basis"] = ("the whole %s was read (%d members)%s and every macro-capable document in it is ranked (%d)" % (
                                "tree" if is_tree else "member list", cov["members"], "" if is_tree else ", its own coverage record says the list is complete,", len(scored))
@@ -1008,10 +1259,10 @@ def run(path, out_dir):
     cov["seconds"] = round(time.monotonic() - started, 2)
     _write_json_whole(os.path.join(out_dir, "coverage.json"), cov, indent=2)
     _write_text_whole(os.path.join(out_dir, "index.tsv"),
-                      "candidates.tsv\tfirst-stage candidates (%d), ranked: rank, score, path, kind, size, profile, signals; each signal says what it adds and what was not read\n" % len(kept))
+                      "candidates.tsv\tfirst-stage candidates (%d), ranked: rank, score, path, kind, size, profile, signals; each signal says what it adds and what was not read\n" % len(scored))
     print_answer({"ok": True, "status": status, "members": cov["members"], "candidates": len(scored), "whole_list_read": whole,
                   **({"list_coverage": list_cov["status"]} if list_cov is not None else {}), "rule": cov["rule"],
-                  "first": [{"rank": i + 1, "score": s[0], "path": esc(s[1])[:300], "signals": len(s[5])} for i, s in enumerate(kept[:5])], "status_basis": cov["status_basis"]})
+                  "first": [{"rank": i + 1, "score": s[0], "path": shown(s[1])[:300], "signals": len(s[5])} for i, s in enumerate(scored[:5])], "status_basis": cov["status_basis"]})
     return 0
 
 

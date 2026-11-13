@@ -434,8 +434,8 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "cache_body", "version": 2}
-PARSER = "cache_body/2"
+TOOL = {"name": "cache_body", "version": 3}
+PARSER = "cache_body/3"
 DEFAULT_SECONDS, MAX_SECONDS = 100, 110         # under the manifest's 120
 DEFAULT_BYTES, MAX_BYTES = 256 << 20, 2 << 30   # the most one body may be when decoded
 MAX_RATIO = 2000                                # decoded bytes for one stored byte, past the first MiB
@@ -602,7 +602,10 @@ class Place:
                 os.makedirs(out, exist_ok=True)
                 fd = os.open(out, nofollow)
             else:
-                agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
+                agent = os.environ.get("AGENT_ID") or "tool"
+                if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}", agent):
+                    raise Refused("AGENT_ID is not a plain name (letters, digits, '_', '-' and '.', and no '.' first): outside a job the files go under "
+                                  "work/<AGENT_ID>/tool-output, and this one would not name a directory there. Nothing was written")
                 self.shown = "work/%s/tool-output" % agent
                 self.path = os.path.join("work", agent, "tool-output")
                 fd = os.open(".", nofollow)
@@ -783,12 +786,24 @@ def chunks_of(fd, offset, length):
 
 
 def brotli_module():
+    """(module, its name, why none is used): a brotli module whose decoder bounds the output of a call (output_buffer_limit, brotli 1.2
+    and later). An older one is not used: its process() returns all that a stored byte decodes to, which can be hundreds of MiB."""
+    older = None
     for name in ("brotli", "brotlicffi"):
         try:
-            return __import__(name), name
+            module = __import__(name)
         except Exception:  # noqa: BLE001 - not installed, or a broken build
             continue
-    return None, None
+        try:
+            engine = module.Decompressor()
+            engine.process(b"", output_buffer_limit=OUT_PIECE)
+            if hasattr(engine, "can_accept_more_data"):
+                return module, name, None
+        except Exception:  # noqa: BLE001 - no output_buffer_limit (TypeError), or a module that dislikes an empty input
+            pass
+        older = older or name
+    return None, None, ("the %s module of this image is older than 1.2: its decoder cannot bound what one call returns, so it is not used" % older
+                        if older else "no brotli or brotlicffi module imports in this image")
 
 
 def zstd_module():
@@ -835,27 +850,16 @@ class _Zlib:
 
 
 class _Brotli:
-    """brotli: with output_buffer_limit (brotli 1.2 and later) a call returns at most about OUT_PIECE and the rest is drained with empty
-    input (can_accept_more_data() can say True while output is still held, so the drain runs until a call returns nothing); without it the input is fed a byte at a time, so that one call returns what one byte of the stream can say (a few MiB at most).
-    A brotli decoder refuses bytes after the end of its stream: that shows as Damaged, and the replay (below) finds where the end was."""
+    """brotli 1.2 and later (brotli_module() takes no other): with output_buffer_limit a call returns at most about OUT_PIECE and the rest
+    is drained with empty input (can_accept_more_data() can say True while output is still held, so the drain runs until a call returns
+    nothing). A brotli decoder refuses bytes after the end of its stream: that shows as Damaged, and the replay (below) finds where the end was."""
+    piece = 16384
 
     def __init__(self, module):
         self.engine = module.Decompressor()
-        self.limited = hasattr(self.engine, "can_accept_more_data")
-        if self.limited:
-            try:
-                self.engine.process(b"", output_buffer_limit=OUT_PIECE)
-            except TypeError:
-                self.limited = False
-            except Exception:  # noqa: BLE001 - an empty input the module dislikes: the slow form
-                self.limited = False
-        self.piece = 16384 if self.limited else 1
 
     def feed(self, data):
         try:
-            if not self.limited:
-                yield self.engine.process(data)
-                return
             yield self.engine.process(data, output_buffer_limit=OUT_PIECE)
             while True:               # what the piece holds past the limit comes with empty input, until a call returns nothing
                 out = self.engine.process(b"", output_buffer_limit=OUT_PIECE)
@@ -976,16 +980,18 @@ def decoded(stored, encoding, most, state, again):
             engine = make()
         for at in range(0, len(block), engine.piece):
             piece = block[at:at + engine.piece]
+            given = 0                  # what this piece decoded to and was yielded before a refusal: the replay does not give it again
             try:
                 for out in engine.feed(piece):
                     tick()
                     part = take(out)
+                    given += len(part)
                     if part:
                         yield part
                     if state["cut"]:
                         return
             except Damaged:
-                yield from _replay(make, again, position, piece, state, take, name)
+                yield from _replay(make, again, position, piece, state, take, name, given)
                 return
             if engine.finished():
                 state["ended"] = True
@@ -999,11 +1005,21 @@ def decoded(stored, encoding, most, state, again):
     state["error"] = "the %s stream has no end marker: the stored body is cut after %d stored bytes" % (name, state["stored"])
 
 
-def _replay(make, again, position, piece, state, take, name):
-    """A decoder refused the piece at `position`, and what that piece decoded to was lost with the refusal. Decode the stored bytes before
-    it again (their output was written already, and is dropped here), then the piece a byte at a time: what decodes before the refused
-    byte is yielded, and a stream that ends inside the piece ends there (the bytes after it are what the decoder refused)."""
+def _replay(make, again, position, piece, state, take, name, given=0):
+    """A decoder refused the piece at `position`. Decode the stored bytes before it again (their output was written already, and is
+    dropped here), then the piece a byte at a time: what decodes before the refused byte is yielded, except its first `given` bytes,
+    which the piece had yielded before the refusal (a decoder is deterministic: the replay decodes the same bytes again, and the body
+    holds each decoded byte once), and a stream that ends inside the piece ends there (the bytes after it are what the decoder refused)."""
     engine = make()
+    skip = [given]
+
+    def fresh(out):
+        """The part of out the body does not hold yet."""
+        if skip[0]:
+            dropped = min(skip[0], len(out))
+            skip[0] -= dropped
+            out = out[dropped:]
+        return out
     done = 0
     for chunk in again(position):
         for at in range(0, len(chunk), engine.piece):
@@ -1022,7 +1038,7 @@ def _replay(make, again, position, piece, state, take, name):
         try:
             for out in engine.feed(piece[k:k + 1]):
                 tick()
-                part = take(out)
+                part = take(fresh(out))
                 if part:
                     yield part
                 if state["cut"]:
@@ -1039,7 +1055,10 @@ def _replay(make, again, position, piece, state, take, name):
 
 def response_headers(stream0):
     """What the stored response says about its body, from the header block inside the entry's first stream (lines separated by NUL,
-    as Chromium keeps them): {status_code, content_type, content_encoding, header_lines, block} or None when no block is found."""
+    as Chromium keeps them): {status_code, content_type, content_encoding, content_length, header_lines, block} or None when no block
+    is found. The codings are those of every Content-Encoding line, in order, each line's comma list taken apart (HTTP joins repeated
+    lines into one list): two lines are two codings, never the last one alone. Every Content-Length line is read; lines that disagree,
+    or a value that is no number, are said (content_length_said) and no length is taken."""
     start = stream0.find(b"HTTP/")
     if start < 0:
         return None
@@ -1050,16 +1069,42 @@ def response_headers(stream0):
     first = lines[0].decode("latin-1").split() if lines else []
     if len(first) >= 2 and first[1].isdigit() and len(first[1]) == 3:
         info["status_code"] = int(first[1])
+    codings, coding_lines, lengths = [], 0, []
     for line in lines[1:]:
         name, _, value = line.partition(b":")
         name, value = name.strip().lower(), value.strip().decode("latin-1")
         if name == b"content-encoding":
-            codings = [v.strip().lower() for v in value.split(",") if v.strip()]
-            info["content_encoding"] = codings if all(TOKEN.match(c) for c in codings) and len(codings) <= 4 else ["(not a token: see the headers file)"]
+            coding_lines += 1
+            codings += [v.strip().lower() for v in value.split(",") if v.strip()]
+        elif name == b"content-length":
+            lengths.append(value.strip())
         elif name == b"content-type":
             media = MEDIA.match(value)
             info["content_type"] = media.group(1).lower() if media else "(not a media type: see the headers file)"
+    if coding_lines:
+        info["content_encoding"] = codings if all(TOKEN.match(c) for c in codings) and len(codings) <= 4 else ["(not a token, or more than four codings: see the headers file)"]
+        if coding_lines > 1:
+            info["content_encoding_lines"] = coding_lines
+    if lengths:
+        if all(re.fullmatch(r"[0-9]{1,15}", v) for v in lengths) and len({int(v) for v in lengths}) == 1:
+            info["content_length"] = int(lengths[0])
+        else:
+            info["content_length_said"] = "%d Content-Length line(s) that are not one number: see the headers file" % len(lengths)
     return info
+
+
+RESPONSE_INFO_TRUNCATED = 1 << 12           # net/http/http_response_info.cc: the response was not finished when it was stored
+
+
+def response_flags(stream0):
+    """The flags of the HttpResponseInfo pickle the entry's first stream holds (a 4-byte payload size, then the flags), or None when the
+    stream does not read as one (a payload size that does not fit, or a version outside 1 to 3, RESPONSE_INFO_VERSION_MASK's byte)."""
+    if len(stream0) < 8:
+        return None
+    payload, flags = struct.unpack("<Ii", stream0[:8])
+    if payload + 4 > len(stream0) or payload < 4 or not 1 <= (flags & 0xFF) <= 3:
+        return None
+    return flags
 
 
 def webkit_time(raw):
@@ -1219,6 +1264,31 @@ class BlockCache:
                         return
                     address = entry["next"]
 
+    def stream_problem(self, entry, index):
+        """Why one of the entry's data streams cannot be read where its address points (None when it can, or when it has none), opening
+        no f_ file: a data file is opened (there are four), an external file is looked at (a link or a file that is not regular is no stream)."""
+        size, address = entry["sizes"][index], entry["addresses"][index]
+        if size == 0 or not address:
+            return None
+        try:
+            name, offset, span = self.locate(address)
+            if span is None:
+                st = os.lstat(os.path.join(self.directory, name))
+                if not stat.S_ISREG(st.st_mode):
+                    return "stream %d is in %s, which is a link or not a regular file" % (index, name)
+                file_size = st.st_size
+            else:
+                file_size = self._file(name)[1]
+                if size > span:
+                    return "stream %d is %d bytes at an address that spans %d" % (index, size, span)
+            if offset + size > file_size:
+                return "stream %d lies past the end of %s" % (index, name)
+        except Unreadable as exc:
+            return "stream %d: %s" % (index, exc)
+        except OSError as exc:
+            return "stream %d: its file cannot be looked at (%s)" % (index, describe(exc))
+        return None
+
     def stream(self, entry, index):
         """(file descriptor, offset, length) of one of the entry's data streams, or None when it has none."""
         size, address = entry["sizes"][index], entry["addresses"][index]
@@ -1304,6 +1374,11 @@ def main():
                     yield b"n\taddress\tstate\tcreated_utc\tcreated_raw\tkey_bytes\theaders_bytes\tbody_bytes\tbody_in\tsparse\tkey\n"
                     for n, entry in cache.walk(problems):
                         count[0] = n
+                        for index in (0, 1):
+                            problem = cache.stream_problem(entry, index)
+                            if problem:
+                                problems["streams_unreadable"] = problems.get("streams_unreadable", 0) + 1
+                                problems.setdefault("first_stream_unreadable", "entry %d (0x%08x): %s" % (n, entry["address"], problem))
                         where = cache.locate(entry["addresses"][1])[0] if entry["sizes"][1] and entry["addresses"][1] & 0x80000000 else ""
                         yield ("%d\t0x%08x\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n" % (
                             n, entry["address"], ("normal", "evicted", "doomed")[entry["state"]], webkit_time(entry["created_raw"]) or "", entry["created_raw"], len(entry["key"]),
@@ -1320,6 +1395,9 @@ def main():
                     reasons.append("%d chain(s) were cut at a loop, %d entry record(s) did not read as entries%s%s: what they led to is not in the list" % (
                         problems["chains_cut"], problems["entries_unreadable"], ", the list stopped at %d entries" % MAX_ENTRIES if problems.get("stopped_at_limit") else "",
                         ", the index is shorter than its table" if getattr(cache, "table_cut", False) else ""))
+                if problems.get("streams_unreadable"):
+                    reasons.append("%d stream(s) of listed entries point where the cache holds no readable bytes (the first: %s): those entries are listed, "
+                                   "and their headers or body cannot be taken" % (problems["streams_unreadable"], problems["first_stream_unreadable"]))
                 answer = {**common, "mode": "list", "entries": count[0], "entries_the_index_says": cache.entries_said, **({"entries_file": listed} if listed else {}),
                           "columns": ["n", "address", "state", "created_utc", "created_raw", "key_bytes", "headers_bytes", "body_bytes", "body_in", "sparse", "key"],
                           "created": "created_raw is microseconds since 1601-01-01 UTC, as the cache keeps it; created_utc is that value as ISO 8601",
@@ -1394,13 +1472,27 @@ def main():
             files["key"] = place.write("key.txt", esc(key).encode("utf-8") + b"\n", 0o600)
         if headers:
             files["headers"] = place.write("headers.txt", b"\n".join(headers["block"].split(b"\x00")) + b"\n", 0o600)
-            answer["response"] = {k: headers[k] for k in ("status_code", "content_type", "content_encoding", "header_lines") if k in headers}
+            answer["response"] = {k: headers[k] for k in ("status_code", "content_type", "content_encoding", "content_encoding_lines", "content_length",
+                                                          "content_length_said", "header_lines") if k in headers}
         elif kind != "plain":
             answer["response"] = {"said": "no HTTP header block was found in the entry's first stream (%d bytes)" % len(stream0)}
     except OSError as exc:
         files["write_error"] = "the key or the headers could not be written (%s)" % describe(exc)
         reasons.append("the key or the headers file could not be written")
     answer["key_in_answer"] = False
+    if kind == "simple" and "key_sha256_matches" not in source and expected_crc is None:
+        answer["checks"] = "none: the entry records neither its key's SHA-256 nor its body's CRC-32"
+        reasons.append("the entry records neither its key's SHA-256 nor its body's CRC-32: where the body begins rests on the key length in the header alone, "
+                       "and nothing checks that the body file holds the stored body")
+    flags = response_flags(stream0) if stream0 else None
+    if flags is not None and flags & RESPONSE_INFO_TRUNCATED:
+        answer.setdefault("response", {})["truncated"] = True
+        reasons.append("the entry marks its own response truncated (the browser stored it before the response had ended): the body is not the whole response")
+    if headers and "content_length" in headers and headers["content_length"] != body_length:
+        reasons.append("the response's Content-Length says %d bytes and the entry stores %d: the stored body is %s" % (
+            headers["content_length"], body_length, "cut" if body_length < headers["content_length"] else "not the length the response said"))
+    if headers and "content_length_said" in headers:
+        reasons.append("the response's Content-Length lines are not one number: the stored body's length is not checked against them")
     # Which encoding: the caller's word, else the stored response's header, else a signature (gzip and zstd have one; deflate and brotli do not).
     said_by = "the caller"
     head = b""
@@ -1414,25 +1506,35 @@ def main():
                 encoding = "gzip" if codings[0] == "x-gzip" else codings[0]
             else:
                 encoding = "identity"
-                answer["not_decoded"] = "the header names %d codings, or one this tool does not decode: the stored bytes were written as they are" % len(codings)
-                reasons.append("the body's content coding is not one this tool decodes")
-        elif head[:3] == b"\x1f\x8b\x08":
-            encoding, said_by = "gzip", "the stored bytes' own signature (no header said)"
-        elif head[:4] == b"\x28\xb5\x2f\xfd":
-            encoding, said_by = "zstd", "the stored bytes' own signature (no header said)"
+                if len(codings) > 1:
+                    answer["not_decoded"] = ("the response names %d content codings at once (%s, in the order they were applied, from every Content-Encoding "
+                                             "line): several codings are not decoded, and the stored bytes were written as they are" % (len(codings), ", ".join(codings)))
+                    reasons.append("the response names %d content codings at once (%s): several are not decoded, and the body file holds the stored bytes, "
+                                   "still coded" % (len(codings), ", ".join(codings)))
+                else:
+                    answer["not_decoded"] = "the header names a coding this tool does not decode: the stored bytes were written as they are"
+                    reasons.append("the body's content coding is not one this tool decodes")
+        elif head[:3] == b"\x1f\x8b\x08" or head[:4] == b"\x28\xb5\x2f\xfd":
+            encoding, said_by = "gzip" if head[:1] == b"\x1f" else "zstd", "the stored bytes' own signature (no header said)"
+            if headers:
+                answer["signature_note"] = ("the stored response names no Content-Encoding, and its body begins with a %s signature: it was decoded by that "
+                                            "signature, so the body file holds what the %s file decodes to, while the response's own body is the %s file as "
+                                            "stored (encoding: identity writes that)" % ((encoding,) * 3))
+                reasons.append("decoded as %s by the bytes' own signature although the stored response names no Content-Encoding: the body may be a %s "
+                               "file the server sent as it is (encoding: identity writes the stored bytes)" % (encoding, encoding))
         else:
             encoding, said_by = "identity", "nothing: no header named a coding and the bytes begin with no gzip or zstd signature (deflate and brotli have none)"
-    undecodable = None
+    undecodable, why_not = None, None
     if encoding == "br" and brotli_module()[0] is None:
-        undecodable = "brotli: not decodable here"
+        undecodable, why_not = "brotli: not decodable here", brotli_module()[2]
     if encoding == "zstd" and zstd_module()[0] is None:
-        undecodable = "zstd: not decodable here"
+        undecodable, why_not = "zstd: not decodable here", "no compression.zstd or zstandard module imports in this image"
     answer["encoding"] = {"coding": encoding, "said_by": said_by}
     if encoding in ("br", "zstd") and not undecodable:
         answer["encoding"]["decoder"] = (brotli_module() if encoding == "br" else zstd_module())[1] + " (a Python module of this image)"
     if undecodable:
         answer["encoding"]["decoded"] = False
-        answer["encoding"]["said"] = "%s (no brotli, brotlicffi or zstandard module imports in this image): the stored bytes were written as they are, still compressed" % undecodable
+        answer["encoding"]["said"] = "%s (%s): the stored bytes were written as they are, still compressed" % (undecodable, why_not)
         reasons.append(undecodable)
     state = {}
     body_info = {"stored_bytes": body_length}

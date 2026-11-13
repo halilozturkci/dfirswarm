@@ -12,7 +12,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { PYTHON3 } from "./host-gates.ts";
@@ -55,9 +55,10 @@ for d, _dirs, files in sorted(os.walk(root)):
     for f in sorted(files):
         n += 1
         rows.append("%d\tx:%d\tfile\t%d\tC:\\%s" % (n, n, os.path.getsize(os.path.join(d, f)), os.path.relpath(os.path.join(d, f), root).replace("/", "\\")))
-open(top + "/members list.tsv", "w").write("\n".join(rows) + "\n")
+os.makedirs(top + "/listing", exist_ok=True)
+open(top + "/listing/members.tsv", "w").write("\n".join(rows) + "\n")
 # The coverage record the recipe that wrote a list leaves beside it (a catalogue generation's coverage.json): this one says the list is whole.
-open(top + "/coverage.json", "w").write('{"recipe": "a-lister", "status": "complete", "status_basis": "every item of the image was listed"}')
+open(top + "/listing/coverage.json", "w").write('{"recipe": "a-lister", "status": "complete", "status_basis": "every item of the image was listed"}')
 print(n)
 `;
 
@@ -111,10 +112,10 @@ test("a member list gives the same first rank from names alone, and says what a 
   await withRun(async (run) => {
     const members = Number(py(BUILD, [join(run, "inputs/case files")], run).trim());
     const out = "store/jobs/j000001/out/from list";
-    const r = recipe(run, "run", { paths: ["inputs/case files/members list.tsv"] }, out);
+    const r = recipe(run, "run", { paths: ["inputs/case files/listing/members.tsv"] }, out);
     assert.equal(r.code, 0, JSON.stringify(r.doc));
     const rows = await table(join(run, out, "candidates.tsv"));
-    assert.equal(rows[0]!.path, "C:\\\\Users\\\\sam\\\\Music\\\\old albums\\\\notes for you.docm", "the path as the list has it, backslashes escaped");
+    assert.equal(rows[0]!.path, "C:\\Users\\sam\\Music\\old albums\\notes for you.docm", "the path as the list has it: a backslash is one backslash, as in the list's text");
     assert.equal(rows.length, 3, "a project under a plain name is not seen from names");
     assert.doesNotMatch(rows[0]!.signals, /VBA project|NTUSER|antivirus/);
     assert.match(rows[0]!.signals, /a Recent shortcut carries its name/);
@@ -129,11 +130,11 @@ test("a member list gives the same first rank from names alone, and says what a 
 test("a member list that is itself partial, or whose coverage is not recorded, makes the ranking partial and whole_list_read false", async () => {
   await withRun(async (run) => {
     py(BUILD, [join(run, "inputs/case files")], run);
-    const record = join(run, "inputs/case files/coverage.json");
+    const record = join(run, "inputs/case files/listing/coverage.json");
     // The shape a lister writes when a segment of its image is missing: the list it wrote holds only what it could read.
     await writeFile(record, JSON.stringify({ recipe: "a-lister", status: "partial", segments_missing: ["image.s03"], limits_hit: [],
       status_basis: "a segment is missing: what lies in it is not listed" }));
-    const cut = recipe(run, "run", { paths: ["inputs/case files/members list.tsv"] }, "store/jobs/j000001/out/partial list");
+    const cut = recipe(run, "run", { paths: ["inputs/case files/listing/members.tsv"] }, "store/jobs/j000001/out/partial list");
     assert.equal(cut.code, 0, JSON.stringify(cut.doc));
     assert.deepEqual([cut.doc.status, cut.doc.whole_list_read, cut.doc.list_coverage], ["partial", false, "partial"]);
     const cov = JSON.parse(await readFile(join(run, "store/jobs/j000001/out/partial list/coverage.json"), "utf8")) as Doc;
@@ -144,13 +145,13 @@ test("a member list that is itself partial, or whose coverage is not recorded, m
     assert.equal(rows.length, 3, "what the list holds is still ranked");
 
     await rm(record);
-    const bare = recipe(run, "run", { paths: ["inputs/case files/members list.tsv"] }, "store/jobs/j000001/out/bare list");
+    const bare = recipe(run, "run", { paths: ["inputs/case files/listing/members.tsv"] }, "store/jobs/j000001/out/bare list");
     assert.deepEqual([bare.doc.status, bare.doc.whole_list_read, bare.doc.list_coverage], ["partial", false, "not recorded"]);
     const bareCov = JSON.parse(await readFile(join(run, "store/jobs/j000001/out/bare list/coverage.json"), "utf8")) as Doc;
     assert.match(bareCov.list_coverage.why[0], /^no coverage\.json beside the list/);
 
     await writeFile(record, "{not json");
-    const unreadable = recipe(run, "run", { paths: ["inputs/case files/members list.tsv"] }, "store/jobs/j000001/out/odd list");
+    const unreadable = recipe(run, "run", { paths: ["inputs/case files/listing/members.tsv"] }, "store/jobs/j000001/out/odd list");
     assert.deepEqual([unreadable.doc.status, unreadable.doc.whole_list_read, unreadable.doc.list_coverage], ["partial", false, "unknown"]);
   });
 });
@@ -192,7 +193,7 @@ with zipfile.ZipFile(sys.argv[1], "w") as z:
 test("a list that was not read whole says so: whole_list_read is false and the status partial", async () => {
   await withRun(async (run) => {
     py(BUILD, [join(run, "inputs/case files")], run);
-    for (const target of ["inputs/case files/vol one", "inputs/case files/members list.tsv"]) {
+    for (const target of ["inputs/case files/vol one", "inputs/case files/listing/members.tsv"]) {
       const out = `store/jobs/j000001/out/cut ${target.endsWith(".tsv") ? "list" : "tree"}`;
       const r = recipe(run, "run", { paths: [target] }, out, { RECIPE_MEMBERS: "12" });
       assert.equal(r.code, 0);
@@ -208,7 +209,7 @@ test("a list that was not read whole says so: whole_list_read is false and the s
 test("detect has three answers, and a target that cannot be used is a JSON answer", async () => {
   await withRun(async (run) => {
     py(BUILD, [join(run, "inputs/case files")], run);
-    assert.deepEqual([recipe(run, "detect", { paths: ["inputs/case files/vol one"] }).code, recipe(run, "detect", { paths: ["inputs/case files/members list.tsv"] }).code], [0, 0]);
+    assert.deepEqual([recipe(run, "detect", { paths: ["inputs/case files/vol one"] }).code, recipe(run, "detect", { paths: ["inputs/case files/listing/members.tsv"] }).code], [0, 0]);
     const no = recipe(run, "detect", { paths: ["inputs/case files/vol one/Windows/Prefetch"] });
     assert.deepEqual([no.code, no.doc.applies], [1, false]);
     const unknown = recipe(run, "detect", { paths: ["inputs/case files/absent"] });
@@ -221,6 +222,218 @@ test("detect has three answers, and a target that cannot be used is a JSON answe
     }
     const usage = recipe(run, "detect", { paths: ["x"] }, undefined);
     assert.ok(usage.code !== null);
+  });
+});
+
+const cov = async (run: string, out: string): Promise<Doc> => JSON.parse(await readFile(join(run, out, "coverage.json"), "utf8")) as Doc;
+
+test("the name search reads the clock inside a block: many names and a large hive of near misses end within the recipe's own seconds", async () => {
+  await withRun(async (run) => {
+    // 20,000 macro-enabled names and an 8 MiB hive whose text is all near misses of them (b00001.docm against a00001.docm). A search that
+    // tests every name against a 4 MiB block before it looks at the clock again holds the run far past its seconds.
+    py(String.raw`
+import os, sys
+root = sys.argv[1]
+d = root + "/Users/sam/AppData/Local/Temp"
+os.makedirs(d)
+for i in range(20000):
+    open(d + "/a%05d.docm" % i, "wb").close()
+blk = "".join("b%05d.docm;" % (i % 100000) for i in range(200000)).encode("utf-16-le")[:4 << 20]
+with open(root + "/Users/sam/NTUSER.DAT", "wb") as f:
+    f.write(blk + blk)
+`, [join(run, "inputs/many names")], run);
+    const began = Date.now();
+    const r = recipe(run, "run", { paths: ["inputs/many names"] }, "store/jobs/j000001/out/many", { RECIPE_SECONDS: "8" });
+    const seconds = (Date.now() - began) / 1000;
+    assert.equal(r.code, 0, JSON.stringify(r.doc) + r.stderr);
+    assert.ok(seconds < 25, `the run took ${seconds} s against a limit of 8 s`);
+    const c = await cov(run, "store/jobs/j000001/out/many");
+    assert.equal(c.candidates, 20000);
+    // Whatever the host's speed, the answer is consistent: a run the clock stopped says so.
+    if (c.status === "complete") assert.equal(c.not_read_to_the_end, undefined);
+    else assert.match(c.limits_hit.join(" "), /^seconds: the clock ran out/);
+  });
+});
+
+test("a document under a plain name whose VBA check cannot be told is ranked, says so, and makes the run partial", async () => {
+  await withRun(async (run) => {
+    py(BUILD, [join(run, "inputs/case files")], run);
+    // It begins like a ZIP and has no end-of-central-directory record.
+    await writeFile(join(run, "inputs/case files/vol one/Users/sam/Pictures/statement.docx"), Buffer.concat([Buffer.from("PK\u0003\u0004"), Buffer.alloc(300)]));
+    const out = "store/jobs/j000001/out/not told";
+    const r = recipe(run, "run", { paths: ["inputs/case files/vol one"] }, out);
+    assert.equal(r.code, 0, JSON.stringify(r.doc) + r.stderr);
+    const rows = await table(join(run, out, "candidates.tsv"));
+    const row = rows.find((x) => x.path === "Users/sam/Pictures/statement.docx");
+    assert.ok(row, "the document is ranked");
+    assert.match(row!.signals, /\+0 not told whether it holds a VBA project: it begins like a ZIP and has no end-of-central-directory record/);
+    const c = await cov(run, out);
+    assert.deepEqual([r.doc.status, c.status, c.whole_list_read], ["partial", "partial", true]);
+    assert.match(c.not_read_to_the_end.join(" "), /whether a VBA project is inside could not be told for 1 document/);
+    assert.doesNotMatch(c.status_basis, /every macro-capable document/);
+  });
+});
+
+test("every candidate is a row: a list of 25,000 macro-enabled names gives 25,000 ranked rows", async () => {
+  await withRun(async (run) => {
+    py(String.raw`
+import os, sys
+top = sys.argv[1]
+os.makedirs(top)
+rows = ["path"] + ["C:\\Users\\sam\\AppData\\Local\\Temp\\report %05d.docm" % i for i in range(25000)]
+open(top + "/members.tsv", "w").write("\n".join(rows) + "\n")
+open(top + "/coverage.json", "w").write('{"recipe": "a-lister", "status": "complete"}')
+`, [join(run, "inputs/big list")], run);
+    const out = "store/jobs/j000001/out/big";
+    const r = recipe(run, "run", { paths: ["inputs/big list/members.tsv"] }, out);
+    assert.equal(r.code, 0, JSON.stringify(r.doc) + r.stderr);
+    assert.deepEqual([r.doc.status, r.doc.candidates, r.doc.whole_list_read], ["complete", 25000, true]);
+    const rows = await table(join(run, out, "candidates.tsv"));
+    assert.equal(rows.length, 25000, "no row is cut");
+    assert.equal(rows[24999]!.rank, "25000");
+    assert.match(await readFile(join(run, out, "index.tsv"), "utf8"), /first-stage candidates \(25000\)/);
+  });
+});
+
+test("more antivirus files than the recipe searches is a limit: in limits_hit, and the run partial", async () => {
+  await withRun(async (run) => {
+    py(String.raw`
+import os, sys
+root = sys.argv[1]
+os.makedirs(root + "/Users/sam/Downloads")
+open(root + "/Users/sam/Downloads/parcel note.docm", "wb").close()
+d = root + "/ProgramData/Microsoft/Windows Defender/Support"
+os.makedirs(d)
+for i in range(450):
+    text = "detected: C:\\Users\\sam\\Downloads\\parcel note.docm" if i == 449 else "nothing"
+    open(d + "/MPLog-%03d.log" % i, "wb").write(text.encode("utf-16-le"))
+`, [join(run, "inputs/av tree")], run);
+    const out = "store/jobs/j000001/out/av";
+    const r = recipe(run, "run", { paths: ["inputs/av tree"] }, out);
+    assert.equal(r.code, 0, JSON.stringify(r.doc) + r.stderr);
+    const c = await cov(run, out);
+    assert.deepEqual([r.doc.status, c.status, c.antivirus_files_not_searched, c.whole_list_read], ["partial", "partial", 50, true], "every name was read; one signal's source was cut");
+    assert.match(c.limits_hit.join(" "), /^antivirus: more than 400 antivirus logs and detection files/);
+  });
+});
+
+test("a coverage record counts only for the list it stands for: another list beside it, a link to a list elsewhere, a record that contradicts itself", async () => {
+  await withRun(async (run) => {
+    py(BUILD, [join(run, "inputs/case files")], run);
+    const listing = join(run, "inputs/case files/listing");
+    // Another list beside a complete record (as attributes.tsv lies beside ad1-items' record): the record says nothing of it.
+    await writeFile(join(listing, "subset.tsv"), (await readFile(join(listing, "members.tsv"), "utf8")).split("\n").slice(0, 8).join("\n") + "\n");
+    const other = recipe(run, "run", { paths: ["inputs/case files/listing/subset.tsv"] }, "store/jobs/j000001/out/subset");
+    assert.deepEqual([other.doc.status, other.doc.whole_list_read, other.doc.list_coverage], ["partial", false, "not named"]);
+    // A link to a list whose own directory's record is partial, with a complete record beside the link.
+    await mkdir(join(run, "inputs/cut gen"));
+    await writeFile(join(run, "inputs/cut gen/members.tsv"), await readFile(join(listing, "members.tsv"), "utf8"));
+    await writeFile(join(run, "inputs/cut gen/coverage.json"), JSON.stringify({ status: "partial", segments_missing: ["image.s02"] }));
+    await mkdir(join(run, "inputs/link gen"));
+    await symlink(join(run, "inputs/cut gen/members.tsv"), join(run, "inputs/link gen/members.tsv"));
+    await writeFile(join(run, "inputs/link gen/coverage.json"), JSON.stringify({ status: "complete" }));
+    const linked = recipe(run, "run", { paths: ["inputs/link gen/members.tsv"] }, "store/jobs/j000001/out/linked list");
+    assert.deepEqual([linked.doc.status, linked.doc.whole_list_read, linked.doc.list_coverage], ["partial", false, "partial"]);
+    assert.deepEqual((await cov(run, "store/jobs/j000001/out/linked list")).list_coverage.why, ["segments_missing: image.s02"]);
+    // A record that says complete and lists a missing segment.
+    await writeFile(join(listing, "coverage.json"), JSON.stringify({ status: "complete", segments_missing: ["image.s03"] }));
+    const odd = recipe(run, "run", { paths: ["inputs/case files/listing/members.tsv"] }, "store/jobs/j000001/out/odd");
+    assert.deepEqual([odd.doc.status, odd.doc.whole_list_read, odd.doc.list_coverage], ["partial", false, "partial"]);
+    assert.match((await cov(run, "store/jobs/j000001/out/odd")).list_coverage.why[0], /says complete and lists segments_missing: it contradicts itself/);
+  });
+});
+
+test("detect exits 2 where it cannot tell, and reads a list past its first megabytes", async () => {
+  await withRun(async (run) => {
+    // A list sorted by path: Program Files fills the first 5 MiB, the profile comes after.
+    py(String.raw`
+import os, sys
+top = sys.argv[1]
+os.makedirs(top)
+with open(top + "/members.tsv", "w") as f:
+    f.write("path\n")
+    i = 0
+    while f.tell() < 5 << 20:
+        f.write("C:\\Program Files\\Vendor\\lib\\part %07d.dll\n" % i)
+        i += 1
+    f.write("C:\\Users\\sam\\NTUSER.DAT\n")
+`, [join(run, "inputs/sorted")], run);
+    const late = recipe(run, "detect", { paths: ["inputs/sorted/members.tsv"] });
+    assert.deepEqual([late.code, late.doc.applies], [0, true], JSON.stringify(late.doc));
+    if (process.getuid?.() !== 0) {
+      // A directory that cannot be listed, and no profile in the rest: not told.
+      await mkdir(join(run, "inputs/shut/Windows/locked"), { recursive: true });
+      await chmod(join(run, "inputs/shut/Windows/locked"), 0o000);
+      try {
+        const shut = recipe(run, "detect", { paths: ["inputs/shut"] });
+        assert.deepEqual([shut.code, shut.doc.applies], [2, "unknown"], JSON.stringify(shut.doc));
+        assert.match(shut.doc.why, /could not be listed/);
+      } finally {
+        await chmod(join(run, "inputs/shut/Windows/locked"), 0o755);
+      }
+    }
+    // A call detect cannot use is no answer about the object.
+    for (const target of ["not json", { paths: [] }]) {
+      const bad = recipe(run, "detect", target);
+      assert.deepEqual([bad.code, bad.doc.applies], [2, "unknown"], JSON.stringify(target));
+    }
+  });
+});
+
+test("a ZIP directory of millions of records is walked no further than 20,000 records: memory stays small, and the run is partial", async () => {
+  await withRun(async (run) => {
+    // A .docm whose central directory declares 600,000 records (local header, records, end record).
+    const doc = join(run, "inputs/zip tree/Users/sam/Downloads/huge.docm");
+    py(String.raw`
+import os, struct, sys
+p, n = sys.argv[1], 600000
+os.makedirs(os.path.dirname(p))
+lh = struct.pack("<IHHHHHIIIHH", 0x04034b50, 20, 0, 0, 0, 0, 0, 0, 0, 1, 0) + b"a"
+cd = struct.pack("<IHHHHHHIIIHHHHHII", 0x02014b50, 20, 20, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0) + b"a"
+with open(p, "wb") as f:
+    f.write(lh)
+    for _ in range(n // 100000):
+        f.write(cd * 100000)
+    f.write(struct.pack("<IHHHHIIH", 0x06054b50, 0, 0, 0xFFFF, 0xFFFF, len(cd) * n, len(lh), 0))
+`, [doc], run);
+    const measured = JSON.parse(py(String.raw`
+import importlib.util, json, resource, sys, time
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("first_stage", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+unit = 1 if sys.platform == "darwin" else 1024
+before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
+answer = m.vba_in_file(sys.argv[2], "word", time.monotonic() + 60)
+after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
+print(json.dumps({"answer": list(answer), "grew": after - before}))
+`, [RECIPE, doc], run)) as Doc;
+    assert.ok(measured.grew < 64 << 20, `memory grew by ${measured.grew} bytes`);
+    assert.equal(measured.answer[0], null);
+    assert.match(measured.answer[1], /more than 20000 members: the first 20000 were walked/);
+    const out = "store/jobs/j000001/out/zip";
+    const r = recipe(run, "run", { paths: ["inputs/zip tree"] }, out);
+    assert.equal(r.code, 0, JSON.stringify(r.doc) + r.stderr);
+    const c = await cov(run, out);
+    assert.equal(c.status, "partial");
+    assert.match(c.limits_hit.join(" "), /^vba: a ZIP directory of more than 20000 members was walked only that far \(1 document/);
+  });
+});
+
+test("a link to a directory outside the tree is not entered, and whole_list_read says the tree was not read whole", async () => {
+  await withRun(async (run) => {
+    py(BUILD, [join(run, "inputs/case files")], run);
+    await mkdir(join(run, "inputs/elsewhere/share"), { recursive: true });
+    await writeFile(join(run, "inputs/elsewhere/share/hidden.docm"), "x");
+    await symlink(join(run, "inputs/elsewhere/share"), join(run, "inputs/case files/vol one/Users/sam/Share"));
+    const r = recipe(run, "run", { paths: ["inputs/case files/vol one"] }, "store/jobs/j000001/out/dir link");
+    const c = await cov(run, "store/jobs/j000001/out/dir link");
+    assert.deepEqual([r.doc.status, r.doc.whole_list_read, c.links_to_directories_outside], ["partial", false, 1]);
+    // A link to a directory inside the tree loses nothing: what lies below it is read under its own path.
+    await rm(join(run, "inputs/case files/vol one/Users/sam/Share"));
+    await symlink(join(run, "inputs/case files/vol one/Users/sam/Music"), join(run, "inputs/case files/vol one/Users/sam/My Music"));
+    const inside = recipe(run, "run", { paths: ["inputs/case files/vol one"] }, "store/jobs/j000001/out/inner link");
+    assert.deepEqual([inside.doc.status, inside.doc.whole_list_read], ["partial", true]);
   });
 });
 

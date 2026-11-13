@@ -172,6 +172,7 @@ if __name__ == "__main__":
 import collections
 import errno
 import hashlib
+import itertools
 import math
 import re
 import stat
@@ -424,6 +425,8 @@ def _unexpected_tool(kind, value, _tb):
     exit 1; what was written before it is not claimed. A stop signal that arrives while this runs is held with the answer's write and is answered by
     this document and exit 1, not by 128 + the signal."""
     try:
+        if "kill_decoder" in globals():
+            kill_decoder()
         left = drop_temporaries()
         reason = getattr(value, "strerror", None) if issubclass(kind, OSError) else None
         said = ("a path or file could not be used: %s" % (reason or kind.__name__)) if issubclass(kind, (OSError, ValueError)) else "internal error: %s" % kind.__name__
@@ -439,10 +442,12 @@ def _unexpected_tool(kind, value, _tb):
 
 
 sys.excepthook = _unexpected_tool
+# A stop ends the child that decodes a picture with Pillow (below) before the tool's own last word.
+install_signal_handlers(lambda signum: (kill_decoder(), interrupted_answer(signum)))
 
 
-TOOL = {"name": "qr_read", "version": 2}
-PARSER = "qr_read/2"
+TOOL = {"name": "qr_read", "version": 3}
+PARSER = "qr_read/3"
 DEFAULT_SECONDS, MAX_SECONDS = 90, 100          # under the manifest's 120
 MAX_INPUTS = 64
 KNOWN_PARAMS = {"image", "images", "mode", "box", "version", "module_pixels", "reader", "max_seconds", "self_test"}
@@ -463,7 +468,8 @@ NOT_READ = ("versions 11 to 40; Micro QR, rMQR and every other symbology; a symb
             "(one alignment pattern is used, from version 2); pieces that are turned against each other, scaled differently or not "
             "rectangular; a piece set with a hole is read only while Reed-Solomon can still correct what is missing (missing modules "
             "count as light, there is no erasure decoding); frames past the %dth of a picture, and by the built-in reader (reader builtin, or "
-            "no Pillow) the frames of an animated PNG other than its default image (frames_not_read names them, and the answer is partial)" % 64)
+            "no Pillow) the frames of an animated PNG other than its default image (frames_not_read names them, and the answer is partial); "
+            "a picture of a format other than PNG, JPEG, BMP, GIF, WebP and TIFF (an icon, for one), which is not read" % 64)
 
 
 # ---- what every answer and every file of this tool goes through ---------------------------------------------------------------------
@@ -691,6 +697,7 @@ PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_PIXELS = 36_000_000            # a picture larger than this is refused (its rows would not fit the tool's memory and clock)
 MAX_IMAGE_BYTES = 256 << 20
 MAX_PNG_ROWS = 256 << 20           # the inflated rows of a PNG the built-in reader holds
+MAX_FRAMES = 64                    # frames or pages of one picture that are searched
 
 
 class NotAPicture(Exception):
@@ -704,50 +711,70 @@ class NotAPicture(Exception):
 
 class Picture:
     """A picture as rows of bytes: `gray` (one byte a pixel, 0 black to 255 white) always, `rgb` (three bytes a pixel) when it was asked for.
-    `frames` is how many frames or pages the file holds (this is the first); frame_at(k) reads frame k (0-based) or raises NotAPicture,
-    and is None when the reader cannot reach the others (frames_why says why). `damage` is what the built-in reader found wrong with a
-    PNG that Pillow then read (Pillow fills what is missing), or None."""
+    `frames` is how many frames or pages the built-in reader knows the file holds (this is the first), and `frames_why` why it does not
+    read the others. `stream` is Pillow's (a PillowFrames, the child that decodes the picture): its next_frame() gives the frames after
+    this one as they are decoded, and how many there are is known only when it has given the last. `damage` is what the built-in reader
+    found wrong with a PNG that Pillow then read (Pillow fills what is missing), or None."""
 
     def __init__(self, width, height, gray, rgb=None, reader=""):
         self.width, self.height, self.gray, self.rgb, self.reader = width, height, gray, rgb, reader
-        self.frames, self.frame_at, self.frames_why, self.damage, self.notes = 1, None, None, None, []
+        self.frames, self.stream, self.frames_why, self.damage, self.notes = 1, None, None, None, []
 
 
-def _unfilter(kind, line, previous, bpp):
+SPAN = 1 << 16                     # the bytes (or pixels) of a row worked between two readings of the clock: a row can be 144 MB wide
+
+
+def _spans(start, stop, tick, step=1):
+    """range(start, stop) in pieces of SPAN steps, the clock read before each: (first, end) pairs."""
+    for first in range(start, stop, SPAN * step):
+        if tick:
+            tick()
+        yield first, min(stop, first + SPAN * step)
+
+
+def _unfilter(kind, out, previous, bpp, tick=None):
+    """Undo a row's filter in place (`out` is a bytearray of the row's bytes) and return it; the clock is read every SPAN bytes."""
     if kind == 0:
-        return line
-    out = bytearray(line)
+        return out
     if kind == 1:
-        for i in range(bpp, len(out)):
-            out[i] = (out[i] + out[i - bpp]) & 255
+        for first, end in _spans(bpp, len(out), tick):
+            for i in range(first, end):
+                out[i] = (out[i] + out[i - bpp]) & 255
     elif kind == 2:
         if previous is not None:
-            out = bytearray((a + b) & 255 for a, b in zip(out, previous))
+            for first, end in _spans(0, len(out), tick):
+                out[first:end] = bytes((a + b) & 255 for a, b in zip(out[first:end], previous[first:end]))
     elif kind == 3:
-        for i in range(len(out)):
-            left = out[i - bpp] if i >= bpp else 0
-            up = previous[i] if previous is not None else 0
-            out[i] = (out[i] + ((left + up) >> 1)) & 255
+        for first, end in _spans(0, len(out), tick):
+            for i in range(first, end):
+                left = out[i - bpp] if i >= bpp else 0
+                up = previous[i] if previous is not None else 0
+                out[i] = (out[i] + ((left + up) >> 1)) & 255
     elif kind == 4:
-        for i in range(len(out)):
-            a = out[i - bpp] if i >= bpp else 0
-            b = previous[i] if previous is not None else 0
-            c = previous[i - bpp] if previous is not None and i >= bpp else 0
-            p = a + b - c
-            pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-            out[i] = (out[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        for first, end in _spans(0, len(out), tick):
+            for i in range(first, end):
+                a = out[i - bpp] if i >= bpp else 0
+                b = previous[i] if previous is not None else 0
+                c = previous[i - bpp] if previous is not None and i >= bpp else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                out[i] = (out[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
     else:
         raise NotAPicture("a PNG row with the unknown filter %d" % kind)
-    return bytes(out)
+    return out
 
 
 def read_png(data, want_rgb=False, tick=None):
     """A PNG read with the standard library alone: 8 and 16-bit grey, RGB, palette and alpha forms and the 1, 2 and 4-bit grey and palette
-    forms, not interlaced. Transparency is put on white. NotAPicture for anything else; tick() is called once a row (the clock)."""
+    forms, not interlaced. Transparency is put on white. NotAPicture for anything else; tick() is the clock, read every 1024 chunks, once a
+    row and every SPAN bytes inside a row (a row can be 144 MB wide)."""
     if data[:8] != PNG_MAGIC:
         raise NotAPicture("not a PNG (no PNG signature)")
-    at, header, palette, alpha, parts, animation, default_in_animation = 8, None, None, None, [], None, False
+    at, header, palette, alpha, parts, animation, default_in_animation, chunks = 8, None, None, None, [], None, False, 0
     while at + 12 <= len(data):
+        chunks += 1
+        if tick and chunks % 1024 == 0:
+            tick()
         length = int.from_bytes(data[at:at + 4], "big")
         kind = data[at + 4:at + 8]
         body = data[at + 8:at + 8 + length]
@@ -778,6 +805,8 @@ def read_png(data, want_rgb=False, tick=None):
     width, height, depth, colour, _compression, _filter, interlace = header
     if width == 0 or height == 0 or width * height > MAX_PIXELS:
         raise NotAPicture("a PNG of %d x %d pixels (this tool reads up to %d pixels)" % (width, height, MAX_PIXELS))
+    if height > MAX_ROWS:
+        raise NotAPicture("a PNG of %d x %d pixels (this tool reads up to %d rows)" % (width, height, MAX_ROWS))
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
     if channels is None or depth not in (1, 2, 4, 8, 16) or (depth < 8 and colour not in (0, 3)) or (depth == 16 and colour == 3):
         raise NotAPicture("a PNG of colour type %d at %d bits, which the format does not define" % (colour, depth))
@@ -822,7 +851,7 @@ def read_png(data, want_rgb=False, tick=None):
             if tick:
                 tick()
             start = y * (stride + 1)
-            line = _unfilter(raw[start], bytes(raw[start + 1:start + 1 + stride]), previous, bpp)
+            line = _unfilter(raw[start], raw[start + 1:start + 1 + stride], previous, bpp, tick)
             previous = line
             high = max(high, max(line[0::2]))
         shift = high.bit_length()
@@ -831,23 +860,24 @@ def read_png(data, want_rgb=False, tick=None):
         if tick:
             tick()
         start = y * (stride + 1)
-        line = _unfilter(raw[start], bytes(raw[start + 1:start + 1 + stride]), previous, bpp)
+        line = _unfilter(raw[start], raw[start + 1:start + 1 + stride], previous, bpp, tick)
         previous = line
         if depth == 16:
-            line = bytes(min(255, ((line[i] << 8) | line[i + 1]) >> shift) for i in range(0, len(line), 2))
+            line = b"".join(bytes(min(255, ((line[i] << 8) | line[i + 1]) >> shift) for i in range(first, end, 2)) for first, end in _spans(0, len(line), tick, 2))
         elif depth < 8:
             mask, scale = (1 << depth) - 1, 255 // ((1 << depth) - 1) if colour == 0 else 1
-            line = bytes(((line[(x * depth) >> 3] >> (8 - depth - (x * depth) % 8)) & mask) * scale for x in range(width))
+            line = b"".join(bytes(((line[(x * depth) >> 3] >> (8 - depth - (x * depth) % 8)) & mask) * scale for x in range(first, end)) for first, end in _spans(0, width, tick))
         if colour == 0:
-            g = line
+            g = bytes(line)
         elif colour == 3:
-            g = line.translate(bytes(pal_gray))
+            g = bytes(line.translate(bytes(pal_gray)))
         elif colour == 2:
-            g = bytes((line[i] * 299 + line[i + 1] * 587 + line[i + 2] * 114) // 1000 for i in range(0, 3 * width, 3))
+            g = b"".join(bytes((line[i] * 299 + line[i + 1] * 587 + line[i + 2] * 114) // 1000 for i in range(first, end, 3)) for first, end in _spans(0, 3 * width, tick, 3))
         elif colour == 4:
-            g = bytes((line[i] * line[i + 1] + 255 * (255 - line[i + 1])) // 255 for i in range(0, 2 * width, 2))
+            g = b"".join(bytes((line[i] * line[i + 1] + 255 * (255 - line[i + 1])) // 255 for i in range(first, end, 2)) for first, end in _spans(0, 2 * width, tick, 2))
         else:
-            g = bytes(((line[i] * 299 + line[i + 1] * 587 + line[i + 2] * 114) // 1000 * line[i + 3] + 255 * (255 - line[i + 3])) // 255 for i in range(0, 4 * width, 4))
+            g = b"".join(bytes(((line[i] * 299 + line[i + 1] * 587 + line[i + 2] * 114) // 1000 * line[i + 3] + 255 * (255 - line[i + 3])) // 255 for i in range(first, end, 4))
+                         for first, end in _spans(0, 4 * width, tick, 4))
         gray.append(g)
         if want_rgb:
             if colour == 2:
@@ -884,11 +914,16 @@ def _inflate(parts, want, tick=None):
 
 
 def pillow():
-    """The Pillow module, or None when it does not import here."""
+    """The Pillow module, or None when it does not import here. The plugins of PILLOW_FORMATS are loaded here, once, before a child is forked."""
     if "module" not in _PILLOW:
         try:
             from PIL import Image
             Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+            for plugin in ("BmpImagePlugin", "GifImagePlugin", "JpegImagePlugin", "MpoImagePlugin", "PngImagePlugin", "TiffImagePlugin", "WebPImagePlugin"):
+                try:
+                    __import__("PIL." + plugin)
+                except Exception:  # noqa: BLE001 - a plugin that does not load leaves its format unread
+                    pass
             _PILLOW["module"] = Image
             _PILLOW["version"] = getattr(__import__("PIL"), "__version__", "?")
         except Exception:  # noqa: BLE001 - not installed, or broken: the built-in reader is what there is
@@ -899,10 +934,292 @@ def pillow():
 _PILLOW = {}
 
 
-def read_picture(data, want_rgb=False, reader="auto", tick=None):
+def clock_deadline():
+    """When the tool's clock runs out (time.monotonic()), or None before it is set."""
+    return STOP["deadline"]
+
+
+# ---- Pillow in a child process that the clock ends (the same code is in qr_read and glyph_strip) --------------------------------------
+# Pillow's decoders do not read this tool's clock: a progressive JPEG of a quarter of a million scans, a TIFF of a quarter of a million
+# pages (Pillow counts them by walking every page) and a format Pillow decodes in Python each ran for minutes inside one call. So Pillow
+# never runs in the tool's own process. A child is forked for one picture; it opens the picture as one of PILLOW_FORMATS only, and sends
+# each frame's size and then its grey rows on a pipe, frame after frame (seeking to the next, never asking how many there are), up to the
+# frames asked for, and then whether there is another. The tool reads the pipe against its clock and kills the child (SIGKILL) when the
+# clock runs out or the picture is done. The child's address space is bounded (DECODE_MEMORY more than it was forked with; Linux, where
+# the limit is enforced), its CPU time by the clock, it dies with the tool (Linux), it takes the stop signals' default action, it writes
+# nothing on standard output, and it ends with os._exit (no hook of the tool runs in it). A JPEG is counted before it is handed over: one
+# with more than MAX_JPEG_SCANS start-of-scan markers is refused (a picture has one, a progressive one about ten).
+import resource as _resource
+import select as _decode_select
+
+PILLOW_FORMATS = ("PNG", "JPEG", "BMP", "GIF", "WEBP", "TIFF")     # a JPEG of several pictures (MPO) is opened by the JPEG plugin
+PILLOW_FORMAT_NAMES = "PNG, JPEG, BMP, GIF, WebP and TIFF"
+MAX_ROWS = 100_000                 # a picture higher than this is refused: each row is one object, and a picture one pixel wide would take gigabytes
+MAX_JPEG_SCANS = int(os.environ.get("TOOL_MAX_JPEG_SCANS") or 256)        # the environment variable is for the tests
+DECODE_MEMORY = 1 << 30            # what the decoding child may add to the address space it was forked with (Linux)
+DECODER = {"pid": None}            # the decoding child that is running, which the stop's last word and the exit end
+
+
+def kill_decoder():
+    """End the decoding child that is running, if one is, and reap it."""
+    pid, DECODER["pid"] = DECODER["pid"], None
+    if pid:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            os.waitpid(pid, 0)
+        except OSError:
+            pass
+
+
+atexit.register(kill_decoder)
+
+
+def jpeg_scans(data):
+    """The start-of-scan markers of a JPEG (0 for any other format). Inside entropy-coded data a 0xFF byte is always followed by 0x00 or a
+    restart marker, so FF DA is a marker wherever it is; one inside an embedded thumbnail is counted too, which only errs on the side of
+    refusing."""
+    return data.count(b"\xff\xda") if data[:2] == b"\xff\xd8" else 0
+
+
+def _send(fd, kind, body=b""):
+    for part in (kind + len(body).to_bytes(4, "big"), body):
+        view = memoryview(part)
+        while len(view):
+            view = view[os.write(fd, view[:1 << 20]):]
+
+
+def _bound_decoder(parent):
+    deadline = clock_deadline()
+    if deadline is not None:
+        cpu = int(max(1.0, deadline - time.monotonic())) + 2
+        try:
+            _resource.setrlimit(_resource.RLIMIT_CPU, (cpu, cpu + 1))
+        except (ValueError, OSError, AttributeError):
+            pass
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/self/status", "rb") as status:
+                size = next(int(line.split()[1]) for line in status if line.startswith(b"VmSize:")) * 1024
+            _hard = _resource.getrlimit(_resource.RLIMIT_AS)[1]
+            limit = size + DECODE_MEMORY
+            _resource.setrlimit(_resource.RLIMIT_AS, (limit if _hard == _resource.RLIM_INFINITY else min(limit, _hard), _hard))
+        except Exception:  # noqa: BLE001 - the clock still bounds the child
+            pass
+        try:
+            import ctypes
+            ctypes.CDLL(None).prctl(1, signal.SIGKILL)       # PR_SET_PDEATHSIG: the child dies with the tool
+            if os.getppid() != parent:                       # the tool was gone before the request was made (the tool can be pid 1)
+                os._exit(1)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _decode_frames(data, image_module, fd, frames):
+    import io
+    k = 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")         # a decompression-bomb warning is an error, as in the tool
+        try:
+            image = image_module.open(io.BytesIO(data), formats=PILLOW_FORMATS)
+        except Exception as exc:  # noqa: BLE001 - the class is sent, never the message
+            _send(fd, b"U" if type(exc).__name__ == "UnidentifiedImageError" else b"X", json.dumps({"frame": 0, "class": type(exc).__name__}).encode("ascii"))
+            return
+        try:
+            while True:
+                width, height = image.size
+                _send(fd, b"H", struct.pack(">II", width, height))
+                if width * height > MAX_PIXELS or height > MAX_ROWS:
+                    return                     # the tool refuses it by the size it was sent
+                image.load()
+                frame = image
+                if frame.mode in ("RGBA", "LA", "PA") or "transparency" in frame.info:
+                    frame = frame.convert("RGBA")
+                    flat = image_module.new("RGB", frame.size, (255, 255, 255))
+                    flat.paste(frame, mask=frame.split()[3])
+                    frame = flat
+                _send(fd, b"F", frame.convert("L").tobytes())
+                k += 1
+                try:
+                    image.seek(k)
+                except EOFError:
+                    _send(fd, b"E", struct.pack(">I", k))
+                    return
+                if k >= frames:
+                    _send(fd, b"M", struct.pack(">I", k))
+                    return
+        except Exception as exc:  # noqa: BLE001 - the class is sent, never the message
+            _send(fd, b"X", json.dumps({"frame": k, "class": type(exc).__name__}).encode("ascii"))
+
+
+def _decoder_child(data, image_module, fd, frames, parent):
+    """The forked child: it never returns."""
+    code = 0
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(signum, signal.SIG_DFL)
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, set())
+        except (AttributeError, ValueError, OSError):
+            pass
+        null = os.open(os.devnull, os.O_RDWR)
+        for target in (0, 1, 2):
+            os.dup2(null, target)
+        _bound_decoder(parent)
+        _decode_frames(data, image_module, fd, frames)
+    except BaseException as exc:  # noqa: BLE001 - nothing may return into the tool's own code
+        try:
+            _send(fd, b"X", json.dumps({"frame": None, "class": type(exc).__name__}).encode("ascii"))
+        except BaseException:  # noqa: BLE001
+            code = 1
+    finally:
+        os._exit(code)
+
+
+class PillowFrames:
+    """The frames of one picture as Pillow decodes them in a child. next_frame() is the next frame as a Picture, or None when there is no
+    other: then `total` is how many frames the picture has, or `more` is True when it has more than were asked for. NotAPicture when
+    Pillow does not read it (or a frame of it), Clock when the clock runs out first; either way the child is ended. `check(width, height)`
+    may refuse a frame by its size before its rows are taken. close() ends the child."""
+
+    def __init__(self, data, image_module, frames, check=None):
+        self.total, self.more, self.check, self.k, self.buf, self.pid, self.fd = None, False, check, 0, bytearray(), None, None
+        read_fd, write_fd = os.pipe()
+        stops = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+        try:
+            before = signal.pthread_sigmask(signal.SIG_BLOCK, stops)   # a stop between the fork and the child's own handlers waits
+        except (AttributeError, ValueError, OSError):
+            before = None
+        parent = os.getpid()
+        try:
+            pid = os.fork()
+        except OSError as exc:
+            os.close(read_fd)
+            os.close(write_fd)
+            if before is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, before)
+            raise NotAPicture("Pillow decodes in a child process here, and none could be started (%s)" % describe(exc))
+        if pid == 0:
+            os.close(read_fd)
+            _decoder_child(data, image_module, write_fd, frames, parent)
+        DECODER["pid"] = self.pid = pid
+        os.close(write_fd)
+        self.fd = read_fd
+        if before is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, before)
+
+    def close(self, kill=True):
+        """End the child (kill, or wait up to a second for one that has said its last) and reap it: its wait status, or None."""
+        status, pid, self.pid = None, self.pid, None
+        if pid:
+            if DECODER["pid"] == pid:
+                DECODER["pid"] = None
+            try:
+                if not kill:
+                    for _wait in range(100):
+                        done, status = os.waitpid(pid, os.WNOHANG)
+                        if done:
+                            break
+                        time.sleep(0.01)
+                    else:
+                        kill = True
+                if kill:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                    _done, status = os.waitpid(pid, 0)
+            except OSError:
+                pass
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+        return status
+
+    def _fill(self, need):
+        while len(self.buf) < need:
+            deadline = clock_deadline()
+            wait = 1.0 if deadline is None else deadline - time.monotonic()
+            if wait <= 0:
+                raise Clock()
+            if not _decode_select.select([self.fd], [], [], min(wait, 1.0))[0]:
+                continue
+            block = os.read(self.fd, max(1 << 16, min(need - len(self.buf), 1 << 22)))
+            if not block:
+                return False
+            self.buf += block
+        return True
+
+    def _ended(self):
+        status = self.close(kill=False)
+        if status is not None and os.WIFSIGNALED(status):
+            return ("Pillow's decoding process was ended by signal %d before it answered (past its bound of memory or of CPU time, or a "
+                    "fault in a decoder)" % os.WTERMSIG(status))
+        return "Pillow's decoding process ended without an answer (exit code %s)" % (os.WEXITSTATUS(status) if status is not None and os.WIFEXITED(status) else "unknown")
+
+    def _message(self):
+        if not self._fill(5):
+            raise NotAPicture(self._ended())
+        kind, length = bytes(self.buf[:1]), int.from_bytes(self.buf[1:5], "big")
+        if length > MAX_PIXELS + 4096 or not self._fill(5 + length):
+            raise NotAPicture(self._ended())
+        body = bytes(self.buf[5:5 + length])
+        del self.buf[:5 + length]
+        return kind, body
+
+    def _refusal(self, kind, body):
+        try:
+            said = json.loads(body.decode("ascii"))
+            frame, name = said.get("frame"), str(said.get("class"))[:80]
+        except (ValueError, UnicodeDecodeError, AttributeError):
+            frame, name = None, "an unreadable report"
+        if kind == b"U":
+            return "Pillow does not read it as a picture of the formats this tool hands it (%s: %s)" % (PILLOW_FORMAT_NAMES, name)
+        if frame:
+            return "Pillow does not read frame %d (%s)" % (frame + 1, name)
+        return "Pillow does not read it as a picture (%s)" % name
+
+    def next_frame(self):
+        if self.total is not None or self.more or self.pid is None:
+            return None
+        try:
+            kind, body = self._message()
+            if kind in (b"E", b"M"):
+                if kind == b"E":
+                    self.total = int.from_bytes(body, "big")
+                else:
+                    self.more = True
+                self.close(kill=False)
+                return None
+            if kind != b"H" or len(body) != 8:
+                raise NotAPicture(self._refusal(kind, body) if kind in (b"U", b"X") else "Pillow's decoding process sent what it should not")
+            width, height = struct.unpack(">II", body)
+            what = "frame %d is" % (self.k + 1) if self.k else "a picture of"
+            if width * height > MAX_PIXELS or width == 0 or height == 0:
+                raise NotAPicture("%s %d x %d pixels (this tool reads up to %d pixels)" % (what, width, height, MAX_PIXELS))
+            if height > MAX_ROWS:
+                raise NotAPicture("%s %d x %d pixels (this tool reads up to %d rows)" % (what, width, height, MAX_ROWS))
+            if self.check is not None:
+                self.check(width, height)
+            kind, body = self._message()
+            if kind != b"F" or len(body) != width * height:
+                raise NotAPicture(self._refusal(kind, body) if kind in (b"U", b"X") else "Pillow's decoding process sent what it should not")
+            self.k += 1
+            gray = [body[y * width:(y + 1) * width] for y in range(height)]
+            return Picture(width, height, gray, None, "Pillow %s" % _PILLOW.get("version", "?"))
+        except BaseException:
+            self.close()
+            raise
+
+
+def read_picture(data, want_rgb=False, reader="auto", tick=None, frames=MAX_FRAMES):
     """The picture in `data`: a PNG by the built-in reader when it reads it (or when reader is "builtin"), anything else, a PNG the
-    built-in reader refuses and an animated PNG, by Pillow when it imports. NotAPicture says which reader said what. A PNG the built-in
-    reader found cut or corrupt and Pillow read all the same carries that finding in `damage`: Pillow fills what is missing."""
+    built-in reader refuses and an animated PNG, by Pillow in a child when it imports. NotAPicture says which reader said what; Clock
+    when the clock runs out first. A PNG the built-in reader found cut or corrupt and Pillow read all the same carries that finding in
+    `damage`: Pillow fills what is missing. A picture Pillow read carries `stream`, which gives up to `frames` frames in all, and which
+    the caller closes. Pillow's frames are grey only (want_rgb is for the built-in reader)."""
     first = damage = builtin = None
     if data[:8] == PNG_MAGIC or reader == "builtin":
         try:
@@ -917,61 +1234,27 @@ def read_picture(data, want_rgb=False, reader="auto", tick=None):
     image_module = pillow() if reader != "builtin" else None
     if image_module is None:
         raise NotAPicture(first or "not a PNG, and Pillow, which reads the other picture formats, does not import here")
-    import io
+    said = "the built-in reader: %s; " % first if first else ""
+    scans = jpeg_scans(data)
+    if scans > MAX_JPEG_SCANS:
+        raise NotAPicture("%sa JPEG of %d scans (start-of-scan markers): this tool hands Pillow a JPEG of up to %d (a picture has one, a "
+                          "progressive one about ten)" % (said, scans, MAX_JPEG_SCANS), damaged=damage is not None)
+    stream = PillowFrames(data, image_module, frames)
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            image = image_module.open(io.BytesIO(data))
-            if image.width * image.height > MAX_PIXELS:
-                raise NotAPicture("a picture of %d x %d pixels (this tool reads up to %d pixels)" % (image.width, image.height, MAX_PIXELS))
-            picture = _pillow_frame(image_module, image, want_rgb)
-            frames = getattr(image, "n_frames", 1)
-    except NotAPicture:
-        if builtin is not None:
-            return builtin
-        raise
-    except Exception as exc:  # noqa: BLE001 - Pillow's own errors, a decompression-bomb warning included: the class is said, never the message
+        picture = stream.next_frame()
+        if picture is None:
+            raise NotAPicture("Pillow found no frame in it")
+    except NotAPicture as exc:
+        stream.close()
         if builtin is not None:
             return builtin                  # an animated PNG Pillow does not read: its default image, and frames_why says the rest
-        raise NotAPicture("%sPillow does not read it as a picture (%s)" % ("the built-in reader: %s; " % first if first else "", type(exc).__name__),
-                          damaged=damage is not None)
+        raise NotAPicture("%s%s" % (said, exc), damaged=damage is not None)
+    except BaseException:
+        stream.close()
+        raise
     picture.damage = damage
-    if isinstance(frames, int) and frames > 1:
-        picture.frames = frames
-
-        def frame_at(k):
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("error")
-                    image.seek(k)
-                    if image.width * image.height > MAX_PIXELS:
-                        raise NotAPicture("frame %d is %d x %d pixels (this tool reads up to %d pixels)" % (k + 1, image.width, image.height, MAX_PIXELS))
-                    return _pillow_frame(image_module, image, want_rgb)
-            except NotAPicture:
-                raise
-            except Exception as exc:  # noqa: BLE001 - the class is said, never the message
-                raise NotAPicture("Pillow does not read frame %d (%s)" % (k + 1, type(exc).__name__))
-        picture.frame_at = frame_at
+    picture.stream = stream
     return picture
-
-
-def _pillow_frame(image_module, image, want_rgb):
-    """The frame Pillow has open, as a Picture: transparency put on white, grey always, RGB when asked for."""
-    image.load()
-    if image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info:
-        image = image.convert("RGBA")
-        flat = image_module.new("RGB", image.size, (255, 255, 255))
-        flat.paste(image, mask=image.split()[3])
-        image = flat
-    grey = image.convert("L")
-    width, height = grey.size
-    flat_gray = grey.tobytes()
-    gray = [flat_gray[y * width:(y + 1) * width] for y in range(height)]
-    rgb = None
-    if want_rgb:
-        flat_rgb = image.convert("RGB").tobytes()
-        rgb = [flat_rgb[y * width * 3:(y + 1) * width * 3] for y in range(height)]
-    return Picture(width, height, gray, rgb, "Pillow %s" % _PILLOW.get("version", "?"))
 
 
 def png_bytes(width, height, rows, channels=1):
@@ -989,11 +1272,14 @@ def otsu(gray_rows, tick=None):
     """The threshold that best splits the grey values in two (Otsu): a pixel below it is dark."""
     histogram = [0] * 256
     step = max(1, len(gray_rows) // 400)
+    counts = collections.Counter()
     for row in gray_rows[::step]:
-        if tick:
-            tick()
-        for value, count in collections.Counter(row).items():
-            histogram[value] += count
+        for first in range(0, len(row), SPAN * 16):       # a wide row is counted a megabyte at a time, the clock read before each
+            if tick:
+                tick()
+            counts.update(row[first:first + SPAN * 16])
+    for value, count in counts.items():
+        histogram[value] = count
     total = sum(histogram)
     if total == 0:
         return 128
@@ -1652,33 +1938,28 @@ def _ratio(lengths):
 
 
 def _cross_check(line, centre):
-    """Along one line of 0 and 1 (a row, or a column as bytes), the finder pattern through `centre`: (middle, total length) or None."""
+    """Along one line of 0 and 1 (a row, or a column as bytes), the finder pattern through `centre`: (middle, total length) or None. The
+    runs are walked by find and rfind, so a run of millions of pixels costs no Python loop."""
     n = len(line)
     centre = int(centre)
     if not 0 <= centre < n or line[centre] != 1:
         return None
     lengths = [0] * 5
-    i = centre
-    while i >= 0 and line[i] == 1:
-        i -= 1
+    i = line.rfind(b"\x00", 0, centre + 1)           # the first light pixel left of the dark core (or -1)
     lengths[2] = centre - i
     start_core = i + 1
-    for k, want in ((1, 0), (0, 1)):
-        j = i
-        while j >= 0 and line[j] == want:
-            j -= 1
+    for k, other in ((1, b"\x01"), (0, b"\x00")):
+        j = line.rfind(other, 0, i + 1) if i >= 0 else -1
         lengths[k] = i - j
         i = j
     left = i + 1
-    i = centre + 1
-    while i < n and line[i] == 1:
-        i += 1
+    i = line.find(b"\x00", centre + 1)
+    i = n if i < 0 else i
     lengths[2] += i - centre - 1
     end_core = i
-    for k, want in ((3, 0), (4, 1)):
-        j = i
-        while j < n and line[j] == want:
-            j += 1
+    for k, other in ((3, b"\x01"), (4, b"\x00")):
+        j = line.find(other, i) if i < n else -1
+        j = n if j < 0 else j
         lengths[k] = j - i
         i = j
     if min(lengths) == 0 or _ratio(lengths) is None:
@@ -1688,7 +1969,8 @@ def _cross_check(line, centre):
 
 def find_finders(binary, width, height):
     """Finder-pattern candidates: [(x, y, module size, rows that saw it)], the most seen first. A row is scanned for five runs in the
-    ratio 1:1:3:1:1, the column through its middle must show the same, and the row through that column's middle again."""
+    ratio 1:1:3:1:1, the column through its middle must show the same, and the row through that column's middle again. A row's runs are
+    walked through a window of five (never a list of them all: a row can be 36,000,000 runs), the clock read every 4096 runs."""
     flat = b"".join(binary)
     found = []
     step = max(1, height // 1500)
@@ -1698,13 +1980,18 @@ def find_finders(binary, width, height):
         row = binary[y]
         if 1 not in row:
             continue
-        runs = [(m.start(), m.end() - m.start()) for m in RUNS.finditer(row)]
-        first_dark = 0 if row[0] == 1 else 1
-        for i in range(first_dark, len(runs) - 4, 2):
-            lengths = [runs[i + k][1] for k in range(5)]
+        window = collections.deque(maxlen=5)
+        for seen, m in enumerate(RUNS.finditer(row), 1):
+            if seen % 4096 == 0:
+                tick()
+            window.append((m.start(), m.end() - m.start()))
+            if len(window) < 5 or row[window[0][0]] != 1:
+                continue
+            lengths = [w[1] for w in window]
             if _ratio(lengths) is None:
                 continue
-            cx = runs[i + 2][0] + runs[i + 2][1] / 2.0
+            tick()
+            cx = window[2][0] + window[2][1] / 2.0
             vertical = _cross_check(flat[int(cx)::width], y)
             if vertical is None:
                 continue
@@ -1923,6 +2210,8 @@ def dark_box(binary, width, height):
     top = bottom = None
     left, right = width, 0
     for y, row in enumerate(binary):
+        if y % 4096 == 0:
+            tick()
         first = row.find(b"\x01")
         if first < 0:
             continue
@@ -1938,21 +2227,26 @@ def module_size(binary, width, box):
     """The module size of an axis-aligned symbol (or a piece of one) from its runs: the largest size of which nine runs in ten, along
     rows and columns inside the box, are whole multiples. None when no size fits (a picture that is not made of square modules)."""
     left, top, right, bottom = box
-    runs = []
-    rows = range(top, bottom, max(1, (bottom - top) // 60))
-    for y in rows:
-        runs += [m.end() - m.start() for m in RUNS.finditer(binary[y][left:right])]
+    counts = collections.Counter()           # the lengths are counted as they come (a row can hold 36,000,000 runs), the clock read between
     flat = b"".join(binary)
-    for x in range(left, right, max(1, (right - left) // 60)):
-        runs += [m.end() - m.start() for m in RUNS.finditer(flat[x::width][top:bottom])]
-    if len(runs) < 8:
+    rows = (binary[y][left:right] for y in range(top, bottom, max(1, (bottom - top) // 60)))
+    columns = (flat[x::width][top:bottom] for x in range(left, right, max(1, (right - left) // 60)))
+    for line in itertools.chain(rows, columns):
+        runs = RUNS.finditer(line)
+        while True:
+            tick()
+            piece = [m.end() - m.start() for m in itertools.islice(runs, 1 << 16)]
+            if not piece:
+                break
+            counts.update(piece)
+    total = sum(counts.values())
+    if total < 8:
         return None
     tick()
-    counts = collections.Counter(runs)
     largest = min(max(counts), min(right - left, bottom - top))
     size = float(largest)
-    total = len(runs)
     while size >= 1.0:
+        tick()
         slack = max(1.0, size * 0.2)
         fit = sum(count for length, count in counts.items() if round(length / size) >= 1 and abs(length - size * round(length / size)) <= slack)
         if fit >= 0.9 * total:
@@ -2078,7 +2372,6 @@ def read_symbol(binary, width, height, mode, stats, box=None, version=None):
 
 # ---- pieces of one symbol -----------------------------------------------------------------------------------------------------------
 MAX_PIECES = 16
-MAX_FRAMES = 64                    # frames or pages of one picture that are searched
 MAX_LEAVES = 4000                  # whole placements whose format word and syndromes are computed
 MAX_NODES = 20000                  # steps of the placement search (a piece put in a place, or a whole placement scored)
 
@@ -2369,14 +2662,18 @@ def keep(place, row, result, stem, want_repaint):
         row["write_error"] = "the payload could not be written under the output directory (%s)" % describe(exc)
 
 
-def load(path, reader, what):
+def load(path, reader, what, frames=MAX_FRAMES):
     data = read_file(path, MAX_IMAGE_BYTES, what)
-    picture = read_picture(data, False, reader, tick)
+    picture = read_picture(data, False, reader, tick, frames)
     return picture, hashlib.sha256(data).hexdigest(), len(data)
 
 
-def looked_for(stats, mode):
+def looked_for(stats, mode, box=None):
     methods = []
+    if box is not None:
+        return {"methods": ["the box given cut into the module grid of each version the module size allows (the readings by finder patterns take no box)",
+                            "the same grids with each of the 32 format words when neither format copy could be read"],
+                "polarities": ["dark on light", "light on dark"], "versions": "1 to %d" % MAX_VERSION, **stats}
     if mode in ("auto", "finders"):
         methods.append("finder patterns (1:1:3:1:1 along rows and columns), three of them at the corners of a right angle, the grid sampled through them and the alignment pattern")
     if mode in ("auto", "repaint"):
@@ -2397,6 +2694,8 @@ def main():
     if box is not None:
         if not isinstance(box, list) or len(box) != 4 or any(isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 100000 for v in box) or box[2] - box[0] < 21 or box[3] - box[1] < 21:
             raise Refused("box must be [left, top, right, bottom] in pixels, whole numbers, at least 21 wide and high: the symbol's own extent without its quiet zone")
+        if mode in ("finders", "fragments"):
+            raise Refused("box goes with mode auto or repaint: the box is read by the repaint reading, and the three-finder reading and the placement of pieces take none")
     paths = []
     if args.get("image") is not None:
         paths.append(path_param(args.get("image"), "image"))
@@ -2458,46 +2757,68 @@ def main():
             row["picture_damaged"] = ("the built-in reader found it cut or corrupt (%s); Pillow read it all the same, and what it filled in for "
                                       "the missing part is not the picture's" % picture.damage)
             reasons.append("%s is a damaged picture, read only in part (see picture_damaged)" % row["input"])
-        stats, found, searched, frames_not_read = {}, [], 0, None
-        for k in range(min(picture.frames, MAX_FRAMES)):
-            if k:
-                if picture.frame_at is None:
-                    frames_not_read = "frames 2 to %d: %s" % (picture.frames, picture.frames_why)
+        stats, found, searched, frames_not_read, total = {}, [], 0, None, None
+        frame = picture
+        try:
+            while True:
+                if searched == 0:
+                    try:
+                        result, row["threshold"] = search(picture, stats)
+                    except Refused as exc:
+                        row.update({"result": "not read", "why": str(exc)})
+                        reasons.append("%s was not read: %s" % (row["input"], exc))
+                        return row
+                else:
+                    try:
+                        result, _threshold = search(frame, stats)
+                    except Refused as exc:
+                        frames_not_read = "frame %d and any after it: %s" % (searched + 1, exc)
+                        break
+                    except Clock:
+                        frames_not_read = "frame %d and any after it: the tool's clock (max_seconds %d) ran out while it was searched" % (searched + 1, seconds)
+                        break
+                searched += 1
+                if result is not None:
+                    found.append((searched, result))
+                if picture.stream is None:
+                    total = picture.frames
+                    if total > 1:
+                        frames_not_read = "frames 2 to %d: %s" % (total, picture.frames_why)
                     break
                 try:
-                    frame = picture.frame_at(k)
-                    result, _threshold = search(frame, stats)
-                except (NotAPicture, Refused) as exc:
-                    frames_not_read = "frames %d to %d: %s" % (k + 1, picture.frames, exc)
+                    frame = picture.stream.next_frame()
+                except NotAPicture as exc:
+                    frames_not_read = "frame %d and any after it: %s" % (searched + 1, exc)
                     break
                 except Clock:
-                    frames_not_read = "frames %d to %d: the tool's clock (max_seconds %d) ran out" % (k + 1, picture.frames, seconds)
+                    frames_not_read = ("frame %d and any after it (whether the picture has more frames is not known): the tool's clock (max_seconds %d) ran "
+                                       "out while it was decoded" % (searched + 1, seconds))
                     break
-            else:
-                try:
-                    result, row["threshold"] = search(picture, stats)
-                except Refused as exc:
-                    row.update({"result": "not read", "why": str(exc)})
-                    reasons.append("%s was not read: %s" % (row["input"], exc))
-                    return row
-            searched += 1
-            if result is not None:
-                found.append((k + 1, result))
-        if frames_not_read is None and picture.frames > MAX_FRAMES:
-            frames_not_read = "frames %d to %d: past the bound of %d frames a picture" % (MAX_FRAMES + 1, picture.frames, MAX_FRAMES)
-        if picture.frames > 1:
-            row.update({"frames": picture.frames, "frames_searched": searched})
+                if frame is None:
+                    if picture.stream.more:
+                        frames_not_read = ("frames past the %dth: the picture has more than %d frames, and they were neither counted nor searched (the bound of %d "
+                                           "frames a picture)" % (MAX_FRAMES, MAX_FRAMES, MAX_FRAMES))
+                    else:
+                        total = picture.stream.total
+                    break
+        finally:
+            if picture.stream is not None:
+                picture.stream.close()
+        if total is None:
+            row.update({"frames_at_least": searched + (1 if picture.stream is not None and picture.stream.more else 0), "frames_searched": searched})
+        elif total > 1:
+            row.update({"frames": total, "frames_searched": searched})
         if frames_not_read:
             row["frames_not_read"] = frames_not_read
             reasons.append("%s: %s" % (row["input"], frames_not_read))
         if not found:
-            row.update({"result": "not a symbol", "looked_for": looked_for(stats, mode),
+            row.update({"result": "not a symbol", "looked_for": looked_for(stats, mode, box),
                         "meaning": "no QR symbol of version 1 to %d was read from this picture%s by these methods; see not_read for what they do not reach"
-                        % (MAX_VERSION, "" if picture.frames == 1 else " (in the %d frames searched; frames_not_read names any that were not)" % searched)})
+                        % (MAX_VERSION, "" if total == 1 else " (in the %d frames searched; frames_not_read names any that were not)" % searched)})
             return row
         frame_number, result = found[0]
         row.update(describe_result(result))
-        if picture.frames > 1:
+        if total != 1:
             row["frame"] = frame_number
         keep(place, row, result, "qr-%02d" % number, mode == "repaint" or "function_patterns" in result)
         others, same = [], []
@@ -2505,11 +2826,8 @@ def main():
             if other["payload"] == result["payload"]:
                 same.append(k)
                 continue
-            if any(other["payload"] == o["payload"] for _k, o in others):
-                same_as = next(kk for kk, o in others if o["payload"] == other["payload"])
-                others.append((k, other, same_as))
-                continue
-            others.append((k, other, None))
+            same_as = next((kk for kk, o, _first in others if o["payload"] == other["payload"]), None)
+            others.append((k, other, same_as))
         if same:
             row["frames_with_the_same_payload"] = same
         if others:
@@ -2535,8 +2853,17 @@ def main():
         pieces, piece_rows, unread = [], [], 0
         for index, path in enumerate(paths):
             row = {"piece": index, "input": printable(path)}
+            picture = None
             try:
-                picture, digest, size = load(path, reader, "the picture")
+                picture, digest, size = load(path, reader, "the picture", 1)
+                more = picture.frames > 1
+                if picture.stream is not None:
+                    try:
+                        more = picture.stream.next_frame() is None and picture.stream.more
+                    except NotAPicture:
+                        more = None         # Pillow could not say whether a second frame is there (it does not read past the first)
+                    finally:
+                        picture.stream.close()
                 binary, _threshold = binarise(picture.gray, None, tick)
                 grid, unit = piece_modules(binary, picture.width, picture.height, module_pixels)
                 row.update({"sha256": digest, "bytes": size, "pixels": "%d x %d" % (picture.width, picture.height), "picture_reader": picture.reader})
@@ -2546,9 +2873,9 @@ def main():
                     row["picture_damaged"] = ("the built-in reader found it cut or corrupt (%s); Pillow read it all the same, and what it filled in "
                                               "for the missing part is not the picture's" % picture.damage)
                     reasons.append("piece %d is a damaged picture, read only in part (see picture_damaged)" % index)
-                if picture.frames > 1:
-                    row.update({"frames": picture.frames, "frames_not_read": "frames 2 to %d: a piece is read from its first frame" % picture.frames})
-                    reasons.append("piece %d: frames 2 to %d were not read (a piece is read from its first frame)" % (index, picture.frames))
+                if more or more is None:
+                    row["frames_not_read"] = "frames past the first%s: a piece is read from its first frame" % ("" if more else ", if it has any (Pillow did not say)")
+                    reasons.append("piece %d: %s" % (index, row["frames_not_read"]))
                 if grid is None:
                     row.update({"result": "not a piece", "why": unit})
                     unread += 1
@@ -2561,6 +2888,9 @@ def main():
             except Clock:
                 stopped = "the clock ran out while piece %d was being read" % index
                 break
+            finally:
+                if picture is not None and picture.stream is not None:
+                    picture.stream.close()
             piece_rows.append(row)
         row = {"input": "the set of %d pieces" % len(paths), "pieces": piece_rows}
         if stopped is None and unread:

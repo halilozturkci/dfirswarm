@@ -1442,14 +1442,15 @@ def _unexpected_tool(kind, value, _tb):
 sys.excepthook = _unexpected_tool
 
 
-TOOL = {"name": "frame_survey", "version": 2}
-PARSER = "frame_survey/2"
-DEFAULT_SECONDS, MAX_SECONDS = 540, 570         # under the manifest's 600
+TOOL = {"name": "frame_survey", "version": 3}
+PARSER = "frame_survey/3"
+DEFAULT_SECONDS, MAX_SECONDS = 500, 540         # under the manifest's 600, with room for what may follow the clock: FINISH_SECONDS, the pairing's
+                                                # own 10 seconds, the decoder's ending and the settling of its group (about 40 seconds at most)
 PROBE_SECONDS = 30
 DEFAULT_FRAMES, MAX_FRAMES = 20000, 200000      # frames decoded a call
 MAX_EXTRACT = 300                               # frames written at native size a call
 MAX_EXTRACT_BYTES = 2 << 30
-MAX_NATIVE_PIXELS = 8192 * 4320
+MAX_NATIVE_WIDTH, MAX_NATIVE_HEIGHT = 8192, 4320       # the coded frame, each side (a frame turned by its display matrix is turned after)
 TILE_BOX_HEIGHT = 2                             # a tile is at most this many tile widths high: a tall frame is fitted into the box
 MAX_SHEET_BYTES = 192 << 20                     # the pixels of one contact sheet held at once (RGB)
 FINISH_SECONDS = 20                             # past the clock, the time an encoder that has begun a picture is given (under the manifest's timeout)
@@ -1620,7 +1621,10 @@ class Place:
                 os.makedirs(out, exist_ok=True)
                 fd = os.open(out, nofollow)
             else:
-                agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
+                agent = os.environ.get("AGENT_ID") or "tool"
+                if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}", agent):
+                    raise Refused("AGENT_ID is not a plain name (letters, digits, '_', '-' and '.', and no '.' first): outside a job the files go under "
+                                  "work/<AGENT_ID>/tool-output, and this one would not name a directory there. Nothing was written")
                 self.shown = "work/%s/tool-output" % agent
                 self.path = os.path.join("work", agent, "tool-output")
                 fd = os.open(".", nofollow)
@@ -1790,7 +1794,11 @@ def tick():
 
 
 SHOWINFO = re.compile(rb"\] n: *(\d+) +pts: *(-?\d+|N/A) +pts_time: *(-?[0-9.]+|N/A)")
-TROUBLE = re.compile(rb"error|damaged|corrupt|invalid|partial file|missing|conceal|truncat", re.I)
+# A decoder's or a demuxer's line about damage: an error, a cut file ("File ended prematurely", "partial file", "Truncating packet", "end of
+# file"), a structure past its parent (Matroska's "exceeds containing master element"), a lost or broken reference ("Frame num gap",
+# "non-existing PPS", "no frame!"), a concealed or skipped frame. Plain words a title can hold ("lost", "skipping") are left out.
+TROUBLE = re.compile(rb"error|damaged|corrupt|invalid|partial file|missing|conceal|truncat|prematur|end of file|unexpected|incomplete|exceed|overread"
+                     rb"|out of (?:range|bounds)|broken|mismatch|desync|resync|fail|num gap|non-existing|no frame", re.I)
 
 
 def clean(text, most=300):
@@ -1825,15 +1833,28 @@ def rotation_of(stream):
         return None
 
 
+def mirror_of(stream):
+    """Whether the stream's display matrix mirrors the picture (the determinant of its 2 x 2 part is negative), from the matrix as ffprobe
+    prints it; None when it prints none. ffprobe gives a mirror a rotation as well (a horizontal mirror reads as 180 degrees)."""
+    for side in stream.get("side_data_list") or []:
+        if isinstance(side, dict) and isinstance(side.get("displaymatrix"), str):
+            numbers = re.findall(r"^\s*[0-9a-fA-F]{8}:\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s*$", side["displaymatrix"], re.M)
+            if len(numbers) == 3:
+                (a, b, _u), (c, d, _v) = [tuple(int(x) for x in row) for row in numbers[:2]]
+                return a * d - b * c < 0
+    return None
+
+
 def probe(ffprobe, path):
     """The first video stream as ffprobe reads it: {codec, width, height (of the frame as the decoder gives it), coded, rotation, autorotate,
     rate, frames_said, duration_said, container, video_streams}, or (None, why). A rotation by a quarter or half turn is let through to the
     decoder, which turns each frame without resampling it (width and height are then of the turned frame); any other angle is not applied
     (-noautorotate), because turning by it resamples the frame."""
-    code, out, err, timed_out = preflight([ffprobe, "-v", "error", "-select_streams", "v", "-show_entries", "stream:format=format_name,duration",
-                                           "-of", "json", "-i", "file:" + target_of(path)], seconds_left(PROBE_SECONDS))
+    given = seconds_left(PROBE_SECONDS)
+    code, out, err, timed_out = preflight([ffprobe, "-v", "error", "-select_streams", "v", "-show_entries", "stream:format=format_name,duration,start_time",
+                                           "-of", "json", "-i", "file:" + target_of(path)], given)
     if timed_out:
-        return None, "ffprobe did not finish in %d seconds" % PROBE_SECONDS
+        return None, "ffprobe did not finish in the %.0f seconds it was given (at most %d, and no more than the clock had left)" % (given, PROBE_SECONDS)
     try:
         doc = json.loads(out.decode("utf-8", "replace"))
     except (ValueError, RecursionError):
@@ -1843,8 +1864,10 @@ def probe(ffprobe, path):
         return None, "ffprobe found no video stream it can read (exit %s): %s" % (code, clean(err) or "it said nothing")
     stream = streams[0]
     width, height = stream.get("width"), stream.get("height")
-    if not isinstance(width, int) or not isinstance(height, int) or width < 2 or height < 2 or width * height > MAX_NATIVE_PIXELS:
-        return None, "the video stream's frame size is not one this tool takes (%s x %s)" % (clean(str(width), 12), clean(str(height), 12))
+    if (not isinstance(width, int) or not isinstance(height, int) or isinstance(width, bool) or isinstance(height, bool) or width < 2 or height < 2
+            or width > MAX_NATIVE_WIDTH or height > MAX_NATIVE_HEIGHT):
+        return None, ("the video stream's frame size is not one this tool takes (%s x %s; it takes 2 to %d wide and 2 to %d high, as coded)"
+                      % (clean(str(width), 12), clean(str(height), 12), MAX_NATIVE_WIDTH, MAX_NATIVE_HEIGHT))
     turn = rotation_of(stream)
     quarter = turn is not None and abs(turn - round(turn / 90.0) * 90) < 1.0
     autorotate = turn is None or quarter
@@ -1869,22 +1892,35 @@ def probe(ffprobe, path):
 
     form = doc.get("format") if isinstance(doc.get("format"), dict) else {}
     return {"codec": clean(str(stream.get("codec_name")), 40), "width": width, "height": height, "coded": "%d x %d" % coded,
-            "rotation": turn, "autorotate": autorotate, "attached_picture": disposition.get("attached_pic") == 1,
+            "rotation": turn, "mirrored": mirror_of(stream), "autorotate": autorotate, "attached_picture": disposition.get("attached_pic") == 1,
             "rate": rate(stream.get("avg_frame_rate")) or rate(stream.get("r_frame_rate")), "frames_said": number(stream.get("nb_frames"), int),
-            "duration_said": number(stream.get("duration"), float) or number(form.get("duration"), float), "container": clean(str(form.get("format_name")), 60),
+            "duration_said": number(stream.get("duration"), float) or number(form.get("duration"), float),
+            # The decoder shifts every time by the file's start time (it runs without -copyts): the stream's stated end is its own start
+            # time less the file's, plus its duration; with only the file's duration, the end is that duration.
+            "start_said": ((number(stream.get("start_time"), float) or 0.0) - (number(form.get("start_time"), float) or 0.0)) if number(stream.get("duration"), float) else 0.0,
+            "container": clean(str(form.get("format_name")), 60),
             "video_streams": len(streams)}, None
 
 
 def turned(info):
     """What the answer says about the stream's display rotation and its other video streams: {field: sentence}, empty when there is nothing."""
     said = {}
-    if info["rotation"] is not None and info["autorotate"] and round(info["rotation"]) % 360:
-        said["rotation_note"] = ("the stream carries a display rotation of %g degrees: the decoder turns each frame as a player shows it (a quarter or half "
-                                 "turn moves pixels without resampling them), and every size, frame and region here is of the turned frame, %d x %d (coded %s)"
-                                 % (info["rotation"], info["width"], info["height"], info["coded"]))
+    mirror = info.get("mirrored")
+    if info["rotation"] is not None and info["autorotate"] and (round(info["rotation"]) % 360 or mirror):
+        if mirror:
+            said["rotation_note"] = ("the stream's display matrix MIRRORS the picture (ffprobe gives it a rotation of %g degrees, a number that alone does not say how a mirrored picture is shown): "
+                                     "the decoder applies the matrix as a player shows it, a mirror%s, moving pixels without resampling them, and every size, "
+                                     "frame and region here is of the shown frame, %d x %d (coded %s): text in it reads as the player shows it, which may be "
+                                     "mirrored from the scene" % (info["rotation"], " and a turn" if round(info["rotation"]) % 180 else "", info["width"],
+                                                                   info["height"], info["coded"]))
+        else:
+            said["rotation_note"] = ("the stream carries a display rotation of %g degrees: the decoder turns each frame as a player shows it (a quarter or half "
+                                     "turn moves pixels without resampling them), and every size, frame and region here is of the turned frame, %d x %d (coded %s)"
+                                     % (info["rotation"], info["width"], info["height"], info["coded"]))
     elif info["rotation"] is not None and not info["autorotate"]:
-        said["rotation_note"] = ("the stream carries a display rotation of %g degrees, which is not a quarter or half turn: it was NOT applied (turning by it "
-                                 "resamples the frame), and every size, frame and region here is of the frame as coded, %s" % (info["rotation"], info["coded"]))
+        said["rotation_note"] = ("the stream carries a display rotation of %g degrees%s, which is not a quarter or half turn: it was NOT applied (turning by it "
+                                 "resamples the frame), and every size, frame and region here is of the frame as coded, %s" % (
+                                     info["rotation"], " and a mirror (not applied either)" if mirror else "", info["coded"]))
     if info["video_streams"] > 1:
         said["streams_note"] = ("the file has %d video streams and this tool reads the first (0:v:0) only: the others were not decoded, and a negative here "
                                 "says nothing about them" % info["video_streams"])
@@ -1958,18 +1994,39 @@ def stream_frames(argv, frame_bytes, on_frame, stderr_file):
 FRAME_SIZE = re.compile(rb" s:(\d+)x(\d+) ")
 
 
+REBUILT = re.compile(rb"Reconfiguring filter graph")
+
+
 class LogTimes:
     """The presentation time and the size of each output frame, from the showinfo lines the decoder writes to its log: {output index:
-    seconds}, and the indexes whose line was read. The log is read on from where the last reading stopped, a line that is not whole yet
-    waits for the next. A line about an error is counted with the input's own name taken out of it first (a file named "missing" is no
-    error), and showinfo's own lines are never counted as one."""
+    seconds}, and the indexes whose line was read. An output frame's index is the order of its showinfo line, counted here (the k-th line
+    is the k-th frame on the pipe), never showinfo's own n: that counter starts again when the decoder rebuilds its filters. A rebuild
+    (its "Reconfiguring filter graph" line, or an n that is not the one after the last) is counted in `restarts`, with the output index it
+    came at: the select filter's count started again with it, so a frame number chosen by that filter is not a decoded frame's number past
+    it. The log is read on from where the last reading stopped, a line that is not whole yet waits for the next. A line about an error is
+    counted with the input's own name taken out of it first (a file named "missing" is no error), and showinfo's own lines are never
+    counted as one."""
 
     def __init__(self, path, size, quiet=(), keep=20):
         self.path, self.at, self.times = path, 0, {}
         self.size, self.quiet, self.keep = size, [q for q in quiet if q], keep
         self.seen = set()                          # the output indexes whose showinfo line was read
+        self.lines = 0                             # showinfo lines read: the next output index
+        self.rebuilt, self.jumps = 0, 0            # the decoder's own lines about a rebuild, and showinfo counters that were not the one after the last
+        self.last_n = -1
+        self.restart_at = None                     # the output index the first rebuild came at
+        self.last_time = None                      # the presentation time of the last frame that had one
         self.other_size, self.other_first = 0, {}  # frames decoded at another size than the stream's: how many, and the first (index: "w x h")
         self.trouble, self.said = 0, []            # the decoder's own lines about errors: how many, and the first three
+
+    @property
+    def restarts(self):
+        """How many times the decoder's filters were rebuilt, as far as the log shows it."""
+        return max(self.rebuilt, self.jumps)
+
+    def _restart(self):
+        if self.restart_at is None:
+            self.restart_at = self.lines
 
     def read(self):
         try:
@@ -1982,10 +2039,15 @@ class LogTimes:
                     self.at += len(line)
                     found = SHOWINFO.search(line)
                     if found:
-                        index = int(found.group(1))
+                        index = self.lines
+                        self.lines += 1
+                        if int(found.group(1)) != self.last_n + 1:
+                            self.jumps += 1
+                            self._restart()
+                        self.last_n = int(found.group(1))
                         self.seen.add(index)
                         if found.group(3) != b"N/A":
-                            self.times[index] = float(found.group(3))
+                            self.times[index] = self.last_time = float(found.group(3))
                         size = FRAME_SIZE.search(line)
                         if size and (int(size.group(1)), int(size.group(2))) != self.size:
                             self.other_size += 1
@@ -1996,6 +2058,10 @@ class LogTimes:
                         continue
                     for name in self.quiet:
                         line = line.replace(name, b"")
+                    if REBUILT.search(line):
+                        self.rebuilt += 1
+                        self._restart()
+                        continue
                     if TROUBLE.search(line):
                         self.trouble += 1
                         if len(self.said) < 3:
@@ -2025,6 +2091,22 @@ def passthrough(ffmpeg):
     found = re.search(rb"ffmpeg version n?(\d+)\.(\d+)", out)
     old = found is not None and (int(found.group(1)), int(found.group(2))) < (5, 1)
     return (["-vsync", "0"] if old else ["-fps_mode", "passthrough"]), (clean(out.split(b"\n")[0], 80) if out else "ffmpeg, version not printed")
+
+
+def shortfall(info, last_time):
+    """Why a whole-stream survey that ended cleanly did not reach the end the container states (None when it did, or when there is nothing
+    to compare): its last frame's presentation time plus one frame against the stream's start time plus its stated duration, with two frames
+    (0.1 second where the rate is unknown) of slack. A container with no frame count (Matroska, WebM, an elementary stream) is held to it."""
+    if info["duration_said"] is None or last_time is None or info["duration_said"] <= 0:
+        return None
+    step = 1.0 / info["rate"] if info["rate"] else 0.05
+    end = (info["start_said"] or 0.0) + info["duration_said"]
+    reached = last_time + step
+    if end - reached <= 2 * step + 0.001:
+        return None
+    return ("the container states a duration of %.3f s (to %.3f s) and the last frame decoded is at %.3f s: %.3f s, about %d frames, were not decoded "
+            "(a cut stream the decoder did not report, or a video stream that ends before the file's other streams)" % (
+                info["duration_said"], end, last_time, end - reached, int(round((end - reached) / step))))
 
 
 def stamp(seconds):
@@ -2129,7 +2211,10 @@ def survey(args, video, info, ffmpeg, common, started):
     select = "select='gte(n\\,%d)*not(mod(n-%d\\,%d))'" % (start, start, every)
     keep_every_frame, decoder_version = passthrough(ffmpeg)
     common["decoder"]["version"] = decoder_version
-    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", *([] if info["autorotate"] else ["-noautorotate"]), "-i", "file:" + target_of(video),
+    # -reinit_filter 0: a frame of another size or format goes through the same filters (scale takes it as it comes), so that the select
+    # filter's count, which picks the frames, is never started again by a rebuild of the filters; a rebuild that happens anyway is counted.
+    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", *([] if info["autorotate"] else ["-noautorotate"]), "-reinit_filter", "0",
+            "-i", "file:" + target_of(video),
             "-map", "0:v:0", "-an", "-sn", "-vf", "%s,showinfo,scale=%d:%d:flags=area,setsar=1" % (select, tile_width, tile_height), *keep_every_frame,
             "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
     sheets = Sheets(place, tile_width, tile_height, box_width, columns, rows)
@@ -2141,6 +2226,8 @@ def survey(args, video, info, ffmpeg, common, started):
     kept_frames = [0]
 
     def on_frame(frame):
+        if kept_frames[0] >= most:
+            return False              # a frame past max_frames: the cap is reached only when there is one, and it is not kept
         number = start + kept_frames[0] * every
         means = block_means(frame, tile_width, tile_height)
         changed, box = 0, None
@@ -2157,7 +2244,7 @@ def survey(args, video, info, ffmpeg, common, started):
         kept_frames[0] += 1
         if len(pending) >= 30:
             drain()
-        return kept_frames[0] < most
+        return True
 
     log_times = LogTimes(stderr_path, (info["width"], info["height"]), quiet_names(video))
     times = log_times.times
@@ -2200,10 +2287,20 @@ def survey(args, video, info, ffmpeg, common, started):
         reasons.append("the decoder's output ended inside a frame (%d bytes over)" % state["left"])
     if sheets.error:
         reasons.append(sheets.error)
+    if log_times.other_size:
+        reasons.append("%d frame(s) were decoded at another size than the stream's %d x %d (frames_of_another_size): their tiles are scaled to the same "
+                       "tile, and a region in native pixels over them is of the stream's size, not theirs" % (log_times.other_size, info["width"], info["height"]))
+    if log_times.restarts and (start or every > 1) and log_times.restart_at < decoded:
+        reasons.append("the decoder rebuilt its filters %d time(s), the first after %d frame(s) given here, and its select filter's count started again "
+                       "there: the frame numbers from frame %d on (numbers_unconfirmed_from) are not confirmed to be decoded frames' numbers; survey from "
+                       "start_frame 0 with every 1, where every frame is counted here" % (log_times.restarts, log_times.restart_at, start + log_times.restart_at * every))
     whole_call = start == 0 and every == 1 and state["stopped"] is None and state["exit"] == 0
     if whole_call and info["frames_said"] and decoded < info["frames_said"]:
         reasons.append("the container lists %d frames and the decoder gave %d with no error: %d were not decoded (dropped by the decoder, or outside an "
                        "edit list), so the frames here are not every frame the file holds" % (info["frames_said"], decoded, info["frames_said"] - decoded))
+    short = shortfall(info, log_times.last_time) if whole_call and decoded else None
+    if short:
+        reasons.append(short)
     reasons += ["not decoded: " + s for s in skipped]
     # The change scores. A frame's score is the share of blocks that changed from the frame before it. A cut changes most of the picture;
     # a local change (a caption, an overlay) changes a few blocks and, when it ends, changes the same blocks again.
@@ -2287,6 +2384,8 @@ def survey(args, video, info, ffmpeg, common, started):
         answer["tile_note"] = ("a frame of %d x %d does not fit a tile %d wide and at most %d high with its shape: its tile is %d x %d, stretched, and a "
                                "region read off it is of that stretched copy (region_native_pixels is of the frame)" % (info["width"], info["height"], box_width,
                                                                                                                        TILE_BOX_HEIGHT * box_width, tile_width, tile_height))
+    if log_times.restarts and (start or every > 1) and log_times.restart_at < decoded:
+        answer["numbers_unconfirmed_from"] = start + log_times.restart_at * every
     if log_times.other_size:
         answer["frames_of_another_size"] = {"count": log_times.other_size, "first": [{"frame": start + i * every, "size": v} for i, v in sorted(log_times.other_first.items())],
                                             "what": "frames the decoder gave at another size than the stream's %d x %d (the stream changes size there): their tiles are scaled to the same tile, and a region in native pixels is of the stream's size" % (info["width"], info["height"])}
@@ -2323,7 +2422,9 @@ def extract(args, video, info, ffmpeg, common):
     # as without it), and one of another size (a stream that changes size, a turn the probe did not foresee) comes out at the size the
     # frames are cut at, never misaligned, and is named. setsar only sets the aspect the raw output does not carry, so that the encoder
     # writes no line about it.
-    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", *([] if info["autorotate"] else ["-noautorotate"]), "-i", "file:" + target_of(video),
+    # -reinit_filter 0 keeps one set of filters for the whole stream (see survey): select's count is the decoded frame's number.
+    argv = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", *([] if info["autorotate"] else ["-noautorotate"]), "-reinit_filter", "0",
+            "-i", "file:" + target_of(video),
             "-map", "0:v:0", "-an", "-sn", "-vf", "select='between(n\\,%d\\,%d)',showinfo,scale=%d:%d,setsar=1" % (first, last, width, height), *keep_every_frame,
             "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
     written, total, problem = [], [0], [None]
@@ -2355,6 +2456,17 @@ def extract(args, video, info, ffmpeg, common):
     log_times = LogTimes(stderr_path, (width, height), quiet_names(video), MAX_EXTRACT)
     times = log_times.read()
     temp_drop(stderr_path)
+    dropped, rebuilt = 0, None
+    if log_times.restarts and log_times.restart_at < len(written):
+        # The select filter's count started again with a rebuild: a frame it gave after the rebuild is not known to be the decoded frame its
+        # number names, so none of those is kept under a number that may not be its own (the frames before the rebuild were counted whole).
+        doubtful = written[log_times.restart_at:]
+        for row in doubtful:
+            dropped += place.remove(os.path.basename(row["file"]))
+        rebuilt = ("the decoder rebuilt its filters %d time(s) (the stream changes size or format) and the count that picks frames started again "
+                   "with it: the %d frame(s) it gave after that cannot be numbered, and %d were removed%s" % (
+                       log_times.restarts, len(doubtful), dropped, "" if dropped == len(doubtful) else " (the others could not be: do not cite them)"))
+        written = written[:log_times.restart_at]
     unconfirmed = []
     for index, row in enumerate(written):
         seconds = times.get(index, row["frame"] / info["rate"] if info["rate"] else None)
@@ -2366,7 +2478,7 @@ def extract(args, video, info, ffmpeg, common):
         elif index not in log_times.seen:
             unconfirmed.append(row["frame"])
     wanted = last - first + 1
-    reasons = []
+    reasons = [rebuilt] if rebuilt else []
     if problem[0]:
         reasons.append(problem[0])
     if state["stopped"] == "clock":

@@ -12,7 +12,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { call, CFB, filesBelow, py, withRun, type Doc } from "./pack-base-media-fixture.ts";
@@ -309,7 +309,7 @@ peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * (1 if sys.platfo
 print(json.dumps({"peak": peak, "answer": json.loads(r.stdout)}))
 `;
 
-test("a brotli stream is expanded a bounded piece at a time: a 512 MiB bomb with max_bytes 1,000,000 stays small in memory, with and without output_buffer_limit", async (t) => {
+test("a brotli stream is expanded a bounded piece at a time: a 512 MiB bomb with max_bytes 1,000,000 stays small in memory; a module without output_buffer_limit is not used", async (t) => {
   await withRun(async (run, out) => {
     const made = py(String.raw`
 import os, sys
@@ -334,12 +334,125 @@ print("made")
       t.diagnostic("not run: this host's python3 has no brotli module to build the fixture with");
       return;
     }
-    for (const [older, decoder] of [["", /^brotli /], [join(run, "older"), /^brotlicffi /]] as const) {
-      const r = JSON.parse(py(PEAK, [join(CFB, "tools", "cache_body", "run.py"), JSON.stringify({ path: "bomb.br", encoding: "br", max_bytes: 1_000_000 }), join(out, older ? "b" : "a"), older], run)) as Doc;
-      assert.ok(r.peak < 200 * 1024 * 1024, `peak resident memory ${r.peak} bytes for 512 MiB of output`);
-      assert.match(r.answer.encoding.decoder, decoder);
-      assert.deepEqual([r.answer.status, r.answer.body.decoded_bytes, r.answer.body.cap], ["partial", 1_000_000, "max_bytes (1000000)"]);
+    const r = JSON.parse(py(PEAK, [join(CFB, "tools", "cache_body", "run.py"), JSON.stringify({ path: "bomb.br", encoding: "br", max_bytes: 1_000_000 }), join(out, "a"), ""], run)) as Doc;
+    assert.ok(r.peak < 200 * 1024 * 1024, `peak resident memory ${r.peak} bytes for 512 MiB of output`);
+    assert.match(r.answer.encoding.decoder, /^brotli /);
+    assert.deepEqual([r.answer.status, r.answer.body.decoded_bytes, r.answer.body.cap], ["partial", 1_000_000, "max_bytes (1000000)"]);
+    // A module whose decoder cannot bound one call's output (one stored byte can decode to hundreds of MiB) is not used: the stored bytes
+    // are written as they are and the answer says why.
+    const old = JSON.parse(py(PEAK, [join(CFB, "tools", "cache_body", "run.py"), JSON.stringify({ path: "bomb.br", encoding: "br", max_bytes: 1_000_000 }), join(out, "b"), join(run, "older")], run)) as Doc;
+    assert.ok(old.peak < 200 * 1024 * 1024, `peak resident memory ${old.peak} bytes`);
+    assert.deepEqual([old.answer.status, old.answer.partial_reasons[0], old.answer.encoding.decoded], ["partial", "brotli: not decodable here", false]);
+    assert.match(old.answer.encoding.said, /^brotli: not decodable here \(the brotlicffi module of this image is older than 1\.2: its decoder cannot bound what one call returns/);
+  });
+});
+
+/** Fixtures for the decoder's replay, the header's codings and the entry's own checks; argv: the output directory. Written from the
+ * formats (RFC 1950 to 1952, simple_entry_format.h, http_response_info.cc's pickle: a payload size, then the flags), never from the tool. */
+const BUILD2 = String.raw`
+import gzip, hashlib, os, struct, sys, zlib
+out = sys.argv[1]
+INITIAL, FINAL = 0xFCFB6D1BA7725C30, 0xF4FA6F45970D41D8
+def stream0(lines, flags=0x10003):
+    head = b"\x00".join(lines) + b"\x00\x00"
+    return struct.pack("<II", len(head) + 4, flags) + head
+def simple(stored, s0, sha=True, crc=True, key=b"https://shop.example.test/a?session=TOKEN-9f3c", key_length=None):
+    return (struct.pack("<QIII", INITIAL, 5, len(key) if key_length is None else key_length, 0x5EED) + b"\x00" * 4 + key + stored
+            + struct.pack("<QIII", FINAL, 1 if crc else 0, zlib.crc32(stored) & 0xFFFFFFFF if crc else 0, 0) + b"\x00" * 4 + s0
+            + (hashlib.sha256(key).digest() if sha else b"")
+            + struct.pack("<QIII", FINAL, 1 | (2 if sha else 0), zlib.crc32(s0) & 0xFFFFFFFF, len(s0)) + b"\x00" * 4)
+w = lambda name, data: open(os.path.join(out, name), "wb").write(data)
+def before_damage(stored, wbits):
+    """What a decoder fed one stored byte at a time gives before it refuses one: the reference the body file is held to."""
+    d, parts = zlib.decompressobj(wbits), []
+    for i in range(len(stored)):
+        try:
+            parts.append(d.decompress(stored[i:i + 1]))
+        except zlib.error:
+            break
+    return b"".join(parts)
+# 4 MiB that says where each byte is, so that a repeated stretch cannot pass for the next one; it compresses into one 8 KiB piece.
+text = b"".join(bytes([65 + i % 26]) * 4096 for i in range(1024))
+g = gzip.compress(text, 9)
+g = g[:-8] + struct.pack("<I", zlib.crc32(text) ^ 1) + g[-4:]                 # the gzip trailer's CRC-32 fails
+w("crc.gz", g); w("crc.ref", before_damage(g, 31))
+z = zlib.compress(text, 9)
+z = z[:-4] + struct.pack(">I", zlib.adler32(text) ^ 1)                          # the zlib trailer's Adler-32 fails
+w("adler.zz", z); w("adler.ref", before_damage(z, 15))
+w("crc_0", simple(g, stream0([b"HTTP/1.1 200 OK", b"Content-Encoding: gzip", b"Content-Type: text/plain"])))
+# Two Content-Encoding lines: the body was coded with the first, then with the second (RFC 9110 lists them in the order applied).
+inner = gzip.compress(b"<html>two codings</html>" * 50)
+w("lines_0", simple(inner, stream0([b"HTTP/1.1 200 OK", b"Content-Encoding: br", b"Content-Encoding: gzip", b"Content-Type: text/html"])))
+w("lines2_0", simple(inner, stream0([b"HTTP/1.1 200 OK", b"Content-Encoding: gzip", b"Content-Encoding: identity", b"Content-Type: text/html"])))
+w("inner.gz", inner)
+page = b"<html>" + b"y" * 94
+w("trunc_0", simple(page, stream0([b"HTTP/1.1 200 OK", b"Content-Type: text/html"], flags=0x10003 | (1 << 12))))
+w("length_0", simple(page, stream0([b"HTTP/1.1 200 OK", b"Content-Type: text/html", b"Content-Length: 5000"])))
+w("length_ok_0", simple(page, stream0([b"HTTP/1.1 200 OK", b"Content-Type: text/html", b"Content-Length: 100"])))
+key = b"https://a.example.test/x"
+w("nocheck_0", simple(page, stream0([b"HTTP/1.1 200 OK"]), sha=False, crc=False, key=key, key_length=len(key) + 1))
+w("sig_0", simple(gzip.compress(b'{"a": 1}'), stream0([b"HTTP/1.1 200 OK", b"Content-Type: application/gzip"])))
+`;
+
+test("a stream damaged after a large output keeps what it decoded once: the body file is the exact prefix a byte-at-a-time decoder gives", async () => {
+  await withRun(async (run, out) => {
+    const dir = "inputs/case files";
+    py(BUILD2, [join(run, dir)], run);
+    const text = Buffer.concat(Array.from({ length: 1024 }, (_, i) => Buffer.alloc(4096, 65 + (i % 26))));
+    for (const [name, coding, ref] of [["crc.gz", "gzip", "crc.ref"], ["adler.zz", "deflate", "adler.ref"], ["crc_0", undefined, "crc.ref"]] as const) {
+      const r = await call("cache_body", run, { path: `${dir}/${name}`, ...(coding ? { encoding: coding } : {}) }, { out });
+      assert.equal(r.code, 0, r.stdout + r.stderr);
+      const want = await readFile(join(run, dir, ref));
+      const body = await readFile(join(run, r.doc.files.body));
+      assert.equal(body.length, want.length, `${name}: the body file holds each decoded byte once`);
+      assert.ok(body.equals(want), name);
+      assert.ok(body.equals(text.subarray(0, body.length)), `${name}: a prefix of what the stream holds`);
+      assert.deepEqual([r.doc.status, r.doc.body.decoded_bytes, r.doc.body.sha256], ["partial", want.length, sha(want)], name);
+      assert.match(r.doc.body.decode_error, /stream is damaged after \d+ decoded bytes/, name);
     }
+  });
+});
+
+test("the codings of every Content-Encoding line are read together: two lines are two codings, not decoded, and the answer is partial", async () => {
+  await withRun(async (run, out) => {
+    const dir = "inputs/case files";
+    py(BUILD2, [join(run, dir)], run);
+    const inner = await readFile(join(run, dir, "inner.gz"));
+    for (const [name, codings] of [["lines_0", ["br", "gzip"]], ["lines2_0", ["gzip", "identity"]]] as const) {
+      const r = await call("cache_body", run, { path: `${dir}/${name}` }, { out });
+      assert.equal(r.code, 0, r.stdout + r.stderr);
+      assert.deepEqual([r.doc.status, r.doc.response.content_encoding, r.doc.response.content_encoding_lines, r.doc.encoding.coding], ["partial", codings, 2, "identity"], name);
+      assert.ok(r.doc.partial_reasons.some((x: string) => x.startsWith(`the response names 2 content codings at once (${codings.join(", ")})`)), name);
+      assert.deepEqual([r.doc.body.decoded_bytes, r.doc.body.sha256], [inner.length, sha(inner)], `${name}: the stored bytes, as they are`);
+    }
+  });
+});
+
+test("the entry's own word is held: a truncated response, a Content-Length the body does not have, an entry with no check, gzip bytes no header names", async () => {
+  await withRun(async (run, out) => {
+    const dir = "inputs/case files";
+    py(BUILD2, [join(run, dir)], run);
+    const trunc = await call("cache_body", run, { path: `${dir}/trunc_0` }, { out });
+    assert.deepEqual([trunc.doc.status, trunc.doc.response.truncated], ["partial", true]);
+    assert.match(trunc.doc.partial_reasons.join(" | "), /the entry marks its own response truncated/);
+    const length = await call("cache_body", run, { path: `${dir}/length_0` }, { out });
+    assert.deepEqual([length.doc.status, length.doc.response.content_length, length.doc.response.truncated], ["partial", 5000, undefined]);
+    assert.match(length.doc.partial_reasons.join(" | "), /Content-Length says 5000 bytes and the entry stores 100: the stored body is cut/);
+    const fine = await call("cache_body", run, { path: `${dir}/length_ok_0` }, { out });
+    assert.equal(fine.doc.status, "complete", fine.doc.status_basis);
+    const none = await call("cache_body", run, { path: `${dir}/nocheck_0` }, { out });
+    assert.deepEqual([none.doc.status, none.doc.checks], ["partial", "none: the entry records neither its key's SHA-256 nor its body's CRC-32"]);
+    const sig = await call("cache_body", run, { path: `${dir}/sig_0` }, { out });
+    assert.deepEqual([sig.doc.status, sig.doc.encoding.coding, sig.doc.body.decoded_bytes], ["partial", "gzip", 8]);
+    assert.match(sig.doc.signature_note, /names no Content-Encoding/);
+    assert.ok(!sig.stdout.includes("TOKEN-9f3c"));
+    // Outside a job the files go under work/<AGENT_ID>/tool-output: an AGENT_ID that is not a plain name is refused, with nothing written.
+    for (const agent of ["..", ".", "a/b"]) {
+      const r = await call("cache_body", run, { path: `${dir}/length_ok_0` }, { env: { AGENT_ID: agent } });
+      assert.equal(r.code, 1, agent);
+      assert.match(r.doc.error, /^AGENT_ID is not a plain name/, agent);
+    }
+    assert.deepEqual(filesBelow(join(run, "work")).filter((f) => !f.startsWith("s1/")), []);
   });
 });
 
@@ -391,6 +504,11 @@ test("a block-file cache is listed first, then one entry is taken by row or addr
     assert.equal(holed.code, 0, holed.stdout + holed.stderr);
     assert.deepEqual([holed.doc.status, holed.doc.entries, holed.doc.problems.entries_unreadable], ["partial", 3, 1]);
     assert.match(holed.doc.problems.first_unreadable, /^an entry at address 0xa0040000: the cache file data_4 cannot be opened/);
+    // A stream of a listed entry in a data file the cache does not have: the entry is listed, and the list is partial and says so.
+    await rm(join(run, dir, "Holed Cache", "data_3"));
+    const noData3 = await call("cache_body", run, { path: `${dir}/Holed Cache`, list: true }, { out });
+    assert.deepEqual([noData3.doc.status, noData3.doc.entries, noData3.doc.problems.streams_unreadable], ["partial", 3, 1]);
+    assert.match(noData3.doc.problems.first_stream_unreadable, /^entry 1 \(0x[0-9a-f]{8}\): stream 1: the cache file data_3 cannot be opened/);
     const old = await call("cache_body", run, { path: `${dir}/Old Cache`, list: true }, { out });
     assert.equal(old.doc.status, "failed");
     assert.match(old.doc.error, /block-file index version 0x30000: this tool reads 2\.0 and 2\.1/);

@@ -14,7 +14,7 @@ import { lstat, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { PYTHON3 } from "./host-gates.ts";
-import { call, CFB, greyPng, py, ROOT, withRun, type Doc } from "./pack-base-media-fixture.ts";
+import { call, CFB, greyPng, py, ROOT, tool, withRun, type Doc } from "./pack-base-media-fixture.ts";
 
 const QRGEN = join(ROOT, "scripts", "lib");
 const PAYLOAD = "fixture payload 0042 / not from any case";
@@ -598,5 +598,206 @@ png(draw(M, 6, 4), d + "/sixteen.png", depth=16)                  # samples 0 an
     const repaint = await call("qr_read", run, { image: "inputs/case files/finder erased.png", mode: "repaint" }, { out });
     const file = repaint.doc.rows[0].repainted_file as string;
     assert.equal((await lstat(join(out, file.replace("store/jobs/j000001/out/", "")))).mode & 0o777, 0o600);
+  });
+});
+
+// ---- the second verification of 1.17.1: every decode, frame walk and row loop reads the clock and is bounded in memory -------------------
+
+/** Pillow as the tool sees it (the tool runs without -I, so a user site counts). */
+const pillowHere = (cwd: string): boolean => spawnSync(PYTHON3, ["-c", "import PIL.Image"], { cwd }).status === 0;
+
+/** A fixture script that needs Pillow (run without -I, as the tool is): its stdout, or a failed assertion. */
+function withPillow(code: string, args: string[], cwd: string): string {
+  const r = spawnSync(PYTHON3, ["-c", code, ...args], { cwd, encoding: "utf8", maxBuffer: 64 << 20 });
+  assert.equal(r.status, 0, `the fixture builder failed: ${r.stderr.slice(-600)}`);
+  return r.stdout;
+}
+
+/**
+ * A progressive JPEG with `n` more AC scans of its one component, each coding every block in end-of-band runs (EOB14: one code of one bit
+ * in the scan's own table, then 14 bits of run length, so 32767 blocks in 15 bits; ISO/IEC 10918-1 G.1.2.2). A decoder works through
+ * every block of every scan, so the scans cost time far beyond their bytes. 3000 x 2000 pixels: 93,750 blocks, three runs a scan.
+ */
+const JPEG_SCANS = String.raw`
+import io, struct, sys
+from PIL import Image, ImageDraw
+out, n, w, h = sys.argv[1], int(sys.argv[2]), 3000, 2000
+im = Image.new("L", (w, h), 255)
+d = ImageDraw.Draw(im)
+for i in range(0, w - 20, 40): d.rectangle([i + 5, 20, i + 20, h - 20], fill=0)
+buf = io.BytesIO(); im.save(buf, "JPEG", progressive=True, quality=90); data = buf.getvalue()
+assert data[-2:] == b"\xff\xd9"
+left, bits = ((w + 7) // 8) * ((h + 7) // 8), ""
+while left > 0:
+    run = min(left, 32767); assert run >= 16384; bits += "0" + format(run - 16384, "014b"); left -= run
+bits += "1" * (-len(bits) % 8)
+entropy = bytearray()
+for i in range(0, len(bits), 8):
+    entropy.append(int(bits[i:i + 8], 2))
+    if entropy[-1] == 0xFF: entropy.append(0)
+table = bytes([0x10]) + bytes([1] + [0] * 15) + bytes([0xE0])
+dht = b"\xff\xc4" + struct.pack(">H", 2 + len(table)) + table
+scan = b"\xff\xda" + struct.pack(">H", 8) + bytes([1, 1, 0x00, 1, 63, 0x00]) + bytes(entropy)
+open(out, "wb").write(data[:-2] + dht + scan * n + b"\xff\xd9")
+`;
+
+/** One call run under a parent that reports the peak resident memory of the tool and of every process it started (ru_maxrss of the children). */
+function measured(run: string, out: string, args: unknown, limitS: number): { code: number | null; ms: number; rssMb: number; killed: boolean; doc: Doc; stdout: string } {
+  const script = String.raw`
+import json, os, resource, subprocess, sys, time
+tool, args, out, limit = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+env = {k: v for k, v in os.environ.items() if k not in ("SECRET_OUTPUT",)}
+env.update(AGENT_ID="s1", JOB_ID="j000001", OUT=out)
+started = time.monotonic()
+p = subprocess.Popen([sys.executable, tool], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+try:
+    so, _se = p.communicate(args.encode(), timeout=limit); killed = False
+except subprocess.TimeoutExpired:
+    p.kill(); so, _se = p.communicate(); killed = True
+peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+peak = peak / (1 << 20) if sys.platform == "darwin" else peak / 1024
+print(json.dumps({"code": p.returncode, "ms": round((time.monotonic() - started) * 1000), "rss_mb": round(peak), "killed": killed, "stdout": so.decode("utf-8", "replace")}))
+`;
+  const r = spawnSync(PYTHON3, ["-c", script, tool("qr_read"), JSON.stringify(args), out, String(limitS)], { cwd: run, encoding: "utf8", maxBuffer: 64 << 20 });
+  assert.equal(r.status, 0, r.stderr.slice(-600));
+  const m = JSON.parse(r.stdout) as { code: number | null; ms: number; rss_mb: number; killed: boolean; stdout: string };
+  let doc: Doc = {};
+  try {
+    doc = JSON.parse(m.stdout) as Doc;
+  } catch {
+    doc = { not_json: m.stdout.slice(0, 300) };
+  }
+  return { code: m.code, ms: m.ms, rssMb: m.rss_mb, killed: m.killed, doc, stdout: m.stdout };
+}
+
+test("a TIFF of 250,000 pages is searched to the bound of 64 frames and never counted whole; Pillow's decode ends at the clock; an icon is not read", async () => {
+  await withRun(async (run, out) => {
+    // 250,000 page directories that share one 8 x 8 strip, written from the TIFF 6.0 layout: Pillow's count of the pages walks every one of them.
+    py(String.raw`
+import struct, sys
+strip = b"\xff" * 64
+data = bytearray(b"II*\x00" + struct.pack("<I", 8 + len(strip)) + strip)
+tags = [(256, 3, 8), (257, 3, 8), (258, 3, 8), (259, 3, 1), (262, 3, 1), (273, 4, 8), (278, 3, 8), (279, 4, 64)]
+size, base, n = 2 + 12 * len(tags) + 4, len(data), 250000
+for i in range(n):
+    data += struct.pack("<H", len(tags))
+    for tag, kind, value in tags:
+        data += struct.pack("<HHI", tag, kind, 1) + (struct.pack("<HH", value, 0) if kind == 3 else struct.pack("<I", value))
+    data += struct.pack("<I", base + (i + 1) * size if i < n - 1 else 0)
+open(sys.argv[1], "wb").write(bytes(data))
+`, [join(run, "work/s1/pages.tif")], run);
+    if (!pillowHere(run)) return;
+    const pages = await call("qr_read", run, { image: "work/s1/pages.tif", max_seconds: 5 }, { out, limitMs: 40_000 });
+    assert.equal(pages.killed, false, "the call ended by itself");
+    assert.ok(pages.ms < 20_000, `answered in ${pages.ms} ms on a 5 second clock`);
+    const row = pages.doc.rows[0] as Doc;
+    assert.equal(pages.doc.status, "partial", pages.stdout.slice(0, 600));
+    assert.deepEqual([row.result, row.frames_searched, row.frames_at_least, row.frames], ["not a symbol", 64, 65, undefined]);
+    assert.match(row.frames_not_read, /^frames past the 64th: the picture has more than 64 frames, and they were neither counted nor searched/);
+
+    // A JPEG of 250,000 scans: refused by its count of scans before Pillow sees it; and, with the bound of scans lifted (an environment
+    // variable for the tests), Pillow's decode, which reads no clock of its own, is ended at the tool's clock.
+    withPillow(JPEG_SCANS, [join(run, "work/s1/scans.jpg"), "250000"], run);
+    const refused = await call("qr_read", run, { image: "work/s1/scans.jpg", max_seconds: 5 }, { out, limitMs: 40_000 });
+    assert.ok(refused.ms < 10_000, `${refused.ms} ms`);
+    assert.match(refused.doc.rows[0].why, /a JPEG of 25000\d scans \(start-of-scan markers\): this tool hands Pillow a JPEG of up to 256/);
+    const lifted = await call("qr_read", run, { image: "work/s1/scans.jpg", max_seconds: 5 }, { out, limitMs: 40_000, env: { TOOL_MAX_JPEG_SCANS: "100000000" } });
+    assert.equal(lifted.killed, false, "the call ended by itself");
+    assert.ok(lifted.ms < 15_000, `answered in ${lifted.ms} ms on a 5 second clock`);
+    assert.deepEqual([lifted.doc.status, lifted.doc.rows[0].result], ["failed", "not finished"], lifted.stdout.slice(0, 600));
+    assert.match(lifted.doc.partial_reasons.join(" "), /the clock ran out while picture 1 of 1 was being read/);
+
+    // An icon is not one of the formats the tool hands Pillow: it is not read, and the answer names the formats.
+    withPillow(`from PIL import Image; import sys; Image.new("L", (64, 64), 255).save(sys.argv[1], sizes=[(16, 16), (64, 64)])`, [join(run, "work/s1/icon.ico")], run);
+    const icon = await call("qr_read", run, { image: "work/s1/icon.ico" }, { out });
+    assert.equal(icon.doc.rows[0].result, "not read");
+    assert.match(icon.doc.rows[0].why, /the formats this tool hands it \(PNG, JPEG, BMP, GIF, WebP and TIFF/);
+  });
+});
+
+test("a 40 KB PNG of 36,000,000 x 1 alternating pixels is bounded in memory; a PNG of 22 million chunks ends at the clock", async () => {
+  await withRun(async (run, out) => {
+    py(String.raw`
+import struct, sys, zlib
+def chunk(k, b): return struct.pack(">I", len(b)) + k + b + struct.pack(">I", zlib.crc32(k + b))
+w = 36_000_000
+raw = b"\x00" + (b"\x00\xff" * (w // 2))
+open(sys.argv[1], "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, 1, 8, 0, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+small = b"".join(b"\x00" + b"\xff" * 8 for _ in range(8))
+head = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 8, 8, 8, 0, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(small))
+with open(sys.argv[2], "wb") as f:
+    f.write(head)
+    one = chunk(b"zzZz", b"") * 65536
+    for _ in range((250 << 20) // len(one)): f.write(one)
+    f.write(chunk(b"IEND", b""))
+`, [join(run, "work/s1/wide.png"), join(run, "work/s1/chunks.png")], run);
+    // Every run of the row used to be held in a list (3.9 GB at its peak); the runs are now walked five at a time and counted as they come.
+    const wide = measured(run, out, { image: "work/s1/wide.png", max_seconds: 10 }, 60);
+    assert.equal(wide.killed, false);
+    assert.ok(wide.rssMb < 1024, `the peak resident memory was ${wide.rssMb} MB`);
+    assert.ok(wide.ms < 25_000, `answered in ${wide.ms} ms on a 10 second clock`);
+    assert.ok(["not a symbol", "not finished"].includes(wide.doc.rows?.[0]?.result), wide.stdout.slice(0, 600));
+    // The built-in reader's walk of the chunks reads the clock.
+    const chunks = await call("qr_read", run, { image: "work/s1/chunks.png", max_seconds: 5, reader: "builtin" }, { out, limitMs: 40_000 });
+    assert.equal(chunks.killed, false);
+    assert.ok(chunks.ms < 12_000, `answered in ${chunks.ms} ms on a 5 second clock`);
+    assert.equal(chunks.doc.rows[0].result, "not finished", chunks.stdout.slice(0, 600));
+  });
+});
+
+test("frames that hold three different payloads are each written and listed; box goes with auto and repaint only", async () => {
+  await withRun(async (run, out) => {
+    encode(String.raw`
+d = sys.argv[1]
+for name, payload in (("a", b"fixture frame one 0042"), ("b", b"fixture frame two 0042"), ("c", b"fixture frame three 0042")):
+    rows = draw(symbol(payload, 2, "M", 2), 4, 4)
+    open(d + "/" + name + ".raw", "wb").write(b"".join(rows))
+    open(d + "/" + name + ".expect", "wb").write(payload)
+    side = len(rows)
+open(d + "/side", "w").write(str(side))
+png(draw(symbol(b"fixture plain symbol 0042", 2, "M", 3), 4, 4), d + "/plain.png")
+`, [join(run, "work/s1")], run);
+    if (pillowHere(run)) {
+      withPillow(String.raw`
+import sys
+from PIL import Image
+d = sys.argv[1]; side = int(open(d + "/side").read())
+f = {k: Image.frombytes("L", (side, side), open(d + "/" + k + ".raw", "rb").read()) for k in "abc"}
+for name, keys, kind in (("abc.gif", "abc", "GIF"), ("abab.gif", "abab", "GIF"), ("abc.tif", "abc", "TIFF")):
+    frames = [f[k] for k in keys]
+    frames[0].save(d + "/" + name, kind, save_all=True, append_images=frames[1:], **({"duration": 100} if kind == "GIF" else {}))
+`, [join(run, "work/s1")], run);
+      const r = await call("qr_read", run, { images: ["work/s1/plain.png", "work/s1/abc.gif", "work/s1/abab.gif", "work/s1/abc.tif"] }, { out });
+      assert.equal(r.doc.status, "complete", r.stdout.slice(0, 800));
+      const expect = async (name: string): Promise<Buffer> => readFile(join(run, "work/s1", name + ".expect"));
+      const file = (cited: string): string => join(out, cited.replace("store/jobs/j000001/out/", ""));
+      for (const [index, keys] of [[1, "abc"], [2, "abab"], [3, "abc"]] as Array<[number, string]>) {
+        const at = r.doc.rows[index] as Doc;
+        assert.deepEqual([at.result, at.frames, at.frames_searched, at.frame], ["decoded", keys.length, keys.length, 1], at.input);
+        assert.deepEqual(await readFile(file(at.payload_file)), await expect("a"));
+        const others = at.other_frames_decoded as Doc[];
+        if (keys === "abc") {
+          assert.deepEqual(others.map((o) => [o.frame, o.same_payload_as_frame ?? null]), [[2, null], [3, null]], at.input);
+          assert.deepEqual(await readFile(file(others[0]!.payload_file)), await expect("b"));
+          assert.deepEqual(await readFile(file(others[1]!.payload_file)), await expect("c"));
+        } else {
+          assert.deepEqual(at.frames_with_the_same_payload, [3]);
+          assert.deepEqual(others.map((o) => [o.frame, o.same_payload_as_frame ?? null]), [[2, null], [4, 2]], at.input);
+          assert.equal(others[1]!.payload_file, undefined, "a payload already written is not written twice");
+        }
+      }
+      assert.doesNotMatch(r.stdout, /fixture frame/, "no payload in the answer");
+    }
+    // The box: refused with mode finders, and with it in auto only the box is read (looked_for says so).
+    const finders = await call("qr_read", run, { image: "work/s1/plain.png", mode: "finders", box: [16, 16, 116, 116] }, { out });
+    assert.equal(finders.doc.status, "failed");
+    assert.match(finders.doc.error, /box goes with mode auto or repaint/);
+    const exact = await call("qr_read", run, { image: "work/s1/plain.png", box: [16, 16, 116, 116] }, { out });
+    assert.deepEqual([exact.doc.rows[0].result, exact.doc.rows[0].located_by], ["decoded", "the box given cut into 25 x 25 modules"], exact.stdout.slice(0, 600));
+    const wrong = await call("qr_read", run, { image: "work/s1/plain.png", box: [0, 0, 132, 132] }, { out });
+    const row = wrong.doc.rows[0] as Doc;
+    assert.equal(row.result, "not a symbol", wrong.stdout.slice(0, 600));
+    assert.match(row.looked_for.methods[0], /^the box given/);
+    assert.doesNotMatch(JSON.stringify(row.looked_for), /three of them at the corners|two finder patterns/, "the readings that take no box are not claimed");
   });
 });
