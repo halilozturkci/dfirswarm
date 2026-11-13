@@ -180,6 +180,12 @@ export const SWEEP_RULE_CHANGES: readonly SweepRuleChange[] = [
     what: "a whole output kept by one of the harness's tools that read the registers alone (REGISTER_READERS: ledger, leads, questions) is an echo, whatever its arguments name",
     bytes: false,
   },
+  {
+    version: 3,
+    since: "2026-11-13",
+    what: "a maker that read a whole job (job:<id>) or a directory of one read what is accounted for when the record names an object under it holding the string and no object under it holds the string unnamed",
+    bytes: false,
+  },
 ];
 /** This harness's version of the sweep's rules: written on every coverage record's sweep line. */
 export const SWEEP_RULES: number = SWEEP_RULE_CHANGES.at(-1)!.version;
@@ -647,7 +653,7 @@ type JobSpec = { kind?: string; command?: string; tool?: string; args?: unknown;
  * trace's kept outputs (keptOutputOrigins), the jobs' records, the seals of
  * the seats' own outputs, the run's top-level names.
  */
-export function hitOrigins(sandboxRoot: string, refs: readonly string[]): (names: readonly string[], term: string, said: (ref: string, term: string) => boolean) => Promise<HitOrigin[] | null> {
+export function hitOrigins(sandboxRoot: string, refs: readonly string[]): (names: readonly string[], term: string, said: (ref: string, term: string) => boolean, open?: (ref: string, term: string) => boolean) => Promise<HitOrigin[] | null> {
   const S = resolve(sandboxRoot);
   const canon = refs.map((r) => r.trim().replace(/^input:inputs\//, "input:"));
   const named = (ref: string) => refsName(canon, ref);
@@ -674,7 +680,11 @@ export function hitOrigins(sandboxRoot: string, refs: readonly string[]): (names
     return p;
   };
   // What a maker read, accounted for: a register, or an object the record names in which this sweep found the string (its hit said already). An input is never swept: what is made from it is the only place its rows show.
-  const accounted = (ref: string, term: string, said: (ref: string, term: string) => boolean) => named(ref) && said(ref, term);
+  // A maker that read a whole job (job:<id>) or a directory of one, which the record does not name as such, read what is accounted for when
+  // the record names an object under it that holds the string and no object under it holds the string unnamed (`open`): every place the
+  // string is in what it read is then said. One object under it holding the string unnamed, or not known, and the hit stands.
+  let openOf: (ref: string, term: string) => boolean = () => true;
+  const accounted = (ref: string, term: string, said: (ref: string, term: string) => boolean) => said(ref, term) && (named(ref) || !openOf(ref, term));
   // The paths a maker's words name, each accounted for; null when any is not, or none is named.
   const readsOf = async (words: string, term: string, said: (ref: string, term: string) => boolean): Promise<{ text: string; verdict: { why: "registers" } | { why: "named_sources"; reads: string[] } | null }> => {
     const t = await topOf();
@@ -735,7 +745,8 @@ export function hitOrigins(sandboxRoot: string, refs: readonly string[]): (names
     }
     return null;
   };
-  return async (names, term, said) => {
+  return async (names, term, said, open) => {
+    openOf = open ?? (() => true);
     const out: HitOrigin[] = [];
     for (const name of names) {
       const o = await originOf(name, term, said);
@@ -765,6 +776,23 @@ function saidIn(named: readonly SweepHit[]): (ref: string, term: string) => bool
     const t = term.toLowerCase();
     for (const [k, terms] of found) if ((k === r || k.startsWith(`${r}/`)) && terms.has(t)) return true;
     return false;
+  };
+}
+
+/**
+ * Whether the sweep found a string in an object under `ref` (the object, or
+ * one under it as a directory) that the record does not name: a hit not yet
+ * judged, by any of its names. What a maker read under such a ref is not
+ * accounted for by the record's named hits alone.
+ */
+function openIn(unnamed: ReadonlyArray<{ term: string; names: readonly string[] }>): (ref: string, term: string) => boolean {
+  return (ref, term) => {
+    const r = normRef(ref);
+    const t = term.toLowerCase();
+    return unnamed.some((u) => u.term.toLowerCase() === t && u.names.some((n) => {
+      const k = normRef(n);
+      return k === r || k.startsWith(`${r}/`);
+    }));
   };
 }
 
@@ -823,8 +851,9 @@ export async function computeSweep(sandboxRoot: string, cov: Pick<LedgerEntry, "
   }
   // Not named: an echo, or said among the named hits, when what made every name of it says so (hitOrigins), read against what this sweep found in the objects the record names; else a hit.
   const said = saidIn(namedHits);
+  const open = openIn(unnamed.map((u) => ({ term: u.hit.term, names: u.names })));
   for (const { hit, names } of unnamed) {
-    const made = await origins(names, hit.term, said);
+    const made = await origins(names, hit.term, said, open);
     if (!made) hits.push(hit);
     else (isEcho(made) ? echoes : namedHits).push({ ...hit, origins: made });
   }
@@ -855,6 +884,7 @@ export async function resplitSweep(sandboxRoot: string, cov: Pick<LedgerEntry, "
   const namedHits = [...line.named_hits];
   const echoes = [...(line.echoes ?? [])];
   const said = saidIn(line.named_hits.filter((h) => !h.origins?.length));
+  const open = openIn(line.hits.map((h) => ({ term: h.term, names: [h.ref, ...(h.also ?? [])] })));
   for (const h of line.hits) {
     const was = [h.ref, ...(h.also ?? [])];
     const keys = new Set(was.map((n) => keyOf.get(n)).filter((k): k is string => Boolean(k)));
@@ -864,7 +894,7 @@ export async function resplitSweep(sandboxRoot: string, cov: Pick<LedgerEntry, "
       namedHits.push(hit);
       continue;
     }
-    const made = await origins(names, h.term, said);
+    const made = await origins(names, h.term, said, open);
     if (!made) hits.push(hit);
     else (isEcho(made) ? echoes : namedHits).push({ ...hit, origins: made });
   }

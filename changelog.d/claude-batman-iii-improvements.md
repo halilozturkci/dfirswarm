@@ -145,3 +145,10 @@ ransomware-response 1.13.8, encrypted-containers 1.14.10.
 note on that tool (loaded or shown as a card since its last compaction, which drops a body from the context), the tools run uncovered most,
 and how often a compaction after a load was followed by a load again. On one Batman III run it reads 1 of 55 tool jobs (2%): 44 of the
 uncovered were `ad1_extract`. It is the measure of the skills experiment.
+
+### Fixed: a search over a whole job whose hits the record names is said, not held
+
+A job that declared a whole job as its input (`job:j000104`) read nothing the record named as such, so its output stood as a hit although
+the record named the one file under that job that held the string (one run's j000468, held on E-414). A whole job or a directory of one is
+now accounted for when the record names an object under it in which the sweep found the string and no object under it holds the string
+unnamed; one that does keeps the hit standing. Sweep rules version 3: recorded sweeps are read again under it.

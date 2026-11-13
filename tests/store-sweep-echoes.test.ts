@@ -299,3 +299,31 @@ test("replay --resweep reads a recorded sweep again: the hit an older harness he
   assert.equal(again.unchanged, true);
   assert.equal(await readFile(join(S, SW.LEDGER_SWEEPS), "utf8"), before, "the run's own sweeps are untouched");
 });
+
+/** A committed job whose outputs are `files` (name to body), made as `spec` says. */
+async function jobFiles(S: string, id: string, files: Record<string, string>, spec: Record<string, unknown>): Promise<void> {
+  const staging = join(S, "..", `staging-${id}-${Math.random().toString(16).slice(2)}`);
+  await mkdir(staging, { recursive: true });
+  for (const [f, body] of Object.entries(files)) await writeFile(join(staging, f), body);
+  await sealTree(S, staging, join(storePaths(S).jobs, id, "out"), id, 1);
+  await writeFile(join(storePaths(S).jobs, id, "job.json"), JSON.stringify({ id, state: "committed", requester: { agent: "a0" }, status: "ok", exit: 0, spec }));
+}
+
+test("a job that read a whole job read what is accounted for when the record names every object under it that holds the string (the run sf4406b's j000468); one object under it holding the string unnamed, and its hit stands", async () => {
+  const { S, a0 } = await run();
+  const disk = { kind: "command", scope: "declared", inputs: ["input:disk.E01"], network: "off", command: "export" };
+  await jobFiles(S, "j000104", { "a.txt": "09:58 alice\n", "b.txt": "nothing here\n" }, disk);
+  await jobFiles(S, "j000105", { "a.txt": "09:58 alice, second export\n", "c.txt": "10:02 alice again\n" }, disk);
+  const grep = (inputs: string[]) => ({ kind: "command", scope: "declared", inputs, network: "off", command: "grep -rh 09:58 \"$IN\" > \"$OUT/hits.txt\"" });
+  await jobFiles(S, "j000468", { "hits.txt": "a.txt:09:58 alice\n" }, grep(["job:j000104"]));
+  await jobFiles(S, "j000469", { "hits.txt": "a.txt:09:58 alice (j000105)\n" }, grep(["job:j000105"]));
+  await planned(a0, "2");
+  const abs = ok(await rec(a0, { kind: "absence", value: "a remote tool", source: "the disk", evidence: "a search", refs: ["job:j000001/hits.txt"], answers: ["2"] })).entry;
+  const cov = ok(await rec(a0, coverage("2", ["input:disk.E01", "job:j000104/a.txt", "job:j000105/a.txt"], [`E-${abs.seq}`, "job:j000001/hits.txt"], { looked_for: ["alice"] }))).entry;
+  await SW.awaitSweeps(S);
+  const sw = SW.sweepOf(cov, await SW.readSweeps(S))!;
+  const said = sw.named_hits.find((h) => h.ref === "job:j000468/hits.txt");
+  assert.deepEqual(said?.origins, [{ name: "job:j000468/hits.txt", by: "job:j000468", why: "named_sources", reads: ["job:j000104"] }], "every object under job:j000104 holding the string is named: said among the named hits");
+  assert.deepEqual(sw.hits.map((h) => h.ref).sort(), ["job:j000105/c.txt", "job:j000469/hits.txt"], "c.txt holds it unnamed: what read the whole of j000105 holds, and so does c.txt");
+  assert.equal(SW.SWEEP_RULES, 3);
+});
