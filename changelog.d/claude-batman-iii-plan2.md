@@ -101,3 +101,39 @@ read. `browser_storage` resolved a run-relative path against `/` in its reader a
 answers a key it looked for and did not find (`found: false`, exit 0) instead of failing, and is partial on a dirty hive whose
 logs were not replayed. Notes: `evidence/ad1` shows both member forms and carries a card; a browser store is examined as secret
 output; the p-code reader that is in the image is named.
+
+### Added: ransomware-response reads a key scheme from a sample, a dump and the files (1.14.0)
+
+`cipher_state_scan` lists ChaCha/Salsa states, AES key schedules, 256-byte permutations and constant tables in a dump by
+offset, after a planted control that must pass. `stream_kpa_check` says per member which key and nonce source gives the
+expected first bytes, builds the trailer hypothesis from one known (file, key) pair and writes the recipe.
+`family_decrypt` applies a recipe with a receipt per file, and says it authenticates nothing. `encrypted_survey` measures what
+the encryptor added (`scheme_pointers`). Each is a secret-output job; no key, nonce or plaintext is in an answer. Note
+`recovery/scheme-from-sample`.
+
+### Added: windows-forensics reads Chromium logins, DPAPI master keys and thumbnail caches (1.8.0)
+
+`chromium_logins` (v10/v11 with the tag verified; a wrong key is `decrypted: false` on its row), `dpapi_masterkey` (verified
+only when the master key's own HMAC holds) and `thumbcache_read`. The DPAPI derivation is checked against two independent
+forward implementations, not against a real Windows master key. `registry_recover` bounds every inline page (an answer was
+144.8 MB) and counts what the keys declare against what was read; regipy read the rest of the file for a value whose data is
+in its record, which the shared HIVE BOUNDS block now bounds (184 of 70,010 values became 69,989). Five hive readers are
+partial on a dirty hive whose logs were not replayed.
+
+### Changed: `ad1_extract` lists without writing and stops at the members it was asked for; the kickoff catalogue lists first
+
+`list: true` writes the item list and no file; `paths` patterns and `members_file` select; a walk for files named by number or
+locator ends when they are written (one member of 399,836: 0.1 to 6.5 s, was 15 to 19 s), and the selection's status is said
+apart from the image's. A call that names no member over an image past 50,000 items or 2 GiB answers with the list unless
+`whole: true`. A recipe that declares `phases: ["listing"]` is run at kickoff once for its listing and then whole: the listing
+is posted as "the listing", with what follows, and the contract says nobody need walk the image for a list. `chunk_needles`
+names a compressed container by its first bytes and is partial over one. A kickoff catalogue that lists process or memory
+dumps says so to everyone, once, with the tools of the run's packs that read one.
+
+### Changed: a reference given to a tool as an argument is the path it names
+
+An argument that is wholly `job:<id>/<path>`, `import:<id>/<path>` or `input:<path>` is replaced by the path the worker sees,
+`$OUT` and `${OUT}` at an argument's head are the job's directory, a declared scope is given what the arguments name, and a
+reference that names nothing is refused before the job runs. A job's write quota is the free room shared among the jobs that
+run at once. A hand-off's header is at most 2,000 characters beside the note and the skills line. The leads header says how
+many seats work now. Custody holds a sweep line's side list to the sha256 the line names.
