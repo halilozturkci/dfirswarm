@@ -105,6 +105,12 @@ export type PackIndex = PackRef & {
   entries: IndexEntry[];
   /** The skill the pack declares as its router (`Router:` line of INDEX.md), when it names one the index lists. */
   router: string | null;
+  /**
+   * The notes the pack names as its core (`Core:` line of INDEX.md: the ones
+   * its cases reach for most), those the index lists, in its order: shown
+   * beside the router, as the run's budget allows, when the index collapses.
+   */
+  core?: string[];
   /** Tokens of every entry line. */
   tokens: number;
   /** Why the pack's index could not be read, when it carries skills and it could not. */
@@ -132,10 +138,11 @@ export async function readPackRef(dir: string): Promise<PackRef> {
   return { id, version, dir, ...(declared !== undefined ? { declared } : {}) };
 }
 
-/** The entries of one INDEX.md, and the router it names. */
-export function parseIndex(text: string): { entries: IndexEntry[]; router: string | null } {
+/** The entries of one INDEX.md, the router it names and its core notes. */
+export function parseIndex(text: string): { entries: IndexEntry[]; router: string | null; core: string[] } {
   const entries: IndexEntry[] = [];
   let router: string | null = null;
+  let core: string[] = [];
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     const entry = /^- `([^`]+)`/.exec(line);
@@ -145,9 +152,11 @@ export function parseIndex(text: string): { entries: IndexEntry[]; router: strin
     }
     const named = /^Router: `([^`]+)`\s*$/.exec(line);
     if (named) router = named[1]!;
+    if (/^Core: /.test(line)) core = [...line.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
   }
   if (router && !entries.some((e) => e.id === router)) router = null;
-  return { entries, router };
+  core = [...new Set(core)].filter((id) => id !== router && entries.some((e) => e.id === id));
+  return { entries, router, core };
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -170,6 +179,7 @@ export async function readPackIndex(dir: string): Promise<PackIndex> {
   const parsed = parseIndex(text);
   out.entries = parsed.entries;
   out.router = parsed.router;
+  if (parsed.core.length) out.core = parsed.core;
   out.tokens = parsed.entries.reduce((sum, e) => sum + e.tokens, 0);
   // An index that lists nothing for a pack that counts skills is a broken index, not a pack with none.
   if (parsed.entries.length === 0 && (out.declared ?? 0) > 0) out.error = `skills/INDEX.md lists no skill although pack.json counts ${out.declared}`;
@@ -199,7 +209,7 @@ function entryLine(pack: PackIndex, entry: IndexEntry, colliding: Set<string>): 
 export type SectionReport = {
   /** Every pack's entries are in the section, or at least one pack shows its router only. */
   mode: "full" | "routers";
-  packs: Array<{ id: string; version: string; skills: number; tokens: number; shown: "full" | "router"; router: string | null }>;
+  packs: Array<{ id: string; version: string; skills: number; tokens: number; shown: "full" | "router"; router: string | null; core_shown?: string[] }>;
   /** Tokens of every entry of every pack, and of the entries the section carries. */
   index_tokens: number;
   shown_tokens: number;
@@ -249,6 +259,26 @@ export function renderSkillsSection(packs: PackIndex[], budget: SkillBudget = SK
     overBudget.push(`run ${fmt(indexTokens)} > ${fmt(budget.run)}`);
     for (const p of live) if (p.router) shown.set(p.id, "router");
   }
+  // Graded, not all or nothing: beside each collapsed pack's router, the notes it names as its core, one pack's at a time in turn, while
+  // the run's budget (and the pack's) has room. A pack that names none shows its router only, as before.
+  const beside = new Map<string, IndexEntry[]>();
+  const besideTokens = () => [...beside.values()].flat().reduce((sum, e) => sum + e.tokens, 0);
+  const packShown = (p: PackIndex) => p.entries.find((e) => e.id === p.router)!.tokens + (beside.get(p.id) ?? []).reduce((sum, e) => sum + e.tokens, 0);
+  const queues = live.filter((p) => shown.get(p.id) === "router" && p.core?.length).map((p) => ({ p, ids: [...p.core!] }));
+  for (let added = true; added; ) {
+    added = false;
+    for (const q of queues) {
+      const id = q.ids.shift();
+      if (!id) continue;
+      const entry = q.p.entries.find((e) => e.id === id)!;
+      if (cost() + besideTokens() + entry.tokens > budget.run || packShown(q.p) + entry.tokens > budget.pack) {
+        q.ids.length = 0;
+        continue;
+      }
+      beside.set(q.p.id, [...(beside.get(q.p.id) ?? []), entry]);
+      added = true;
+    }
+  }
   // A pack that was part of the overrun and names no router: nothing to shorten it to.
   const noRouter = live.filter((p) => !p.router && (p.tokens > budget.pack || runOver)).map((p) => p.id);
   const collapsed = live.some((p) => shown.get(p.id) === "router");
@@ -260,16 +290,17 @@ export function renderSkillsSection(packs: PackIndex[], budget: SkillBudget = SK
   );
   if (collapsed) {
     lines.push(
-      `This index is over its budget (${fmt(indexTokens)} tokens of entries; ${fmt(budget.pack)} a pack, ${fmt(budget.run)} the run), so a pack marked "router only" shows the one note that routes to the rest: load it and it names the notes under it. skill() with no id lists every skill of every pack.`,
+      `This index is over its budget (${fmt(indexTokens)} tokens of entries; ${fmt(budget.pack)} a pack, ${fmt(budget.run)} the run), so a pack marked "router only" shows the one note that routes to the rest: load it and it names the notes under it. A pack marked "router and N core notes" shows beside its router the notes it names as its core, as the budget allows. skill() with no id lists every skill of every pack.`,
     );
   }
   let shownTokens = 0;
   for (const p of live) {
     const router = shown.get(p.id) === "router";
+    const core = new Set((beside.get(p.id) ?? []).map((e) => e.id));
     lines.push("");
-    lines.push(`${p.id}${p.version ? ` ${p.version}` : ""} (${p.entries.length} skill${p.entries.length === 1 ? "" : "s"}${router ? ", router only" : ""})`);
+    lines.push(`${p.id}${p.version ? ` ${p.version}` : ""} (${p.entries.length} skill${p.entries.length === 1 ? "" : "s"}${router ? (core.size ? `, router and ${core.size} core note${core.size === 1 ? "" : "s"}` : ", router only") : ""})`);
     for (const entry of p.entries) {
-      if (router && entry.id !== p.router) continue;
+      if (router && entry.id !== p.router && !core.has(entry.id)) continue;
       lines.push(entryLine(p, entry, colliding));
       shownTokens += entry.tokens;
     }
@@ -277,7 +308,7 @@ export function renderSkillsSection(packs: PackIndex[], budget: SkillBudget = SK
   const text = live.length ? lines.join("\n") : "";
   const report: SectionReport = {
     mode: collapsed ? "routers" : "full",
-    packs: live.map((p) => ({ id: p.id, version: p.version, skills: p.entries.length, tokens: p.tokens, shown: shown.get(p.id)!, router: p.router })),
+    packs: live.map((p) => ({ id: p.id, version: p.version, skills: p.entries.length, tokens: p.tokens, shown: shown.get(p.id)!, router: p.router, ...(beside.get(p.id)?.length ? { core_shown: beside.get(p.id)!.map((e) => e.id) } : {}) })),
     index_tokens: indexTokens,
     shown_tokens: shownTokens,
     section_tokens: estimateTokens(text),

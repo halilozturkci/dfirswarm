@@ -5,7 +5,12 @@ when: Pick one when none is listed, or you cannot choose.
 router: true
 ---
 
-Use when the index shows only this line and you need a ransomware note. Not for rules: each note holds its own.
+Use when the index shows only this line and you need a ransomware note. Not for a note's own rules; those below hold for every note.
+
+Always
+- Chain deployment, execution and file change per asset, and say which links the evidence supports.
+- A missing binary does not show it was deleted; a service installed does not show it ran.
+- A matching note or extension names a family candidate, not the variant or a decryptor's fit.
 
 Scope
 `scope/first-hour` first report, containment, preservation

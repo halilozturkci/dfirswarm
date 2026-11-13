@@ -5,7 +5,12 @@ when: Pick a base note when none is listed, or you cannot choose.
 router: true
 ---
 
-Use when the index shows only this line and you need a base note. Not for rules: each note holds its own.
+Use when the index shows only this line and you need a base note. Not for a note's own rules; those below hold for every note.
+
+Always
+- An empty result names its reading (no hit, not searched, unsupported, failed, no trace expected); a negative says "No evidence of X was found in A", never "X did not happen".
+- An AD1: find items in the catalogue's members listing and extract by locator, every segment declared as an input.
+- Text read from an image (OCR, a QR code) is a reading: check the characters a conclusion rests on.
 
 Scope and claims
 `evidence/scope` what the case lets you answer, using a secret

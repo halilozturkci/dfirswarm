@@ -92,6 +92,27 @@ test("a pack over its budget shows its router only; a pack within it is shown wh
   assert.ok(report.shown_tokens < report.index_tokens);
 });
 
+test("collapsed, a pack shows beside its router the notes its index names as core, one pack's at a time, as the run's budget allows", () => {
+  assert.deepEqual(parseIndex("Router: `a/router`\nCore: `a/two`, `a/one`, `a/router`, `a/none`\n\n- `a/router` R: r.\n- `a/one` One: o.\n- `a/two` Two: t.").core, ["a/two", "a/one"], "the core it lists, in its order, without the router or an id it does not list");
+  const mk = (id: string) => ({ ...fakePack(id, [[`${id}/router`, "Router: go."], [`${id}/one`, "One: " + "o".repeat(60)], [`${id}/two`, "Two: " + "t".repeat(60)], [`${id}/leaf`, "Leaf: " + "z".repeat(200)]], `${id}/router`), core: [`${id}/two`, `${id}/one`] });
+  const packs = [mk("p1"), mk("p2"), { ...fakePack("p3", [["p3/router", "Router: go."], ["p3/leaf", "Leaf: " + "z".repeat(300)]], "p3/router") }];
+  const router = packs[0]!.entries[0]!.tokens;
+  const one = packs[0]!.entries[1]!.tokens;
+  // Room for the three routers and three core notes: p1 and p2 get their first core note, then p1 its second.
+  const run = 3 * router + 3 * one;
+  const { text, report } = renderSkillsSection(packs, { entry: 1000, pack: 10_000, run });
+  assert.equal(report.mode, "routers");
+  assert.deepEqual(report.packs.map((p) => [p.id, p.shown, p.core_shown ?? []]), [["p1", "router", ["p1/two", "p1/one"]], ["p2", "router", ["p2/two"]], ["p3", "router", []]]);
+  assert.match(text, /p1 1\.0\.0 \(4 skills, router and 2 core notes\)\n- `p1\/router` Router: go\.\n- `p1\/one`/);
+  assert.match(text, /p2 1\.0\.0 \(4 skills, router and 1 core note\)/);
+  assert.match(text, /p3 1\.0\.0 \(2 skills, router only\)/);
+  assert.ok(!text.includes("p1/leaf") && !text.includes("p2/one"), "what does not fit stays out");
+  assert.ok(report.shown_tokens <= run, `${report.shown_tokens} > ${run}`);
+  // A pack held to its own budget gets no core note past it.
+  const held = renderSkillsSection([mk("p1")], { entry: 1000, pack: router + one - 1, run: 10_000 });
+  assert.deepEqual(held.report.packs[0]!.core_shown, undefined);
+});
+
 test("a run over its budget shows every pack's router only", () => {
   const mk = (id: string) => fakePack(id, [[`${id}/router`, "Router: go."], [`${id}/leaf`, "Leaf: " + "z".repeat(120)]], `${id}/router`);
   const packs = [mk("p1"), mk("p2"), mk("p3")];

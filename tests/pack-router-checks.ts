@@ -22,6 +22,7 @@
  *   forced one token under its index, and the pack must then be shown by its router.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -29,7 +30,32 @@ import { estimateTokens, readPackIndex, renderSkillsSection, SKILL_BUDGET, type 
 import { ROOT } from "./tool-library-harness.ts";
 
 const TOKENS = (text: string): number => Buffer.byteLength(text) / 4.245;
-const ROUTER_MAX = 400;
+/** The router limit of a pack (scripts/skill-budgets.json): 400, or the pack's own. */
+const BUDGETS = JSON.parse(readFileSync(join(ROOT, "scripts", "skill-budgets.json"), "utf8")) as { router_max: number; router_max_by_pack: Record<string, number> };
+const routerMax = (pack: string): number => BUDGETS.router_max_by_pack[pack] ?? BUDGETS.router_max;
+
+/**
+ * A router's body split at its Always block (docs/packs.md "Routers"): the
+ * routing lines the shape checks read, and the block's rules. The block is a
+ * line "Always" and the "- " lines under it; a rule names no note (the
+ * routing lines name each once) and is one line.
+ */
+export function alwaysBlock(body: string): { routing: string; rules: string[] } {
+  const m = /\nAlways\n((?:- [^\n]*\n?)+)/.exec(body);
+  if (!m) return { routing: body, rules: [] };
+  return { routing: body.slice(0, m.index) + "\n" + body.slice(m.index + m[0].length), rules: m[1]!.trim().split("\n") };
+}
+
+/** What an Always block may hold: at most five one-line rules, none naming a note. */
+export function alwaysProblems(rules: string[]): string[] {
+  const out: string[] = [];
+  if (rules.length > 5) out.push(`the Always block holds ${rules.length} rules, at most 5`);
+  for (const r of rules) {
+    if (r.length > 220) out.push(`an Always rule is one short line: "${r}"`);
+    if (/`[a-z0-9-]+\/[a-z0-9-]+`/.test(r)) out.push(`an Always rule names no note (the routing lines name each once): "${r}"`);
+  }
+  return out;
+}
 
 // A router line says where to read, never what to do. The shape check (no `. : ;`, a few words) lets a rule through when it has no
 // punctuation ("Never replay a recovered token"), so a line is also refused when it holds a word of obligation or prohibition, or when
@@ -143,12 +169,12 @@ export function routerChecks(spec: RouterSpec): void {
   const PACK = join(ROOT, "packs", spec.pack);
   const SKILLS = join(PACK, "skills");
 
-  test(`${spec.pack}: the router is the pack's only router, within 400 tokens, and names every other skill exactly once; every old id is alive`, async () => {
+  test(`${spec.pack}: the router is the pack's only router, within its limit (${routerMax(spec.pack)} tokens), and names every other skill exactly once; every old id is alive`, async () => {
     const skills = await loadSkills(SKILLS);
     const routers = [...skills.values()].filter((s) => s.meta.router === "true");
     assert.deepEqual(routers.map((s) => s.id), [spec.router], "one router, and it is the one named");
     const router = skills.get(spec.router)!;
-    assert.ok(TOKENS(router.text) <= ROUTER_MAX, `the router is ${Math.round(TOKENS(router.text))} tokens`);
+    assert.ok(TOKENS(router.text) <= routerMax(spec.pack), `the router is ${Math.round(TOKENS(router.text))} tokens`);
     assert.ok(TOKENS(router.text) >= 100, "a router that says nothing routes nothing");
     const first = router.body.trim().split("\n")[0]!;
     assert.match(first, /^Use when .*\bNot for\b/, "the router opens with Use when ... Not for ...");
@@ -162,7 +188,9 @@ export function routerChecks(spec: RouterSpec): void {
     for (const id of spec.foreign ?? []) assert.ok(!router.body.includes(id), `the router names ${id}, which is another pack's`);
     // No rule and no tool instruction: after the opening line a group heading (no code, short) or one line per leaf (the id, then
     // a few words), nothing longer, no sentence, no command.
-    const lines = router.body.trim().split("\n").slice(1).filter((l) => l.trim());
+    const { routing, rules } = alwaysBlock(router.body.trim());
+    assert.deepEqual(alwaysProblems(rules), []);
+    const lines = routing.trim().split("\n").slice(1).filter((l) => l.trim());
     const leafLine = /^(`[a-z0-9-]+\/[a-z0-9-]+`) ([^`.:;]{3,70})$/;
     const heading = /^[A-Za-z][^`.:;]{1,40}$/;
     const phrases = new Map<string, string>();

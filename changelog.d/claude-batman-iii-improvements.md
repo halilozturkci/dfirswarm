@@ -125,3 +125,16 @@ goal's metadata block) names what the questions need; the toolbox check, where t
 a test input where one says more than presence (`zbarimg` on a small PNG). `toolbox.json` records each under `requires`, `SWARM.md` says
 it, and one not met is a warning before the run starts (a blocker with `--toolbox-required`). Eleven capabilities: video-decode,
 audio-decode, qr-decode, ocr, image-convert, pdf-text, office-macros, archive-7z, pcap, stego, memory.
+
+### Changed: a collapsed skill index shows each pack's core notes beside its router, and five routers carry the rules every note holds
+
+With five packs the index (4,339 tokens) passed the run's 2,500 and every pack showed its router line alone, so the notes the cases
+reached for most (the AD1 note, the documents and media note, Windows clocks, Prefetch, static inspection) were one load further than a
+weak model went. A skill may now say `core: <rank>`; the generated index lists the pack's core notes on a `Core:` line, and a collapsed
+index shows them beside each router, one pack's at a time, while the run's and the pack's budgets have room (`core_shown` in the
+report). With the five Batman III packs the prompt shows 14 index lines (406 tokens) instead of 5. The routers of the base,
+Windows, reverse-engineering, ransomware and encrypted-containers packs open with an `Always` block of two or three one-line rules every note
+of the pack holds (a negative is bounded, a converted time keeps its raw value, a decompiler's output is a lead), for a model that loads
+the router and nothing under it; the base, reverse-engineering and ransomware routers may have 500 tokens for it
+(`scripts/skill-budgets.json`). Packs: computer-forensics-base 1.16.12, windows-forensics 1.7.36, reverse-engineering 1.16.10,
+ransomware-response 1.13.8, encrypted-containers 1.14.10.

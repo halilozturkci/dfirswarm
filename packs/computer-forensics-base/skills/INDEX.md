@@ -4,6 +4,8 @@ Fetch a body with `skill("<id>")`. A body may name others; fetch those the same 
 
 Router: `base/router`
 
+Core: `evidence/ad1`, `data/documents-media`, `evidence/coverage`
+
 - `base/router` Base notes by question: Pick a base note when none is listed, or you cannot choose.
 - `data/browser-storage` Browser storage in LevelDB and IndexedDB: IndexedDB, Local or Session Storage of a Chromium browser or Electron app.
 - `data/documents-media` Document and image content is its own layer: A PDF, an Office file, an image or a media file is the evidence, or holds it.

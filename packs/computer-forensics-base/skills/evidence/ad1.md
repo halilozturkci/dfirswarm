@@ -2,6 +2,7 @@
 id: evidence/ad1
 title: An AD1 image is a collection in a container
 when: Evidence is an FTK Imager logical image (.ad1).
+core: 1
 tools: [ad1_extract, catalog_search]
 requires_host: [target-query]
 ---

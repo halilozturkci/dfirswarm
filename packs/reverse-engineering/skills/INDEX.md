@@ -4,6 +4,8 @@ Fetch a body with `skill("<id>")`. A body may name others; fetch those the same 
 
 Router: `reverse-engineering/router`
 
+Core: `code/static-inspection`
+
 - `capabilities/mapping` Static capabilities and the evidence behind them: You must assess what a sample could do without claiming it ran.
 - `code/second-readers` Ghidra's headless route, DIE and LIEF as second readings: A second reader of code, signatures or structure is wanted beside the pack's tools.
 - `code/static-inspection` Reading native code with its analysis limits stated: You must read a native binary's code: functions, control flow, references.

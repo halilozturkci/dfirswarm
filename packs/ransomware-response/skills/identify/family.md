@@ -2,6 +2,7 @@
 id: identify/family
 title: Identifying a ransomware family without overstating attribution
 when: Artefacts may support a family classification or a public recovery option.
+core: 2
 needs: []
 tools: [ransom_note_scan, encrypted_survey, file_type]
 requires_host: []

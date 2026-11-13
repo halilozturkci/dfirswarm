@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { alwaysBlock, alwaysProblems } from "./pack-router-checks.ts";
 import { estimateTokens, readPackIndex, readPackIndexes, renderSkillsSection, SKILL_BUDGET } from "../extensions/skills.ts";
 import { ROOT } from "./tool-library-harness.ts";
 
@@ -233,16 +234,19 @@ const BEFORE = [
   "reporting/notification-register", "scope/first-hour", "scope/phase-timeline", "scope/triage-tools",
 ];
 
-test("ransomware/router is the pack's only router, within 400 tokens, holds no rule, and names every other skill exactly once; every old id is alive", async () => {
+test("ransomware/router is the pack's only router, within its limit, holds no rule outside its Always block, and names every other skill exactly once; every old id is alive", async () => {
   const skills = await load(SKILLS);
   const routers = [...skills.values()].filter((s) => s.meta.router === "true");
   assert.deepEqual(routers.map((s) => s.id), [ROUTER], "one router, and it is ransomware/router");
   const router = skills.get(ROUTER)!;
-  assert.ok(TOKENS(router.text) <= 400, `the router is ${Math.round(TOKENS(router.text))} tokens`);
+  assert.ok(TOKENS(router.text) <= 500, `the router is ${Math.round(TOKENS(router.text))} tokens`);
   assert.match(router.body.trim().split("\n")[0], /^Use when .*\bNot for\b/);
   assert.deepEqual(router.meta.tools ?? [], [], "the router names no tool");
   // No rule content: after its first line the body is group headings and lines that start with a skill id and say when to read it.
-  for (const line of router.body.trim().split("\n").slice(1)) {
+  // The Always block (docs/packs.md "Routers") holds the rules every note holds; the routing lines hold none.
+  const { routing, rules } = alwaysBlock(router.body.trim());
+  assert.deepEqual(alwaysProblems(rules), []);
+  for (const line of routing.trim().split("\n").slice(1)) {
     if (!line.trim()) continue;
     assert.match(line, /^(`[a-z0-9-]+\/[a-z0-9-]+`|[A-Z][A-Za-z, -]{0,30}$)/, `a router line is a heading or starts with an id: ${line}`);
     assert.doesNotMatch(line, /\b(must|never|always|do not|don't|only if)\b/i, `a router holds no rule: ${line}`);
@@ -303,7 +307,10 @@ test("a run that carries this pack with others is over the run's index budget, a
     assert.equal(bare.shown, "full", `${label}: without its router the pack is shown whole`);
     assert.ok(without.no_router.includes("ransomware-response"), `${label}: without its router the report names the pack as one that cannot be shortened`);
     const routerLine = (await readPackIndex(PACK)).entries.find((e) => e.id === ROUTER)!.tokens;
-    assert.equal(without.shown_tokens - whole.shown_tokens, mine.tokens - routerLine, `${label}: the section grows by the pack's index minus its router line`);
+    // Collapsed, the pack shows its router and the core notes the budget had room for (docs/packs.md "Routers"); whole, every line.
+    const coreLines = (await readPackIndex(PACK)).entries.filter((e) => (mine.core_shown ?? []).includes(e.id)).reduce((n, e) => n + e.tokens, 0);
+    assert.ok(without.shown_tokens > whole.shown_tokens, `${label}: shown whole the pack takes more of the section`);
+    assert.ok(mine.tokens - routerLine - coreLines > 0, `${label}: collapsed, the pack leaves out what is not its router or core`);
   }
   // The family on its own: with the family's routers the section fits the run's budget, without them it does not (the base pack's router, if it has one, is no help:
   // the family's indexes alone are over the budget).

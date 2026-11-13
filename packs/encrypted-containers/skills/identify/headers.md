@@ -2,6 +2,7 @@
 id: identify/headers
 title: Identifying encrypted evidence and its limits
 when: A volume, archive or document may be encrypted.
+core: 1
 needs: []
 tools: [crypto_id, file_type]
 requires_host: []

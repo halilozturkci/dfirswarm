@@ -2,6 +2,7 @@
 id: execution/prefetch
 title: Prefetch
 when: A .pf file: run count, last runs.
+core: 2
 needs: []
 tools: [prefetch_mam, mam_scan, icat_extract]
 requires_host: [sccainfo]

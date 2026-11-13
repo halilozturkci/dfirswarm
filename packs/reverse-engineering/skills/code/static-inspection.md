@@ -2,6 +2,7 @@
 id: code/static-inspection
 title: Reading native code with its analysis limits stated
 when: You must read a native binary's code: functions, control flow, references.
+core: 1
 needs: [triage/quarantine]
 tools: [pe_info, pe_directories]
 requires_host: [r2]

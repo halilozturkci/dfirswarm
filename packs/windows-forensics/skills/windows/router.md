@@ -5,7 +5,12 @@ when: Pick one when none is listed, or you cannot choose.
 router: true
 ---
 
-Use when the index shows only this line and you need a Windows note. Not for rules: each note holds its own.
+Use when the index shows only this line and you need a Windows note. Not for a note's own rules; those below hold for every note.
+
+Always
+- Keep the raw value beside every converted time and convert from it: FILETIMEs are UTC, FAT and DOS times the local clock.
+- `ActiveTimeBias` is the offset when Windows last wrote it: never apply today's zone to a past date.
+- Prefetch shows what the prefetcher recorded for one path: not who ran it, that it finished, or every run.
 
 Machine
 `registry/system-profile` build

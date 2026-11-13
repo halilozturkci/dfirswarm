@@ -275,8 +275,13 @@ matter, optional and at most one a pack:
 
     router: true
 
-A router names no program, tool or rule, only which note answers which
-question. Its id is the pack's own (`base/router` and `windows/router`, but
+A router names no program or tool, only which note answers which question,
+save an `Always` block under its first line: at most a few one-line rules
+that every note of the pack holds, each naming the note it comes from (the
+base pack's "a negative says No evidence of X was found in A", the Windows
+pack's "keep the raw value beside every converted time"). A weak model that
+loads the router and no note under it still has those; such a router has
+100 tokens more (`scripts/skill-budgets.json`). Its id is the pack's own (`base/router` and `windows/router`, but
 `router/start` in `virtualization-backup-forensics`), and the `Router:` line of a
 pack's `skills/INDEX.md` says which pack has one and under what id. A pack that
 names none is shown whole whatever the budget.
@@ -291,6 +296,13 @@ packs have routers, and how long a router may be, are the pack standard's and
 the pack lint's to say. A run of the base pack with `windows-forensics` and
 `linux-forensics` has index entries whole over the run's 2,500 tokens; with
 each pack shown by its router the prompt carries three router lines and fits.
+
+A skill may also say `core: <rank>` (1 to 9; at most six a pack, never the
+router): a note the pack's cases reach for most. The generated index carries
+``Core: `<id>`, …`` under the `Router:` line, in rank order, and a run whose
+index collapses shows beside each router its core notes, one pack's at a time
+in turn, while the run's budget and the pack's have room (the report's
+`core_shown`). A pack that names none shows its router only.
 
 ### Tool help stays out of the context window
 

@@ -4,6 +4,8 @@ Fetch a body with `skill("<id>")`. A body may name others; fetch those the same 
 
 Router: `ransomware/router`
 
+Core: `encryptor/traces`, `identify/family`
+
 - `encryptor/backup-infrastructure` Backup servers, immutable storage and hypervisors: A backup server, immutable store, hypervisor or recovery setting was affected.
 - `encryptor/destroyed-backups` Recovery impairment and surviving recovery paths: Backups, snapshots, catalogues or recovery services may have been altered.
 - `encryptor/samples-and-notes` Recovered samples, tails and note placement: You hold a recovered binary or script, repeated tails, or note placement.

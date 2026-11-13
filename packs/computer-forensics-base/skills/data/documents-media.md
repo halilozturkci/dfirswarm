@@ -2,6 +2,7 @@
 id: data/documents-media
 title: Document and image content is its own layer
 when: A PDF, an Office file, an image or a media file is the evidence, or holds it.
+core: 2
 needs: []
 tools: []
 requires_host: [pdftotext, exiftool, steghide]

@@ -8,7 +8,11 @@ tools: []
 requires_host: []
 ---
 
-Use when the index shows only this line and you need an encrypted-container note. Not for rules: each note holds its own.
+Use when the index shows only this line and you need an encrypted-container note. Not for a note's own rules; those below hold for every note.
+
+Always
+- Identify the storage layer before the encryption: an offset in a logical disk is not one in its E01 or virtual-disk wrapper.
+- A signature at an offset is a triage: confirm the format with a reader for the version you see, and record it.
 
 Identify
 `identify/headers` what protects a volume, archive or document
