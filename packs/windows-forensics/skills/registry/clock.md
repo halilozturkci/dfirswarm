@@ -4,6 +4,7 @@ title: Windows clocks
 when: Convert or compare a Windows time.
 core: 1
 needs: []
+card: regkv {"hive": "<SYSTEM>", "key": "ControlSet00n\\Control\\TimeZoneInformation"}: Bias and ActiveTimeBias are minutes, UTC = local time + bias (480 is UTC-8); ActiveTimeBias is the offset when Windows last wrote it and says nothing of an earlier date. Never apply the zone read today to a past date: take that date's rule from a named source. FILETIMEs (NTFS, event SystemTime, a key's last write) are UTC; FAT and shell-item DOS times are the local clock. Convert from the raw value (mft_records returns it), never from a rendering. Does not show: that the clock was right.
 tools: [mft_records, regkv]
 requires_host: [istat]
 ---

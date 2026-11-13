@@ -189,7 +189,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-PARSER = "regkv/4"
+PARSER = "regkv/5"
 MAX_DEPTH = 128
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 SENSITIVE_NAME = re.compile(r"passw(or)?d|pwd|secret|token|credential|api_?key|private_?key", re.I)

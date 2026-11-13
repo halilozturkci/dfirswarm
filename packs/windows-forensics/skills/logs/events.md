@@ -3,6 +3,7 @@ id: logs/events
 title: Event ids, logon types
 when: What an id or logon type means.
 needs: [logs/security]
+card: evtx_query {"path": "<log>.evtx", "event_ids": [4624]}: an id alone names nothing; provider, channel and Version in the XML decide it. 5145 is an access check, not a read or a copy. A logon type is how a logon was requested, not who.
 tools: [evtx_query]
 requires_host: []
 ---

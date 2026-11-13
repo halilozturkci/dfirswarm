@@ -3,6 +3,7 @@ id: execution/amcache
 title: Amcache
 when: Identify a file by path or hash.
 needs: []
+card: amcache_apps {"hive": "<Amcache.hve>"}: an entry means the inventory recorded the file, not that it ran. Read layouts_found and hive_dirty first.
 tools: [amcache_apps]
 requires_host: []
 ---

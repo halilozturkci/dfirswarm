@@ -552,6 +552,208 @@ test("a log beside the database, a file that is no database, a database without 
   });
 });
 
+// --- the findings of the verification of 1.8.0 ------------------------------------------------------------------------------------------------
+
+test("a cell over the limit of one cell loses no other row: the row that holds it says its type and length, the rows around it are decrypted", async () => {
+  await withCwd(async (cwd) => {
+    const big = 9 * 1024 * 1024;
+    const p = profile(cwd, {
+      rows: (k) => [
+        { origin: "https://one.example/", username: "one", value: v10(k, SECRETS[0]) },
+        { origin: "https://big.example/", username: "big", value: v10(k, "to be replaced") },
+        { origin: "https://three.example/", username: "three", value: v10(k, SECRETS[1]) },
+      ],
+    });
+    py("import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\nc.execute('UPDATE logins SET password_value = zeroblob(?) WHERE rowid = 2', (int(sys.argv[2]),))\nc.commit(); c.close()", join(cwd, p.loginData), String(big));
+    const env = secretJob(cwd);
+    const { out, exit } = await call("chromium_logins", cwd, { login_data: p.loginData, key_file: secretFile(cwd, "work/k", p.key) }, env);
+    assert.equal(exit, 0);
+    assert.equal(out.status, "partial");
+    assert.deepEqual([out.rows_in_table, out.rows_read, out.every_row_read, out.decrypted, out.not_decrypted, out.cells_over_limit], [3, 3, true, 2, 1, 1]);
+    const rows = out.rows as Answer[];
+    assert.deepEqual(rows.map((r) => [r.username, r.decrypted, r.scheme]), [["one", true, "v10"], ["big", false, "not_read"], ["three", true, "v10"]]);
+    assert.deepEqual([rows[1].password_present, rows[1].password_value_bytes, rows[1].origin], [true, big, "https://big.example/"], "every other cell of that row was read");
+    assert.deepEqual([rows[1].cells_not_read.password_value.type, rows[1].cells_not_read.password_value.length], ["blob", big]);
+    assert.match(rows[1].why_not, new RegExp(`the stored value is ${big} bytes, over the 8388608 this reader takes of one cell: only its type and length were read`));
+    assert.match(out.status_basis, /1 cell\(s\) in 1 row\(s\) are over the 8388608 bytes this reader takes of one cell .* every other cell and row was read/);
+    assert.deepEqual(lines(join(env.OUT, "chromium_logins-values.jsonl")).map((v) => v.password), [SECRETS[0], SECRETS[1]]);
+    // The first row of the table, and a TEXT cell (whose length SQLite cannot give without loading it): the same holds.
+    py("import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\nc.execute('UPDATE logins SET password_value = (SELECT password_value FROM logins WHERE rowid = 3) WHERE rowid = 2')\nc.execute(\"UPDATE logins SET username_value = replace(hex(zeroblob(?)), '00', 'u') WHERE rowid = 1\", (int(sys.argv[2]),))\nc.commit(); c.close()", join(cwd, p.loginData), String(big));
+    const text = await call("chromium_logins", cwd, { login_data: p.loginData, key_file: "work/k" }, secretJob(cwd));
+    assert.deepEqual([text.out.status, text.out.rows_read, text.out.decrypted, text.out.cells_over_limit], ["partial", 3, 3, 1]);
+    assert.deepEqual([text.out.rows[0].username, text.out.rows[0].cells_not_read.username_value.type, text.out.rows[0].cells_not_read.username_value.length, text.out.rows[0].decrypted], [null, "text", null, true]);
+  });
+});
+
+test("an origin is printed with no '//' the evidence does not have, a v10 value too short for a nonce and a tag says so, and a column is found whatever its case", async () => {
+  await withCwd(async (cwd) => {
+    const p = profile(cwd, {
+      rows: (k) => [
+        { origin: "javascript:alert(1)", username: "js", value: v10(k, SECRETS[0]) },
+        { origin: "mailto:someone@example.org", username: "mail", value: v10(k, SECRETS[1]) },
+        { origin: "https://short.example/a", username: "short", value: Buffer.concat([Buffer.from("v10"), randomBytes(27)]) },
+        { origin: "https://tiny.example/", username: "tiny", value: Buffer.from("v11") },
+      ],
+    });
+    const key = secretFile(cwd, "work/k", p.key);
+    const { out } = await call("chromium_logins", cwd, { login_data: p.loginData, key_file: key }, secretJob(cwd));
+    const rows = out.rows as Answer[];
+    assert.deepEqual(rows.map((r) => r.origin), ["javascript:alert(1)", "mailto:someone@example.org", "https://short.example/a", "https://tiny.example/"]);
+    assert.deepEqual(rows.map((r) => r.decrypted), [true, true, false, false]);
+    assert.match(rows[2].why_not, /the stored value is 30 bytes: too short to hold a 12-byte nonce and a 16-byte tag after 'v10' \(31 bytes at the least\)/);
+    assert.match(rows[3].why_not, /the stored value is 3 bytes: too short to hold a 12-byte nonce and a 16-byte tag after 'v11'/);
+    assert.doesNotMatch(rows[2].why_not + rows[3].why_not, /did not verify/);
+    assert.deepEqual(out.not_decrypted_by_reason, { "a v10 or v11 value under 31 bytes: too short to hold a nonce and a tag": 2 });
+
+    // SQLite's names are not case-sensitive: a table LOGINS with columns in another case is the logins table.
+    const upper = join(cwd, "work/upper.db");
+    py(
+      "import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\nc.execute('CREATE TABLE LOGINS (Origin_URL VARCHAR, USERNAME_VALUE VARCHAR, Password_Value BLOB, DATE_CREATED INTEGER)')\n" +
+        "c.execute('INSERT INTO LOGINS VALUES (?,?,?,?)', ('https://case.example/', 'Case', bytes.fromhex(sys.argv[2]), 13352846768131444))\nc.commit(); c.close()",
+      upper,
+      v10(p.key, SECRETS[2]).toString("hex"),
+    );
+    const env = secretJob(cwd);
+    const cased = await call("chromium_logins", cwd, { login_data: "work/upper.db", key_file: key }, env);
+    assert.equal(cased.out.status, "complete", cased.out.status_basis);
+    assert.deepEqual(cased.out.columns_read, ["origin_url", "username_value", "password_value", "date_created"]);
+    assert.deepEqual([cased.out.rows[0].origin, cased.out.rows[0].username, cased.out.rows[0].created, cased.out.rows[0].decrypted], ["https://case.example/", "Case", "2024-02-19T20:06:08.131444Z", true]);
+    assert.deepEqual(lines(join(env.OUT, "chromium_logins-values.jsonl")).map((v) => [v.username, v.password]), [["Case", SECRETS[2]]]);
+  });
+});
+
+test("a REAL cell of Infinity or NaN is written to the values file as text: every line of the file is strict JSON", async () => {
+  await withCwd(async (cwd) => {
+    const key = randomBytes(32);
+    py(
+      "import sqlite3, sys\nc = sqlite3.connect(sys.argv[1])\nc.execute('CREATE TABLE logins (origin_url, action_url, signon_realm, username_value, password_value BLOB, date_created, times_used, id)')\n" +
+        "c.execute('INSERT INTO logins VALUES (?,?,?,?,?,?,?,?)', (9e999, -9e999, 9e999, -9e999, bytes.fromhex(sys.argv[2]), 9e999, 9e999, 9e999))\nc.commit(); c.close()",
+      join(cwd, "inf.db"),
+      v10(key, SECRETS[0]).toString("hex"),
+    );
+    const env = secretJob(cwd);
+    const { out, raw } = await call("chromium_logins", cwd, { login_data: "inf.db", key_file: secretFile(cwd, "work/k", key) }, env);
+    assert.equal(out.decrypted, 1);
+    const text = readFileSync(join(env.OUT, "chromium_logins-values.jsonl"), "utf8");
+    assert.doesNotMatch(text + raw, /(?<!")-?\bInfinity\b|\bNaN\b/, "no token that is not JSON");
+    const [row] = lines(join(env.OUT, "chromium_logins-values.jsonl"));
+    assert.deepEqual([row.origin_url, row.action_url, row.signon_realm, row.username, row.password], ["inf", "-inf", "inf", "-inf", SECRETS[0]]);
+    assert.deepEqual([out.rows[0].created, out.rows[0].created_raw, out.rows[0].times_used, out.rows[0].id], [null, null, null, null]);
+  });
+});
+
+test("dpapi_masterkey: a SID with a line break is refused, a path that is not there is said, and a blob file this tool refuses is refused before a key is written, the values files named", async () => {
+  await withCwd(async (cwd) => {
+    const p = profile(cwd);
+    const pw = secretFile(cwd, "work/pw", PASSWORD);
+    for (const sid of [SID + "\n", " " + SID, SID + "\r\n", SID + " "]) {
+      const env = secretJob(cwd);
+      const { out } = await call("dpapi_masterkey", cwd, { masterkey: p.protect, password_file: pw, sid }, env);
+      assert.equal(out.status, "failed", JSON.stringify(sid));
+      assert.match(out.error, /sid must be a security identifier .* and nothing else: a space or a line break before or after it is not dropped/);
+      assert.equal(readFileSync(join(env.OUT, "dpapi_masterkey-keys.jsonl")).length, 0);
+    }
+    const exact = await call("dpapi_masterkey", cwd, { masterkey: p.protect, password_file: pw, sid: SID }, secretJob(cwd));
+    assert.deepEqual([exact.out.status, exact.out.verified_count], ["complete", 1]);
+    // The same regular expression reads the SID in chromium_logins.
+    const chromium = await call("chromium_logins", cwd, { login_data: p.loginData, local_state: p.localState, masterkey: p.protect, password_file: pw, sid: SID + "\n" }, secretJob(cwd));
+    assert.match(chromium.out.error, /sid must be a security identifier .* and nothing else/);
+
+    // A masterkey path that does not exist is said as that, not as a missing SID.
+    for (const tool of ["dpapi_masterkey", "chromium_logins"]) {
+      const gone = await call(tool, cwd, { login_data: p.loginData, local_state: p.localState, masterkey: ["work/Protect/nothing-here"], password_file: pw, ...(tool === "dpapi_masterkey" ? { login_data: undefined, local_state: undefined } : {}) }, secretJob(cwd));
+      assert.match(gone.out.error, /masterkey path 1 of 1 does not exist: no file or directory is at that name/, tool);
+      assert.doesNotMatch(gone.out.error, /sid is required/);
+    }
+
+    // A blob_file that holds no blob, and JSON nested past what a parser descends: refused in the tool's words, before a master key is tried, and
+    // the failed answer names the values files and says what they hold.
+    const nested = '{"a":'.repeat(60000) + "1" + "}".repeat(60000);
+    for (const [content, expected] of [["neither a blob nor base64 of one!", /blob_file holds no DPAPI blob/], [nested, /blob_file is JSON without a DPAPI blob under os_crypt\.encrypted_key/]] as Array<[string, RegExp]>) {
+      const env = secretJob(cwd);
+      const { out, exit } = await call("dpapi_masterkey", cwd, { masterkey: p.protect, password_file: pw, blob_file: secretFile(cwd, "work/notblob", content) }, env);
+      assert.equal(out.status, "failed");
+      assert.notEqual(exit, 0);
+      assert.match(out.error, expected);
+      assert.notEqual(out.reason, "RecursionError");
+      assert.deepEqual([out.secret_values.keys.values_file, out.secret_values.keys.written, out.secret_values.plaintext.written, out.contains_secret_values],
+        [`store/jobs/${env.JOB_ID}/out/dpapi_masterkey-keys.jsonl`, 0, 0, false]);
+      assert.equal(readFileSync(join(env.OUT, "dpapi_masterkey-keys.jsonl")).length, 0, "no key was verified and written before the refusal");
+    }
+    const state = await call("chromium_logins", cwd, { login_data: p.loginData, local_state: secretFile(cwd, "work/nested-state", nested), masterkey: p.protect, password_file: pw }, secretJob(cwd));
+    assert.match(state.out.error, /local_state is not JSON/);
+    assert.equal(state.out.secret_values.written, 0, "the failed answer names the values file it made");
+  });
+});
+
+test("a master key file whose header holds no GUID is matched to a blob by its file's name, and the answer says where the GUID came from", async () => {
+  await withCwd(async (cwd) => {
+    const masterKey = randomBytes(64);
+    const protect = `work/Protect/${SID}`;
+    mkdirSync(join(cwd, protect), { recursive: true });
+    writeFileSync(join(cwd, protect, GUID.toUpperCase()), masterKeyFile(prekeySha1(PASSWORD), masterKey, { guid: "not-a-guid-at-all-not-a-guid-at-all!" }));
+    const clear = Buffer.from("clear text under a key whose header GUID is damaged");
+    const env = secretJob(cwd);
+    const { out } = await call("dpapi_masterkey", cwd, { masterkey: protect, password_file: secretFile(cwd, "work/pw", PASSWORD), blob_file: secretFile(cwd, "work/blob", dpapiBlob(masterKey, clear)) }, env);
+    assert.equal(out.status, "complete", out.status_basis);
+    const [mk] = out.masterkeys as Answer[];
+    assert.deepEqual([mk.verified, mk.guid], [true, GUID]);
+    assert.match(mk.guid_from, /^the file's name \(the GUID field of the file's header is not a GUID\)$/);
+    assert.match(out.status_basis, /a verified key's GUID was not in its file's header/);
+    assert.deepEqual([out.blob.decrypted, out.blob.masterkey_available, out.blob.plaintext_bytes], [true, true, clear.length]);
+    assert.deepEqual(lines(join(env.OUT, "dpapi_masterkey-keys.jsonl")).map((k) => k.guid), [GUID]);
+    // A file with a good header says so.
+    const p = profile(cwd);
+    const good = await call("dpapi_masterkey", cwd, { masterkey: join(p.protect, GUID), password_file: "work/pw" }, secretJob(cwd));
+    assert.equal(good.out.masterkeys[0].guid_from, "the file's header");
+  });
+});
+
+test("when the clock ends between the derivations of one file, the answer does not say every derivation was tried", () => {
+  // The clock is replaced by a counter, so that the case does not depend on how fast the host derives: the file is begun, one derivation
+  // (of a wrong password) is tried, and time is up before the second.
+  const out = py(
+    [
+      "import importlib.util, io, json, os, sys, tempfile, contextlib",
+      "spec = importlib.util.spec_from_file_location('tool', sys.argv[1]); w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)",
+      "d = tempfile.mkdtemp(); protect = os.path.join(d, sys.argv[2]); os.makedirs(protect); out = os.path.join(d, 'out'); os.makedirs(out)",
+      "open(os.path.join(protect, sys.argv[3]), 'wb').write(bytes.fromhex(sys.argv[4])); open(os.path.join(d, 'pw'), 'w').write('a wrong password')",
+      "os.environ.update(JOB_ID='j000001', OUT=out, SECRET_OUTPUT='1')",
+      "calls = [0]",
+      "def clock():",
+      "    calls[0] += 1",
+      "    return calls[0] > 2",
+      "w.out_of_time = clock",
+      "sys.stdin = io.StringIO(json.dumps({'masterkey': [protect], 'password_file': os.path.join(d, 'pw')}))",
+      "buf = io.StringIO()",
+      "with contextlib.redirect_stdout(buf):",
+      "    w.main()",
+      "print(buf.getvalue())",
+    ].join("\n"),
+    join(WIN, "dpapi_masterkey", "run.py"),
+    SID,
+    GUID,
+    masterKeyFile(prekeySha1(PASSWORD), randomBytes(64)).toString("hex"),
+  );
+  const answer = JSON.parse(out) as Answer;
+  const [mk] = answer.masterkeys as Answer[];
+  assert.equal(answer.status, "partial");
+  assert.deepEqual([mk.attempted, mk.verified, mk.not_tried_for_time, mk.derivations_tried], [true, false, true, ["the SHA-1 of the password"]]);
+  assert.match(mk.error, /the tool's own clock ran out after 1 of the 3 derivation\(s\) were tried: this file is neither verified nor refused/);
+  assert.match(answer.status_basis, /ran out before every derivation was tried for 1 file\(s\) .* those files are neither verified nor refused/);
+  assert.doesNotMatch(answer.status_basis, /every derivation of a password for this SID was tried/);
+});
+
+test("the manifests say what the fixes changed: when the values file is made, what a cell over the limit gives, and what a failed answer names", () => {
+  const chromium = manifestOf("chromium_logins").description as string;
+  assert.match(chromium, /created exclusively as soon as login_data is seen to be an SQLite database \(its first 16 bytes, the only bytes read before it\)/);
+  assert.doesNotMatch(chromium, /created exclusively before anything is read/);
+  assert.match(chromium, /a cell over 8 MiB .* is read as its type and length only/);
+  const dpapi = manifestOf("dpapi_masterkey").description as string;
+  assert.match(dpapi, /guid_from/);
+  assert.match(dpapi, /a failed answer made after the values files exist names them/);
+});
+
 // --- the contract -----------------------------------------------------------------------------------------------------------------------------------
 
 test("a secret given as a value, two key sources at once, a values file already there, and a secret file that is a link are refused by name", async () => {
@@ -568,7 +770,7 @@ test("a secret given as a value, two key sources at once, a values file already 
       ["chromium_logins", { login_data: p.loginData, local_state: p.localState, masterkey: p.protect }, /name exactly one of password_file .* none was given/],
       ["chromium_logins", { key_file: key }, /login_data is required/],
       ["dpapi_masterkey", { masterkey: p.protect, password_file: pw, sid: "not-a-sid" }, /sid must be a security identifier/],
-      ["dpapi_masterkey", { masterkey: join(p.protect, "Preferred") + "x", password_file: pw, sid: SID }, /0 of 1|could not be opened/],
+      ["dpapi_masterkey", { masterkey: join(p.protect, "Preferred") + "x", password_file: pw, sid: SID }, /masterkey path 1 of 1 does not exist/],
       ["dpapi_masterkey", { password_file: pw }, /name masterkey .* or keys_file/],
       ["dpapi_masterkey", { keys_file: key }, /keys_file is for decrypting a blob: name blob_file with it/],
       ["dpapi_masterkey", { masterkey: "work/User Data", password_file: pw, sid: SID }, /holds no file named by a GUID/],

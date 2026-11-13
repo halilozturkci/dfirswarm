@@ -16,13 +16,16 @@ Explorer keeps the thumbnails and icons it has rendered in %LOCALAPPDATA%\\Micro
                 .  .  Windows 8 and later: 4 width, 4 height
                 .  4  unknown, 8 data checksum, 8 header checksum
 
-Every length is checked against the entry and the entry against the file: an entry whose parts do not fit it is a problem line and the next
-'CMMM' is looked for; a file that ends inside an entry gives a truncated row and a partial answer, and the cut image is not written. A version
-that is not in the table is refused, not guessed. The index (thumbcache_idx.db, 'IMMM') and the older IconCache.db are other formats and are
-answered as such. The checksums are copied and not verified.
+The read begins at the end of the file header, whatever the header gives as the offset of its first entry: an entry that lies before that
+offset is read as an entry and marked, and bytes there that are neither an entry nor zero are counted like any others. Every length is checked
+against the entry and the entry against the file: an entry whose parts do not fit it is a problem line and the next 'CMMM' is looked for; a
+file that ends inside an entry gives a truncated row and a partial answer, and its image is written only when every byte of the image is in the
+file. A version that is not in the table is refused, not guessed. The index (thumbcache_idx.db, 'IMMM') and the older IconCache.db are other
+formats and are answered as such. The checksums are copied and not verified.
 
-An image is copied out under a name this tool makes (the cache's name, the entry's number and its hash), never one the evidence gives, and a
-file that is there is never replaced. Only regular files are opened, without blocking and without following a link.
+An image is copied out under a name this tool makes (the number of the cache file in this call, the entry's number and its hash in hexadecimal),
+never one the evidence gives, and a file that is there is never replaced. The images directory is the tool's own: one that is a link, or a $OUT
+that is not there, is refused before anything is read. Only regular files are opened, without blocking and without following a link.
 """
 
 # BEGIN SHARED ENDS
@@ -527,7 +530,7 @@ install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
 
-PARSER = "thumbcache_read/1"
+PARSER = "thumbcache_read/2"
 MAGIC = b"CMMM"
 INDEX_MAGIC = b"IMMM"
 DEADLINE_SECONDS = 100            # the manifest allows 120: the reads and the writes stop here, so that the page is placed and the answer printed before the harness ends it
@@ -662,6 +665,41 @@ def output_directory(identity):
     return Path("work") / agent / name, str(Path("work") / agent / name)
 
 
+def refuse_output_place(directory, shown_dir, extract):
+    """Why nothing may be written to the images directory, or None. In a job $OUT must be there (it is the harness's to make, never this
+    tool's), and the images directory, if something is at its name, must be a directory of its own and not a link: a link planted there
+    would send every image somewhere else."""
+    job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+    if job and out and not os.path.isdir(out):
+        return "$OUT is not an existing directory: it is not created by this tool, and nothing was read or written"
+    if not extract:
+        return None                   # no image is written: the directory is not touched
+    try:
+        mode = os.lstat(directory).st_mode
+    except OSError:
+        return None
+    if stat.S_ISLNK(mode):
+        return "%s is a symbolic link: nothing is written through it, and nothing was read (remove the link, or name another output place)" % shown_dir
+    if not stat.S_ISDIR(mode):
+        return "%s is there and is not a directory: nothing was written or read" % shown_dir
+    return None
+
+
+def make_output_directory(directory):
+    """Make the images directory (in a job only the directory itself, under a $OUT that is there; outside a job its parents under work/ too)
+    and hold that it is a directory of its own, not a link."""
+    import errno
+    job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+    if not (job and out):
+        os.makedirs(directory.parent, exist_ok=True)
+    try:
+        os.mkdir(directory)
+    except FileExistsError:
+        pass
+    if not stat.S_ISDIR(os.lstat(directory).st_mode):
+        raise OSError(errno.ENOTDIR, "the images directory is a link or not a directory, and nothing is written through it")
+
+
 class Budget:
     def __init__(self, entries, image_bytes, output_bytes):
         self.entries_left = entries
@@ -676,7 +714,7 @@ def write_image(fd, offset, length, directory, shown_dir, name):
     there (the same bytes are named again; other bytes take the next free name). Returns (shown path, sha256, bytes written)."""
     import hashlib
     import tempfile
-    directory.mkdir(parents=True, exist_ok=True)
+    make_output_directory(directory)
     digest = hashlib.sha256()
     before = None
     try:
@@ -750,9 +788,11 @@ def next_magic(fd, start, size):
     return size, nonzero
 
 
-def read_cache(path, rows, budget, extract, include_free, directory, shown_dir):
-    """Read one cache file: its header, then every entry from the first one to the end of the file. Returns what the answer says of the file."""
-    said = {"file": path, "status": "complete", "entries": 0, "entries_with_image": 0, "images_written": 0, "image_bytes_written": 0, "problems": []}
+def read_cache(path, rows, budget, extract, include_free, directory, shown_dir, prefix):
+    """Read one cache file: its header, then every entry from the end of the header to the end of the file (the header's own offset of its
+    first entry decides nothing about what is read). `prefix` is this tool's own name for the file, which the images are named by. Returns
+    what the answer says of the file."""
+    said = {"file": path, "output_prefix": prefix, "status": "complete", "entries": 0, "entries_with_image": 0, "images_written": 0, "image_bytes_written": 0, "problems": []}
     reasons = []
 
     def problem(text):
@@ -813,14 +853,18 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir):
         first, free = struct.unpack_from("<I", head, first_at)[0], struct.unpack_from("<I", head, free_at)[0]
         said["first_entry_offset"], said["first_free_offset"] = first, free
         said["first_entry_offset_from"] = "header"
-        if first < header_bytes or first > size or (first < size and pread(fd, 4, first) != MAGIC and first != free):
+        first_usable = not (first < header_bytes or first > size or (first < size and pread(fd, 4, first) != MAGIC and first != free))
+        if not first_usable:
             said["first_entry_offset_from"] = "search"
             problem("the header's first entry offset (%d) is not where an entry begins: the first 'CMMM' after the header was looked for instead" % first)
-            first = header_bytes
         if free > size:
             problem("the header's first free offset (%d) is past the end of the file (%d bytes): the file is shorter than its header says" % (free, size))
             reasons.append("the file ends before the offset its header gives for its first free byte (%d of %d bytes are there)" % (size, free))
-        pos = first
+        # The read begins at the end of the header, never at the header's own offset: what lies between the two is read like the rest of the
+        # file (an entry there is an entry, bytes there that are no entry and not zero are counted), so an offset that points past real
+        # entries hides none of them.
+        pos = header_bytes
+        said["read_from_offset"] = pos
         gaps = {"zero_bytes": 0, "other_bytes": 0, "other": 0}
         end = size if include_free or not header_bytes <= free <= size else free
         said["read_to_offset"] = end
@@ -846,6 +890,9 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir):
                 pos = at
                 continue
             row = {"file": path, "entry": said["entries"] + 1, "offset": pos, "in_free_space": pos >= free}
+            if first_usable and pos < first:
+                row["before_first_entry_offset"] = True
+                said["entries_before_first_entry_offset"] = said.get("entries_before_first_entry_offset", 0) + 1
             said["entries"] += 1
             budget.entries_left -= 1
             PROGRESS["entries"] += 1
@@ -912,8 +959,7 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir):
                     budget.output_full = True
                     said["images_not_written_for_output"] = said.get("images_not_written_for_output", 0) + 1
                 else:
-                    stem = re.sub(r"[^A-Za-z0-9_.-]", "_", base)[:60]
-                    name = "%s-%06d-%016x.%s" % (stem, row["entry"], entry_hash, EXTENSION[kind])
+                    name = "%s-%06d-%016x.%s" % (prefix, row["entry"], entry_hash, EXTENSION[kind])
                     try:
                         row["written"], row["sha256"], wrote = write_image(fd, data_at, data_size, directory, shown_dir, name)
                     except OSError as exc:
@@ -942,6 +988,10 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir):
                 break
             pos += entry_size
         said["bytes_not_in_an_entry"] = gaps
+        skipped_by_header = said.get("entries_before_first_entry_offset", 0)
+        if skipped_by_header:
+            problem("the header's first entry offset (%d) lies past %d entr(ies) that begin before it: a reader that starts at that offset skips them; they were "
+                    "read here as entries and are marked before_first_entry_offset" % (first, skipped_by_header))
         if gaps["other"]:
             reasons.append("%d stretch(es) of the file (%d bytes) are neither an entry nor zero" % (gaps["other"], gaps["other_bytes"]))
         if said.get("entries_malformed"):
@@ -954,10 +1004,12 @@ def read_cache(path, rows, budget, extract, include_free, directory, shown_dir):
             reasons.append("the header's first entry offset was not usable, so the entries were found by search")
         if reasons:
             return ended("partial", "; ".join(reasons))
-        return ended("complete", "every entry from the first one to %s was read (%d, %d with an image)%s" % (
+        return ended("complete", "every entry from the end of the header to %s was read (%d, %d with an image)%s%s" % (
             "the end of the file" if end == size else "the header's first free offset (include_free is false: what lies past it was not read)",
             said["entries"], said["entries_with_image"],
-            "" if not extract else "; every image was written" if said["entries_with_image"] else ""))
+            "" if not extract else "; every image was written" if said["entries_with_image"] else "",
+            "" if not skipped_by_header else "; %d of them begin before the header's first entry offset (%d), which skips them: they are marked "
+                                             "before_first_entry_offset" % (skipped_by_header, first)))
     finally:
         os.close(fd)
 
@@ -1029,14 +1081,25 @@ def main():
     import hashlib
     identity = hashlib.sha256(json.dumps([os.path.abspath(path), extract, include_free]).encode("utf-8", "surrogatepass")).hexdigest()[:12]
     directory, shown_dir = output_directory(identity)
+    refused = refuse_output_place(directory, shown_dir, extract)
+    if refused:
+        fail(refused, path=path)
     rows = NoReplacePage("thumbcache_read", [os.path.abspath(path), extract, include_free, budget.entries_left, budget.image_bytes, budget.output_left], limit)
-    files = []
-    for target in targets:
+    files, indexes = [], []
+    for number, target in enumerate(targets, 1):
         if budget.stopped or out_of_time():
             skipped.append({"file": target, "why": "%s before this file was started" % (budget.stopped or "the tool's own clock (%d s) ran out" % DEADLINE_SECONDS)})
             continue
         PROGRESS["files"] += 1
-        files.append(read_cache(target, rows, budget, extract, include_free, directory, shown_dir))
+        said = read_cache(target, rows, budget, extract, include_free, directory, shown_dir, "c%03d" % number)
+        if said.get("format") == "index (IMMM)" and os.path.isdir(path):
+            # The index Explorer keeps beside its caches is in every real directory: it is named as what it is, and it is not a cache that
+            # failed to read, so it does not make the answer for the directory partial. Named by itself, it is answered as failed (below).
+            indexes.append({"file": target, "bytes": said.get("bytes"),
+                            "why": "the cache's index (it begins 'IMMM'): not a cache this tool reads; it holds no image, and its layout (which ties an entry "
+                                   "hash to a slot in each cache) is not read"})
+            continue
+        files.append(said)
 
     page = rows.finish()
     reasons = []
@@ -1049,11 +1112,20 @@ def main():
         reasons.append("%d file(s) or director(ies) were not read (not_read)" % len(skipped))
     if files and all(f["status"] == "failed" for f in files) and not page["matched"]:
         status, basis = "failed", "no cache file named was read: " + "; ".join("%s" % f.get("status_basis") for f in files[:3])
+    elif not files and indexes and not skipped and not walk_stopped:
+        status, basis = "failed", "the directory holds %d cache index file(s) ('IMMM') and no cache this tool reads: nothing was read" % len(indexes)
     else:
         status = "partial" if reasons else "complete"
-        basis = "; ".join(reasons) if reasons else "every cache file found (%d) was read from its first entry to its end; %d entr(ies), %d with an image%s" % (
-            len(files), sum(f["entries"] for f in files), sum(f["entries_with_image"] for f in files),
-            ", every image written" if extract else ", none written (extract is false)")
+        to_free = sum(1 for f in files if f.get("read_to_offset") != f.get("bytes"))
+        skipped_by_header = sum(f.get("entries_before_first_entry_offset", 0) for f in files)
+        basis = "; ".join(reasons) if reasons else "every cache file found (%d) was read from the end of its header to %s; %d entr(ies), %d with an image%s%s%s" % (
+            len(files),
+            "its end" if not to_free else "the header's first free offset in %d of them and to its end in the others (include_free is false: what lies past that "
+                                          "offset was not read, and complete says nothing of it)" % to_free,
+            sum(f["entries"] for f in files), sum(f["entries_with_image"] for f in files),
+            ", every image written" if extract else ", none written (extract is false)",
+            "" if not skipped_by_header else "; %d entr(ies) begin before their header's first entry offset, which skips them (marked before_first_entry_offset)" % skipped_by_header,
+            "" if not indexes else "; %d cache index file(s) beside them are named in not_caches and are not caches this tool reads" % len(indexes))
     answer = {
         "parser": PARSER,
         "status": status,
@@ -1063,6 +1135,8 @@ def main():
         "files_not_listed": max(0, len(files) - MAX_PROBLEMS),
         "not_read": skipped[:MAX_PROBLEMS],
         "not_read_count": len(skipped),
+        "not_caches": indexes[:MAX_PROBLEMS],
+        "not_caches_count": len(indexes),
         "entries": rows.page,
         "entry_count": page["matched"],
         "images_written": sum(f["images_written"] for f in files),
@@ -1073,7 +1147,9 @@ def main():
                    "max_output_bytes": whole(args.get("max_output_bytes"), "max_output_bytes", DEFAULT_OUTPUT_BYTES, 0, MAX_OUTPUT_BYTES)},
         "note": "An entry is a rendering Explorer stored: a thumbnail or an icon, under a hash of the item it was made for. The cache does not hold the item's path "
                 "(Windows Search's index and the cache's own index tie a hash to a file, and neither is read here), and it gives no time. in_free_space marks an entry "
-                "past the offset the header gives for its first free byte: bytes of an earlier state of the cache, a candidate. The two checksums are copied, not verified.",
+                "past the offset the header gives for its first free byte: bytes of an earlier state of the cache, a candidate. before_first_entry_offset marks an "
+                "entry that begins before the offset the header gives for its first entry: the header skips it, and it was read all the same. An image's file is "
+                "named by this tool (files[].output_prefix, the entry's number, its hash), never by the cache file's name. The two checksums are copied, not verified.",
         **page,
     }
     if status == "failed":

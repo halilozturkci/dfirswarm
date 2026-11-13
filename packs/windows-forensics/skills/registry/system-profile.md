@@ -3,6 +3,7 @@ id: registry/system-profile
 title: Build, names, profiles
 when: Machine profile first.
 needs: []
+card: regkv {"hive": "<SOFTWARE>", "key": "Microsoft\\Windows NT\\CurrentVersion"}: decide the build from CurrentBuild with UBR, not ProductName (a label); InstallDate can date the last upgrade, not the first install. A loaded profile in ProfileList is not an interactive logon. Compare volume serials like with like: equal serials support an association and do not prove one. Does not show: who used the machine, or a connection history.
 tools: [regkv, timestamp_decode, image_layout, lnk_parse]
 requires_host: [fsstat]
 ---

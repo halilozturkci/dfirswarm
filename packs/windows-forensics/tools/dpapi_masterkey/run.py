@@ -275,7 +275,7 @@ PBKDF2_ROUNDS_MAX = 1_000_000          # Windows writes 4,000 to 24,000; a file 
 DPAPI_BLOB_MAX = 256 << 10              # a blob is some hundreds of bytes to a few KiB; this AES is Python's, and a megabyte of it is seconds
 MASTERKEY_ENCRYPTED_MAX = 1024         # the encrypted master key is 144 bytes; a block that declares far more is not a master key
 DPAPI_PROVIDER = bytes.fromhex("d08c9ddf0115d1118c7a00c04fc297eb")
-SID_TEXT = r"^S-1-[0-9]{1,14}(?:-[0-9]{1,10}){1,14}$"
+SID_TEXT = r"\AS-1-[0-9]{1,14}(?:-[0-9]{1,10}){1,14}\Z"   # \Z, not $: '$' also matches before a trailing line break, and a SID with one derives another key
 
 
 class Unsupported(Exception):
@@ -694,7 +694,7 @@ import stat
 SECRET_FILE_MAX = 4096                 # a password, a hash or a key file
 KEYS_FILE_MAX = 4 << 20                # the sealed keys file of an earlier call
 MASTERKEY_FILES_MAX = 64               # master key files tried in one call
-GUID_NAME = re.compile(r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
+GUID_NAME = re.compile(r"\A[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\Z")
 SID_NAME = re.compile(SID_TEXT)
 
 
@@ -838,9 +838,13 @@ def masterkey_paths(value):
     """The master key files a call names: each path is a file, or a directory (a user's Protect/<SID>) whose files named by a GUID are taken, in
     name order. Links are not followed."""
     out = []
-    for path in path_list(value, "masterkey"):
+    named = path_list(value, "masterkey")
+    for number, path in enumerate(named, 1):
         if os.path.islink(path):
             raise Refused("a masterkey path is a symbolic link: name what it resolves to")
+        if not os.path.lexists(path):
+            raise Refused("masterkey path %d of %d does not exist: no file or directory is at that name (a user's master keys are in "
+                          "AppData/Roaming/Microsoft/Protect/<SID>/<GUID>)" % (number, len(named)))
         if os.path.isdir(path):
             try:
                 names = sorted(os.listdir(path))
@@ -863,7 +867,8 @@ def sid_of(args, files):
     sid = args.get("sid")
     if sid is not None:
         if not isinstance(sid, str) or not SID_NAME.match(sid):
-            raise Refused("sid must be a security identifier such as S-1-5-21-1111111111-2222222222-3333333333-1001")
+            raise Refused("sid must be a security identifier such as S-1-5-21-1111111111-2222222222-3333333333-1001, and nothing else: a space or a line "
+                          "break before or after it is not dropped, because the SID is part of the key derivation")
         return sid, "the sid argument"
     for path in files:
         parent = os.path.basename(os.path.dirname(os.path.abspath(path)))
@@ -906,7 +911,16 @@ def open_masterkeys(files, sid, secret, time_is_up):
         except (Refused, Malformed) as exc:
             report["error"] = str(exc)
             continue
-        report.update(guid=mk["guid"], version=mk["version"], policy=mk["policy"], flags=mk["flags"], rounds=mk["rounds"],
+        guid, guid_from = mk["guid"], "the file's header"
+        if guid is None:
+            # The header's GUID field is not a GUID. Windows names the file by the same GUID, and a blob names its master key by it: the file's
+            # name is used, and said, so that a key that verifies still opens the blobs that name it.
+            name = os.path.basename(path)
+            if GUID_NAME.match(name):
+                guid, guid_from = name.lower(), "the file's name (the GUID field of the file's header is not a GUID)"
+            else:
+                guid_from = "nowhere: neither the file's header nor its name holds a GUID, so no blob can be matched to this key by GUID"
+        report.update(guid=guid, guid_from=guid_from, version=mk["version"], policy=mk["policy"], flags=mk["flags"], rounds=mk["rounds"],
                       hash_algorithm=alg_name(mk["hash_alg"]), cipher_algorithm=alg_name(mk["cipher_alg"]), masterkey_block_bytes=mk["masterkey_bytes"],
                       backupkey_bytes=mk["backupkey_bytes"], credhist_bytes=mk["credhist_bytes"], domainkey_bytes=mk["domainkey_bytes"],
                       sizes_fit_file=mk["sizes_fit_file"])
@@ -919,13 +933,14 @@ def open_masterkeys(files, sid, secret, time_is_up):
         for how, prekey in prekeys:
             if time_is_up():
                 report["not_tried_for_time"] = True
-                report["error"] = "the tool's own clock ran out before every derivation was tried"
+                report["error"] = ("the tool's own clock ran out after %d of the %d derivation(s) were tried: this file is neither verified nor refused"
+                                   % (len(report["derivations_tried"]), len(prekeys)))
                 break
             report["derivations_tried"].append(how)
             key = decrypt_masterkey(mk, prekey)
             if key is not None:
                 report["verified"], report["verified_with"] = True, how
-                keys[(mk["guid"] or "").lower()] = key
+                keys[(guid or "").lower()] = key
                 break
     return reports, keys
 
@@ -948,7 +963,7 @@ def read_keys_file(path):
 # END CREDENTIAL IO
 
 
-PARSER = "dpapi_masterkey/1"
+PARSER = "dpapi_masterkey/2"
 DEADLINE_SECONDS = 45             # the manifest allows 60: the derivations stop here, so that the answer is printed before the harness ends the tool
 KEYS_NAME = "dpapi_masterkey-keys.jsonl"
 PLAIN_NAME = "dpapi_masterkey-plaintext.jsonl"
@@ -973,8 +988,18 @@ def close_sealed():
         sealed.close()
 
 
+def sealed_said():
+    """What a failed answer says of the values files this call made: where they are and how many lines each holds. A call that is refused
+    after a master key verified has written that key, and the file stays a sealed output of the job: the answer must name it."""
+    if not SEALED:
+        return {}
+    return {"secret_values": {("keys" if sealed.name == KEYS_NAME else "plaintext"): sealed.said() for sealed in SEALED},
+            "contains_secret_values": any(sealed.written for sealed in SEALED)}
+
+
 def fail(message, **extra):
     close_sealed()
+    extra = {**sealed_said(), **extra}
     print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}, indent=2)
     raise SystemExit(1)
 
@@ -1007,8 +1032,8 @@ def blob_bytes(path):
             state = json.loads(text.decode("utf-8"))
             encoded = state["os_crypt"]["encrypted_key"]
             found = blob_in(base64.b64decode(encoded, validate=True))
-        except (ValueError, KeyError, TypeError, binascii.Error):
-            found = None
+        except (ValueError, KeyError, TypeError, binascii.Error, RecursionError):
+            found = None                   # (JSON nested past what the parser descends is not a Local State either)
         if found is None:
             raise Refused("blob_file is JSON without a DPAPI blob under os_crypt.encrypted_key (a Chromium Local State holds base64 of 'DPAPI' and the blob there)")
         return found, "os_crypt.encrypted_key of a Chromium Local State"
@@ -1069,19 +1094,26 @@ def main():
             files = masterkey_paths(args["masterkey"])
             sid, sid_from = sid_of(args, files)
             secret_kind, secret = user_secret(args)
+        # The blob and its entropy are read before a master key is tried, so that a blob_file this tool refuses is refused before any key was
+        # verified and written (a refusal after it names the keys file all the same: fail() says what the values files hold).
+        blob_input = None
+        if args.get("blob_file") is not None:
+            PROGRESS["stage"] = "while the blob was read"
+            entropy = read_regular(args["entropy_file"], "entropy_file", SECRET_FILE_MAX) if args.get("entropy_file") is not None else None
+            blob_input = blob_bytes(args["blob_file"])
+        earlier_keys = read_keys_file(args["keys_file"]) if args.get("keys_file") is not None else {}
+        if args.get("masterkey") is not None:
             PROGRESS["stage"] = "while the master keys were tried"
             reports, keys = open_masterkeys(files, sid, secret, out_of_time)
             by_guid = {(r.get("guid") or "").lower(): r for r in reports if r.get("verified")}
             for guid, key in keys.items():
                 keys_out.add({"kind": "masterkey", "guid": guid, "sid": sid, "file": by_guid[guid]["file"], "verified_with": by_guid[guid]["verified_with"], "key_hex": key.hex()})
-        if args.get("keys_file") is not None:
-            for guid, key in read_keys_file(args["keys_file"]).items():
-                keys.setdefault(guid, key)
+        for guid, key in earlier_keys.items():
+            keys.setdefault(guid, key)
         blob_report = None
-        if args.get("blob_file") is not None:
-            PROGRESS["stage"] = "while the blob was read"
-            entropy = read_regular(args["entropy_file"], "entropy_file", SECRET_FILE_MAX) if args.get("entropy_file") is not None else None
-            data, found_as = blob_bytes(args["blob_file"])
+        if blob_input is not None:
+            PROGRESS["stage"] = "while the blob was tried"
+            data, found_as = blob_input
             blob_report = {"file": args["blob_file"], "found_as": found_as, "attempted": False, "decrypted": False, "entropy_given": entropy is not None}
             try:
                 if len(data) > DPAPI_BLOB_MAX + 4096:
@@ -1127,16 +1159,21 @@ def main():
     unread = [r for r in reports if not r.get("attempted")]
     if unread:
         reasons.append("%d of the %d master key file(s) were not tried (masterkeys[].error or unsupported_why says why for each)" % (len(unread), len(reports)))
-    if any(r.get("not_tried_for_time") for r in reports if r.get("attempted")):
-        reasons.append("the tool's own clock (%d s) ran out before every derivation was tried" % DEADLINE_SECONDS)
+    cut_short = [r for r in reports if r.get("attempted") and r.get("not_tried_for_time")]
+    if cut_short:
+        reasons.append("the tool's own clock (%d s) ran out before every derivation was tried for %d file(s) (masterkeys[].not_tried_for_time; derivations_tried "
+                       "lists what was tried): those files are neither verified nor refused" % (DEADLINE_SECONDS, len(cut_short)))
     if blob_report is not None and not blob_report["attempted"]:
         reasons.append("the blob was not tried: %s" % (blob_report.get("error") or blob_report.get("unsupported_why") or blob_report.get("why_not")))
     said = []
     if reports:
         said.append("%d of %d master key file(s) verified (the block's own HMAC matched)" % (verified, len(reports)))
-        if verified < len([r for r in reports if r.get("attempted")]):
-            said.append("for a file that did not verify, every derivation of %s for this SID was tried and the HMAC matched none: not this secret for this SID, or a key "
-                        "the secret does not open by itself (an older key behind the credential history, a domain key)" % secret_kind)
+        refused_whole = [r for r in reports if r.get("attempted") and not r.get("verified") and not r.get("not_tried_for_time")]
+        if refused_whole:
+            said.append("for %d file(s) that did not verify, every derivation of %s for this SID was tried and the HMAC matched none: not this secret for this SID, or a "
+                        "key the secret does not open by itself (an older key behind the credential history, a domain key)" % (len(refused_whole), secret_kind))
+        if any(r.get("verified") and not str(r.get("guid_from", "")).startswith("the file's header") for r in reports):
+            said.append("a verified key's GUID was not in its file's header (masterkeys[].guid_from says where it was taken from)")
     if blob_report is not None and blob_report["attempted"]:
         said.append("the blob was decrypted and its signature verified" if blob_report["decrypted"] else "the blob was tried and its signature did not verify")
     answer = {
@@ -1167,7 +1204,7 @@ if __name__ == "__main__":
             hold_stop_signals(quietly=True)
             close_sealed()
             print_answer({"error": "the tool failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error: nothing it read is an answer",
-                          "reason": type(exc).__name__}, indent=2)
+                          "reason": type(exc).__name__, **sealed_said()}, indent=2)
             sys.exit(1)
     except SystemExit as stop:
         exit_code = _code(stop)

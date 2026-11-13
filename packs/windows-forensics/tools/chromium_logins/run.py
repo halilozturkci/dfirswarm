@@ -174,6 +174,7 @@ if __name__ == "__main__":
 import collections
 import datetime
 import json
+import math
 import os
 import sqlite3
 import struct
@@ -551,7 +552,7 @@ PBKDF2_ROUNDS_MAX = 1_000_000          # Windows writes 4,000 to 24,000; a file 
 DPAPI_BLOB_MAX = 256 << 10              # a blob is some hundreds of bytes to a few KiB; this AES is Python's, and a megabyte of it is seconds
 MASTERKEY_ENCRYPTED_MAX = 1024         # the encrypted master key is 144 bytes; a block that declares far more is not a master key
 DPAPI_PROVIDER = bytes.fromhex("d08c9ddf0115d1118c7a00c04fc297eb")
-SID_TEXT = r"^S-1-[0-9]{1,14}(?:-[0-9]{1,10}){1,14}$"
+SID_TEXT = r"\AS-1-[0-9]{1,14}(?:-[0-9]{1,10}){1,14}\Z"   # \Z, not $: '$' also matches before a trailing line break, and a SID with one derives another key
 
 
 class Unsupported(Exception):
@@ -970,7 +971,7 @@ import stat
 SECRET_FILE_MAX = 4096                 # a password, a hash or a key file
 KEYS_FILE_MAX = 4 << 20                # the sealed keys file of an earlier call
 MASTERKEY_FILES_MAX = 64               # master key files tried in one call
-GUID_NAME = re.compile(r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
+GUID_NAME = re.compile(r"\A[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\Z")
 SID_NAME = re.compile(SID_TEXT)
 
 
@@ -1114,9 +1115,13 @@ def masterkey_paths(value):
     """The master key files a call names: each path is a file, or a directory (a user's Protect/<SID>) whose files named by a GUID are taken, in
     name order. Links are not followed."""
     out = []
-    for path in path_list(value, "masterkey"):
+    named = path_list(value, "masterkey")
+    for number, path in enumerate(named, 1):
         if os.path.islink(path):
             raise Refused("a masterkey path is a symbolic link: name what it resolves to")
+        if not os.path.lexists(path):
+            raise Refused("masterkey path %d of %d does not exist: no file or directory is at that name (a user's master keys are in "
+                          "AppData/Roaming/Microsoft/Protect/<SID>/<GUID>)" % (number, len(named)))
         if os.path.isdir(path):
             try:
                 names = sorted(os.listdir(path))
@@ -1139,7 +1144,8 @@ def sid_of(args, files):
     sid = args.get("sid")
     if sid is not None:
         if not isinstance(sid, str) or not SID_NAME.match(sid):
-            raise Refused("sid must be a security identifier such as S-1-5-21-1111111111-2222222222-3333333333-1001")
+            raise Refused("sid must be a security identifier such as S-1-5-21-1111111111-2222222222-3333333333-1001, and nothing else: a space or a line "
+                          "break before or after it is not dropped, because the SID is part of the key derivation")
         return sid, "the sid argument"
     for path in files:
         parent = os.path.basename(os.path.dirname(os.path.abspath(path)))
@@ -1182,7 +1188,16 @@ def open_masterkeys(files, sid, secret, time_is_up):
         except (Refused, Malformed) as exc:
             report["error"] = str(exc)
             continue
-        report.update(guid=mk["guid"], version=mk["version"], policy=mk["policy"], flags=mk["flags"], rounds=mk["rounds"],
+        guid, guid_from = mk["guid"], "the file's header"
+        if guid is None:
+            # The header's GUID field is not a GUID. Windows names the file by the same GUID, and a blob names its master key by it: the file's
+            # name is used, and said, so that a key that verifies still opens the blobs that name it.
+            name = os.path.basename(path)
+            if GUID_NAME.match(name):
+                guid, guid_from = name.lower(), "the file's name (the GUID field of the file's header is not a GUID)"
+            else:
+                guid_from = "nowhere: neither the file's header nor its name holds a GUID, so no blob can be matched to this key by GUID"
+        report.update(guid=guid, guid_from=guid_from, version=mk["version"], policy=mk["policy"], flags=mk["flags"], rounds=mk["rounds"],
                       hash_algorithm=alg_name(mk["hash_alg"]), cipher_algorithm=alg_name(mk["cipher_alg"]), masterkey_block_bytes=mk["masterkey_bytes"],
                       backupkey_bytes=mk["backupkey_bytes"], credhist_bytes=mk["credhist_bytes"], domainkey_bytes=mk["domainkey_bytes"],
                       sizes_fit_file=mk["sizes_fit_file"])
@@ -1195,13 +1210,14 @@ def open_masterkeys(files, sid, secret, time_is_up):
         for how, prekey in prekeys:
             if time_is_up():
                 report["not_tried_for_time"] = True
-                report["error"] = "the tool's own clock ran out before every derivation was tried"
+                report["error"] = ("the tool's own clock ran out after %d of the %d derivation(s) were tried: this file is neither verified nor refused"
+                                   % (len(report["derivations_tried"]), len(prekeys)))
                 break
             report["derivations_tried"].append(how)
             key = decrypt_masterkey(mk, prekey)
             if key is not None:
                 report["verified"], report["verified_with"] = True, how
-                keys[(mk["guid"] or "").lower()] = key
+                keys[(guid or "").lower()] = key
                 break
     return reports, keys
 
@@ -1224,13 +1240,15 @@ def read_keys_file(path):
 # END CREDENTIAL IO
 
 
-PARSER = "chromium_logins/1"
+PARSER = "chromium_logins/2"
 DEADLINE_SECONDS = 45             # the manifest allows 60: the reads stop here, so that the page is placed and the answer printed before the harness ends the tool
 VALUES_NAME = "chromium_logins-values.jsonl"
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000                  # the largest inline page; the whole result is in the file the answer names
 MAX_ROWS = 1_000_000
 LOCAL_STATE_MAX = 64 << 20
+CELL_MAX = 8 << 20                # SQLITE_LIMIT_LENGTH for this read: a cell over it is not taken into memory; it is read as its type and its length alone
+V10_MIN = 3 + 12 + 16             # 'v10' or 'v11', a 12-byte nonce and a 16-byte tag: a shorter value holds no message to verify
 VALUE_MAX = 64 << 10              # a stored secret longer than this is not decrypted (a password is tens of bytes; this AES is Python's, and a megabyte of it is seconds)
 TEXT_SHOWN = 512                  # characters of a user name or an origin shown inline; the whole is in the sealed file
 WEBKIT_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
@@ -1272,6 +1290,8 @@ def drop_pages():
 def fail(message, **extra):
     drop_pages()
     close_sealed()
+    if SEALED:                        # a values file this call made stays a sealed output of the job: a failed answer names it and counts its lines
+        extra = {"secret_values": SEALED[0].said(), "contains_secret_values": SEALED[0].written > 0, **extra}
     print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}, indent=2)
     raise SystemExit(1)
 
@@ -1311,7 +1331,9 @@ def origin_shown(url):
         return None, {"not_a_url_characters": len(url)}
     if not parts.scheme or not all(c.isprintable() for c in url):
         return None, {"not_a_url_characters": len(url)}
-    shown = "%s://%s%s%s" % (parts.scheme, host, ":%d" % port if port else "", parts.path)
+    # '//' is printed only where the URL has an authority part: 'javascript:alert(1)' and 'mailto:a@b' have none, and are shown without one.
+    slashes = "//" if url.lstrip()[len(parts.scheme):len(parts.scheme) + 3] == "://" else ""
+    shown = "%s:%s%s%s%s" % (parts.scheme, slashes, host, ":%d" % port if port else "", parts.path)
     left_out = {k: n for k, n in (("user_info_characters", len(parts.netloc.rsplit("@", 1)[0]) if "@" in parts.netloc else 0),
                                   ("query_characters", len(parts.query)), ("fragment_characters", len(parts.fragment))) if n}
     if len(shown) > TEXT_SHOWN:
@@ -1342,6 +1364,48 @@ def sidecars(path):
         except OSError:
             pass
     return looked, found
+
+
+def login_records(conn, columns):
+    """Every row of the logins table in rowid order, as (fields, cells over the limit). `columns` is [(the reader's name, the table's own name)].
+    A cell over CELL_MAX (SQLITE_LIMIT_LENGTH) ends a statement that selects it, so the row that holds one is read cell by cell: every cell
+    that fits is read as it is, and the one that does not is None in the fields and is described by its type and, for a BLOB, its length
+    (SQLite gives both without loading the value; the length of a TEXT is a count of characters, which needs the value, so it stays None).
+    The rows after it are read by a new statement that starts past it, so one such cell loses no other row and no other cell."""
+    names = ["rowid"] + [name for name, _real in columns]
+    select = "SELECT rowid, %s FROM logins" % ", ".join('"%s"' % real for _name, real in columns)
+    last = None
+    while True:
+        try:
+            # (the statement's first step is taken by execute itself, so it is inside the try as well)
+            cursor = conn.execute(select + " ORDER BY rowid") if last is None else conn.execute(select + " WHERE rowid > ? ORDER BY rowid", (last,))
+            for record in cursor:
+                last = record[0]
+                yield dict(zip(names, record)), {}
+            return
+        except sqlite3.DataError:
+            pass                                               # SQLITE_TOOBIG: the next row holds a cell over the limit
+        found = (conn.execute("SELECT rowid FROM logins ORDER BY rowid LIMIT 1") if last is None else
+                 conn.execute("SELECT rowid FROM logins WHERE rowid > ? ORDER BY rowid LIMIT 1", (last,))).fetchone()
+        if found is None:
+            return
+        last = found[0]
+        fields, over = {"rowid": last}, {}
+        for name, real in columns:
+            try:
+                got = conn.execute('SELECT "%s" FROM logins WHERE rowid = ?' % real, (last,)).fetchone()
+                fields[name] = got[0] if got else None
+            except sqlite3.DataError:
+                fields[name] = None
+                about = {"type": None, "length": None}
+                for what in ("typeof", "length"):
+                    try:
+                        got = conn.execute('SELECT %s("%s") FROM logins WHERE rowid = ?' % (what, real), (last,)).fetchone()
+                        about["type" if what == "typeof" else "length"] = got[0] if got else None
+                    except sqlite3.DataError:
+                        pass
+                over[name] = about
+        yield fields, over
 
 
 def profile_key_from(args, local_state, masterkeys, report):
@@ -1455,7 +1519,7 @@ def main():
         if args.get("local_state") is not None:
             try:
                 local_state = json.loads(read_regular(args["local_state"], "local_state", LOCAL_STATE_MAX).decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
+            except (ValueError, UnicodeDecodeError, RecursionError):
                 raise Refused("local_state is not JSON: it is the profile directory's parent's Local State file (User Data/Local State)") from None
             if not isinstance(local_state, dict):
                 raise Refused("local_state is JSON but not an object")
@@ -1483,13 +1547,14 @@ def main():
     PROGRESS["stage"] = "while the logins were read"
     looked, beside = sidecars(path)
     rows = NoReplacePage("chromium_logins", [os.path.abspath(path), limit], limit)
-    counts = {"rows": 0, "password_present": 0, "decrypted": 0, "not_decrypted": 0, "unreadable": 0, "too_long": 0}
+    counts = {"rows": 0, "password_present": 0, "decrypted": 0, "not_decrypted": 0, "unreadable": 0, "too_long": 0, "cells_over_limit": 0, "rows_with_cell_over_limit": 0}
     schemes = collections.Counter()
     why_counts = collections.Counter()
     declared = None
     stopped = None
     read_error = None
     present = []
+    columns = []
     try:
         conn = sqlite3.connect("file:%s?mode=ro&immutable=1" % urllib.parse.quote(os.path.abspath(path)), uri=True)
     except sqlite3.Error as exc:
@@ -1497,7 +1562,7 @@ def main():
     try:
         conn.text_factory = lambda b: b.decode("utf-8", "replace")
         try:
-            conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 8 << 20)
+            conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, CELL_MAX)
         except (AttributeError, sqlite3.Error):
             pass
         conn.set_progress_handler(lambda: 1 if out_of_time() else 0, 2000)
@@ -1505,20 +1570,24 @@ def main():
         def authorizer(action, arg1, arg2, _db, _source):
             if action == sqlite3.SQLITE_SELECT:
                 return sqlite3.SQLITE_OK
-            if action == sqlite3.SQLITE_READ and arg1 in ("logins", "sqlite_master"):
-                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_READ and isinstance(arg1, str) and arg1.lower() in ("logins", "sqlite_master"):
+                return sqlite3.SQLITE_OK                                   # (SQLite's names are not case-sensitive: 'Logins' is the logins table)
             if action == sqlite3.SQLITE_PRAGMA and arg1 == "table_info" and arg2 == "logins":
                 return sqlite3.SQLITE_OK
-            if action == sqlite3.SQLITE_FUNCTION and arg2 in ("count",):
+            if action == sqlite3.SQLITE_FUNCTION and arg2 in ("count", "typeof", "length"):
                 return sqlite3.SQLITE_OK
             return sqlite3.SQLITE_DENY
         conn.set_authorizer(authorizer)
         try:
-            kind = conn.execute("SELECT type FROM sqlite_master WHERE name = 'logins'").fetchall()
+            kind = conn.execute("SELECT type FROM sqlite_master WHERE name = 'logins' COLLATE NOCASE").fetchall()
             if [k[0] for k in kind] != ["table"]:
                 read_error = "the database has no table named logins (it is not a Chromium Login Data, or its schema is damaged)"
             else:
-                present = [r[1] for r in conn.execute("PRAGMA table_info(logins)") if r[1] in COLUMNS]
+                # SQLite matches a column's name without regard to case, so this reader does too: the fields are named as the reader names them
+                # (COLUMNS), and the table's own spelling is what the statements select.
+                columns = [(r[1].lower(), r[1]) for r in conn.execute("PRAGMA table_info(logins)")
+                           if isinstance(r[1], str) and r[1].lower() in COLUMNS and '"' not in r[1]]
+                present = [name for name, _real in columns]
                 if "password_value" not in present or "origin_url" not in present:
                     read_error = "the logins table has no origin_url or no password_value column: not a layout this reader knows"
         except sqlite3.Error as exc:
@@ -1526,7 +1595,7 @@ def main():
         if read_error is None:
             try:
                 declared = conn.execute("SELECT count(*) FROM logins").fetchone()[0]
-                cursor = conn.execute("SELECT rowid, %s FROM logins ORDER BY rowid" % ", ".join(present))
+                records = login_records(conn, columns)
                 while True:
                     if out_of_time():
                         stopped = "the tool's own clock (%d s) ran out after %d row(s)" % (DEADLINE_SECONDS, counts["rows"])
@@ -1534,12 +1603,11 @@ def main():
                     if counts["rows"] >= MAX_ROWS:
                         stopped = "the bound of %d rows was reached" % MAX_ROWS
                         break
-                    record = cursor.fetchone()
-                    if record is None:
+                    field, over = next(records, (None, None))
+                    if field is None:
                         break
                     counts["rows"] += 1
                     PROGRESS["rows"] = counts["rows"]
-                    field = dict(zip(["rowid"] + present, record))
                     stored = field.get("password_value")
                     stored = stored.encode("utf-8", "surrogatepass") if isinstance(stored, str) else stored if isinstance(stored, bytes) else b""
                     scheme = chromium_scheme(stored)
@@ -1548,6 +1616,19 @@ def main():
                     user, user_left = text_shown(field.get("username_value"))
                     row = {"row": counts["rows"], "rowid": field["rowid"], "id": field.get("id") if isinstance(field.get("id"), int) else None,
                            "origin": origin, "username": user, "password_present": scheme != "empty", "password_value_bytes": len(stored), "scheme": scheme}
+                    if over:
+                        # A cell of this row is over the limit of one cell: it was not taken into memory. What SQLite says of it without loading it
+                        # is here, and every other cell of the row, and every other row, was read as usual.
+                        row["cells_not_read"] = {name: {"type": about["type"], "length": about["length"],
+                                                        "why": "over the %d bytes this reader takes of one cell: read as its type and length only" % CELL_MAX}
+                                                 for name, about in over.items()}
+                        counts["cells_over_limit"] += len(over)
+                        counts["rows_with_cell_over_limit"] += 1
+                        if "password_value" in over:
+                            scheme = "not_read"
+                            schemes["empty"] -= 1
+                            schemes[scheme] += 1
+                            row.update(password_present=True, password_value_bytes=over["password_value"]["length"], scheme=scheme)
                     if origin_left:
                         row["origin_left_out"] = origin_left
                     if user_left:
@@ -1567,11 +1648,18 @@ def main():
                         row["decrypted"] = None
                     else:
                         counts["password_present"] += 1
-                        if len(stored) > VALUE_MAX:
+                        if scheme == "not_read":
+                            why = ("the stored value is %s bytes, over the %d this reader takes of one cell: only its type and length were read, and it was "
+                                   "not decrypted" % (over["password_value"]["length"], CELL_MAX))
+                            counts["too_long"] += 1
+                        elif len(stored) > VALUE_MAX:
                             why = "the stored value is over %d bytes: not decrypted" % VALUE_MAX
                             counts["too_long"] += 1
                         elif scheme in ("v10", "v11"):
-                            if profile_key is None:
+                            if len(stored) < V10_MIN:
+                                why = ("the stored value is %d bytes: too short to hold a 12-byte nonce and a 16-byte tag after '%s' (%d bytes at the least), so "
+                                       "there is nothing to verify" % (len(stored), scheme, V10_MIN))
+                            elif profile_key is None:
                                 why = "no profile key (profile_key.why_not)"
                             else:
                                 clear = chromium_decrypt(stored, profile_key)
@@ -1605,6 +1693,11 @@ def main():
                             for k, v in list(out.items()):
                                 if isinstance(v, bytes):
                                     out[k] = {"hex": v.hex()}
+                                elif isinstance(v, float) and not math.isfinite(v):
+                                    out[k] = repr(v)                       # a REAL cell of Infinity or NaN is no JSON number: written as its text
+
+                            if over:
+                                out["cells_not_read"] = row["cells_not_read"]
                             try:
                                 out["password"], out["password_encoding"] = clear.decode("utf-8"), "utf-8"
                             except UnicodeDecodeError:
@@ -1613,7 +1706,9 @@ def main():
                         else:
                             counts["not_decrypted"] += 1
                             row["why_not"] = why
-                            why_counts[why if scheme != "dpapi" else why.split(" under master key")[0]] += 1
+                            why_counts[("a stored value over %d bytes: read as its type and length only" % CELL_MAX) if scheme == "not_read" else
+                                       ("a v10 or v11 value under %d bytes: too short to hold a nonce and a tag" % V10_MIN) if why.startswith("the stored value is") and "too short" in why else
+                                       why if scheme != "dpapi" else why.split(" under master key")[0]] += 1
                     rows.add(row)
             except sqlite3.Error as exc:
                 if stopped is None and out_of_time():
@@ -1635,6 +1730,9 @@ def main():
         reasons.append(stopped + ": the rows after it were not read")
     if declared is not None and not stopped and not read_error and declared != counts["rows"]:
         reasons.append("the table counts %d row(s) and %d were read" % (declared, counts["rows"]))
+    if counts["cells_over_limit"]:
+        reasons.append("%d cell(s) in %d row(s) are over the %d bytes this reader takes of one cell and were read as their type and length only (rows[].cells_not_read); "
+                       "every other cell and row was read" % (counts["cells_over_limit"], counts["rows_with_cell_over_limit"], CELL_MAX))
     if beside:
         reasons.append("%d file(s) SQLite keeps beside the database are there and not empty (sidecars_beside): they hold changes the database file does not, and this "
                        "reader opens the database file alone" % len(beside))
@@ -1667,7 +1765,8 @@ def main():
         "decrypted": counts["decrypted"],
         "not_decrypted": counts["not_decrypted"],
         "not_decrypted_by_reason": dict(why_counts),
-        "schemes": dict(schemes),
+        "cells_over_limit": counts["cells_over_limit"],
+        "schemes": {k: n for k, n in schemes.items() if n},
         "profile_key": key_report,
         "sid": sid, "sid_from": sid_from, "secret_kind": secret_kind,
         "masterkeys": masterkey_reports,
@@ -1702,7 +1801,8 @@ if __name__ == "__main__":
             drop_pages()
             close_sealed()
             print_answer({"error": "the tool failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error: nothing it read is an answer",
-                          "reason": type(exc).__name__}, indent=2)
+                          "reason": type(exc).__name__,
+                          **({"secret_values": SEALED[0].said(), "contains_secret_values": SEALED[0].written > 0} if SEALED else {})}, indent=2)
             sys.exit(1)
     except SystemExit as stop:
         exit_code = _code(stop)

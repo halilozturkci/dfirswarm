@@ -3,6 +3,7 @@ id: filesystem/ads
 title: NTFS data streams
 when: List, extract or date alternate streams.
 needs: [filesystem/mft]
+card: mft_records {"path": "<$MFT>", "streams_only": true}: extract by <entry>-128-<instance>. A stream has no timestamps.
 tools: [mft_records, extract_stream, usn_journal, file_type]
 requires_host: [fls, istat]
 ---

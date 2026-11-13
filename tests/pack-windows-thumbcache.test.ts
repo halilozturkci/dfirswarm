@@ -133,8 +133,8 @@ test("a Windows 10 cache: every entry is a row, every stored image is written by
     const out = await read(cwd, { path: file });
     assert.equal(out.status, "complete", out.status_basis);
     assert.equal(out.exit, 0);
-    assert.match(out.status_basis, /every cache file found \(1\) was read from its first entry to its end; 4 entr\(ies\), 3 with an image, every image written/);
-    assert.equal(out.parser, "thumbcache_read/1");
+    assert.match(out.status_basis, /every cache file found \(1\) was read from the end of its header to its end; 4 entr\(ies\), 3 with an image, every image written/);
+    assert.equal(out.parser, "thumbcache_read/2");
     const [said] = out.files;
     assert.deepEqual([said.format_version, said.windows, said.cache_type, said.size_class_from_header, said.size_class_from_name, said.cache_family_from_name],
       ["0x20", "Windows 10 and later", 6, "1280", "1280", "thumbcache"]);
@@ -153,7 +153,7 @@ test("a Windows 10 cache: every entry is a row, every stored image is written by
       assert.equal(row.checksums_verified, false, "the checksums are copied, not verified");
       assert.equal(row.data_checksum, "1122334455667788");
       assert.ok(readFileSync(join(cwd, row.written)).equals(image), "the image written is the image stored");
-      assert.match(row.written, new RegExp(`^work/s1/thumbcache_read-[0-9a-f]{12}/thumbcache_1280\\.db-00000${i + 1}-${row.entry_hash}\\.(bmp|jpg|png)$`));
+      assert.match(row.written, new RegExp(`^work/s1/thumbcache_read-[0-9a-f]{12}/c001-00000${i + 1}-${row.entry_hash}\\.(bmp|jpg|png)$`), "a name of the tool's own, not the cache file's");
     }
     assert.deepEqual(rows.map((r) => r.image_type), ["bmp", "jpeg", "png", null]);
     assert.deepEqual([rows[0].image_width, rows[0].image_height], [4, 3], "a BMP's own header, its height stored negative");
@@ -269,6 +269,141 @@ test("a version without a layout, the cache's index, IconCache.db and a file tha
   });
 });
 
+// --- the header's offset of its first entry decides nothing about what is read ----------------------------------------------------------------
+
+test("a header whose first entry offset points past real entries hides none of them: honest, at the file's end, at the third entry, and in the Windows 7 layout", async () => {
+  await withCwd(async (cwd) => {
+    const images = [A, B, C];
+    const sizes = THREE.map((e) => entry(0x20, e).length);
+    const end = 24 + sizes[0] + sizes[1] + sizes[2];
+    const seven = THREE.slice(0, 2).map((e) => entry(0x15, e).length);
+    const cases: Array<[string, Buffer, number, number, number]> = [
+      // name, the file, the entries it holds, how many of them begin before the header's offset, that offset
+      ["honest", cache(0x20, 4, THREE), 3, 0, 24],
+      ["first = the file's size", cache(0x20, 4, THREE, { first: end }), 3, 3, end],
+      ["first = the third entry", cache(0x20, 4, THREE, { first: 24 + sizes[0] + sizes[1] }), 3, 2, 24 + sizes[0] + sizes[1]],
+      ["Windows 7 layout, first = the file's size", cache(0x15, 2, THREE.slice(0, 2), { first: 24 + seven[0] + seven[1] }), 2, 2, 24 + seven[0] + seven[1]],
+    ];
+    for (const [i, [name, bytes, held, before, first]] of cases.entries()) {
+      const out = await read(cwd, { path: put(cwd, `work/first${i}/thumbcache_256.db`, bytes) });
+      const [said] = out.files;
+      const rows = out.entries as Row[];
+      assert.equal(out.entry_count, held, `${name}: every entry in the file is a row`);
+      assert.equal(out.images_written, held, `${name}: every image is written`);
+      assert.deepEqual(rows.map((r) => r.sha256), images.slice(0, held).map(sha), name);
+      for (const [n, row] of rows.entries()) assert.ok(readFileSync(join(cwd, row.written)).equals(images[n]), `${name}: image ${n + 1} byte for byte`);
+      assert.deepEqual([said.first_entry_offset, said.read_from_offset, said.entries_before_first_entry_offset ?? 0], [first, 24, before], name);
+      assert.deepEqual(rows.map((r) => r.before_first_entry_offset === true), rows.map((_, n) => n < before), `${name}: the entries the header skips are marked`);
+      assert.deepEqual(said.bytes_not_in_an_entry, { zero_bytes: 0, other_bytes: 0, other: 0 }, name);
+      assert.equal(out.status, "complete", `${name}: ${out.status_basis}`);
+      if (before) {
+        assert.match(said.problems.join("\n"), new RegExp(`the header's first entry offset \\(${first}\\) lies past ${before} entr\\(ies\\) that begin before it`), name);
+        assert.match(out.status_basis, new RegExp(`${before} entr\\(ies\\) begin before their header's first entry offset, which skips them`), name);
+        assert.match(said.status_basis, /begin before the header's first entry offset/, name);
+      } else {
+        assert.deepEqual(said.problems, [], name);
+        assert.doesNotMatch(out.status_basis, /skips/);
+      }
+    }
+  });
+});
+
+test("bytes between the header and its first entry offset that are neither an entry nor zero are counted and make the answer partial; zeros there do not", async () => {
+  await withCwd(async (cwd) => {
+    const body = Buffer.concat(THREE.map((e) => entry(0x20, e)));
+    const build = (gap: Buffer): Buffer => {
+      const head = cache(0x20, 4, []);
+      head.writeUInt32LE(24 + gap.length, 16); // the first entry, past the gap
+      head.writeUInt32LE(24 + gap.length + body.length, 20);
+      return Buffer.concat([head, gap, body]);
+    };
+    const junk = await read(cwd, { path: put(cwd, "work/gap/thumbcache_256.db", build(Buffer.alloc(200, 0xab))) });
+    assert.equal(junk.status, "partial");
+    assert.equal(junk.entry_count, 3);
+    assert.deepEqual(junk.files[0].bytes_not_in_an_entry, { zero_bytes: 0, other_bytes: 200, other: 1 });
+    assert.match(junk.files[0].status_basis, /1 stretch\(es\) of the file \(200 bytes\) are neither an entry nor zero/);
+    assert.match(junk.files[0].problems.join("\n"), /200 byte\(s\) at offset 24 are not an entry/);
+    const zeros = await read(cwd, { path: put(cwd, "work/zeros/thumbcache_256.db", build(Buffer.alloc(200))) });
+    assert.equal(zeros.status, "complete", zeros.status_basis);
+    assert.deepEqual([zeros.entry_count, zeros.files[0].bytes_not_in_an_entry.zero_bytes, zeros.files[0].first_entry_offset_from], [3, 200, "header"]);
+    // An entry hidden in the gap, with bytes that are no entry after it: the entry is read and marked, the bytes are counted.
+    const hidden = entry(0x20, { hash: 0x77n, data: A, width: 4, height: 3 });
+    const mixed = await read(cwd, { path: put(cwd, "work/mixed/thumbcache_256.db", build(Buffer.concat([hidden, Buffer.alloc(40, 0xcd)]))) });
+    assert.equal(mixed.status, "partial");
+    assert.deepEqual([mixed.entry_count, mixed.entries[0].before_first_entry_offset, mixed.entries[0].sha256, mixed.files[0].bytes_not_in_an_entry.other_bytes], [4, true, sha(A), 40]);
+  });
+});
+
+test("an entry that declares more bytes than the file holds is truncated; its image is written only when every byte of the image is there, as the manifest says", async () => {
+  await withCwd(async (cwd) => {
+    const huge = entry(0x20, THREE[0]);
+    huge.writeUInt32LE(0xffffffff, 4); // the entry's own size: past the end of any file
+    const head = cache(0x20, 4, []);
+    head.writeUInt32LE(24 + huge.length, 20);
+    const out = await read(cwd, { path: put(cwd, "work/huge/thumbcache_256.db", Buffer.concat([head, huge])) });
+    assert.equal(out.status, "partial");
+    const [row] = out.entries as Row[];
+    assert.deepEqual([row.truncated, row.data_bytes_present, row.data_size, row.sha256], [true, A.length, A.length, sha(A)]);
+    assert.ok(readFileSync(join(cwd, row.written)).equals(A), "the image is whole in the file, so it is written");
+    assert.match(manifestOf(TOOL).description ?? "", /truncated true; its image is written only when every byte of the image is in the file/);
+  });
+});
+
+test("an image's file is named by the tool alone: a cache file whose name begins with dots or a dash gives no hidden file and no leading dash", async () => {
+  await withCwd(async (cwd) => {
+    for (const [i, name] of ["..thumbcache_1.db", "-thumbcache_256.db", "thumbcache_256.db\nx.db"].entries()) {
+      const out = await read(cwd, { path: put(cwd, `work/n${i}/${name}`, cache(0x20, 4, THREE)) });
+      assert.equal(out.images_written, 3, JSON.stringify(name));
+      for (const row of out.entries as Row[]) assert.match(row.written.split("/").pop(), /^c001-00000[123]-[0-9a-f]{16}\.(bmp|jpg|png)$/, JSON.stringify(name));
+      const dir = join(cwd, out.images_directory);
+      assert.deepEqual(readdirSync(dir).filter((n) => !/^c001-/.test(n)), [], "no file in the images directory has a name from the evidence");
+    }
+  });
+});
+
+test("the images directory is the tool's own: a link planted at its name is refused and nothing is written through it, and a $OUT that is not there is not made", async () => {
+  await withCwd(async (cwd) => {
+    const file = put(cwd, "work/Explorer/thumbcache_256.db", cache(0x20, 4, THREE));
+    const first = await read(cwd, { path: file }, jobEnv(cwd, "j000001", "out1"));
+    assert.equal(first.status, "complete");
+    const name = first.images_directory.split("/").pop() as string;
+    // The same call in another job, where the directory's name is already a link to somewhere else.
+    const env = jobEnv(cwd, "j000002", "out2");
+    mkdirSync(join(cwd, "elsewhere"));
+    symlinkSync(join(cwd, "elsewhere"), join(env.OUT, name));
+    const planted = await read(cwd, { path: file }, env);
+    assert.equal(planted.status, "failed");
+    assert.notEqual(planted.exit, 0);
+    assert.match(String(planted.error), /thumbcache_read-[0-9a-f]{12} is a symbolic link: nothing is written through it, and nothing was read/);
+    assert.deepEqual(readdirSync(join(cwd, "elsewhere")), [], "nothing was written through the link");
+    // With extract false no image is written, so the name is not looked at and the read is made.
+    const listed = await read(cwd, { path: file, extract: false }, env);
+    assert.equal(listed.status, "complete");
+    assert.deepEqual(readdirSync(join(cwd, "elsewhere")), []);
+    // A regular file at the name is refused as well.
+    const env3 = jobEnv(cwd, "j000003", "out3");
+    writeFileSync(join(env3.OUT, name), "not a directory");
+    assert.match(String((await read(cwd, { path: file }, env3)).error), /is there and is not a directory/);
+    // $OUT that does not exist: refused, and neither it nor its parents are made.
+    const missing = await read(cwd, { path: file }, { JOB_ID: "j000004", OUT: join(cwd, "nowhere", "deep", "out") });
+    assert.equal(missing.status, "failed");
+    assert.match(String(missing.error), /\$OUT is not an existing directory: it is not created by this tool, and nothing was read or written/);
+    assert.equal(existsSync(join(cwd, "nowhere")), false);
+  });
+});
+
+test("a directory that holds the cache's index and no cache is failed, and the index named by itself is failed: neither is a cache", async () => {
+  await withCwd(async (cwd) => {
+    put(cwd, "work/only/thumbcache_idx.db", Buffer.concat([Buffer.from("IMMM"), Buffer.alloc(64)]));
+    const only = await read(cwd, { path: "work/only" });
+    assert.equal(only.status, "failed");
+    assert.match(only.status_basis, /the directory holds 1 cache index file\(s\) \('IMMM'\) and no cache this tool reads/);
+    const named = await read(cwd, { path: "work/only/thumbcache_idx.db" });
+    assert.equal(named.status, "failed");
+    assert.match(named.files[0].status_basis, /this is the cache's index/);
+  });
+});
+
 // --- a directory, the page, a rerun ---------------------------------------------------------------------------------------------------------
 
 test("a directory is read file by file; the inline page is `limit` rows and the whole list is a file; a rerun replaces nothing and names the same images", async () => {
@@ -279,9 +414,12 @@ test("a directory is read file by file; the inline page is `limit` rows and the 
     put(cwd, "work/Explorer/notes.txt", Buffer.from("not a cache"));
     const env = jobEnv(cwd);
     const first = await read(cwd, { path: "work/Explorer", limit: 1 }, env);
-    assert.equal(first.status, "partial", "the index beside the caches is named and not read");
-    assert.match(first.status_basis, /1 of the 3 cache file\(s\) read are partial or failed/);
-    assert.deepEqual(first.files.map((f: Row) => [f.file.split("/").pop(), f.status]), [["iconcache_16.db", "complete"], ["thumbcache_1280.db", "complete"], ["thumbcache_idx.db", "failed"]]);
+    // The index is in every real Explorer directory: it is named as what it is (not a cache this tool reads) and does not make the answer partial.
+    assert.equal(first.status, "complete", first.status_basis);
+    assert.match(first.status_basis, /every cache file found \(2\) was read .* 1 cache index file\(s\) beside them are named in not_caches/);
+    assert.deepEqual(first.files.map((f: Row) => [f.file.split("/").pop(), f.status, f.output_prefix]), [["iconcache_16.db", "complete", "c001"], ["thumbcache_1280.db", "complete", "c002"]]);
+    assert.deepEqual([first.not_caches_count, first.not_caches[0].file.split("/").pop()], [1, "thumbcache_idx.db"]);
+    assert.match(first.not_caches[0].why, /the cache's index \(it begins 'IMMM'\): not a cache this tool reads/);
     assert.equal(first.entries.length, 1);
     assert.deepEqual([first.entry_count, first.returned, first.truncated, first.images_written], [4, 1, true, 4]);
     assert.match(first.all_results, /^store\/jobs\/j000001\/out\/tool-output\/thumbcache_read-[0-9a-f]{16}\.jsonl$/);
@@ -322,6 +460,11 @@ test("each bound is said when it is reached: max_entries, max_image_bytes, max_o
     const allocated = await read(cwd, { path: file, include_free: false });
     assert.equal(allocated.entry_count, 3, "the entry past the header's first free byte is not read");
     assert.match(allocated.files[0].status_basis, /include_free is false: what lies past it was not read/);
+    // complete in that mode says exactly how far the read went: to the header's first free offset, not to the end of the file.
+    assert.equal(allocated.status, "complete");
+    assert.match(allocated.status_basis, /was read from the end of its header to the header's first free offset in 1 of them .*include_free is false: what lies past that offset was not read/);
+    assert.doesNotMatch(allocated.status_basis, /to its end;/);
+    assert.ok(allocated.files[0].read_to_offset < allocated.files[0].bytes);
   });
 });
 

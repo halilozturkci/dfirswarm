@@ -3,6 +3,7 @@ id: artifacts/shellbags
 title: ShellBags
 when: Read BagMRU, RecentDocs, OpenSavePidlMRU.
 needs: [artifacts/shell]
+card: shellbags {"hive": "<UsrClass.dat>"}: key_last_written is not a first or last view; item times are local DOS times. long_name_from strings is a candidate.
 tools: [shellbags, regkv]
 requires_host: []
 ---
