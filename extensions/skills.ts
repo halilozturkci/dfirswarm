@@ -462,6 +462,30 @@ export function skillCard(file: Pick<SkillFile, "title" | "body" | "card">): str
   return cut(out.join("\n"));
 }
 
+/**
+ * A tool's card from its own manifest, for a tool no one note is the method of: the part of its description past the
+ * first sentence (SWARM.md already carries the first), cut at a sentence within CARD_MAX_CHARS. Null for a forged tool
+ * (its maker wrote it this run), a manifest that cannot be read, or a description of one sentence.
+ */
+export async function manifestCard(sandboxRoot: string, tool: string): Promise<string | null> {
+  if (!/^[a-z0-9_]{1,64}$/.test(tool)) return null;
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const m = JSON.parse(await readFile(join(sandboxRoot, "tools", tool, "manifest.json"), "utf8")) as { description?: unknown; pack?: unknown; by?: unknown };
+    const text = typeof m.description === "string" ? m.description.replace(/\s+/g, " ").trim() : "";
+    const first = /^.*?[.!?](?=\s|$)/.exec(text)?.[0] ?? text;
+    const rest = text.slice(first.length).trim();
+    if (rest.length < 80) return null;
+    if (rest.length <= CARD_MAX_CHARS) return rest;
+    const head = rest.slice(0, CARD_MAX_CHARS);
+    const end = head.lastIndexOf(". ");
+    return `${(end > CARD_MAX_CHARS / 2 ? head.slice(0, end + 1) : head).trimEnd()} \u2026`;
+  } catch {
+    return null;
+  }
+}
+
 /** Each tool a note names, and the notes naming it, the most specific (fewest tools) first. */
 export async function toolNotes(packs: readonly PackIndex[]): Promise<Map<string, Array<{ pack: PackRef; id: string; spread: number }>>> {
   const map = new Map<string, Array<{ pack: PackRef; id: string; spread: number }>>();
@@ -1801,14 +1825,26 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
     const tool = cardToolOf(ev.toolName ?? "", ev.input);
     if (!tool) return undefined;
     try {
-      const notes = (await (notesByTool ??= packIndexes().then((all) => toolNotes(all)))).get(tool);
-      if (!notes?.length) return undefined;
+      const notes = (await (notesByTool ??= packIndexes().then((all) => toolNotes(all)))).get(tool) ?? [];
       const refOf = (n: { pack: PackRef; id: string }) => (notes.filter((x) => x.id === n.id).length > 1 ? `${n.pack.id}:${n.id}` : n.id);
       // A call that was refused or failed before it ran gets no card: seven of 39 cards of one run were pinned to a refusal.
       if ((event as unknown as { isError?: boolean }).isError) return undefined;
-      // A generic tool (regkv, evtx_query, pe_info) has no one note that is its method: nothing is shown. The bare list
-      // of note ids it used to get ("Notes that name regkv: ... and 11 more") was 9 of those 39 and was followed by no load.
-      if (notes.length > CARD_TOOL_SPREAD) return undefined;
+      // A generic tool (regkv, evtx_query, pe_info: more notes name it than CARD_TOOL_SPREAD) or one no note names has no
+      // one note that is its method. It gets its own manifest's rules, once: SWARM.md lists a pack tool in one line, so
+      // what its description says it does not show reaches a seat nowhere else unless it asks. Never the bare list of
+      // note ids ("Notes that name regkv: ... and 11 more"), which was 9 of 39 cards of one run and followed by no load.
+      if (!notes.length || notes.length > CARD_TOOL_SPREAD) {
+        const toolKey = `tool:${tool}`;
+        if (cardsEver.has(toolKey)) return undefined;
+        const card = await manifestCard((ctx as unknown as { cwd: string }).cwd, tool);
+        // Asked once a tool, whatever the answer: a shell or a read has no manifest, and is not looked up at every call.
+        cardsEver.add(toolKey);
+        if (!card) return undefined;
+        cardsHeld.set(`${tool} (its manifest)`, card);
+        const words = `Before you read this result, what ${tool} says of itself (its manifest; whole with tools(name: "${tool}")):\n${card}`;
+        await deps.trace((ctx as unknown as { cwd: string }).cwd, "skill_card", { tool, id: "manifest" }, { ok: true, pack: null, tokens: estimateTokens(words), turn: deps.turns() }).catch(() => undefined);
+        return { content: [{ type: "text" as const, text: words }, ...content] };
+      }
       // One card a tool, the most specific note's, once in the run for this seat: not again after a compaction (20 of 39
       // were the same card), and never a second note's for the same tool (the second picks were off the subject).
       const toolKey = `tool:${tool}`;

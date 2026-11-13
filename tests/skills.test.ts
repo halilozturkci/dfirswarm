@@ -742,6 +742,20 @@ test("a note's card comes first in the result of the first call to its tool, onc
     assert.equal(await result("catalog_search", { query: "x" }), null);
     assert.equal(rows.filter((r) => r.tool === "skill_card").length, 1);
     assert.match((await result("ewf_verify", {}))!, /^Before you read this result, the rules of ewf_verify \(from the note `evidence\/e01`.*\nVerify the set first with ewf_verify/, "a note's own card: line");
+    // A generic tool whose manifest says more than one sentence gets that, once: what its description says past the first sentence.
+    const { mkdir: mk, writeFile: wf } = await import("node:fs/promises");
+    await mk(join(sandbox, "tools", "catalog_search"), { recursive: true });
+    await wf(join(sandbox, "tools", "catalog_search", "manifest.json"), JSON.stringify({ name: "catalog_search", description: "Search the catalogue's member lists. A match is a name, never content: a file whose name does not hold the string is not found. Every answer carries the generation's status, and a partial list makes the search partial." }));
+    const generic = await result("catalog_search", { query: "x" });
+    assert.ok(generic?.startsWith('Before you read this result, what catalog_search says of itself (its manifest; whole with tools(name: "catalog_search")):\nA match is a name, never content:'), String(generic));
+    assert.ok(generic?.endsWith("Job j000001 done"));
+    assert.deepEqual(rows.at(-1)?.args, { tool: "catalog_search", id: "manifest" });
+    assert.equal(await result("catalog_search", { query: "y" }), null, "once");
+    // A manifest of one sentence, or none, gives nothing.
+    await mk(join(sandbox, "tools", "short_one"), { recursive: true });
+    await wf(join(sandbox, "tools", "short_one", "manifest.json"), JSON.stringify({ name: "short_one", description: "It does one thing." }));
+    assert.equal(await result("short_one", {}), null);
+    assert.equal(await result("no_such_tool", {}), null);
     // A compaction does not bring the card again (20 of one run's 39 cards were the same card after each compaction): its rules ride on the hand-off.
     for (const h of handlers.get("session_compact") ?? []) await h({ type: "session_compact" }, ctx);
     assert.equal(await result("job_run", { tool: "ad1_extract" }), null, "not again after a compaction");
