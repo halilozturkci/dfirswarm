@@ -216,7 +216,7 @@ import signal
 import sys
 
 PARSER = "minidump_map/3"
-TOOL = 6
+TOOL = 7
 
 
 def _before_start(signum, _frame):
@@ -2484,6 +2484,21 @@ def paged(total, offset, limit, make, deadline=None):
     return rows, facts
 
 
+def judge_before(offset, total, make, deadline, what):
+    """A page that begins past row 0 answers for the whole list, so the rows before it are judged too: each is made and dropped, which
+    locates its records and names and records their faults, so a fault on an earlier row makes this page partial as it does page 0.
+    Returns a partial reason when the clock stopped the judging before the page's first row."""
+    stop = min(offset, total)
+    for i in range(stop):
+        if deadline is not None and time.monotonic() > deadline:
+            return ["the %s before offset %d were judged to row %d when max_seconds was reached: a fault in a record of rows %d to %d "
+                    "would not be said here (call with a larger max_seconds, or from offset 0)" % (what, offset, i, i, stop - 1)]
+        make(i)
+        if not (i + 1) % 64:
+            checkpoint()
+    return []
+
+
 def dump_kind(dump):
     full = bool(dump.flags & 0x2)
     has64, has32 = "Memory64List" in dump.streams, "MemoryList" in dump.streams
@@ -2725,6 +2740,7 @@ def view_modules(dump, p):
 
     def make(i):
         return module_row(dump, dump.modules[i], "loaded") if i < len(dump.modules) else module_row(dump, dump.unloaded[i - len(dump.modules)], "unloaded")
+    before = judge_before(p["offset"], total, make, p["deadline"], "module rows")
     rows, facts = paged(total, p["offset"], p["limit"], make, p["deadline"])
     out["modules"] = rows
     out["page"] = facts
@@ -2736,6 +2752,7 @@ def view_modules(dump, p):
                    "of Windows system files, puts a hash there, so a date far from the dump's is not a finding by itself). The loaded "
                    "rows come first, then the unloaded ones")
     extra = ["%d of %d rows are on this page (page.next_offset continues)" % (facts["returned"], total)] if facts["truncated"] else []
+    extra += before
     status, basis = status_of(dump, "modules", "every entry of the module lists the dump has was read%s"
                               % ("" if not out["streams_absent"] else " (absent from this dump: %s)" % ", ".join(out["streams_absent"])), extra)
     finish(dump, out, status, basis)
@@ -2789,6 +2806,17 @@ def view_memory(dump, p):
         fail("protect and type filter by the MemoryInfoList, and this dump has none: the protection of its ranges is not recorded in it. "
              "Call again without them", memory_info_list="absent")
     out["list"] = p["list"]
+    # The view names the module that holds an address, so it rests on every module's name, not only on those of this page's rows:
+    # each is read here (once, cached), so a name fault makes every page of this view partial alike.
+    names_cut = []
+    for n, module in enumerate(dump.modules):
+        if p["deadline"] is not None and time.monotonic() > p["deadline"]:
+            names_cut = ["max_seconds was reached after %d of %d module names were read: a fault in the others would not be said here"
+                         % (n, len(dump.modules))]
+            break
+        dump.module_name(module)
+        if not (n + 1) % 64:
+            checkpoint()
     if p["list"] == "ranges":
         if filtered:
             keep = []
@@ -2859,6 +2887,7 @@ def view_memory(dump, p):
                    "is the process's own bookkeeping (VirtualQuery) at the moment of the dump: it can be reserved or free and hold no bytes, and "
                    "its protection is the page protection then, not what the pages were earlier. Addresses between ranges are not in the dump")
     extra = ["%d of %d rows are on this page (page.next_offset continues)" % (facts["returned"], facts["total"])] if facts["truncated"] else []
+    extra += names_cut
     status, basis = status_of(dump, "memory", "every entry of the dump's memory lists%s was read" % (" and of its MemoryInfoList" if has_info else ""), extra)
     finish(dump, out, status, basis)
 
@@ -2954,6 +2983,7 @@ def view_threads(dump, p):
             elif not text:
                 row["name_why_not"] = "the name string at file offset %d is empty (0 characters)" % name_rva
         return row
+    before = judge_before(p["offset"], len(dump.threads), make, p["deadline"], "thread rows")
     rows, facts = paged(len(dump.threads), p["offset"], min(p["limit"], 500), make, p["deadline"])
     out["threads"] = rows
     out["page"] = facts
@@ -2964,6 +2994,7 @@ def view_threads(dump, p):
                    "which is a lead to look at (view va, then memory), not a finding that code was injected. Times and start addresses come "
                    "from the ThreadInfoList and are absent when the dump has none")
     extra = ["%d of %d threads are on this page (page.next_offset continues)" % (facts["returned"], facts["total"])] if facts["truncated"] else []
+    extra += before
     status, basis = status_of(dump, "threads", "every thread of the dump's thread list was read, with the context and stack records it declares", extra)
     finish(dump, out, status, basis)
 

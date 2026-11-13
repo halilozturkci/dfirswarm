@@ -1244,3 +1244,36 @@ test("lossy decoding is said and partial; an empty handle type name has its own 
     assert.equal((await ask({ path })).exception.context.location, "read");
   }
 });
+
+test("a page past offset 0 answers for the whole list: a fault on an earlier row makes it partial, and the memory view reads every module's name", async () => {
+  // module 0's CodeView inside the header, module 1 clean: page 2 (offset 1) is partial like page 1
+  const mods = assemble((put) => [{ type: 4, body: Buffer.concat([u32(2),
+    moduleEntry({ base: 0x10000n, size: 0x1000, nameRva: put(mdString("a.dll")), cv: [64, 9] }),
+    moduleEntry({ base: 0x20000n, size: 0x1000, nameRva: put(mdString("b.dll")) })]) }]).file;
+  await writeFile(join(dir, "inputs", "page-mods.dmp"), mods);
+  for (const offset of [0, 1]) {
+    const a = await ask({ path: "inputs/page-mods.dmp", view: "modules", offset, limit: 1 });
+    assert.equal(a.status, "partial", `modules offset ${offset}`);
+    assert.ok(a.problems.some((x: any) => /CodeView \(PDB\) record of module 0/.test(x.problem)), JSON.stringify(a.problems));
+  }
+  // thread 0's context inside the header, thread 1 clean: the page at offset 1 is partial
+  const ctx = (rva: number): Buffer => Buffer.concat([u32(1232), u32(rva)]);
+  const threads = assemble((put) => {
+    const good = put(Buffer.alloc(1232));
+    const entry = (id: number, c: Buffer): Buffer => Buffer.concat([u32(id), u32(0), u32(0x20), u32(8), u64(0n), u64(0n), u32(0), u32(0), c]);
+    return [{ type: 7, body: sysInfo(put, 9) }, { type: 3, body: Buffer.concat([u32(2), entry(77, ctx(9)), entry(78, ctx(good))]) }];
+  }).file;
+  await writeFile(join(dir, "inputs", "page-threads.dmp"), threads);
+  const t1 = await ask({ path: "inputs/page-threads.dmp", view: "threads", offset: 1 });
+  assert.deepEqual([t1.status, t1.threads.length, t1.threads[0].thread_id], ["partial", 1, 78]);
+  assert.ok(t1.problems.some((x: any) => /context of thread 77/.test(x.problem)), JSON.stringify(t1.problems));
+  // a module whose name is inside the header and that holds no listed range: the memory view is partial on every page
+  const mem = assemble((put) => {
+    const data = put(Buffer.alloc(0x100, 0x41));
+    return [{ type: 4, body: Buffer.concat([u32(1), moduleEntry({ base: 0x90000n, size: 0x1000, nameRva: 12 })]) },
+      { type: 5, body: Buffer.concat([u32(1), u64(0x20000n), u32(0x100), u32(data)]) }];
+  }).file;
+  await writeFile(join(dir, "inputs", "page-memory.dmp"), mem);
+  const m = await ask({ path: "inputs/page-memory.dmp", view: "memory" });
+  assert.equal(m.status, "partial", "a module name the view rests on is a fault even when no row names that module");
+});
