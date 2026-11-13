@@ -806,52 +806,90 @@ def list_members(args, max_files, suffix=None):
     recursive = bool_param(args, "recursive")
     if not os.path.isdir(directory):
         raise Refused("dir is not a directory")
+    # One directory's entries are read one at a time, the clock read every 1024 of them, and what is kept of them is bounded: the files
+    # that match, at most twice the room left under max_files (cut to the room, in the order of their names, whenever that is passed;
+    # the others are counted in `more`), and the directories still to list, at most 100000 (the others are counted).
     found, more = [], 0
     stack = [directory]
+    pending_most = 100000                                   # the directories still to list that are kept, at most
     while stack:
         if out_of_time():
-            skipped["directories_not_listed_time_limit"] = len(stack)
+            skipped["directories_not_listed_time_limit"] = skipped.get("directories_not_listed_time_limit", 0) + len(stack)
             break
         here = stack.pop()
+        room = max_files - len(found)
+        names, below, seen, cut = [], [], 0, False
         try:
-            entries = sorted(os.scandir(here), key=lambda e: e.name)
+            with os.scandir(here) as entries:
+                for entry in entries:
+                    seen += 1
+                    if not seen & 1023 and out_of_time():
+                        cut = True
+                        break
+                    try:
+                        entry.name.encode("utf-8")
+                    except UnicodeError:
+                        skipped["names_not_utf8"] += 1
+                        continue
+                    try:
+                        if entry.is_symlink():
+                            skipped["links"] += 1
+                        elif entry.is_dir(follow_symlinks=False):
+                            if recursive:
+                                below.append(entry.name)
+                                if len(below) + len(stack) > 2 * pending_most:
+                                    below.sort()
+                                    keep = max(0, pending_most - len(stack))
+                                    skipped["directories_not_listed_bound"] = skipped.get("directories_not_listed_bound", 0) + len(below) - keep
+                                    del below[keep:]
+                        elif not entry.is_file(follow_symlinks=False):
+                            skipped["not_regular"] += 1
+                        elif carries_suffix(entry.name, by_suffix) if by_suffix else fnmatch.fnmatchcase(entry.name, pattern):
+                            names.append(entry.name)
+                            if len(names) > 2 * room + 1024:
+                                names.sort()
+                                more += len(names) - room
+                                del names[room:]
+                    except OSError:
+                        skipped["not_regular"] += 1
         except OSError:
             skipped["unreadable_directories"] += 1
             continue
-        below = []
-        for entry in entries:
-            try:
-                entry.name.encode("utf-8")
-            except UnicodeError:
-                skipped["names_not_utf8"] += 1
-                continue
-            try:
-                if entry.is_symlink():
-                    skipped["links"] += 1
-                elif entry.is_dir(follow_symlinks=False):
-                    if recursive:
-                        below.append(entry.path)
-                elif not entry.is_file(follow_symlinks=False):
-                    skipped["not_regular"] += 1
-                elif carries_suffix(entry.name, by_suffix) if by_suffix else fnmatch.fnmatchcase(entry.name, pattern):
-                    if len(found) < max_files:
-                        found.append(entry.path)
-                    else:
-                        more += 1
-            except OSError:
-                skipped["not_regular"] += 1
-        stack.extend(reversed(below))
+        if cut:
+            skipped["directories_not_listed_time_limit"] = skipped.get("directories_not_listed_time_limit", 0) + 1 + len(stack)
+            break
+        names.sort()
+        more += max(0, len(names) - room)
+        found.extend(os.path.join(here, name) for name in names[:room])
+        below.sort()
+        if len(below) + len(stack) > pending_most:
+            keep = max(0, pending_most - len(stack))
+            skipped["directories_not_listed_bound"] = skipped.get("directories_not_listed_bound", 0) + len(below) - keep
+            del below[keep:]
+        stack.extend(os.path.join(here, name) for name in reversed(below))
     return found, more, skipped
 # FAMILY: end
 
 TOOL = "stream_kpa_check"
-VERSION = 3
-PARSER = "stream_kpa_check/2"
+VERSION = 4
+PARSER = "stream_kpa_check/3"
 DEFAULT_SECONDS, MAX_SECONDS = 480, 540
 HEAD = 64                         # bytes of a member that are ever decrypted here
 MAX_SLICE = 4096
 MAX_SKIP = 64                     # how far from the end (or the start) the footer hypothesis looks for a key
 MAX_DERIVED_KEY = 256             # the longest key the footer hypothesis is made from (what is kept of each member is bounded by it)
+# What a call's inputs may make the tool hold, each bound stated in the manifest. Every one of them is counted as it is reached, and the
+# clock is read inside every loop that reads an input or makes a hypothesis.
+MAX_CANDIDATES_BYTES = 64 << 20   # a candidates file larger than this is refused unread
+MAX_CANDIDATE_ROWS = 20000        # lines of one candidates file (four times the 5000 rows cipher_state_scan writes); more is refused
+MAX_ROW_BYTES = 1 << 16           # a longer line is not a row of a values file: counted as not usable, never parsed
+MAX_LAYOUTS = 8                   # nonces taken from one row's layouts (cipher_state_scan writes two at most)
+MAX_VALUES = 40000                # distinct keys, and distinct nonces, the sources of one call may yield; more is refused
+MAX_KEY_TAKEN = 256               # the longest key a cipher takes (rc4, xor): a longer key of a candidates file is counted, not kept
+NONCE_TAKEN = (8, 12, 16)         # the nonce lengths a cipher takes: a nonce of a candidates file of another length is counted, not kept
+MAX_MATCHES_KEPT = 64             # matching combinations kept per member and per rule; the others are counted
+MAX_PLACES = 65536                # places of the footer hypothesis listed; the others are counted, and the answer is partial
+MAX_RECIPE_VARIANTS = 16          # the most variants family_decrypt reads from a recipe
 KNOWN_PARAMS = {"files", "dir", "glob", "recursive", "max_files", "magics", "ciphers", "key_sources", "nonce_sources", "counters",
                 "header_bytes", "trailer_bytes", "derive", "max_trials", "max_seconds", "limit"}
 KEY_LENGTHS = {"chacha20-ietf": (16, 32), "chacha20-original": (16, 32), "salsa20": (16, 32), "aes-ctr": (16, 24, 32)}
@@ -900,19 +938,36 @@ class Member:
         # member: `keys` and `nonces` are made from the call's sources when they are asked for, one member at a time, so that what is kept
         # per member is its slices, never a list as long as a values file (nor the trials, which are made as they are run).
         self.sliced = {}
-        self.call = ((), ())                                                      # the call's key and nonce sources, shared by every member
+        self.call = Call((), (), ())                                              # the call's key and nonce sources, shared by every member
         self.counts = {}                                                          # cipher -> the trials planned on this member
 
-    def _values(self, specs):
+    def _values(self, specs, slices, fixed):
+        if not slices:
+            return fixed                                  # the call's own list, shared: nothing is copied for a member
         return [(s.ident, v) for s in specs for v in [s.value if isinstance(s, Fixed) else self.sliced.get(s.ident)] if v]
 
     @property
     def keys(self):
-        return self._values(self.call[0])
+        return self._values(self.call.keys, self.call.key_slices, self.call.fixed_keys)
 
     @property
     def nonces(self):
-        return self._values(self.call[1])
+        return self._values(self.call.nonces, self.call.nonce_slices, self.call.fixed_nonces)
+
+
+class Call:
+    """The sources of a call, sorted once for every member: the slices of each role, the fixed values of each role as (ident, bytes) in
+    the order of the call, and for each cipher the nonce sources whose length it takes (so that no member's loop runs over a values
+    file's worth of nonces that no cipher can use)."""
+
+    def __init__(self, keys, nonces, ciphers):
+        self.keys, self.nonces = tuple(keys), tuple(nonces)
+        self.key_slices = [s for s in self.keys if isinstance(s, Sliced)]
+        self.nonce_slices = [s for s in self.nonces if isinstance(s, Sliced)]
+        self.fixed_keys = [(s.ident, s.value) for s in self.keys if isinstance(s, Fixed)]
+        self.fixed_nonces = [(s.ident, s.value) for s in self.nonces if isinstance(s, Fixed)]
+        self.nonces_for = {cipher: [s for s in self.nonces if (len(s.value) if isinstance(s, Fixed) else s.length) in NONCE_LENGTHS[cipher]]
+                           for cipher in ciphers if cipher in NONCE_LENGTHS}
 
 
 def window_slice(member, region, skip, length, header):
@@ -928,8 +983,9 @@ def window_slice(member, region, skip, length, header):
     return member.last[at:at + length]
 
 
-def variants_for(ciphers, key_length, nonces, counters):
-    """Every (cipher, nonce ident, nonce, counter) a key of this length can take with these nonces: what combinations() gives for one key."""
+def variants_for(ciphers, key_length, member, counters):
+    """Every (cipher, nonce ident, nonce, counter) a key of this length can take with a member's nonces: what combinations() gives for
+    one key. The nonces are read from the call's sources as they are needed, never copied into a list per member."""
     for cipher in ciphers:
         if cipher in ("rc4", "xor"):
             if 1 <= key_length <= 256:
@@ -938,11 +994,12 @@ def variants_for(ciphers, key_length, nonces, counters):
         if key_length not in KEY_LENGTHS[cipher]:
             continue
         limit = (1 << 32) - 1 if cipher == "chacha20-ietf" else (1 << 62)
-        for nonce_id, nonce in nonces:
-            if len(nonce) in NONCE_LENGTHS[cipher]:
+        for spec in member.call.nonces_for.get(cipher, ()):
+            nonce = spec.value if isinstance(spec, Fixed) else member.sliced.get(spec.ident)
+            if nonce and len(nonce) in NONCE_LENGTHS[cipher]:
                 for counter in counters:
                     if counter <= limit:
-                        yield cipher, nonce_id, nonce, counter
+                        yield cipher, spec.ident, nonce, counter
 
 
 def hex_value(text, what, most=MAX_SLICE):
@@ -974,30 +1031,76 @@ def bytes_of(spec, what):
     return value, "%d bytes at offset %d of a file" % (length, offset)
 
 
-def read_candidates(path, what):
+def read_candidates(path, what, take, files_read, index):
+    """Read a values file one line at a time and hand each row (a JSON object) to take(row number, row), which returns how many of its
+    values were not usable. Nothing of the file is kept here: a line is parsed and dropped, a line longer than MAX_ROW_BYTES is counted
+    as not usable without being parsed, and the clock is read for every 64 KiB read and every 1024 rows. A file the call named already
+    in this role ((st_dev, st_ino) in files_read) is not read again. Returns (rows, rows not usable, the index of the source that read
+    the file first, or None). It holds a block of 64 KiB, the line being read and one parsed row at a time."""
     path = path_param(path, "%s.candidates" % what)
-    rows, bad = [], 0
     try:
         fd, size = open_regular(path)
-        try:
-            if size > 64 << 20:
-                raise Refused("%s.candidates is larger than 64 MiB: not a values file of cipher_state_scan" % what)
-            text = pread_full(fd, size, 0)
-        finally:
-            os.close(fd)
     except (OSError, ValueError) as exc:
         raise Refused("%s.candidates could not be read (%s)" % (what, describe(exc) if isinstance(exc, OSError) else "not a usable path"))
-    for line in text.split(b"\n"):
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
+    try:
+        st = os.fstat(fd)
+        same = files_read.get((st.st_dev, st.st_ino))
+        if same is not None:
+            return same[1], same[2], same[0]
+        if size > MAX_CANDIDATES_BYTES:
+            raise Refused("%s.candidates is larger than %d MiB: not a values file of cipher_state_scan. Nothing was tried" % (what, MAX_CANDIDATES_BYTES >> 20))
+        count = {"lines": 0, "rows": 0, "bad": 0}         # lines that are not empty; rows: those that are JSON objects
+
+        def line_of(line):
+            if not line.strip():
+                return
+            count["lines"] += 1
+            if count["lines"] > MAX_CANDIDATE_ROWS:
+                raise Refused("%s.candidates holds more than %d lines (the values file of cipher_state_scan holds 5000 rows at most): not one, and "
+                              "it is not read further. Nothing was tried" % (what, MAX_CANDIDATE_ROWS))
+            if not count["lines"] & 1023 and out_of_time():
+                raise Refused("the time limit (max_seconds) was reached while %s.candidates was read, %d lines in: nothing was tried. Raise "
+                              "max_seconds or name a smaller values file" % (what, count["lines"]))
+            if len(line) > MAX_ROW_BYTES:
+                count["bad"] += 1
+                return
+            try:
+                row = json.loads(line)
+            except (ValueError, RecursionError):
+                row = None
             if not isinstance(row, dict):
-                raise ValueError
-            rows.append(row)
-        except (ValueError, RecursionError):
-            bad += 1
-    return rows, bad
+                count["bad"] += 1
+                return
+            count["rows"] += 1
+            count["bad"] += take(count["rows"], row)
+
+        at, carry, skipping = 0, b"", False
+        while at < size:
+            if out_of_time():
+                raise Refused("the time limit (max_seconds) was reached while %s.candidates was read, %d bytes of %d in: nothing was tried. "
+                              "Raise max_seconds or name a smaller values file" % (what, at, size))
+            block = os.pread(fd, min(1 << 16, size - at), at)    # 64 KiB at a time: a block of empty lines splits into a list that size
+            if not block:
+                break
+            at += len(block)
+            if skipping:                                       # the rest of a line that is too long to be a row
+                cut = block.find(b"\n")
+                if cut < 0:
+                    continue
+                block, skipping = block[cut + 1:], False
+            lines = (carry + block).split(b"\n")
+            carry = lines.pop()
+            if len(carry) > MAX_ROW_BYTES:
+                carry, skipping = b"", True
+                line_of(b"x" * (MAX_ROW_BYTES + 1))            # counted as a row that is not usable
+            for line in lines:
+                line_of(line)
+        if carry and not skipping:
+            line_of(carry)
+    finally:
+        os.close(fd)
+    files_read[(st.st_dev, st.st_ino)] = (index, count["rows"], count["bad"])
+    return count["rows"], count["bad"], None
 
 
 def sources(specs, what, role):
@@ -1008,7 +1111,10 @@ def sources(specs, what, role):
         raise Refused("%s is a list of at most 32 sources" % what)
     made, said = [], []
     seen = {}
+    files_read = {}                 # (st_dev, st_ino) of a candidates file read in this role -> (index of the source, rows, rows not usable)
     for index, spec in enumerate(specs):
+        if out_of_time():
+            raise Refused("the time limit (max_seconds) was reached while %s were read, at %s[%d]: nothing was tried" % (what, what, index))
         here = "%s[%d]" % (what, index)
         if not isinstance(spec, dict):
             raise Refused("%s must be an object: {\"hex\": ...}, {\"file\": ..., \"offset\": ..., \"length\": ...}, {\"candidates\": ...} or "
@@ -1037,30 +1143,56 @@ def sources(specs, what, role):
             made.append(Sliced("%s%d" % (role[0].upper(), index), label, region, length, skip, mask))
             said.append({"index": index, "kind": "slice", "region": region, "length": length, "skip": skip, "xor": mask_said})
         elif kind == "candidates":
-            rows, bad = read_candidates(spec["candidates"], here)
-            count = 0
-            for n, row in enumerate(rows):
-                finding = printable(str(row.get("finding_id", "row %d" % (n + 1))), 24)
-                where = "%s at offset %s" % (printable(str(row.get("kind", "?")), 32), row.get("offset") if isinstance(row.get("offset"), int) else "?")
-                values = []
-                if role == "key" and isinstance(row.get("key_hex"), str):
-                    values.append(("key", row["key_hex"]))
-                if role == "nonce" and isinstance(row.get("layouts"), dict):
-                    values.extend(("%s nonce" % printable(str(name), 16), layout.get("nonce_hex")) for name, layout in row["layouts"].items() if isinstance(layout, dict))
-                for name, text in values:
-                    if not isinstance(text, str) or re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,%d}" % MAX_SLICE, text) is None:
+            tally = {"distinct": 0, "no_cipher_takes": 0}
+
+            def take(number, row, here=here, tally=tally):
+                """The values of one row for this role, kept when they are new; returns how many were not usable. A row with no value
+                of this role costs nothing more (its finding id is not even made printable)."""
+                texts = []
+                if role == "key":
+                    if isinstance(row.get("key_hex"), str):
+                        texts.append(("key", row["key_hex"]))
+                elif isinstance(row.get("layouts"), dict):
+                    for n, (name, layout) in enumerate(row["layouts"].items()):
+                        if n >= MAX_LAYOUTS:
+                            return 1
+                        if isinstance(layout, dict):
+                            texts.append(("%s nonce" % printable(str(name), 16), layout.get("nonce_hex")))
+                bad, about = 0, None
+                for name, text in texts:
+                    if (not isinstance(text, str) or not text or len(text) > 2 * MAX_SLICE
+                            or re.fullmatch(r"(?:[0-9a-fA-F]{2})+", text) is None):
                         bad += 1
                         continue
                     value = bytes.fromhex(text)
+                    if (len(value) > MAX_KEY_TAKEN) if role == "key" else (len(value) not in NONCE_TAKEN):
+                        tally["no_cipher_takes"] += 1
+                        continue
                     if value in seen:
                         continue
+                    if len(seen) >= MAX_VALUES:
+                        raise Refused("%s yield more than %d distinct %ss (%s, row %d): more than one call can try. Nothing was tried: name "
+                                      "fewer candidates files, or split them over calls" % (what, MAX_VALUES, role, here, number))
                     seen[value] = True
-                    made.append(Fixed("%s%d#%d" % (role[0].upper(), index, len(made)), "%s: %s of %s (%s), %d bytes" % (here, name, finding, where, len(value)), value))
-                    count += 1
-            said.append({"index": index, "kind": "candidates", "rows": len(rows), "rows_not_usable": bad, "distinct_%ss" % role: count})
+                    if about is None:
+                        about = "%s (%s at offset %s)" % (printable(str(row.get("finding_id", "row %d" % number)), 24), printable(str(row.get("kind", "?")), 32),
+                                                          row.get("offset") if isinstance(row.get("offset"), int) else "?")
+                    made.append(Fixed("%s%d#%d" % (role[0].upper(), index, len(made)), "%s: %s of %s, %d bytes" % (here, name, about, len(value)), value))
+                    tally["distinct"] += 1
+                return bad
+
+            rows, bad, first = read_candidates(spec["candidates"], here, take, files_read, index)
+            entry = {"index": index, "kind": "candidates", "rows": rows, "rows_not_usable": bad, "distinct_%ss" % role: tally["distinct"]}
+            if first is not None:
+                entry["same_file_as"] = "%s[%d]" % (what, first)
+            if tally["no_cipher_takes"]:
+                entry["%ss_of_a_length_no_cipher_takes" % role] = tally["no_cipher_takes"]
+            said.append(entry)
         else:
             value, how = bytes_of(spec, here)
             if value not in seen:
+                if len(seen) >= MAX_VALUES:
+                    raise Refused("%s yield more than %d distinct %ss: more than one call can try. Nothing was tried" % (what, MAX_VALUES, role))
                 seen[value] = True
                 made.append(Fixed("%s%d" % (role[0].upper(), index), "%s: %s" % (here, how), value))
             said.append({"index": index, "kind": kind, "bytes": len(value)})
@@ -1160,7 +1292,7 @@ def chance(alternatives):
 PROGRESS = {"members": 0, "checked": 0, "trials": 0}
 
 
-def read_member(member, row, magics, header, trailer, key_sources, nonce_sources, ciphers, counters, window, fixed_lengths):
+def read_member(member, row, magics, header, trailer, call, ciphers, counters, window, fixed_lengths):
     """Everything the check needs of one open member, read now so that the file can be closed: its first bytes, its crib (the type in its
     name, a plaintext twin beside it), the keys and nonces its slices give, how many trials are planned on it (counted, not listed: the
     trials are made in pass 2 as they are run), and its first and last `window` bytes for the footer hypothesis. `fixed_lengths` is
@@ -1208,24 +1340,90 @@ def read_member(member, row, magics, header, trailer, key_sources, nonce_sources
         return
     member.alternatives = alternatives
     row["crib_bytes"] = min(crib_bytes(alt) for alt in alternatives)
-    member.call = (key_sources, nonce_sources)
-    member.sliced = {s.ident: s.of(member) for s in key_sources + nonce_sources if isinstance(s, Sliced)}
+    member.call = call
+    member.sliced = {s.ident: s.of(member) for s in call.key_slices + call.nonce_slices}
     fixed_keys, fixed_nonces = fixed_lengths
 
-    def plus_slices(fixed, specs):
+    def plus_slices(fixed, slices):
         tally = dict(fixed)
-        for spec in specs:
-            value = member.sliced.get(spec.ident) if isinstance(spec, Sliced) else None
+        for spec in slices:
+            value = member.sliced.get(spec.ident)
             if value:
                 tally[len(value)] = tally.get(len(value), 0) + 1
         return tally
 
-    member.counts = count_trials(ciphers, plus_slices(fixed_keys, key_sources), plus_slices(fixed_nonces, nonce_sources), counters)
+    member.counts = count_trials(ciphers, plus_slices(fixed_keys, call.key_slices), plus_slices(fixed_nonces, call.nonce_slices), counters)
     row["trials"] = sum(member.counts.values())
     if window:
         member.first = pread_full(member.fd, min(window, header, member.size), 0)
         keep = min(window, member.size)
         member.last = pread_full(member.fd, keep, member.size - keep)
+
+
+class RecipePage:
+    """The recipe file of this call while it is being written, and once written until the answer is printed: a stop removes it (the shared
+    STOP block reads `_tmp` of everything in PAGES), so that an answer that says no recipe was written leaves none behind."""
+
+    def __init__(self):
+        self._tmp = None
+
+
+RECIPE = RecipePage()
+PAGES.append(RECIPE)
+
+
+def write_recipe(directory, text):
+    """Write the recipe under a temporary name, then give it its name (stream-recipe.json, or -2, -3 ... when one is there: nothing is
+    replaced). The stop signals are held for the few steps it takes, and a stop that came then is answered once they are let go: by then
+    RECIPE._tmp names the file, and the stop removes it. A kill that no handler sees leaves a .part file, never a cut stream-recipe.json."""
+    try:
+        old = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        old = None
+    try:
+        fd, part = create_new(directory, ".stream-recipe.json.part")
+        RECIPE._tmp = str(directory / part)
+        with os.fdopen(fd, "w", encoding="ascii") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        for n in range(1, 1000):
+            name = "stream-recipe.json" if n == 1 else "stream-recipe-%d.json" % n
+            try:
+                os.link(RECIPE._tmp, str(directory / name))
+            except FileExistsError:
+                continue
+            except OSError:
+                if os.path.lexists(str(directory / name)):
+                    continue
+                os.rename(RECIPE._tmp, str(directory / name))   # a file system without hard links: the name was free just now
+                RECIPE._tmp = str(directory / name)
+                return name
+            os.unlink(RECIPE._tmp)
+            RECIPE._tmp = str(directory / name)
+            return name
+        raise OSError(errno.EEXIST, "no free name for the recipe file")
+    except BaseException:
+        if RECIPE._tmp is not None:
+            try:
+                os.unlink(RECIPE._tmp)
+            except OSError:
+                pass
+            RECIPE._tmp = None
+        raise
+    finally:
+        if old is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+
+def forget_recipe():
+    """answered()'s cleanup: an answer that is an error does not leave the recipe it did not name."""
+    if RECIPE._tmp is not None:
+        try:
+            os.unlink(RECIPE._tmp)
+        except OSError:
+            pass
+        RECIPE._tmp = None
 
 
 def last_word(signum):
@@ -1237,10 +1435,14 @@ def last_word(signum):
 
 def main():
     install_signal_handlers(last_word)
+    # The clock runs from here: every input (the sources' files included) is read after the deadline is set, and under it.
+    started = time.monotonic()
+    set_deadline(MAX_SECONDS)
     args, unknown = read_args(KNOWN_PARAMS)
     max_files = int_param(args, "max_files", 200, 1, 5000)
     max_trials = int_param(args, "max_trials", 500000, 1, 5000000)
     max_seconds = int_param(args, "max_seconds", DEFAULT_SECONDS, 1, MAX_SECONDS)
+    set_deadline(max_seconds - (time.monotonic() - started))
     limit = int_param(args, "limit", 200, 1, 5000)
     derive = bool_param(args, "derive", True)
     header_given = int_param(args, "header_bytes", None, 0, 1 << 30)
@@ -1274,7 +1476,6 @@ def main():
         raise Refused("key_sources is required: at least one source that yields a key. A literal ({\"hex\": ...}), a slice of a file ({\"file\": ..., "
                       "\"offset\": ..., \"length\": ...}), the values file of cipher_state_scan ({\"candidates\": ...}) or a slice of each member "
                       "({\"slice\": \"tail\", \"length\": 32, \"xor\": {...}}). Nothing was tried")
-    set_deadline(max_seconds)
     paths, more, skipped = list_members(args, max_files)
     labels = {s.ident: s.label for s in key_sources + nonce_sources}
 
@@ -1297,6 +1498,7 @@ def main():
     # be in the file). A call whose sources alone pass max_trials on ONE member is refused here, with the count; nothing is listed in
     # memory, however large a values file is.
     call_keys, call_nonces = tuple(key_sources), tuple(nonce_sources)
+    call = Call(call_keys, call_nonces, ciphers)
     nonce_by_ident = {s.ident: s for s in call_nonces}
     fixed_lengths = (lengths_of(s.value for s in call_keys if isinstance(s, Fixed)), lengths_of(s.value for s in call_nonces if isinstance(s, Fixed)))
     most_per_member = count_trials(ciphers, lengths_of((s.value for s in call_keys if isinstance(s, Fixed)), [s.length for s in call_keys if isinstance(s, Sliced)]),
@@ -1329,7 +1531,7 @@ def main():
             row["verdict"], row["error"] = "read_failed", describe(exc) if isinstance(exc, OSError) else "not a usable path"
             continue
         try:
-            read_member(member, row, magics, header, trailer, call_keys, call_nonces, ciphers, counters, window, fixed_lengths)
+            read_member(member, row, magics, header, trailer, call, ciphers, counters, window, fixed_lengths)
         except OSError as exc:
             row["verdict"], row["error"] = "read_failed", describe(exc)
         finally:
@@ -1346,7 +1548,9 @@ def main():
     # Pass 2: the trials.
     matched = {}                    # key ident -> {member index: [(cipher, nonce ident, counter)]}
     opened_by_fixed = []            # (member index, key bytes, key ident): a key that is not a slice opened this member
+    opened_pairs = set()            # (member index, key ident) of opened_by_fixed
     fixed_keys = {s.ident for s in fixed_sources}
+    not_kept = {"members": 0, "matches": 0}   # matches past MAX_MATCHES_KEPT on a member (or on a member for one rule): counted, not kept
     not_tried_members = unread_members
     no_trial_members = 0
     total_trials = 0
@@ -1366,7 +1570,7 @@ def main():
             not_tried_members += 1
             continue
         head = member.cipher_head
-        made, hits, cut = 0, [], False
+        made, hits, cut, extra_hits = 0, [], False, 0
         keys, nonces = member.keys, member.nonces                 # this member's values, for as long as its trials run
         for cipher in ciphers:
             for (key_id, key), (nonce_id, nonce), counter in combinations(cipher, keys, nonces, counters):
@@ -1376,7 +1580,10 @@ def main():
                     break
                 plain = xor_bytes(head, first_bytes(cipher, key, nonce, counter))
                 if any(crib_holds(plain, alt) for alt in member.alternatives):
-                    hits.append((key_id, key, cipher, nonce_id, counter))
+                    if len(hits) < MAX_MATCHES_KEPT:
+                        hits.append((key_id, key, cipher, nonce_id, counter))
+                    else:
+                        extra_hits += 1                   # a crib this short matches by chance: counted, not kept
             if cut:
                 break
         if cut:
@@ -1387,53 +1594,90 @@ def main():
             row["trials"] = made
             not_tried_members += 1
             continue
-        for key_id, key, cipher, nonce_id, counter in hits:
+        if extra_hits:
+            row["matches_not_kept"] = extra_hits
+            not_kept["members"] += 1
+            not_kept["matches"] += extra_hits
+        for key_id, key, cipher, nonce_id, counter in hits:      # at most MAX_MATCHES_KEPT
             matched.setdefault(key_id, {}).setdefault(index, []).append((cipher, nonce_id, counter))
-            if key_id in fixed_keys and (index, key_id) not in {(i, k) for i, _key, k in opened_by_fixed}:
+            if key_id in fixed_keys and (index, key_id) not in opened_pairs:
+                opened_pairs.add((index, key_id))
                 opened_by_fixed.append((index, key, key_id))
         total_trials += row["trials"]
         PROGRESS["checked"] += 1
         PROGRESS["trials"] = total_trials
 
     with_crib = [i for i, row in enumerate(rows) if row["verdict"] is None]
+    crib_set = set(with_crib)
 
     # The footer hypothesis: a key that is not a slice opened a member, so that key XOR the member's own last (or, inside header_bytes,
     # first) bytes may be a constant mask. Every place (an end and a skip) of every such pair is one hypothesis, and each is tried on
     # EVERY other member that no key rule explains yet: first with what opened the pair's own member (one cheap trial per member, so
     # the place the family really uses is found early), then with every cipher, nonce and counter of the call. No place is given up
     # because the first members it was tried on did not open: a member whose content is not what its name promises never shows its
-    # crib, and says nothing against a rule. What bounds the work is max_trials and the clock, and when either stops it the answer
-    # says so (partial, not_tried, tried.derivation). The pairs are taken in the order of their crib (the longest first), so nothing
-    # here follows the order of the members' names except which pair a rule is reported from.
+    # crib, and says nothing against a rule. What bounds the work is max_trials, MAX_PLACES and the clock, and when one stops it the
+    # answer says so (partial, not_tried, tried.derivation). The pairs are taken in the order of their crib (the longest first), so
+    # nothing here follows the order of the members' names except which pair a rule is reported from. A key that opened several
+    # members is paired with one member per crib length (the first): the same key XOR the bytes of a second member of the same crib
+    # length is the hypothesis that the first opening was by chance and the second was not, which the crib cannot tell apart.
     derived = []
     work = {"trials": 0, "left": max_trials - total_trials, "cut": None}
     by_rule = set()                 # members a key rule (a slice of the call, or a derived one) explains
     for source in key_sources:
         if isinstance(source, Sliced):
             by_rule.update(matched.get(source.ident, {}))
-    derivation = {"made": derive, "pairs": 0, "places": 0, "places_tried_on_every_member": 0, "trials": 0, "stopped_by": None}
+    derivation = {"made": derive, "pairs": 0, "pairs_not_used": 0, "places": 0, "places_not_listed": 0, "places_tried_on_every_member": 0,
+                  "trials": 0, "stopped_by": None}
     pairs = []
     too_long = 0
+    paired = set()                  # (key ident, crib length) already paired
+    pairs_not_used = 0
     for index, key, key_id in sorted(opened_by_fixed, key=lambda pair: (-rows[pair[0]]["crib_bytes"], pair[0])):
         if len(key) > MAX_DERIVED_KEY:
             too_long += 1
-        elif index in with_crib:
+        elif index in crib_set:
+            mark = (key_id, rows[index]["crib_bytes"])
+            if mark in paired:
+                pairs_not_used += 1
+                continue
+            paired.add(mark)
             pairs.append((index, key, key_id))
-    todo = []                       # (pair, region, skip, mask): every hypothesis, the same mask at the same place once
+
+    def place_count(pair, region):
+        """How many skips of one end window_slice() gives for a pair, by arithmetic (the places are made one at a time below)."""
+        member, length = members[pair[0]], len(pair[1])
+        if region == "tail":
+            most = min(len(member.last) - length, member.size - length - header)
+        else:
+            most = min(header, len(member.first)) - length
+        return max(0, min(MAX_SKIP, most) + 1)
+
+    todo = []                       # (pair, region, skip, mask): every hypothesis listed, the same mask at the same place once
+    places_not_listed = 0           # places past MAX_PLACES (or past the clock), counted before the same mask at the same place is merged
     if derive and len(with_crib) > 1 and not by_rule.issuperset(with_crib):
         seen_masks = set()
-        for pair in pairs:
+        listing = True
+        for number, pair in enumerate(pairs):
+            if listing and not number & 255 and out_of_time():
+                listing = False
+                work["cut"] = "max_seconds"
             index, key, _key_id = pair
             for region in ("tail", "head"):
-                for skip in range(0, MAX_SKIP + 1):
-                    own = window_slice(members[index], region, skip, len(key), header)
-                    if own is None:
+                count = place_count(pair, region)
+                if not listing or len(todo) >= MAX_PLACES:
+                    places_not_listed += count
+                    continue
+                for skip in range(count):
+                    if len(todo) >= MAX_PLACES:
+                        places_not_listed += count - skip
                         break
-                    mask = xor_bytes(own, key)
+                    mask = xor_bytes(window_slice(members[index], region, skip, len(key), header), key)
                     if (region, skip, mask) not in seen_masks:
                         seen_masks.add((region, skip, mask))
                         todo.append((pair, region, skip, mask))
-        derivation["pairs"], derivation["places"] = len(pairs), len(todo)
+        seen_masks = None
+        derivation["pairs"], derivation["places"], derivation["places_not_listed"] = len(pairs), len(todo), places_not_listed
+    derivation["pairs_not_used"] = pairs_not_used
     extra = {}                      # member index -> the derived trials made on it
 
     def spend(other):
@@ -1451,14 +1695,17 @@ def main():
         return True
 
     def try_place(place, others, variants_of, done=()):
-        """The mask of a place on each of `others`, with the variants variants_of(member) gives, but for those in `done` (what the first
-        pass tried on every one of them already). Returns the hits, or None when a bound stopped it."""
-        _pair, region, skip, mask = place
+        """The mask of a place on each of `others` but the pair's own member, with the variants variants_of(member) gives, but for those
+        in `done` (what the first pass tried on every one of them already). Returns the hits (at most MAX_MATCHES_KEPT a member, the
+        others counted), or None when a bound stopped it. The clock is read for every member, whether a trial is made on it or not."""
+        (own_index, _key, _key_id), region, skip, mask = place
         hits = {}
-        if out_of_time():                                        # a place whose variants are all done makes no trial: the clock is read here too
-            work["cut"] = work["cut"] or "max_seconds"
-            return None
         for other in others:
+            if out_of_time():
+                work["cut"] = work["cut"] or "max_seconds"
+                return None
+            if other == own_index:
+                continue
             target = members[other]
             own = window_slice(target, region, skip, len(mask), header)
             if own is None:
@@ -1471,11 +1718,15 @@ def main():
                     return None
                 plain = xor_bytes(target.cipher_head, first_bytes(cipher, value, nonce, counter, keep=False))
                 if any(crib_holds(plain, alt) for alt in target.alternatives):
-                    hits.setdefault(other, []).append((cipher, nonce_id, counter))
+                    found = hits.setdefault(other, [])
+                    if len(found) < MAX_MATCHES_KEPT:
+                        found.append((cipher, nonce_id, counter))
+                    else:
+                        not_kept["matches"] += 1
         return hits
 
     def every_variant(length):
-        return lambda target: variants_for(ciphers, length, target.nonces, counters)
+        return lambda target: variants_for(ciphers, length, target, counters)
 
     def make_rule(place, hits):
         (index, key, key_id), region, skip, mask = place
@@ -1487,20 +1738,21 @@ def main():
         matched[source.ident] = hits
         key_sources.append(source)
         by_rule.update(hits)
+        unexplained[:] = [i for i in with_crib if i not in by_rule]
         derived.append({"ident": source.ident, "rule": source.label, "from_file": as_given(members[index].path), "from_key": labels[key_id],
                         "constant": "the key that opened from_file XOR that file's own bytes at the same place. It is not here: when this "
                                     "rule is the recipe's, the recipe file holds it (key.xor_hex) and says whether it is all zero",
                         "region": region, "skip": skip, "length": len(key), "explains": len(hits), "of": len(with_crib)})
 
+    unexplained = [i for i in with_crib if i not in by_rule]      # the members no key rule explains: made again only when a rule is made
     screened = set()                # places tried with what opened the pair's own member, on every member no rule explained
     settled = set()                 # places tried with every variant, on every member no rule explained
     # First, every place with what opened the pair's own member; a place that opens another member is then tried with every variant.
     for number, place in enumerate(todo):
-        if work["cut"] or by_rule.issuperset(with_crib):
+        if work["cut"] or not unexplained:
             break
         (index, key, key_id), _region, _skip, _mask = place
         own_variants = matched[key_id][index]
-        others = [i for i in with_crib if i != index and i not in by_rule]
 
         def as_opened(target, own_variants=own_variants, length=len(key)):
             # The nonce of each variant is looked up by its source, not by a list of every nonce the member has (a values file's worth).
@@ -1515,12 +1767,12 @@ def main():
                     made.append((cipher, nonce_id, value, counter))
             return made
 
-        hits = try_place(place, others, as_opened)
+        hits = try_place(place, list(unexplained), as_opened)
         if hits is not None:
             screened.add(number)
         if hits:
             # The members the place opened are explained; the others get every variant (a member may use another counter or cipher).
-            rest = try_place(place, [i for i in others if i not in hits], every_variant(len(key)), set(own_variants))
+            rest = try_place(place, [i for i in unexplained if i not in hits], every_variant(len(key)), set(own_variants))
             if rest is not None:
                 settled.add(number)
             for other, found in (rest or {}).items():
@@ -1528,13 +1780,12 @@ def main():
             make_rule(place, hits)
     # Then every place that is no rule yet, with every variant, on every member no rule explains.
     for number, place in enumerate(todo):
-        if work["cut"] or by_rule.issuperset(with_crib):
+        if work["cut"] or not unexplained:
             break
         if number in settled:
             continue
         (index, key, key_id), _region, _skip, _mask = place
-        others = [i for i in with_crib if i != index and i not in by_rule]
-        hits = try_place(place, others, every_variant(len(key)), set(matched[key_id][index]) if number in screened else ())
+        hits = try_place(place, list(unexplained), every_variant(len(key)), set(matched[key_id][index]) if number in screened else ())
         if hits is None:
             break
         settled.add(number)
@@ -1543,14 +1794,18 @@ def main():
     derived_trials = work["trials"]
     total_trials += derived_trials
     everyone = by_rule.issuperset(with_crib)
-    derivation_cut = bool(todo) and not everyone and work["cut"] is not None
+    if places_not_listed and work["cut"] is None:
+        work["cut"] = "max_places"                    # every place listed was tried, and the places past MAX_PLACES were not
+    derivation_cut = bool(todo or places_not_listed) and not everyone and work["cut"] is not None
     derivation.update({"trials": derived_trials, "places_tried_on_every_member": len(settled), "stopped_by": work["cut"] if derivation_cut else None,
                        "keys_longer_than_%d_bytes_not_used" % MAX_DERIVED_KEY: too_long,
                        "plan": "for each key that is not a slice and opened a member: that key XOR the member's own last bytes (and, inside "
                                "header_bytes, first bytes) at every skip from 0 to %d is one constant mask; each is tried on every other member "
                                "that has a crib and that no key rule explains yet, first with the cipher, nonce source and counter that opened "
                                "the first member, then with every cipher, nonce and counter in `tried`. It ends when every place was tried so, "
-                               "or when one rule explains every member" % MAX_SKIP})
+                               "or when one rule explains every member. A key that opened several members is paired with the first member of "
+                               "each crib length (pairs_not_used counts the others); at most %d places are listed (places_not_listed counts "
+                               "the others, before equal masks are merged)" % (MAX_SKIP, MAX_PLACES)})
     if not derive:
         derivation = {"made": False}
 
@@ -1597,9 +1852,10 @@ def main():
             for combo in combos:
                 tally[combo] = tally.get(combo, 0) + 1
         order = sorted(tally, key=lambda combo: (-tally[combo], combo[0], combo[2], str(combo[1])))
+        rank = {combo: n for n, combo in enumerate(order)}
         assignments, ambiguous = {}, 0
         for index, combos in matched[best].items():
-            assignments[members[index].key] = order.index(min(combos, key=order.index))
+            assignments[members[index].key] = min(rank[combo] for combo in combos)
             ambiguous += len(combos) > 1
 
         def as_source(source):
@@ -1631,7 +1887,9 @@ def main():
         }
         recipe_said = {
             "key": labels[best],
-            "variants": [{"cipher": cipher, "counter": counter, "nonce": labels.get(nonce_id), "members": tally[(cipher, nonce_id, counter)]} for cipher, nonce_id, counter in order],
+            "variants": [{"cipher": cipher, "counter": counter, "nonce": labels.get(nonce_id), "members": tally[(cipher, nonce_id, counter)]}
+                         for cipher, nonce_id, counter in order[:MAX_RECIPE_VARIANTS]],
+            **({"variants_not_listed": len(order) - MAX_RECIPE_VARIANTS} if len(order) > MAX_RECIPE_VARIANTS else {}),
             "header_bytes": header, "trailer_bytes": recipe_trailer,
             "trailer_basis": "given in the call" if trailer_given is not None else
                              ("at least the bytes the key and nonce slices take from the end; a longer trailer leaves its other bytes at the end of each "
@@ -1644,16 +1902,16 @@ def main():
         if explained < 2 and explained < len(with_crib):
             recipe_why = ("not written: the best rule explains %d of %d members, which is one known (file, key) pair, not a rule for the family. "
                           "Use it: see rules" % (explained, len(with_crib)))
+        elif len(order) > MAX_RECIPE_VARIANTS:
+            recipe_why = ("not written: the best rule matched with %d combinations of cipher, nonce and counter, and family_decrypt reads at most "
+                          "%d. A rule that needs that many is a crib too short to tell them apart: narrow ciphers, counters or nonce_sources"
+                          % (len(order), MAX_RECIPE_VARIANTS))
         elif not (in_job and secret):
             recipe_why = ("not written: the recipe holds key material and this run is not a job run as secret output. Run it as job_run "
                           "tool=stream_kpa_check (the manifest makes the job secret output)")
         else:
             try:
-                fd, name = create_new(directory, "stream-recipe.json")
-                with os.fdopen(fd, "w", encoding="ascii") as fh:
-                    fh.write(json.dumps(recipe, indent=1) + "\n")
-                    fh.flush()
-                    os.fsync(fh.fileno())
+                name = write_recipe(directory, json.dumps(recipe, indent=1) + "\n")
                 recipe_file = "%s/%s" % (shown, name)
             except OSError as exc:
                 recipe_why = "not written: the recipe file could not be created (%s)" % describe(exc)
@@ -1673,14 +1931,28 @@ def main():
     if idle and (with_crib or no_trial_members):
         not_tried.append("asked for and not tried, on any member: %s. No trial was made with %s: the sources yield no key of a length it takes, "
                          "or no nonce of a length it takes (see tried.layouts and tried.trials_by_cipher)" % (", ".join(idle), "it" if len(idle) == 1 else "them"))
+    if not_kept["matches"]:
+        reasons.append("%d matching combinations were counted and not kept: more than %d matched on %d members (or for one derived rule on one "
+                       "member), which a crib this short gives by chance. The key rule, the footer hypothesis and the recipe were made from "
+                       "the kept ones; give a longer crib (magics, a plaintext twin) or fewer sources" % (not_kept["matches"], MAX_MATCHES_KEPT, not_kept["members"]))
     if derivation_cut:
-        bound = ("max_trials (%d) was reached" % max_trials if work["cut"] == "max_trials" else "the time limit (max_seconds %d) was reached" % max_seconds)
-        said = ("%s while the footer hypothesis was being tried: %d of its %d places (a key that opened a member XOR that member's own bytes, at one "
-                "end and one skip) were tried on every member no rule explains, with every cipher, nonce and counter; the others were not, so a "
-                "no_match of this answer does not cover them" % (bound, len(settled), len(todo)))
+        unlisted = (" %d more places (past the first %d listed, counted before equal masks are merged) were not listed or tried."
+                    % (places_not_listed, MAX_PLACES) if places_not_listed else "")
+        if work["cut"] == "max_places":
+            said = ("the footer hypothesis has more places (a key that opened a member XOR that member's own bytes, at one end and one skip) than "
+                    "the %d it lists: the %d listed were tried on every member no rule explains, with every cipher, nonce and counter, and%s "
+                    "A no_match of this answer does not cover them" % (MAX_PLACES, len(todo), unlisted))
+        else:
+            bound = "max_trials (%d) was reached" % max_trials if work["cut"] == "max_trials" else "the time limit (max_seconds %d) was reached" % max_seconds
+            said = ("%s while the footer hypothesis was being tried: %d of its %d places listed (a key that opened a member XOR that member's own "
+                    "bytes, at one end and one skip) were tried on every member no rule explains, with every cipher, nonce and counter; the others "
+                    "were not, so a no_match of this answer does not cover them.%s" % (bound, len(settled), len(todo), unlisted))
         reasons.append(said)
         not_tried.append("the footer hypothesis, in part: %s. Raise max_trials (at most 5000000) or max_seconds, or narrow it: give the key that opened "
                          "a member as the only key source, with the one nonce and cipher it matched" % said)
+    if pairs_not_used and derive:
+        not_tried.append("the footer hypothesis from a key paired with a second member of the same crib length: %d such pairs (a key that "
+                         "opened several members is paired with the first of each crib length only)" % pairs_not_used)
     if too_long:
         not_tried.append("the footer hypothesis from a key of more than %d bytes: %d such keys opened a member and no mask was derived from them" % (MAX_DERIVED_KEY, too_long))
     if counts.get("read_failed"):
@@ -1739,7 +2011,7 @@ def main():
 if __name__ == "__main__":
     exit_code = 0
     try:
-        answered(main)
+        answered(main, forget_recipe)
     except SystemExit as stop:
         exit_code = _code(stop)
     _leave(exit_code)

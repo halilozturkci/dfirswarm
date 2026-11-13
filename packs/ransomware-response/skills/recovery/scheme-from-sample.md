@@ -22,4 +22,4 @@ Use when encrypted files of one family are held with the encryptor, its process 
 
 **Does not show.** A scan with no hit is a negative only after its planted control passed, and only for the shapes it lists. `no_combination_matched` names what was tried; it does not mean that no key exists. A match is the expected first bytes on a crib of the stated length: a 4-byte crib needs the rule to hold on other members. Decryption authenticates nothing: `type confirmed` is first bytes only, so open a file with its own reader before relying on it.
 
-Sensitive output: the three tools run as jobs with `secret_output: true` (their manifests make every job one). Keys, nonces, masks and decrypted content stay in the job's files; the ledger cites the job, the file and the offset, not a value or a hash of one.
+Sensitive output: cipher_state_scan, stream_kpa_check and family_decrypt run as secret-output jobs (their manifests require it). Keys, nonces, masks and decrypted content stay in the job's files; the ledger cites job, file and offset, never a value or its hash.

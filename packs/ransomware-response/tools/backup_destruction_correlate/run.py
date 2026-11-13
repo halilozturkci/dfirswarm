@@ -1942,9 +1942,18 @@ class Ctx:
         return row
 
 
-def read_doc(path):
+def read_doc(path, named=None, use=None):
+    """An answer document, read whole (MAX_DOC at most) and parsed. With `named` (a set) and `use` (what the call reads the document for:
+    its kind, host and the other fields of its entry), a document already read for the same use, the same file by (st_dev, st_ino), is
+    not read again: its rows would only be counted twice. Parsing 16 MiB of JSON can take about 500 MB (16 MiB of empty objects took 460
+    MB), and the caller holds one document at a time."""
     fd, st = open_regular(path)
     try:
+        if named is not None:
+            mark = (use, st.st_dev, st.st_ino)
+            if mark in named:
+                return None, "named again"
+            named.add(mark)
         data = pread_full(fd, min(st.st_size, MAX_DOC) + 1, 0)
     finally:
         os.close(fd)
@@ -2337,8 +2346,11 @@ def main():
     inventories = collections.defaultdict(list)
     services = collections.defaultdict(list)
 
+    named = set()                   # (kind, host, entry, st_dev, st_ino) of every document read: one named again is not read again
+    named_again = collections.Counter()
     for kind in KINDS:
         for host, path, extra in specs[kind]:
+            doc = adoc = None                                     # one parsed document held at a time
             if out_of_time():
                 stopped["inputs_not_read"] = stopped.get("inputs_not_read", 0) + 1
                 continue
@@ -2365,7 +2377,10 @@ def main():
                     if facts["stopped_by_clock"]:
                         stopped["input_cut_by_clock"] = stopped.get("input_cut_by_clock", 0) + 1
                     continue
-                doc, why = read_doc(path)
+                doc, why = read_doc(path, named, (kind, host, json.dumps(extra, sort_keys=True)))
+                if why == "named again":
+                    named_again[kind] += 1
+                    continue
                 if doc is None:
                     problems["input_unreadable:" + kind] += 1
                     continue
@@ -2548,6 +2563,9 @@ def main():
         "observation_counts": {cls: sum(s["counts"][cls] for s in ctx.summary.values()) for cls in CLASSES},
         "flag_counts": dict(flag_counts),
         "inputs_read": dict(inputs_read),
+        **({"inputs_named_again": dict(named_again),
+            "inputs_named_again_basis": "an entry that names, for the same kind, host and fields, a file already read (the same file by device and "
+                                        "inode) was not read again: its rows would only be counted twice"} if named_again else {}),
         "inputs_whose_producer_status_is_unknown": dict(unchecked),
         "observations_left_out_by_only_objects": ctx.filtered,
         "time_limit": {"max_seconds": max_seconds, "reached": bool(stopped), **stopped},

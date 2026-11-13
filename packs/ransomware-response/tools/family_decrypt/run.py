@@ -803,46 +803,72 @@ def list_members(args, max_files, suffix=None):
     recursive = bool_param(args, "recursive")
     if not os.path.isdir(directory):
         raise Refused("dir is not a directory")
+    # One directory's entries are read one at a time, the clock read every 1024 of them, and what is kept of them is bounded: the files
+    # that match, at most twice the room left under max_files (cut to the room, in the order of their names, whenever that is passed;
+    # the others are counted in `more`), and the directories still to list, at most 100000 (the others are counted).
     found, more = [], 0
     stack = [directory]
+    pending_most = 100000                                   # the directories still to list that are kept, at most
     while stack:
         if out_of_time():
-            skipped["directories_not_listed_time_limit"] = len(stack)
+            skipped["directories_not_listed_time_limit"] = skipped.get("directories_not_listed_time_limit", 0) + len(stack)
             break
         here = stack.pop()
+        room = max_files - len(found)
+        names, below, seen, cut = [], [], 0, False
         try:
-            entries = sorted(os.scandir(here), key=lambda e: e.name)
+            with os.scandir(here) as entries:
+                for entry in entries:
+                    seen += 1
+                    if not seen & 1023 and out_of_time():
+                        cut = True
+                        break
+                    try:
+                        entry.name.encode("utf-8")
+                    except UnicodeError:
+                        skipped["names_not_utf8"] += 1
+                        continue
+                    try:
+                        if entry.is_symlink():
+                            skipped["links"] += 1
+                        elif entry.is_dir(follow_symlinks=False):
+                            if recursive:
+                                below.append(entry.name)
+                                if len(below) + len(stack) > 2 * pending_most:
+                                    below.sort()
+                                    keep = max(0, pending_most - len(stack))
+                                    skipped["directories_not_listed_bound"] = skipped.get("directories_not_listed_bound", 0) + len(below) - keep
+                                    del below[keep:]
+                        elif not entry.is_file(follow_symlinks=False):
+                            skipped["not_regular"] += 1
+                        elif carries_suffix(entry.name, by_suffix) if by_suffix else fnmatch.fnmatchcase(entry.name, pattern):
+                            names.append(entry.name)
+                            if len(names) > 2 * room + 1024:
+                                names.sort()
+                                more += len(names) - room
+                                del names[room:]
+                    except OSError:
+                        skipped["not_regular"] += 1
         except OSError:
             skipped["unreadable_directories"] += 1
             continue
-        below = []
-        for entry in entries:
-            try:
-                entry.name.encode("utf-8")
-            except UnicodeError:
-                skipped["names_not_utf8"] += 1
-                continue
-            try:
-                if entry.is_symlink():
-                    skipped["links"] += 1
-                elif entry.is_dir(follow_symlinks=False):
-                    if recursive:
-                        below.append(entry.path)
-                elif not entry.is_file(follow_symlinks=False):
-                    skipped["not_regular"] += 1
-                elif carries_suffix(entry.name, by_suffix) if by_suffix else fnmatch.fnmatchcase(entry.name, pattern):
-                    if len(found) < max_files:
-                        found.append(entry.path)
-                    else:
-                        more += 1
-            except OSError:
-                skipped["not_regular"] += 1
-        stack.extend(reversed(below))
+        if cut:
+            skipped["directories_not_listed_time_limit"] = skipped.get("directories_not_listed_time_limit", 0) + 1 + len(stack)
+            break
+        names.sort()
+        more += max(0, len(names) - room)
+        found.extend(os.path.join(here, name) for name in names[:room])
+        below.sort()
+        if len(below) + len(stack) > pending_most:
+            keep = max(0, pending_most - len(stack))
+            skipped["directories_not_listed_bound"] = skipped.get("directories_not_listed_bound", 0) + len(below) - keep
+            del below[keep:]
+        stack.extend(os.path.join(here, name) for name in reversed(below))
     return found, more, skipped
 # FAMILY: end
 
 TOOL = "family_decrypt"
-VERSION = 3
+VERSION = 4
 PARSER = "family_decrypt/2"
 DEFAULT_SECONDS, MAX_SECONDS = 1500, 1740
 PIECE = 1 << 20
@@ -994,10 +1020,14 @@ def keystream_for(variant, key, fd, size):
 
 def main():
     install_signal_handlers(last_word)
+    # The clock runs from here: the recipe and the directory are read after the deadline is set, and under it.
+    started = time.monotonic()
+    set_deadline(MAX_SECONDS)
     args, unknown = read_args(KNOWN_PARAMS)
     max_files = int_param(args, "max_files", 1000, 1, 100000)
     max_bytes = int_param(args, "max_bytes", 2 << 30, 1, 64 << 30)
     max_seconds = int_param(args, "max_seconds", DEFAULT_SECONDS, 1, MAX_SECONDS)
+    set_deadline(max_seconds - (time.monotonic() - started))
     limit = int_param(args, "limit", 200, 1, 5000)
     # Refused first, before the recipe is read or a directory listed: outside a secret-output job this tool opens nothing.
     directory, shown, in_job, secret = job_place()
@@ -1007,11 +1037,13 @@ def main():
              % ("this run is not a job (JOB_ID and OUT are not set), so a file written here would not be sealed" if not in_job else
                 "SECRET_OUTPUT is not 1 in this job, so its files would be sealed as ordinary output"), written=False)
     key_source, variants, assignments, header, trailer, suffix = read_recipe(args)
-    set_deadline(max_seconds)
     paths, more, skipped = list_members(args, max_files, suffix)
     names_in_recipe = member_keys(args, paths)
     by_base = {}                    # a base name -> the variants of the recipe's members of that name
-    for assigned_name, variant_number in assignments.items():
+    for n, (assigned_name, variant_number) in enumerate(assignments.items()):
+        if not n & 4095 and out_of_time():
+            raise Refused("the time limit (max_seconds %d) was reached while the recipe's assignments were read (%d of %d): nothing was "
+                          "decrypted and nothing was written" % (max_seconds, n, len(assignments)))
         by_base.setdefault(assigned_name.rsplit("/", 1)[-1], []).append(variant_number)
     out_dir = directory / "decrypted"
     if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
@@ -1095,10 +1127,10 @@ def main():
             out_fd, out_name = create_new(out_dir, out_name)
             WRITING._tmp = str(out_dir / out_name)
             both = hashlib.sha256(), hashlib.sha256()
-            _hash_range(fd, 0, header, both[0])
-            at, first, timed_out = header, None, False
+            timed_out = not _hash_range(fd, 0, header, both[0])
+            at, first = header, None
             end = header + payload
-            while at < end:
+            while at < end and not timed_out:
                 block = pread_full(fd, min(PIECE, end - at), at)
                 if not block:
                     raise ValueError("the file ended at byte %d, before its size" % at)
@@ -1112,6 +1144,8 @@ def main():
                 if at < end and out_of_time():
                     timed_out = True
                     break
+            if not timed_out and not _hash_range(fd, end, trailer, both[0]):
+                timed_out = True
             if timed_out:
                 os.close(out_fd)
                 out_fd = None
@@ -1121,7 +1155,6 @@ def main():
                                                                    "partial output was removed" % (max_seconds, at - header))
                 counts["not_decrypted_time"] += 1
                 continue
-            _hash_range(fd, end, trailer, both[0])
             os.fsync(out_fd)
             os.close(out_fd)
             out_fd = None
@@ -1216,14 +1249,18 @@ def main():
 
 
 def _hash_range(fd, at, length, digest):
-    """`length` bytes of a file from `at` into a digest, a piece at a time (a header or a trailer may be large)."""
+    """`length` bytes of a file from `at` into a digest, a piece at a time (a header or a trailer may be as large as 1 GiB), the clock read
+    between pieces. False when the time limit was reached first."""
     end = at + length
     while at < end:
+        if out_of_time():
+            return False
         block = pread_full(fd, min(PIECE, end - at), at)
         if not block:
             raise ValueError("the file ended at byte %d, before its size" % at)
         digest.update(block)
         at += len(block)
+    return True
 
 
 def _write_all(fd, data):
