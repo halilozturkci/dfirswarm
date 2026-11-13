@@ -459,7 +459,7 @@ export const HANDOFF_LEADS_MAX = 2000;
  * and one of s5d814f was 38 MB. Bounded at HANDOFF_LEADS_MAX characters.
  */
 export function handoffLeads(digest: string): string {
-  const keep = /^(Leads:|Yours:|Blocked on you:|Awaiting your interpretation:|Questions nobody holds|Your running jobs)/;
+  const keep = /^(Leads:|Yours:|Blocked on you:|Awaiting your interpretation:|Questions nobody holds|Your running jobs|Found but not answered)/;
   const out: string[] = [];
   for (const line of digest.split("\n")) {
     if (keep.test(line)) out.push(line.length > 600 ? `${line.slice(0, 560)}\u2026 (cut: leads gives it whole)` : line);

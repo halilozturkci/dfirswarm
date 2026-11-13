@@ -1493,6 +1493,51 @@ export type LeadsSnapshot = {
   questions: import("./questions.ts").QuestionsSnapshot | null;
 };
 
+/** How long a standing finding that answers a question may stand with no answer entry before it is said, and before anyone may write it. */
+export const FOUND_NOT_ANSWERED_MS = 10 * 60_000;
+export const FOUND_ANYONE_ANSWERS_MS = 20 * 60_000;
+
+export type FoundNotAnswered = { question: string; finding: number; by: string; minutes: number; lead: string | null; holder: string | null; anyone: boolean };
+
+/**
+ * The questions a standing finding answers that have no answer entry yet, with the oldest such finding of each. A
+ * value known is not an answer: on the run s5d814f a finding for question 5 stood 58 minutes while two seats waited
+ * for the lead's holder to write the answer, and on s01a4f4 a value was found a minute before the stop and never
+ * recorded. After FOUND_NOT_ANSWERED_MS the holder is told; after FOUND_ANYONE_ANSWERS_MS whoever can cite the
+ * finding is told to write the answer.
+ */
+export function foundNotAnswered(snap: Pick<LeadsSnapshot, "ledger" | "answered" | "state">, now: number): FoundNotAnswered[] {
+  const oldest = new Map<string, P.LedgerEntry>();
+  for (const e of snap.ledger.entries) {
+    if (e.kind !== "finding" || snap.ledger.replaced.has(e.seq)) continue;
+    const raw = (e as { answers?: string[] | string }).answers;
+    for (const a of Array.isArray(raw) ? raw : raw ? [raw] : []) {
+      const q = P.sectionKey(String(a).replace(/^question:/, ""));
+      if (!q || snap.answered.has(q)) continue;
+      const had = oldest.get(q);
+      if (!had || Date.parse(e.at) < Date.parse(had.at)) oldest.set(q, e);
+    }
+  }
+  const out: FoundNotAnswered[] = [];
+  for (const [q, e] of oldest) {
+    const age = now - Date.parse(e.at);
+    if (!(age >= FOUND_NOT_ANSWERED_MS)) continue;
+    const lead = [...snap.state.leads.values()].find((l) => !l.closed && l.holder && l.answers.some((x) => P.sectionKey(String(x).replace(/^question:/, "")) === q)) ?? null;
+    out.push({ question: q, finding: e.seq, by: e.by, minutes: Math.round(age / 60_000), lead: lead?.id ?? null, holder: lead?.holder ?? null, anyone: age >= FOUND_ANYONE_ANSWERS_MS });
+  }
+  return out.sort((a, b) => b.minutes - a.minutes);
+}
+
+/** The digest's line for them, for one seat. */
+export function foundNotAnsweredLine(items: readonly FoundNotAnswered[], me: string): string | null {
+  if (!items.length) return null;
+  const each = items.slice(0, 6).map((x) => {
+    const who = x.holder === me ? "you hold its lead: record the answer now" : x.anyone ? `${x.holder ? `${x.holder} holds its lead and has not answered` : "nobody holds a lead for it"}: whoever can cite E-${x.finding} records the answer now, the holder included` : x.holder ? `${x.holder} holds its lead and is asked to record the answer` : "nobody holds a lead for it: record the answer, citing the finding";
+    return `question:${x.question} (finding E-${x.finding} by ${x.by}, ${x.minutes} min ago; ${who})`;
+  });
+  return `Found but not answered (a finding says it, no answer entry does; an answer is what is graded): ${each.join("; ")}${items.length > 6 ? `; and ${items.length - 6} more` : ""}.`;
+}
+
 export async function leadsSnapshot(sandboxRoot: string): Promise<LeadsSnapshot> {
   const { events, text } = await readLeadEvents(sandboxRoot);
   const chain = verifyLeadChain(text);
@@ -3987,6 +4032,9 @@ export async function leadsDigest(ctx: P.SwarmContext, o: { mark?: boolean } = {
   lines.push(`Blocked on you: ${blockedOnMe.length ? blockedOnMe.map((x) => `${x.id} (${x.holder ?? "unheld"}) needs ${x.needs.filter((n) => !n.met).map((n) => n.need).join(", ")}`).join("; ") : "none"}.`);
   lines.push(`Awaiting your interpretation: ${awaiting.length ? awaiting.map((a) => `${a.job}${a.lead ? ` (${a.lead})` : ""}${a.reinterpret ? `: its interpretation no longer stands, interpret it again (${a.why})` : ""}${a.unread_bytes ? `: ${a.unread_bytes} of ${a.total_bytes} stdout bytes unread, job_status offset ${a.next_offset}` : ""}`).join("; ") : "none"}.`);
   lines.push(`Questions nobody holds a lead for, with no answer yet: ${cov.uncovered.length ? cov.uncovered.map((q) => `question:${q}${cov.open_leads_for[q] ? ` (open: ${cov.open_leads_for[q].join(", ")})` : ""}`).join(", ") : "none"}.`);
+  // A value known is not an answer: findings that answer a question no answer entry answers yet.
+  const unanswered = foundNotAnsweredLine(foundNotAnswered(snap, Date.now()), me);
+  if (unanswered) lines.push(unanswered);
   // This seat's running jobs that look stuck (B11): all three signals still, not near their timeout. A hint, never a cancel.
   const T = await import("../scripts/job-telemetry.ts");
   const stuck: string[] = [];
