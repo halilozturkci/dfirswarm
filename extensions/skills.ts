@@ -1722,7 +1722,8 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
 
   pi.on("tool_result", async (event, ctx) => {
     if (cardsMode === "off") return undefined;
-    const ev = event as unknown as { toolName?: string; input?: Record<string, unknown>; content?: Array<Record<string, unknown>> };
+    const ev = event as unknown as { toolName?: string; input?: Record<string, unknown> };
+    const content = Array.isArray(event.content) ? event.content : [];
     const tool = cardToolOf(ev.toolName ?? "", ev.input);
     if (!tool) return undefined;
     try {
@@ -1737,7 +1738,7 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
         const shown = notes.slice(0, NOTES_LISTED_MAX).map(refOf);
         const words = `Notes that name ${tool}: ${shown.join(", ")}${notes.length > shown.length ? ` and ${notes.length - shown.length} more` : ""}. Load the one for what you are reading: skill(id).`;
         await deps.trace((ctx as unknown as { cwd: string }).cwd, "skill_card", { tool, ids: shown }, { ok: true, listed: notes.length, tokens: estimateTokens(words), turn: deps.turns() }).catch(() => undefined);
-        return { content: [...(Array.isArray(ev.content) ? ev.content : []), { type: "text", text: words }] };
+        return { content: [...content, { type: "text" as const, text: words }] };
       }
       const pick = notes.find((n) => {
         const key = SkillLedger.key(n.pack.id, n.id);
@@ -1756,7 +1757,7 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
       const ref = refOf(pick);
       const words = `Skill card for ${tool}: \`${ref}\` (${pick.pack.id}). The whole note: skill('${ref}').\n${card}`;
       await deps.trace((ctx as unknown as { cwd: string }).cwd, "skill_card", { tool, id: pick.id }, { ok: true, pack: pick.pack.id, tokens: estimateTokens(words), turn: deps.turns() }).catch(() => undefined);
-      return { content: [...(Array.isArray(ev.content) ? ev.content : []), { type: "text", text: words }] };
+      return { content: [...content, { type: "text" as const, text: words }] };
     } catch {
       return undefined;
     }

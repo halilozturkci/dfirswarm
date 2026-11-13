@@ -6196,6 +6196,9 @@ export const TOOL_RESERVED_NAMES = new Set([
   // The keeper restarting the collector, an operator's own command or
   // console action, and the console opening an artifact with its scripts.
   "collector_restarted", "operator_action", "artifact_scripts",
+  // A seat's shell call past its limit, its images left out of a model call and the cap a provider set, a card shown with a tool's
+  // result, a seat silent in one call (the watchdog), and the hub's heap past three quarters of its limit.
+  "shell_timeout", "image_cap", "images_left_out", "skill_card", "call_stalled", "hub_memory_high",
   // A long command run again pointed at its kept output, a seat stopped
   // before a model call, a ledger correction, the operator's --notify hook,
   // the hub's history quota and a connection refused its seat token; a

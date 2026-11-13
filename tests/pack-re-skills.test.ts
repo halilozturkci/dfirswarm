@@ -51,7 +51,8 @@ test("every skill is a leaf within the budget, opens with Use when ... Not for .
   const skills = await load(SKILLS);
   assert.equal(skills.size, 25);
   for (const s of skills.values()) {
-    assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? 400 : 800), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
+    assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? 500 : 800), // scripts/skill-budgets.json: the router opens with an Always block
+      `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
     const first = s.body.trim().split("\n")[0]!;
     assert.match(first, /^Use when /, `${s.id} opens with Use when`);

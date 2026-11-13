@@ -78,5 +78,5 @@ test("through the service: a supplied program sealed 0444 runs when the job name
   assert.match((await run({ command: "x", programs: ["import:mat-0009"] })).refused ?? "", /no supplied program import:mat-0009/);
   assert.match((await run({ command: "x", programs: ["job:j000001"] })).refused ?? "", /is not one/);
   assert.match((await run({ command: "x", programs: "import:mat-0001" })).refused ?? "", /a list of supplied programs/);
-  await svc.stop?.();
+  await svc.stop("test over");
 });

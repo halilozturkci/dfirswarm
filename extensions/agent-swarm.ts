@@ -1417,7 +1417,7 @@ export default function (pi: ExtensionAPI) {
   let pauseAborted = false;
   // The newest images only, within the provider's limit (capImages): what the model is sent, not what the session keeps.
   pi.on("context", async (event, ctx) => {
-    const messages = (event as { messages?: unknown[] }).messages;
+    const messages = event.messages;
     if (!Array.isArray(messages) || imageCap <= 0) return undefined;
     const capped = capImages(messages, imageCap, imagesDropped);
     if (!capped.dropped) {
@@ -2996,7 +2996,8 @@ export default function (pi: ExtensionAPI) {
   // every prompt on every turn. extensions/skills.ts is the whole of it: the
   // index section, the `skill` and `skill_done` tools, what each seat holds.
   const packDirs = packDirsFromEnv();
-  if (packDirs.length) {
+  // --pack-skills off (docs/usage.md): the packs' tools only; no skill tool, index or card (the arm of the skills experiment).
+  if (packDirs.length && process.env.SWARM_PACK_SKILLS?.trim() !== "off") {
     skills = registerSkills(pi, {
       packDirs,
       agentId: () => agentId,

@@ -531,10 +531,12 @@ const historySpent = new Set<string>();
 export const recordFileVersion: typeof P.recordFileVersion = async (sandboxRoot, rawPath, agentId, options = {}) => {
   const socket = boardSocket();
   if (!socket) return P.recordFileVersion(sandboxRoot, rawPath, agentId, options);
-  const spent = historySpent.has(agentId);
+  // Per run and seat: the quota is the run's hub's.
+  const seatKey = `${sandboxRoot}\u0000${agentId}`;
+  const spent = historySpent.has(seatKey);
   const wire = options.bytes && !spent ? { bytes_b64: options.bytes.toString("base64") } : options.bytes ? { hash_only: { sha256: P.sha256Hex(options.bytes), bytes: options.bytes.byteLength } } : await ownFileWire(sandboxRoot, rawPath, agentId, spent ? 0 : P.HISTORY_STORE_MAX_BYTES);
   const rec = (await callBoard(socket, "recordFileVersion", [sandboxRoot, rawPath, agentId, wire ?? null])) as Awaited<ReturnType<typeof P.recordFileVersion>> & { not_stored?: unknown };
-  if (rec && typeof rec.not_stored === "string" && rec.not_stored) historySpent.add(agentId);
+  if (rec && typeof rec.not_stored === "string" && rec.not_stored) historySpent.add(seatKey);
   return rec;
 };
 
